@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="用一张图看懂 AgentNave 的原理、调用流程与边界。">
+  <title>AgentNave 是怎么工作的？</title>
+  <style>
+    :root {
+      --paper: #f3ead7;
+      --paper-deep: #e6d4b5;
+      --ink: #18221f;
+      --muted: #5e675f;
+      --orange: #ee633f;
+      --yellow: #f4b942;
+      --green: #2d6b57;
+      --blue: #3c6170;
+      --line: rgba(24, 34, 31, .24);
+      --shadow: 0 24px 70px rgba(38, 30, 18, .14);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(46, 39, 28, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(46, 39, 28, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .22;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.16'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+      z-index: 10;
+    }
+
+    a { color: inherit; }
+    button { font: inherit; }
+
+    .progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      width: 0;
+      height: 4px;
+      background: var(--orange);
+      z-index: 20;
+    }
+
+    .shell {
+      width: min(1440px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      min-height: 94vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+      gap: clamp(32px, 6vw, 96px);
+      align-items: center;
+      padding: 72px 0 56px;
+    }
+
+    .eyebrow,
+    .section-no,
+    .label {
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 34px;
+      height: 9px;
+      background: var(--orange);
+      border-radius: 100%;
+      transform: rotate(-7deg);
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      max-width: 780px;
+      margin-bottom: 28px;
+      font-family: "STKaiti", "KaiTi", "Kaiti SC", serif;
+      font-size: clamp(58px, 8.2vw, 132px);
+      font-weight: 700;
+      letter-spacing: -.075em;
+      line-height: .9;
+    }
+
+    h1 em {
+      color: var(--orange);
+      font-style: normal;
+    }
+
+    .lead {
+      max-width: 680px;
+      margin-bottom: 32px;
+      font-size: clamp(16px, 1.5vw, 21px);
+      line-height: 1.7;
+    }
+
+    .plain {
+      display: inline-block;
+      padding: 5px 12px 4px;
+      color: var(--paper);
+      background: var(--ink);
+      transform: rotate(-1deg);
+    }
+
+    .hero-note {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      max-width: 660px;
+    }
+
+    .note {
+      min-height: 104px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 252, 244, .55);
+    }
+
+    .note strong { display: block; margin-bottom: 3px; font-size: 16px; }
+    .note span { color: var(--muted); font-size: 12px; }
+
+    .hero-visual {
+      position: relative;
+      aspect-ratio: .92;
+      max-height: 720px;
+      min-height: 500px;
+    }
+
+    .orbit {
+      position: absolute;
+      inset: 5%;
+      border: 1px dashed var(--line);
+      border-radius: 50%;
+      animation: turn 36s linear infinite;
+    }
+
+    .orbit::before,
+    .orbit::after {
+      content: "";
+      position: absolute;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--orange);
+    }
+
+    .orbit::before { top: 17%; left: 4%; }
+    .orbit::after { right: 9%; bottom: 12%; background: var(--green); }
+
+    @keyframes turn { to { transform: rotate(360deg); } }
+
+    .machine {
+      position: absolute;
+      inset: 16% 8%;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 2px solid var(--ink);
+      border-radius: 48% 52% 43% 57% / 58% 42% 58% 42%;
+      color: var(--paper);
+      background: var(--ink);
+      box-shadow: var(--shadow);
+      transform: rotate(2deg);
+    }
+
+    .machine::before,
+    .machine::after {
+      content: "";
+      position: absolute;
+      border: 1px solid rgba(243, 234, 215, .22);
+      border-radius: 50%;
+    }
+
+    .machine::before { width: 76%; aspect-ratio: 1; }
+    .machine::after { width: 54%; aspect-ratio: 1; }
+
+    .machine-copy { position: relative; z-index: 1; text-align: center; transform: rotate(-2deg); }
+    .machine-copy b { display: block; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(42px, 5vw, 76px); line-height: 1; }
+    .machine-copy small { display: block; margin-top: 12px; color: #c8d2c7; letter-spacing: .12em; }
+
+    .satellite {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      width: 116px;
+      aspect-ratio: 1;
+      padding: 10px;
+      border: 1px solid var(--ink);
+      border-radius: 50%;
+      background: var(--yellow);
+      text-align: center;
+      font-weight: 700;
+      box-shadow: 7px 8px 0 var(--ink);
+    }
+
+    .satellite small { display: block; font-size: 10px; font-weight: 400; }
+    .satellite.manager { top: 1%; left: 1%; }
+    .satellite.provider { right: 0; bottom: 2%; background: #a8cab8; }
+
+    .section {
+      padding: 100px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 760px);
+      gap: 20px;
+      margin-bottom: 54px;
+    }
+
+    .section-no { color: var(--orange); padding-top: 12px; }
+
+    h2 {
+      margin-bottom: 14px;
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: clamp(38px, 5.4vw, 76px);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+
+    .section-head p { max-width: 620px; color: var(--muted); font-size: 14px; }
+
+    .big-flow {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(180px, 1fr));
+      gap: 18px;
+      min-width: 1020px;
+      padding: 42px 24px 36px;
+    }
+
+    .flow-wrap {
+      overflow-x: auto;
+      border: 2px solid var(--ink);
+      border-radius: 32px;
+      background: rgba(255, 252, 244, .65);
+      box-shadow: var(--shadow);
+      scrollbar-color: var(--orange) transparent;
+    }
+
+    .big-flow::before {
+      content: "";
+      position: absolute;
+      top: 106px;
+      left: 10%;
+      right: 10%;
+      height: 3px;
+      background: var(--ink);
+    }
+
+    .flow-card {
+      position: relative;
+      z-index: 1;
+      min-height: 240px;
+      padding: 22px 18px;
+      border: 1px solid var(--ink);
+      border-radius: 22px;
+      background: var(--paper);
+      transition: transform .22s ease, background .22s ease;
+    }
+
+    .flow-card:hover { transform: translateY(-7px) rotate(-1deg); background: #fff9ea; }
+
+    .flow-icon {
+      display: grid;
+      place-items: center;
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 28px;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      background: var(--yellow);
+      font-family: ui-monospace, monospace;
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    .flow-card:nth-child(2) .flow-icon { background: #f5aa95; }
+    .flow-card:nth-child(3) .flow-icon { color: var(--paper); background: var(--green); }
+    .flow-card:nth-child(4) .flow-icon { color: var(--paper); background: var(--blue); }
+    .flow-card:nth-child(5) .flow-icon { background: #b9d6bd; }
+    .flow-card h3 { margin-bottom: 8px; font-size: 18px; }
+    .flow-card p { color: var(--muted); font-size: 12px; line-height: 1.65; }
+
+    .hand-note {
+      padding: 12px 20px 18px;
+      color: var(--muted);
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: 15px;
+      text-align: center;
+    }
+
+    .inside-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+    }
+
+    .inside-card {
+      min-height: 250px;
+      padding: 28px;
+      border: 1px solid var(--ink);
+      border-radius: 26px;
+      background: rgba(255, 252, 244, .58);
+    }
+
+    .inside-card:nth-child(1) { grid-column: span 5; }
+    .inside-card:nth-child(2) { grid-column: span 7; background: var(--ink); color: var(--paper); transform: translateY(24px); }
+    .inside-card:nth-child(3) { grid-column: 2 / span 7; margin-top: 24px; background: var(--yellow); }
+    .inside-card:nth-child(4) { grid-column: span 4; margin-top: 48px; }
+
+    .inside-card .num {
+      display: inline-block;
+      margin-bottom: 42px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      letter-spacing: .14em;
+      border-bottom: 2px solid currentColor;
+    }
+
+    .inside-card h3 { margin-bottom: 12px; font-family: "STKaiti", "KaiTi", serif; font-size: 30px; line-height: 1.1; }
+    .inside-card p { max-width: 560px; margin: 0; color: inherit; opacity: .76; font-size: 12px; }
+
+    .status-board {
+      display: grid;
+      grid-template-columns: minmax(280px, .8fr) minmax(400px, 1.2fr);
+      gap: 46px;
+      align-items: center;
+    }
+
+    .switches { display: grid; gap: 10px; }
+
+    .status-button {
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+      padding: 14px 16px;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 252, 244, .5);
+      text-align: left;
+      cursor: pointer;
+      transition: .2s ease;
+    }
+
+    .status-button:hover,
+    .status-button.active { border-color: var(--ink); background: #fff9ea; transform: translateX(6px); }
+    .status-dot { width: 14px; height: 14px; margin-left: 8px; border-radius: 50%; background: var(--dot); box-shadow: 0 0 0 5px color-mix(in srgb, var(--dot) 20%, transparent); }
+    .status-button b { font-size: 14px; }
+    .status-button small { color: var(--muted); font-family: ui-monospace, monospace; font-size: 9px; }
+
+    .result-card {
+      min-height: 430px;
+      padding: clamp(28px, 5vw, 62px);
+      border-radius: 42px 12px 42px 12px;
+      color: var(--paper);
+      background: var(--ink);
+      box-shadow: var(--shadow);
+    }
+
+    .result-card .stamp {
+      display: inline-block;
+      padding: 6px 10px;
+      border: 1px solid rgba(243, 234, 215, .4);
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: .14em;
+    }
+
+    .result-card h3 { margin: 70px 0 18px; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(42px, 6vw, 72px); line-height: .95; color: var(--active-color, var(--yellow)); }
+    .result-card p { max-width: 560px; color: #cbd2ca; font-size: 13px; }
+    .result-fields { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 32px; }
+    .result-fields span { padding: 5px 9px; border: 1px solid rgba(243, 234, 215, .2); border-radius: 99px; font-family: ui-monospace, monospace; font-size: 9px; }
+
+    .boundary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+      border: 2px solid var(--ink);
+      border-radius: 34px;
+      box-shadow: var(--shadow);
+    }
+
+    .boundary-side { min-height: 460px; padding: clamp(28px, 5vw, 64px); }
+    .boundary-side:first-child { color: var(--paper); background: var(--green); }
+    .boundary-side:last-child { background: #f8cfc3; }
+    .boundary-side h3 { margin-bottom: 46px; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(34px, 4vw, 58px); line-height: 1; }
+    .boundary-side ul { margin: 0; padding: 0; list-style: none; }
+    .boundary-side li { position: relative; padding: 15px 0 15px 30px; border-top: 1px solid currentColor; font-size: 13px; }
+    .boundary-side li::before { content: "●"; position: absolute; left: 4px; color: var(--yellow); }
+    .boundary-side:last-child li::before { content: "×"; color: var(--orange); font-size: 18px; line-height: 1; }
+
+    .resume-strip {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 28px;
+      align-items: center;
+      margin-top: 60px;
+      padding: 34px;
+      border: 1px dashed var(--ink);
+      border-radius: 24px;
+    }
+
+    .resume-strip > div { padding: 26px; border: 1px solid var(--ink); border-radius: 18px; background: rgba(255, 252, 244, .6); }
+    .resume-strip b { display: block; margin-bottom: 5px; font-size: 16px; }
+    .resume-strip span { color: var(--muted); font-size: 11px; }
+    .resume-arrow { font-family: ui-monospace, monospace; font-size: 28px; }
+
+    .finale { padding: 120px 0 140px; text-align: center; }
+    .finale .kicker { color: var(--orange); font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .15em; }
+    .finale h2 { max-width: 1050px; margin: 28px auto 36px; font-size: clamp(48px, 7vw, 102px); }
+    .finale p { max-width: 660px; margin: 0 auto; color: var(--muted); }
+    .footer-mark { display: inline-block; margin-top: 70px; padding: 12px 20px; color: var(--paper); background: var(--ink); font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: .14em; transform: rotate(-2deg); }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .orbit { animation: none; }
+      * { transition: none !important; }
+    }
+
+    @media (max-width: 900px) {
+      .hero { min-height: auto; grid-template-columns: 1fr; padding-top: 56px; }
+      .hero-visual { min-height: 430px; max-width: 580px; width: 100%; margin: 0 auto; }
+      .section { padding: 76px 0; }
+      .inside-card:nth-child(n) { grid-column: span 12; margin-top: 0; transform: none; }
+      .status-board { grid-template-columns: 1fr; }
+      .boundary { grid-template-columns: 1fr; }
+      .resume-strip { grid-template-columns: 1fr; }
+      .resume-arrow { transform: rotate(90deg); text-align: center; }
+    }
+
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 20px, 1440px); }
+      .hero { padding-top: 44px; }
+      h1 { font-size: clamp(52px, 20vw, 82px); }
+      .hero-note { grid-template-columns: 1fr; }
+      .hero-visual { min-height: 350px; }
+      .satellite { width: 88px; font-size: 12px; box-shadow: 5px 5px 0 var(--ink); }
+      .machine { inset: 17% 6%; }
+      .section-head { grid-template-columns: 1fr; gap: 4px; }
+      .section-no { padding-top: 0; }
+      .result-card { min-height: 390px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"></div>
+
+  <main>
+    <header class="hero shell">
+      <div>
+        <div class="eyebrow">AgentNave · 新手图解</div>
+        <h1>它不是大脑，<br>它是<em>接头。</em></h1>
+        <p class="lead">
+          上层智能体决定“找谁、做什么”；Antigravity、Claude Code、CodeBuddy Code 或 Grok 真正执行任务；
+          <span class="plain">AgentNave 负责把两边可靠地接起来。</span>
+        </p>
+        <div class="hero-note">
+          <div class="note"><strong>像什么？</strong><span>像一个懂两种方言、还会看守工人的任务中转站。</span></div>
+          <div class="note"><strong>不是什么？</strong><span>不是团队主管，不拆任务，也不会替上层判断结果好不好。</span></div>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-label="Manager 通过 AgentNave 连接 Provider 的示意图">
+        <div class="orbit"></div>
+        <div class="satellite manager">Manager<small>发任务的人</small></div>
+        <div class="machine"><div class="machine-copy"><b>Agent<br>Nave</b><small>本地 MCP Server</small></div></div>
+        <div class="satellite provider">Provider<small>Antigravity / Claude / CodeBuddy / Grok</small></div>
+      </div>
+    </header>
+
+    <section class="section shell">
+      <div class="section-head">
+        <div class="section-no">01 / 一次任务</div>
+        <div>
+          <h2>五步走完一趟。</h2>
+          <p>上层 Agent 通过 MCP 的三个工具进入，所有调用都会汇合到同一套 Invocation Manager。</p>
+        </div>
+      </div>
+
+      <div class="flow-wrap">
+        <div class="big-flow">
+          <article class="flow-card">
+            <div class="flow-icon">①</div>
+            <h3>收下任务</h3>
+            <p>接收 provider、prompt、工作目录、超时、可选会话 ID 和显式参数，并先检查是否合法。</p>
+          </article>
+          <article class="flow-card">
+            <div class="flow-icon">②</div>
+            <h3>翻译命令</h3>
+            <p>Provider Adapter 把统一请求翻译成 Antigravity、Claude、CodeBuddy 或 Grok CLI 能听懂的命令与输入。</p>
+          </article>
+          <article class="flow-card">
+            <div class="flow-icon">③</div>
+            <h3>启动并看守</h3>
+            <p>Supervisor 启动 Provider，并独占一个 POSIX 进程组，方便之后连同子进程一起清理。</p>
+          </article>
+          <article class="flow-card">
+            <div class="flow-icon">④</div>
+            <h3>等第一个结局</h3>
+            <p>正常结束、主动取消、运行超时、输出过大——谁先发生，就按谁进入收尾。</p>
+          </article>
+          <article class="flow-card">
+            <div class="flow-icon">⑤</div>
+            <h3>统一交卷</h3>
+            <p>Adapter 解析 Provider 原生 JSON，整理成固定字段，调用方不用分别理解两套格式。</p>
+          </article>
+        </div>
+        <div class="hand-note">← 手机端可以左右滑动这张大图 →</div>
+      </div>
+    </section>
+
+    <section class="section shell">
+      <div class="section-head">
+        <div class="section-no">02 / 里面是谁</div>
+        <div>
+          <h2>四个零件，各守一段。</h2>
+          <p>AgentNave 很薄：没有复杂工作流，只有请求合同、翻译器、运行看守和结果合同。</p>
+        </div>
+      </div>
+
+      <div class="inside-grid">
+        <article class="inside-card">
+          <span class="num">ENTRY</span>
+          <h3>MCP 入口</h3>
+          <p>STDIO MCP 提供 start、wait、cancel，供上层智能体异步掌控 Provider 调用。</p>
+        </article>
+        <article class="inside-card">
+          <span class="num">MANAGER</span>
+          <h3>Invocation Manager</h3>
+          <p>为每次调用生成一个临时 ID，把任务放进内存，并协调启动、等待、取消、超时和关闭清理。</p>
+        </article>
+        <article class="inside-card">
+          <span class="num">ADAPTER</span>
+          <h3>Provider Adapter</h3>
+          <p>把同一份请求翻译成 Antigravity、Claude、CodeBuddy 或 Grok 的命令；只接受白名单参数，不会偷偷改模型、权限或 effort。</p>
+        </article>
+        <article class="inside-card">
+          <span class="num">SUPERVISOR</span>
+          <h3>进程看守</h3>
+          <p>负责 POSIX 进程组。完成、取消或超时后，先温和终止，再必要时强制清理。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section shell">
+      <div class="section-head">
+        <div class="section-no">03 / 怎么收场</div>
+        <div>
+          <h2>不只分“成功 / 失败”。</h2>
+          <p>点选下面的状态，看看 AgentNave 会如何向上层说明一次调用的结局。</p>
+        </div>
+      </div>
+
+      <div class="status-board">
+        <div class="switches" role="tablist" aria-label="Invocation 结果状态">
+          <button class="status-button active" style="--dot:#5f9a70" data-status="succeeded" role="tab" aria-selected="true">
+            <span class="status-dot"></span><b>成功完成</b><small>SUCCEEDED</small>
+          </button>
+          <button class="status-button" style="--dot:#d85c48" data-status="failed" role="tab" aria-selected="false">
+            <span class="status-dot"></span><b>执行失败</b><small>FAILED</small>
+          </button>
+          <button class="status-button" style="--dot:#e19b37" data-status="blocked" role="tab" aria-selected="false">
+            <span class="status-dot"></span><b>被权限挡住</b><small>BLOCKED</small>
+          </button>
+          <button class="status-button" style="--dot:#668491" data-status="cancelled" role="tab" aria-selected="false">
+            <span class="status-dot"></span><b>上层主动取消</b><small>CANCELLED</small>
+          </button>
+          <button class="status-button" style="--dot:#867464" data-status="timed_out" role="tab" aria-selected="false">
+            <span class="status-dot"></span><b>运行超时</b><small>TIMED OUT</small>
+          </button>
+        </div>
+
+        <article class="result-card" aria-live="polite">
+          <span class="stamp">INVOCATION RESULT</span>
+          <h3 id="result-title">任务完成，结果已带回。</h3>
+          <p id="result-copy">Provider 正常结束，Adapter 把原生输出与用量信息整理成统一结果。上层 Manager 再决定下一步做什么。</p>
+          <div class="result-fields" aria-label="固定结果字段">
+            <span>status</span><span>provider</span><span>output</span><span>session_id</span><span>provider_usage</span><span>duration_ms</span><span>error</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section shell">
+      <div class="section-head">
+        <div class="section-no">04 / 边界</div>
+        <div>
+          <h2>它负责跑稳，不负责想明白。</h2>
+          <p>这是理解 AgentNave 最重要的一条线：技术执行归它，团队决策归调用它的 Manager。</p>
+        </div>
+      </div>
+
+      <div class="boundary">
+        <article class="boundary-side">
+          <h3>AgentNave 负责</h3>
+          <ul>
+            <li>启动 Antigravity、Claude Code、CodeBuddy Code 或 Grok CLI</li>
+            <li>传递 prompt、目录、会话 ID 和显式选项</li>
+            <li>等待、取消、超时和输出上限</li>
+            <li>清理仍留在进程组里的子进程</li>
+            <li>返回统一、可读取的终态结果</li>
+          </ul>
+        </article>
+        <article class="boundary-side">
+          <h3>AgentNave 不负责</h3>
+          <ul>
+            <li>拆任务、排优先级或选择角色</li>
+            <li>安排并行、重试、审核与结果综合</li>
+            <li>管理 Git worktree 或长期任务状态</li>
+            <li>跨重启恢复 Invocation 句柄</li>
+            <li>充当安全沙箱或隔离恶意进程</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="resume-strip">
+        <div><b>这一次调用结束</b><span>结果里可能带回 Provider 原生 session_id</span></div>
+        <span class="resume-arrow">→</span>
+        <div><b>开一次新的调用</b><span>把 session_id 再传进去，就能续接原来的 Provider 对话</span></div>
+      </div>
+    </section>
+
+    <footer class="finale shell">
+      <div class="kicker">THE WHOLE IDEA</div>
+      <h2>上层管“做什么”，<br>AgentNave 管“跑起来”，<br>Provider 管“真正做”。</h2>
+      <p>它刻意保持简单：把不同 CLI 的差异藏在 Adapter 后面，把进程风险关在一次 Invocation 里，再交回一份稳定结果。</p>
+      <span class="footer-mark">AGENTNAVE · AGENT-ONLY STDIO MCP SERVER</span>
+    </footer>
+  </main>
+
+  <script>
+    const statusCopy = {
+      succeeded: ["任务完成，结果已带回。", "Provider 正常结束，Adapter 把原生输出与用量信息整理成统一结果。上层 Manager 再决定下一步做什么。", "#f4b942"],
+      failed: ["任务跑完了，但没做成。", "Provider 返回业务错误，或输出超过捕获上限。已有输出会尽量保留，并附上一份结构化错误说明。", "#ee755d"],
+      blocked: ["不是做不到，是没获准。", "Provider 遇到权限、批准、登录或拒绝类问题。AgentNave 如实标记 blocked，是否授权由外层决定。", "#f2ae48"],
+      cancelled: ["上层说停，于是收工。", "Manager 发出取消信号后，AgentNave 结束进程组、收集现有输出，再返回 cancelled。", "#8eb5c2"],
+      timed_out: ["时间到了，停止等待。", "运行超过 request 中的 timeout_seconds。AgentNave 清理进程，并把结局标记为 timed_out。", "#b8a493"]
+    };
+
+    const buttons = document.querySelectorAll(".status-button");
+    const card = document.querySelector(".result-card");
+    const title = document.querySelector("#result-title");
+    const copy = document.querySelector("#result-copy");
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        buttons.forEach((item) => {
+          item.classList.remove("active");
+          item.setAttribute("aria-selected", "false");
+        });
+        button.classList.add("active");
+        button.setAttribute("aria-selected", "true");
+        const [nextTitle, nextCopy, color] = statusCopy[button.dataset.status];
+        title.textContent = nextTitle;
+        copy.textContent = nextCopy;
+        card.style.setProperty("--active-color", color);
+      });
+    });
+
+    const progress = document.querySelector(".progress");
+    const updateProgress = () => {
+      const max = document.documentElement.scrollHeight - innerHeight;
+      progress.style.width = `${max > 0 ? (scrollY / max) * 100 : 0}%`;
+    };
+    addEventListener("scroll", updateProgress, { passive: true });
+    updateProgress();
+  </script>
+</body>
+</html>

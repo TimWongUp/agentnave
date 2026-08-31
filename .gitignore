@@ -1,0 +1,13 @@
+__pycache__/
+.DS_Store
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.codegraph/
+.venv/
+build/
+dist/
+*.egg-info/
+macos/AgentNaveStatus/.build/
+macos/AgentNaveStatus/.swiftpm/
+*.xcresult/
