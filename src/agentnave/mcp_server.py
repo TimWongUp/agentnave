@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import Field
 
+from agentnave import __version__
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
 
@@ -77,6 +78,7 @@ async def _lifespan(_server: MCPServer[InvocationManager]) -> AsyncGenerator[Inv
 
 mcp = MCPServer(
     "AgentNave",
+    version=__version__,
     instructions=(
         "AgentNave is an agent-only MCP server that launches local Antigravity CLI, Claude Code, "
         "CodeBuddy Code, or Grok CLI subagents. The calling Manager owns planning, role/model selection, "

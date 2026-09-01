@@ -9,34 +9,68 @@ compatible host.
 
 ## Requirements
 
-- Python 3.12+
 - macOS or Linux
 - `uv`
 - At least one authenticated provider CLI
+
+`uv` installs AgentNave in an isolated Python 3.12 environment. A separately managed system
+Python is not required.
 
 AgentNave 0.2 does not claim Windows process-tree supervision. Native Windows support requires Job
 Object ownership first.
 
 ## Install
 
+Install a tagged release with `uv tool` so the MCP launcher does not depend on a source checkout:
+
 ```bash
-git clone https://github.com/TimWongUp/agentnave.git
-cd agentnave
-uv sync --all-groups
+uv tool install --python 3.12 \
+  "git+https://github.com/TimWongUp/agentnave.git@v0.2.0"
 ```
+
+The release tag is part of the install source. Do not replace it with the mutable `main` branch.
+`uv` owns the isolated runtime, launcher, upgrades, and removal.
+It does not modify host Skills, global instructions, permissions, or provider configuration.
 
 ## Connect an MCP host
 
-Register AgentNave as a local STDIO server. For Codex, add the following to `~/.codex/config.toml`
-or a trusted project's `.codex/config.toml`, replacing the repository path with its absolute path:
+Register the installed launcher as a local STDIO server. Codex provides an official MCP management
+command, so no configuration file needs to be edited by hand:
 
-```toml
-[mcp_servers.agentnave]
-command = "uv"
-args = ["--directory", "/absolute/path/to/agentnave", "run", "agentnave-mcp"]
+```bash
+AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
+test -x "$AGENTNAVE_MCP"
+codex mcp add agentnave -- "$AGENTNAVE_MCP"
+codex mcp get agentnave
 ```
 
-Restart the host after changing its MCP configuration.
+Restart Codex after registration. A new session should expose `start_agent`, `wait_agent`, and
+`cancel_agent`. Other compatible hosts should likewise point their STDIO MCP registration at the
+absolute launcher reported by `uv tool dir --bin`; their activation commands and scopes are
+host-specific.
+
+AgentNave creates no durable user data. Provider authentication and configuration remain owned by
+their respective CLIs.
+
+## Upgrade and uninstall
+
+Replace `vNEXT` with a published release tag, install it into the same `uv`-owned tool environment,
+then restart the MCP host:
+
+```bash
+uv tool install --force --python 3.12 \
+  "git+https://github.com/TimWongUp/agentnave.git@vNEXT"
+codex mcp get agentnave
+```
+
+To remove AgentNave from Codex, remove the host registration before uninstalling the runtime:
+
+```bash
+codex mcp remove agentnave
+uv tool uninstall agentnave
+```
+
+Uninstalling AgentNave does not remove or sign out any provider CLI.
 
 ## MCP tools
 
@@ -81,7 +115,11 @@ required.
 
 ## Verify
 
+The commands below are for a source checkout used for development, not for the `uv tool`
+installation above. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete contributor workflow.
+
 ```bash
+uv sync --locked --all-groups
 uv run ruff format --check .
 uv run ruff check .
 uv run pyright

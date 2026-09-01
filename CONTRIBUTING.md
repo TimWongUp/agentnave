@@ -20,7 +20,7 @@ AgentNave requires Python 3.12 or later, `uv`, and macOS or Linux.
 ```bash
 git clone https://github.com/TimWongUp/agentnave.git
 cd agentnave
-uv sync --all-groups
+uv sync --locked --all-groups
 ```
 
 ## Make a change

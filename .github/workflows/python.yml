@@ -37,3 +37,13 @@ jobs:
         run: uv run pyright
       - name: Test
         run: uv run pytest
+      - name: Build distributions
+        run: uv build
+      - name: Verify installed launcher
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/agentnave-tools
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/agentnave-bin
+        run: |
+          uv tool install --python 3.12 dist/*.whl
+          test -x "$UV_TOOL_BIN_DIR/agentnave-mcp"
+          "$UV_TOOL_BIN_DIR/agentnave-mcp" </dev/null

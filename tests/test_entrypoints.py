@@ -9,6 +9,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 from mcp_types import TextContent
 
+from agentnave import __version__
 from agentnave.mcp_server import mcp
 
 
@@ -217,6 +218,9 @@ async def test_mcp_provider_launch_failure_is_structured_and_hides_traceback(
 async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "agentnave.mcp_server"])
     async with Client(parameters) as client:
+        assert client.server_info is not None
+        assert client.server_info.name == "AgentNave"
+        assert client.server_info.version == __version__
         result = await client.list_tools()
 
     assert [tool.name for tool in result.tools] == [
