@@ -16,6 +16,12 @@ AgentNave 只拥有：
 
 AgentNave 不拥有 DAG、调度器、角色系统、自动重规划、工作树、SQLite／JSONL、恢复、保留策略、桌面 App 或 TUI。
 
+## 安装与激活边界
+
+面向使用者的运行时由 Python Tool Manager 安装为隔离环境和稳定的 `agentnave-mcp` launcher；该 Tool Manager 拥有运行时的安装、升级与卸载。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
+
+MCP Host 拥有 AgentNave 的注册、作用域、启停和移除；能使用 Host 官方管理接口时，不由 AgentNave 直接修改其配置文件。安装运行时不会自动写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，AgentNave 不创建需要随卸载处理的持久用户数据。
+
 ## 稳定合同
 
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、`timeout_seconds` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
