@@ -27,6 +27,7 @@ MCP Host 拥有 AgentNave 的注册、作用域、启停和移除；能使用 Ho
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、`timeout_seconds` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
 
 随包提供的 Manager Skill 可以定义默认模型路由，但调用时仍须把模型与 effort 作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
+Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
 结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 

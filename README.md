@@ -89,6 +89,8 @@ arguments are `provider`, `prompt`, and an absolute existing `cwd`. Optional arg
 
 Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. Provider-native
 settings are inherited unless the Manager explicitly supplies allowlisted options.
+For Codex calls outside a Git repository, the Manager must explicitly pass
+`{"skip_git_repo_check": true}` in `provider_options`.
 
 ### `wait_agent`
 

@@ -156,7 +156,11 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(tmp_path: Path
             tmp_path,
             "codex",
             session_id="0199a213-81c0-7800-8aa1-bbab2a035a53",
-            provider_options={"model": "gpt-5.6-sol", "effort": "high"},
+            provider_options={
+                "model": "gpt-5.6-sol",
+                "effort": "high",
+                "skip_git_repo_check": True,
+            },
         )
     )
 
@@ -169,6 +173,7 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(tmp_path: Path
         "gpt-5.6-sol",
         "--config",
         "model_reasoning_effort=high",
+        "--skip-git-repo-check",
         "0199a213-81c0-7800-8aa1-bbab2a035a53",
         "-",
     )
@@ -179,6 +184,17 @@ def test_codex_adapter_does_not_supply_model_defaults(tmp_path: Path) -> None:
     prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
 
     assert prepared.argv == ("codex", "exec", "--json", "-")
+
+
+def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="skip_git_repo_check must be a boolean"):
+        CodexAdapter().prepare(
+            request(
+                tmp_path,
+                "codex",
+                provider_options={"skip_git_repo_check": "true"},
+            )
+        )
 
 
 def test_codex_adapter_preserves_final_message_and_session() -> None:
