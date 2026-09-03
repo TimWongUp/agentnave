@@ -1,6 +1,7 @@
 ---
 name: agentnave-manager
 description: 当用户要求使用 AgentNave、本地 CLI 子代理、Antigravity CLI、Claude Code CLI、CodeBuddy Code CLI、Codex CLI 或 Grok CLI 子代理执行独立任务时使用。负责由当前 Manager 决定任务、Provider、并行和审核策略，再通过 AgentNave 的 start/wait/cancel 接口运行；宿主原生子代理不触发。
+compatibility: 需要宿主已连接暴露 start_agent、wait_agent、cancel_agent 的 AgentNave MCP Server。
 ---
 
 # AgentNave Manager

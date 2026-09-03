@@ -39,11 +39,39 @@ jobs:
         run: uv run pytest
       - name: Build distributions
         run: uv build
-      - name: Verify installed launcher
+      - name: Verify installed distribution
         env:
           UV_TOOL_DIR: ${{ runner.temp }}/agentnave-tools
           UV_TOOL_BIN_DIR: ${{ runner.temp }}/agentnave-bin
         run: |
           uv tool install --python 3.12 dist/*.whl
           test -x "$UV_TOOL_BIN_DIR/agentnave-mcp"
-          "$UV_TOOL_BIN_DIR/agentnave-mcp" </dev/null
+          "$UV_TOOL_DIR/agentnave/bin/python" - <<'PY'
+          import asyncio
+          import os
+          from importlib.resources import files
+          from pathlib import Path
+
+          from mcp import Client, StdioServerParameters
+
+
+          async def verify() -> None:
+              skill = files("agentnave.resources").joinpath(
+                  "agentnave-manager", "SKILL.md"
+              )
+              assert skill.is_file(), "installed wheel is missing agentnave-manager/SKILL.md"
+
+              launcher = Path(os.environ["UV_TOOL_BIN_DIR"]) / "agentnave-mcp"
+              parameters = StdioServerParameters(command=str(launcher))
+              async with Client(parameters) as client:
+                  result = await client.list_tools()
+
+              assert [tool.name for tool in result.tools] == [
+                  "start_agent",
+                  "wait_agent",
+                  "cancel_agent",
+              ]
+
+
+          asyncio.run(verify())
+          PY

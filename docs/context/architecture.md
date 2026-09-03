@@ -18,9 +18,11 @@ AgentNave 不拥有 DAG、调度器、角色系统、自动重规划、工作树
 
 ## 安装与激活边界
 
-面向使用者的运行时由 Python Tool Manager 安装为隔离环境和稳定的 `agentnave-mcp` launcher；该 Tool Manager 拥有运行时的安装、升级与卸载。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
+完整安装只包含两个 AgentNave 自有部分：由 Python Tool Manager 安装的隔离运行时，以及安装到各 Host 的 `agentnave-manager` Skill。两者必须来自同一个已发布版本；MCP-only 可以调用 Tool，但缺少 Manager 路由和生命周期说明，Skill-only 则不能形成可工作的 AgentNave 安装。
 
-MCP Host 拥有 AgentNave 的注册、作用域、启停和移除；能使用 Host 官方管理接口时，不由 AgentNave 直接修改其配置文件。安装运行时不会自动写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，AgentNave 不创建需要随卸载处理的持久用户数据。
+Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
+
+MCP Host 拥有 AgentNave 的注册、作用域、启停、移除和 Skill 发现位置；能使用 Host 官方管理接口时，不由 AgentNave 直接修改其配置文件。安装运行时不会自动写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，AgentNave 不创建需要随卸载处理的持久用户数据。
 
 ## 稳定合同
 
