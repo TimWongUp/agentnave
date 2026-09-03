@@ -182,8 +182,8 @@ Remove only the registrations and Skill files you installed, then remove the sha
 ```bash
 # Run the command for each configured host.
 codex mcp remove agentnave
-claude mcp remove agentnave
-gemini mcp remove agentnave
+claude mcp remove --scope user agentnave
+gemini mcp remove agentnave --scope user
 
 # Remove each installed Skill file. rmdir refuses to remove a directory containing other files.
 rm -f "$HOME/.agents/skills/agentnave-manager/SKILL.md"
