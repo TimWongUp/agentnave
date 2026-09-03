@@ -45,4 +45,4 @@ AgentNave 不是沙箱或同用户恶意进程隔离边界。已获得命令执�
 
 Adapter 只能添加非交互输出、prompt 传输和 cwd 等协议必需参数。Provider stderr 仅在失败结果中以有界详情返回；prompt 不写入 AgentNave 日志或持久存储。
 
-AgentNave 0.2 的 best-effort 进程监督只支持 POSIX（macOS／Linux）。Windows 没有用 `CREATE_NEW_PROCESS_GROUP` 冒充进程树清理；如需原生 Windows，必须先引入 Job Object 的 kill-on-close 所有权。
+AgentNave 的 best-effort 进程监督只支持 POSIX（macOS／Linux）。Windows 没有用 `CREATE_NEW_PROCESS_GROUP` 冒充进程树清理；如需原生 Windows，必须先引入 Job Object 的 kill-on-close 所有权。

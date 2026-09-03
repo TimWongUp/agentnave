@@ -16,8 +16,8 @@ compatible host.
 `uv` installs AgentNave in an isolated Python 3.12 environment. A separately managed system
 Python is not required.
 
-AgentNave 0.2 does not claim Windows process-tree supervision. Native Windows support requires Job
-Object ownership first.
+AgentNave supports POSIX process supervision on macOS and Linux. Native Windows support requires
+Job Object ownership first.
 
 ## Install
 
@@ -28,11 +28,8 @@ Install the runtime with `uv tool` so the MCP launcher does not depend on a sour
 
 ```bash
 uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@v0.2.0"
+  "git+https://github.com/TimWongUp/agentnave.git@v0.3.0"
 ```
-
-The `v0.2.0` release predates the Codex CLI provider added on `main`; use Codex as a host with that
-release, or wait for the next published release before selecting `provider: codex`.
 
 The release tag is part of the install source. Do not replace it with the mutable `main` branch.
 `uv` owns the isolated runtime, launcher, upgrades, and removal.

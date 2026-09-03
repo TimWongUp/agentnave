@@ -12,7 +12,7 @@
 - Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；只允许协议必需参数和调用方显式提供的 allowlist options。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程组内的活跃进程做 best-effort 清理，不引入跨重启恢复。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。
-- 0.2 只支持 POSIX 进程监督；不得用 Windows process group 冒充 Job Object 的树级所有权。
+- 仅支持 POSIX 进程监督；不得用 Windows process group 冒充 Job Object 的树级所有权。
 - stdout 的 JSON 结果遵守 `InvocationResult` 稳定字段；Provider 业务终态必须尽量保全输出和原生 `session_id`。
 
 ## Setup and verification

@@ -28,7 +28,7 @@ class SupervisedProcess:
 
 async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
     if os.name != "posix":
-        raise OSError("AgentNave 0.2 supports POSIX process supervision only")
+        raise OSError("AgentNave supports POSIX process supervision only")
     status_read, status_write = os.pipe()
     try:
         process = await asyncio.create_subprocess_exec(
