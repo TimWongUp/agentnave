@@ -61,6 +61,11 @@ then restart the MCP host:
 ```bash
 uv tool install --force --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@vNEXT"
+```
+
+Codex users can verify the existing host registration after the upgrade:
+
+```bash
 codex mcp get agentnave
 ```
 
