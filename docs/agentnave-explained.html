@@ -486,7 +486,7 @@
         <div class="eyebrow">AgentNave · 新手图解</div>
         <h1>它不是大脑，<br>它是<em>接头。</em></h1>
         <p class="lead">
-          上层智能体决定“找谁、做什么”；Antigravity、Claude Code、CodeBuddy Code 或 Grok 真正执行任务；
+          上层智能体决定“找谁、做什么”；Antigravity、Claude Code、CodeBuddy Code、Codex 或 Grok 真正执行任务；
           <span class="plain">AgentNave 负责把两边可靠地接起来。</span>
         </p>
         <div class="hero-note">
@@ -499,7 +499,7 @@
         <div class="orbit"></div>
         <div class="satellite manager">Manager<small>发任务的人</small></div>
         <div class="machine"><div class="machine-copy"><b>Agent<br>Nave</b><small>本地 MCP Server</small></div></div>
-        <div class="satellite provider">Provider<small>Antigravity / Claude / CodeBuddy / Grok</small></div>
+        <div class="satellite provider">Provider<small>Antigravity / Claude / CodeBuddy / Codex / Grok</small></div>
       </div>
     </header>
 
@@ -522,7 +522,7 @@
           <article class="flow-card">
             <div class="flow-icon">②</div>
             <h3>翻译命令</h3>
-            <p>Provider Adapter 把统一请求翻译成 Antigravity、Claude、CodeBuddy 或 Grok CLI 能听懂的命令与输入。</p>
+            <p>Provider Adapter 把统一请求翻译成 Antigravity、Claude、CodeBuddy、Codex 或 Grok CLI 能听懂的命令与输入。</p>
           </article>
           <article class="flow-card">
             <div class="flow-icon">③</div>
@@ -537,7 +537,7 @@
           <article class="flow-card">
             <div class="flow-icon">⑤</div>
             <h3>统一交卷</h3>
-            <p>Adapter 解析 Provider 原生 JSON，整理成固定字段，调用方不用分别理解两套格式。</p>
+            <p>Adapter 解析 Provider 原生 JSON，整理成固定字段，调用方不用分别理解各套格式。</p>
           </article>
         </div>
         <div class="hand-note">← 手机端可以左右滑动这张大图 →</div>
@@ -567,7 +567,7 @@
         <article class="inside-card">
           <span class="num">ADAPTER</span>
           <h3>Provider Adapter</h3>
-          <p>把同一份请求翻译成 Antigravity、Claude、CodeBuddy 或 Grok 的命令；只接受白名单参数，不会偷偷改模型、权限或 effort。</p>
+          <p>把同一份请求翻译成 Antigravity、Claude、CodeBuddy、Codex 或 Grok 的命令；只接受白名单参数，不会偷偷改模型、权限或 effort。</p>
         </article>
         <article class="inside-card">
           <span class="num">SUPERVISOR</span>
@@ -629,7 +629,7 @@
         <article class="boundary-side">
           <h3>AgentNave 负责</h3>
           <ul>
-            <li>启动 Antigravity、Claude Code、CodeBuddy Code 或 Grok CLI</li>
+            <li>启动 Antigravity、Claude Code、CodeBuddy Code、Codex 或 Grok CLI</li>
             <li>传递 prompt、目录、会话 ID 和显式选项</li>
             <li>等待、取消、超时和输出上限</li>
             <li>清理仍留在进程组里的子进程</li>

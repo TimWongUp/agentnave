@@ -11,7 +11,7 @@ AgentNave 的唯一用户。Manager 解释目标，选择 Provider，决定角�
 
 ## Provider
 
-AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code 与 Grok CLI。
+AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI 与 Grok CLI。
 
 ## Invocation
 

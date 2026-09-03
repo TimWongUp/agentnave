@@ -156,6 +156,7 @@ async def test_mcp_schema_rejects_invalid_provider_with_actionable_error(tmp_pat
     assert "antigravity" in result.content[0].text
     assert "claude" in result.content[0].text
     assert "codebuddy" in result.content[0].text
+    assert "codex" in result.content[0].text
     assert "grok" in result.content[0].text
 
 

@@ -4,6 +4,7 @@ from agentnave.adapters.antigravity import AntigravityAdapter
 from agentnave.adapters.base import ProviderAdapter
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
+from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
 
 
@@ -12,6 +13,7 @@ def get_adapter(provider: str) -> ProviderAdapter:
         "antigravity": AntigravityAdapter(),
         "claude": ClaudeAdapter(),
         "codebuddy": CodeBuddyAdapter(),
+        "codex": CodexAdapter(),
         "grok": GrokAdapter(),
     }
     try:

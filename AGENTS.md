@@ -20,7 +20,7 @@
 - 开发环境：`uv sync --all-groups`。
 - MCP：`uv run agentnave-mcp`。
 - Python 门：`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run pytest`。
-- 真实 Provider 调用会消耗配额，只有用户在当前会话明确授权后才运行；测试默认使用 fake executable。
+- 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
 
 ## Context change gate
 
