@@ -9,17 +9,16 @@ Keep both parts on the same published release tag. Provider CLIs such as Claude 
 or Grok CLI are separate programs: install and authenticate only the providers you intend to call,
 using their own official instructions.
 
-The examples below use `v0.2.0`. That release supports the `antigravity`, `claude`, `codebuddy`, and
-`grok` providers. Codex CLI provider support exists after that tag and should be used from the next
-published release that contains it. Codex can still be the MCP host for `v0.2.0`; the Codex host and
-the Codex provider are different roles.
+The examples below use `v0.3.0`, which supports the `antigravity`, `claude`, `codebuddy`, `codex`,
+and `grok` providers. A host agent and a provider CLI are different roles even when both are Codex
+or Claude Code.
 
 ## 1. Install the runtime
 
 AgentNave supports macOS and Linux and requires `uv`:
 
 ```bash
-AGENTNAVE_RELEASE=v0.2.0
+AGENTNAVE_RELEASE=v0.3.0
 uv tool install --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 
