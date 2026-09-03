@@ -10,6 +10,7 @@ from agentnave.adapters import get_adapter
 from agentnave.adapters.antigravity import AntigravityAdapter
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
+from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.models import InvocationRequest, InvocationStatus
 
@@ -149,10 +150,120 @@ def test_codebuddy_authentication_failure_is_blocked() -> None:
     assert result.status is InvocationStatus.BLOCKED
 
 
+def test_codex_adapter_passes_only_transport_and_explicit_options(tmp_path: Path) -> None:
+    prepared = CodexAdapter().prepare(
+        request(
+            tmp_path,
+            "codex",
+            session_id="0199a213-81c0-7800-8aa1-bbab2a035a53",
+            provider_options={"model": "gpt-5.6-sol", "effort": "high"},
+        )
+    )
+
+    assert prepared.argv == (
+        "codex",
+        "exec",
+        "resume",
+        "--json",
+        "--model",
+        "gpt-5.6-sol",
+        "--config",
+        "model_reasoning_effort=high",
+        "0199a213-81c0-7800-8aa1-bbab2a035a53",
+        "-",
+    )
+    assert prepared.stdin == b"do the task"
+
+
+def test_codex_adapter_does_not_supply_model_defaults(tmp_path: Path) -> None:
+    prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
+
+    assert prepared.argv == ("codex", "exec", "--json", "-")
+
+
+def test_codex_adapter_preserves_final_message_and_session() -> None:
+    payload = b"\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "thread.started",
+                    "thread_id": "0199a213-81c0-7800-8aa1-bbab2a035a53",
+                }
+            ).encode(),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_1", "type": "agent_message", "text": "finished"},
+                }
+            ).encode(),
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {"input_tokens": 12, "output_tokens": 3},
+                }
+            ).encode(),
+        )
+    )
+
+    result = CodexAdapter().parse(0, payload, b"")
+
+    assert result.status is InvocationStatus.SUCCEEDED
+    assert result.output == "finished"
+    assert result.session_id == "0199a213-81c0-7800-8aa1-bbab2a035a53"
+    assert result.usage == {}
+
+
+def test_codex_adapter_preserves_blocked_failure() -> None:
+    payload = b"\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-1"}).encode(),
+            json.dumps(
+                {
+                    "type": "turn.failed",
+                    "error": {"message": "Approval required for command execution"},
+                }
+            ).encode(),
+        )
+    )
+
+    result = CodexAdapter().parse(1, payload, b"")
+
+    assert result.status is InvocationStatus.BLOCKED
+    assert result.session_id == "session-1"
+    assert result.error_message == "Approval required for command execution"
+
+
+def test_codex_adapter_preserves_standalone_error() -> None:
+    payload = json.dumps({"type": "error", "message": "Authentication required"}).encode()
+
+    result = CodexAdapter().parse(1, payload, b"")
+
+    assert result.status is InvocationStatus.BLOCKED
+    assert result.error_message == "Authentication required"
+
+
+def test_codex_adapter_requires_a_terminal_turn_event() -> None:
+    payload = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "partial"}}
+    ).encode()
+
+    result = CodexAdapter().parse(0, payload, b"")
+
+    assert result.status is InvocationStatus.FAILED
+    assert result.output == "partial"
+    assert result.error_message == "codex stream ended without a completion event"
+
+
 def test_provider_registry_returns_codebuddy_adapter() -> None:
     adapter = get_adapter("codebuddy")
 
     assert isinstance(adapter, CodeBuddyAdapter)
+
+
+def test_provider_registry_returns_codex_adapter() -> None:
+    adapter = get_adapter("codex")
+
+    assert isinstance(adapter, CodexAdapter)
 
 
 @pytest.mark.parametrize(
@@ -634,4 +745,9 @@ def test_adapter_rejects_implicit_or_unknown_provider_overrides(tmp_path: Path) 
                 "codebuddy",
                 provider_options={"max_turns": 8},
             )
+        )
+
+    with pytest.raises(ValueError, match="unsupported codex options"):
+        CodexAdapter().prepare(
+            request(tmp_path, "codex", provider_options={"sandbox": "danger-full-access"})
         )

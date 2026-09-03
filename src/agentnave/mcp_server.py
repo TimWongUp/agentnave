@@ -17,7 +17,7 @@ from agentnave import __version__
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
 
-type ProviderName = Literal["antigravity", "claude", "codebuddy", "grok"]
+type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok"]
 type InvocationStatusName = Literal["succeeded", "failed", "blocked", "cancelled", "timed_out"]
 type InvocationPhaseName = Literal["preparing", "running", "stopping"]
 
@@ -81,7 +81,8 @@ mcp = MCPServer(
     version=__version__,
     instructions=(
         "AgentNave is an agent-only MCP server that launches local Antigravity CLI, Claude Code, "
-        "CodeBuddy Code, or Grok CLI subagents. The calling Manager owns planning, role/model selection, "
+        "CodeBuddy Code, Codex CLI, or Grok CLI subagents. The calling Manager owns planning, "
+        "role/model selection, "
         "parallelism, retries, review, synthesis, permissions, and worktrees. Call start_agent, "
         "then wait_agent; use cancel_agent only to stop an invocation. An active invocation does "
         "not accept follow-up messages. To continue or redirect a provider conversation, wait for "

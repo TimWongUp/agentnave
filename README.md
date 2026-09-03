@@ -1,8 +1,8 @@
 # AgentNave
 
 AgentNave is a local STDIO MCP server for agents that need to launch Antigravity CLI, Claude Code,
-CodeBuddy Code, or Grok CLI as subagents. It deliberately leaves planning, parallelism, review,
-synthesis, retries, permissions, and worktree management to the calling Agent Manager.
+CodeBuddy Code, Codex CLI, or Grok CLI as subagents. It deliberately leaves planning, parallelism,
+review, synthesis, retries, permissions, and worktree management to the calling Agent Manager.
 
 AgentNave has no human-facing CLI. The `agentnave-mcp` command only starts the MCP process for a
 compatible host.
@@ -87,8 +87,8 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 arguments are `provider`, `prompt`, and an absolute existing `cwd`. Optional arguments are
 `session_id`, `timeout_seconds`, and explicit `provider_options`.
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, and `grok`. Provider-native settings
-are inherited unless the Manager explicitly supplies allowlisted options.
+Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. Provider-native
+settings are inherited unless the Manager explicitly supplies allowlisted options.
 
 ### `wait_agent`
 
