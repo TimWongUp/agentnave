@@ -21,63 +21,36 @@ Object ownership first.
 
 ## Install
 
-Install a tagged release with `uv tool` so the MCP launcher does not depend on a source checkout:
+A complete installation has two parts: the `agentnave-mcp` runtime and the `agentnave-manager`
+Skill. Install both from the same published release tag.
+
+Install the runtime with `uv tool` so the MCP launcher does not depend on a source checkout:
 
 ```bash
 uv tool install --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@v0.2.0"
 ```
 
+The `v0.2.0` release predates the Codex CLI provider added on `main`; use Codex as a host with that
+release, or wait for the next published release before selecting `provider: codex`.
+
 The release tag is part of the install source. Do not replace it with the mutable `main` branch.
 `uv` owns the isolated runtime, launcher, upgrades, and removal.
 It does not modify host Skills, global instructions, permissions, or provider configuration.
 
-## Connect an MCP host
+Then connect the runtime and install the Skill for your host agent. The detailed guide covers:
 
-Any MCP host that can launch a local STDIO server can use AgentNave. Register the installed launcher
-through the host's supported MCP configuration or management interface. The following example uses
-Codex and its official MCP management command:
+- Codex;
+- Claude Code;
+- Gemini CLI;
+- OpenCode; and
+- other agents that support local STDIO MCP servers and Agent Skills.
 
-```bash
-AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
-test -x "$AGENTNAVE_MCP"
-codex mcp add agentnave -- "$AGENTNAVE_MCP"
-codex mcp get agentnave
-```
-
-Restart the MCP host after registration. A new session should expose `start_agent`, `wait_agent`,
-and `cancel_agent`. Hosts other than Codex should likewise point their STDIO MCP registration at the
-absolute launcher reported by `uv tool dir --bin`; their activation commands and scopes are
-host-specific.
+[Read the installation guide](docs/installation.md) for host-specific MCP registration, Skill
+locations, verification, upgrade, and uninstall steps.
 
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
-
-## Upgrade and uninstall
-
-Replace `vNEXT` with a published release tag, install it into the same `uv`-owned tool environment,
-then restart the MCP host:
-
-```bash
-uv tool install --force --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@vNEXT"
-```
-
-Codex users can verify the existing host registration after the upgrade:
-
-```bash
-codex mcp get agentnave
-```
-
-Before uninstalling the runtime, remove AgentNave through the MCP host's supported management
-interface. For Codex:
-
-```bash
-codex mcp remove agentnave
-uv tool uninstall agentnave
-```
-
-Uninstalling AgentNave does not remove or sign out any provider CLI.
 
 ## MCP tools
 
