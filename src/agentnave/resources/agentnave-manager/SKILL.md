@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 当用户要求使用 AgentNave、本地 CLI 子代理、Antigravity CLI、Claude Code CLI、CodeBuddy Code CLI 或 Grok CLI 子代理执行独立任务时使用。负责由当前 Manager 决定任务、Provider、并行和审核策略，再通过 AgentNave 的 start/wait/cancel 接口运行；普通 Codex 内建子代理不触发。
+description: 当用户要求使用 AgentNave、本地 CLI 子代理、Antigravity CLI、Claude Code CLI、CodeBuddy Code CLI 或 Grok CLI 子代理执行独立任务时使用。负责由当前 Manager 决定任务、Provider、并行和审核策略，再通过 AgentNave 的 start/wait/cancel 接口运行；宿主原生子代理不触发。
 ---
 
 # AgentNave Manager
@@ -9,12 +9,12 @@ AgentNave 是只供 Agent 使用的本地 MCP Server，负责适配 CLI 子代�
 
 ## 默认路由
 
-调用 `start_agent` 时，按 Provider 传入以下默认 `provider_options`：
+调用 `start_agent` 时，每条 CLI 路由都同时传入 `model` 与 `effort`：
 
 - `claude`：`{"model": "opus", "effort": "max"}`
 - `codebuddy`：`{"model": "hy3", "effort": "high"}`
 - `grok`：`{"model": "grok-4.6", "effort": "high"}`
-- `antigravity`：`{"model": "gemini-3.7-flash-high"}`
+- `antigravity`：`{"model": "gemini-3.8-flash", "effort": "high"}`
 
 用户显式指定模型或 effort 时，以用户值覆盖对应默认项；未显式指定的字段继续使用上述默认值。只传 Adapter allowlist 已支持的字段，不覆盖权限、工具或其他 Provider 设置。
 

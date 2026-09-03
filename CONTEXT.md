@@ -2,7 +2,7 @@
 
 ## AgentNave
 
-只供 Agent Manager 使用的本地 STDIO MCP Server，负责把统一的 Invocation 生命周期工具映射到不同 Provider CLI。
+供 Agent Manager 通过任意兼容本地 STDIO 的 MCP Host 使用，负责把统一的 Invocation 生命周期工具映射到不同 Provider CLI。
 _Avoid_: CLI 产品、多智能体运行时、工作流引擎
 
 ## Manager
