@@ -34,8 +34,9 @@ It does not modify host Skills, global instructions, permissions, or provider co
 
 ## Connect an MCP host
 
-Register the installed launcher as a local STDIO server. Codex provides an official MCP management
-command, so no configuration file needs to be edited by hand:
+Any MCP host that can launch a local STDIO server can use AgentNave. Register the installed launcher
+through the host's supported MCP configuration or management interface. The following example uses
+Codex and its official MCP management command:
 
 ```bash
 AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
@@ -44,8 +45,8 @@ codex mcp add agentnave -- "$AGENTNAVE_MCP"
 codex mcp get agentnave
 ```
 
-Restart Codex after registration. A new session should expose `start_agent`, `wait_agent`, and
-`cancel_agent`. Other compatible hosts should likewise point their STDIO MCP registration at the
+Restart the MCP host after registration. A new session should expose `start_agent`, `wait_agent`,
+and `cancel_agent`. Hosts other than Codex should likewise point their STDIO MCP registration at the
 absolute launcher reported by `uv tool dir --bin`; their activation commands and scopes are
 host-specific.
 
@@ -63,7 +64,8 @@ uv tool install --force --python 3.12 \
 codex mcp get agentnave
 ```
 
-To remove AgentNave from Codex, remove the host registration before uninstalling the runtime:
+Before uninstalling the runtime, remove AgentNave through the MCP host's supported management
+interface. For Codex:
 
 ```bash
 codex mcp remove agentnave

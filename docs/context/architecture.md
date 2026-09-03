@@ -1,6 +1,6 @@
 # 架构与边界
 
-AgentNave 是只供 Agent Manager 使用的本地 STDIO MCP Server。它在 Manager 与 Antigravity CLI、Claude Code、CodeBuddy Code、Grok CLI 之间提供很薄的进程边界，不是面向人的 CLI 产品、多智能体运行时或工作流引擎。
+AgentNave 是供 Agent Manager 通过任意兼容本地 STDIO 的 MCP Host 使用的 MCP Server。它在 Manager 与 Antigravity CLI、Claude Code、CodeBuddy Code、Grok CLI 之间提供很薄的进程边界，不是面向人的 CLI 产品、多智能体运行时或工作流引擎。
 
 ## 所有权
 
