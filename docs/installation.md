@@ -116,9 +116,16 @@ Official references: [Gemini CLI commands](https://geminicli.com/docs/cli/cli-re
 
 ### OpenCode
 
-OpenCode does not provide a local-server add command. Merge this entry into the existing `mcp`
-object in `~/.config/opencode/opencode.json` (or `opencode.jsonc`) without replacing unrelated
-configuration:
+Run OpenCode's interactive MCP setup and choose a local server. Use `agentnave` as the name and the
+literal absolute value of `$AGENTNAVE_MCP` as its command:
+
+```bash
+opencode mcp add
+opencode mcp list
+```
+
+For a non-interactive or manually reviewed setup, merge this entry into the existing `mcp` object in
+`~/.config/opencode/opencode.json` (or `opencode.jsonc`) without replacing unrelated configuration:
 
 ```json
 {
@@ -134,11 +141,11 @@ configuration:
 ```
 
 Use the literal absolute value printed by `uv tool dir --bin`; JSON does not expand shell variables.
-Then run `opencode mcp list`.
 
 Start a new OpenCode session and confirm that it discovers the shared Skill.
 
-Official references: [OpenCode MCP servers](https://opencode.ai/docs/mcp-servers) and
+Official references: [OpenCode CLI](https://opencode.ai/docs/cli/),
+[OpenCode MCP servers](https://opencode.ai/docs/mcp-servers), and
 [OpenCode Skills](https://opencode.ai/docs/skills).
 
 ### Other compatible agents
