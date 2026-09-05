@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal, NotRequired, TypedDict, cast
+from typing import Annotated, Literal, NotRequired, TypedDict, cast, get_args
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
@@ -20,6 +21,44 @@ from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
 type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok"]
 type InvocationStatusName = Literal["succeeded", "failed", "blocked", "cancelled", "timed_out"]
 type InvocationPhaseName = Literal["preparing", "running", "stopping"]
+
+
+def _read_excluded_providers() -> frozenset[str]:
+    excluded = frozenset(
+        name.strip().lower()
+        for name in os.environ.get("AGENTNAVE_EXCLUDED_PROVIDERS", "").split(",")
+        if name.strip()
+    )
+    unknown = excluded.difference(get_args(ProviderName.__value__))
+    if unknown:
+        raise ValueError("Unknown AGENTNAVE_EXCLUDED_PROVIDERS: " + ", ".join(sorted(unknown)))
+    return excluded
+
+
+_EXCLUDED_PROVIDERS = _read_excluded_providers()
+_PROVIDER_SELECTION = (
+    "Providers permitted by this host configuration: "
+    + (
+        ", ".join(
+            name for name in get_args(ProviderName.__value__) if name not in _EXCLUDED_PROVIDERS
+        )
+        or "none"
+    )
+    + ". Excluded providers: "
+    + (", ".join(sorted(_EXCLUDED_PROVIDERS)) or "none")
+    + ". Exclusions are enforced before an invocation is created. Choose an installed, "
+    "authenticated permitted CLI; if none is available, report the blocker instead of falling "
+    "back to an excluded provider."
+)
+_MODEL_SELECTION = (
+    "Pass model and effort explicitly using these defaults: "
+    "claude: model=opus, effort=max; codebuddy: model=hy3, effort=high; "
+    "codex: model=gpt-5.6-sol, effort=high; grok: model=grok-4.6, effort=high; "
+    "antigravity: model=gemini-3.8-flash, effort=high. "
+    "User-specified values override the corresponding defaults; keep defaults for unspecified "
+    "fields. If the user requests native provider settings, omit those options. "
+    "These are Manager instructions: the server does not inject model or effort defaults."
+)
 
 
 class InvocationErrorPayload(TypedDict):
@@ -89,6 +128,16 @@ mcp = MCPServer(
         "it to finish, then pass its returned session_id and a new prompt to a new start_agent "
         "call. Invocation handles exist only for this MCP server lifetime. AgentNave is not a "
         "sandbox; provider-native permissions remain the security boundary."
+        " Use AgentNave for an explicitly requested CLI subagent or a bounded task the Manager "
+        "has chosen to delegate to a local CLI. "
+        + _PROVIDER_SELECTION
+        + " "
+        + _MODEL_SELECTION
+        + " Inherit native permissions and tools unless the user explicitly requests changes. "
+        "Verify succeeded output before synthesis; resolve blocked results through user input, "
+        "login or native permissions, without bypassing gates. Retry failed work only when the "
+        "task remains valid and there is a concrete reason. Cancelled and timed_out invocations "
+        "are terminal. Running snapshots describe lifecycle, not semantic task progress."
     ),
     lifespan=_lifespan,
 )
@@ -121,7 +170,7 @@ def _unknown_invocation() -> ToolError:
 async def start_agent(
     provider: Annotated[
         ProviderName,
-        Field(description="Local subagent provider to launch."),
+        Field(description="Local subagent provider to launch. " + _PROVIDER_SELECTION),
     ],
     prompt: Annotated[
         str,
@@ -147,7 +196,13 @@ async def start_agent(
         Field(
             description=(
                 "Explicit provider-native options. Omit to inherit the provider's own settings; "
-                "supported keys depend on the selected provider."
+                "supported keys: all providers accept model and effort; "
+                "claude also accepts permission_mode, agent, fallback_model, max_budget_usd; "
+                "codebuddy: permission_mode, agent, fallback_model; "
+                "codex: skip_git_repo_check (boolean, explicitly true outside Git repositories); "
+                "grok: permission_mode, agent, max_turns, sandbox; "
+                "antigravity: agent, mode, project, print_timeout, sandbox (boolean), "
+                "disable_slash_commands (boolean). " + _MODEL_SELECTION
             )
         ),
     ] = None,
@@ -159,6 +214,8 @@ async def start_agent(
     Use wait_agent with the returned ID to observe the invocation. The launched provider may read,
     write, or run commands in cwd subject to its native permission controls.
     """
+    if provider in _EXCLUDED_PROVIDERS:
+        raise ToolError(f"Provider '{provider}' is excluded by this host. " + _PROVIDER_SELECTION)
     try:
         request = InvocationRequest(
             provider=provider,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import cast
@@ -229,3 +230,67 @@ async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
         "wait_agent",
         "cancel_agent",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "excluded",
+    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,grok"],
+)
+async def test_stdio_enforces_host_exclusions_before_launch(
+    excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    marker = tmp_path / "codex-started"
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+    fake_codex.chmod(0o755)
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "agentnave.mcp_server"],
+        env={"PATH": os.environ["PATH"], "AGENTNAVE_EXCLUDED_PROVIDERS": excluded},
+    )
+    async with Client(parameters) as client:
+        tools = (await client.list_tools()).tools
+        description = str(tools[0].input_schema)
+        assert client.instructions is not None
+        assert "model=opus, effort=max" in client.instructions
+        assert "Excluded providers:" in client.instructions
+        assert "Excluded providers:" in description
+        assert "model=gpt-5.6-sol" in description
+        rejected = await client.call_tool(
+            "start_agent", {"provider": "codex", "prompt": "finish", "cwd": str(tmp_path)}
+        )
+        assert rejected.is_error is True
+        assert "excluded by this host" in str(rejected.content)
+        assert not marker.exists()
+        if "claude" in excluded:
+            assert "Providers permitted by this host configuration: none" in description
+        else:
+            started = await client.call_tool(
+                "start_agent", {"provider": "claude", "prompt": "finish", "cwd": str(tmp_path)}
+            )
+            assert started.is_error is False
+            finished = await client.call_tool(
+                "wait_agent",
+                {
+                    "invocation_id": _payload(started.structured_content)["invocation_id"],
+                    "wait_timeout_seconds": 3,
+                },
+            )
+            result = _payload(_payload(finished.structured_content)["result"])
+            assert result["output"] == "FINISH"
+
+
+def test_stdio_rejects_unknown_exclusion_configuration() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "agentnave.mcp_server"],
+        env={**os.environ, "AGENTNAVE_EXCLUDED_PROVIDERS": "codxe"},
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert "Unknown AGENTNAVE_EXCLUDED_PROVIDERS: codxe" in completed.stderr

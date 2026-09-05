@@ -18,17 +18,20 @@ AgentNave 不拥有 DAG、调度器、角色系统、自动重规划、工作树
 
 ## 安装与激活边界
 
-完整安装只包含两个 AgentNave 自有部分：由 Python Tool Manager 安装的隔离运行时，以及安装到各 Host 的 `agentnave-manager` Skill。两者必须来自同一个已发布版本；MCP-only 可以调用 Tool，但缺少 Manager 路由和生命周期说明，Skill-only 则不能形成可工作的 AgentNave 安装。
+完整安装由 Python Tool Manager 安装隔离运行时，并在 MCP Host 注册稳定入口。使用时机、默认模型指引、生命周期和结果处理通过 MCP instructions 与 Tool 描述提供，不交付独立 Skill。
 
 Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
-MCP Host 拥有 AgentNave 的注册、作用域、启停、移除和 Skill 发现位置；能使用 Host 官方管理接口时，不由 AgentNave 直接修改其配置文件。安装运行时不会自动写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，AgentNave 不创建需要随卸载处理的持久用户数据。
+MCP Host 拥有 AgentNave 的注册、作用域、启停、移除；能使用 Host 官方管理接口时，不由 AgentNave 直接修改其配置文件。安装运行时不会自动写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，AgentNave 不创建需要随卸载处理的持久用户数据。
 
 ## 稳定合同
 
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、`timeout_seconds` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
 
-随包提供的 Manager Skill 可以定义默认模型路由，但调用时仍须把模型与 effort 作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
+MCP instructions 提供默认模型路由指引，但调用时仍须把模型与 effort 作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
+
+每个 Host 通过 `AGENTNAVE_EXCLUDED_PROVIDERS` 显式配置逗号分隔的 Provider 排除项，以排除与宿主同类的 CLI。按宿主产品对应的 CLI 配置，不按当前模型判断，也不猜测客户端身份。排除项在 server 启动时固定并验证，未知名称使启动失败；未配置或空值不排除任何 Provider。MCP 向 Manager 公布允许项与排除项；被排除的调用在创建 Invocation 前返回 Tool error，不能通过单次调用参数覆盖，也不自动回退。允许项不代表 CLI 已安装或认证。
+
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
 结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
