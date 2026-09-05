@@ -145,19 +145,29 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
         run: |
+          tag_exists=false
           if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            tag_exists=true
             test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$GITHUB_SHA" || {
               echo "Refusing to move an existing release tag: $RELEASE_TAG" >&2
               exit 1
             }
           fi
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
+            test "$tag_exists" = true || {
+              echo "An existing release has no tag: $RELEASE_TAG" >&2
+              exit 1
+            }
             test "$draft" = false || {
               echo "An existing draft requires manual review: $RELEASE_TAG" >&2
               exit 1
             }
             echo "Release already published: $RELEASE_TAG"
           else
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
+            if [ "$tag_exists" = false ]; then
+              gh api --method POST "repos/$GH_REPO/git/refs" \
+                -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag \
               --title "AgentNave $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
           fi

@@ -56,8 +56,9 @@ both macOS and Linux verification jobs, then creates the version tag and GitHub 
 exact push commit. Ordinary changes without a version bump do not publish. The Git installation
 channel remains canonical; this workflow does not publish to PyPI or upload binary distributions.
 
-Re-running the original workflow resumes a failed release. A published release at the same tag and
-commit is a no-op; a conflicting tag or existing draft requires manual review and is never
-overwritten. A later ordinary push does not retry an earlier release: rerun the original version
-change workflow after correcting its failure. Confirm that the release job and GitHub Release have
-completed before reporting a version as published.
+After a transient or external failure is resolved, rerun the original workflow. If recovery requires
+code or release metadata changes, submit a new pull request with another version increase: reruns
+use the original commit, and an ordinary same-version push does not retry an earlier release.
+A published release at the same tag and commit is a no-op; a conflicting tag, missing tag for an
+existing release, or existing draft requires manual review and is never overwritten. Confirm that
+the release job and GitHub Release have completed before reporting a version as published.
