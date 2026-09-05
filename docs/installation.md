@@ -1,24 +1,21 @@
 # Installation
 
-An AgentNave installation has exactly two AgentNave-owned parts:
+Install the `agentnave-mcp` runtime once, then register it with each host that should use it.
+AgentNave delivers its usage, model-selection, and lifecycle instructions through MCP. It does not
+require or distribute a Skill.
 
-1. the `agentnave-mcp` runtime, installed once with `uv tool`; and
-2. the `agentnave-manager` Skill, installed in each host agent that should use the runtime.
-
-Keep both parts on the same published release tag. Provider CLIs such as Claude Code, Codex CLI,
-or Grok CLI are separate programs: install and authenticate only the providers you intend to call,
-using their own official instructions.
-
-The examples below use `v0.3.0`, which supports the `antigravity`, `claude`, `codebuddy`, `codex`,
-and `grok` providers. A host agent and a provider CLI are different roles even when both are Codex
-or Claude Code.
+**Release status:** this MCP-only workflow and provider exclusions are unreleased. `v0.3.0` does
+not enforce exclusions. `vNEXT` below is a placeholder for a published tag containing these changes;
+do not run the release installation until that tag exists. To verify this checkout now, use the
+[development workflow](../CONTRIBUTING.md); an isolated wheel installation can also be tested with
+`uv build` followed by `uv tool install --python 3.12 dist/agentnave-*.whl` in a separate tool directory.
 
 ## 1. Install the runtime
 
-AgentNave supports macOS and Linux and requires `uv`:
+AgentNave supports macOS and Linux. Install `uv` and Git, then choose a published release tag:
 
 ```bash
-AGENTNAVE_RELEASE=v0.3.0
+AGENTNAVE_RELEASE=vNEXT
 uv tool install --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 
@@ -26,105 +23,105 @@ AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
 test -x "$AGENTNAVE_MCP"
 ```
 
-The remaining commands reuse `AGENTNAVE_RELEASE` and `AGENTNAVE_MCP`; run them in the same shell or
-define those variables again.
+The remaining commands reuse these variables; run them in the same shell or define them again.
+`uv` manages the isolated Python 3.12 runtime. Use a fixed release rather than mutable `main`, and
+register the absolute launcher path rather than a source checkout or development `.venv`.
 
-Always use a published tag rather than the mutable `main` branch. The absolute launcher path is the
-stable boundary between `uv` and the MCP host; do not point a long-lived host registration at a
-source checkout or its `.venv`.
+Provider CLIs are separate programs. Install and authenticate only those you intend to call, using
+their official instructions. The MCP server must inherit a `PATH` that can locate them. Desktop
+hosts may have a different environment from your terminal; set an explicit `PATH` in the server's
+host configuration if necessary, retaining the directories needed by the CLIs and their runtimes.
+AgentNave does not install providers or change their login, permissions, or configuration.
 
-## 2. Install the Manager Skill
+## 2. Configure provider exclusions per host
 
-Codex, Gemini CLI, and OpenCode all discover the shared Agent Skills user directory. One copy there
-serves all three hosts:
+Set `AGENTNAVE_EXCLUDED_PROVIDERS` in each host's MCP server environment to exclude the CLI matching
+that host product, regardless of which model the host is currently using:
 
-```bash
-AGENTNAVE_SKILL_DIR="$HOME/.agents/skills/agentnave-manager"
-AGENTNAVE_SKILL_TMP="$(mktemp)"
-curl -fsSL \
-  "https://raw.githubusercontent.com/TimWongUp/agentnave/${AGENTNAVE_RELEASE}/src/agentnave/resources/agentnave-manager/SKILL.md" \
-  -o "$AGENTNAVE_SKILL_TMP"
-install -d "$AGENTNAVE_SKILL_DIR"
-install -m 0644 "$AGENTNAVE_SKILL_TMP" "$AGENTNAVE_SKILL_DIR/SKILL.md"
-rm "$AGENTNAVE_SKILL_TMP"
-```
+| Host product | Exclusion value |
+| --- | --- |
+| Codex | `codex` |
+| Claude Code | `claude` |
+| CodeBuddy Code | `codebuddy` |
+| Grok CLI | `grok` |
+| Antigravity | `antigravity` |
+| Other hosts | Explicitly choose exclusions, or use an empty value |
 
-Claude Code uses its own personal Skill directory, so install a second copy only when Claude Code is
-one of the host agents:
+Gemini CLI and OpenCode do not have same-product providers in the current registry; they need no
+automatic exclusion. Sharing a model vendor is not the same as sharing a host product.
 
-```bash
-AGENTNAVE_SKILL_DIR="$HOME/.claude/skills/agentnave-manager"
-AGENTNAVE_SKILL_TMP="$(mktemp)"
-curl -fsSL \
-  "https://raw.githubusercontent.com/TimWongUp/agentnave/${AGENTNAVE_RELEASE}/src/agentnave/resources/agentnave-manager/SKILL.md" \
-  -o "$AGENTNAVE_SKILL_TMP"
-install -d "$AGENTNAVE_SKILL_DIR"
-install -m 0644 "$AGENTNAVE_SKILL_TMP" "$AGENTNAVE_SKILL_DIR/SKILL.md"
-rm "$AGENTNAVE_SKILL_TMP"
-```
+Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespace, letter case, and
+duplicates are normalized; empty items are ignored. An unset or empty value excludes nothing.
+Unknown IDs prevent server startup so a typo cannot silently disable the intended restriction.
+All five providers may be excluded; the tools remain discoverable, but no invocation is allowed.
 
-The Skill is release-managed. Update it by replacing `SKILL.md` from a newer published tag rather
-than editing the installed copy.
+Exclusions are fixed when the server starts. Restart it after changing configuration. MCP tool
+metadata lists permitted and excluded providers. A permitted provider is not necessarily installed
+or authenticated. `start_agent` rejects an excluded provider before creating an invocation; a call
+cannot override the exclusion and the server never substitutes a different provider. If no permitted
+provider is usable, the Manager reports the blocker.
+
+This is a restriction on calls through this MCP server, not a sandbox preventing the host from
+executing commands through its other tools.
 
 ## 3. Register the MCP server
 
-Choose every host agent that should use AgentNave. Personal/user scope is shown because AgentNave is
-normally useful across projects.
+Any host that can launch a local STDIO MCP process can register the same absolute executable with
+its own environment. No host-specific Skill, plugin, or global instruction file is needed. A host
+that only accepts remote HTTP MCP endpoints cannot directly use this local server.
+
+For hosts documenting the `mcpServers` JSON format, this example excludes the `codex` provider:
+
+```json
+{
+  "mcpServers": {
+    "agentnave": {
+      "command": "/absolute/path/from/uv/tool/dir/bin/agentnave-mcp",
+      "args": [],
+      "env": {"AGENTNAVE_EXCLUDED_PROVIDERS": "codex"}
+    }
+  }
+}
+```
+
+Replace the path and exclusion value for your host. Configuration formats differ; this JSON is an
+example for hosts that document this shape, not a universal MCP configuration standard. Preserve
+unrelated server entries. JSON does not expand shell variables. Codex uses its own configuration
+format; register it with the official CLI command below instead of copying this JSON into Codex.
 
 ### Codex
 
 ```bash
-codex mcp add agentnave -- "$AGENTNAVE_MCP"
+codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- "$AGENTNAVE_MCP"
 codex mcp get agentnave
 ```
 
-Start a new Codex session. It should discover `agentnave-manager`, and the MCP server should expose
-`start_agent`, `wait_agent`, and `cancel_agent`. Codex CLI, the Codex IDE extension, and the Codex app
-share the same MCP configuration.
-
-Official references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) and
-[Codex Skills](https://learn.chatgpt.com/docs/build-skills).
+Start a new session and confirm the three tools and the `codex` exclusion.
+Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
 
 ```bash
-claude mcp add --transport stdio --scope user agentnave -- "$AGENTNAVE_MCP"
+claude mcp add agentnave --transport stdio --scope user \
+  --env AGENTNAVE_EXCLUDED_PROVIDERS=claude -- "$AGENTNAVE_MCP"
 claude mcp get agentnave
 ```
 
-Run `/skills` in Claude Code to confirm Skill discovery. If `~/.claude/skills` did not exist when the
-current session started, restart Claude Code once.
-
-Official references: [Claude Code MCP](https://code.claude.com/docs/en/mcp) and
-[Claude Code Skills](https://code.claude.com/docs/en/slash-commands).
+Reference: [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 
 ### Gemini CLI
 
-Register the MCP server at user scope:
-
 ```bash
-gemini mcp add agentnave "$AGENTNAVE_MCP" --scope user
+gemini mcp add agentnave "$AGENTNAVE_MCP" --scope user --env AGENTNAVE_EXCLUDED_PROVIDERS=
 gemini mcp list
 ```
 
-Run `gemini skills list` to verify the shared Skill, then run `/skills reload` in an already open
-Gemini CLI session if necessary.
-
-Official references: [Gemini CLI commands](https://geminicli.com/docs/cli/cli-reference/) and
-[Gemini CLI Skills](https://geminicli.com/docs/cli/skills/).
+Reference: [Gemini CLI commands](https://geminicli.com/docs/cli/cli-reference/).
 
 ### OpenCode
 
-Run OpenCode's interactive MCP setup and choose a local server. Use `agentnave` as the name and the
-literal absolute value of `$AGENTNAVE_MCP` as its command:
-
-```bash
-opencode mcp add
-opencode mcp list
-```
-
-For a non-interactive or manually reviewed setup, merge this entry into the existing `mcp` object in
-`~/.config/opencode/opencode.json` (or `opencode.jsonc`) without replacing unrelated configuration:
+Merge this entry into the existing `mcp` object in `~/.config/opencode/opencode.json` or
+`opencode.jsonc`:
 
 ```json
 {
@@ -133,36 +130,49 @@ For a non-interactive or manually reviewed setup, merge this entry into the exis
     "agentnave": {
       "type": "local",
       "command": ["/absolute/path/from/uv/tool/dir/bin/agentnave-mcp"],
+      "environment": {"AGENTNAVE_EXCLUDED_PROVIDERS": ""},
       "enabled": true
     }
   }
 }
 ```
 
-Use the literal absolute value printed by `uv tool dir --bin`; JSON does not expand shell variables.
+Run `opencode mcp list` and start a new session.
+Reference: [OpenCode MCP servers](https://opencode.ai/docs/mcp-servers).
 
-Start a new OpenCode session and confirm that it discovers the shared Skill.
+### Other hosts
 
-Official references: [OpenCode CLI](https://opencode.ai/docs/cli/),
-[OpenCode MCP servers](https://opencode.ai/docs/mcp-servers), and
-[OpenCode Skills](https://opencode.ai/docs/skills).
+Use the host's documented MCP registration interface. Configure the absolute command, empty
+arguments, and the appropriate exclusion environment value. For CodeBuddy Code, Grok CLI, or
+Antigravity hosts, use the corresponding value from the table above. These are configuration
+requirements, not claims that every host/version combination has been live-tested.
 
-### Other compatible agents
+## Model selection and verification
 
-A host is compatible when it can both:
+The Manager chooses a permitted provider and explicitly passes `model` and `effort` in
+`provider_options`. MCP instructions and the parameter description carry the default model/effort
+pairs and supported option names. User-specified values override the corresponding defaults.
+When the user requests native settings, the Manager omits those options. The adapters do not inject
+defaults; omitted values retain provider-native behavior. Permissions and tools remain inherited
+unless explicitly changed by the user.
 
-- launch a local STDIO MCP server from an absolute executable path; and
-- discover an [Agent Skills](https://agentskills.io/specification) directory containing
-  `agentnave-manager/SKILL.md`.
+After registration or upgrade:
 
-Register `$AGENTNAVE_MCP` through the host's supported MCP interface, then install the Skill into a
-documented user or project Skill root. If a host supports MCP but not Skills, AgentNave's tools can
-still be called, but the Manager routing and lifecycle instructions will not be installed. A Skill
-without the MCP tools is not a working AgentNave installation.
+1. Use the host's MCP list/get interface to verify the command and exclusion environment.
+2. Restart the server/session and confirm `start_agent`, `wait_agent`, and `cancel_agent` are visible.
+3. Inspect the tool metadata to confirm the permitted/excluded providers and model guidance.
+4. A call selecting an excluded provider must return a Tool error without starting a CLI.
+5. With authorization for any provider quota consumption, run a small task through a permitted
+   provider and verify its final result using `wait_agent`.
 
-## Upgrade
+Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
+and the allowed-provider lifecycle. The CI workflow also installs a built wheel and lists tools
+through its installed launcher on macOS and Linux. These checks do not establish live compatibility
+with every host or availability of each account's models.
 
-Choose a newer published tag and replace both AgentNave-owned parts from that same tag:
+## Upgrade, repair, and rollback
+
+Choose the desired published tag and reinstall through `uv`:
 
 ```bash
 AGENTNAVE_RELEASE=vNEXT
@@ -170,30 +180,40 @@ uv tool install --force --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 ```
 
-Repeat the Skill installation for each host. Existing MCP registrations keep using the stable
-launcher path. Restart the host, verify its MCP entry, confirm Skill discovery, and confirm that the
-three lifecycle tools are available.
+The same command can repair a damaged runtime or restore a previous version. Restoring `v0.3.0`
+loses exclusion enforcement and MCP model guidance, so it is not an equivalent policy rollback.
+Host registrations retain the stable launcher path. Recheck configuration and restart after changes.
+There is no cross-host transaction or automatic host configuration update.
+
+When upgrading from v0.3.0, updating the runtime alone leaves the old host registrations without
+exclusions. Before restarting, explicitly update each existing registration's environment using
+the host's supported configuration interface and the values in sections 2 and 3: for example,
+`AGENTNAVE_EXCLUDED_PROVIDERS=codex` for Codex and `=claude` for Claude Code. Preserve other server
+settings and sibling registrations. Verify the effective entry in the actual project/session;
+a same-name project registration may override the user-level entry. After restart, confirm the
+exclusions in tool metadata and test rejection as described above. These restrictions apply to
+that configured server process, not to a replacement registration with a different environment.
+
+When migrating from the former two-part installation, first install and verify the MCP-only
+runtime. Then remove the old `agentnave-manager` Skill from the host's discovered Skill directories
+(including user or project copies). Preserve any user-authored additions before removal. A managed
+symlink should be unlinked without deleting its target. Remove its deployment-manifest entry too,
+if a separate Skill manager would otherwise reinstall it. Keeping the old Skill can supply stale
+model-selection instructions.
 
 ## Uninstall
 
-Remove only the registrations and Skill files you installed, then remove the shared runtime.
+Remove only AgentNave's registrations, then remove the shared runtime after all hosts stop using it:
 
 ```bash
-# Run the command for each configured host.
+# Run the relevant commands for your configured hosts.
 codex mcp remove agentnave
 claude mcp remove --scope user agentnave
 gemini mcp remove agentnave --scope user
-
-# Remove each installed Skill file. rmdir refuses to remove a directory containing other files.
-rm -f "$HOME/.agents/skills/agentnave-manager/SKILL.md"
-rmdir "$HOME/.agents/skills/agentnave-manager"
-rm -f "$HOME/.claude/skills/agentnave-manager/SKILL.md"
-rmdir "$HOME/.claude/skills/agentnave-manager"
-
 uv tool uninstall agentnave
 ```
 
-For OpenCode, remove only the `mcp.agentnave` entry from its configuration.
-
-AgentNave creates no durable user data, so there is no separate purge step. Removing AgentNave does
-not remove provider CLIs, their authentication, configuration, or sessions.
+For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.
+Remove any legacy Skill as described above. AgentNave creates no durable user data and needs no
+purge operation. Provider CLIs, authentication, configuration, sessions, and user projects remain
+owned by the user and providers.

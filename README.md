@@ -10,7 +10,7 @@ compatible host.
 ## Requirements
 
 - macOS or Linux
-- `uv`
+- `uv` and Git (for installation from a release tag)
 - At least one authenticated provider CLI
 
 `uv` installs AgentNave in an isolated Python 3.12 environment. A separately managed system
@@ -21,30 +21,37 @@ Job Object ownership first.
 
 ## Install
 
-A complete installation has two parts: the `agentnave-mcp` runtime and the `agentnave-manager`
-Skill. Install both from the same published release tag.
+Install the `agentnave-mcp` runtime and register it in your MCP host. Model-selection guidance,
+lifecycle instructions, and tool schemas are delivered through MCP; no Skill is required.
+
+The MCP-only workflow and provider exclusions are unreleased. The published `v0.3.0` does not
+enforce exclusions. Replace `<release-tag>` below with a release containing these changes once
+available; use the development workflow to test this checkout before release.
 
 Install the runtime with `uv tool` so the MCP launcher does not depend on a source checkout:
 
 ```bash
 uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@v0.3.0"
+  "git+https://github.com/TimWongUp/agentnave.git@<release-tag>"
 ```
 
 The release tag is part of the install source. Do not replace it with the mutable `main` branch.
 `uv` owns the isolated runtime, launcher, upgrades, and removal.
 It does not modify host Skills, global instructions, permissions, or provider configuration.
 
-Then connect the runtime and install the Skill for your host agent. The detailed guide covers:
+Then register the runtime with a host-specific `AGENTNAVE_EXCLUDED_PROVIDERS` environment value:
+Codex hosts exclude `codex`, Claude Code hosts exclude `claude`, and other matching hosts exclude
+their corresponding CLI provider. The server rejects excluded providers before creating an
+invocation. The detailed guide covers:
 
 - Codex;
 - Claude Code;
 - Gemini CLI;
 - OpenCode; and
-- other agents that support local STDIO MCP servers and Agent Skills.
+- other agents that support local STDIO MCP servers.
 
-[Read the installation guide](docs/installation.md) for host-specific MCP registration, Skill
-locations, verification, upgrade, and uninstall steps.
+[Read the installation guide](docs/installation.md) for host-specific MCP registration, provider
+exclusions, verification, upgrades, and removal.
 
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
@@ -57,9 +64,11 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 arguments are `provider`, `prompt`, and an absolute existing `cwd`. Optional arguments are
 `session_id`, `timeout_seconds`, and explicit `provider_options`.
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. Provider-native
-settings are inherited unless the Manager explicitly supplies allowlisted options.
-For Codex calls outside a Git repository, the Manager must explicitly pass
+Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. MCP instructions
+provide model and effort defaults for the Manager to pass explicitly through allowlisted options.
+User choices override that guidance; omitted options still inherit native settings. Exclusions are
+configured per host process, independently of the model it uses. For Codex calls outside a Git
+repository, the Manager must explicitly pass
 `{"skip_git_repo_check": true}` in `provider_options`.
 
 ### `wait_agent`
