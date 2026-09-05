@@ -4,18 +4,12 @@ Install the `agentnave-mcp` runtime once, then register it with each host that s
 AgentNave delivers its usage, model-selection, and lifecycle instructions through MCP. It does not
 require or distribute a Skill.
 
-**Release status:** this MCP-only workflow and provider exclusions are unreleased. `v0.3.0` does
-not enforce exclusions. `vNEXT` below is a placeholder for a published tag containing these changes;
-do not run the release installation until that tag exists. To verify this checkout now, use the
-[development workflow](../CONTRIBUTING.md); an isolated wheel installation can also be tested with
-`uv build` followed by `uv tool install --python 3.12 dist/agentnave-*.whl` in a separate tool directory.
-
 ## 1. Install the runtime
 
 AgentNave supports macOS and Linux. Install `uv` and Git, then choose a published release tag:
 
 ```bash
-AGENTNAVE_RELEASE=vNEXT
+AGENTNAVE_RELEASE=v0.4.0
 uv tool install --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 
@@ -175,7 +169,7 @@ with every host or availability of each account's models.
 Choose the desired published tag and reinstall through `uv`:
 
 ```bash
-AGENTNAVE_RELEASE=vNEXT
+AGENTNAVE_RELEASE=v0.4.0
 uv tool install --force --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 ```

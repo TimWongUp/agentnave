@@ -24,15 +24,11 @@ Job Object ownership first.
 Install the `agentnave-mcp` runtime and register it in your MCP host. Model-selection guidance,
 lifecycle instructions, and tool schemas are delivered through MCP; no Skill is required.
 
-The MCP-only workflow and provider exclusions are unreleased. The published `v0.3.0` does not
-enforce exclusions. Replace `<release-tag>` below with a release containing these changes once
-available; use the development workflow to test this checkout before release.
-
 Install the runtime with `uv tool` so the MCP launcher does not depend on a source checkout:
 
 ```bash
 uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@<release-tag>"
+  "git+https://github.com/TimWongUp/agentnave.git@v0.4.0"
 ```
 
 The release tag is part of the install source. Do not replace it with the mutable `main` branch.
