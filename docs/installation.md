@@ -102,8 +102,8 @@ Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 ### Claude Code
 
 ```bash
-claude mcp add --transport stdio --scope user \
-  --env AGENTNAVE_EXCLUDED_PROVIDERS=claude agentnave -- "$AGENTNAVE_MCP"
+claude mcp add agentnave --transport stdio --scope user \
+  --env AGENTNAVE_EXCLUDED_PROVIDERS=claude -- "$AGENTNAVE_MCP"
 claude mcp get agentnave
 ```
 
