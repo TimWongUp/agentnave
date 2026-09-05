@@ -43,3 +43,22 @@ uv run pytest
 
 In the pull request, explain the user-visible change, the validation performed, and any remaining
 limitations or platform-specific behavior.
+
+## Version releases
+
+Prepare a release in a pull request: increase the stable `MAJOR.MINOR.PATCH` version in
+`pyproject.toml` and `src/agentnave/__init__.py`, refresh `uv.lock` with `uv lock`, update the install
+examples, and add `docs/releases/v<version>.md` with user-facing changes and migration instructions.
+The CI metadata check rejects inconsistent versions, decreases, and missing release notes.
+
+After the version change is merged into `origin/main`, the existing Python workflow waits for
+both macOS and Linux verification jobs, then creates the version tag and GitHub Release at that
+exact push commit. Ordinary changes without a version bump do not publish. The Git installation
+channel remains canonical; this workflow does not publish to PyPI or upload binary distributions.
+
+After a transient or external failure is resolved, rerun the original workflow. If recovery requires
+code or release metadata changes, submit a new pull request with another version increase: reruns
+use the original commit, and an ordinary same-version push does not retry an earlier release.
+A published release at the same tag and commit is a no-op; a conflicting tag, missing tag for an
+existing release, or existing draft requires manual review and is never overwritten. Confirm that
+the release job and GitHub Release have completed before reporting a version as published.

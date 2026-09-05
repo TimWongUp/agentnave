@@ -10,6 +10,60 @@ permissions:
   contents: read
 
 jobs:
+  release-metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Check version change and release notes
+        id: version
+        env:
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+        run: |
+          python - <<'PY'
+          import ast
+          import os
+          import re
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+              raise SystemExit("Releases require a stable MAJOR.MINOR.PATCH version")
+          module = ast.parse(Path("src/agentnave/__init__.py").read_text())
+          runtime_versions = [
+              ast.literal_eval(node.value)
+              for node in module.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+          ]
+          if runtime_versions != [version]:
+              raise SystemExit("pyproject.toml and agentnave.__version__ must match")
+          previous = tomllib.loads(subprocess.check_output(
+              ["git", "show", f"{os.environ['BASE_SHA']}:pyproject.toml"], text=True
+          ))["project"]["version"]
+          changed = version != previous
+          if changed:
+              if tuple(map(int, version.split("."))) <= tuple(map(int, previous.split("."))):
+                  raise SystemExit("A release version must increase")
+              notes = Path(f"docs/releases/v{version}.md")
+              if not notes.is_file() or not notes.read_text().strip():
+                  raise SystemExit(f"Missing release notes: {notes}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"changed={str(changed).lower()}\ntag=v{version}\n")
+          print(f"{previous} -> {version}; release required: {changed}")
+          PY
+
   verify:
     name: Python 3.12 / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -21,11 +75,11 @@ jobs:
           - macos-latest
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: uv sync --locked --all-groups
@@ -69,3 +123,51 @@ jobs:
 
           asyncio.run(verify())
           PY
+
+  release:
+    name: Publish version release
+    needs: [release-metadata, verify]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-metadata.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+        run: |
+          tag_exists=false
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            tag_exists=true
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$GITHUB_SHA" || {
+              echo "Refusing to move an existing release tag: $RELEASE_TAG" >&2
+              exit 1
+            }
+          fi
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
+            test "$tag_exists" = true || {
+              echo "An existing release has no tag: $RELEASE_TAG" >&2
+              exit 1
+            }
+            test "$draft" = false || {
+              echo "An existing draft requires manual review: $RELEASE_TAG" >&2
+              exit 1
+            }
+            echo "Release already published: $RELEASE_TAG"
+          else
+            if [ "$tag_exists" = false ]; then
+              gh api --method POST "repos/$GH_REPO/git/refs" \
+                -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag \
+              --title "AgentNave $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
+          fi

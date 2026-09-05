@@ -26,3 +26,9 @@
 
 - 术语变化更新 `CONTEXT.md`；稳定所有权或接口边界变化更新 `docs/context/architecture.md`；难逆转且经过真实取舍的决定写 ADR。
 - 精确实现、临时路线、分支、commit、测试输出和实时运行状态不写入长期上下文。
+
+## Version releases
+
+- 版本 PR 同步更新 `pyproject.toml`、`src/agentnave/__init__.py`、`uv.lock`、安装文档和 `docs/releases/v<version>.md`。
+- 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
+- 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。
