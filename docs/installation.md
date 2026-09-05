@@ -70,7 +70,7 @@ Any host that can launch a local STDIO MCP process can register the same absolut
 its own environment. No host-specific Skill, plugin, or global instruction file is needed. A host
 that only accepts remote HTTP MCP endpoints cannot directly use this local server.
 
-For hosts using the common `mcpServers` JSON format, a Codex-host example is:
+For hosts documenting the `mcpServers` JSON format, this example excludes the `codex` provider:
 
 ```json
 {
@@ -86,7 +86,8 @@ For hosts using the common `mcpServers` JSON format, a Codex-host example is:
 
 Replace the path and exclusion value for your host. Configuration formats differ; this JSON is an
 example for hosts that document this shape, not a universal MCP configuration standard. Preserve
-unrelated server entries. JSON does not expand shell variables.
+unrelated server entries. JSON does not expand shell variables. Codex uses its own configuration
+format; register it with the official CLI command below instead of copying this JSON into Codex.
 
 ### Codex
 
@@ -183,6 +184,15 @@ The same command can repair a damaged runtime or restore a previous version. Res
 loses exclusion enforcement and MCP model guidance, so it is not an equivalent policy rollback.
 Host registrations retain the stable launcher path. Recheck configuration and restart after changes.
 There is no cross-host transaction or automatic host configuration update.
+
+When upgrading from v0.3.0, updating the runtime alone leaves the old host registrations without
+exclusions. Before restarting, explicitly update each existing registration's environment using
+the host's supported configuration interface and the values in sections 2 and 3: for example,
+`AGENTNAVE_EXCLUDED_PROVIDERS=codex` for Codex and `=claude` for Claude Code. Preserve other server
+settings and sibling registrations. Verify the effective entry in the actual project/session;
+a same-name project registration may override the user-level entry. After restart, confirm the
+exclusions in tool metadata and test rejection as described above. These restrictions apply to
+that configured server process, not to a replacement registration with a different environment.
 
 When migrating from the former two-part installation, first install and verify the MCP-only
 runtime. Then remove the old `agentnave-manager` Skill from the host's discovered Skill directories
