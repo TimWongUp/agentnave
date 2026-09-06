@@ -43,6 +43,7 @@ class GrokAdapter:
     }
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        options = option_args(request, self._options)
         prompt = request.prompt.encode()
         fd, raw_path = tempfile.mkstemp(prefix="agentnave-prompt-", suffix=".txt")
         path = Path(raw_path)
@@ -64,11 +65,7 @@ class GrokAdapter:
         ]
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
-        try:
-            argv.extend(option_args(request, self._options))
-        except Exception:
-            path.unlink(missing_ok=True)
-            raise
+        argv.extend(options)
         return PreparedCommand(tuple(argv), request.cwd, cleanup_paths=(path,))
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:

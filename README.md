@@ -1,11 +1,31 @@
 # AgentNave
 
-AgentNave is a local STDIO MCP server for agents that need to launch Antigravity CLI, Claude Code,
-CodeBuddy Code, Codex CLI, or Grok CLI as subagents. It deliberately leaves planning, parallelism,
-review, synthesis, retries, permissions, and worktree management to the calling Agent Manager.
+<p align="center">
+  <img src="docs/assets/agentnave-banner.png" alt="AgentNave — a thin local bridge to CLI subagents" width="100%">
+</p>
 
-AgentNave has no human-facing CLI. The `agentnave-mcp` command only starts the MCP process for a
-compatible host.
+**A thin local bridge from Agent Managers to CLI subagents.**
+
+AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI, or
+Grok CLI through three lifecycle-focused MCP tools. Each provider keeps its native authentication,
+configuration, permissions, and session model; AgentNave supplies the adapter and process
+supervision around it.
+
+The boundary is intentional. AgentNave does not plan tasks, assign roles, build DAGs, choose
+parallelism, review results, synthesize answers, retry work, or manage worktrees. Those decisions
+belong to the calling Agent Manager, where the full task context already exists.
+
+AgentNave has no human-facing CLI. The `agentnave-mcp` command is only the STDIO entry point used by
+a compatible MCP host.
+
+## What AgentNave owns
+
+| AgentNave | Calling Agent Manager |
+| --- | --- |
+| Provider command adapters | Planning and task decomposition |
+| In-memory invocation lifecycle | Provider and model selection |
+| POSIX process-group supervision | Parallelism, review, and synthesis |
+| Normalized terminal results | Retries, permissions, and worktrees |
 
 ## Requirements
 
@@ -31,9 +51,9 @@ uv tool install --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@v0.4.0"
 ```
 
-The release tag is part of the install source. Do not replace it with the mutable `main` branch.
-`uv` owns the isolated runtime, launcher, upgrades, and removal.
-It does not modify host Skills, global instructions, permissions, or provider configuration.
+Keep the release tag in the install source rather than replacing it with the mutable `main` branch.
+`uv` owns the isolated runtime, launcher, upgrades, and removal; it does not modify host Skills,
+global instructions, permissions, or provider configuration.
 
 Then register the runtime with a host-specific `AGENTNAVE_EXCLUDED_PROVIDERS` environment value:
 Codex hosts exclude `codex`, Claude Code hosts exclude `claude`, and other matching hosts exclude
@@ -52,55 +72,71 @@ exclusions, verification, upgrades, and removal.
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
 
-## MCP tools
+## The MCP surface
+
+AgentNave exposes exactly three tools:
 
 ### `start_agent`
 
-Starts one provider invocation and immediately returns an in-memory `invocation_id`. Required
-arguments are `provider`, `prompt`, and an absolute existing `cwd`. Optional arguments are
-`session_id`, `timeout_seconds`, and explicit `provider_options`.
+Starts one provider invocation and immediately returns an in-memory `invocation_id`. It requires
+`provider`, `prompt`, and an absolute existing `cwd`; `session_id`, `timeout_seconds`, and explicit
+`provider_options` are optional.
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. MCP instructions
-provide model and effort defaults for the Manager to pass explicitly through allowlisted options.
-User choices override that guidance; omitted options still inherit native settings. Exclusions are
-configured per host process, independently of the model it uses. For Codex calls outside a Git
-repository, the Manager must explicitly pass
+Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. MCP instructions provide model and effort defaults for the Manager to pass explicitly through
+allowlisted options. User choices override that guidance; omitted options still inherit native
+settings. Exclusions are configured per host process, independently of the model it uses. For Codex calls outside a
+Git repository, the Manager must pass
 `{"skip_git_repo_check": true}` in `provider_options`.
+
+### Choosing a model and reasoning effort
+
+To override the defaults for one task, tell your calling Agent the provider, model ID, and
+reasoning effort. For example: “Use Codex CLI with model `gpt-6-astra` and effort `medium`.”
+The Agent passes `{"model": "gpt-6-astra", "effort": "medium"}` in `provider_options`.
+Only specified fields override the MCP guidance. To keep your choices across tasks, put the
+same preference in your calling Agent's personal instructions. To use the CLI's native settings,
+explicitly ask the Agent to omit the corresponding options.
+
+When a new model becomes available, use its exact ID from that provider's model list; updating
+AgentNave is not required to pass a new model ID. If you maintain a source installation and want
+to change the bundled defaults, edit `_MODEL_SELECTION` in `src/agentnave/mcp_server.py`, then
+restart the MCP connection so the calling Agent receives the updated instructions. An unavailable
+model should be reported rather than silently replaced.
 
 ### `wait_agent`
 
-Waits for at most `wait_timeout_seconds`. A `running` response leaves the invocation active and
-includes a lifecycle snapshot. A `finished` response contains the normalized provider result.
+Waits for at most `wait_timeout_seconds`. A `running` response keeps the invocation active and
+includes a lifecycle snapshot; a `finished` response contains the normalized provider result.
 
 ### `cancel_agent`
 
-Stops one invocation and returns its terminal result. Use it only when the Manager intends to stop
-active provider work; `wait_agent` observes work without cancelling it.
+Stops an invocation and returns its terminal result. Use it only when the Manager intends to end
+active provider work; `wait_agent` observes without cancelling.
 
-All tools publish input and output JSON Schemas. Agent-correctable request errors are returned as MCP
-Tool errors with retry guidance; provider launch and execution outcomes remain structured Invocation
+All three tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
+errors with retry guidance; provider launch and execution outcomes remain structured Invocation
 Results.
 
 ## Lifecycle and security
 
-Invocation handles exist only for the current MCP server process. When the server stops, AgentNave
-makes a best-effort attempt to terminate processes that remain in the provider process group. Old
-handles cannot be recovered after restart, although a provider `session_id` can be supplied to a new
-`start_agent` call if the provider retained it.
+Invocation handles live only in the current MCP server process. When the server stops, AgentNave
+makes a best-effort attempt to terminate processes that remain in the provider process group. A
+restart cannot recover old handles, but a retained provider `session_id` can be supplied to a new
+`start_agent` call.
 
-A running snapshot reports the lifecycle phase, elapsed time, and age of the latest official provider
-stream event. It does not claim semantic task progress. Terminal `output` contains the provider's
-final response rather than streamed intermediate narration.
+A running snapshot reports lifecycle phase, elapsed time, and the age of the latest official
+provider stream event. It does not claim semantic task progress. Terminal `output` contains the
+provider's final response rather than intermediate narration.
 
 AgentNave is not a sandbox. A same-user provider with command permission can deliberately daemonize,
 kill its supervisor, or otherwise escape ordinary POSIX process-group cleanup. Provider-native
-permissions are the security boundary; use OS-level isolation when adversarial containment is
+permissions remain the security boundary; use OS-level isolation when adversarial containment is
 required.
 
 ## Verify
 
-The commands below are for a source checkout used for development, not for the `uv tool`
-installation above. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete contributor workflow.
+These checks are for a development checkout, not the `uv tool` installation above. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the complete contributor workflow.
 
 ```bash
 uv sync --locked --all-groups
@@ -112,8 +148,8 @@ uv run pytest
 
 ## Contributing and security
 
-Contributions are welcome through GitHub Issues and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the development workflow and validation requirements.
+Contributions are welcome through GitHub Issues and pull requests. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and validation requirements.
 
 Do not report security vulnerabilities in a public Issue. Follow [SECURITY.md](SECURITY.md) to use
 the repository's private vulnerability reporting channel.

@@ -52,8 +52,8 @@ _PROVIDER_SELECTION = (
 )
 _MODEL_SELECTION = (
     "Pass model and effort explicitly using these defaults: "
-    "claude: model=opus, effort=max; codebuddy: model=hy3, effort=high; "
-    "codex: model=gpt-5.6-sol, effort=high; grok: model=grok-4.6, effort=high; "
+    "claude: model=opus, effort=max; codebuddy: model=hy4-preview, effort=high; "
+    "codex: model=gpt-6-astra, effort=medium; grok: model=grok-4.6, effort=high; "
     "antigravity: model=gemini-3.8-flash, effort=high. "
     "User-specified values override the corresponding defaults; keep defaults for unspecified "
     "fields. If the user requests native provider settings, omit those options. "
@@ -159,7 +159,7 @@ def _unknown_invocation() -> ToolError:
 
 
 @mcp.tool(
-    title="Start a local CLI subagent",
+    title="Run a task with a local AI CLI",
     annotations=ToolAnnotations(
         read_only_hint=False,
         destructive_hint=True,
@@ -170,11 +170,14 @@ def _unknown_invocation() -> ToolError:
 async def start_agent(
     provider: Annotated[
         ProviderName,
-        Field(description="Local subagent provider to launch. " + _PROVIDER_SELECTION),
+        Field(description="CLI requested by the user, not a model ID. " + _PROVIDER_SELECTION),
     ],
     prompt: Annotated[
         str,
-        Field(min_length=1, description="Complete, self-contained task for the subagent."),
+        Field(
+            min_length=1,
+            description="Complete task, context, constraints, and expected output; the CLI does not inherit this conversation.",
+        ),
     ],
     cwd: Annotated[
         str,
@@ -184,18 +187,25 @@ async def start_agent(
         str | None,
         Field(
             min_length=1,
-            description="Provider session ID returned by an earlier finished invocation.",
+            description=(
+                "To continue a conversation, use the session_id returned by a finished invocation "
+                "of the same provider; omit for a new conversation. Never use an invocation_id here."
+            ),
         ),
     ] = None,
     timeout_seconds: Annotated[
         float,
-        Field(gt=0, le=86_400, description="Maximum provider runtime in seconds."),
+        Field(
+            gt=0,
+            le=86_400,
+            description="Total runtime limit in seconds; expiry stops the invocation.",
+        ),
     ] = 1800,
     provider_options: Annotated[
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                "Explicit provider-native options. Omit to inherit the provider's own settings; "
+                "Provider-native options; pass model and effort using the defaults below unless overridden. "
                 "supported keys: all providers accept model and effort; "
                 "claude also accepts permission_mode, agent, fallback_model, max_budget_usd; "
                 "codebuddy: permission_mode, agent, fallback_model; "
@@ -209,10 +219,16 @@ async def start_agent(
     *,
     ctx: Context[InvocationManager],
 ) -> StartAgentPayload:
-    """Start one subagent and return its in-memory invocation ID without waiting for completion.
+    """Run a task via Grok CLI (grok), Claude Code (claude), CodeBuddy Code (codebuddy),
+    Codex CLI (codex), or Antigravity CLI (antigravity).
 
-    Use wait_agent with the returned ID to observe the invocation. The launched provider may read,
-    write, or run commands in cwd subject to its native permission controls.
+    Use when the user requests one of these CLIs or the caller chooses local CLI delegation;
+    mentioning MCP or "subagent" is unnecessary. Prefer this tool over shell execution or
+    alternative integrations unless the user requests another route. CLI help questions or
+    model names alone do not request execution.
+
+    Follow provider_options for model/effort defaults. Returns invocation_id; call wait_agent
+    with that ID to get the result. If blocked, report it without silently switching providers.
     """
     if provider in _EXCLUDED_PROVIDERS:
         raise ToolError(f"Provider '{provider}' is excluded by this host. " + _PROVIDER_SELECTION)
@@ -229,6 +245,10 @@ async def start_agent(
     except ValueError as exc:
         raise ToolError(
             f"Invalid invocation request: {exc}. Correct the arguments and retry."
+        ) from exc
+    except OSError as exc:
+        raise ToolError(
+            f"Unable to prepare invocation: {exc}. Check local filesystem access."
         ) from exc
     return {"invocation_id": invocation_id, "state": "running"}
 
@@ -249,15 +269,20 @@ async def wait_agent(
     ],
     wait_timeout_seconds: Annotated[
         float,
-        Field(gt=0, le=300, description="Maximum time to wait during this call, in seconds."),
+        Field(
+            gt=0,
+            le=300,
+            description="Seconds to wait for this response; expiry leaves the invocation running.",
+        ),
     ] = 30,
     *,
     ctx: Context[InvocationManager],
 ) -> WaitAgentPayload:
-    """Wait briefly for one invocation and return either a running snapshot or its final result.
+    """Wait for a task using the invocation_id returned by start_agent.
 
-    A running response leaves the invocation active; call wait_agent again later. Use cancel_agent
-    only when the invocation should be stopped.
+    state=running: call again with the same ID; do not launch a duplicate.
+    state=finished: inspect result.status, output, and error; completion does not imply success.
+    This wait does not stop the task.
     """
     manager = _manager(ctx)
     try:
@@ -295,10 +320,9 @@ async def cancel_agent(
     *,
     ctx: Context[InvocationManager],
 ) -> CancelAgentPayload:
-    """Stop one invocation and return its final cancelled or already-terminal result.
+    """Stop a task by invocation_id; use wait_agent to observe without stopping.
 
-    Use this only when the Manager intends to stop active provider work; use wait_agent to observe
-    work without stopping it.
+    Returns the cancelled or already-finished result. Does not undo prior CLI side effects.
     """
     try:
         result = await _manager(ctx).cancel(invocation_id)
