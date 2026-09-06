@@ -178,6 +178,61 @@ async def test_mcp_rejects_non_absolute_cwd_with_retry_guidance(cwd: str) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "options", "message"),
+    [
+        ("grok", {"unsupported_probe": True}, "unsupported grok options"),
+        ("codex", {"skip_git_repo_check": "true"}, "must be a boolean"),
+        ("antigravity", {"sandbox": "true"}, "must be boolean"),
+    ],
+)
+async def test_mcp_rejects_invalid_options_before_starting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    options: dict[str, str | bool],
+    message: str,
+) -> None:
+    def unexpected_temp_file(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        pytest.fail("invalid options must not create a prompt file")
+
+    monkeypatch.setattr("agentnave.adapters.grok.tempfile.mkstemp", unexpected_temp_file)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agent",
+            {
+                "provider": provider,
+                "prompt": "finish",
+                "cwd": str(tmp_path),
+                "provider_options": options,
+            },
+        )
+
+    assert result.is_error is True
+    assert message in str(result.content)
+    assert "Correct the arguments and retry" in str(result.content)
+    assert "invocation_id" not in (result.structured_content or {})
+
+
+@pytest.mark.asyncio
+async def test_mcp_reports_preparation_io_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def denied_temp_file(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        raise PermissionError("temporary directory is not writable")
+
+    monkeypatch.setattr("agentnave.adapters.grok.tempfile.mkstemp", denied_temp_file)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agent", {"provider": "grok", "prompt": "finish", "cwd": str(tmp_path)}
+        )
+
+    assert result.is_error is True
+    assert "Unable to prepare invocation" in str(result.content)
+    assert "Invalid invocation request" not in str(result.content)
+
+
+@pytest.mark.asyncio
 async def test_mcp_unknown_invocation_error_tells_agent_how_to_recover() -> None:
     async with Client(mcp) as client:
         result = await client.call_tool("wait_agent", {"invocation_id": "missing"})
@@ -257,7 +312,8 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         assert "model=opus, effort=max" in client.instructions
         assert "Excluded providers:" in client.instructions
         assert "Excluded providers:" in description
-        assert "model=gpt-5.6-sol" in description
+        assert "model=gpt-6-astra, effort=medium" in description
+        assert "model=hy4-preview, effort=high" in description
         rejected = await client.call_tool(
             "start_agent", {"provider": "codex", "prompt": "finish", "cwd": str(tmp_path)}
         )

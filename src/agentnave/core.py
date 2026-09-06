@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agentnave.adapters import ProviderAdapter, get_adapter
+from agentnave.adapters.base import PreparedCommand
 from agentnave.models import (
     InvocationError,
     InvocationPhase,
@@ -58,10 +59,11 @@ class InvocationManager:
         if self._closed:
             raise RuntimeError("invocation manager is closed")
         adapter = get_adapter(request.provider)
+        prepared = adapter.prepare(request)
         invocation_id = str(uuid.uuid4())
         record = _InvocationRecord(request)
         self._records[invocation_id] = record
-        record.task = asyncio.create_task(self._execute(record, adapter))
+        record.task = asyncio.create_task(self._execute(record, adapter, prepared))
         return invocation_id
 
     async def wait(
@@ -117,15 +119,13 @@ class InvocationManager:
             raise KeyError(f"unknown invocation_id: {invocation_id}") from exc
 
     async def _execute(
-        self, record: _InvocationRecord, adapter: ProviderAdapter
+        self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
     ) -> InvocationResult:
         started = record.started_at
-        prepared = None
         supervised = None
         provider_returncode: int | None = None
         tasks: list[asyncio.Task[object]] = []
         try:
-            prepared = adapter.prepare(record.request)
             supervised = await spawn_process(prepared.argv, prepared.cwd)
             process = supervised.process
             record.process = process
@@ -253,9 +253,8 @@ class InvocationManager:
                     task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
-            if prepared is not None:
-                for path in prepared.cleanup_paths:
-                    Path(path).unlink(missing_ok=True)
+            for path in prepared.cleanup_paths:
+                Path(path).unlink(missing_ok=True)
             record.process = None
 
 

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">AgentNave</title>
+  <desc id="desc">A thin local bridge from Agent Managers to CLI subagents.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111815"/>
+      <stop offset="1" stop-color="#1d2924"/>
+    </linearGradient>
+    <linearGradient id="route" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#9cff00"/>
+      <stop offset="1" stop-color="#50cbed"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" rx="48" fill="url(#background)"/>
+  <circle cx="1130" cy="72" r="230" fill="#9cff00" opacity="0.045"/>
+  <circle cx="1010" cy="646" r="330" fill="#50cbed" opacity="0.045"/>
+  <path d="M0 530C210 488 347 565 544 528s334-9 484 35 188 28 252 7v70H0Z" fill="#ffffff" opacity="0.025"/>
+
+  <g transform="rotate(-2 102 81)">
+    <rect x="68" y="56" width="76" height="58" rx="16" fill="#000000" opacity="0.28"/>
+    <rect x="64" y="52" width="76" height="58" rx="16" fill="#232820" stroke="#9cff00" stroke-opacity="0.3"/>
+    <image href="tim-wong-mark.png" x="72" y="57" width="60" height="48" preserveAspectRatio="xMidYMid meet"/>
+  </g>
+
+  <text x="88" y="240" fill="#f3f5ef" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="82" font-weight="760" letter-spacing="-3">AgentNave</text>
+  <text x="92" y="308" fill="#b8c2bb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="29" font-weight="520">A thin local bridge to CLI subagents.</text>
+
+  <g transform="translate(92 374)" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17" font-weight="650">
+    <rect width="132" height="46" rx="23" fill="#9cff00" opacity="0.13"/>
+    <text x="66" y="30" text-anchor="middle" fill="#b8ff51">STDIO MCP</text>
+    <rect x="144" width="156" height="46" rx="23" fill="#50cbed" opacity="0.13"/>
+    <text x="222" y="30" text-anchor="middle" fill="#7bdcf5">Native sessions</text>
+    <rect x="312" width="164" height="46" rx="23" fill="#ffffff" opacity="0.07"/>
+    <text x="394" y="30" text-anchor="middle" fill="#d3d9d4">Agent-managed</text>
+  </g>
+
+  <g transform="translate(720 124)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <path d="M120 196H252M336 196H430M294 154V76M294 238V316" fill="none" stroke="url(#route)" stroke-width="4" stroke-linecap="round" opacity="0.75"/>
+    <circle cx="176" cy="196" r="6" fill="#9cff00" filter="url(#glow)"/>
+    <circle cx="392" cy="196" r="6" fill="#50cbed" filter="url(#glow)"/>
+
+    <rect x="0" y="148" width="126" height="96" rx="22" fill="#18221e" stroke="#9cff00" stroke-opacity="0.45" stroke-width="2"/>
+    <text x="63" y="190" text-anchor="middle" fill="#b8ff51" font-size="16" font-weight="700">MANAGER</text>
+    <text x="63" y="216" text-anchor="middle" fill="#839087" font-size="13">plan · review</text>
+
+    <rect x="246" y="148" width="96" height="96" rx="28" fill="#223029" stroke="url(#route)" stroke-width="3"/>
+    <path d="M272 181h44l-13 15 13 15h-44l13-15Z" fill="none" stroke="#f3f5ef" stroke-width="3" stroke-linejoin="round"/>
+    <text x="294" y="228" text-anchor="middle" fill="#f3f5ef" font-size="12" font-weight="700">NAVE</text>
+
+    <g fill="#18221e" stroke="#50cbed" stroke-opacity="0.42" stroke-width="2">
+      <rect x="430" y="32" width="126" height="72" rx="18"/>
+      <rect x="430" y="160" width="126" height="72" rx="18"/>
+      <rect x="430" y="288" width="126" height="72" rx="18"/>
+    </g>
+    <g fill="#aebbb2" font-size="14" font-weight="650" text-anchor="middle">
+      <text x="493" y="76">CLI AGENT</text>
+      <text x="493" y="204">CLI AGENT</text>
+      <text x="493" y="332">CLI AGENT</text>
+    </g>
+    <g fill="#50cbed">
+      <circle cx="430" cy="68" r="4"/>
+      <circle cx="430" cy="196" r="4"/>
+      <circle cx="430" cy="324" r="4"/>
+    </g>
+    <path d="M336 196C378 196 380 68 430 68M336 196H430M336 196C378 196 380 324 430 324" fill="none" stroke="#50cbed" stroke-width="3" stroke-linecap="round" opacity="0.56"/>
+  </g>
+</svg>
