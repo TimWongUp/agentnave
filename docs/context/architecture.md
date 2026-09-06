@@ -8,6 +8,7 @@ Manager 拥有目标解释、任务拆解、角色和模型选择、并行策略
 
 AgentNave 只拥有：
 
+- 按需返回所选 Provider 的参数和默认模型指引；
 - 根据冻结请求启动一个 Provider CLI；
 - 传递 prompt、cwd、可选 `session_id` 和显式 Provider Options；
 - 归一化 Provider 的终端结果；
@@ -18,7 +19,7 @@ AgentNave 不拥有 DAG、调度器、角色系统、自动重规划、工作树
 
 ## 安装与激活边界
 
-完整安装由 Python Tool Manager 安装隔离运行时，并在 MCP Host 注册稳定入口。使用时机、默认模型指引、生命周期和结果处理通过 MCP instructions 与 Tool 描述提供，不交付独立 Skill。
+完整安装由 Python Tool Manager 安装隔离运行时，并在 MCP Host 注册稳定入口。使用时机、生命周期和结果处理通过 MCP instructions 与 Tool 描述提供，Provider 参数与默认模型指引通过 `describe_provider` 按需返回，不交付独立 Skill。
 
 Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
@@ -28,7 +29,7 @@ MCP Host 拥有 AgentNave 的注册、作用域、启停、移除；能使用 Ho
 
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、`timeout_seconds` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
 
-MCP instructions 提供默认模型路由指引，但调用时仍须把模型与 effort 作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
+MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态、默认模型与 effort、支持的选项及覆盖规则，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。调用时仍须把模型与 effort 作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
 
 每个 Host 通过 `AGENTNAVE_EXCLUDED_PROVIDERS` 显式配置逗号分隔的 Provider 排除项，以排除与宿主同类的 CLI。按宿主产品对应的 CLI 配置，不按当前模型判断，也不猜测客户端身份。排除项在 server 启动时固定并验证，未知名称使启动失败；未配置或空值不排除任何 Provider。MCP 向 Manager 公布允许项与排除项；被排除的调用在创建 Invocation 前返回 Tool error，不能通过单次调用参数覆盖，也不自动回退。允许项不代表 CLI 已安装或认证。
 
@@ -36,7 +37,7 @@ Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_gi
 
 结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
-STDIO MCP 是唯一公开接口，只暴露 `start_agent`、`wait_agent` 和 `cancel_agent`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。三个 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent(session_id=...)` 完成。
+STDIO MCP 是唯一公开接口，暴露 `describe_provider`、`start_agent`、`wait_agent` 和 `cancel_agent`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。四个 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent(session_id=...)` 完成。
 
 `wait_agent` 超时但 Invocation 仍在运行时返回 `snapshot`，只包含 `phase`、`elapsed_ms` 和 `last_event_age_ms`。Antigravity、Claude、CodeBuddy、Codex 与 Grok Adapter 分别消费 Provider 官方的 `stream-json`、`stream-json`、`stream-json`、JSONL 与 `streaming-json` 事件流；Snapshot 只记录最近事件时间，不解析或声称 Provider 的语义进度。终态 `output` 只保留 Provider 最终回答，其中 Codex 取最后一个完成的 `agent_message`，Grok 取结束前最近一段连续 `text` 事件。
 

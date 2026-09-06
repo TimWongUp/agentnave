@@ -50,15 +50,37 @@ _PROVIDER_SELECTION = (
     "authenticated permitted CLI; if none is available, report the blocker instead of falling "
     "back to an excluded provider."
 )
-_MODEL_SELECTION = (
-    "Pass model and effort explicitly using these defaults: "
-    "claude: model=opus, effort=max; codebuddy: model=hy4-preview, effort=high; "
-    "codex: model=gpt-6-astra, effort=medium; grok: model=grok-4.6, effort=high; "
-    "antigravity: model=gemini-3.8-flash, effort=high. "
+_MODEL_DEFAULTS: dict[ProviderName, dict[str, str]] = {
+    "claude": {"model": "opus", "effort": "max"},
+    "codebuddy": {"model": "hy4-preview", "effort": "high"},
+    "codex": {"model": "gpt-6-astra", "effort": "medium"},
+    "grok": {"model": "grok-4.6", "effort": "high"},
+    "antigravity": {"model": "gemini-3.8-flash", "effort": "high"},
+}
+_PROVIDER_OPTIONS: dict[ProviderName, str] = {
+    "claude": "permission_mode, agent, fallback_model, max_budget_usd",
+    "codebuddy": "permission_mode, agent, fallback_model",
+    "codex": "skip_git_repo_check (boolean; explicitly true outside Git repositories)",
+    "grok": "permission_mode, agent, max_turns, sandbox",
+    "antigravity": (
+        "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean)"
+    ),
+}
+_MODEL_POLICY = (
+    "Pass the returned defaults explicitly in start_agent.provider_options. "
     "User-specified values override the corresponding defaults; keep defaults for unspecified "
     "fields. If the user requests native provider settings, omit those options. "
-    "These are Manager instructions: the server does not inject model or effort defaults."
+    "The server does not inject model or effort defaults. "
+    "Inherit native permissions and tools unless the user explicitly requests changes."
 )
+
+
+class ProviderDescriptionPayload(TypedDict):
+    provider: ProviderName
+    permitted: bool
+    defaults: dict[str, str]
+    supported_options: str
+    guidance: str
 
 
 class InvocationErrorPayload(TypedDict):
@@ -132,7 +154,8 @@ mcp = MCPServer(
         "has chosen to delegate to a local CLI. "
         + _PROVIDER_SELECTION
         + " "
-        + _MODEL_SELECTION
+        + "Call describe_provider for the selected CLI before its first use in this context; "
+        "reuse that description for subsequent calls. "
         + " Inherit native permissions and tools unless the user explicitly requests changes. "
         "Verify succeeded output before synthesis; resolve blocked results through user input, "
         "login or native permissions, without bypassing gates. Retry failed work only when the "
@@ -205,14 +228,8 @@ async def start_agent(
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                "Provider-native options; pass model and effort using the defaults below unless overridden. "
-                "supported keys: all providers accept model and effort; "
-                "claude also accepts permission_mode, agent, fallback_model, max_budget_usd; "
-                "codebuddy: permission_mode, agent, fallback_model; "
-                "codex: skip_git_repo_check (boolean, explicitly true outside Git repositories); "
-                "grok: permission_mode, agent, max_turns, sandbox; "
-                "antigravity: agent, mode, project, print_timeout, sandbox (boolean), "
-                "disable_slash_commands (boolean). " + _MODEL_SELECTION
+                "Explicit options for the selected CLI. Call describe_provider(provider) for "
+                "supported keys and model/effort defaults; user choices override those defaults."
             )
         ),
     ] = None,
@@ -227,7 +244,8 @@ async def start_agent(
     alternative integrations unless the user requests another route. CLI help questions or
     model names alone do not request execution.
 
-    Follow provider_options for model/effort defaults. Returns invocation_id; call wait_agent
+    First read describe_provider for this CLI if not already available in context.
+    Returns invocation_id; call wait_agent
     with that ID to get the result. If blocked, report it without silently switching providers.
     """
     if provider in _EXCLUDED_PROVIDERS:
@@ -332,6 +350,34 @@ async def cancel_agent(
         "invocation_id": invocation_id,
         "state": "finished",
         "result": _result_payload(result),
+    }
+
+
+@mcp.tool(
+    title="Read one CLI's options and defaults",
+    annotations=ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def describe_provider(
+    provider: Annotated[
+        ProviderName, Field(description="Provider to describe before using start_agent.")
+    ],
+) -> ProviderDescriptionPayload:
+    """Read one provider's permitted status, model/effort defaults, and supported options.
+
+    Call before first using that provider; reuse the result in this context. Does not launch
+    a CLI or check installation/login. If permitted is false, do not start this provider.
+    """
+    return {
+        "provider": provider,
+        "permitted": provider not in _EXCLUDED_PROVIDERS,
+        "defaults": _MODEL_DEFAULTS[provider],
+        "supported_options": "model, effort, " + _PROVIDER_OPTIONS[provider],
+        "guidance": _MODEL_POLICY,
     }
 
 

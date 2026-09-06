@@ -118,6 +118,7 @@ jobs:
                   "start_agent",
                   "wait_agent",
                   "cancel_agent",
+                  "describe_provider",
               ]
 
 

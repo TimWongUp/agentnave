@@ -7,7 +7,7 @@
 **A thin local bridge from Agent Managers to CLI subagents.**
 
 AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI, or
-Grok CLI through three lifecycle-focused MCP tools. Each provider keeps its native authentication,
+Grok CLI through three lifecycle tools and one read-only provider-description tool. Each provider keeps its native authentication,
 configuration, permissions, and session model; AgentNave supplies the adapter and process
 supervision around it.
 
@@ -74,7 +74,21 @@ their respective CLIs.
 
 ## The MCP surface
 
-AgentNave exposes exactly three tools:
+The interface below describes the current source. `describe_provider` is not yet published;
+the `v0.4.0` installation above exposes only `start_agent`, `wait_agent`, and `cancel_agent`,
+with model and option guidance included in its initial MCP metadata.
+
+AgentNave exposes four tools. The initial tool metadata contains a compact provider directory;
+model defaults and provider-specific options are returned only when requested.
+
+### `describe_provider`
+
+Call with the selected `provider` before its first use in the current context. Returns that
+provider's permitted status, model/effort defaults, supported options, and override guidance.
+Reuse the result for later calls with the same provider. This tool neither launches a CLI nor
+checks installation or authentication; it does not consume provider quota or change the tool list.
+
+For example: `describe_provider({"provider": "grok"})` → `start_agent(...)` → `wait_agent(...)`.
 
 ### `start_agent`
 
@@ -82,7 +96,7 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id`, `timeout_seconds`, and explicit
 `provider_options` are optional.
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. MCP instructions provide model and effort defaults for the Manager to pass explicitly through
+Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. `describe_provider` provides model and effort defaults for the Manager to pass explicitly through
 allowlisted options. User choices override that guidance; omitted options still inherit native
 settings. Exclusions are configured per host process, independently of the model it uses. For Codex calls outside a
 Git repository, the Manager must pass
@@ -99,7 +113,7 @@ explicitly ask the Agent to omit the corresponding options.
 
 When a new model becomes available, use its exact ID from that provider's model list; updating
 AgentNave is not required to pass a new model ID. If you maintain a source installation and want
-to change the bundled defaults, edit `_MODEL_SELECTION` in `src/agentnave/mcp_server.py`, then
+to change the bundled defaults, edit `_MODEL_DEFAULTS` in `src/agentnave/mcp_server.py`, then
 restart the MCP connection so the calling Agent receives the updated instructions. An unavailable
 model should be reported rather than silently replaced.
 
@@ -113,7 +127,7 @@ includes a lifecycle snapshot; a `finished` response contains the normalized pro
 Stops an invocation and returns its terminal result. Use it only when the Manager intends to end
 active provider work; `wait_agent` observes without cancelling.
 
-All three tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
+All four tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
 errors with retry guidance; provider launch and execution outcomes remain structured Invocation
 Results.
 
