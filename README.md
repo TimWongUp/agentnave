@@ -48,7 +48,7 @@ Install the runtime with `uv tool` so the MCP launcher does not depend on a sour
 
 ```bash
 uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@v0.4.0"
+  "git+https://github.com/TimWongUp/agentnave.git@v0.5.0"
 ```
 
 Keep the release tag in the install source rather than replacing it with the mutable `main` branch.
@@ -74,9 +74,8 @@ their respective CLIs.
 
 ## The MCP surface
 
-The interface below describes the current source. `describe_provider` is not yet published;
-the `v0.4.0` installation above exposes only `start_agent`, `wait_agent`, and `cancel_agent`,
-with model and option guidance included in its initial MCP metadata.
+The interface below is available in `v0.5.0`. After upgrading from `v0.4.0` or earlier,
+restart the MCP connection so the host discovers `describe_provider`.
 
 AgentNave exposes four tools. The initial tool metadata contains a compact provider directory;
 model defaults and provider-specific options are returned only when requested.
