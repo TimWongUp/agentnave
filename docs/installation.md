@@ -27,6 +27,35 @@ hosts may have a different environment from your terminal; set an explicit `PATH
 host configuration if necessary, retaining the directories needed by the CLIs and their runtimes.
 AgentNave does not install providers or change their login, permissions, or configuration.
 
+### Select installed CLIs before locating them
+
+When an Agent assists with installation, first ask the user which CLIs are already installed.
+Present this numbered list and accept multiple numbers, for example `1, 3`:
+
+1. Grok CLI (`grok`)
+2. Claude Code (`claude`)
+3. CodeBuddy Code (`codebuddy`)
+4. Codex CLI (`codex`)
+5. Antigravity CLI (`agy`)
+
+The user may also answer “none”. Wait for the answer before locating provider executables; do not
+probe every provider, scan the disk, or infer the selection from the host or model name.
+
+For each selected CLI only, run `command -v <command>` in the user's terminal shell, using the
+command in parentheses above. For example, selection `1, 3` means checking only `command -v grok`
+and `command -v codebuddy`. Confirm each result is an executable file, not a shell alias or function.
+If a selected command is missing, report that specific CLI and ask for its installation location
+or let the user install it before checking again. Do not search unselected providers.
+
+When registering the MCP server below, add the discovered executable directories to that server's
+host-specific `PATH`, preserving any existing entries and the paths needed by the selected CLIs'
+interpreters. Write resolved directory values, not literal `$PATH` or `~`, into JSON configuration.
+This selection only scopes installation-time checks; it does not change provider exclusions.
+If the user selected none, explain that provider calls require a separately installed CLI.
+
+This is an Agent-assisted installation procedure, not an interactive prompt or automatic discovery
+feature in the MCP server. AgentNave continues to inherit the configured `PATH` at runtime.
+
 ## 2. Configure provider exclusions per host
 
 Set `AGENTNAVE_EXCLUDED_PROVIDERS` in each host's MCP server environment to exclude the CLI matching
@@ -90,7 +119,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- "$AGENTNAVE_
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the three tools and the `codex` exclusion.
+Start a new session and confirm the four tools and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -144,8 +173,8 @@ requirements, not claims that every host/version combination has been live-teste
 ## Model selection and verification
 
 The Manager chooses a permitted provider and explicitly passes `model` and `effort` in
-`provider_options`. MCP instructions and the parameter description carry the default model/effort
-pairs and supported option names. User-specified values override the corresponding defaults.
+`provider_options`. `describe_provider(provider)` returns the selected provider's default model/effort
+pair and supported option names; read it before first use and reuse it in the current context. User-specified values override the corresponding defaults.
 When the user requests native settings, the Manager omits those options. The adapters do not inject
 defaults; omitted values retain provider-native behavior. Permissions and tools remain inherited
 unless explicitly changed by the user.
@@ -153,8 +182,9 @@ unless explicitly changed by the user.
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `start_agent`, `wait_agent`, and `cancel_agent` are visible.
-3. Inspect the tool metadata to confirm the permitted/excluded providers and model guidance.
+2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`, and `cancel_agent` are visible.
+3. Inspect the compact provider directory, then call `describe_provider` only for the selected CLI
+   to confirm its permitted status and model guidance. This read does not launch a CLI.
 4. A call selecting an excluded provider must return a Tool error without starting a CLI.
 5. With authorization for any provider quota consumption, run a small task through a permitted
    provider and verify its final result using `wait_agent`.

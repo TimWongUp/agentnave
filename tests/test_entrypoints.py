@@ -39,7 +39,7 @@ def _payload(value: object) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_mcp_lists_only_agent_lifecycle_tools_with_structured_contracts() -> None:
+async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts() -> None:
     async with Client(mcp) as client:
         result = await client.list_tools()
 
@@ -47,6 +47,7 @@ async def test_mcp_lists_only_agent_lifecycle_tools_with_structured_contracts() 
         "start_agent",
         "wait_agent",
         "cancel_agent",
+        "describe_provider",
     ]
     assert all(tool.output_schema is not None for tool in result.tools)
     assert result.tools[0].annotations is not None
@@ -56,6 +57,30 @@ async def test_mcp_lists_only_agent_lifecycle_tools_with_structured_contracts() 
     assert result.tools[1].annotations.read_only_hint is True
     assert result.tools[2].annotations is not None
     assert result.tools[2].annotations.destructive_hint is True
+
+
+@pytest.mark.asyncio
+async def test_provider_details_are_disclosed_only_on_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PATH", "")
+    async with Client(mcp) as client:
+        before = await client.list_tools()
+        catalog = str(before) + str(client.instructions)
+        assert "hy4-preview" not in catalog
+        assert "gpt-6-astra" not in catalog
+        assert "permission_mode" not in catalog
+        assert "describe_provider" in catalog
+        described = await client.call_tool("describe_provider", {"provider": "codebuddy"})
+        payload = _payload(described.structured_content)
+        assert described.is_error is False
+        assert payload["provider"] == "codebuddy"
+        assert payload["defaults"] == {"model": "hy4-preview", "effort": "high"}
+        assert "permission_mode" in str(payload["supported_options"])
+        assert "gpt-6-astra" not in str(payload)
+        assert await client.list_tools() == before
+        invalid = await client.call_tool("describe_provider", {"provider": "unknown"})
+        assert invalid.is_error is True
 
 
 @pytest.mark.asyncio
@@ -284,6 +309,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
         "start_agent",
         "wait_agent",
         "cancel_agent",
+        "describe_provider",
     ]
 
 
@@ -309,11 +335,15 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         tools = (await client.list_tools()).tools
         description = str(tools[0].input_schema)
         assert client.instructions is not None
-        assert "model=opus, effort=max" in client.instructions
+        assert "describe_provider" in client.instructions
         assert "Excluded providers:" in client.instructions
         assert "Excluded providers:" in description
-        assert "model=gpt-6-astra, effort=medium" in description
-        assert "model=hy4-preview, effort=high" in description
+        described = await client.call_tool("describe_provider", {"provider": "codex"})
+        assert _payload(described.structured_content)["permitted"] is False
+        assert _payload(described.structured_content)["defaults"] == {
+            "model": "gpt-6-astra",
+            "effort": "medium",
+        }
         rejected = await client.call_tool(
             "start_agent", {"provider": "codex", "prompt": "finish", "cwd": str(tmp_path)}
         )
