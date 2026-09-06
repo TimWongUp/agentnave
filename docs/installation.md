@@ -119,7 +119,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- "$AGENTNAVE_
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the four tools and the `codex` exclusion.
+Start a new session and confirm the three lifecycle tools and the `codex` exclusion for `v0.4.0`.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -172,6 +172,12 @@ requirements, not claims that every host/version combination has been live-teste
 
 ## Model selection and verification
 
+The published `v0.4.0` installed by this guide exposes `start_agent`, `wait_agent`, and
+`cancel_agent`. Read its default model/effort guidance and supported options from the initial
+MCP instructions and parameter descriptions. It does not provide `describe_provider`.
+
+The following on-demand flow describes the current source and is not yet published:
+
 The Manager chooses a permitted provider and explicitly passes `model` and `effort` in
 `provider_options`. `describe_provider(provider)` returns the selected provider's default model/effort
 pair and supported option names; read it before first use and reuse it in the current context. User-specified values override the corresponding defaults.
@@ -182,9 +188,10 @@ unless explicitly changed by the user.
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`, and `cancel_agent` are visible.
-3. Inspect the compact provider directory, then call `describe_provider` only for the selected CLI
-   to confirm its permitted status and model guidance. This read does not launch a CLI.
+2. Restart the server/session and confirm `start_agent`, `wait_agent`, and `cancel_agent` are visible.
+3. For published `v0.4.0`, inspect the initial tool metadata for exclusions and model guidance.
+   For an explicitly configured development checkout containing the new tool, additionally confirm
+   `describe_provider` is visible and call it only for the selected CLI. This read does not launch a CLI.
 4. A call selecting an excluded provider must return a Tool error without starting a CLI.
 5. With authorization for any provider quota consumption, run a small task through a permitted
    provider and verify its final result using `wait_agent`.

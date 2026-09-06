@@ -74,6 +74,10 @@ their respective CLIs.
 
 ## The MCP surface
 
+The interface below describes the current source. `describe_provider` is not yet published;
+the `v0.4.0` installation above exposes only `start_agent`, `wait_agent`, and `cancel_agent`,
+with model and option guidance included in its initial MCP metadata.
+
 AgentNave exposes four tools. The initial tool metadata contains a compact provider directory;
 model defaults and provider-specific options are returned only when requested.
 
