@@ -8,7 +8,7 @@ Manager 拥有目标解释、任务拆解、角色和模型选择、并行策略
 
 AgentNave 只拥有：
 
-- 按需返回所选 Provider 的参数和默认模型指引；
+- 按需返回所选 Provider 的允许状态和支持参数；
 - 根据冻结请求启动一个 Provider CLI；
 - 传递 prompt、cwd、可选 `session_id` 和显式 Provider Options；
 - 归一化 Provider 的终端结果；
@@ -19,7 +19,7 @@ AgentNave 不拥有 DAG、调度器、角色系统、自动重规划、工作树
 
 ## 安装与激活边界
 
-完整安装由 Python Tool Manager 安装隔离运行时，并在 MCP Host 注册稳定入口。使用时机、生命周期和结果处理通过 MCP instructions 与 Tool 描述提供，Provider 参数与默认模型指引通过 `describe_provider` 按需返回，不交付独立 Skill。
+运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，每个 CLI 的模型与 effort 默认值放在独立参考文件中，选中后才读取。MCP instructions 与 Tool 描述只保留轻量调用合同，`describe_provider` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。
 
 Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
@@ -29,7 +29,7 @@ MCP Host 拥有 AgentNave 的注册、作用域、启停、移除；能使用 Ho
 
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、`timeout_seconds` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
 
-MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态、默认模型与 effort、支持的选项及覆盖规则，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。调用时仍须把模型与 effort 作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
+MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态与支持的选项，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。`describe_provider` 返回 `provider`、`permitted` 与 `supported_options`，不承载模型推荐。模型与 effort 由 Skill 的所选 CLI 参考文件和用户要求决定，使用推荐值时作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
 
 每个 Host 通过 `AGENTNAVE_EXCLUDED_PROVIDERS` 显式配置逗号分隔的 Provider 排除项，以排除与宿主同类的 CLI。按宿主产品对应的 CLI 配置，不按当前模型判断，也不猜测客户端身份。排除项在 server 启动时固定并验证，未知名称使启动失败；未配置或空值不排除任何 Provider。MCP 向 Manager 公布允许项与排除项；被排除的调用在创建 Invocation 前返回 Tool error，不能通过单次调用参数覆盖，也不自动回退。允许项不代表 CLI 已安装或认证。
 

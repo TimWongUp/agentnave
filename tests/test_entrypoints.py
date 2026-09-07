@@ -55,6 +55,8 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert result.tools[0].annotations.destructive_hint is True
     assert result.tools[1].annotations is not None
     assert result.tools[1].annotations.read_only_hint is True
+    wait_properties = _payload(result.tools[1].input_schema["properties"])
+    assert _payload(wait_properties["wait_timeout_seconds"])["default"] == 120
     assert result.tools[2].annotations is not None
     assert result.tools[2].annotations.destructive_hint is True
 
@@ -75,7 +77,7 @@ async def test_provider_details_are_disclosed_only_on_request(
         payload = _payload(described.structured_content)
         assert described.is_error is False
         assert payload["provider"] == "codebuddy"
-        assert payload["defaults"] == {"model": "hy4-preview", "effort": "high"}
+        assert set(payload) == {"provider", "permitted", "supported_options"}
         assert "permission_mode" in str(payload["supported_options"])
         assert "gpt-6-astra" not in str(payload)
         assert await client.list_tools() == before
@@ -340,10 +342,6 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         assert "Excluded providers:" in description
         described = await client.call_tool("describe_provider", {"provider": "codex"})
         assert _payload(described.structured_content)["permitted"] is False
-        assert _payload(described.structured_content)["defaults"] == {
-            "model": "gpt-6-astra",
-            "effort": "medium",
-        }
         rejected = await client.call_tool(
             "start_agent", {"provider": "codex", "prompt": "finish", "cwd": str(tmp_path)}
         )
