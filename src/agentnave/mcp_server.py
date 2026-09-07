@@ -46,17 +46,8 @@ _PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(_EXCLUDED_PROVIDERS)) or "none")
-    + ". Exclusions are enforced before an invocation is created. Choose an installed, "
-    "authenticated permitted CLI; if none is available, report the blocker instead of falling "
-    "back to an excluded provider."
+    + ". Excluded providers are rejected before launch."
 )
-_MODEL_DEFAULTS: dict[ProviderName, dict[str, str]] = {
-    "claude": {"model": "opus", "effort": "max"},
-    "codebuddy": {"model": "hy4-preview", "effort": "high"},
-    "codex": {"model": "gpt-6-astra", "effort": "medium"},
-    "grok": {"model": "grok-4.6", "effort": "high"},
-    "antigravity": {"model": "gemini-3.8-flash", "effort": "high"},
-}
 _PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "claude": "permission_mode, agent, fallback_model, max_budget_usd",
     "codebuddy": "permission_mode, agent, fallback_model",
@@ -66,21 +57,12 @@ _PROVIDER_OPTIONS: dict[ProviderName, str] = {
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean)"
     ),
 }
-_MODEL_POLICY = (
-    "Pass the returned defaults explicitly in start_agent.provider_options. "
-    "User-specified values override the corresponding defaults; keep defaults for unspecified "
-    "fields. If the user requests native provider settings, omit those options. "
-    "The server does not inject model or effort defaults. "
-    "Inherit native permissions and tools unless the user explicitly requests changes."
-)
 
 
 class ProviderDescriptionPayload(TypedDict):
     provider: ProviderName
     permitted: bool
-    defaults: dict[str, str]
     supported_options: str
-    guidance: str
 
 
 class InvocationErrorPayload(TypedDict):
@@ -141,26 +123,11 @@ mcp = MCPServer(
     "AgentNave",
     version=__version__,
     instructions=(
-        "AgentNave is an agent-only MCP server that launches local Antigravity CLI, Claude Code, "
-        "CodeBuddy Code, Codex CLI, or Grok CLI subagents. The calling Manager owns planning, "
-        "role/model selection, "
-        "parallelism, retries, review, synthesis, permissions, and worktrees. Call start_agent, "
-        "then wait_agent; use cancel_agent only to stop an invocation. An active invocation does "
-        "not accept follow-up messages. To continue or redirect a provider conversation, wait for "
-        "it to finish, then pass its returned session_id and a new prompt to a new start_agent "
-        "call. Invocation handles exist only for this MCP server lifetime. AgentNave is not a "
-        "sandbox; provider-native permissions remain the security boundary."
-        " Use AgentNave for an explicitly requested CLI subagent or a bounded task the Manager "
-        "has chosen to delegate to a local CLI. "
-        + _PROVIDER_SELECTION
-        + " "
-        + "Call describe_provider for the selected CLI before its first use in this context; "
-        "reuse that description for subsequent calls. "
-        + " Inherit native permissions and tools unless the user explicitly requests changes. "
-        "Verify succeeded output before synthesis; resolve blocked results through user input, "
-        "login or native permissions, without bypassing gates. Retry failed work only when the "
-        "task remains valid and there is a concrete reason. Cancelled and timed_out invocations "
-        "are terminal. Running snapshots describe lifecycle, not semantic task progress."
+        "AgentNave launches local CLI subagents. Use the agentnave-manager Skill for CLI usage "
+        "and model selection. describe_provider reports permitted status and supported options. "
+        "Call start_agent, then wait_agent with its invocation_id; "
+        "cancel_agent stops work. Handles last only for this server process. "
+        "Provider-native permissions remain the security boundary. " + _PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
 )
@@ -229,24 +196,17 @@ async def start_agent(
         Field(
             description=(
                 "Explicit options for the selected CLI. Call describe_provider(provider) for "
-                "supported keys and model/effort defaults; user choices override those defaults."
+                "supported keys. Omitted options inherit native CLI settings."
             )
         ),
     ] = None,
     *,
     ctx: Context[InvocationManager],
 ) -> StartAgentPayload:
-    """Run a task via Grok CLI (grok), Claude Code (claude), CodeBuddy Code (codebuddy),
-    Codex CLI (codex), or Antigravity CLI (antigravity).
+    """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
-    Use when the user requests one of these CLIs or the caller chooses local CLI delegation;
-    mentioning MCP or "subagent" is unnecessary. Prefer this tool over shell execution or
-    alternative integrations unless the user requests another route. CLI help questions or
-    model names alone do not request execution.
-
-    First read describe_provider for this CLI if not already available in context.
-    Returns invocation_id; call wait_agent
-    with that ID to get the result. If blocked, report it without silently switching providers.
+    Active invocations do not accept messages. To continue a finished conversation, pass
+    its returned native session_id with a new prompt to a new start_agent call.
     """
     if provider in _EXCLUDED_PROVIDERS:
         raise ToolError(f"Provider '{provider}' is excluded by this host. " + _PROVIDER_SELECTION)
@@ -292,7 +252,7 @@ async def wait_agent(
             le=300,
             description="Seconds to wait for this response; expiry leaves the invocation running.",
         ),
-    ] = 30,
+    ] = 120,
     *,
     ctx: Context[InvocationManager],
 ) -> WaitAgentPayload:
@@ -300,7 +260,8 @@ async def wait_agent(
 
     state=running: call again with the same ID; do not launch a duplicate.
     state=finished: inspect result.status, output, and error; completion does not imply success.
-    This wait does not stop the task.
+    This wait returns early on completion; expiry does not stop the task or mean timed_out.
+    Snapshots describe lifecycle and event timing, not task progress or evidence of a stall.
     """
     manager = _manager(ctx)
     try:
@@ -354,7 +315,7 @@ async def cancel_agent(
 
 
 @mcp.tool(
-    title="Read one CLI's options and defaults",
+    title="Read one CLI's permitted status and options",
     annotations=ToolAnnotations(
         read_only_hint=True,
         destructive_hint=False,
@@ -364,20 +325,17 @@ async def cancel_agent(
 )
 async def describe_provider(
     provider: Annotated[
-        ProviderName, Field(description="Provider to describe before using start_agent.")
+        ProviderName, Field(description="Provider whose permitted status and options to return.")
     ],
 ) -> ProviderDescriptionPayload:
-    """Read one provider's permitted status, model/effort defaults, and supported options.
+    """Read one provider's permitted status and supported options.
 
-    Call before first using that provider; reuse the result in this context. Does not launch
-    a CLI or check installation/login. If permitted is false, do not start this provider.
+    Does not launch a CLI or check installation/login. Excluded providers cannot be started.
     """
     return {
         "provider": provider,
         "permitted": provider not in _EXCLUDED_PROVIDERS,
-        "defaults": _MODEL_DEFAULTS[provider],
         "supported_options": "model, effort, " + _PROVIDER_OPTIONS[provider],
-        "guidance": _MODEL_POLICY,
     }
 
 

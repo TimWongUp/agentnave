@@ -41,49 +41,49 @@ Job Object ownership first.
 
 ## Install
 
-Install the `agentnave-mcp` runtime and register it in your MCP host. Model-selection guidance,
-lifecycle instructions, and tool schemas are delivered through MCP; no Skill is required.
+Install the MCP runtime and companion [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)
+as a pair. The runtime exposes the tools; the Skill teaches the calling Agent how to use other
+CLIs. Planning, scheduling, review, retry decisions, and synthesis remain with the calling Agent.
 
-Install the runtime with `uv tool` so the MCP launcher does not depend on a source checkout:
+Follow the [installation guide](docs/installation.md) to:
 
-```bash
-uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@v0.5.0"
-```
+1. Check the existing runtime's source, version and launcher; reuse it when suitable, or install
+   the missing runtime with `uv tool`.
+2. Inspect the target host's effective MCP registration; reuse matching settings and add only
+   a missing entry, with the host's provider exclusions.
+3. Reuse the matching Skill or install its complete directory, including `references/`, from
+   the same release. Existing shared sources need only a discovery entry for the new host.
+4. Verify both MCP tools and Skill discovery; restart connections or sessions after changes.
 
-Keep the release tag in the install source rather than replacing it with the mutable `main` branch.
-`uv` owns the isolated runtime, launcher, upgrades, and removal; it does not modify host Skills,
-global instructions, permissions, or provider configuration.
+Hosts under the same OS user and `uv` tool directories share installation files, but each MCP
+connection runs its own STDIO service process. Adding a host does not require reinstalling the
+runtime or authorize upgrading it for other hosts. The guide covers differences and shared updates.
 
-Then register the runtime with a host-specific `AGENTNAVE_EXCLUDED_PROVIDERS` environment value:
-Codex hosts exclude `codex`, Claude Code hosts exclude `claude`, and other matching hosts exclude
-their corresponding CLI provider. The server rejects excluded providers before creating an
-invocation. The detailed guide covers:
+The guide covers host registration, provider paths, Skill installation, paired upgrades, rollback,
+and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
+runtime; it does not install the Skill or modify provider permissions and configuration.
 
-- Codex;
-- Claude Code;
-- Gemini CLI;
-- OpenCode; and
-- other agents that support local STDIO MCP servers.
-
-[Read the installation guide](docs/installation.md) for host-specific MCP registration, provider
-exclusions, verification, upgrades, and removal.
+**The companion Skill is not yet published.** `v0.5.0` supplies only the runtime. Until a paired
+release is available, the guide provides an explicit development-Skill option; installing v0.5.0
+alone does not install the new Skill. Hosts without Skill support can still use MCP alone.
 
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
 
 ## The MCP surface
 
-The interface below is available in `v0.5.0`. After upgrading from `v0.4.0` or earlier,
-restart the MCP connection so the host discovers `describe_provider`.
+This section describes the development version. Compared with `v0.5.0`, model-selection
+guidance moves to the Skill and `describe_provider` no longer returns `defaults` or `guidance`.
+Restart the MCP connection after updating the runtime to refresh its schemas.
 
 AgentNave exposes four tools. The initial tool metadata contains a compact provider directory;
-model defaults and provider-specific options are returned only when requested.
+provider-specific options are returned only when requested. Model defaults live in the Skill's
+per-CLI reference files, loaded only for the selected CLI.
 
 ### `describe_provider`
 
 Call with the selected `provider` before its first use in the current context. Returns that
-provider's permitted status, model/effort defaults, supported options, and override guidance.
+provider's permitted status and supported options.
 Reuse the result for later calls with the same provider. This tool neither launches a CLI nor
 checks installation or authentication; it does not consume provider quota or change the tool list.
 
@@ -95,7 +95,7 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id`, `timeout_seconds`, and explicit
 `provider_options` are optional.
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. `describe_provider` provides model and effort defaults for the Manager to pass explicitly through
+Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. The Skill provides model and effort defaults for the Manager to pass explicitly through
 allowlisted options. User choices override that guidance; omitted options still inherit native
 settings. Exclusions are configured per host process, independently of the model it uses. For Codex calls outside a
 Git repository, the Manager must pass
@@ -106,20 +106,24 @@ Git repository, the Manager must pass
 To override the defaults for one task, tell your calling Agent the provider, model ID, and
 reasoning effort. For example: “Use Codex CLI with model `gpt-6-astra` and effort `medium`.”
 The Agent passes `{"model": "gpt-6-astra", "effort": "medium"}` in `provider_options`.
-Only specified fields override the MCP guidance. To keep your choices across tasks, put the
+Only specified fields override the Skill guidance. To keep your choices across tasks, put the
 same preference in your calling Agent's personal instructions. To use the CLI's native settings,
 explicitly ask the Agent to omit the corresponding options.
 
 When a new model becomes available, use its exact ID from that provider's model list; updating
 AgentNave is not required to pass a new model ID. If you maintain a source installation and want
-to change the bundled defaults, edit `_MODEL_DEFAULTS` in `src/agentnave/mcp_server.py`, then
-restart the MCP connection so the calling Agent receives the updated instructions. An unavailable
+to change the bundled defaults, edit the selected CLI file in
+`skills/agentnave-manager/references/`, then reload the Skill in a fresh context. An unavailable
 model should be reported rather than silently replaced.
 
 ### `wait_agent`
 
 Waits for at most `wait_timeout_seconds`. A `running` response keeps the invocation active and
 includes a lifecycle snapshot; a `finished` response contains the normalized provider result.
+The development version defaults to 120 seconds per wait (v0.5.0 defaults to 30); both return early
+when the task finishes. Wait expiry is separate from `start_agent.timeout_seconds`, the total
+runtime budget. Continue waiting on the same ID; elapsed time or event silence alone does not
+justify cancellation or a duplicate invocation.
 
 ### `cancel_agent`
 

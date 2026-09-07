@@ -1,15 +1,61 @@
 # Installation
 
-Install the `agentnave-mcp` runtime once, then register it with each host that should use it.
-AgentNave delivers its usage, model-selection, and lifecycle instructions through MCP. It does not
-require or distribute a Skill.
+The standard installation pairs the MCP runtime with the `agentnave-manager` Skill from the
+same release. Check existing installations first, then complete only the missing or explicitly
+requested updates in the five steps below. Provider CLIs are installed
+and authenticated separately.
 
-## 1. Install the runtime
+For the same OS user and `uv` tool directories, hosts share one runtime installation and launcher.
+Each host registers that launcher with its own environment and starts an independent STDIO server
+process; invocation handles are not shared. Adding another host normally requires only its MCP
+registration and Skill discovery entry, not another runtime installation.
 
-AgentNave supports macOS and Linux. Install `uv` and Git, then choose a published release tag:
+The MCP server supplies parameter and lifecycle contracts. The Skill teaches CLI selection,
+model options, waiting, cancellation, and session continuation. Neither installs providers or
+sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
+use MCP alone, but must supply their own calling guidance.
+
+**Release availability:** `v0.5.0` contains only the runtime; this companion Skill is currently
+in the development checkout. A same-release paired installation requires a published tag that
+contains `skills/agentnave-manager/SKILL.md`. Until that release exists, use the explicitly
+labelled development option in step 4; do not present v0.5.0 as a complete paired package.
+
+## 1. Check and reuse the runtime
+
+AgentNave supports macOS and Linux. Install `uv` and Git. Set `AGENTNAVE_RELEASE` to the chosen
+published tag; use the same value for the Skill in step 4. For a runtime-only installation or
+the development option below, the existing runtime tag is `v0.5.0`.
+
+Inspect the current installation before running an install command:
 
 ```bash
-AGENTNAVE_RELEASE=v0.5.0
+uv tool list
+uv tool dir
+AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
+```
+
+Check the installed AgentNave version and source using the `uv` installation receipt or package
+source metadata, and verify that the launcher is executable and belongs to that installation.
+A matching version string alone does not establish the source release. Also inspect the target
+host's existing MCP registration as described in step 3; it may use a custom launcher instead.
+
+- Matching release/source and working launcher: reuse `AGENTNAVE_MCP` and skip installation.
+- Neither a runtime nor an existing custom registration: install using the command below.
+- Different version, broken launcher, custom installation, or uncertain source: report the
+  difference before replacement. Adding a host does not authorize upgrading, repairing, or
+  migrating the shared runtime. Reuse the confirmed existing release when it meets the requested
+  requirements; otherwise follow an explicitly authorized upgrade or repair.
+
+An upgrade changes the files used by every host pointing at the shared launcher. Identify known
+consumers from the relevant host configurations, disclose any unknown coverage, and explain that
+they must restart their MCP connections. Reuse current-session authorization when it already
+covers that shared change; otherwise obtain it before replacing the runtime. Do not use `--force`
+as a response to finding an existing installation.
+
+For a missing runtime only:
+
+```bash
+: "${AGENTNAVE_RELEASE:?Set the chosen published release tag first}"
 uv tool install --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 
@@ -90,8 +136,23 @@ executing commands through its other tools.
 ## 3. Register the MCP server
 
 Any host that can launch a local STDIO MCP process can register the same absolute executable with
-its own environment. No host-specific Skill, plugin, or global instruction file is needed. A host
-that only accepts remote HTTP MCP endpoints cannot directly use this local server.
+its own environment. Registration installs no Skill; continue to step 4 to install the shared
+companion Skill. No global instruction edits are needed. A host that only accepts remote HTTP
+MCP endpoints cannot directly use this local server.
+
+Before any `add` command below, inspect the target host's MCP list/get interface and its effective
+configuration in the intended project/session. Check user and project scopes, including entries
+under another name that resolve to the same launcher; do not create a duplicate alias.
+
+- If the effective entry already has the intended launcher, arguments, enabled state, provider
+  exclusions and required `PATH`, leave it unchanged and proceed to Skill discovery.
+- If it is absent, add it in the intended scope using the commands below.
+- If it differs, preserve unrelated environment values and settings; update only the necessary
+  fields through the host's supported interface. Respect existing permission/exclusion choices
+  unless their change is authorized. A project entry can shadow a user entry, so editing only
+  the user entry may not fix the effective configuration.
+
+The examples below are for missing registrations, not commands to replay on every installation.
 
 For hosts documenting the `mcpServers` JSON format, this example excludes the `codex` provider:
 
@@ -170,11 +231,96 @@ arguments, and the appropriate exclusion environment value. For CodeBuddy Code, 
 Antigravity hosts, use the corresponding value from the table above. These are configuration
 requirements, not claims that every host/version combination has been live-tested.
 
-## Model selection and verification
+## 4. Install the matching Skill
+
+Use the host's Skill installer or existing deployment manager to install
+`skills/agentnave-manager/` from the **same `AGENTNAVE_RELEASE` tag** as the runtime.
+Install the whole directory, including `SKILL.md` and all five files in `references/`.
+The Skill content is shared across hosts; the destination and discovery scope belong to the host.
+
+First inspect the host's effective Skill discovery locations and any existing deployment-manager
+entry. Check `agentnave-manager` in both user and project scopes, its source/release, and all of
+`references/`; an existing name or `SKILL.md` alone is not sufficient.
+
+- Matching source/release and complete content: reuse it and skip copying or re-registering.
+- A managed shared source already exists but this host lacks an entry: add only this host's
+  discovery entry through that manager, preserving the source and other hosts' entries.
+- No installation exists: install from the selected source below.
+- Different, incomplete, or uncertain content: compare against the selected release tree and
+  preserve user additions. Update only when required and authorized; do not create a second
+  copy that shadows it. Changes to a shared source also affect every host linked to that source.
+
+If installing manually, set `AGENTNAVE_SKILLS_DIR` to the absolute Skill directory supported by
+that host and desired scope. Obtain a temporary checkout of the selected release:
+
+```bash
+: "${AGENTNAVE_RELEASE:?Set the same tag used for the runtime}"
+: "${AGENTNAVE_SKILLS_DIR:?Set the absolute Skill directory for the host}"
+AGENTNAVE_SOURCE="$(mktemp -d)"
+git clone --depth 1 --branch "$AGENTNAVE_RELEASE" \
+  https://github.com/TimWongUp/agentnave.git "$AGENTNAVE_SOURCE"
+```
+
+Then copy the Skill if missing, or leave identical content unchanged. Differing content is
+reported for the update procedure instead of being overwritten:
+
+```bash
+(
+  set -eu
+  case "$AGENTNAVE_SKILLS_DIR" in
+    /*) ;;
+    *) echo "Use an absolute Skill directory" >&2; exit 1 ;;
+  esac
+  test -f "$AGENTNAVE_SOURCE/skills/agentnave-manager/SKILL.md"
+  test -d "$AGENTNAVE_SOURCE/skills/agentnave-manager/references"
+  if test -e "$AGENTNAVE_SKILLS_DIR/agentnave-manager" ||
+     test -L "$AGENTNAVE_SKILLS_DIR/agentnave-manager"; then
+    if test -d "$AGENTNAVE_SKILLS_DIR/agentnave-manager" &&
+       diff -qr "$AGENTNAVE_SOURCE/skills/agentnave-manager" \
+         "$AGENTNAVE_SKILLS_DIR/agentnave-manager" >/dev/null; then
+      echo "Reuse existing agentnave-manager Skill"
+      exit 0
+    fi
+    echo "Existing Skill differs or is broken; inspect before updating" >&2
+    exit 1
+  fi
+  mkdir -p "$AGENTNAVE_SKILLS_DIR"
+  cp -R "$AGENTNAVE_SOURCE/skills/agentnave-manager" "$AGENTNAVE_SKILLS_DIR/"
+)
+```
+
+A missing source Skill means that release does not provide the paired installation. A differing target
+requires inspection through the update procedure below, preserving user additions. After a successful copy or comparison,
+the temporary checkout is no longer needed; remove only that temporary directory. If a deployment
+manager owns the Skill, register the source and scope there instead of creating a competing copy.
+
+### Development option before the paired release
+
+Use a local checkout containing this Skill as `AGENTNAVE_SOURCE`, then run the copy block above,
+or register that directory with the existing deployment manager. A managed symlink may point at
+`skills/agentnave-manager/` in the development checkout, but must not point at a temporary directory.
+The target must remain present when switching branches. Record this as a development Skill,
+not as part of v0.5.0. Keep the installed runtime's stable launcher registration.
+
+The Skill explicitly requests 120-second waits, so it also works with v0.5.0's 30-second default.
+The development runtime changes the default itself to 120 seconds. Host timeout and responsiveness
+limits may require shorter waits. The invocation keeps running when a wait expires; completion
+returns early. Only the total runtime limit, cancellation, or a terminal provider outcome ends it.
+
+The Skill loads model/effort defaults from one reference file per CLI and reads permitted status
+and supported options from the connected MCP server. Install the complete Skill directory,
+including `references/`. The development runtime removes `defaults` and `guidance` from
+`describe_provider`; update callers that consume those fields. With v0.5.0, the Skill's model
+policy takes precedence over the old server guidance. `uv tool install` manages only the runtime; install, update, or remove
+the Skill separately. Verify that your host discovers the Skill and that its waiting guidance
+matches this section. Runtime changes require an updated runtime and a restarted MCP connection.
+
+## 5. Verify MCP and Skill discovery
 
 The Manager chooses a permitted provider and explicitly passes `model` and `effort` in
-`provider_options`. `describe_provider(provider)` returns the selected provider's default model/effort
-pair and supported option names; read it before first use and reuse it in the current context. User-specified values override the corresponding defaults.
+`provider_options`. Read the selected CLI reference from the Skill for model/effort defaults;
+call `describe_provider(provider)` for permitted status and supported option names, reusing its
+result in the current context. User-specified values override the corresponding defaults.
 When the user requests native settings, the Manager omits those options. The adapters do not inject
 defaults; omitted values retain provider-native behavior. Permissions and tools remain inherited
 unless explicitly changed by the user.
@@ -183,9 +329,11 @@ After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
 2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`, and
-   `cancel_agent` are visible.
-3. Call `describe_provider` only for the selected CLI to confirm its permitted status and model
-   guidance. This read does not launch a CLI.
+   `cancel_agent` are visible. Confirm the host also discovers `agentnave-manager` in the intended
+   scope and can read its five referenced CLI files. Check for older user/project copies that
+   could shadow it. For hosts without Skill support, record the installation as MCP-only.
+3. Call `describe_provider` only for the selected CLI to confirm its permitted status and supported
+   options. This read does not launch a CLI.
 4. A call selecting an excluded provider must return a Tool error without starting a CLI.
 5. With authorization for any provider quota consumption, run a small task through a permitted
    provider and verify its final result using `wait_agent`.
@@ -197,15 +345,28 @@ with every host or availability of each account's models.
 
 ## Upgrade, repair, and rollback
 
-Choose the desired published tag and reinstall through `uv`:
+This section replaces an existing installation; it is not part of merely registering another
+host. Confirm the shared impact and applicable authorization from step 1 before proceeding.
+
+Choose a published tag containing both components. Set `AGENTNAVE_RELEASE` to that tag and
+reinstall the runtime through `uv`:
 
 ```bash
-AGENTNAVE_RELEASE=v0.5.0
+: "${AGENTNAVE_RELEASE:?Set the desired published release tag}"
 uv tool install --force --python 3.12 \
   "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 ```
 
-The same command can repair a damaged runtime or restore a previous version. Restoring `v0.3.0`
+Then update the Skill from that same tag through its installer or deployment manager. For a manual
+copy, stage the new Skill outside the discovered directory, preserve user-authored additions, and
+replace only the existing `agentnave-manager` tree, including `references/`; do not merge new files
+over old files and leave stale references behind. A managed symlink is updated through its source
+registration, without deleting the source directory. Restart the MCP connection and start a fresh
+Skill context, then repeat step 5. Updating the runtime alone does not update the Skill.
+
+Use this paired procedure for repair and rollback too. If rolling back to a runtime-only tag such
+as v0.5.0, explicitly choose MCP-only or retain the labelled development Skill; it is not a matched
+release pair. Restoring `v0.3.0`
 loses exclusion enforcement and MCP model guidance, so it is not an equivalent policy rollback.
 Host registrations retain the stable launcher path. Recheck configuration and restart after changes.
 There is no cross-host transaction or automatic host configuration update.
@@ -219,16 +380,16 @@ a same-name project registration may override the user-level entry. After restar
 exclusions in tool metadata and test rejection as described above. These restrictions apply to
 that configured server process, not to a replacement registration with a different environment.
 
-When migrating from the former two-part installation, first install and verify the MCP-only
-runtime. Then remove the old `agentnave-manager` Skill from the host's discovered Skill directories
-(including user or project copies). Preserve any user-authored additions before removal. A managed
-symlink should be unlinked without deleting its target. Remove its deployment-manifest entry too,
-if a separate Skill manager would otherwise reinstall it. Keeping the old Skill can supply stale
-model-selection instructions.
+When migrating from a legacy Skill installation, replace its `agentnave-manager` with the
+companion from the selected release, or use the labelled development option above. Check user and project copies, preserving user-authored additions. Update
+the deployment manager's source so it does not reinstall legacy model-selection instructions.
+A managed symlink should be unlinked without deleting its target.
 
 ## Uninstall
 
-Remove only AgentNave's registrations, then remove the shared runtime after all hosts stop using it:
+For each target host, remove AgentNave's MCP registration and uninstall `agentnave-manager` through
+its Skill installer or deployment manager. Remove the shared runtime only after all hosts stop
+using it. These are separate operations; the MCP removal commands do not uninstall the Skill:
 
 ```bash
 # Run the relevant commands for your configured hosts.
@@ -239,6 +400,7 @@ uv tool uninstall agentnave
 ```
 
 For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.
-Remove any legacy Skill as described above. AgentNave creates no durable user data and needs no
+Remove the companion Skill through its deployment manager, or remove only its installed directory
+or symlink, preserving user-authored additions. AgentNave creates no durable user data and needs no
 purge operation. Provider CLIs, authentication, configuration, sessions, and user projects remain
 owned by the user and providers.
