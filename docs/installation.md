@@ -15,16 +15,14 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Release availability:** `v0.5.0` contains only the runtime; this companion Skill is currently
-in the development checkout. A same-release paired installation requires a published tag that
-contains `skills/agentnave-manager/SKILL.md`. Until that release exists, use the explicitly
-labelled development option in step 4; do not present v0.5.0 as a complete paired package.
+**Paired release:** `v0.6.0` contains the runtime source, `agentnave-manager` Skill and all five
+CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
+the runtime; it is not a complete paired installation.
 
 ## 1. Check and reuse the runtime
 
 AgentNave supports macOS and Linux. Install `uv` and Git. Set `AGENTNAVE_RELEASE` to the chosen
-published tag; use the same value for the Skill in step 4. For a runtime-only installation or
-the development option below, the existing runtime tag is `v0.5.0`.
+published tag; the current paired release is `v0.6.0`. Use the same value for the Skill in step 4.
 
 Inspect the current installation before running an install command:
 
@@ -359,7 +357,7 @@ requires inspection through the update procedure below, preserving user addition
 the temporary checkout is no longer needed; remove only that temporary directory. If a deployment
 manager owns the Skill, register the source and scope there instead of creating a competing copy.
 
-### Development option before the paired release
+### Development checkout option
 
 Use a local checkout containing this Skill as `AGENTNAVE_SOURCE`, then run the copy block above,
 or register that directory with the existing deployment manager. A managed symlink may point at
@@ -367,22 +365,24 @@ or register that directory with the existing deployment manager. A managed symli
 The target must remain present when switching branches. Record this as a development Skill,
 not as part of v0.5.0. Keep the installed runtime's stable launcher registration.
 
-The Skill explicitly requests 120-second waits, so it also works with v0.5.0's 30-second default.
-The development runtime changes the wait default itself to 120 seconds and makes the total
-`start_agent.timeout_seconds` optional (omitted/null means no AgentNave deadline), replacing
-v0.5.0's default 1,800-second cutoff. Explicit total limits still terminate the invocation;
-provider-native limits are independent. Check the connected schema before relying on these
-changes. A development Skill paired with v0.5.0 does not change its runtime behavior. Host timeout and responsiveness
-limits may require shorter waits. The invocation keeps running when a wait expires; completion
-returns early. Only the total runtime limit, cancellation, or a terminal provider outcome ends it.
+### Upgrading from v0.5.0
 
-The Skill loads model/effort defaults from one reference file per CLI and reads permitted status
-and supported options from the connected MCP server. Install the complete Skill directory,
-including `references/`. The development runtime removes `defaults` and `guidance` from
-`describe_provider`; update callers that consume those fields. With v0.5.0, the Skill's model
-policy takes precedence over the old server guidance. `uv tool install` manages only the runtime; install, update, or remove
-the Skill separately. Verify that your host discovers the Skill and that its waiting guidance
-matches this section. Runtime changes require an updated runtime and a restarted MCP connection.
+The Skill explicitly requests 120-second waits, so it also works with v0.5.0's 30-second default.
+In v0.6.0 the runtime wait default itself is 120 seconds. Total `start_agent.timeout_seconds`
+is now optional: omitted/null means no AgentNave deadline, replacing the former 1,800-second
+cutoff. To retain a deadline, pass an explicit positive total limit; expiry terminates the
+invocation. Provider-native limits remain independent. A wait expiry only returns running,
+and completion returns early. Respect any shorter host timeout/responsiveness limits.
+
+The v0.6.0 runtime removes `defaults` and `guidance` from `describe_provider`; update callers
+that consume those fields. The tool now reports permitted status and supported option names;
+the complete Skill and its five references supply model/effort guidance. Running snapshots
+add recent native activity, its age, and remaining explicit budget; unknown values are null.
+They describe observations rather than all concurrent work or evidence of a stall.
+
+Updating the runtime alone does not install or update the Skill. Update the pair through the
+procedure below, restart MCP connections to refresh schemas, and start a fresh Skill context.
+A development Skill used with v0.5.0 does not change that older runtime's behavior.
 
 ## 5. Verify MCP and Skill discovery
 
@@ -458,7 +458,7 @@ exclusions in tool metadata and test rejection as described above. These restric
 that configured server process, not to a replacement registration with a different environment.
 
 When migrating from a legacy Skill installation, replace its `agentnave-manager` with the
-companion from the selected release, or use the labelled development option above. Check user and project copies, preserving user-authored additions. Update
+companion from the selected release, or use the development checkout option above. Check user and project copies, preserving user-authored additions. Update
 the deployment manager's source so it does not reinstall legacy model-selection instructions.
 A managed symlink should be unlinked without deleting its target.
 
