@@ -285,17 +285,19 @@ class InvocationManager:
                 InvocationError("launch_error", str(exc)),
             )
         finally:
-            if supervised is not None and supervised.process.returncode is None:
-                await terminate_process_tree(supervised.process)
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            for path in prepared.cleanup_paths:
-                Path(path).unlink(missing_ok=True)
-            record.process = None
-            record.tool_names.clear()
+            try:
+                if supervised is not None and supervised.process.returncode is None:
+                    await terminate_process_tree(supervised.process)
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                for path in prepared.cleanup_paths:
+                    Path(path).unlink(missing_ok=True)
+            finally:
+                record.process = None
+                record.tool_names.clear()
 
 
 async def _read_limited(
