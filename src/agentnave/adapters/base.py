@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
 
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,11 +35,18 @@ class ProviderAdapter(Protocol):
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult: ...
 
+    def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
+
+
+def brief(value: object, limit: int = 512) -> str | None:
+    """Bound only explicitly selected public fields; never stringify arbitrary payloads."""
+    return value[-limit:] if isinstance(value, str) and value else None
+
 
 def parse_json_object(text: str) -> dict[str, object] | None:
     try:
         raw = cast(object, json.loads(text, parse_int=_parse_json_int))
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(raw, dict):
         return None

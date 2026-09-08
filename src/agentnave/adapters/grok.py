@@ -9,13 +9,14 @@ from pathlib import Path
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
+    brief,
     error_summary,
     failure_status,
     normalized_usage,
     option_args,
     parse_json_lines,
 )
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 
 def _last_text_block(events: list[dict[str, object]]) -> str:
@@ -67,6 +68,30 @@ class GrokAdapter:
             argv.append(f"--resume={request.session_id}")
         argv.extend(options)
         return PreparedCommand(tuple(argv), request.cwd, cleanup_paths=(path,))
+
+    def activity(self, event: dict[str, object]) -> ProviderActivity | None:
+        event_type = event.get("type")
+        if event_type in ("tool_call", "tool_call_update"):
+            if event_type == "tool_call_update" and not brief(event.get("status")):
+                return None
+            return ProviderActivity(
+                "tool",
+                str(event_type),
+                brief(event.get("status")),
+                brief(event.get("toolName")),
+                tool_call_id=brief(event.get("toolCallId")),
+            )
+        if event_type == "text":
+            return ProviderActivity(
+                "message", "text", message=brief(event.get("data")), message_delta=True
+            )
+        if event_type == "thought":
+            return ProviderActivity("lifecycle", "thought", "reasoning")
+        if event_type == "end":
+            return ProviderActivity("lifecycle", "end", brief(event.get("stopReason")))
+        if event_type == "error":
+            return ProviderActivity("lifecycle", "error", "error")
+        return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()

@@ -75,8 +75,9 @@ AgentNave does not install providers or change their login, permissions, or conf
 
 ### Select installed CLIs before locating them
 
-When an Agent assists with installation, first ask the user which CLIs are already installed.
-Present this numbered list and accept multiple numbers, for example `1, 3`:
+When an Agent assists with installation, reuse the user's current-session selection of installed
+CLIs. If it is missing, ask which are already installed using the list below; accept multiple
+numbers, for example `1, 3`:
 
 1. Grok CLI (`grok`)
 2. Claude Code (`claude`)
@@ -84,7 +85,7 @@ Present this numbered list and accept multiple numbers, for example `1, 3`:
 4. Codex CLI (`codex`)
 5. Antigravity CLI (`agy`)
 
-The user may also answer “none”. Wait for the answer before locating provider executables; do not
+The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.
 
 For each selected CLI only, run `command -v <command>` in the user's terminal shell, using the
@@ -111,7 +112,7 @@ that host product, regardless of which model the host is currently using:
 | --- | --- |
 | Codex | `codex` |
 | Claude Code | `claude` |
-| CodeBuddy Code | `codebuddy` |
+| CodeBuddy Code / WorkBuddy | `codebuddy` |
 | Grok CLI | `grok` |
 | Antigravity | `antigravity` |
 | Other hosts | Explicitly choose exclusions, or use an empty value |
@@ -224,6 +225,57 @@ Merge this entry into the existing `mcp` object in `~/.config/opencode/opencode.
 Run `opencode mcp list` and start a new session.
 Reference: [OpenCode MCP servers](https://opencode.ai/docs/mcp-servers).
 
+### CodeBuddy Code and WorkBuddy desktop
+
+CodeBuddy Code's native command manages its CLI registration:
+
+```bash
+codebuddy mcp add agentnave --transport stdio --scope user \
+  --env AGENTNAVE_EXCLUDED_PROVIDERS=codebuddy -- "$AGENTNAVE_MCP"
+codebuddy mcp get agentnave
+```
+
+Do not assume this also registers WorkBuddy desktop. In the checked macOS versions
+(CodeBuddy Code 2.142.0, WorkBuddy 5.5.3), the CLI used `.mcp.json` under its effective
+configuration directory, while WorkBuddy desktop used `mcp.json` under its configuration
+directory. With the CLI configured to use `~/.workbuddy`, these were respectively
+`~/.workbuddy/.mcp.json` and `~/.workbuddy/mcp.json`. Preserve `CODEBUDDY_CONFIG_DIR` when
+configured; do not copy this machine's override as a universal default. Use WorkBuddy's MCP
+settings to locate and edit its effective entry, preserving other servers and environment values.
+Use the `codebuddy` exclusion for both hosts and restart each connection separately.
+
+### Grok CLI
+
+```bash
+grok mcp add agentnave --scope user --transport stdio \
+  --env AGENTNAVE_EXCLUDED_PROVIDERS=grok -- "$AGENTNAVE_MCP"
+grok mcp list
+```
+
+Grok 1.0.13 documents the user configuration as `~/.grok/config.toml`; project configuration
+can override the effective entry. Recheck `grok mcp add --help` for the installed version.
+
+### Antigravity
+
+Use Antigravity's MCP settings to register the launcher and the `antigravity` exclusion.
+The checked CLI version 1.1.27 uses the shared MCP configuration at
+`~/.gemini/config/mcp_config.json`. Verify the effective path in the installed product before
+editing it; preserve sibling entries. Restart the MCP connection and check discovery from a
+new host session rather than treating the existence of the file as proof of loading.
+
+### Hermes
+
+```bash
+hermes mcp add agentnave --command "$AGENTNAVE_MCP" --env AGENTNAVE_EXCLUDED_PROVIDERS=
+hermes mcp test agentnave
+```
+
+Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
+tools, then asks whether to enable them. Complete that choice for all four AgentNave tools; a
+successful connection alone does not prove tools are enabled. In noninteractive installation,
+handle the documented prompt explicitly and verify the saved enabled-tool selection. Restart
+the host and verify Skill discovery separately.
+
 ### Other hosts
 
 Use the host's documented MCP registration interface. Configure the absolute command, empty
@@ -237,6 +289,19 @@ Use the host's Skill installer or existing deployment manager to install
 `skills/agentnave-manager/` from the **same `AGENTNAVE_RELEASE` tag** as the runtime.
 Install the whole directory, including `SKILL.md` and all five files in `references/`.
 The Skill content is shared across hosts; the destination and discovery scope belong to the host.
+
+The checked macOS user-level discovery locations are listed below as examples; use the host's
+installed-version settings and your deployment manager as authority, especially with custom
+configuration directories.
+
+| Host | User Skill directory |
+| --- | --- |
+| Codex | `~/.codex/skills` |
+| Claude Code | `~/.claude/skills` |
+| WorkBuddy | `~/.workbuddy/skills` |
+| Grok CLI | `~/.grok/skills` |
+| Antigravity | `~/.gemini/config/skills` |
+| Hermes | `~/.hermes/skills` |
 
 First inspect the host's effective Skill discovery locations and any existing deployment-manager
 entry. Check `agentnave-manager` in both user and project scopes, its source/release, and all of
@@ -303,7 +368,11 @@ The target must remain present when switching branches. Record this as a develop
 not as part of v0.5.0. Keep the installed runtime's stable launcher registration.
 
 The Skill explicitly requests 120-second waits, so it also works with v0.5.0's 30-second default.
-The development runtime changes the default itself to 120 seconds. Host timeout and responsiveness
+The development runtime changes the wait default itself to 120 seconds and makes the total
+`start_agent.timeout_seconds` optional (omitted/null means no AgentNave deadline), replacing
+v0.5.0's default 1,800-second cutoff. Explicit total limits still terminate the invocation;
+provider-native limits are independent. Check the connected schema before relying on these
+changes. A development Skill paired with v0.5.0 does not change its runtime behavior. Host timeout and responsiveness
 limits may require shorter waits. The invocation keeps running when a wait expires; completion
 returns early. Only the total runtime limit, cancellation, or a terminal provider outcome ends it.
 
@@ -338,8 +407,16 @@ After registration or upgrade:
 5. With authorization for any provider quota consumption, run a small task through a permitted
    provider and verify its final result using `wait_agent`.
 
+Report installation results per host as **added**, **reused**, **updated**, or **pending** for
+runtime, MCP registration, and Skill separately. Keep four verification levels distinct:
+configuration inspection; protocol connection/tool discovery; actual host loading in a new session;
+and an authorized real provider invocation. A standalone MCP client test proves only its own
+protocol/provider path, not every desktop host's discovery or long-result rendering. The macOS
+versions above are observations from 2026-09-08, not an all-version compatibility guarantee.
+
 Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
-and the allowed-provider lifecycle. The CI workflow also installs a built wheel and lists tools
+and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all five
+references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
 through its installed launcher on macOS and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
 

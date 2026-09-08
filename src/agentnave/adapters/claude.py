@@ -7,13 +7,15 @@ from typing import cast
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
+    brief,
     error_summary,
     failure_status,
     normalized_usage,
+    object_dict,
     option_args,
     parse_json_lines,
 )
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 
 class ClaudeAdapter:
@@ -41,6 +43,75 @@ class ClaudeAdapter:
             argv.append(f"--resume={request.session_id}")
         argv.extend(option_args(request, self._options))
         return PreparedCommand(tuple(argv), request.cwd, request.prompt.encode())
+
+    def activity(self, event: dict[str, object]) -> ProviderActivity | None:
+        event_type = event.get("type")
+        if event_type == "system":
+            subtype = event.get("subtype")
+            if subtype == "api_retry":
+                # Only the native error category, never the full error payload.
+                return ProviderActivity(
+                    "retry", "system.api_retry", "retrying", message=brief(event.get("error"))
+                )
+            if subtype == "status":
+                return ProviderActivity("lifecycle", "system.status", brief(event.get("status")))
+            if subtype in ("init", "hook_started", "hook_response"):
+                return ProviderActivity("lifecycle", f"system.{subtype}", str(subtype))
+        if event_type == "stream_event":
+            nested = object_dict(event.get("event"))
+            block = object_dict(nested.get("content_block"))
+            delta = object_dict(nested.get("delta"))
+            if nested.get("type") == "content_block_start":
+                if block.get("type") == "tool_use":
+                    return ProviderActivity(
+                        "tool",
+                        "stream_event.content_block_start",
+                        "started",
+                        brief(block.get("name")),
+                        tool_call_id=brief(block.get("id")),
+                    )
+                if block.get("type") == "text":
+                    return ProviderActivity(
+                        "message", "stream_event.text", message=brief(block.get("text"))
+                    )
+                if block.get("type") == "thinking":
+                    return ProviderActivity("lifecycle", "stream_event.thinking", "reasoning")
+            if delta.get("type") == "text_delta":
+                return ProviderActivity(
+                    "message",
+                    "stream_event.text",
+                    message=brief(delta.get("text")),
+                    message_delta=True,
+                )
+        if event_type in ("assistant", "user"):
+            content = object_dict(event.get("message")).get("content")
+            if isinstance(content, list):
+                for raw in reversed(cast(list[object], content)):
+                    block = object_dict(raw)
+                    block_type = block.get("type")
+                    if block_type == "tool_use":
+                        return ProviderActivity(
+                            "tool",
+                            "assistant.tool_use",
+                            "started",
+                            brief(block.get("name")),
+                            tool_call_id=brief(block.get("id")),
+                        )
+                    if block_type == "tool_result":
+                        state = "failed" if block.get("is_error") is True else "completed"
+                        return ProviderActivity(
+                            "tool",
+                            "user.tool_result",
+                            state,
+                            tool_call_id=brief(block.get("tool_use_id")),
+                        )
+                    if block_type == "text" and event_type == "assistant":
+                        return ProviderActivity(
+                            "message", "assistant.text", message=brief(block.get("text"))
+                        )
+        if event_type == "result":
+            return ProviderActivity("lifecycle", "result", brief(event.get("subtype")))
+        return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()

@@ -767,3 +767,117 @@ def test_adapter_rejects_implicit_or_unknown_provider_overrides(tmp_path: Path) 
         CodexAdapter().prepare(
             request(tmp_path, "codex", provider_options={"sandbox": "danger-full-access"})
         )
+
+
+@pytest.mark.parametrize(
+    ("provider", "event", "state", "tool"),
+    [
+        (
+            "claude",
+            {
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_start",
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "Bash",
+                        "input": {"secret": "hidden"},
+                    },
+                },
+            },
+            "started",
+            "Bash",
+        ),
+        (
+            "codebuddy",
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "content": "hidden",
+                            "is_error": True,
+                        }
+                    ]
+                },
+            },
+            "failed",
+            None,
+        ),
+        (
+            "codex",
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "t1",
+                    "type": "command_execution",
+                    "status": "in_progress",
+                    "command": "hidden",
+                },
+            },
+            "in_progress",
+            "command_execution",
+        ),
+        (
+            "grok",
+            {
+                "type": "tool_call",
+                "toolCallId": "t1",
+                "toolName": "run_terminal_command",
+                "status": "pending",
+                "rawInput": "hidden",
+            },
+            "pending",
+            "run_terminal_command",
+        ),
+        (
+            "antigravity",
+            {
+                "event": "step_update",
+                "step_update": {
+                    "step_index": 1,
+                    "step_type": "tool",
+                    "state": "ACTIVE",
+                    "tool_name": "run_command",
+                    "tool_info": {"parameters": "hidden"},
+                },
+            },
+            "ACTIVE",
+            "run_command",
+        ),
+    ],
+)
+def test_activity_projects_native_tool_metadata_without_inputs(
+    provider: str, event: dict[str, object], state: str, tool: str | None
+) -> None:
+    activity = get_adapter(provider).activity(event)
+    assert activity is not None
+    assert activity.kind == "tool"
+    assert activity.state == state
+    assert activity.tool_name == tool
+    assert activity.tool_call_id is not None
+    assert "hidden" not in json.dumps(activity.to_dict())
+
+
+def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -> None:
+    claude = ClaudeAdapter()
+    assert (
+        claude.activity(
+            {
+                "type": "stream_event",
+                "event": {"delta": {"type": "thinking_delta", "thinking": "hidden"}},
+            }
+        )
+        is None
+    )
+    thought = GrokAdapter().activity({"type": "thought", "data": "hidden"})
+    assert thought is not None and thought.message is None
+    for provider in ("claude", "codebuddy", "codex", "grok", "antigravity"):
+        adapter = get_adapter(provider)
+        assert adapter.activity({"type": ["unknown"], "event": ["unknown"]}) is None
+        assert adapter.activity({"type": "future_event", "data": "hidden"}) is None
+    text = GrokAdapter().activity({"type": "text", "data": "x" * 1000})
+    assert text is not None and text.message == "x" * 512

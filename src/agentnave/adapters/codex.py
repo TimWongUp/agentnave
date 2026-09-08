@@ -5,12 +5,13 @@ from __future__ import annotations
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
+    brief,
     error_summary,
     failure_status,
     object_dict,
     parse_json_lines,
 )
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 
 class CodexAdapter:
@@ -42,6 +43,28 @@ class CodexAdapter:
             argv.append(request.session_id)
         argv.append("-")
         return PreparedCommand(tuple(argv), request.cwd, request.prompt.encode())
+
+    def activity(self, event: dict[str, object]) -> ProviderActivity | None:
+        event_type = event.get("type")
+        if event_type in ("thread.started", "turn.started", "turn.completed", "turn.failed"):
+            return ProviderActivity("lifecycle", str(event_type), str(event_type))
+        if event_type not in ("item.started", "item.updated", "item.completed"):
+            return None
+        item = object_dict(event.get("item"))
+        item_type = item.get("type")
+        if item_type == "agent_message":
+            return ProviderActivity("message", str(event_type), message=brief(item.get("text")))
+        if item_type in ("command_execution", "mcp_tool_call", "web_search", "file_change"):
+            return ProviderActivity(
+                "tool",
+                str(event_type),
+                brief(item.get("status")),
+                brief(item.get("tool")) or str(item_type),
+                tool_call_id=brief(item.get("id")),
+            )
+        if item_type == "reasoning":
+            return ProviderActivity("lifecycle", str(event_type), "reasoning")
+        return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         events = parse_json_lines(stdout.decode(errors="replace").strip())

@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
+from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationStatus
 
 
-class FakeAdapter:
+class FakeAdapter(ClaudeAdapter):
     name = "claude"
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
@@ -35,8 +37,22 @@ class FakeAdapter:
         elif request.prompt == "progress":
             code = (
                 "import sys,time; "
-                'sys.stdout.write(\'{"type":"event"}\\n\'); '
+                'sys.stdout.write(\'{"type":"system","subtype":"api_retry","error":"authentication_failed"}\\n\'); '
                 "sys.stdout.flush(); time.sleep(30)"
+            )
+        elif request.prompt == "streaming_message":
+            events = [
+                {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
+                for text in ("x" * 600, "中文")
+            ]
+            wire = (
+                "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n"
+            ).encode()
+            split = wire.index("中文".encode()) + 1
+            code = (
+                "import sys,time; "
+                f"sys.stdout.buffer.write({wire[:split]!r}); sys.stdout.flush(); time.sleep(0.02); "
+                f"sys.stdout.buffer.write({wire[split:]!r}); sys.stdout.flush(); time.sleep(30)"
             )
         else:
             code = f"import sys,time; time.sleep({seconds}); sys.stdout.write('completed')"
@@ -157,6 +173,11 @@ async def test_running_snapshot_reports_phase_elapsed_and_event_activity(
         assert snapshot.phase.value == "running"
         assert snapshot.elapsed_ms >= 0
         assert snapshot.last_event_age_ms is not None
+        assert snapshot.remaining_ms is None
+        assert snapshot.last_activity is not None
+        assert snapshot.last_activity.kind == "retry"
+        assert snapshot.last_activity.message == "authentication_failed"
+        assert snapshot.last_activity_age_ms is not None
     finally:
         await manager.cancel(invocation_id)
         await manager.shutdown()
@@ -178,6 +199,29 @@ async def test_invocation_timeout_terminates_process(tmp_path: Path, fake_adapte
     assert result.error is not None
     assert result.error.code == "timed_out"
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_joins_split_unicode_deltas_and_reports_explicit_budget(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    invocation_id = manager.start(
+        InvocationRequest("claude", "streaming_message", tmp_path, timeout_seconds=10)
+    )
+    try:
+        snapshot = manager.snapshot(invocation_id)
+        for _ in range(50):
+            await manager.wait(invocation_id, 0.02)
+            snapshot = manager.snapshot(invocation_id)
+            if snapshot.last_activity and (snapshot.last_activity.message or "").endswith("中文"):
+                break
+        assert snapshot.last_activity is not None
+        assert snapshot.last_activity.message == "x" * 510 + "中文"
+        assert snapshot.remaining_ms is not None
+        assert 0 < snapshot.remaining_ms <= 10_000
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio

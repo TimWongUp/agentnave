@@ -122,7 +122,9 @@ Waits for at most `wait_timeout_seconds`. A `running` response keeps the invocat
 includes a lifecycle snapshot; a `finished` response contains the normalized provider result.
 The development version defaults to 120 seconds per wait (v0.5.0 defaults to 30); both return early
 when the task finishes. Wait expiry is separate from `start_agent.timeout_seconds`, the total
-runtime budget. Continue waiting on the same ID; elapsed time or event silence alone does not
+optional runtime budget: omitted/null means no AgentNave deadline; an explicit positive value
+(up to 86,400 seconds) terminates the invocation when reached. Provider-native limits still apply.
+Continue waiting on the same ID; elapsed time or event silence alone does not
 justify cancellation or a duplicate invocation.
 
 ### `cancel_agent`
@@ -141,9 +143,20 @@ makes a best-effort attempt to terminate processes that remain in the provider p
 restart cannot recover old handles, but a retained provider `session_id` can be supplied to a new
 `start_agent` call.
 
-A running snapshot reports lifecycle phase, elapsed time, and the age of the latest official
-provider stream event. It does not claim semantic task progress. Terminal `output` contains the
-provider's final response rather than intermediate narration.
+A running snapshot reports lifecycle phase, elapsed time, remaining explicit budget (or null),
+and the ages of the latest JSON event and recognizable activity. `last_activity` contains the
+native event type/state, tool name/call ID when available, or at most 512 characters of public
+assistant text. It is one recent observation, not the state of all concurrent work or proof of a
+stall. Unknown fields remain null; retry/input-wait states are reported only when the CLI emits
+them. Tool arguments/results and thinking content are not copied into snapshots. Public text
+can still contain task data; snapshots are not a redaction service. Terminal `output` remains
+the provider's final response.
+
+Use the project directory as `cwd` so the CLI can load its native project rules. Temporary
+handoff files do not change that directory. The companion Skill guides task handoffs and keeps
+intermediate files in OS temporary storage without imposing Markdown or a result-file format.
+AgentNave itself uses stdin/in-memory output except for Grok's temporary prompt file, which is
+removed after use. Provider-owned history and caches remain under provider control.
 
 AgentNave is not a sandbox. A same-user provider with command permission can deliberately daemonize,
 kill its supervisor, or otherwise escape ordinary POSIX process-group cleanup. Provider-native

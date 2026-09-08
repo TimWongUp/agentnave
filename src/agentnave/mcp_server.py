@@ -86,10 +86,22 @@ class InvocationResultPayload(TypedDict):
     error: InvocationErrorPayload | None
 
 
+class ProviderActivityPayload(TypedDict):
+    kind: str
+    event_type: str
+    state: str | None
+    tool_name: str | None
+    message: str | None
+    tool_call_id: str | None
+
+
 class InvocationSnapshotPayload(TypedDict):
     phase: InvocationPhaseName
     elapsed_ms: int
     last_event_age_ms: int | None
+    last_activity: ProviderActivityPayload | None
+    last_activity_age_ms: int | None
+    remaining_ms: int | None
 
 
 class StartAgentPayload(TypedDict):
@@ -184,13 +196,13 @@ async def start_agent(
         ),
     ] = None,
     timeout_seconds: Annotated[
-        float,
+        float | None,
         Field(
             gt=0,
             le=86_400,
-            description="Total runtime limit in seconds; expiry stops the invocation.",
+            description="Optional total runtime limit in seconds; expiry stops the invocation. Omit or null for no AgentNave deadline; native CLI limits still apply.",
         ),
-    ] = 1800,
+    ] = None,
     provider_options: Annotated[
         dict[str, ProviderOption] | None,
         Field(
@@ -261,7 +273,8 @@ async def wait_agent(
     state=running: call again with the same ID; do not launch a duplicate.
     state=finished: inspect result.status, output, and error; completion does not imply success.
     This wait returns early on completion; expiry does not stop the task or mean timed_out.
-    Snapshots describe lifecycle and event timing, not task progress or evidence of a stall.
+    Snapshots include the latest observed activity and its age, not all active work or proof
+    of a stall. Missing activity is unknown; silence alone does not justify cancellation.
     """
     manager = _manager(ctx)
     try:
