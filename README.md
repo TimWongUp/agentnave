@@ -63,16 +63,16 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The companion Skill is not yet published.** `v0.5.0` supplies only the runtime. Until a paired
-release is available, the guide provides an explicit development-Skill option; installing v0.5.0
-alone does not install the new Skill. Hosts without Skill support can still use MCP alone.
+**The paired release is `v0.6.0`.** Install the runtime and complete Skill directory from that
+tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
+Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
 
 ## The MCP surface
 
-This section describes the development version. Compared with `v0.5.0`, model-selection
+This section describes `v0.6.0`. Compared with `v0.5.0`, model-selection
 guidance moves to the Skill and `describe_provider` no longer returns `defaults` or `guidance`.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
@@ -120,7 +120,7 @@ model should be reported rather than silently replaced.
 
 Waits for at most `wait_timeout_seconds`. A `running` response keeps the invocation active and
 includes a lifecycle snapshot; a `finished` response contains the normalized provider result.
-The development version defaults to 120 seconds per wait (v0.5.0 defaults to 30); both return early
+`v0.6.0` defaults to 120 seconds per wait (v0.5.0 defaults to 30); both return early
 when the task finishes. Wait expiry is separate from `start_agent.timeout_seconds`, the total
 optional runtime budget: omitted/null means no AgentNave deadline; an explicit positive value
 (up to 86,400 seconds) terminates the invocation when reached. Provider-native limits still apply.
