@@ -24,6 +24,23 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
+      - name: Verify paired source archive
+        run: |
+          python - <<'PY'
+          import io
+          import subprocess
+          import tarfile
+
+          skill = "skills/agentnave-manager"
+          required = ["pyproject.toml", "src/agentnave/__init__.py", f"{skill}/SKILL.md"]
+          required += [f"{skill}/references/{name}.md" for name in
+                       ("claude", "codebuddy", "codex", "grok", "antigravity")]
+          archive = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "--", *required])
+          with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+              for name in required:
+                  member = source.getmember(name)
+                  assert member.isfile() and member.size > 0, f"Missing source content: {name}"
+          PY
       - name: Check version change and release notes
         id: version
         env:

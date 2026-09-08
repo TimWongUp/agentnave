@@ -55,6 +55,8 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert result.tools[0].annotations.destructive_hint is True
     assert result.tools[1].annotations is not None
     assert result.tools[1].annotations.read_only_hint is True
+    start_properties = _payload(result.tools[0].input_schema["properties"])
+    assert _payload(start_properties["timeout_seconds"])["default"] is None
     wait_properties = _payload(result.tools[1].input_schema["properties"])
     assert _payload(wait_properties["wait_timeout_seconds"])["default"] == 120
     assert result.tools[2].annotations is not None
@@ -166,6 +168,9 @@ async def test_mcp_running_result_can_be_cancelled(
     assert running_payload["state"] == "running"
     assert snapshot["phase"] in {"preparing", "running"}
     assert isinstance(snapshot["elapsed_ms"], int)
+    assert snapshot["remaining_ms"] is None
+    assert "last_activity" in snapshot
+    assert "last_activity_age_ms" in snapshot
     assert cancelled_payload["state"] == "finished"
     assert cancelled_result["status"] == "cancelled"
 

@@ -7,13 +7,14 @@ import json
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
+    brief,
     error_summary,
     failure_status,
     normalized_usage,
     object_dict,
     parse_json_lines,
 )
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 
 class AntigravityAdapter:
@@ -38,6 +39,38 @@ class AntigravityAdapter:
             argv.extend(("--conversation", request.session_id))
         argv.extend(self._option_args(request))
         return PreparedCommand(tuple(argv), request.cwd, prompt)
+
+    def activity(self, event: dict[str, object]) -> ProviderActivity | None:
+        event_type = event.get("event")
+        if event_type == "init":
+            return ProviderActivity("lifecycle", "init", "initialized")
+        if event_type == "result":
+            return ProviderActivity(
+                "lifecycle", "result", brief(object_dict(event.get("result")).get("status"))
+            )
+        if event_type != "step_update":
+            return None
+        step = object_dict(event.get("step_update"))
+        step_type = step.get("step_type")
+        state = brief(step.get("state"))
+        if step_type == "tool":
+            index = step.get("step_index")
+            return ProviderActivity(
+                "tool",
+                "step_update.tool",
+                state,
+                brief(step.get("tool_name")),
+                tool_call_id=str(index) if isinstance(index, int) else None,
+            )
+        if step_type == "agent_response":
+            return ProviderActivity(
+                "message",
+                "step_update.agent_response",
+                state,
+                message=brief(step.get("text_delta")),
+                message_delta=True,
+            )
+        return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()

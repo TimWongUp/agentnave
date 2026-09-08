@@ -7,11 +7,11 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from agentnave.adapters import ProviderAdapter, get_adapter
-from agentnave.adapters.base import PreparedCommand
+from agentnave.adapters.base import PreparedCommand, parse_json_object
 from agentnave.models import (
     InvocationError,
     InvocationPhase,
@@ -19,6 +19,7 @@ from agentnave.models import (
     InvocationResult,
     InvocationSnapshot,
     InvocationStatus,
+    ProviderActivity,
 )
 from agentnave.processes import spawn_process, terminate_process_tree
 
@@ -37,9 +38,36 @@ class _InvocationRecord:
     task: asyncio.Task[InvocationResult] | None = None
     process: asyncio.subprocess.Process | None = None
     last_event_at: float | None = None
+    last_activity: ProviderActivity | None = None
+    last_activity_at: float | None = None
+    tool_names: dict[str, str] = field(default_factory=lambda: {})
 
-    def observe_event(self) -> None:
+    def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
+        event = parse_json_object(line.decode(errors="replace"))
+        if event is None:
+            return
         self.last_event_at = time.monotonic()
+        activity = adapter.activity(event)
+        if activity is not None:
+            previous = self.last_activity
+            if activity.kind == "tool" and activity.tool_call_id is not None:
+                if activity.tool_name is not None:
+                    self.tool_names[activity.tool_call_id] = activity.tool_name
+                else:
+                    activity = replace(
+                        activity, tool_name=self.tool_names.get(activity.tool_call_id)
+                    )
+            if (
+                activity.message_delta
+                and previous is not None
+                and previous.kind == "message"
+                and previous.event_type == activity.event_type
+            ):
+                activity = replace(
+                    activity, message=((previous.message or "") + (activity.message or ""))[-512:]
+                )
+            self.last_activity = activity
+            self.last_activity_at = self.last_event_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +118,13 @@ class InvocationManager:
             record.phase,
             round((now - record.started_at) * 1000),
             last_event_age_ms,
+            record.last_activity,
+            None
+            if record.last_activity_at is None
+            else max(0, round((now - record.last_activity_at) * 1000)),
+            None
+            if record.request.timeout_seconds is None
+            else max(0, round((record.request.timeout_seconds - (now - record.started_at)) * 1000)),
         )
 
     async def cancel(self, invocation_id: str) -> InvocationResult:
@@ -139,7 +174,7 @@ class InvocationManager:
                     process.stdout,
                     _MAX_STDOUT_BYTES,
                     output_exceeded,
-                    record.observe_event,
+                    lambda line: record.observe_event(line, adapter),
                 )
             )
             stderr_task = asyncio.create_task(
@@ -166,7 +201,11 @@ class InvocationManager:
 
             done, _ = await asyncio.wait(
                 (completion_task, cancel_task, exceeded_task),
-                timeout=record.request.timeout_seconds,
+                timeout=(
+                    None
+                    if record.request.timeout_seconds is None
+                    else max(0, record.request.timeout_seconds - (time.monotonic() - started))
+                ),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if exceeded_task in done and output_exceeded.is_set():
@@ -246,35 +285,38 @@ class InvocationManager:
                 InvocationError("launch_error", str(exc)),
             )
         finally:
-            if supervised is not None and supervised.process.returncode is None:
-                await terminate_process_tree(supervised.process)
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            for path in prepared.cleanup_paths:
-                Path(path).unlink(missing_ok=True)
-            record.process = None
+            try:
+                if supervised is not None and supervised.process.returncode is None:
+                    await terminate_process_tree(supervised.process)
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                for path in prepared.cleanup_paths:
+                    Path(path).unlink(missing_ok=True)
+            finally:
+                record.process = None
+                record.tool_names.clear()
 
 
 async def _read_limited(
     stream: asyncio.StreamReader,
     limit: int,
     exceeded_event: asyncio.Event,
-    observe_event: Callable[[], None] | None = None,
+    observe_event: Callable[[bytes], None] | None = None,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
     exceeded = False
     while chunk := await stream.read(64 * 1024):
         if observe_event is not None:
-            pending.extend(chunk[: max(0, limit - len(pending))])
+            pending.extend(chunk[: max(0, limit - len(data))])
             while b"\n" in pending:
                 line, _, remainder = pending.partition(b"\n")
                 pending = bytearray(remainder)
                 if line.strip():
-                    observe_event()
+                    observe_event(bytes(line))
         remaining = limit - len(data)
         if remaining > 0:
             data.extend(chunk[:remaining])
@@ -282,7 +324,7 @@ async def _read_limited(
             exceeded = True
             exceeded_event.set()
     if observe_event is not None and pending.strip():
-        observe_event()
+        observe_event(bytes(pending))
     return _CapturedStream(bytes(data), exceeded)
 
 

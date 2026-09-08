@@ -31,7 +31,7 @@ class InvocationRequest:
     prompt: str
     cwd: Path
     session_id: str | None = None
-    timeout_seconds: float = 1800
+    timeout_seconds: float | None = None
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
 
     def __post_init__(self) -> None:
@@ -52,7 +52,7 @@ class InvocationRequest:
             or any(ord(character) < 32 or ord(character) == 127 for character in self.session_id)
         ):
             raise ValueError("session_id contains unsafe characters")
-        if not 0 < self.timeout_seconds <= 86_400:
+        if self.timeout_seconds is not None and not 0 < self.timeout_seconds <= 86_400:
             raise ValueError("timeout_seconds must be between 0 and 86400")
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "cwd", cwd)
@@ -70,16 +70,45 @@ class InvocationError:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderActivity:
+    """One observed provider event, not an inferred view of all active work."""
+
+    kind: str
+    event_type: str
+    state: str | None = None
+    tool_name: str | None = None
+    message: str | None = None
+    tool_call_id: str | None = None
+    message_delta: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "event_type": self.event_type,
+            "state": self.state,
+            "tool_name": self.tool_name,
+            "message": self.message,
+            "tool_call_id": self.tool_call_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class InvocationSnapshot:
     phase: InvocationPhase
     elapsed_ms: int
     last_event_age_ms: int | None
+    last_activity: ProviderActivity | None = None
+    last_activity_age_ms: int | None = None
+    remaining_ms: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "phase": self.phase.value,
             "elapsed_ms": self.elapsed_ms,
             "last_event_age_ms": self.last_event_age_ms,
+            "last_activity": None if self.last_activity is None else self.last_activity.to_dict(),
+            "last_activity_age_ms": self.last_activity_age_ms,
+            "remaining_ms": self.remaining_ms,
         }
 
 
