@@ -40,6 +40,7 @@ class _InvocationRecord:
     last_event_at: float | None = None
     last_activity: ProviderActivity | None = None
     last_activity_at: float | None = None
+    tool_names: dict[str, str] = field(default_factory=lambda: {})
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -49,15 +50,13 @@ class _InvocationRecord:
         activity = adapter.activity(event)
         if activity is not None:
             previous = self.last_activity
-            if (
-                activity.kind == "tool"
-                and activity.tool_call_id is not None
-                and previous is not None
-                and previous.kind == "tool"
-                and activity.tool_call_id == previous.tool_call_id
-                and activity.tool_name is None
-            ):
-                activity = replace(activity, tool_name=previous.tool_name)
+            if activity.kind == "tool" and activity.tool_call_id is not None:
+                if activity.tool_name is not None:
+                    self.tool_names[activity.tool_call_id] = activity.tool_name
+                else:
+                    activity = replace(
+                        activity, tool_name=self.tool_names.get(activity.tool_call_id)
+                    )
             if (
                 activity.message_delta
                 and previous is not None
@@ -296,6 +295,7 @@ class InvocationManager:
             for path in prepared.cleanup_paths:
                 Path(path).unlink(missing_ok=True)
             record.process = None
+            record.tool_names.clear()
 
 
 async def _read_limited(
@@ -309,7 +309,7 @@ async def _read_limited(
     exceeded = False
     while chunk := await stream.read(64 * 1024):
         if observe_event is not None:
-            pending.extend(chunk[: max(0, limit - len(pending))])
+            pending.extend(chunk[: max(0, limit - len(data))])
             while b"\n" in pending:
                 line, _, remainder = pending.partition(b"\n")
                 pending = bytearray(remainder)

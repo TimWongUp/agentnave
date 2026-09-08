@@ -9,7 +9,7 @@ import pytest
 
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
-from agentnave.core import InvocationManager
+from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
 from agentnave.models import InvocationRequest, InvocationStatus
 
 
@@ -53,6 +53,24 @@ class FakeAdapter(ClaudeAdapter):
                 "import sys,time; "
                 f"sys.stdout.buffer.write({wire[:split]!r}); sys.stdout.flush(); time.sleep(0.02); "
                 f"sys.stdout.buffer.write({wire[split:]!r}); sys.stdout.flush(); time.sleep(30)"
+            )
+        elif request.prompt == "interleaved_tools":
+            events = [
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "tool_use", "id": tool_id, "name": name}]},
+                }
+                for tool_id, name in (("a", "Bash"), ("b", "Read"))
+            ]
+            events.append(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "tool_result", "tool_use_id": "a"}]},
+                }
+            )
+            wire = "\n".join(json.dumps(event) for event in events) + "\n"
+            code = (
+                f"import sys,time; sys.stdout.write({wire!r}); sys.stdout.flush(); time.sleep(30)"
             )
         else:
             code = f"import sys,time; time.sleep({seconds}); sys.stdout.write('completed')"
@@ -225,6 +243,27 @@ async def test_snapshot_joins_split_unicode_deltas_and_reports_explicit_budget(
 
 
 @pytest.mark.asyncio
+async def test_snapshot_retains_tool_name_across_interleaved_calls(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("claude", "interleaved_tools", tmp_path))
+    try:
+        snapshot = manager.snapshot(invocation_id)
+        for _ in range(50):
+            await manager.wait(invocation_id, 0.02)
+            snapshot = manager.snapshot(invocation_id)
+            if snapshot.last_activity and snapshot.last_activity.state == "completed":
+                break
+        assert snapshot.last_activity is not None
+        assert snapshot.last_activity.tool_call_id == "a"
+        assert snapshot.last_activity.tool_name == "Bash"
+        assert snapshot.last_activity.state == "completed"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_completion_cleans_group_when_provider_leaves_descendant(
     tmp_path: Path, fake_adapter: None
 ) -> None:
@@ -317,3 +356,16 @@ async def test_shutdown_cancels_every_active_invocation(tmp_path: Path, fake_ada
     results = [await manager.wait(item) for item in invocation_ids]
     assert all(result is not None for result in results)
     assert all(result.status is InvocationStatus.CANCELLED for result in results if result)
+
+
+@pytest.mark.asyncio
+async def test_activity_observer_stops_at_capture_limit() -> None:
+    stream = asyncio.StreamReader()
+    stream.feed_data(b"{}\n{}\n")
+    stream.feed_eof()
+    exceeded = asyncio.Event()
+    observed: list[bytes] = []
+    captured = await _read_limited(stream, 3, exceeded, observed.append)
+    assert captured.data == b"{}\n"
+    assert captured.exceeded and exceeded.is_set()
+    assert observed == [b"{}"]

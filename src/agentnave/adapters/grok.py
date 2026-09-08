@@ -98,7 +98,7 @@ class GrokAdapter:
         events = parse_json_lines(stdout_text)
         output = _last_text_block(events)
         payload = next(
-            (event for event in reversed(events) if event.get("type") in {"end", "error"}),
+            (event for event in reversed(events) if event.get("type") in ("end", "error")),
             None,
         )
 

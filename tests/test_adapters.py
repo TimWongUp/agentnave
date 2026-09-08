@@ -881,3 +881,28 @@ def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -
         assert adapter.activity({"type": "future_event", "data": "hidden"}) is None
     text = GrokAdapter().activity({"type": "text", "data": "x" * 1000})
     assert text is not None and text.message == "x" * 512
+
+
+@pytest.mark.parametrize("provider", ["codex", "grok"])
+def test_terminal_result_survives_invalid_event_discriminators(provider: str) -> None:
+    events: list[dict[str, object]]
+    if provider == "codex":
+        events = [
+            {"type": "thread.started", "thread_id": "session-1"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "done"}},
+            {"type": "turn.completed"},
+        ]
+    else:
+        events = [
+            {"type": "text", "data": "done"},
+            {"type": "end", "sessionId": "session-1"},
+        ]
+    events += [{"type": []}, {"type": {}}]
+    result = get_adapter(provider).parse(
+        0, "\n".join(json.dumps(event) for event in events).encode(), b""
+    )
+    assert result.status is InvocationStatus.SUCCEEDED
+    assert result.output == "done"
+    assert result.session_id == "session-1"
+    failed = get_adapter(provider).parse(1, b'{"type": []}\n{"type": {}}', b"")
+    assert failed.status is InvocationStatus.FAILED

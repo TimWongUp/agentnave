@@ -91,7 +91,7 @@ class CodexAdapter:
             (
                 event
                 for event in reversed(events)
-                if event.get("type") in {"turn.completed", "turn.failed"}
+                if event.get("type") in ("turn.completed", "turn.failed")
             ),
             None,
         )
@@ -100,7 +100,7 @@ class CodexAdapter:
             return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
 
         error_event = next(
-            (event for event in reversed(events) if event.get("type") in {"turn.failed", "error"}),
+            (event for event in reversed(events) if event.get("type") in ("turn.failed", "error")),
             None,
         )
         raw_error = ""
