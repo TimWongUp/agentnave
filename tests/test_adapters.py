@@ -897,7 +897,8 @@ def test_terminal_result_survives_invalid_event_discriminators(provider: str) ->
             {"type": "text", "data": "done"},
             {"type": "end", "sessionId": "session-1"},
         ]
-    events += [{"type": []}, {"type": {}}]
+    events.append({"type": []})
+    events.append({"type": {}})
     result = get_adapter(provider).parse(
         0, "\n".join(json.dumps(event) for event in events).encode(), b""
     )
