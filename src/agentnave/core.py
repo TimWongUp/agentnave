@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -42,7 +43,9 @@ class _InvocationRecord:
     last_activity_at: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
-    pending_attention: InvocationError | None = None
+    pending_attention: deque[InvocationError] = field(
+        default_factory=lambda: deque[InvocationError]()
+    )
     reported_errors: set[str] = field(default_factory=lambda: set[str]())
     output_tail: str = ""
     output_at: float | None = None
@@ -58,8 +61,10 @@ class _InvocationRecord:
             code = activity.blocking_error
             if code is not None and code not in self.reported_errors:
                 self.reported_errors.add(code)
-                self.pending_attention = InvocationError(
-                    code, "CLI reported an execution blocker; inspect or cancel the invocation."
+                self.pending_attention.append(
+                    InvocationError(
+                        code, "CLI reported an execution blocker; inspect or cancel the invocation."
+                    )
                 )
                 self.attention_event.set()
             if activity.kind == "message" and activity.public_output:
@@ -138,10 +143,10 @@ class InvocationManager:
                 while True:
                     if record.task.done():
                         return record.task.result()
-                    if record.pending_attention is not None:
-                        attention = record.pending_attention
-                        record.pending_attention = None
-                        record.attention_event.clear()
+                    if record.pending_attention:
+                        attention = record.pending_attention.popleft()
+                        if not record.pending_attention:
+                            record.attention_event.clear()
                         return attention
                     attention_task = asyncio.create_task(record.attention_event.wait())
                     try:
