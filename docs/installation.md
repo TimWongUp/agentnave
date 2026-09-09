@@ -15,14 +15,14 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.6.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.7.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation.
 
 ## 1. Check and reuse the runtime
 
 AgentNave supports macOS and Linux. Install `uv` and Git. Set `AGENTNAVE_RELEASE` to the chosen
-published tag; the current paired release is `v0.6.0`. Use the same value for the Skill in step 4.
+published tag; the current paired release is `v0.7.0`. Use the same value for the Skill in step 4.
 
 Inspect the current installation before running an install command:
 
@@ -429,13 +429,13 @@ references, matching the source-tag installation route. The workflow also instal
 through its installed launcher on macOS and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
 
-### Development waiting contract after v0.6.0
+### Upgrading from v0.6.0 to v0.7.0
 
-The development runtime changes wait default/maximum to 600 seconds and replaces the lifecycle
+The v0.7.0 runtime changes wait default/maximum to 600 seconds and replaces the lifecycle
 responses with a flat `status`/`reason`/`elapsed_ms` template. Running replies include at most
 1,000 characters from the latest public reply; recognized blockers return early without stopping
 the CLI. Completed replies retain full final output within the existing capture limit. Usage/cost
-and raw event details are omitted. This is a breaking MCP response change, not a new release yet.
+and raw event details are omitted. This is a breaking MCP response change from v0.6.0.
 Update runtime and Skill together and restart the connection; a source-linked Skill alone does
 not upgrade an installed v0.6.0 runtime. The Skill checks the connected schema for older limits
 and response shapes. Hosts that cap tool calls below ten minutes must use shorter waits.
