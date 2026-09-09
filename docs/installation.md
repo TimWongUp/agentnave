@@ -408,8 +408,10 @@ After registration or upgrade:
    provider and verify its final result using `wait_agent`. Check actual task evidence as well as
    status: a provider can finish its conversation successfully after a tool was denied.
 
-For Antigravity project work, select `provider_options.project` together with `cwd` and verify
-the tool's actual directory with `pwd`; cwd alone may leave tools in the native scratch workspace.
+For Antigravity project work, use the absolute project directory as `cwd` and follow the
+[directory handoff guidance](../skills/agentnave-manager/references/antigravity.md): require the
+terminal's explicit `Cwd`, verify it with `pwd`, and stop project operations on a mismatch.
+`provider_options.project` selects a native project, not a terminal working directory.
 For CodeBuddy, `--print` cannot display permission prompts. Preserve native permissions and resolve
 any denied tool with the user before retrying; do not automatically enable permission bypass.
 The companion Skill's provider references give the calling guidance for these cases.
