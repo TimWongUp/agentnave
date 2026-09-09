@@ -164,9 +164,11 @@ bounded in process memory; no output log/database is added. A 1,000-character re
 per invocation for waiting responses. Final results remain available for this server process.
 
 Use the project directory as `cwd` so the CLI can load its native project rules. Temporary
-handoff files do not change that directory. For Antigravity, explicitly select the native project
-with `provider_options.project` as well: process cwd alone may leave tools in its scratch workspace.
-Verify the tool's actual working directory before project operations. The companion Skill guides task handoffs and keeps
+handoff files do not change that directory. Antigravity can choose a different terminal `Cwd`:
+state the absolute project directory in the handoff, require that terminal directory explicitly,
+and verify it with `pwd` before project operations. This is a behavioral instruction, not enforced
+directory isolation. `provider_options.project` selects a native project ID or name; it is not a
+working-directory override. The companion Skill guides task handoffs and keeps
 intermediate files in OS temporary storage without imposing Markdown or a result-file format.
 AgentNave itself uses stdin/in-memory output except for Grok's temporary prompt file, which is
 removed after use. Provider-owned history and caches remain under provider control.
