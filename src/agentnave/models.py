@@ -80,6 +80,8 @@ class ProviderActivity:
     message: str | None = None
     tool_call_id: str | None = None
     message_delta: bool = False
+    blocking_error: str | None = None
+    public_output: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {

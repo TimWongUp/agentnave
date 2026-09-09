@@ -47,13 +47,23 @@ class CodexAdapter:
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
         if event_type in ("thread.started", "turn.started", "turn.completed", "turn.failed"):
-            return ProviderActivity("lifecycle", str(event_type), str(event_type))
+            return ProviderActivity(
+                "lifecycle",
+                str(event_type),
+                str(event_type),
+                blocking_error="provider_failed" if event_type == "turn.failed" else None,
+            )
         if event_type not in ("item.started", "item.updated", "item.completed"):
             return None
         item = object_dict(event.get("item"))
         item_type = item.get("type")
         if item_type == "agent_message":
-            return ProviderActivity("message", str(event_type), message=brief(item.get("text")))
+            return ProviderActivity(
+                "message",
+                str(event_type),
+                message=brief(item.get("text")),
+                public_output=brief(item.get("text"), 1000),
+            )
         if item_type in ("command_execution", "mcp_tool_call", "web_search", "file_change"):
             return ProviderActivity(
                 "tool",

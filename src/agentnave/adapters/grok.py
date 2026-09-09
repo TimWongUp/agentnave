@@ -83,14 +83,18 @@ class GrokAdapter:
             )
         if event_type == "text":
             return ProviderActivity(
-                "message", "text", message=brief(event.get("data")), message_delta=True
+                "message",
+                "text",
+                message=brief(event.get("data")),
+                message_delta=True,
+                public_output=brief(event.get("data"), 1000),
             )
         if event_type == "thought":
             return ProviderActivity("lifecycle", "thought", "reasoning")
         if event_type == "end":
             return ProviderActivity("lifecycle", "end", brief(event.get("stopReason")))
         if event_type == "error":
-            return ProviderActivity("lifecycle", "error", "error")
+            return ProviderActivity("lifecycle", "error", "error", blocking_error="provider_failed")
         return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:

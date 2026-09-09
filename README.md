@@ -118,14 +118,29 @@ model should be reported rather than silently replaced.
 
 ### `wait_agent`
 
-Waits for at most `wait_timeout_seconds`. A `running` response keeps the invocation active and
-includes a lifecycle snapshot; a `finished` response contains the normalized provider result.
-`v0.6.0` defaults to 120 seconds per wait (v0.5.0 defaults to 30); both return early
-when the task finishes. Wait expiry is separate from `start_agent.timeout_seconds`, the total
-optional runtime budget: omitted/null means no AgentNave deadline; an explicit positive value
+The development runtime waits up to 600 seconds by default (and at most 600). It returns early
+when the invocation finishes or reports a recognized execution blocker. Released v0.6.0 still
+uses a 120-second default and a 300-second maximum; reconnect after upgrading the runtime and
+respect any shorter host timeout.
+
+Start, wait and cancel use one flat response: `invocation_id`, `status`, `reason`, `elapsed_ms`,
+plus applicable `activity`, `error`, `output`, `output_age_ms` and `session_id` fields. Reasons are
+`started`, `wait_elapsed`, `execution_blocked` and `finished`. Running replies include the latest
+public reply tail (at most 1,000 Unicode characters), retained across tool events, and its age.
+No new public reply means the same tail can recur; unavailable fields are omitted. There is no
+cursor, pagination or separate output-reading tool. Final replies are not subject to the tail limit.
+Provider usage/cost, native event names, tool call IDs, tool payloads and thinking are not returned.
+Public replies may still contain task data; this is not a redaction service.
+
+`execution_blocked` leaves `status=running`: the Manager decides whether to keep waiting or cancel.
+Each recognized blocker category wakes once per invocation, avoiding repeated immediate returns
+from the same retry loop. Ordinary tool failures, transient retries and silence do not imply a
+blocker; unrecognized errors may only become visible in output or the final result. There is no
+unsolicited completion/error push without a pending wait request.
+
+Wait expiry never terminates the invocation. `start_agent.timeout_seconds` remains a separate
+optional total budget: omitted/null means no AgentNave deadline; an explicit positive value
 (up to 86,400 seconds) terminates the invocation when reached. Provider-native limits still apply.
-Continue waiting on the same ID; elapsed time or event silence alone does not
-justify cancellation or a duplicate invocation.
 
 ### `cancel_agent`
 
@@ -143,14 +158,10 @@ makes a best-effort attempt to terminate processes that remain in the provider p
 restart cannot recover old handles, but a retained provider `session_id` can be supplied to a new
 `start_agent` call.
 
-A running snapshot reports lifecycle phase, elapsed time, remaining explicit budget (or null),
-and the ages of the latest JSON event and recognizable activity. `last_activity` contains the
-native event type/state, tool name/call ID when available, or at most 512 characters of public
-assistant text. It is one recent observation, not the state of all concurrent work or proof of a
-stall. Unknown fields remain null; retry/input-wait states are reported only when the CLI emits
-them. Tool arguments/results and thinking content are not copied into snapshots. Public text
-can still contain task data; snapshots are not a redaction service. Terminal `output` remains
-the provider's final response.
+Running responses help inspect health and direction using a bounded public reply and native
+activity. They do not show every active operation or guarantee progress. Raw streams remain
+bounded in process memory; no output log/database is added. A 1,000-character reply tail is kept
+per invocation for waiting responses. Final results remain available for this server process.
 
 Use the project directory as `cwd` so the CLI can load its native project rules. Temporary
 handoff files do not change that directory. For Antigravity, explicitly select the native project

@@ -46,7 +46,16 @@ class AntigravityAdapter:
             return ProviderActivity("lifecycle", "init", "initialized")
         if event_type == "result":
             return ProviderActivity(
-                "lifecycle", "result", brief(object_dict(event.get("result")).get("status"))
+                "lifecycle",
+                "result",
+                brief(object_dict(event.get("result")).get("status")),
+                blocking_error=(
+                    "provider_blocked"
+                    if object_dict(event.get("result")).get("status") == "WAITING"
+                    else "provider_failed"
+                    if object_dict(event.get("result")).get("status") in ("ERROR", "FAILED")
+                    else None
+                ),
             )
         if event_type != "step_update":
             return None
@@ -68,6 +77,7 @@ class AntigravityAdapter:
                 "step_update.agent_response",
                 state,
                 message=brief(step.get("text_delta")),
+                public_output=brief(step.get("text_delta"), 1000),
                 message_delta=True,
             )
         return None
