@@ -42,9 +42,10 @@ CLI 不继承主对话。主 Agent 在首次派发、切换 CLI 或交接未完�
 ## 启动与等待
 
 1. 按上节准备任务后调用 `start_agent`，传入 `provider`、绝对且存在的 `cwd`、`prompt` 和显式 `provider_options`。`cwd` 应是需要加载项目规则的项目目录，CLI 在其中启动；临时交接文档的位置不改变工作目录，规则能否加载仍取决于 CLI 原生支持。`timeout_seconds` 是可选总运行上限，显式设置后到期会停止调用；支持可空参数的新运行时省略或传 null 表示不设 AgentNave 总截止，CLI 自身限制仍生效。旧运行时可能保留 30 分钟默认值，按实时 schema 确认，不将旧服务视作无限期运行。
-2. 保存返回的 `invocation_id`，调用 `wait_agent`，显式传入 `wait_timeout_seconds: 120`。宿主的工具超时或响应限制更短时服从宿主限制。任务完成会提前返回，无需额外 sleep。
-3. 返回 `state=running` 时检查 `snapshot`：`phase` 为进程生命周期；`last_activity` 为最新可识别的原生活动，包含事件类型、原生状态、工具名/调用 ID 或最多 512 字符的公开回复片段；`last_activity_age_ms` 为该观察的年龄，`last_event_age_ms` 为最近 JSON 事件的年龄。未支持/未报告的字段为 null，不能据此推断等待输入、卡死或所有并发工具的状态。`remaining_ms` 仅在显式总预算下提供剩余时间。根据活动、错误和任务预算决定继续等待同一 ID 或取消；明确的认证重试可作为停止排查的依据，单次等待到期、多轮 running 或事件沉默本身不足以取消或重复启动。
-4. 返回 `state=finished` 时读取 `result.status`、`output`、`error` 和原生 `session_id`。`succeeded` 是 Provider 的成功终态，不保证用户任务完成；结合输出及任务所需的实际命令结果、产物或检查证据验收。若输出报告权限拒绝、未执行或目录不符，明确报告未完成部分。`failed` / `blocked` 的原因看错误与输出；`cancelled` / `timed_out` 表示本次调用已停止。读取 `duration_ms` 与 `provider_usage` 中实际报告的费用/轮次；缺失表示未报告，不等于零，也不用于推算固定价格。将结果交回调用方，由其决定验收和下一步。
+2. 保存返回的 `invocation_id`，调用 `wait_agent`，显式传入 `wait_timeout_seconds: 600`。每轮最长等待 10 分钟，任务完成或 CLI 明确报告执行阻塞时提前返回。宿主工具超时更短时服从宿主限制；旧版 schema 上限不足 600 时使用其允许值。无需额外 sleep，也不是后台定时推送。
+3. 新版启动、等待和取消共用顶层 `invocation_id`、`status`、`reason`、`elapsed_ms`，其他字段仅在有值时出现。`status=running` 表示 CLI 尚未结束；`reason=wait_elapsed` 表示本轮等待到期，`reason=execution_blocked` 表示提前发现明确阻塞，读取固定类别 `error.code`。阻塞返回不停止 CLI，同类阻塞在一次 Invocation 内只主动提醒一次；根据错误决定继续等待同一 ID 或取消。普通工具失败、暂时重试和沉默不等于任务无法执行。仅 CLI 暴露的已识别阻塞可提前返回，未知错误仍需检查输出或最终结果。
+4. 每轮运行中返回包含可用的 `activity`（最近活动类型、原生状态、工具名和 `age_ms`）以及最新公开回复尾部 `output`（最多 1000 个 Unicode 字符）与 `output_age_ms`。用正文判断方向、活动判断运行情况；没有新正文时可能重复同一内容，用年龄区分。未输出正文就省略该字段；不返回思考、工具参数或工具结果，无游标、分页或独立读取工具。单次观察不代表所有并发工作，也不证明卡死。若材料不足以判断是否跑偏，应报告未知。
+5. `reason=finished` 时按顶层 `status`、`output`、`error` 和原生 `session_id` 验收；最终正文不受 1000 字符限制，但仍受运行时整体捕获上限约束。`succeeded` 不保证用户任务完成，结合实际命令结果、产物或检查证据验收；权限拒绝、未执行或目录不符要报告未完成部分。费用不展示；耗时使用 `elapsed_ms`。旧版仍返回 `state`、`snapshot` / `result` 嵌套结构，按当前连接 schema 读取，不能把 Skill 更新当作运行时已升级。
 
 ## 取消与续接
 

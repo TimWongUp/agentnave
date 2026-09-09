@@ -367,7 +367,7 @@ not as part of v0.5.0. Keep the installed runtime's stable launcher registration
 
 ### Upgrading from v0.5.0
 
-The Skill explicitly requests 120-second waits, so it also works with v0.5.0's 30-second default.
+The v0.6.0 Skill explicitly requests 120-second waits, also supported by v0.5.0.
 In v0.6.0 the runtime wait default itself is 120 seconds. Total `start_agent.timeout_seconds`
 is now optional: omitted/null means no AgentNave deadline, replacing the former 1,800-second
 cutoff. To retain a deadline, pass an explicit positive total limit; expiry terminates the
@@ -426,6 +426,17 @@ and the allowed-provider lifecycle. CI checks that the Git source archive contai
 references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
 through its installed launcher on macOS and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
+
+### Development waiting contract after v0.6.0
+
+The development runtime changes wait default/maximum to 600 seconds and replaces the lifecycle
+responses with a flat `status`/`reason`/`elapsed_ms` template. Running replies include at most
+1,000 characters from the latest public reply; recognized blockers return early without stopping
+the CLI. Completed replies retain full final output within the existing capture limit. Usage/cost
+and raw event details are omitted. This is a breaking MCP response change, not a new release yet.
+Update runtime and Skill together and restart the connection; a source-linked Skill alone does
+not upgrade an installed v0.6.0 runtime. The Skill checks the connected schema for older limits
+and response shapes. Hosts that cap tool calls below ten minutes must use shorter waits.
 
 ## Upgrade, repair, and rollback
 

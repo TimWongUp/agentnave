@@ -35,13 +35,15 @@ MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manage
 
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
-结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
+内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
 STDIO MCP 是唯一公开接口，暴露 `describe_provider`、`start_agent`、`wait_agent` 和 `cancel_agent`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。四个 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent(session_id=...)` 完成。
 
 `start_agent.timeout_seconds` 省略或为 null 时不设 AgentNave 总截止；显式正数预算到期会停止调用。Provider 原生限制继续生效，AgentNave 不静默改写。`wait_agent` 的单次等待到期只返回运行状态，不终止任务。
 
-`wait_agent` 在 Invocation 仍运行时返回 `snapshot`，包含 `phase`、`elapsed_ms`、`remaining_ms`、`last_event_age_ms`、`last_activity` 和 `last_activity_age_ms`。无显式预算时余量为 null。Antigravity、Claude、CodeBuddy、Codex 与 Grok Adapter 分别消费 Provider 官方的 `stream-json`、`stream-json`、`stream-json`、JSONL 与 `streaming-json` 事件流；只提取已识别的事件类型、原生状态、工具名/调用 ID 和有界公开回复片段。单条活动不是所有并发工作的完整状态，事件沉默不证明卡死；未知字段为 null，重试或交互等待只按原生报告呈现，继续/终止由 Manager 决定。快照不转发工具参数、工具输出或推理正文；公开回复仍可能含任务数据，不提供自动脱敏保证。终态 `output` 只保留 Provider 最终回答，其中 Codex 取最后一个完成的 `agent_message`，Grok 取结束前最近一段连续 `text` 事件。
+启动、等待和取消的公开回复共用顶层 `invocation_id`、`status`、`reason`、`elapsed_ms`；按需包含 `activity`、`error`、`output`、`output_age_ms` 与 `session_id`，不返回费用或空字段。内部 Invocation Result 的 Provider 用量仍可保全，但不向公开回复转发。等待默认最长十分钟，完成或已识别的明确执行阻塞提前返回；阻塞返回不终止 CLI，由 Manager 决定继续等待还是取消，同类阻塞每次 Invocation 仅唤醒一次。普通工具失败、暂时重试和事件沉默本身不构成阻塞。未识别的原生错误不保证提前唤醒。
+
+运行中回复同时提供最新原生活动与最多 1000 字符的公开回复尾部及其年龄。正文独立保留，不因后续工具事件消失；相同正文可能在不同等待中重复，无游标、分页或独立读取工具。只增加有界进程内尾部，不持久化输出。活动不返回原始事件名、工具调用 ID、工具参数/结果或推理正文；公开正文可能含任务数据，不提供自动脱敏保证。终态 `output` 保全最终回答，不应用中间正文长度限制；仍受整体捕获上限约束。宿主超时限制由 Manager 尊重，无等待请求时不主动推送。
 
 Invocation 状态只存在于当前进程内。每次 Invocation 由一个专用 supervisor 持续占有 POSIX 进程组，Provider 正常终止后也先清理该组再回收 supervisor，避免旧 PGID 被复用。MCP server 退出时会尽力终止仍留在该组内的活跃进程；重启后旧 Invocation 句柄不可恢复。Provider 自己持久化的 Session 不受此限制。
 

@@ -6,7 +6,7 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal, NotRequired, TypedDict, cast, get_args
+from typing import Annotated, Literal, NotRequired, TypedDict, get_args
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
@@ -19,8 +19,6 @@ from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
 
 type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok"]
-type InvocationStatusName = Literal["succeeded", "failed", "blocked", "cancelled", "timed_out"]
-type InvocationPhaseName = Literal["preparing", "running", "stopping"]
 
 
 def _read_excluded_providers() -> frozenset[str]:
@@ -68,58 +66,25 @@ class ProviderDescriptionPayload(TypedDict):
 class InvocationErrorPayload(TypedDict):
     code: str
     message: str
-    details: str | None
 
 
-class ProviderUsagePayload(TypedDict, total=False):
-    num_turns: int
-    total_cost_usd: float
-
-
-class InvocationResultPayload(TypedDict):
-    status: InvocationStatusName
-    provider: ProviderName
-    output: str
-    session_id: str | None
-    provider_usage: ProviderUsagePayload
-    duration_ms: int
-    error: InvocationErrorPayload | None
-
-
-class ProviderActivityPayload(TypedDict):
+class ActivityPayload(TypedDict):
     kind: str
-    event_type: str
-    state: str | None
-    tool_name: str | None
-    message: str | None
-    tool_call_id: str | None
+    state: NotRequired[str]
+    tool_name: NotRequired[str]
+    age_ms: NotRequired[int]
 
 
-class InvocationSnapshotPayload(TypedDict):
-    phase: InvocationPhaseName
+class InvocationPayload(TypedDict):
+    invocation_id: str
+    status: Literal["running", "succeeded", "failed", "blocked", "cancelled", "timed_out"]
+    reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
     elapsed_ms: int
-    last_event_age_ms: int | None
-    last_activity: ProviderActivityPayload | None
-    last_activity_age_ms: int | None
-    remaining_ms: int | None
-
-
-class StartAgentPayload(TypedDict):
-    invocation_id: str
-    state: Literal["running"]
-
-
-class WaitAgentPayload(TypedDict):
-    invocation_id: str
-    state: Literal["running", "finished"]
-    snapshot: NotRequired[InvocationSnapshotPayload]
-    result: NotRequired[InvocationResultPayload]
-
-
-class CancelAgentPayload(TypedDict):
-    invocation_id: str
-    state: Literal["finished"]
-    result: InvocationResultPayload
+    activity: NotRequired[ActivityPayload]
+    error: NotRequired[InvocationErrorPayload]
+    output: NotRequired[str]
+    output_age_ms: NotRequired[int]
+    session_id: NotRequired[str]
 
 
 @asynccontextmanager
@@ -149,8 +114,20 @@ def _manager(ctx: Context[InvocationManager]) -> InvocationManager:
     return ctx.request_context.lifespan_context
 
 
-def _result_payload(result: InvocationResult) -> InvocationResultPayload:
-    return cast(InvocationResultPayload, result.to_dict())
+def _finished_payload(invocation_id: str, result: InvocationResult) -> InvocationPayload:
+    payload: InvocationPayload = {
+        "invocation_id": invocation_id,
+        "status": result.status.value,
+        "reason": "finished",
+        "elapsed_ms": result.duration_ms,
+    }
+    if result.output:
+        payload["output"] = result.output
+    if result.session_id:
+        payload["session_id"] = result.session_id
+    if result.error:
+        payload["error"] = {"code": result.error.code, "message": result.error.message}
+    return payload
 
 
 def _unknown_invocation() -> ToolError:
@@ -214,7 +191,7 @@ async def start_agent(
     ] = None,
     *,
     ctx: Context[InvocationManager],
-) -> StartAgentPayload:
+) -> InvocationPayload:
     """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
     Active invocations do not accept messages. To continue a finished conversation, pass
@@ -240,7 +217,12 @@ async def start_agent(
         raise ToolError(
             f"Unable to prepare invocation: {exc}. Check local filesystem access."
         ) from exc
-    return {"invocation_id": invocation_id, "state": "running"}
+    return {
+        "invocation_id": invocation_id,
+        "status": "running",
+        "reason": "started",
+        "elapsed_ms": 0,
+    }
 
 
 @mcp.tool(
@@ -261,38 +243,52 @@ async def wait_agent(
         float,
         Field(
             gt=0,
-            le=300,
+            le=600,
             description="Seconds to wait for this response; expiry leaves the invocation running.",
         ),
-    ] = 120,
+    ] = 600,
     *,
     ctx: Context[InvocationManager],
-) -> WaitAgentPayload:
-    """Wait for a task using the invocation_id returned by start_agent.
+) -> InvocationPayload:
+    """Wait up to ten minutes; completion or an explicit CLI execution blocker returns early.
 
-    state=running: call again with the same ID; do not launch a duplicate.
-    state=finished: inspect result.status, output, and error; completion does not imply success.
-    This wait returns early on completion; expiry does not stop the task or mean timed_out.
-    Snapshots include the latest observed activity and its age, not all active work or proof
-    of a stall. Missing activity is unknown; silence alone does not justify cancellation.
+    Running responses include the latest public reply tail (at most 1000 characters) and its age.
+    execution_blocked leaves the CLI running: continue waiting or cancel with the same ID.
+    Each blocker category wakes once per invocation. Ordinary tool failures, transient retries,
+    and silence are not proof the task cannot proceed. Finished responses contain the final reply.
+    This is request/response waiting, not a background notification subscription.
     """
     manager = _manager(ctx)
     try:
-        result = await manager.wait(invocation_id, wait_timeout_seconds)
-        if result is None:
-            snapshot = manager.snapshot(invocation_id)
-            return {
-                "invocation_id": invocation_id,
-                "state": "running",
-                "snapshot": cast(InvocationSnapshotPayload, snapshot.to_dict()),
-            }
+        result = await manager.wait_for_update(invocation_id, wait_timeout_seconds)
+        if isinstance(result, InvocationResult):
+            return _finished_payload(invocation_id, result)
+        snapshot = manager.snapshot(invocation_id)
+        response: InvocationPayload = {
+            "invocation_id": invocation_id,
+            "status": "running",
+            "reason": "execution_blocked" if result is not None else "wait_elapsed",
+            "elapsed_ms": snapshot.elapsed_ms,
+        }
+        activity = snapshot.last_activity
+        if activity is not None:
+            summary: ActivityPayload = {"kind": activity.kind}
+            if activity.state:
+                summary["state"] = activity.state
+            if activity.tool_name:
+                summary["tool_name"] = activity.tool_name
+            if snapshot.last_activity_age_ms is not None:
+                summary["age_ms"] = snapshot.last_activity_age_ms
+            response["activity"] = summary
+        output, age = manager.recent_output(invocation_id)
+        if output and age is not None:
+            response["output"] = output
+            response["output_age_ms"] = age
+        if result is not None:
+            response["error"] = {"code": result.code, "message": result.message}
+        return response
     except KeyError as exc:
         raise _unknown_invocation() from exc
-    return {
-        "invocation_id": invocation_id,
-        "state": "finished",
-        "result": _result_payload(result),
-    }
 
 
 @mcp.tool(
@@ -311,7 +307,7 @@ async def cancel_agent(
     ],
     *,
     ctx: Context[InvocationManager],
-) -> CancelAgentPayload:
+) -> InvocationPayload:
     """Stop a task by invocation_id; use wait_agent to observe without stopping.
 
     Returns the cancelled or already-finished result. Does not undo prior CLI side effects.
@@ -320,11 +316,7 @@ async def cancel_agent(
         result = await _manager(ctx).cancel(invocation_id)
     except KeyError as exc:
         raise _unknown_invocation() from exc
-    return {
-        "invocation_id": invocation_id,
-        "state": "finished",
-        "result": _result_payload(result),
-    }
+    return _finished_payload(invocation_id, result)
 
 
 @mcp.tool(

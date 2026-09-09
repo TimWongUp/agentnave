@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -41,6 +42,14 @@ class _InvocationRecord:
     last_activity: ProviderActivity | None = None
     last_activity_at: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
+    attention_event: asyncio.Event = field(default_factory=asyncio.Event)
+    pending_attention: deque[InvocationError] = field(
+        default_factory=lambda: deque[InvocationError]()
+    )
+    reported_errors: set[str] = field(default_factory=lambda: set[str]())
+    output_tail: str = ""
+    output_at: float | None = None
+    output_event_type: str | None = None
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -49,6 +58,23 @@ class _InvocationRecord:
         self.last_event_at = time.monotonic()
         activity = adapter.activity(event)
         if activity is not None:
+            code = activity.blocking_error
+            if code is not None and code not in self.reported_errors:
+                self.reported_errors.add(code)
+                self.pending_attention.append(
+                    InvocationError(
+                        code, "CLI reported an execution blocker; inspect or cancel the invocation."
+                    )
+                )
+                self.attention_event.set()
+            if activity.kind == "message" and activity.public_output:
+                # Delta events append; cumulative/final message events replace the current reply.
+                if activity.message_delta and self.output_event_type == activity.event_type:
+                    self.output_tail = (self.output_tail + activity.public_output)[-1000:]
+                else:
+                    self.output_tail = activity.public_output[-1000:]
+                self.output_at = self.last_event_at
+                self.output_event_type = activity.event_type
             previous = self.last_activity
             if activity.kind == "tool" and activity.tool_call_id is not None:
                 if activity.tool_name is not None:
@@ -106,6 +132,33 @@ class InvocationManager:
         except TimeoutError:
             return None
 
+    async def wait_for_update(
+        self, invocation_id: str, timeout_seconds: float
+    ) -> InvocationResult | InvocationError | None:
+        record = self._record(invocation_id)
+        if record.task is None:
+            raise RuntimeError("invocation task was not initialized")
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                while True:
+                    if record.task.done():
+                        return record.task.result()
+                    if record.pending_attention:
+                        attention = record.pending_attention.popleft()
+                        if not record.pending_attention:
+                            record.attention_event.clear()
+                        return attention
+                    attention_task = asyncio.create_task(record.attention_event.wait())
+                    try:
+                        await asyncio.wait(
+                            (record.task, attention_task), return_when=asyncio.FIRST_COMPLETED
+                        )
+                    finally:
+                        attention_task.cancel()
+                        await asyncio.gather(attention_task, return_exceptions=True)
+        except TimeoutError:
+            return None
+
     def snapshot(self, invocation_id: str) -> InvocationSnapshot:
         record = self._record(invocation_id)
         now = time.monotonic()
@@ -126,6 +179,15 @@ class InvocationManager:
             if record.request.timeout_seconds is None
             else max(0, round((record.request.timeout_seconds - (now - record.started_at)) * 1000)),
         )
+
+    def recent_output(self, invocation_id: str) -> tuple[str, int | None]:
+        record = self._record(invocation_id)
+        age = (
+            None
+            if record.output_at is None
+            else max(0, round((time.monotonic() - record.output_at) * 1000))
+        )
+        return record.output_tail, age
 
     async def cancel(self, invocation_id: str) -> InvocationResult:
         record = self._record(invocation_id)

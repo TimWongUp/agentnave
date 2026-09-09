@@ -15,6 +15,59 @@ from agentnave.adapters.grok import GrokAdapter
 from agentnave.models import InvocationRequest, InvocationStatus
 
 
+@pytest.mark.parametrize(
+    ("provider", "event", "code"),
+    [
+        ("claude", {"type": "system", "subtype": "api_retry", "error": "overloaded_error"}, None),
+        (
+            "claude",
+            {"type": "system", "subtype": "api_retry", "error": "authentication_failed"},
+            "authentication_failed",
+        ),
+        (
+            "claude",
+            {
+                "type": "user",
+                "message": {
+                    "content": [{"type": "tool_result", "is_error": True, "content": "test failed"}]
+                },
+            },
+            None,
+        ),
+        (
+            "codebuddy",
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Error: Permission to use Bash has been denied because this tool requires approval but permission prompts are not available in non-interactive mode.",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+            "permission_denied",
+        ),
+        ("codex", {"type": "turn.failed", "error": {"message": "secret"}}, "provider_failed"),
+        ("grok", {"type": "error", "message": "secret"}, "provider_failed"),
+        ("antigravity", {"event": "result", "result": {"status": "WAITING"}}, "provider_blocked"),
+    ],
+)
+def test_execution_blockers_are_distinct_from_recoverable_tool_errors(
+    provider: str, event: dict[str, object], code: str | None
+) -> None:
+    activity = get_adapter(provider).activity(event)
+    assert activity is not None
+    assert activity.blocking_error == code
+    assert activity.public_output is None
+
+
 def request(
     tmp_path: Path,
     provider: str,

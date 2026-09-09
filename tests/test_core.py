@@ -10,7 +10,7 @@ import pytest
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
 
 
 class FakeAdapter(ClaudeAdapter):
@@ -34,11 +34,19 @@ class FakeAdapter(ClaudeAdapter):
             )
         elif request.prompt == "kill_supervisor":
             code = "import os,signal,time; os.kill(os.getppid(), signal.SIGKILL); time.sleep(0.1)"
-        elif request.prompt == "progress":
+        elif request.prompt in {"progress", "multiple_blockers"}:
+            errors = ["authentication_failed"]
+            if request.prompt == "multiple_blockers":
+                errors += ["permission_denied", "authentication_failed"]
+            wire = (
+                "\n".join(
+                    json.dumps({"type": "system", "subtype": "api_retry", "error": error})
+                    for error in errors
+                )
+                + "\n"
+            )
             code = (
-                "import sys,time; "
-                'sys.stdout.write(\'{"type":"system","subtype":"api_retry","error":"authentication_failed"}\\n\'); '
-                "sys.stdout.flush(); time.sleep(30)"
+                f"import sys,time; sys.stdout.write({wire!r}); sys.stdout.flush(); time.sleep(30)"
             )
         elif request.prompt == "streaming_message":
             events = [
@@ -97,6 +105,65 @@ def fake_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
         return FakeAdapter()
 
     monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
+
+
+@pytest.mark.asyncio
+async def test_wait_preserves_distinct_blockers_in_one_stdout_burst(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("claude", "multiple_blockers", tmp_path))
+    try:
+        async with asyncio.timeout(3):
+            first = await manager.wait_for_update(invocation_id, 600)
+            second = await manager.wait_for_update(invocation_id, 600)
+        assert isinstance(first, InvocationError)
+        assert isinstance(second, InvocationError)
+        assert [first.code, second.code] == ["authentication_failed", "permission_denied"]
+        assert await manager.wait_for_update(invocation_id, 0.02) is None
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_blocker_wakes_long_wait_once_and_cancellation_still_works(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("claude", "progress", tmp_path))
+    try:
+        async with asyncio.timeout(3):
+            notice = await manager.wait_for_update(invocation_id, 600)
+        assert isinstance(notice, InvocationError)
+        assert notice.code == "authentication_failed"
+        # No duplicate notice, and neither wait cancels the CLI.
+        assert await manager.wait_for_update(invocation_id, 0.02) is None
+        assert manager.snapshot(invocation_id).phase.value == "running"
+        result = await manager.cancel(invocation_id)
+        assert result.status is InvocationStatus.CANCELLED
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wait_update_timeout_keeps_streaming_public_tail(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("claude", "streaming_message", tmp_path))
+    try:
+        assert await manager.wait_for_update(invocation_id, 0.5) is None
+        output, age = manager.recent_output(invocation_id)
+        assert output == "x" * 600 + "中文"
+        assert age is not None
+        waiting = asyncio.create_task(manager.wait_for_update(invocation_id, 600))
+        await asyncio.sleep(0)
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        assert await manager.wait_for_update(invocation_id, 0.01) is None
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio

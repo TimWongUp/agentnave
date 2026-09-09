@@ -51,7 +51,22 @@ class ClaudeAdapter:
             if subtype == "api_retry":
                 # Only the native error category, never the full error payload.
                 return ProviderActivity(
-                    "retry", "system.api_retry", "retrying", message=brief(event.get("error"))
+                    "retry",
+                    "system.api_retry",
+                    "retrying",
+                    message=brief(event.get("error")),
+                    blocking_error=(
+                        str(event["error"])
+                        if event.get("error")
+                        in (
+                            "authentication_failed",
+                            "permission_denied",
+                            "insufficient_quota",
+                            "billing_error",
+                            "invalid_api_key",
+                        )
+                        else None
+                    ),
                 )
             if subtype == "status":
                 return ProviderActivity("lifecycle", "system.status", brief(event.get("status")))
@@ -72,7 +87,11 @@ class ClaudeAdapter:
                     )
                 if block.get("type") == "text":
                     return ProviderActivity(
-                        "message", "stream_event.text", message=brief(block.get("text"))
+                        "message",
+                        "stream_event.text",
+                        message=brief(block.get("text")),
+                        public_output=brief(block.get("text"), 1000),
+                        message_delta=True,
                     )
                 if block.get("type") == "thinking":
                     return ProviderActivity("lifecycle", "stream_event.thinking", "reasoning")
@@ -81,6 +100,7 @@ class ClaudeAdapter:
                     "message",
                     "stream_event.text",
                     message=brief(delta.get("text")),
+                    public_output=brief(delta.get("text"), 1000),
                     message_delta=True,
                 )
         if event_type in ("assistant", "user"):
@@ -99,18 +119,55 @@ class ClaudeAdapter:
                         )
                     if block_type == "tool_result":
                         state = "failed" if block.get("is_error") is True else "completed"
+                        content = block.get("content")
+                        texts = (
+                            [content]
+                            if isinstance(content, str)
+                            else [
+                                text
+                                for part in cast(list[object], content)
+                                if isinstance((text := object_dict(part).get("text")), str)
+                                and object_dict(part).get("type") == "text"
+                            ]
+                            if isinstance(content, list)
+                            else []
+                        )
+                        denied = any(
+                            text.startswith("Error: Permission to use ")
+                            and "permission prompts are not available in non-interactive mode"
+                            in text
+                            for text in texts
+                        )
                         return ProviderActivity(
                             "tool",
                             "user.tool_result",
                             state,
                             tool_call_id=brief(block.get("tool_use_id")),
+                            blocking_error="permission_denied" if denied else None,
                         )
                     if block_type == "text" and event_type == "assistant":
                         return ProviderActivity(
-                            "message", "assistant.text", message=brief(block.get("text"))
+                            "message",
+                            "assistant.text",
+                            message=brief(block.get("text")),
+                            public_output=brief(block.get("text"), 1000),
                         )
         if event_type == "result":
-            return ProviderActivity("lifecycle", "result", brief(event.get("subtype")))
+            denied = event.get("permission_denials")
+            blocked = isinstance(denied, list) and len(cast(list[object], denied)) > 0
+            failed = event.get("is_error") is True or (
+                isinstance(event.get("subtype"), str) and str(event["subtype"]).startswith("error")
+            )
+            return ProviderActivity(
+                "lifecycle",
+                "result",
+                brief(event.get("subtype")),
+                blocking_error="permission_denied"
+                if blocked
+                else "provider_failed"
+                if failed
+                else None,
+            )
         return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:

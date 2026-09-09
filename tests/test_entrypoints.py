@@ -20,6 +20,14 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
+        "if prompt == 'blocker':\n"
+        "    for text in ['旧' * 1100, '新进展']:\n"
+        "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':text}}}), flush=True)\n"
+        "    print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{'secret':'DO_NOT_RETURN'}}]}}), flush=True)\n"
+        "    for _ in range(5):\n"
+        "        print(json.dumps({'type':'system','subtype':'api_retry','error':'authentication_failed'}), flush=True)\n"
+        "        time.sleep(0.05)\n"
+        "    time.sleep(30)\n"
         "if prompt == 'sleep':\n"
         "    time.sleep(30)\n"
         "if prompt == 'malformed usage':\n"
@@ -36,6 +44,39 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 def _payload(value: object) -> dict[str, object]:
     return cast(dict[str, object], value)
+
+
+@pytest.mark.asyncio
+async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    async with Client(mcp) as client:
+        started = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "blocker", "cwd": str(tmp_path)}
+        )
+        invocation_id = _payload(started.structured_content)["invocation_id"]
+        async with asyncio.timeout(3):
+            response = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
+        payload = _payload(response.structured_content)
+        assert payload["status"] == "running"
+        assert payload["reason"] == "execution_blocked"
+        assert _payload(payload["error"])["code"] == "authentication_failed"
+        assert payload["output"] == "旧" * 997 + "新进展"
+        assert "DO_NOT_RETURN" not in str(payload)
+        assert "provider_usage" not in payload
+        later = await client.call_tool(
+            "wait_agent", {"invocation_id": invocation_id, "wait_timeout_seconds": 0.4}
+        )
+        assert _payload(later.structured_content)["reason"] == "wait_elapsed"
+        assert _payload(later.structured_content)["output"] == payload["output"]
+        assert cast(int, _payload(later.structured_content)["output_age_ms"]) > cast(
+            int, payload["output_age_ms"]
+        )
+        cancelled = await client.call_tool("cancel_agent", {"invocation_id": invocation_id})
+        assert _payload(cancelled.structured_content)["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -58,7 +99,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     start_properties = _payload(result.tools[0].input_schema["properties"])
     assert _payload(start_properties["timeout_seconds"])["default"] is None
     wait_properties = _payload(result.tools[1].input_schema["properties"])
-    assert _payload(wait_properties["wait_timeout_seconds"])["default"] == 120
+    assert _payload(wait_properties["wait_timeout_seconds"])["default"] == 600
     assert result.tools[2].annotations is not None
     assert result.tools[2].annotations.destructive_hint is True
 
@@ -108,11 +149,11 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
         )
 
     finished_payload = _payload(finished.structured_content)
-    invocation_result = _payload(finished_payload["result"])
+    invocation_result = finished_payload
     assert started.is_error is False
-    assert started_payload["state"] == "running"
+    assert started_payload["status"] == "running"
     assert finished.is_error is False
-    assert finished_payload["state"] == "finished"
+    assert finished_payload["reason"] == "finished"
     assert invocation_result["status"] == "succeeded"
     assert invocation_result["output"] == "FINISH"
     assert invocation_result["session_id"] == "session-e2e"
@@ -135,12 +176,12 @@ async def test_mcp_preserves_terminal_result_when_provider_usage_is_malformed(
         )
 
     finished_payload = _payload(finished.structured_content)
-    invocation_result = _payload(finished_payload["result"])
+    invocation_result = finished_payload
     assert finished.is_error is False
     assert invocation_result["status"] == "succeeded"
     assert invocation_result["output"] == "MALFORMED USAGE"
     assert invocation_result["session_id"] == "session-e2e"
-    assert invocation_result["provider_usage"] == {}
+    assert "provider_usage" not in invocation_result
 
 
 @pytest.mark.asyncio
@@ -162,16 +203,13 @@ async def test_mcp_running_result_can_be_cancelled(
         cancelled = await client.call_tool("cancel_agent", {"invocation_id": invocation_id})
 
     running_payload = _payload(running.structured_content)
-    snapshot = _payload(running_payload["snapshot"])
     cancelled_payload = _payload(cancelled.structured_content)
-    cancelled_result = _payload(cancelled_payload["result"])
-    assert running_payload["state"] == "running"
-    assert snapshot["phase"] in {"preparing", "running"}
-    assert isinstance(snapshot["elapsed_ms"], int)
-    assert snapshot["remaining_ms"] is None
-    assert "last_activity" in snapshot
-    assert "last_activity_age_ms" in snapshot
-    assert cancelled_payload["state"] == "finished"
+    cancelled_result = cancelled_payload
+    assert running_payload["status"] == "running"
+    assert isinstance(running_payload["elapsed_ms"], int)
+    assert running_payload["reason"] == "wait_elapsed"
+    assert "snapshot" not in running_payload
+    assert cancelled_payload["reason"] == "finished"
     assert cancelled_result["status"] == "cancelled"
 
 
@@ -294,7 +332,7 @@ async def test_mcp_provider_launch_failure_is_structured_and_hides_traceback(
         )
 
     finished_payload = _payload(finished.structured_content)
-    invocation_result = _payload(finished_payload["result"])
+    invocation_result = finished_payload
     error = _payload(invocation_result["error"])
     assert finished.is_error is False
     assert invocation_result["status"] == "failed"
@@ -367,7 +405,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
                     "wait_timeout_seconds": 3,
                 },
             )
-            result = _payload(_payload(finished.structured_content)["result"])
+            result = _payload(finished.structured_content)
             assert result["output"] == "FINISH"
 
 
