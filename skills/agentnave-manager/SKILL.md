@@ -44,7 +44,7 @@ CLI 不继承主对话。主 Agent 在首次派发、切换 CLI 或交接未完�
 1. 按上节准备任务后调用 `start_agent`，传入 `provider`、绝对且存在的 `cwd`、`prompt` 和显式 `provider_options`。`cwd` 应是需要加载项目规则的项目目录，CLI 在其中启动；临时交接文档的位置不改变工作目录，规则能否加载仍取决于 CLI 原生支持。`timeout_seconds` 是可选总运行上限，显式设置后到期会停止调用；支持可空参数的新运行时省略或传 null 表示不设 AgentNave 总截止，CLI 自身限制仍生效。旧运行时可能保留 30 分钟默认值，按实时 schema 确认，不将旧服务视作无限期运行。
 2. 保存返回的 `invocation_id`，调用 `wait_agent`，显式传入 `wait_timeout_seconds: 120`。宿主的工具超时或响应限制更短时服从宿主限制。任务完成会提前返回，无需额外 sleep。
 3. 返回 `state=running` 时检查 `snapshot`：`phase` 为进程生命周期；`last_activity` 为最新可识别的原生活动，包含事件类型、原生状态、工具名/调用 ID 或最多 512 字符的公开回复片段；`last_activity_age_ms` 为该观察的年龄，`last_event_age_ms` 为最近 JSON 事件的年龄。未支持/未报告的字段为 null，不能据此推断等待输入、卡死或所有并发工具的状态。`remaining_ms` 仅在显式总预算下提供剩余时间。根据活动、错误和任务预算决定继续等待同一 ID 或取消；明确的认证重试可作为停止排查的依据，单次等待到期、多轮 running 或事件沉默本身不足以取消或重复启动。
-4. 返回 `state=finished` 时读取 `result.status`、`output`、`error` 和原生 `session_id`。`succeeded` 是 Provider 的成功终态；`failed` / `blocked` 的原因看错误与输出；`cancelled` / `timed_out` 表示本次调用已停止。读取 `duration_ms` 与 `provider_usage` 中实际报告的费用/轮次；缺失表示未报告，不等于零，也不用于推算固定价格。将结果交回调用方，由其决定验收和下一步。
+4. 返回 `state=finished` 时读取 `result.status`、`output`、`error` 和原生 `session_id`。`succeeded` 是 Provider 的成功终态，不保证用户任务完成；结合输出及任务所需的实际命令结果、产物或检查证据验收。若输出报告权限拒绝、未执行或目录不符，明确报告未完成部分。`failed` / `blocked` 的原因看错误与输出；`cancelled` / `timed_out` 表示本次调用已停止。读取 `duration_ms` 与 `provider_usage` 中实际报告的费用/轮次；缺失表示未报告，不等于零，也不用于推算固定价格。将结果交回调用方，由其决定验收和下一步。
 
 ## 取消与续接
 

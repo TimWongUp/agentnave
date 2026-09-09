@@ -153,7 +153,9 @@ can still contain task data; snapshots are not a redaction service. Terminal `ou
 the provider's final response.
 
 Use the project directory as `cwd` so the CLI can load its native project rules. Temporary
-handoff files do not change that directory. The companion Skill guides task handoffs and keeps
+handoff files do not change that directory. For Antigravity, explicitly select the native project
+with `provider_options.project` as well: process cwd alone may leave tools in its scratch workspace.
+Verify the tool's actual working directory before project operations. The companion Skill guides task handoffs and keeps
 intermediate files in OS temporary storage without imposing Markdown or a result-file format.
 AgentNave itself uses stdin/in-memory output except for Grok's temporary prompt file, which is
 removed after use. Provider-owned history and caches remain under provider control.

@@ -405,7 +405,14 @@ After registration or upgrade:
    options. This read does not launch a CLI.
 4. A call selecting an excluded provider must return a Tool error without starting a CLI.
 5. With authorization for any provider quota consumption, run a small task through a permitted
-   provider and verify its final result using `wait_agent`.
+   provider and verify its final result using `wait_agent`. Check actual task evidence as well as
+   status: a provider can finish its conversation successfully after a tool was denied.
+
+For Antigravity project work, select `provider_options.project` together with `cwd` and verify
+the tool's actual directory with `pwd`; cwd alone may leave tools in the native scratch workspace.
+For CodeBuddy, `--print` cannot display permission prompts. Preserve native permissions and resolve
+any denied tool with the user before retrying; do not automatically enable permission bypass.
+The companion Skill's provider references give the calling guidance for these cases.
 
 Report installation results per host as **added**, **reused**, **updated**, or **pending** for
 runtime, MCP registration, and Skill separately. Keep four verification levels distinct:
