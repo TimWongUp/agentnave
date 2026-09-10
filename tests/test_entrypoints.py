@@ -11,7 +11,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 from mcp_types import TextContent
 
-from agentnave import __version__
+from agentnave import __version__, mcp_server
 from agentnave.mcp_server import mcp
 
 
@@ -70,9 +70,8 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         assert payload["output"] == "旧" * 997 + "新进展"
         assert "DO_NOT_RETURN" not in str(payload)
         assert "provider_usage" not in payload
-        later = await client.call_tool(
-            "wait_agent", {"invocation_id": invocation_id, "wait_timeout_seconds": 0.4}
-        )
+        monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.4)
+        later = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
         assert _payload(later.structured_content)["reason"] == "wait_elapsed"
         assert _payload(later.structured_content)["output"] == payload["output"]
         assert cast(int, _payload(later.structured_content)["output_age_ms"]) > cast(
@@ -102,7 +101,8 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     start_properties = _payload(result.tools[0].input_schema["properties"])
     assert "timeout_seconds" not in start_properties
     wait_properties = _payload(result.tools[1].input_schema["properties"])
-    assert _payload(wait_properties["wait_timeout_seconds"])["default"] == 600
+    assert set(wait_properties) == {"invocation_id"}
+    assert mcp_server.WAIT_SECONDS == 300
     assert result.tools[2].annotations is not None
     assert result.tools[2].annotations.destructive_hint is True
 
@@ -136,6 +136,7 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.05)
 
     async with Client(mcp) as client:
         started = await client.call_tool(
@@ -150,7 +151,6 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
                     "wait_agent",
                     {
                         "invocation_id": started_payload["invocation_id"],
-                        "wait_timeout_seconds": 0.05,
                     },
                 )
                 payload = _payload(finished.structured_content)
@@ -184,9 +184,7 @@ async def test_mcp_preserves_terminal_result_when_provider_usage_is_malformed(
             {"provider": "claude", "prompt": "malformed usage", "cwd": str(tmp_path)},
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
-        finished = await client.call_tool(
-            "wait_agent", {"invocation_id": invocation_id, "wait_timeout_seconds": 3}
-        )
+        finished = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
 
     finished_payload = _payload(finished.structured_content)
     invocation_result = finished_payload
@@ -202,6 +200,7 @@ async def test_mcp_running_result_can_be_cancelled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.01)
 
     async with Client(mcp) as client:
         started = await client.call_tool(
@@ -211,7 +210,7 @@ async def test_mcp_running_result_can_be_cancelled(
         invocation_id = _payload(started.structured_content)["invocation_id"]
         running = await client.call_tool(
             "wait_agent",
-            {"invocation_id": invocation_id, "wait_timeout_seconds": 0.01},
+            {"invocation_id": invocation_id},
         )
         cancelled = await client.call_tool("cancel_agent", {"invocation_id": invocation_id})
 
@@ -341,7 +340,7 @@ async def test_mcp_provider_launch_failure_is_structured_and_hides_traceback(
         invocation_id = _payload(started.structured_content)["invocation_id"]
         finished = await client.call_tool(
             "wait_agent",
-            {"invocation_id": invocation_id, "wait_timeout_seconds": 3},
+            {"invocation_id": invocation_id},
         )
 
     finished_payload = _payload(finished.structured_content)
@@ -415,7 +414,6 @@ async def test_stdio_enforces_host_exclusions_before_launch(
                 "wait_agent",
                 {
                     "invocation_id": _payload(started.structured_content)["invocation_id"],
-                    "wait_timeout_seconds": 3,
                 },
             )
             result = _payload(finished.structured_content)
