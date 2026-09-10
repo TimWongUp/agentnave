@@ -63,7 +63,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.7.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.8.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 
@@ -72,8 +72,9 @@ their respective CLIs.
 
 ## The MCP surface
 
-This section describes `v0.7.0`. Start, wait and cancel now use flat lifecycle responses;
-callers upgrading from v0.6.0 must update their response handling and paired Skill.
+This section describes `v0.8.0`, which removes the total runtime limit and `timed_out` status.
+Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
+update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
 AgentNave exposes four tools. The initial tool metadata contains a compact provider directory;
@@ -92,7 +93,7 @@ For example: `describe_provider({"provider": "grok"})` â†’ `start_agent(...)` â†
 ### `start_agent`
 
 Starts one provider invocation and immediately returns an in-memory `invocation_id`. It requires
-`provider`, `prompt`, and an absolute existing `cwd`; `session_id`, `timeout_seconds`, and explicit
+`provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional.
 
 Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. The Skill provides model and effort defaults for the Manager to pass explicitly through
@@ -138,9 +139,9 @@ from the same retry loop. Ordinary tool failures, transient retries and silence 
 blocker; unrecognized errors may only become visible in output or the final result. There is no
 unsolicited completion/error push without a pending wait request.
 
-Wait expiry never terminates the invocation. `start_agent.timeout_seconds` remains a separate
-optional total budget: omitted/null means no AgentNave deadline; an explicit positive value
-(up to 86,400 seconds) terminates the invocation when reached. Provider-native limits still apply.
+Wait expiry never terminates the invocation. AgentNave has no total runtime deadline and
+`start_agent` has no runtime-limit parameter. Keep waiting for the result or use `cancel_agent`
+to stop work explicitly. Provider-native limits still apply.
 
 ### `cancel_agent`
 

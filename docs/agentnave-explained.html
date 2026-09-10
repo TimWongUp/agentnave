@@ -517,7 +517,7 @@
           <article class="flow-card">
             <div class="flow-icon">①</div>
             <h3>收下任务</h3>
-            <p>接收 provider、prompt、工作目录、超时、可选会话 ID 和显式参数，并先检查是否合法。</p>
+            <p>接收 provider、prompt、工作目录、可选会话 ID 和显式参数，并先检查是否合法。</p>
           </article>
           <article class="flow-card">
             <div class="flow-icon">②</div>
@@ -532,7 +532,7 @@
           <article class="flow-card">
             <div class="flow-icon">④</div>
             <h3>等第一个结局</h3>
-            <p>正常结束、主动取消、运行超时、输出过大——谁先发生，就按谁进入收尾。</p>
+            <p>正常结束、主动取消、输出过大——谁先发生，就按谁进入收尾。等待到期会返回运行状态，任务继续执行。</p>
           </article>
           <article class="flow-card">
             <div class="flow-icon">⑤</div>
@@ -562,7 +562,7 @@
         <article class="inside-card">
           <span class="num">MANAGER</span>
           <h3>Invocation Manager</h3>
-          <p>为每次调用生成一个临时 ID，把任务放进内存，并协调启动、等待、取消、超时和关闭清理。</p>
+          <p>为每次调用生成一个临时 ID，把任务放进内存，并协调启动、等待、取消和关闭清理。</p>
         </article>
         <article class="inside-card">
           <span class="num">ADAPTER</span>
@@ -572,7 +572,7 @@
         <article class="inside-card">
           <span class="num">SUPERVISOR</span>
           <h3>进程看守</h3>
-          <p>负责 POSIX 进程组。完成、取消或超时后，先温和终止，再必要时强制清理。</p>
+          <p>负责 POSIX 进程组。完成、取消或异常结束后，先温和终止，再必要时强制清理。</p>
         </article>
       </div>
     </section>
@@ -599,9 +599,6 @@
           </button>
           <button class="status-button" style="--dot:#668491" data-status="cancelled" role="tab" aria-selected="false">
             <span class="status-dot"></span><b>上层主动取消</b><small>CANCELLED</small>
-          </button>
-          <button class="status-button" style="--dot:#867464" data-status="timed_out" role="tab" aria-selected="false">
-            <span class="status-dot"></span><b>运行超时</b><small>TIMED OUT</small>
           </button>
         </div>
 
@@ -631,7 +628,7 @@
           <ul>
             <li>启动 Antigravity、Claude Code、CodeBuddy Code、Codex 或 Grok CLI</li>
             <li>传递 prompt、目录、会话 ID 和显式选项</li>
-            <li>等待、取消、超时和输出上限</li>
+            <li>等待、显式取消和输出上限</li>
             <li>清理仍留在进程组里的子进程</li>
             <li>返回统一、可读取的终态结果</li>
           </ul>
@@ -668,8 +665,7 @@
       succeeded: ["任务完成，结果已带回。", "Provider 正常结束，Adapter 把原生输出与用量信息整理成统一结果。上层 Manager 再决定下一步做什么。", "#f4b942"],
       failed: ["任务跑完了，但没做成。", "Provider 返回业务错误，或输出超过捕获上限。已有输出会尽量保留，并附上一份结构化错误说明。", "#ee755d"],
       blocked: ["不是做不到，是没获准。", "Provider 遇到权限、批准、登录或拒绝类问题。AgentNave 如实标记 blocked，是否授权由外层决定。", "#f2ae48"],
-      cancelled: ["上层说停，于是收工。", "Manager 发出取消信号后，AgentNave 结束进程组、收集现有输出，再返回 cancelled。", "#8eb5c2"],
-      timed_out: ["时间到了，停止等待。", "运行超过 request 中的 timeout_seconds。AgentNave 清理进程，并把结局标记为 timed_out。", "#b8a493"]
+      cancelled: ["上层说停，于是收工。", "Manager 发出取消信号后，AgentNave 结束进程组、收集现有输出，再返回 cancelled。", "#8eb5c2"]
     };
 
     const buttons = document.querySelectorAll(".status-button");

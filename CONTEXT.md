@@ -15,7 +15,7 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## Invocation
 
-一次 Provider 进程调用。它由 prompt、cwd、可选 Provider Session、可选总运行预算和显式 Provider Options 构成，只在当前 AgentNave 进程内拥有句柄。
+一次 Provider 进程调用。它由 prompt、cwd、可选 Provider Session 和显式 Provider Options 构成，只在当前 AgentNave 进程内拥有句柄。
 
 ## Provider Session
 
@@ -23,8 +23,8 @@ Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` �
 
 ## Invocation Result
 
-AgentNave 对 Provider 终态的归一化结果；`output` 只承载 Provider 最终回答，不包含流式过程播报。状态只能是 `succeeded`、`failed`、`blocked`、`cancelled` 或 `timed_out`。
+AgentNave 对 Provider 终态的归一化结果；`output` 只承载 Provider 最终回答，不包含流式过程播报。状态只能是 `succeeded`、`failed`、`blocked` 或 `cancelled`。
 
 ## Invocation Snapshot
 
-AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段、耗时、可选预算余量、最近原生事件和可识别活动及其年龄；单条活动是有来源的观察，不代表所有并发工作的当前状态、完成比例或终态证据。
+AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段、耗时、最近原生事件和可识别活动及其年龄；单条活动是有来源的观察，不代表所有并发工作的当前状态、完成比例或终态证据。

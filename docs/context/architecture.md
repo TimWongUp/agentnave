@@ -12,7 +12,7 @@ AgentNave 只拥有：
 - 根据冻结请求启动一个 Provider CLI；
 - 传递 prompt、cwd、可选 `session_id` 和显式 Provider Options；
 - 从 Provider 原生流事件提取有界活动快照，并归一化终端结果；
-- 执行超时、取消和进程树清理；
+- 执行显式取消和进程树清理；
 - 在 MCP server 生命周期内保存 Invocation 句柄。
 
 AgentNave 不拥有 DAG、调度器、角色系统、自动重规划、工作树、SQLite／JSONL、恢复、保留策略、桌面 App 或 TUI。
@@ -27,7 +27,7 @@ MCP Host 拥有 AgentNave 的注册、作用域、启停、移除；能使用 Ho
 
 ## 稳定合同
 
-请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、可选 `timeout_seconds` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
+请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id` 和 `provider_options`。Provider Options 必须由调用方显式给出并通过对应 Adapter allowlist；AgentNave 不默认覆盖模型、effort、权限模式、工具或 Provider 原生配置。
 
 MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态与支持的选项，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。`describe_provider` 返回 `provider`、`permitted` 与 `supported_options`，不承载模型推荐。模型与 effort 由 Skill 的所选 CLI 参考文件和用户要求决定，使用推荐值时作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
 
@@ -39,7 +39,7 @@ Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_gi
 
 STDIO MCP 是唯一公开接口，暴露 `describe_provider`、`start_agent`、`wait_agent` 和 `cancel_agent`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。四个 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent(session_id=...)` 完成。
 
-`start_agent.timeout_seconds` 省略或为 null 时不设 AgentNave 总截止；显式正数预算到期会停止调用。Provider 原生限制继续生效，AgentNave 不静默改写。`wait_agent` 的单次等待到期只返回运行状态，不终止任务。
+AgentNave 不提供总运行时限；`start_agent` 不接受截止时间参数，也不根据运行时长终止调用。`wait_agent` 的单次等待到期只返回运行状态，Manager 可继续等待或使用 `cancel_agent` 显式停止任务。Provider 原生限制继续生效，AgentNave 不静默改写。
 
 启动、等待和取消的公开回复共用顶层 `invocation_id`、`status`、`reason`、`elapsed_ms`；按需包含 `activity`、`error`、`output`、`output_age_ms` 与 `session_id`，不返回费用或空字段。内部 Invocation Result 的 Provider 用量仍可保全，但不向公开回复转发。等待默认最长十分钟，完成或已识别的明确执行阻塞提前返回；阻塞返回不终止 CLI，由 Manager 决定继续等待还是取消，同类阻塞每次 Invocation 仅唤醒一次。普通工具失败、暂时重试和事件沉默本身不构成阻塞。未识别的原生错误不保证提前唤醒。
 

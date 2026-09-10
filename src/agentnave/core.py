@@ -175,9 +175,6 @@ class InvocationManager:
             None
             if record.last_activity_at is None
             else max(0, round((now - record.last_activity_at) * 1000)),
-            None
-            if record.request.timeout_seconds is None
-            else max(0, round((record.request.timeout_seconds - (now - record.started_at)) * 1000)),
         )
 
     def recent_output(self, invocation_id: str) -> tuple[str, int | None]:
@@ -263,11 +260,6 @@ class InvocationManager:
 
             done, _ = await asyncio.wait(
                 (completion_task, cancel_task, exceeded_task),
-                timeout=(
-                    None
-                    if record.request.timeout_seconds is None
-                    else max(0, record.request.timeout_seconds - (time.monotonic() - started))
-                ),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if exceeded_task in done and output_exceeded.is_set():
@@ -279,7 +271,7 @@ class InvocationManager:
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")
-            elif completion_task in done:
+            else:
                 completion = completion_task.result()
                 if completion.kind == "exit" and completion.returncode is not None:
                     provider_returncode = completion.returncode
@@ -295,12 +287,6 @@ class InvocationManager:
                         ),
                         completion.message or "provider supervisor failed",
                     )
-            else:
-                terminal = InvocationStatus.TIMED_OUT
-                error = InvocationError(
-                    "timed_out",
-                    f"invocation exceeded {record.request.timeout_seconds:g} seconds",
-                )
 
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)

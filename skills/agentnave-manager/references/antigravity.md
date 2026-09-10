@@ -6,7 +6,7 @@
 {"model": "gemini-3.8-flash", "effort": "high"}
 ```
 
-对应 `agy` CLI。原生 `print_timeout` 与 AgentNave 的总运行上限、单次等待时长是不同参数。
+对应 `agy` CLI。原生 `print_timeout` 由 CLI 执行，与 AgentNave 的单次等待时长是不同参数；仅在用户明确要求时设置。
 
 ## 项目目录
 

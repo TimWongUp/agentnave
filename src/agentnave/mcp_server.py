@@ -77,7 +77,7 @@ class ActivityPayload(TypedDict):
 
 class InvocationPayload(TypedDict):
     invocation_id: str
-    status: Literal["running", "succeeded", "failed", "blocked", "cancelled", "timed_out"]
+    status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
     reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
     elapsed_ms: int
     activity: NotRequired[ActivityPayload]
@@ -172,14 +172,6 @@ async def start_agent(
             ),
         ),
     ] = None,
-    timeout_seconds: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            le=86_400,
-            description="Optional total runtime limit in seconds; expiry stops the invocation. Omit or null for no AgentNave deadline; native CLI limits still apply.",
-        ),
-    ] = None,
     provider_options: Annotated[
         dict[str, ProviderOption] | None,
         Field(
@@ -194,6 +186,8 @@ async def start_agent(
 ) -> InvocationPayload:
     """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
+    AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
+    Provider-native limits still apply.
     Active invocations do not accept messages. To continue a finished conversation, pass
     its returned native session_id with a new prompt to a new start_agent call.
     """
@@ -205,7 +199,6 @@ async def start_agent(
             prompt=prompt,
             cwd=Path(cwd),
             session_id=session_id,
-            timeout_seconds=timeout_seconds,
             provider_options=provider_options or {},
         )
         invocation_id = _manager(ctx).start(request)
