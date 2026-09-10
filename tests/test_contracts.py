@@ -19,12 +19,6 @@ def test_request_rejects_non_absolute_cwd(cwd: Path) -> None:
         InvocationRequest("claude", "task", cwd)
 
 
-@pytest.mark.parametrize("timeout", [0, -1, 86_401])
-def test_request_rejects_invalid_timeout(tmp_path: Path, timeout: float) -> None:
-    with pytest.raises(ValueError, match="timeout_seconds"):
-        InvocationRequest("claude", "task", tmp_path, timeout_seconds=timeout)
-
-
 @pytest.mark.parametrize("session_id", ["--always-approve", "valid\n--flag"])
 def test_request_rejects_session_option_injection(tmp_path: Path, session_id: str) -> None:
     with pytest.raises(ValueError, match="unsafe"):

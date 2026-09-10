@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -20,6 +21,10 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
+        "if prompt == 'finish':\n"
+        "    for _ in range(8):\n"
+        "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'working '}}}), flush=True)\n"
+        "        time.sleep(0.05)\n"
         "if prompt == 'blocker':\n"
         "    for text in ['旧' * 1100, '新进展']:\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':text}}}), flush=True)\n"
@@ -50,8 +55,6 @@ def _payload(value: object) -> dict[str, object]:
 async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
-
     _install_fake_claude(tmp_path, monkeypatch)
     async with Client(mcp) as client:
         started = await client.call_tool(
@@ -97,7 +100,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert result.tools[1].annotations is not None
     assert result.tools[1].annotations.read_only_hint is True
     start_properties = _payload(result.tools[0].input_schema["properties"])
-    assert _payload(start_properties["timeout_seconds"])["default"] is None
+    assert "timeout_seconds" not in start_properties
     wait_properties = _payload(result.tools[1].input_schema["properties"])
     assert _payload(wait_properties["wait_timeout_seconds"])["default"] == 600
     assert result.tools[2].annotations is not None
@@ -140,14 +143,24 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
             {"provider": "claude", "prompt": "finish", "cwd": str(tmp_path)},
         )
         started_payload = _payload(started.structured_content)
-        finished = await client.call_tool(
-            "wait_agent",
-            {
-                "invocation_id": started_payload["invocation_id"],
-                "wait_timeout_seconds": 3,
-            },
-        )
+        running_payloads: list[dict[str, object]] = []
+        async with asyncio.timeout(3):
+            while True:
+                finished = await client.call_tool(
+                    "wait_agent",
+                    {
+                        "invocation_id": started_payload["invocation_id"],
+                        "wait_timeout_seconds": 0.05,
+                    },
+                )
+                payload = _payload(finished.structured_content)
+                if payload["status"] != "running":
+                    break
+                running_payloads.append(payload)
 
+    assert len(running_payloads) >= 2
+    assert all(payload["reason"] == "wait_elapsed" for payload in running_payloads)
+    assert any("working" in str(payload.get("output", "")) for payload in running_payloads)
     finished_payload = _payload(finished.structured_content)
     invocation_result = finished_payload
     assert started.is_error is False

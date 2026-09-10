@@ -16,7 +16,6 @@ class InvocationStatus(StrEnum):
     FAILED = "failed"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
-    TIMED_OUT = "timed_out"
 
 
 class InvocationPhase(StrEnum):
@@ -31,7 +30,6 @@ class InvocationRequest:
     prompt: str
     cwd: Path
     session_id: str | None = None
-    timeout_seconds: float | None = None
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
 
     def __post_init__(self) -> None:
@@ -52,8 +50,6 @@ class InvocationRequest:
             or any(ord(character) < 32 or ord(character) == 127 for character in self.session_id)
         ):
             raise ValueError("session_id contains unsafe characters")
-        if self.timeout_seconds is not None and not 0 < self.timeout_seconds <= 86_400:
-            raise ValueError("timeout_seconds must be between 0 and 86400")
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "cwd", cwd)
         object.__setattr__(self, "provider_options", MappingProxyType(dict(self.provider_options)))
@@ -101,7 +97,6 @@ class InvocationSnapshot:
     last_event_age_ms: int | None
     last_activity: ProviderActivity | None = None
     last_activity_age_ms: int | None = None
-    remaining_ms: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -110,7 +105,6 @@ class InvocationSnapshot:
             "last_event_age_ms": self.last_event_age_ms,
             "last_activity": None if self.last_activity is None else self.last_activity.to_dict(),
             "last_activity_age_ms": self.last_activity_age_ms,
-            "remaining_ms": self.remaining_ms,
         }
 
 

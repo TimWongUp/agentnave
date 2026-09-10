@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-08-25
 - 公开接口条款由 [ADR-0003](0003-agent-only-stdio-mcp-server.md) 取代
+- 总运行时限已移除，当前取消与等待合同见[架构与边界](../context/architecture.md)。
 
 ## 背景
 

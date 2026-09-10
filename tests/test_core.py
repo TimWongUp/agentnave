@@ -214,9 +214,7 @@ async def test_provider_completion_does_not_depend_on_default_thread_pool(
 
     monkeypatch.setattr(asyncio, "to_thread", unavailable_to_thread)
     manager = InvocationManager()
-    invocation_id = manager.start(
-        InvocationRequest("claude", "work", tmp_path, timeout_seconds=0.5)
-    )
+    invocation_id = manager.start(InvocationRequest("claude", "work", tmp_path))
 
     result = await asyncio.wait_for(manager.wait(invocation_id), 2)
 
@@ -258,7 +256,6 @@ async def test_running_snapshot_reports_phase_elapsed_and_event_activity(
         assert snapshot.phase.value == "running"
         assert snapshot.elapsed_ms >= 0
         assert snapshot.last_event_age_ms is not None
-        assert snapshot.remaining_ms is None
         assert snapshot.last_activity is not None
         assert snapshot.last_activity.kind == "retry"
         assert snapshot.last_activity.message == "authentication_failed"
@@ -269,31 +266,9 @@ async def test_running_snapshot_reports_phase_elapsed_and_event_activity(
 
 
 @pytest.mark.asyncio
-async def test_invocation_timeout_terminates_process(tmp_path: Path, fake_adapter: None) -> None:
+async def test_snapshot_joins_split_unicode_deltas(tmp_path: Path, fake_adapter: None) -> None:
     manager = InvocationManager()
-    invocation_id = manager.start(
-        InvocationRequest("claude", "sleep", tmp_path, timeout_seconds=0.01)
-    )
-
-    result = await manager.wait(invocation_id)
-
-    assert result is not None
-    assert result.status is InvocationStatus.TIMED_OUT
-    assert result.output == ""
-    assert result.session_id == "provider-session"
-    assert result.error is not None
-    assert result.error.code == "timed_out"
-    await manager.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_snapshot_joins_split_unicode_deltas_and_reports_explicit_budget(
-    tmp_path: Path, fake_adapter: None
-) -> None:
-    manager = InvocationManager()
-    invocation_id = manager.start(
-        InvocationRequest("claude", "streaming_message", tmp_path, timeout_seconds=10)
-    )
+    invocation_id = manager.start(InvocationRequest("claude", "streaming_message", tmp_path))
     try:
         snapshot = manager.snapshot(invocation_id)
         for _ in range(50):
@@ -303,8 +278,6 @@ async def test_snapshot_joins_split_unicode_deltas_and_reports_explicit_budget(
                 break
         assert snapshot.last_activity is not None
         assert snapshot.last_activity.message == "x" * 510 + "中文"
-        assert snapshot.remaining_ms is not None
-        assert 0 < snapshot.remaining_ms <= 10_000
     finally:
         await manager.shutdown()
 
@@ -335,9 +308,7 @@ async def test_completion_cleans_group_when_provider_leaves_descendant(
     tmp_path: Path, fake_adapter: None
 ) -> None:
     manager = InvocationManager()
-    invocation_id = manager.start(
-        InvocationRequest("claude", "child_holds_pipes", tmp_path, timeout_seconds=3)
-    )
+    invocation_id = manager.start(InvocationRequest("claude", "child_holds_pipes", tmp_path))
 
     result = await asyncio.wait_for(manager.wait(invocation_id), 3)
 
