@@ -33,6 +33,8 @@ def _read_excluded_providers() -> frozenset[str]:
     return excluded
 
 
+WAIT_SECONDS = 300
+
 _EXCLUDED_PROVIDERS = _read_excluded_providers()
 _PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
@@ -232,28 +234,21 @@ async def wait_agent(
         str,
         Field(min_length=1, description="Invocation ID returned by start_agent."),
     ],
-    wait_timeout_seconds: Annotated[
-        float,
-        Field(
-            gt=0,
-            le=600,
-            description="Seconds to wait for this response; expiry leaves the invocation running.",
-        ),
-    ] = 600,
     *,
     ctx: Context[InvocationManager],
 ) -> InvocationPayload:
-    """Wait up to ten minutes; completion or an explicit CLI execution blocker returns early.
+    """Wait for a fixed window of five minutes; completion or an explicit CLI execution blocker returns early.
 
     Running responses include the latest public reply tail (at most 1000 characters) and its age.
     execution_blocked leaves the CLI running: continue waiting or cancel with the same ID.
     Each blocker category wakes once per invocation. Ordinary tool failures, transient retries,
     and silence are not proof the task cannot proceed. Finished responses contain the final reply.
+    Wait expiry leaves the invocation running. Call again with the same ID to continue.
     This is request/response waiting, not a background notification subscription.
     """
     manager = _manager(ctx)
     try:
-        result = await manager.wait_for_update(invocation_id, wait_timeout_seconds)
+        result = await manager.wait_for_update(invocation_id, WAIT_SECONDS)
         if isinstance(result, InvocationResult):
             return _finished_payload(invocation_id, result)
         snapshot = manager.snapshot(invocation_id)

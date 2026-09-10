@@ -63,7 +63,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.8.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.9.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 
@@ -72,7 +72,7 @@ their respective CLIs.
 
 ## The MCP surface
 
-This section describes `v0.8.0`, which removes the total runtime limit and `timed_out` status.
+This section describes `v0.9.0`, which fixes each wait at five minutes and removes the wait duration argument.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
@@ -119,10 +119,10 @@ model should be reported rather than silently replaced.
 
 ### `wait_agent`
 
-The runtime waits up to 600 seconds by default (and at most 600). It returns early
-when the invocation finishes or reports a recognized execution blocker. Reconnect after
-upgrading from v0.6.0, which used a 120-second default and a 300-second maximum, and respect
-any shorter host timeout.
+Each request has a fixed five-minute (300-second) wait window; `wait_agent` accepts only
+`invocation_id`. Completion or a recognized execution blocker returns early. Expiry leaves the
+invocation running; call again with the same ID to continue. If a host yields a background
+call handle, resume that call using the host's wait mechanism before issuing another request.
 
 Start, wait and cancel use one flat response: `invocation_id`, `status`, `reason`, `elapsed_ms`,
 plus applicable `activity`, `error`, `output`, `output_age_ms` and `session_id` fields. Reasons are

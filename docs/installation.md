@@ -15,14 +15,14 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.8.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.9.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation.
 
 ## 1. Check and reuse the runtime
 
 AgentNave supports macOS and Linux. Install `uv` and Git. Set `AGENTNAVE_RELEASE` to the chosen
-published tag; the current paired release is `v0.8.0`. Use the same value for the Skill in step 4.
+published tag; the current paired release is `v0.9.0`. Use the same value for the Skill in step 4.
 
 Inspect the current installation before running an install command:
 
@@ -437,8 +437,8 @@ responses with a flat `status`/`reason`/`elapsed_ms` template. Running replies i
 the CLI. Completed replies retain full final output within the existing capture limit. Usage/cost
 and raw event details are omitted. This is a breaking MCP response change from v0.6.0.
 Update runtime and Skill together and restart the connection; a source-linked Skill alone does
-not upgrade an installed v0.6.0 runtime. The Skill checks the connected schema for older limits
-and response shapes. Hosts that cap tool calls below ten minutes must use shorter waits.
+not upgrade an installed v0.6.0 runtime. The Skill checks the connected schema for older response shapes. A host yielding a background
+call handle requires resuming that call through its own wait mechanism.
 
 ### Upgrading from v0.7.0 to v0.8.0
 
@@ -450,6 +450,16 @@ waiting or use `cancel_agent` to stop work explicitly. Provider-native limits st
 Update the runtime and complete Skill together, then restart MCP connections to refresh the
 tool schemas. Updating the Skill alone does not remove the older runtime's deadline parameter.
 Rolling back to v0.7.0 restores that parameter and its explicit-deadline behavior.
+
+### Upgrading from v0.8.0 to v0.9.0
+
+`wait_agent` now accepts only `invocation_id` and waits for a fixed 300-second window.
+Remove `wait_timeout_seconds` from callers and refresh the MCP connection after upgrading
+the runtime. Completion and recognized blockers still return early; wait expiry leaves the
+CLI running. Update the runtime and Skill together; editing a source-linked Skill does not
+upgrade an installed runtime. On older schemas that still expose the wait argument, the Skill
+uses 300 seconds. In Codex, resume `Script running with cell ID ...` with `functions.wait`
+and the returned `cell_id` until the original call completes.
 
 ## Upgrade, repair, and rollback
 

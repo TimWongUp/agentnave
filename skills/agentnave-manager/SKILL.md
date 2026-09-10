@@ -42,7 +42,8 @@ CLI 不继承主对话。主 Agent 在首次派发、切换 CLI 或交接未完�
 ## 启动与等待
 
 1. 按上节准备任务后调用 `start_agent`，传入 `provider`、绝对且存在的 `cwd`、`prompt` 和显式 `provider_options`。`cwd` 应是需要加载项目规则的项目目录，CLI 在其中启动；临时交接文档的位置不改变工作目录，规则能否加载仍取决于 CLI 原生支持。AgentNave 不提供总运行时限，持续等待至终态或显式取消；CLI 自身限制仍生效，调用方不另行添加截止时间。旧运行时若仍暴露 `timeout_seconds`，在 schema 支持可空值时传 null 关闭总截止；无法关闭时报告版本限制。
-2. 保存返回的 `invocation_id`，调用 `wait_agent`，显式传入 `wait_timeout_seconds: 600`。每轮最长等待 10 分钟，任务完成或 CLI 明确报告执行阻塞时提前返回。宿主工具超时更短时服从宿主限制；旧版 schema 上限不足 600 时使用其允许值。无需额外 sleep，也不是后台定时推送。
+2. 保存返回的 `invocation_id`，调用 `wait_agent(invocation_id)`。运行时固定每轮最多等待 5 分钟，完成或明确执行阻塞时提前返回；到期后仍在运行就继续等待同一 ID，直至终态或显式取消。无需额外 sleep。旧版 schema 若仍暴露 `wait_timeout_seconds`，固定传 `300`；无法支持时报告版本限制。
+   - 在 Codex 中通过 `functions.exec` 调用时，若返回 `Script running with cell ID ...`，使用 `functions.wait` 携带该 `cell_id` 继续接收原调用，直到脚本完成，再处理 AgentNave 回复。外层交回控制权表示脚本仍在运行，不是任务超时或卡死；此时不重复发起 `wait_agent`，也不据此结束任务。宿主的接收窗口不改变 AgentNave 的 5 分钟等待。
 3. 新版启动、等待和取消共用顶层 `invocation_id`、`status`、`reason`、`elapsed_ms`，其他字段仅在有值时出现。`status=running` 表示 CLI 尚未结束；`reason=wait_elapsed` 表示本轮等待到期，`reason=execution_blocked` 表示提前发现明确阻塞，读取固定类别 `error.code`。阻塞返回不停止 CLI，同类阻塞在一次 Invocation 内只主动提醒一次；根据错误决定继续等待同一 ID 或取消。普通工具失败、暂时重试和沉默不等于任务无法执行。仅 CLI 暴露的已识别阻塞可提前返回，未知错误仍需检查输出或最终结果。
 4. 每轮运行中返回包含可用的 `activity`（最近活动类型、原生状态、工具名和 `age_ms`）以及最新公开回复尾部 `output`（最多 1000 个 Unicode 字符）与 `output_age_ms`。用正文判断方向、活动判断运行情况；没有新正文时可能重复同一内容，用年龄区分。未输出正文就省略该字段；不返回思考、工具参数或工具结果，无游标、分页或独立读取工具。单次观察不代表所有并发工作，也不证明卡死。若材料不足以判断是否跑偏，应报告未知。
 5. `reason=finished` 时按顶层 `status`、`output`、`error` 和原生 `session_id` 验收；最终正文不受 1000 字符限制，但仍受运行时整体捕获上限约束。`succeeded` 不保证用户任务完成，结合实际命令结果、产物或检查证据验收；权限拒绝、未执行或目录不符要报告未完成部分。费用不展示；耗时使用 `elapsed_ms`。旧版仍返回 `state`、`snapshot` / `result` 嵌套结构，按当前连接 schema 读取，不能把 Skill 更新当作运行时已升级。
