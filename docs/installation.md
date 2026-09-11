@@ -15,14 +15,17 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.9.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.10.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
-the runtime; it is not a complete paired installation.
+the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
+native Windows support.
 
 ## 1. Check and reuse the runtime
 
-AgentNave supports macOS and Linux. Install `uv` and Git. Set `AGENTNAVE_RELEASE` to the chosen
-published tag; the current paired release is `v0.9.0`. Use the same value for the Skill in step 4.
+Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
+`AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
+value for the Skill in step 4. The current published paired release is `v0.10.0`, which supports
+Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
 
@@ -65,6 +68,18 @@ The remaining commands reuse these variables; run them in the same shell or defi
 `uv` manages the isolated Python 3.12 runtime. Use a fixed release rather than mutable `main`, and
 register the absolute launcher path rather than a source checkout or development `.venv`.
 
+For a paired release that includes Windows support, locate its launcher in PowerShell with:
+
+```powershell
+$AgentNaveMcp = Join-Path (uv tool dir --bin) "agentnave-mcp.exe"
+if (-not (Test-Path -LiteralPath $AgentNaveMcp -PathType Leaf)) {
+    throw "AgentNave launcher not found: $AgentNaveMcp"
+}
+```
+
+Use `$AgentNaveMcp` wherever the POSIX examples below use `$AGENTNAVE_MCP`. Native Windows
+invocations use Job Object process-tree ownership; WSL is not required.
+
 Provider CLIs are separate programs. Install and authenticate only those you intend to call, using
 their official instructions. The MCP server must inherit a `PATH` that can locate them. Desktop
 hosts may have a different environment from your terminal; set an explicit `PATH` in the server's
@@ -86,9 +101,10 @@ numbers, for example `1, 3`:
 The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.
 
-For each selected CLI only, run `command -v <command>` in the user's terminal shell, using the
-command in parentheses above. For example, selection `1, 3` means checking only `command -v grok`
-and `command -v codebuddy`. Confirm each result is an executable file, not a shell alias or function.
+For each selected CLI only, run `command -v <command>` on POSIX or
+`(Get-Command <command> -CommandType Application).Source` in PowerShell, using the command in
+parentheses above. For example, selection `1, 3` means checking only `grok` and `codebuddy`.
+Confirm each result is an executable file or Windows command shim, not a shell alias or function.
 If a selected command is missing, report that specific CLI and ask for its installation location
 or let the user install it before checking again. Do not search unselected providers.
 
@@ -176,6 +192,13 @@ format; register it with the official CLI command below instead of copying this 
 
 ```bash
 codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- "$AGENTNAVE_MCP"
+codex mcp get agentnave
+```
+
+PowerShell uses the same Codex interface with the Windows launcher variable:
+
+```powershell
+codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMcp
 codex mcp get agentnave
 ```
 
@@ -426,7 +449,7 @@ versions above are observations from 2026-09-08, not an all-version compatibilit
 Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
 and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all five
 references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
-through its installed launcher on macOS and Linux. These checks do not establish live compatibility
+through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
 
 ### Upgrading from v0.6.0 to v0.7.0

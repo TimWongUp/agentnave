@@ -38,7 +38,7 @@ def main() -> int:
     else:
         _write_status(status_fd, {"kind": "exit", "returncode": provider.wait()})
     while True:
-        signal.pause()
+        signal.pause()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
 
 if __name__ == "__main__":

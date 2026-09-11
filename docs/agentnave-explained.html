@@ -527,7 +527,7 @@
           <article class="flow-card">
             <div class="flow-icon">③</div>
             <h3>启动并看守</h3>
-            <p>Supervisor 启动 Provider，并独占一个 POSIX 进程组，方便之后连同子进程一起清理。</p>
+            <p>Supervisor 启动 Provider；POSIX 使用独占进程组，Windows 使用 Job Object，方便之后连同子进程一起清理。</p>
           </article>
           <article class="flow-card">
             <div class="flow-icon">④</div>
@@ -572,7 +572,7 @@
         <article class="inside-card">
           <span class="num">SUPERVISOR</span>
           <h3>进程看守</h3>
-          <p>负责 POSIX 进程组。完成、取消或异常结束后，先温和终止，再必要时强制清理。</p>
+          <p>负责平台进程树。POSIX 使用进程组，Windows 使用 kill-on-close Job Object；完成、取消或异常结束后清理后代。</p>
         </article>
       </div>
     </section>

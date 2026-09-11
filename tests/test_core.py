@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -11,6 +13,9 @@ from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
 from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
+from agentnave.processes import (
+    _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 class FakeAdapter(ClaudeAdapter):
@@ -33,7 +38,16 @@ class FakeAdapter(ClaudeAdapter):
                 f"time.sleep(0.5); pathlib.Path({str(marker)!r}).write_text('survived')"
             )
         elif request.prompt == "kill_supervisor":
-            code = "import os,signal,time; os.kill(os.getppid(), signal.SIGKILL); time.sleep(0.1)"
+            if os.name == "nt":
+                code = (
+                    "import ctypes,os,time; "
+                    "handle=ctypes.windll.kernel32.OpenProcess(1,False,os.getppid()); "
+                    "ctypes.windll.kernel32.TerminateProcess(handle,1); time.sleep(0.1)"
+                )
+            else:
+                code = (
+                    "import os,signal,time; os.kill(os.getppid(), signal.SIGKILL); time.sleep(0.1)"
+                )
         elif request.prompt in {"progress", "multiple_blockers"}:
             errors = ["authentication_failed"]
             if request.prompt == "multiple_blockers":
@@ -225,6 +239,22 @@ async def test_provider_completion_does_not_depend_on_default_thread_pool(
 
 
 @pytest.mark.asyncio
+async def test_windows_supervisor_is_not_exposed_before_job_is_ready(tmp_path: Path) -> None:
+    class PendingProcess:
+        returncode: int | None = None
+
+    ready_path = tmp_path / "job-ready"
+    process = cast(asyncio.subprocess.Process, PendingProcess())
+    waiting = asyncio.create_task(_wait_windows_supervisor_ready(process, ready_path))
+
+    await asyncio.sleep(0.02)
+    assert not waiting.done()
+
+    ready_path.touch()
+    await asyncio.wait_for(waiting, 1)
+
+
+@pytest.mark.asyncio
 async def test_wait_timeout_does_not_cancel_invocation(tmp_path: Path, fake_adapter: None) -> None:
     manager = InvocationManager()
     invocation_id = manager.start(InvocationRequest("claude", "sleep", tmp_path))
@@ -247,11 +277,10 @@ async def test_running_snapshot_reports_phase_elapsed_and_event_activity(
     invocation_id = manager.start(InvocationRequest("claude", "progress", tmp_path))
     try:
         snapshot = manager.snapshot(invocation_id)
-        for _ in range(50):
-            if snapshot.last_event_age_ms is not None:
-                break
-            await asyncio.sleep(0.01)
-            snapshot = manager.snapshot(invocation_id)
+        async with asyncio.timeout(3):
+            while snapshot.last_event_age_ms is None:
+                await asyncio.sleep(0.01)
+                snapshot = manager.snapshot(invocation_id)
 
         assert snapshot.phase.value == "running"
         assert snapshot.elapsed_ms >= 0
@@ -339,6 +368,7 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor lifecycle assertion")
 async def test_supervisor_still_owns_process_group_when_cleanup_starts(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -370,7 +400,14 @@ async def test_supervisor_loss_is_reported_as_infrastructure_failure(
     tmp_path: Path, fake_adapter: None
 ) -> None:
     manager = InvocationManager()
-    invocation_id = manager.start(InvocationRequest("claude", "kill_supervisor", tmp_path))
+    prompt = "sleep" if os.name == "nt" else "kill_supervisor"
+    invocation_id = manager.start(InvocationRequest("claude", prompt, tmp_path))
+    if os.name == "nt":
+        async with asyncio.timeout(3):
+            record = manager._records[invocation_id]  # pyright: ignore[reportPrivateUsage]
+            while record.process is None:
+                await asyncio.sleep(0.01)
+            record.process.terminate()
 
     result = await asyncio.wait_for(manager.wait(invocation_id), 3)
 

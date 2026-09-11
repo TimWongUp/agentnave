@@ -15,7 +15,7 @@ instead.
 
 ## Set up the development environment
 
-AgentNave requires Python 3.12 or later, `uv`, and macOS or Linux.
+AgentNave requires Python 3.12 or later, `uv`, and Windows, macOS, or Linux.
 
 ```bash
 git clone https://github.com/TimWongUp/agentnave.git
@@ -52,7 +52,7 @@ examples, and add `docs/releases/v<version>.md` with user-facing changes and mig
 The CI metadata check rejects inconsistent versions, decreases, and missing release notes.
 
 After the version change is merged into `origin/main`, the existing Python workflow waits for
-both macOS and Linux verification jobs, then creates the version tag and GitHub Release at that
+Windows, macOS, and Linux verification jobs, then creates the version tag and GitHub Release at that
 exact push commit. Ordinary changes without a version bump do not publish. The Git installation
 channel remains canonical; this workflow does not publish to PyPI or upload binary distributions.
 
