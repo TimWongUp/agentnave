@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -33,7 +34,16 @@ class FakeAdapter(ClaudeAdapter):
                 f"time.sleep(0.5); pathlib.Path({str(marker)!r}).write_text('survived')"
             )
         elif request.prompt == "kill_supervisor":
-            code = "import os,signal,time; os.kill(os.getppid(), signal.SIGKILL); time.sleep(0.1)"
+            if os.name == "nt":
+                code = (
+                    "import ctypes,os,time; "
+                    "handle=ctypes.windll.kernel32.OpenProcess(1,False,os.getppid()); "
+                    "ctypes.windll.kernel32.TerminateProcess(handle,1); time.sleep(0.1)"
+                )
+            else:
+                code = (
+                    "import os,signal,time; os.kill(os.getppid(), signal.SIGKILL); time.sleep(0.1)"
+                )
         elif request.prompt in {"progress", "multiple_blockers"}:
             errors = ["authentication_failed"]
             if request.prompt == "multiple_blockers":
@@ -339,6 +349,7 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor lifecycle assertion")
 async def test_supervisor_still_owns_process_group_when_cleanup_starts(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -370,7 +381,15 @@ async def test_supervisor_loss_is_reported_as_infrastructure_failure(
     tmp_path: Path, fake_adapter: None
 ) -> None:
     manager = InvocationManager()
-    invocation_id = manager.start(InvocationRequest("claude", "kill_supervisor", tmp_path))
+    prompt = "sleep" if os.name == "nt" else "kill_supervisor"
+    invocation_id = manager.start(InvocationRequest("claude", prompt, tmp_path))
+    if os.name == "nt":
+        for _ in range(50):
+            record = manager._records[invocation_id]  # pyright: ignore[reportPrivateUsage]
+            if record.process is not None:
+                record.process.terminate()
+                break
+            await asyncio.sleep(0.01)
 
     result = await asyncio.wait_for(manager.wait(invocation_id), 3)
 

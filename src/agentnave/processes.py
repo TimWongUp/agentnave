@@ -1,4 +1,4 @@
-"""POSIX subprocess supervision and process-group cleanup."""
+"""Platform subprocess supervision and process-tree cleanup."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import sys
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,8 +29,10 @@ class SupervisedProcess:
 
 
 async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
+    if os.name == "nt":
+        return await _spawn_windows_process(argv, cwd)
     if os.name != "posix":
-        raise OSError("AgentNave supports POSIX process supervision only")
+        raise OSError(f"AgentNave does not support process supervision on {os.name}")
     status_read, status_write = os.pipe()
     try:
         process = await asyncio.create_subprocess_exec(
@@ -56,8 +60,14 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
 async def terminate_process_tree(
     process: asyncio.subprocess.Process, grace_seconds: float = 2.0
 ) -> None:
-    """Terminate a group while its dedicated supervisor still owns the PGID."""
+    """Terminate a provider tree through its platform supervisor."""
     if process.returncode is not None:
+        return
+    if os.name == "nt":
+        # Terminating the supervisor closes its kill-on-close Job Object. Windows
+        # has no portable graceful tree signal equivalent to POSIX SIGTERM.
+        process.terminate()
+        await process.wait()
         return
     process_group = process.pid
     os.killpg(process_group, signal.SIGTERM)
@@ -65,6 +75,48 @@ async def terminate_process_tree(
     with suppress(ProcessLookupError):
         os.killpg(process_group, signal.SIGKILL)
     await process.wait()
+
+
+async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
+    status_fd, status_name = tempfile.mkstemp(prefix="agentnave-", suffix=".json")
+    os.close(status_fd)
+    status_path = Path(status_name)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-I",
+            str(Path(__file__).with_name("windows_supervisor.py")),
+            str(status_path),
+            *argv,
+            cwd=cwd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        status_path.unlink(missing_ok=True)
+        raise
+    completion = asyncio.create_task(_read_windows_completion(process, status_path))
+    return SupervisedProcess(process, completion)
+
+
+async def _read_windows_completion(
+    process: asyncio.subprocess.Process, status_path: Path
+) -> ProviderCompletion:
+    try:
+        await process.wait()
+        try:
+            data = status_path.read_bytes()
+        except OSError:
+            return ProviderCompletion(
+                "supervisor_error", message="failed to read supervisor status"
+            )
+        if len(data) > 16_384:
+            return ProviderCompletion("supervisor_error", message="status message too large")
+        return _parse_completion(bytearray(data))
+    finally:
+        status_path.unlink(missing_ok=True)
 
 
 async def _read_completion(status_fd: int) -> ProviderCompletion:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -676,7 +677,8 @@ def test_grok_adapter_uses_private_prompt_file_and_explicit_options(tmp_path: Pa
     prompt_path = prepared.cleanup_paths[0]
     try:
         assert prompt_path.read_text() == "do the task"
-        assert stat.S_IMODE(prompt_path.stat().st_mode) == 0o600
+        if os.name == "posix":
+            assert stat.S_IMODE(prompt_path.stat().st_mode) == 0o600
         assert prepared.argv[:7] == (
             "grok",
             "--prompt-file",

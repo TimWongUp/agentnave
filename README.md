@@ -24,20 +24,21 @@ a compatible MCP host.
 | --- | --- |
 | Provider command adapters | Planning and task decomposition |
 | In-memory invocation lifecycle | Provider and model selection |
-| POSIX process-group supervision | Parallelism, review, and synthesis |
+| POSIX process groups / Windows Job Objects | Parallelism, review, and synthesis |
 | Normalized terminal results | Retries, permissions, and worktrees |
 
 ## Requirements
 
-- macOS or Linux
+- Windows, macOS, or Linux
 - `uv` and Git (for installation from a release tag)
 - At least one authenticated provider CLI
 
 `uv` installs AgentNave in an isolated Python 3.12 environment. A separately managed system
 Python is not required.
 
-AgentNave supports POSIX process supervision on macOS and Linux. Native Windows support requires
-Job Object ownership first.
+AgentNave uses dedicated POSIX process-group supervisors on macOS/Linux and kill-on-close Windows
+Job Objects on Windows. Windows providers are created suspended, assigned to the Job Object, and
+only then resumed so descendants cannot start outside the owned process tree.
 
 ## Install
 
@@ -66,6 +67,9 @@ runtime; it does not install the Skill or modify provider permissions and config
 **The paired release is `v0.9.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
+The published `v0.9.0` tag predates native Windows support; use Windows only from a later paired
+release after it is published, or treat a current source checkout as an unreleased development
+installation.
 
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
@@ -155,7 +159,7 @@ Results.
 ## Lifecycle and security
 
 Invocation handles live only in the current MCP server process. When the server stops, AgentNave
-makes a best-effort attempt to terminate processes that remain in the provider process group. A
+makes a best-effort attempt to terminate processes that remain in the provider process tree. A
 restart cannot recover old handles, but a retained provider `session_id` can be supplied to a new
 `start_agent` call.
 
@@ -174,10 +178,11 @@ intermediate files in OS temporary storage without imposing Markdown or a result
 AgentNave itself uses stdin/in-memory output except for Grok's temporary prompt file, which is
 removed after use. Provider-owned history and caches remain under provider control.
 
-AgentNave is not a sandbox. A same-user provider with command permission can deliberately daemonize,
-kill its supervisor, or otherwise escape ordinary POSIX process-group cleanup. Provider-native
-permissions remain the security boundary; use OS-level isolation when adversarial containment is
-required.
+AgentNave is not a sandbox. On POSIX, a same-user provider with command permission can deliberately
+daemonize, kill its supervisor, or otherwise escape ordinary process-group cleanup. Windows Job
+Objects provide tree ownership but do not isolate the provider from the user account or the rest of
+the machine. Provider-native permissions remain the security boundary; use OS-level isolation when
+adversarial containment is required.
 
 ## Verify
 

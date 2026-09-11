@@ -16,8 +16,8 @@ from agentnave.mcp_server import mcp
 
 
 def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    executable = tmp_path / "claude"
-    executable.write_text(
+    script = tmp_path / ("claude.py" if os.name == "nt" else "claude")
+    script.write_text(
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
@@ -41,9 +41,14 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "+ '\"total_cost_usd\":' + '1' * 5001 + ',\"is_error\":false}')\n"
         "else:\n"
         "    print(json.dumps({'type': 'result', 'result': prompt.upper(), "
-        "'session_id': 'session-e2e', 'num_turns': 1, 'is_error': False}))\n"
+        "'session_id': 'session-e2e', 'num_turns': 1, 'is_error': False}))\n",
+        encoding="utf-8",
     )
-    executable.chmod(0o755)
+    script.chmod(0o755)
+    if os.name == "nt":
+        (tmp_path / "claude.cmd").write_text(
+            f'@"{sys.executable}" "%~dp0claude.py" %*\n', encoding="utf-8"
+        )
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
 
 
