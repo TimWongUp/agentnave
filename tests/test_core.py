@@ -277,11 +277,10 @@ async def test_running_snapshot_reports_phase_elapsed_and_event_activity(
     invocation_id = manager.start(InvocationRequest("claude", "progress", tmp_path))
     try:
         snapshot = manager.snapshot(invocation_id)
-        for _ in range(50):
-            if snapshot.last_event_age_ms is not None:
-                break
-            await asyncio.sleep(0.01)
-            snapshot = manager.snapshot(invocation_id)
+        async with asyncio.timeout(3):
+            while snapshot.last_event_age_ms is None:
+                await asyncio.sleep(0.01)
+                snapshot = manager.snapshot(invocation_id)
 
         assert snapshot.phase.value == "running"
         assert snapshot.elapsed_ms >= 0
@@ -404,12 +403,11 @@ async def test_supervisor_loss_is_reported_as_infrastructure_failure(
     prompt = "sleep" if os.name == "nt" else "kill_supervisor"
     invocation_id = manager.start(InvocationRequest("claude", prompt, tmp_path))
     if os.name == "nt":
-        for _ in range(50):
+        async with asyncio.timeout(3):
             record = manager._records[invocation_id]  # pyright: ignore[reportPrivateUsage]
-            if record.process is not None:
-                record.process.terminate()
-                break
-            await asyncio.sleep(0.01)
+            while record.process is None:
+                await asyncio.sleep(0.01)
+            record.process.terminate()
 
     result = await asyncio.wait_for(manager.wait(invocation_id), 3)
 
