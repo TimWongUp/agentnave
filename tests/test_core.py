@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -12,6 +13,9 @@ from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
 from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
+from agentnave.processes import (
+    _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 class FakeAdapter(ClaudeAdapter):
@@ -232,6 +236,22 @@ async def test_provider_completion_does_not_depend_on_default_thread_pool(
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "completed"
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_windows_supervisor_is_not_exposed_before_job_is_ready(tmp_path: Path) -> None:
+    class PendingProcess:
+        returncode: int | None = None
+
+    ready_path = tmp_path / "job-ready"
+    process = cast(asyncio.subprocess.Process, PendingProcess())
+    waiting = asyncio.create_task(_wait_windows_supervisor_ready(process, ready_path))
+
+    await asyncio.sleep(0.02)
+    assert not waiting.done()
+
+    ready_path.touch()
+    await asyncio.wait_for(waiting, 1)
 
 
 @pytest.mark.asyncio

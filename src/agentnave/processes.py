@@ -81,12 +81,17 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
     status_fd, status_name = tempfile.mkstemp(prefix="agentnave-", suffix=".json")
     os.close(status_fd)
     status_path = Path(status_name)
+    ready_fd, ready_name = tempfile.mkstemp(prefix="agentnave-", suffix=".ready")
+    os.close(ready_fd)
+    ready_path = Path(ready_name)
+    ready_path.unlink()
     try:
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-I",
             str(Path(__file__).with_name("windows_supervisor.py")),
             str(status_path),
+            str(ready_path),
             *argv,
             cwd=cwd,
             stdin=asyncio.subprocess.PIPE,
@@ -96,9 +101,22 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
         )
     except Exception:
         status_path.unlink(missing_ok=True)
+        ready_path.unlink(missing_ok=True)
         raise
     completion = asyncio.create_task(_read_windows_completion(process, status_path))
-    return SupervisedProcess(process, completion)
+    try:
+        await _wait_windows_supervisor_ready(process, ready_path)
+        return SupervisedProcess(process, completion)
+    finally:
+        ready_path.unlink(missing_ok=True)
+
+
+async def _wait_windows_supervisor_ready(
+    process: asyncio.subprocess.Process, ready_path: Path
+) -> None:
+    """Do not expose the supervisor until its provider belongs to the Job Object."""
+    while process.returncode is None and not ready_path.exists():
+        await asyncio.sleep(0.01)
 
 
 async def _read_windows_completion(

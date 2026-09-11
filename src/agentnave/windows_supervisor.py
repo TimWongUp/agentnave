@@ -171,7 +171,7 @@ def _configure_api() -> _Kernel32:
     return kernel32
 
 
-def _run_provider(argv: list[str]) -> tuple[str, int | None, str | None]:
+def _run_provider(argv: list[str], ready_path: Path) -> tuple[str, int | None, str | None]:
     executable = shutil.which(argv[0])
     if executable is None:
         return "launch_error", None, f"provider executable not found: {argv[0]}"
@@ -217,6 +217,7 @@ def _run_provider(argv: list[str]) -> tuple[str, int | None, str | None]:
                 message = _last_error()
                 kernel32.TerminateProcess(process_info.process, 1)
                 return "launch_error", None, message
+            ready_path.touch(exist_ok=False)
             if cast(int, kernel32.ResumeThread(process_info.thread)) == 0xFFFFFFFF:
                 message = _last_error()
                 kernel32.TerminateProcess(process_info.process, 1)
@@ -236,11 +237,12 @@ def _run_provider(argv: list[str]) -> tuple[str, int | None, str | None]:
 
 
 def main() -> int:
-    if sys.platform != "win32" or len(sys.argv) < 3:
+    if sys.platform != "win32" or len(sys.argv) < 4:
         return 2
     status_path = Path(sys.argv[1])
+    ready_path = Path(sys.argv[2])
     try:
-        kind, returncode, message = _run_provider(sys.argv[2:])
+        kind, returncode, message = _run_provider(sys.argv[3:], ready_path)
         payload: dict[str, object] = {"kind": kind}
         if returncode is not None:
             payload["returncode"] = returncode
