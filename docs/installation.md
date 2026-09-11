@@ -15,18 +15,17 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.9.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.10.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
-the runtime; it is not a complete paired installation. The published `v0.9.0` tag predates native
-Windows support. Use Windows only from a later paired release after it is published, or explicitly
-record a current source checkout as an unreleased development installation.
+the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
+native Windows support.
 
 ## 1. Check and reuse the runtime
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.9.0`, which supports
-macOS and Linux only.
+value for the Skill in step 4. The current published paired release is `v0.10.0`, which supports
+Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
 

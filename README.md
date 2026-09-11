@@ -64,19 +64,18 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.9.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.10.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
-The published `v0.9.0` tag predates native Windows support; use Windows only from a later paired
-release after it is published, or treat a current source checkout as an unreleased development
-installation.
+`v0.10.0` is the first paired release with native Windows support.
 
 AgentNave creates no durable user data. Provider authentication and configuration remain owned by
 their respective CLIs.
 
 ## The MCP surface
 
-This section describes `v0.9.0`, which fixes each wait at five minutes and removes the wait duration argument.
+This section describes `v0.10.0`, which adds native Windows process-tree supervision while retaining
+the fixed five-minute wait contract introduced in `v0.9.0`.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
