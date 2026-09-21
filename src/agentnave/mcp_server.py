@@ -51,10 +51,15 @@ _PROVIDER_SELECTION = (
 _PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "claude": "permission_mode, agent, fallback_model, max_budget_usd",
     "codebuddy": "permission_mode, agent, fallback_model",
-    "codex": "skip_git_repo_check (boolean; explicitly true outside Git repositories)",
+    "codex": (
+        "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
+        "dangerously_bypass_approvals_and_sandbox "
+        "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag)"
+    ),
     "grok": "permission_mode, agent, max_turns, sandbox",
     "antigravity": (
-        "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean)"
+        "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
+        "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation)"
     ),
 }
 
