@@ -17,7 +17,12 @@ from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivi
 class CodexAdapter:
     name = "codex"
     executable = "codex"
-    _options = {"model", "effort", "skip_git_repo_check"}
+    _options = {
+        "model",
+        "effort",
+        "skip_git_repo_check",
+        "dangerously_bypass_approvals_and_sandbox",
+    }
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         unknown = sorted(set(request.provider_options) - self._options)
@@ -35,9 +40,9 @@ class CodexAdapter:
             elif key == "effort":
                 argv.extend(("--config", f"model_reasoning_effort={value}"))
             elif not isinstance(value, bool):
-                raise ValueError("codex option skip_git_repo_check must be a boolean")
+                raise ValueError(f"codex option {key} must be a boolean")
             elif value:
-                argv.append("--skip-git-repo-check")
+                argv.append("--" + key.replace("_", "-"))
 
         if request.session_id is not None:
             argv.append(request.session_id)

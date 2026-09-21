@@ -251,6 +251,29 @@ def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) ->
         )
 
 
+@pytest.mark.parametrize("value", [None, False, True])
+def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None) -> None:
+    options: dict[str, str | int | float | bool] = (
+        {} if value is None else {"dangerously_bypass_approvals_and_sandbox": value}
+    )
+    prepared = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
+    flag = "--dangerously-bypass-approvals-and-sandbox"
+    assert (flag in prepared.argv) is (value is True)
+
+
+def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
+    with pytest.raises(
+        ValueError, match="dangerously_bypass_approvals_and_sandbox must be a boolean"
+    ):
+        CodexAdapter().prepare(
+            request(
+                tmp_path,
+                "codex",
+                provider_options={"dangerously_bypass_approvals_and_sandbox": "true"},
+            )
+        )
+
+
 def test_codex_adapter_preserves_final_message_and_session() -> None:
     payload = b"\n".join(
         (
@@ -663,11 +686,26 @@ def test_antigravity_stream_without_result_is_failed() -> None:
     assert result.error_message == "antigravity stream ended without a valid result event"
 
 
-def test_antigravity_sandbox_option_requires_boolean(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="sandbox must be boolean"):
+@pytest.mark.parametrize("option", ["sandbox", "dangerously_skip_permissions"])
+def test_antigravity_permission_option_requires_boolean(tmp_path: Path, option: str) -> None:
+    with pytest.raises(ValueError, match=f"{option} must be boolean"):
         AntigravityAdapter().prepare(
-            request(tmp_path, "antigravity", provider_options={"sandbox": "true"})
+            request(tmp_path, "antigravity", provider_options={option: "true"})
         )
+
+
+@pytest.mark.parametrize("value", [None, False, True])
+def test_antigravity_yolo_requires_explicit_option(tmp_path: Path, value: bool | None) -> None:
+    options: dict[str, str | int | float | bool] = (
+        {} if value is None else {"dangerously_skip_permissions": value}
+    )
+    prepared = AntigravityAdapter().prepare(
+        request(tmp_path, "antigravity", provider_options=options)
+    )
+    flags = [arg for arg in prepared.argv if arg.startswith("--dangerously-skip-permissions")]
+    assert flags == (
+        [] if value is None else [f"--dangerously-skip-permissions={str(value).lower()}"]
+    )
 
 
 def test_grok_adapter_uses_private_prompt_file_and_explicit_options(tmp_path: Path) -> None:
@@ -805,7 +843,7 @@ def test_adapter_rejects_implicit_or_unknown_provider_overrides(tmp_path: Path) 
             request(
                 tmp_path,
                 "antigravity",
-                provider_options={"dangerously_skip_permissions": True},
+                provider_options={"unsupported_permission_option": True},
             )
         )
 

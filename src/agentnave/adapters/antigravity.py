@@ -27,9 +27,10 @@ class AntigravityAdapter:
         "project": "--project",
         "print_timeout": "--print-timeout",
         "sandbox": "--sandbox",
+        "dangerously_skip_permissions": "--dangerously-skip-permissions",
         "disable_slash_commands": "--disable-slash-commands",
     }
-    _boolean_options = {"disable_slash_commands", "sandbox"}
+    _boolean_options = {"disable_slash_commands", "sandbox", "dangerously_skip_permissions"}
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         message = {"event": "user", "message": {"content": request.prompt}}

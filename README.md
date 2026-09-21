@@ -107,6 +107,20 @@ Git repository, the Manager must pass
 
 ### Choosing a model and reasoning effort
 
+For Codex, explicitly pass `{"dangerously_bypass_approvals_and_sandbox": true}` in
+`provider_options` to enable native YOLO (`--dangerously-bypass-approvals-and-sandbox`).
+This skips approval prompts and disables sandboxing for that invocation, including when
+resuming a session. Only enable it when the user authorizes both effects. Passing `false`
+or omitting the option adds no flag and inherits native settings; it does not force a sandbox
+or approvals back on. The CLI's saved configuration is unchanged.
+
+For Antigravity, explicitly pass `{"dangerously_skip_permissions": true}` in
+`provider_options` to enable native YOLO (`--dangerously-skip-permissions`) for one invocation.
+This auto-approves all native tool permission requests for that invocation without changing
+the CLI's saved configuration. Omit the option to inherit native settings, or pass `false`
+to explicitly disable the flag. Only enable it when the user authorizes permission bypass;
+`mode` and `sandbox` are separate options and do not imply YOLO.
+
 To override the defaults for one task, tell your calling Agent the provider, model ID, and
 reasoning effort. For example: “Use Codex CLI with model `gpt-6-astra` and effort `medium`.”
 The Agent passes `{"model": "gpt-6-astra", "effort": "medium"}` in `provider_options`.
