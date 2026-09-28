@@ -121,6 +121,12 @@ the CLI's saved configuration. Omit the option to inherit native settings, or pa
 to explicitly disable the flag. Only enable it when the user authorizes permission bypass;
 `mode` and `sandbox` are separate options and do not imply YOLO.
 
+On macOS, AgentNave prefers the executable CLI bundled with the ChatGPT desktop app,
+then the Codex desktop app, checking `/Applications` before `~/Applications` for each.
+This follows desktop app updates instead of selecting an independently installed CLI by PATH.
+If no executable bundle is found, or on other platforms, AgentNave uses `codex` from PATH.
+AgentNave does not install or upgrade Codex, compare version numbers, or change its model settings.
+
 To override the defaults for one task, tell your calling Agent the provider, model ID, and
 reasoning effort. For example: “Use Codex CLI with model `gpt-6-astra` and effort `medium`.”
 The Agent passes `{"model": "gpt-6-astra", "effort": "medium"}` in `provider_options`.
