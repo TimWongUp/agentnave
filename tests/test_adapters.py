@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agentnave.adapters import get_adapter
+from agentnave.adapters import codex, get_adapter
 from agentnave.adapters.antigravity import AntigravityAdapter
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
@@ -204,7 +204,10 @@ def test_codebuddy_authentication_failure_is_blocked() -> None:
     assert result.status is InvocationStatus.BLOCKED
 
 
-def test_codex_adapter_passes_only_transport_and_explicit_options(tmp_path: Path) -> None:
+def test_codex_adapter_passes_only_transport_and_explicit_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
     prepared = CodexAdapter().prepare(
         request(
             tmp_path,
@@ -234,10 +237,44 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(tmp_path: Path
     assert prepared.stdin == b"do the task"
 
 
-def test_codex_adapter_does_not_supply_model_defaults(tmp_path: Path) -> None:
+def test_codex_adapter_does_not_supply_model_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
     prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
 
     assert prepared.argv == ("codex", "exec", "--json", "-")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="macOS bundle selection uses POSIX executability")
+def test_codex_adapter_prefers_executable_desktop_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(codex.sys, "platform", "darwin")
+    unavailable = tmp_path / "unavailable"
+    unavailable.write_text("not executable")
+    desktop = tmp_path / "desktop codex"
+    desktop.write_text("#!/bin/sh\n")
+    desktop.chmod(0o755)
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(unavailable), str(desktop)))
+
+    prepared = CodexAdapter().prepare(request(tmp_path, "codex", session_id="session-1"))
+    assert prepared.argv == (str(desktop), "exec", "resume", "--json", "session-1", "-")
+
+    desktop.unlink()
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
+
+
+def test_codex_adapter_uses_path_outside_macos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(codex.sys, "platform", "linux")
+    desktop = tmp_path / "desktop-codex"
+    desktop.write_text("#!/bin/sh\n")
+    desktop.chmod(0o755)
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(desktop),))
+
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
 
 
 def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:

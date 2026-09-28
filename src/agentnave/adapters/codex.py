@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import sys
+from pathlib import Path
+
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
@@ -13,10 +17,25 @@ from agentnave.adapters.base import (
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
+_DESKTOP_CODEX_PATHS = (
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "~/Applications/Codex.app/Contents/Resources/codex",
+)
+
+
+def _codex_executable() -> str:
+    if sys.platform == "darwin":
+        for candidate in _DESKTOP_CODEX_PATHS:
+            executable = shutil.which(str(Path(candidate).expanduser()))
+            if executable is not None:
+                return executable
+    return "codex"
+
 
 class CodexAdapter:
     name = "codex"
-    executable = "codex"
     _options = {
         "model",
         "effort",
@@ -29,7 +48,7 @@ class CodexAdapter:
         if unknown:
             raise ValueError(f"unsupported codex options: {', '.join(unknown)}")
 
-        argv = [self.executable, "exec"]
+        argv = [_codex_executable(), "exec"]
         if request.session_id is not None:
             argv.append("resume")
         argv.append("--json")
