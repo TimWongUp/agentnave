@@ -25,6 +25,12 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 首次调用所选 CLI 前，使用 `describe_provider` 核对允许状态和支持参数，当前上下文复用结果。它不检查安装或登录。旧服务若仍返回模型指引，模型选择以用户要求和本 Skill 为准；模型不可用时返回具体错误，不静默替换。
 
+## 工作目录与目标路径
+
+调用方将 `cwd` 设为本次目标项目的绝对路径，默认使用当前 checkout 或 worktree 的项目根目录；目标属于独立子项目，或项目明确指定启动目录时，使用对应目录。非 Git 任务使用实际目标项目目录。
+
+具体目标路径和任务范围写入 prompt，路径使用绝对路径或相对于 `cwd` 的路径。需要补读的局部规则，在 prompt 中明确要求子代理修改前读取。临时交接文件的位置不改变 `cwd`；项目规则加载仍由 CLI 原生实现负责。
+
 ## 准备任务与交接
 
 CLI 不继承主对话。主 Agent 在首次派发、切换 CLI 或交接未完成任务前，围绕接收方这次要完成的工作整理以下内容；简单任务直接写入 prompt，省略无关项：
@@ -41,7 +47,7 @@ CLI 不继承主对话。主 Agent 在首次派发、切换 CLI 或交接未完�
 
 ## 启动与等待
 
-1. 按上节准备任务后调用 `start_agent`，传入 `provider`、绝对且存在的 `cwd`、`prompt` 和显式 `provider_options`。`cwd` 应是需要加载项目规则的项目目录，CLI 在其中启动；临时交接文档的位置不改变工作目录，规则能否加载仍取决于 CLI 原生支持。AgentNave 不提供总运行时限，持续等待至终态或显式取消；CLI 自身限制仍生效，调用方不另行添加截止时间。旧运行时若仍暴露 `timeout_seconds`，在 schema 支持可空值时传 null 关闭总截止；无法关闭时报告版本限制。
+1. 按上节准备任务后调用 `start_agent`，传入 `provider`、按“工作目录与目标路径”选定的绝对且存在的 `cwd`、`prompt` 和显式 `provider_options`。AgentNave 不提供总运行时限，持续等待至终态或显式取消；CLI 自身限制仍生效，调用方不另行添加截止时间。旧运行时若仍暴露 `timeout_seconds`，在 schema 支持可空值时传 null 关闭总截止；无法关闭时报告版本限制。
 2. 保存返回的 `invocation_id`，调用 `wait_agent(invocation_id)`。运行时固定每轮最多等待 5 分钟，完成或明确执行阻塞时提前返回；到期后仍在运行就继续等待同一 ID，直至终态或显式取消。无需额外 sleep。旧版 schema 若仍暴露 `wait_timeout_seconds`，固定传 `300`；无法支持时报告版本限制。
    - 在 Codex 中通过 `functions.exec` 调用时，若返回 `Script running with cell ID ...`，使用 `functions.wait` 携带该 `cell_id` 继续接收原调用，直到脚本完成，再处理 AgentNave 回复。外层交回控制权表示脚本仍在运行，不是任务超时或卡死；此时不重复发起 `wait_agent`，也不据此结束任务。宿主的接收窗口不改变 AgentNave 的 5 分钟等待。
 3. 新版启动、等待和取消共用顶层 `invocation_id`、`status`、`reason`、`elapsed_ms`，其他字段仅在有值时出现。`status=running` 表示 CLI 尚未结束；`reason=wait_elapsed` 表示本轮等待到期，`reason=execution_blocked` 表示提前发现明确阻塞，读取固定类别 `error.code`。阻塞返回不停止 CLI，同类阻塞在一次 Invocation 内只主动提醒一次；根据错误决定继续等待同一 ID 或取消。普通工具失败、暂时重试和沉默不等于任务无法执行。仅 CLI 暴露的已识别阻塞可提前返回，未知错误仍需检查输出或最终结果。
