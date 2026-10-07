@@ -64,7 +64,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.10.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.10.1`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
@@ -74,7 +74,7 @@ their respective CLIs.
 
 ## The MCP surface
 
-This section describes `v0.10.0`, which adds native Windows process-tree supervision while retaining
+This section describes `v0.10.1`, which retains native Windows process-tree supervision and
 the fixed five-minute wait contract introduced in `v0.9.0`.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.
@@ -187,8 +187,9 @@ activity. They do not show every active operation or guarantee progress. Raw str
 bounded in process memory; no output log/database is added. A 1,000-character reply tail is kept
 per invocation for waiting responses. Final results remain available for this server process.
 
-Use the project directory as `cwd` so the CLI can load its native project rules. Temporary
-handoff files do not change that directory. Antigravity can choose a different terminal `Cwd`:
+Use the companion Skill's working-directory and target-path guidance to select `cwd` and describe
+the task in the prompt. Project rules load through the CLI's native mechanism.
+Antigravity can choose a different terminal `Cwd`:
 state the absolute project directory in the handoff, require that terminal directory explicitly,
 and verify it with `pwd` before project operations. This is a behavioral instruction, not enforced
 directory isolation. `provider_options.project` selects a native project ID or name; it is not a
