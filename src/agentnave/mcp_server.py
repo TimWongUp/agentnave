@@ -210,8 +210,13 @@ async def start_agent(
         )
         invocation_id = _manager(ctx).start(request)
     except ValueError as exc:
+        supported = (
+            f" Supported {provider} options: model, effort, {_PROVIDER_OPTIONS[provider]}."
+            if "option" in str(exc)
+            else ""
+        )
         raise ToolError(
-            f"Invalid invocation request: {exc}. Correct the arguments and retry."
+            f"Invalid invocation request: {exc}.{supported} Correct the arguments and retry."
         ) from exc
     except OSError as exc:
         raise ToolError(

@@ -50,11 +50,10 @@ class AntigravityAdapter:
                 "lifecycle",
                 "result",
                 brief(object_dict(event.get("result")).get("status")),
+                # Only WAITING can leave agy running; other result states end the process.
                 blocking_error=(
                     "provider_blocked"
                     if object_dict(event.get("result")).get("status") == "WAITING"
-                    else "provider_failed"
-                    if object_dict(event.get("result")).get("status") in ("ERROR", "FAILED")
                     else None
                 ),
             )
@@ -131,10 +130,28 @@ class AntigravityAdapter:
             or "auto-denied" in lowered_stderr
             or "automatically denied" in lowered_stderr
         )
+        last_step = object_dict(
+            next(
+                (
+                    event.get("step_update")
+                    for event in reversed(events)
+                    if event.get("event") == "step_update"
+                ),
+                None,
+            )
+        )
+        # agy reports ERROR with an error already recovered by its own retry, including one
+        # left in the conversation by an earlier turn; a completed final reply as this
+        # invocation's last step shows the turn itself finished.
+        turn_answered = (
+            normalized_status == "ERROR"
+            and bool(output.strip())
+            and last_step.get("step_type") == "agent_response"
+            and last_step.get("state") == "DONE"
+        )
         if (
             returncode == 0
-            and normalized_status == "SUCCESS"
-            and not explicit_error
+            and ((normalized_status == "SUCCESS" and not explicit_error) or turn_answered)
             and not blocked_by_stderr
         ):
             return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id, usage)
