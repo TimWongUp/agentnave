@@ -3,7 +3,7 @@
 `provider: "codebuddy"`；默认 `provider_options`：
 
 ```json
-{"model": "hy4-preview", "effort": "high"}
+{"model": "glm-5.3-flash", "effort": "max"}
 ```
 
 ## 非交互权限与验收

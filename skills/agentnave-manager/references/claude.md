@@ -3,7 +3,5 @@
 `provider: "claude"`；默认 `provider_options`：
 
 ```json
-{"model": "opus", "effort": "max"}
+{"model": "claude-opus-5-5", "effort": "medium"}
 ```
-
-`opus` 是模型别名，由 CLI 解析。
