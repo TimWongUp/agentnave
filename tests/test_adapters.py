@@ -58,6 +58,7 @@ from agentnave.models import InvocationRequest, InvocationStatus
         ("codex", {"type": "turn.failed", "error": {"message": "secret"}}, "provider_failed"),
         ("grok", {"type": "error", "message": "secret"}, "provider_failed"),
         ("antigravity", {"event": "result", "result": {"status": "WAITING"}}, "provider_blocked"),
+        ("antigravity", {"event": "result", "result": {"status": "ERROR"}}, None),
     ],
 )
 def test_execution_blockers_are_distinct_from_recoverable_tool_errors(
@@ -705,6 +706,52 @@ def test_antigravity_soft_permission_denial_is_blocked() -> None:
 
     assert result.status is InvocationStatus.BLOCKED
     assert result.error_message == notice.decode()
+
+
+@pytest.mark.parametrize(
+    ("last_step", "status"),
+    [
+        ({"step_type": "agent_response", "state": "DONE"}, InvocationStatus.SUCCEEDED),
+        ({"step_type": "unknown", "state": "DONE"}, InvocationStatus.FAILED),
+    ],
+)
+def test_antigravity_recovered_error_succeeds_only_after_final_reply(
+    last_step: dict[str, object], status: InvocationStatus
+) -> None:
+    stale_error = "API error (attempt 1): request failed: EOF"
+    stdout = b"\n".join(
+        (
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "step_type": "agent_response",
+                        "state": "DONE",
+                        "text_delta": "OK",
+                    },
+                }
+            ).encode(),
+            json.dumps({"event": "step_update", "step_update": last_step}).encode(),
+            json.dumps(
+                {
+                    "event": "result",
+                    "result": {
+                        "conversation_id": "conversation-6",
+                        "status": "ERROR",
+                        "response": "OK\n",
+                        "error": stale_error,
+                    },
+                }
+            ).encode(),
+        )
+    )
+
+    result = AntigravityAdapter().parse(0, stdout, b"")
+
+    assert result.status is status
+    assert result.output == "OK\n"
+    assert result.session_id == "conversation-6"
+    assert result.error_message == (None if status is InvocationStatus.SUCCEEDED else stale_error)
 
 
 def test_antigravity_stream_without_result_is_failed() -> None:

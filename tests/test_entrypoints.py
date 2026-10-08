@@ -297,6 +297,7 @@ async def test_mcp_rejects_invalid_options_before_starting(
 
     assert result.is_error is True
     assert message in str(result.content)
+    assert f"Supported {provider} options: model, effort," in str(result.content)
     assert "Correct the arguments and retry" in str(result.content)
     assert "invocation_id" not in (result.structured_content or {})
 
