@@ -2,7 +2,9 @@
 
 Contributions are welcome through GitHub Issues and pull requests. Keep changes focused on
 AgentNave's role as a local STDIO MCP adapter for CLI-based subagents; planning, orchestration,
-review, retries, permissions, and worktree management belong to the calling Agent Manager.
+review decisions, retries, permissions, and worktree management belong to the calling Agent Manager.
+Optional discussion-room changes must preserve the separate public projection and explicit director
+publication boundary; see [the room contract](docs/discussion-rooms.md).
 
 ## Report an issue
 

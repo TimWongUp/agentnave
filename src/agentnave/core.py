@@ -109,11 +109,11 @@ class InvocationManager:
         self._records: dict[str, _InvocationRecord] = {}
         self._closed = False
 
-    def start(self, request: InvocationRequest) -> str:
+    def start(self, request: InvocationRequest, *, prepared: PreparedCommand | None = None) -> str:
         if self._closed:
             raise RuntimeError("invocation manager is closed")
         adapter = get_adapter(request.provider)
-        prepared = adapter.prepare(request)
+        prepared = prepared if prepared is not None else adapter.prepare(request)
         invocation_id = str(uuid.uuid4())
         record = _InvocationRecord(request)
         self._records[invocation_id] = record

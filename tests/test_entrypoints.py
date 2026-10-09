@@ -96,6 +96,18 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         "wait_agent",
         "cancel_agent",
         "describe_provider",
+        "open_discussion",
+        "list_conversations",
+        "start_discussion_turn",
+        "read_conversation",
+        "decide_discussion_turn",
+        "decide_discussion_round",
+        "post_discussion_message",
+        "reset_discussion_seat",
+        "open_workbench",
+        "update_conversation",
+        "mark_discussion_absent",
+        "continue_discussion",
     ]
     assert all(tool.output_schema is not None for tool in result.tools)
     assert result.tools[0].annotations is not None
@@ -128,7 +140,12 @@ async def test_provider_details_are_disclosed_only_on_request(
         payload = _payload(described.structured_content)
         assert described.is_error is False
         assert payload["provider"] == "codebuddy"
-        assert set(payload) == {"provider", "permitted", "supported_options"}
+        assert set(payload) == {
+            "provider",
+            "permitted",
+            "discussion_permitted",
+            "supported_options",
+        }
         assert "permission_mode" in str(payload["supported_options"])
         assert "gpt-6-astra" not in str(payload)
         assert await client.list_tools() == before
@@ -361,7 +378,11 @@ async def test_mcp_provider_launch_failure_is_structured_and_hides_traceback(
 
 @pytest.mark.asyncio
 async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
-    parameters = StdioServerParameters(command=sys.executable, args=["-m", "agentnave.mcp_server"])
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "agentnave.mcp_server"],
+        env={"AGENTNAVE_DATA_DIR": os.environ["AGENTNAVE_DATA_DIR"]},
+    )
     async with Client(parameters) as client:
         assert client.server_info is not None
         assert client.server_info.name == "AgentNave"
@@ -373,6 +394,18 @@ async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
         "wait_agent",
         "cancel_agent",
         "describe_provider",
+        "open_discussion",
+        "list_conversations",
+        "start_discussion_turn",
+        "read_conversation",
+        "decide_discussion_turn",
+        "decide_discussion_round",
+        "post_discussion_message",
+        "reset_discussion_seat",
+        "open_workbench",
+        "update_conversation",
+        "mark_discussion_absent",
+        "continue_discussion",
     ]
 
 
@@ -392,7 +425,11 @@ async def test_stdio_enforces_host_exclusions_before_launch(
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "agentnave.mcp_server"],
-        env={"PATH": os.environ["PATH"], "AGENTNAVE_EXCLUDED_PROVIDERS": excluded},
+        env={
+            "PATH": os.environ["PATH"],
+            "AGENTNAVE_EXCLUDED_PROVIDERS": excluded,
+            "AGENTNAVE_DATA_DIR": os.environ["AGENTNAVE_DATA_DIR"],
+        },
     )
     async with Client(parameters) as client:
         tools = (await client.list_tools()).tools
@@ -403,6 +440,19 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         assert "Excluded providers:" in description
         described = await client.call_tool("describe_provider", {"provider": "codex"})
         assert _payload(described.structured_content)["permitted"] is False
+        assert _payload(described.structured_content)["discussion_permitted"] is True
+        opened = await client.call_tool(
+            "open_discussion",
+            {
+                "directory": str(tmp_path / "show"),
+                "title": "Host CLI is a separate contestant",
+                "seats": [
+                    {"id": p, "label": p, "provider": p, "model": "explicit", "effort": "low"}
+                    for p in ("codex", "grok")
+                ],
+            },
+        )
+        assert opened.is_error is False
         rejected = await client.call_tool(
             "start_agent", {"provider": "codex", "prompt": "finish", "cwd": str(tmp_path)}
         )
@@ -410,7 +460,10 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         assert "excluded by this host" in str(rejected.content)
         assert not marker.exists()
         if "claude" in excluded:
-            assert "Providers permitted by this host configuration: none" in description
+            assert (
+                "Providers permitted for ordinary start_agent by this host configuration: none"
+                in description
+            )
         else:
             started = await client.call_tool(
                 "start_agent", {"provider": "claude", "prompt": "finish", "cwd": str(tmp_path)}
@@ -438,3 +491,170 @@ def test_stdio_rejects_unknown_exclusion_configuration() -> None:
     assert completed.returncode != 0
     assert completed.stdout == ""
     assert "Unknown AGENTNAVE_EXCLUDED_PROVIDERS: codxe" in completed.stderr
+
+
+@pytest.mark.asyncio
+async def test_workbench_auto_collects_private_grouped_tasks_and_restores_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from urllib.error import HTTPError
+    from urllib.request import urlopen
+
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    def fetch(url: str) -> str:
+        with urlopen(url, timeout=3) as response:
+            return response.read().decode()
+
+    async with Client(mcp) as client:
+        first = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "finish",
+                        "cwd": str(tmp_path),
+                        "title": "A private job",
+                    },
+                )
+            ).structured_content
+        )
+        rid = first["conversation_id"]
+        second = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "private second output",
+                        "cwd": str(tmp_path),
+                        "conversation_id": rid,
+                    },
+                )
+            ).structured_content
+        )
+        for started in (first, second):
+            await client.call_tool("wait_agent", {"invocation_id": started["invocation_id"]})
+        view = _payload(
+            (await client.call_tool("read_conversation", {"room_id": rid})).structured_content
+        )
+        room = _payload(view["room"])
+        runs = cast(list[dict[str, object]], room["tasks"])
+        assert [run["output"] for run in runs] == ["FINISH", "PRIVATE SECOND OUTPUT"]
+        assert all(run["status"] == "succeeded" for run in runs)
+        assert view["public_url"] == ""
+        desk = await asyncio.to_thread(fetch, str(view["director_url"]) + "state")
+        assert "PRIVATE SECOND OUTPUT" in desk
+        assert "session-e2e" not in desk and str(first["invocation_id"]) not in desk
+        with pytest.raises(HTTPError) as error:
+            await asyncio.to_thread(fetch, str(view["director_url"]) + "transcript.jsonl")
+        assert error.value.code == 404
+        public = _payload(
+            (
+                await client.call_tool(
+                    "open_discussion",
+                    {
+                        "title": "Separate discussion",
+                        "seats": [
+                            {
+                                "id": p,
+                                "label": p,
+                                "provider": p,
+                                "model": "explicit",
+                                "effort": "low",
+                            }
+                            for p in ("claude", "grok")
+                        ],
+                    },
+                )
+            ).structured_content
+        )
+        public_body = await asyncio.to_thread(fetch, str(public["public_url"]) + "state")
+        assert "PRIVATE SECOND OUTPUT" not in public_body and "A private job" not in public_body
+        assert "workbench_url" not in public_body and "storage" not in public_body
+        denied = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "do not mix",
+                "cwd": str(tmp_path),
+                "conversation_id": _payload(public["room"])["id"],
+            },
+        )
+        assert denied.is_error
+        sleeping = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "sleep",
+                        "cwd": str(tmp_path),
+                        "conversation_id": rid,
+                        "session_id": "session-e2e",
+                    },
+                )
+            ).structured_content
+        )
+        duplicate = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "duplicate",
+                "cwd": str(tmp_path),
+                "conversation_id": rid,
+                "session_id": "session-e2e",
+            },
+        )
+        assert duplicate.is_error
+        assert (
+            await client.call_tool("update_conversation", {"room_id": rid, "archived": True})
+        ).is_error
+        await client.call_tool("cancel_agent", {"invocation_id": sleeping["invocation_id"]})
+        await client.call_tool("read_conversation", {"room_id": rid})
+        changed = await client.call_tool(
+            "update_conversation", {"room_id": rid, "title": "Renamed job", "archived": True}
+        )
+        assert not changed.is_error
+        homepage = json.loads(await asyncio.to_thread(fetch, str(first["workbench_url"]) + "state"))
+        assert len(homepage["shows"]) == 2
+        assert "PRIVATE SECOND OUTPUT" not in json.dumps(homepage)
+
+    # A durable running record represents an interrupted process, not a resumable invocation.
+    directory = Path(
+        json.loads(
+            (Path(os.environ["AGENTNAVE_DATA_DIR"]) / "catalog" / (str(rid) + ".json")).read_text()
+        )
+    )
+    state_file = directory / "room.json"
+    saved = json.loads(state_file.read_text())
+    saved["tasks"][0]["status"] = "running"
+    saved["tasks"][0]["invocation_id"] = "expired-invocation"
+    state_file.write_text(json.dumps(saved))
+    async with Client(mcp) as client:
+        view = _payload(
+            (await client.call_tool("read_conversation", {"room_id": rid})).structured_content
+        )
+        room = _payload(view["room"])
+        assert room["title"] == "Renamed job" and room["archived"] is True
+        runs = cast(list[dict[str, object]], room["tasks"])
+        assert runs[0]["status"] == "interrupted" and runs[0]["invocation_id"] is None
+        assert runs[1]["output"] == "PRIVATE SECOND OUTPUT"
+        await client.call_tool("update_conversation", {"room_id": rid, "archived": False})
+        resumed = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "continued",
+                        "cwd": str(tmp_path),
+                        "session_id": "session-e2e",
+                    },
+                )
+            ).structured_content
+        )
+        assert resumed["conversation_id"] == rid
+        await client.call_tool("wait_agent", {"invocation_id": resumed["invocation_id"]})

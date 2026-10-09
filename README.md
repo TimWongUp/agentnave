@@ -69,8 +69,39 @@ tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Ho
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
 
-AgentNave creates no durable user data. Provider authentication and configuration remain owned by
-their respective CLIs.
+The published v0.10.3 runtime creates no durable AgentNave data. The development checkout saves
+private conversation history as described below; provider authentication and configuration remain
+owned by their respective CLIs.
+
+## Optional discussion rooms (unreleased)
+
+A calling Agent can act as director: choose a seat, send unread public dialogue, inspect the
+candidate reply, then publish or discard it. A shared public board collects published dialogue for every participant. A separate director desk
+mirrors that board and additionally shows private instructions, drafts, and turn state. The same mechanism works for technical discussions and an AI show.
+
+Participant profiles support all five CLI adapters, including the director host’s own CLI. Each seat
+resumes its own native session, receiving only unread public messages and the current instruction.
+Provider-specific discussion profiles restrict tools without changing ordinary invocation defaults.
+The director can speak publicly as the host. A tavern-style chat displays original avatars, speaker filters,
+copyable messages and a separate private director desk. Each show uses its own directory, public history
+and seat sessions; the director can switch among opened shows. Participants receive only their own show.
+These profiles combine public-context projection and native tool restrictions; they are not an OS sandbox.
+Ordinary CLI calls retain their existing defaults. No scheduler, automatic retries, game engine,
+new web framework, account system or cloud service is added.
+
+See [discussion-room tools and limitations](docs/discussion-rooms.md). This feature is available in
+the development checkout, not the published v0.10.3 runtime.
+
+For independent answers, use `open_discussion(mode="blind")`. Replies are sealed automatically and
+revealed together through `decide_discussion_round`, so later speakers cannot copy earlier answers.
+
+### Unified local workbench (development checkout)
+
+`open_workbench` opens a private list of conversations: **一起聊** (discussion), **各自答** (independent answers), and **做任务** (ordinary CLI work). Ordinary `start_agent` calls automatically collect output into task conversations; use `title` for a new conversation and `conversation_id` to group related invocations. Grouping does not share context or alter native tool permissions. Task pages have no public counterpart. The browser remains read-only.
+
+History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DATA_DIR`. Records survive restart; active processes and invocation handles do not. `list_conversations`, `read_conversation` and `update_conversation` inspect, rename, end or reopen saved conversations. Other services' locked histories are not taken over.
+
+Independent rounds can explicitly mark unanswered seats with `mark_discussion_absent`, after resolving their active invocation. Revealing a partial round labels it incomplete. After reveal, `continue_discussion` continues together in the same native sessions. See [the conversation guide](docs/discussion-rooms.md) and the [manager Skill](skills/agentnave-manager/SKILL.md).
 
 ## The MCP surface
 
@@ -80,7 +111,7 @@ Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
-AgentNave exposes four tools. The initial tool metadata contains a compact provider directory;
+AgentNave exposes four core tools, plus optional conversation and workbench tools in the development checkout. The initial tool metadata contains a compact provider directory;
 provider-specific options are returned only when requested. Model defaults live in the Skill's
 per-CLI reference files, loaded only for the selected CLI.
 
@@ -171,7 +202,7 @@ to stop work explicitly. Provider-native limits still apply.
 Stops an invocation and returns its terminal result. Use it only when the Manager intends to end
 active provider work; `wait_agent` observes without cancelling.
 
-All four tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
+All tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
 errors with retry guidance; provider launch and execution outcomes remain structured Invocation
 Results.
 

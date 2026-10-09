@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -125,3 +125,17 @@ def option_args(request: InvocationRequest, allowlist: dict[str, str]) -> tuple[
     for key, value in request.provider_options.items():
         args.extend((allowlist[key], str(value).lower() if isinstance(value, bool) else str(value)))
     return tuple(args)
+
+
+def discussion_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
+    """Explicit opt-in only; discussion profiles cannot enable other tools."""
+    options = dict(request.provider_options)
+    enabled = options.pop("discussion_mode", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("discussion_mode must be a boolean")
+    if enabled:
+        if request.provider not in ("antigravity", "claude", "codebuddy", "codex", "grok"):
+            raise ValueError("discussion_mode requires a registered provider")
+        if set(options) - {"model", "effort"}:
+            raise ValueError("discussion_mode accepts only model and effort")
+    return replace(request, provider_options=options), enabled

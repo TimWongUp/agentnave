@@ -8,8 +8,8 @@
 
 ## Implementation boundaries
 
-- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，只做 CLI 子代理适配，不承担规划、角色、DAG、并行策略、审核、综合、重试、worktree、持久化或 UI，也不提供面向人的 CLI。
-- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；只允许协议必需参数和调用方显式提供的 allowlist options。
+- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，提供 CLI 子代理适配、私有任务工作台和显式启用的本地讨论室。讨论室仅负责席位上下文投影、候选台词、导演确认发布、房间持久化和只读 Dashboard；普通任务元信息、会话绑定与最终输出也保存为私有会话，运行中尾部只用于实时展示；规划、角色设定、轮次、审核判断、综合、重试与 worktree 仍由调用方 Manager 决定，不提供面向人的 CLI。
+- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；只允许协议必需参数和调用方显式提供的 allowlist options。`discussion_mode=true` 是显式受限发言配置；普通 Invocation 不继承此配置。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程树内的活跃进程做 best-effort 清理，不引入跨重启恢复。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。
 - macOS／Linux 使用专用 POSIX 进程组 supervisor；Windows 使用挂起创建并先加入
