@@ -15,8 +15,19 @@ from agentnave.adapters.base import (
     normalized_usage,
     option_args,
     parse_json_lines,
+    parse_json_object,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+
+
+def _capture_line(line: bytes) -> bytes:
+    event = parse_json_object(line.decode(errors="replace"))
+    if event is None:
+        return b""
+    if event.get("type") in ("text", "end", "error"):
+        return line + b"\n"
+    # Keep the response boundary used by _last_text_block, not tool/image payloads.
+    return b'{"type":"boundary"}\n'
 
 
 def _last_text_block(events: list[dict[str, object]]) -> str:
@@ -67,7 +78,9 @@ class GrokAdapter:
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
         argv.extend(options)
-        return PreparedCommand(tuple(argv), request.cwd, cleanup_paths=(path,))
+        return PreparedCommand(
+            tuple(argv), request.cwd, cleanup_paths=(path,), capture_line=_capture_line
+        )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
