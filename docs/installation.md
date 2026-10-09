@@ -292,10 +292,11 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all four AgentNave tools; a
-successful connection alone does not prove tools are enabled. In noninteractive installation,
-handle the documented prompt explicitly and verify the saved enabled-tool selection. Restart
-the host and verify Skill discovery separately.
+tools, then asks whether to enable them. Complete that choice for all 16 AgentNave tools; a
+successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
+per-tool selection so it includes the new workbench and conversation tools. In noninteractive
+installation, handle the documented prompt explicitly and verify the saved enabled-tool
+selection. Restart the host and verify Skill discovery separately.
 
 ### Other hosts
 
