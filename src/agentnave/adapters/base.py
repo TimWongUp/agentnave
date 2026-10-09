@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
@@ -17,6 +18,7 @@ class PreparedCommand:
     cwd: Path
     stdin: bytes | None = None
     cleanup_paths: tuple[Path, ...] = ()
+    capture_line: Callable[[bytes], bytes] | None = None
 
 
 @dataclass(frozen=True, slots=True)

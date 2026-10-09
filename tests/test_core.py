@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +12,7 @@ import pytest
 
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
+from agentnave.adapters.grok import GrokAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
 from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
 from agentnave.processes import (
@@ -349,6 +351,43 @@ async def test_completion_cleans_group_when_provider_leaves_descendant(
 
 
 @pytest.mark.asyncio
+async def test_grok_image_tool_output_does_not_terminate_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ImageGrokAdapter(GrokAdapter):
+        def prepare(self, request: InvocationRequest) -> PreparedCommand:
+            prepared = super().prepare(request)
+            code = (
+                "import json,time; "
+                "print(json.dumps({'type':'text','data':'检查中'})); "
+                "event={'type':'tool_call_update','toolCallId':'image',"
+                "'toolName':'read_file','status':'completed','content':[{'type':'content','content':"
+                "{'type':'image','data':'x'*(1024*1024),'mimeType':'image/png'}}]}; "
+                "[print(json.dumps(event),flush=True) for _ in range(10)]; "
+                "time.sleep(0.1); "
+                "print(json.dumps({'type':'text','data':'图片已核对'})); "
+                "print(json.dumps({'type':'end','stopReason':'end_turn',"
+                "'sessionId':'image-session'}))"
+            )
+            return replace(prepared, argv=(sys.executable, "-c", code))
+
+    def adapter_for(_provider: str) -> ImageGrokAdapter:
+        return ImageGrokAdapter()
+
+    monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("grok", "inspect images", tmp_path))
+    try:
+        result = await asyncio.wait_for(manager.wait(invocation_id), 5)
+        assert result is not None
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert result.output == "图片已核对"
+        assert result.session_id == "image-session"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_output_limit_terminates_provider_without_unbounded_capture(
     tmp_path: Path, fake_adapter: None
 ) -> None:
@@ -444,3 +483,23 @@ async def test_activity_observer_stops_at_capture_limit() -> None:
     assert captured.data == b"{}\n"
     assert captured.exceeded and exceeded.is_set()
     assert observed == [b"{}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("oversized_line", [False, True])
+async def test_grok_filtered_capture_still_bounds_memory(
+    tmp_path: Path, oversized_line: bool
+) -> None:
+    prepared = GrokAdapter().prepare(InvocationRequest("grok", "work", tmp_path))
+    try:
+        stream = asyncio.StreamReader()
+        line = json.dumps({"type": "text", "data": "x" * 50}).encode()
+        stream.feed_data(b"x" * 129 if oversized_line else line + b"\n" + line)
+        stream.feed_eof()
+        exceeded = asyncio.Event()
+        captured = await _read_limited(stream, 128, exceeded, capture_line=prepared.capture_line)
+        assert exceeded.is_set() and captured.exceeded
+        assert len(captured.data) <= 128
+    finally:
+        for path in prepared.cleanup_paths:
+            path.unlink()
