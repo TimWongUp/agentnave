@@ -183,6 +183,8 @@ class Workbench(DiscussionRooms):
             restored = next(item for item in room.state.tasks if item.id == task_id)
             restored.status = "interrupted"
             restored.error = "history_write_failed; use wait_agent for the invocation result"
+            # Keep terminal recovery state across subsequent failed edits in this process.
+            room.rollback_state = room.state.model_copy(deep=True)
             self.refresh_views(room)
 
     async def shutdown(self) -> None:

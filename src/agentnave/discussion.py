@@ -121,7 +121,7 @@ class Room:
         mode: Literal["discussion", "blind", "task"] = "discussion",
     ) -> None:
         self.directory = directory
-        self.saved_state: RoomState | None = None
+        self.rollback_state: RoomState | None = None
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         # An OS lock prevents two MCP hosts from writing one room simultaneously.
         self.lock = (directory / ".lock").open("a+b")
@@ -177,10 +177,10 @@ class Room:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(name, self.directory / "room.json")
-            self.saved_state = self.state.model_copy(deep=True)
+            self.rollback_state = self.state.model_copy(deep=True)
         except OSError:
-            if self.saved_state is not None:
-                self.state = self.saved_state.model_copy(deep=True)
+            if self.rollback_state is not None:
+                self.state = self.rollback_state.model_copy(deep=True)
             raise
         finally:
             if name is not None:
@@ -464,6 +464,9 @@ class DiscussionRooms:
             room.state.turn.status = "failed"
             room.state.turn.candidate = None
             room.state.turn.error = "room_write_failed"
+            # The invocation has ended even though its result was not persisted. Later failed
+            # mutations must roll back to this recoverable state, never revive a running turn.
+            room.rollback_state = room.state.model_copy(deep=True)
             self.refresh_views(room)
 
     @staticmethod

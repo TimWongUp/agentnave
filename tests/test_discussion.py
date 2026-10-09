@@ -11,9 +11,11 @@ from urllib.request import Request, urlopen
 import pytest
 
 from agentnave.adapters import get_adapter
+from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
 from agentnave.discussion import DiscussionRooms, RoomState, Seat
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
+from agentnave.workbench import Workbench
 
 
 def seats() -> list[Seat]:
@@ -215,6 +217,9 @@ async def test_invalid_candidate_cancel_and_uncertain_history(
             1,
         ),
         InvocationResult(InvocationStatus.CANCELLED, "claude", "PARTIAL_PRIVATE", None, {}, 1),
+        InvocationResult(
+            InvocationStatus.SUCCEEDED, "claude", '{"public_text":"hello"}', "session", {}, 1
+        ),
     ]
 
     def start(request: InvocationRequest) -> str:
@@ -243,6 +248,68 @@ async def test_invalid_candidate_cancel_and_uncertain_history(
             with pytest.raises(ValueError, match="uncertain"):
                 rooms.start(rid, "claude", "retry")
             rooms.reset(rid, "claude")
+
+        rooms.start(rid, "claude", "result cannot be saved")
+        task = rooms.get(rid).task
+        assert task is not None
+
+        def fail_replace(source: str, destination: Path) -> None:
+            raise OSError("disk unavailable")
+
+        with monkeypatch.context() as disk_failure:
+            disk_failure.setattr(os, "replace", fail_replace)
+            await task
+            with pytest.raises(OSError, match="disk unavailable"):
+                rooms.reset(rid, "claude")
+        recovered = await rooms.read(rid)
+        assert recovered.room.turn is not None
+        assert recovered.room.turn.status == "failed"
+        assert recovered.room.turn.error == "room_write_failed"
+        assert recovered.room.sessions["claude"].needs_reset
+        desk = json.loads(await asyncio.to_thread(fetch, recovered.director_url + "state"))
+        assert desk["status"] == recovered.room.turn.status
+        rooms.reset(rid, "claude")
+        rooms.post(rid, "Disk recovered; continue without restarting the server")
+    finally:
+        await rooms.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_task_collection_stays_terminal_after_repeated_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = InvocationManager()
+
+    def start(request: InvocationRequest, *, prepared: PreparedCommand | None = None) -> str:
+        return "invocation"
+
+    async def wait(invocation_id: str, timeout: float) -> InvocationResult:
+        return InvocationResult(InvocationStatus.SUCCEEDED, "claude", "result", "session", {}, 1)
+
+    def fail_replace(source: str, destination: Path) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(manager, "start", start)
+    monkeypatch.setattr(manager, "wait", wait)
+    rooms = Workbench(manager, tmp_path)
+    try:
+        _, opened = rooms.start_task(
+            InvocationRequest(provider="claude", prompt="task", cwd=tmp_path), None, None
+        )
+        rid = opened.room.id
+        with monkeypatch.context() as disk_failure:
+            disk_failure.setattr(os, "replace", fail_replace)
+            await rooms.collectors[-1]
+            with pytest.raises(OSError, match="disk unavailable"):
+                rooms.update(rid, "Rename while disk unavailable", None)
+        recovered = await rooms.read(rid)
+        assert recovered.room.tasks[0].status == "interrupted"
+        assert "history_write_failed" in (recovered.room.tasks[0].error or "")
+        assert recovered.room.title == opened.room.title
+        desk = json.loads(await asyncio.to_thread(fetch, recovered.director_url + "state"))
+        assert desk["tasks"][0]["status"] == "interrupted"
+        rooms.update(rid, "Recovered", True)
+        assert rooms.view(rid).room.archived
     finally:
         await rooms.shutdown()
 
