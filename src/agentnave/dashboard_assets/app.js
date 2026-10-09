@@ -73,7 +73,7 @@ function render(data) {
   const speaker=cast.find(s=>s.id===data.speaker);
   $("status").textContent=data.archived?"会话已结束 · 历史保留":director?((speaker&&["running","ready"].includes(data.status)?speaker.label+" · ":"")+((data.mode==="blind"&&data.status==="ready"?"会话信息不完整，等待导演处理":labels[data.status])||data.status)):"公开发言 · 全员同步";
   $("count").textContent=data.messages.length+" 条公开发言";
-  $("filter-note").hidden=selected===null;$("filter-note").textContent=selected?"正在查看 "+(cast.find(s=>s.id===selected)?.label||selected)+" 的发言 · 点击「所有人的发言」恢复全场":"";
+  $("filter-note").hidden=selected===null;$("filter-note").textContent=selected?"正在查看 "+(cast.find(s=>s.id===selected)?.label||selected)+" 的发言 · 点击「所有人」恢复全场":"";
   const nextMessageKey=JSON.stringify([data.messages,selected,data.seats]);
   if(messageKey!==nextMessageKey){
     $("messages").replaceChildren();
