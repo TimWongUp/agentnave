@@ -69,8 +69,8 @@ tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Ho
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
 
-Ordinary invocations create no durable AgentNave data. Optional discussion rooms persist only in
-the directory explicitly selected by the Manager; provider authentication and configuration remain
+The published v0.10.3 runtime creates no durable AgentNave data. The development checkout saves
+private conversation history as described below; provider authentication and configuration remain
 owned by their respective CLIs.
 
 ## Optional discussion rooms (unreleased)
@@ -91,6 +91,17 @@ new web framework, account system or cloud service is added.
 
 See [discussion-room tools and limitations](docs/discussion-rooms.md). This feature is available in
 the development checkout, not the published v0.10.3 runtime.
+
+For independent answers, use `open_discussion(mode="blind")`. Replies are sealed automatically and
+revealed together through `decide_discussion_round`, so later speakers cannot copy earlier answers.
+
+### Unified local workbench (development checkout)
+
+`open_workbench` opens a private list of conversations: **一起聊** (discussion), **各自答** (independent answers), and **做任务** (ordinary CLI work). Ordinary `start_agent` calls automatically collect output into task conversations; use `title` for a new conversation and `conversation_id` to group related invocations. Grouping does not share context or alter native tool permissions. Task pages have no public counterpart. The browser remains read-only.
+
+History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DATA_DIR`. Records survive restart; active processes and invocation handles do not. `list_conversations`, `read_conversation` and `update_conversation` inspect, rename, end or reopen saved conversations. Other services' locked histories are not taken over.
+
+Independent rounds can explicitly mark unanswered seats with `mark_discussion_absent`, after resolving their active invocation. Revealing a partial round labels it incomplete. After reveal, `continue_discussion` continues together in the same native sessions. See [the conversation guide](docs/discussion-rooms.md) and the [manager Skill](skills/agentnave-manager/SKILL.md).
 
 ## The MCP surface
 
@@ -248,13 +259,3 @@ the repository's private vulnerability reporting channel.
 ## License
 
 AgentNave is licensed under the [MIT License](LICENSE).
-
-独立答题可在 `open_discussion` 指定 `mode="blind"`：CLI 自行输出答案，服务自动封存至导演台，收齐后用 `decide_discussion_round` 一次揭晓，避免后答者借鉴前答者。用法见 [讨论室](docs/discussion-rooms.md)。
-
-### Unified local workbench (development checkout)
-
-`open_workbench` opens a private list of conversations: **一起聊** (discussion), **各自答** (independent answers), and **做任务** (ordinary CLI work). Ordinary `start_agent` calls automatically collect output into task conversations; use `title` for a new conversation and `conversation_id` to group related invocations. Grouping does not share context or alter native tool permissions. Task pages have no public counterpart. The browser remains read-only.
-
-History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DATA_DIR`. Records survive restart; active processes and invocation handles do not. `list_conversations`, `read_conversation` and `update_conversation` inspect, rename, end or reopen saved conversations. Other services' locked histories are not taken over.
-
-Independent rounds can explicitly mark unanswered seats with `mark_discussion_absent`, after resolving their active invocation. Revealing a partial round labels it incomplete. After reveal, `continue_discussion` continues together in the same native sessions. See [the conversation guide](docs/discussion-rooms.md) and the [manager Skill](skills/agentnave-manager/SKILL.md).

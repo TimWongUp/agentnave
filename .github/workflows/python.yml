@@ -140,6 +140,18 @@ jobs:
                   "wait_agent",
                   "cancel_agent",
                   "describe_provider",
+                  "open_discussion",
+                  "list_conversations",
+                  "start_discussion_turn",
+                  "read_conversation",
+                  "decide_discussion_turn",
+                  "decide_discussion_round",
+                  "post_discussion_message",
+                  "reset_discussion_seat",
+                  "open_workbench",
+                  "update_conversation",
+                  "mark_discussion_absent",
+                  "continue_discussion",
               ]
 
 
@@ -174,6 +186,18 @@ jobs:
                   "wait_agent",
                   "cancel_agent",
                   "describe_provider",
+                  "open_discussion",
+                  "list_conversations",
+                  "start_discussion_turn",
+                  "read_conversation",
+                  "decide_discussion_turn",
+                  "decide_discussion_round",
+                  "post_discussion_message",
+                  "reset_discussion_seat",
+                  "open_workbench",
+                  "update_conversation",
+                  "mark_discussion_absent",
+                  "continue_discussion",
               ]
 
 

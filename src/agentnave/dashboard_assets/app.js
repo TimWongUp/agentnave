@@ -46,11 +46,11 @@ function render(data) {
   if(director){$("public-link").href=data.public_url;$("instruction").textContent=data.instruction||"尚未下达指令";$("candidate").textContent=data.status==="ready"?data.candidate:"当前没有待发布回答";$("turn-error").textContent=data.error?"本轮提示："+data.error:"";}
   $("held-panel").hidden=!director||data.mode!=="blind";
   $("candidate-panel").hidden=data.mode==="blind";
-  const nextHeldKey=JSON.stringify([data.pending_answers,data.absent,data.seats,data.blind_round_id]);
+  const nextHeldKey=JSON.stringify([data.pending_answers,data.absent,data.seats,data.round_id]);
   if(director&&data.mode==="blind"&&heldKey!==nextHeldKey){
     heldKey=nextHeldKey;
     const answers=data.pending_answers||[];
-    $("held-title").textContent=data.blind_round_id?"已封存答案 · "+answers.length+" / "+data.seats.length+" · 仅导演可见":"暂无待揭晓答案";
+    $("held-title").textContent=data.round_id?"已封存答案 · "+answers.length+" / "+data.seats.length+" · 仅导演可见":"暂无待揭晓答案";
     $("held-answers").replaceChildren();
     Object.entries(data.absent||{}).forEach(([id,reason])=>$("held-answers").append(el("p","history-warning",(cast.find(s=>s.id===id)?.label||id)+" · 本轮未作答："+reason)));
     answers.forEach(answer=>{const seat=cast.find(s=>s.id===answer.speaker);const row=el("article","held-answer");row.append(el("strong","",seat?.label||answer.speaker),el("p","",answer.text));$("held-answers").append(row);});
