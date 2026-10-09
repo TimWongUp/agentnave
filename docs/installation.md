@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.10.3` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.11.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.10.3`, which supports
+value for the Skill in step 4. The current published paired release is `v0.11.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -202,7 +202,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm all four tools and the `codex` exclusion.
+Start a new session and confirm the four core tools, the twelve conversation/workbench tools and the ordinary-task `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -292,10 +292,11 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all four AgentNave tools; a
-successful connection alone does not prove tools are enabled. In noninteractive installation,
-handle the documented prompt explicitly and verify the saved enabled-tool selection. Restart
-the host and verify Skill discovery separately.
+tools, then asks whether to enable them. Complete that choice for all 16 AgentNave tools; a
+successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
+per-tool selection so it includes the new workbench and conversation tools. In noninteractive
+installation, handle the documented prompt explicitly and verify the saved enabled-tool
+selection. Restart the host and verify Skill discovery separately.
 
 ### Other hosts
 
@@ -421,7 +422,9 @@ After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
 2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`, and
-   `cancel_agent` are visible. Confirm the host also discovers `agentnave-manager` in the intended
+   `cancel_agent` plus the twelve [conversation/workbench tools](discussion-rooms.md) are visible
+   (16 total). Confirm `open_workbench`, `list_conversations` and `read_conversation` are included.
+   Confirm the host also discovers `agentnave-manager` in the intended
    scope and can read its five referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `describe_provider` only for the selected CLI to confirm its permitted status and supported
@@ -484,6 +487,19 @@ upgrade an installed runtime. On older schemas that still expose the wait argume
 uses 300 seconds. In Codex, resume `Script running with cell ID ...` with `functions.wait`
 and the returned `cell_id` until the original call completes.
 
+### Upgrading from v0.10.3 to v0.11.0
+
+Ordinary `start_agent` calls now save private task metadata, native session bindings and final output
+under `~/.agentnave/` by default. `AGENTNAVE_DATA_DIR` selects another fixed directory. This is a
+new persistence behavior; uninstalling or downgrading does not remove those records. Task grouping
+does not share context or change provider permissions. Active invocation handles do not survive restart.
+
+Update runtime and Skill together, reconnect MCP, then use `open_workbench`. Discussion rooms are
+explicitly created; use `blind` for independent answers. Only published dialogue is shared between
+seats. Ordinary host exclusions remain in force; explicit discussion rooms permit every registered
+provider, including the host CLI. The Dashboard stays local and read-only. See the
+[conversation contract](discussion-rooms.md) for native restriction limits and recovery behavior.
+
 ## Upgrade, repair, and rollback
 
 This section replaces an existing installation; it is not part of merely registering another
@@ -542,6 +558,7 @@ uv tool uninstall agentnave
 
 For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.
 Remove the companion Skill through its deployment manager, or remove only its installed directory
-or symlink, preserving user-authored additions. The published v0.10.3 runtime creates no durable user data and needs no
-purge operation. Provider CLIs, authentication, configuration, sessions, and user projects remain
-owned by the user and providers.
+or symlink, preserving user-authored additions. Uninstalling the runtime does not delete private
+history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
+Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
+configuration, sessions, and user projects remain owned by the user and providers.
