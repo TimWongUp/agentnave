@@ -26,6 +26,7 @@ a compatible MCP host.
 | In-memory invocation lifecycle | Provider and model selection |
 | POSIX process groups / Windows Job Objects | Parallelism, review, and synthesis |
 | Normalized terminal results | Retries, permissions, and worktrees |
+| Private conversation history and read-only Dashboard | Publication decisions and acceptance |
 
 ## Requirements
 
@@ -64,16 +65,15 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.10.3`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.11.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
 
-The published v0.10.3 runtime creates no durable AgentNave data. The development checkout saves
-private conversation history as described below; provider authentication and configuration remain
-owned by their respective CLIs.
+AgentNave saves private conversation history under `~/.agentnave/` by default, including ordinary
+task results. Provider authentication and configuration remain owned by their respective CLIs.
 
-## Optional discussion rooms (unreleased)
+## Optional discussion rooms
 
 A calling Agent can act as director: choose a seat, send unread public dialogue, inspect the
 candidate reply, then publish or discard it. A shared public board collects published dialogue for every participant. A separate director desk
@@ -89,13 +89,13 @@ These profiles combine public-context projection and native tool restrictions; t
 Ordinary CLI calls retain their existing defaults. No scheduler, automatic retries, game engine,
 new web framework, account system or cloud service is added.
 
-See [discussion-room tools and limitations](docs/discussion-rooms.md). This feature is available in
-the development checkout, not the published v0.10.3 runtime.
+See [discussion-room tools and limitations](docs/discussion-rooms.md). Workbench and discussion
+tools are available from v0.11.0.
 
 For independent answers, use `open_discussion(mode="blind")`. Replies are sealed automatically and
 revealed together through `decide_discussion_round`, so later speakers cannot copy earlier answers.
 
-### Unified local workbench (development checkout)
+### Unified local workbench
 
 `open_workbench` opens a private list of conversations: **一起聊** (discussion), **各自答** (independent answers), and **做任务** (ordinary CLI work). Ordinary `start_agent` calls automatically collect output into task conversations; use `title` for a new conversation and `conversation_id` to group related invocations. Grouping does not share context or alter native tool permissions. Task pages have no public counterpart. The browser remains read-only.
 
@@ -105,13 +105,13 @@ Independent rounds can explicitly mark unanswered seats with `mark_discussion_ab
 
 ## The MCP surface
 
-This section describes `v0.10.3`, which retains native Windows process-tree supervision and
+This section describes `v0.11.0`, which retains native Windows process-tree supervision and
 the fixed five-minute wait contract introduced in `v0.9.0`.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
-AgentNave exposes four core tools, plus optional conversation and workbench tools in the development checkout. The initial tool metadata contains a compact provider directory;
+AgentNave exposes four core tools, plus twelve conversation and workbench tools. The initial tool metadata contains a compact provider directory;
 provider-specific options are returned only when requested. Model defaults live in the Skill's
 per-CLI reference files, loaded only for the selected CLI.
 
