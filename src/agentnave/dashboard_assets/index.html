@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>AgentNave · 工作台</title><link rel="stylesheet" href="./style.css"><script src="./app.js" defer></script></head>
+<body>
+<header class="topbar"><a id="brand-link" class="brand" href="./"><span class="brand-mark">N</span> AgentNave <span class="brand-sub">工作台</span></a><div class="connection"><span class="live-dot"></span><span id="connection" role="status">正在连接</span></div></header>
+<main><section class="stage">
+<a id="workbench-link" hidden>← 所有会话</a>
+<div class="heading"><div><p class="eyebrow" id="view-name">公共对话 · 全员可见</p><h1 id="title">正在读取会话…</h1></div><div class="heading-actions"><a id="public-link" class="button-link" hidden target="_blank" rel="noreferrer">选手看到的页面 ↗</a><a class="export" href="./transcript.jsonl" download="transcript.jsonl">导出公开台词 ↓</a></div></div>
+<section id="home-tools" hidden>
+<p class="intro">讨论、独立作答和日常任务，都从这里查看。选手的公开对话与主控的私有内容分开保存。</p>
+<div id="mode-filters" class="mode-filters" aria-label="按用途筛选会话"></div>
+<details class="start-guide"><summary>如何开始新会话？</summary><p>在主控 Agent 的对话中说明用途和内容，主控会创建会话；这里自动同步进展。</p><div id="start-examples"></div></details>
+<div class="list-tools"><label class="search-label"><span>查找会话</span><input id="search" type="search" placeholder="搜索会话名称" autocomplete="off"></label><label><span>会话状态</span><select id="archive-filter"><option value="active">未结束</option><option value="ended">已结束</option><option value="all">全部状态</option></select></label></div><p id="list-count" role="status"></p>
+</section>
+<section id="conversation-list" hidden aria-label="会话列表"></section>
+<p id="mode-note" class="mode-note"></p>
+<div class="now"><span class="live-dot"></span><span id="status" role="status">等待主持人开场</span><span id="count">0 条公开发言</span></div>
+<nav id="view-tabs" class="view-tabs" hidden aria-label="切换会话视图"><button id="conversation-tab" aria-pressed="true">公开对话</button><button id="backstage-tab" aria-pressed="false">导演后台 <span>私有</span></button></nav>
+<section id="director-panel" hidden aria-label="导演后台">
+<div class="desk-heading"><h2>本轮进展</h2><span class="tag">仅主控可见</span></div><p class="desk-note">这里的指令和未公开回答不会同步给其他选手。点名、发布或揭晓，请在主控 Agent 的对话中操作。</p>
+<div class="desk-grid"><div><h3>私有指令</h3><p id="instruction"></p></div><div id="candidate-panel"><h3>候选回答 · 尚未公开</h3><p id="candidate"></p></div></div><p id="turn-error" role="status"></p>
+<section id="held-panel" hidden><h3 id="held-title"></h3><div id="held-answers"></div></section></section>
+<section id="task-list" hidden aria-label="任务结果"></section>
+<section id="transcript-panel" aria-label="公开对话">
+<div class="audience-note"><span id="view-note">全员共享的公共记录</span><p id="view-description">这里只展示已经公开的发言。</p></div>
+<div class="roster"><button id="all-seats" class="all-seats" aria-pressed="true">所有人</button><div id="seats" aria-label="按角色查看公开发言"></div></div>
+<div id="filter-note" hidden></div><div id="empty"><div class="empty-mark">“</div><h2>好戏，从一句话开始。</h2><p id="empty-text">主持人开场，选手回应。公开台词会依次留在这里。</p></div>
+<div id="messages" role="log" aria-label="公开台词" aria-live="polite"></div><button id="latest" hidden>有新发言 · 回到最新 ↓</button>
+</section>
+<footer><span id="footer-note">公开对话 · 只读</span><details id="storage-details" hidden><summary>保存位置</summary><p id="storage-note"></p></details></footer>
+</section></main></body></html>

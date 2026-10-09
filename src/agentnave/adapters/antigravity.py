@@ -8,6 +8,7 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    discussion_options,
     error_summary,
     failure_status,
     normalized_usage,
@@ -15,6 +16,20 @@ from agentnave.adapters.base import (
     parse_json_lines,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+
+_DISCUSSION_AGENT = """---
+name: agentnave-discussion
+description: Dialogue-only participant for AgentNave discussion rooms.
+tools: []
+mcpServers: []
+skills: []
+plugins: []
+mainAgent: true
+subagent: false
+commandExecutionPolicy: off
+---
+You are a conversation participant. Answer the current user request.
+"""
 
 
 class AntigravityAdapter:
@@ -33,12 +48,32 @@ class AntigravityAdapter:
     _boolean_options = {"disable_slash_commands", "sandbox", "dangerously_skip_permissions"}
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        request, discussion = discussion_options(request)
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
         argv = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
         if request.session_id is not None:
             argv.extend(("--conversation", request.session_id))
         argv.extend(self._option_args(request))
+        if discussion:
+            profile = request.cwd / ".agents" / "agents" / "agentnave-discussion.md"
+            if profile.exists():
+                if profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
+                    raise ValueError(
+                        "Discussion agent profile already exists with different contents"
+                    )
+            else:
+                profile.parent.mkdir(parents=True, exist_ok=True)
+                with profile.open("x", encoding="utf-8") as stream:
+                    stream.write(_DISCUSSION_AGENT)
+            argv.extend(
+                (
+                    "--agent",
+                    "agentnave-discussion",
+                    "--sandbox=true",
+                    "--disable-slash-commands=true",
+                )
+            )
         return PreparedCommand(tuple(argv), request.cwd, prompt)
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:

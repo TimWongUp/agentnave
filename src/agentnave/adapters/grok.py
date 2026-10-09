@@ -10,6 +10,7 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    discussion_options,
     error_summary,
     failure_status,
     normalized_usage,
@@ -55,6 +56,7 @@ class GrokAdapter:
     }
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        request, discussion = discussion_options(request)
         options = option_args(request, self._options)
         prompt = request.prompt.encode()
         fd, raw_path = tempfile.mkstemp(prefix="agentnave-prompt-", suffix=".txt")
@@ -78,6 +80,19 @@ class GrokAdapter:
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
         argv.extend(options)
+        if discussion:
+            argv.extend(
+                [
+                    "--tools",
+                    "",
+                    "--deny",
+                    "*",
+                    "--no-subagents",
+                    "--disable-web-search",
+                    "--permission-mode",
+                    "dontAsk",
+                ]
+            )
         return PreparedCommand(
             tuple(argv), request.cwd, cleanup_paths=(path,), capture_line=_capture_line
         )

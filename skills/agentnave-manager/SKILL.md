@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 或 Antigravity CLI 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于这些 CLI 的 AgentNave 调用方式咨询；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 或 Antigravity CLI 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于工作台、一起聊、各自答、普通任务分组、会话续接与统一揭晓；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用其他 CLI
@@ -8,6 +8,17 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 本 Skill 只说明 CLI 的调用方式。任务选择、规划、并行、审核、重试决策与结果综合由调用方负责。
 
 用户要求调用上述 CLI 时，优先使用当前宿主的 AgentNave MCP 工具；用户明确选择其他路线时遵从。工具可能带宿主前缀或延迟加载；首次按 AgentNave 或精确工具名发现，复用当前上下文已有 schema，以连接中的实时 schema 为参数真源。工具不可用或所选 CLI 被排除时，报告具体限制，不静默切换调用路线或 Provider。
+
+## 工作台与会话用途
+
+普通任务、一起聊、各自答共用私有工作台，但不共用权限或上下文。先通过实时 Tool schema 确认运行时能力；若只有四个基础工具，明确说明缺少工作台能力，不以主控复制答案模拟新功能，也不静默改用源码服务。
+
+- **做任务**：沿用 `start_agent` 原生工具与权限。新任务自动入板；用 `title` 命名新会话、`conversation_id` 将同一件事的多个任务归组。分组仅用于展示，不向 CLI 自动转发其他任务的内容。
+- **各自答**：同题测试、独立评审和需要避免借鉴的回答，创建 `mode="blind"`。CLI 回复由程序自动封存；不要逐条发布或复制给后答者。
+- **一起聊**：明确要求互相讨论、接梗、质疑时用 `mode="discussion"`。仅已经发布的台词进入其他席位的增量输入。
+- **先各自答再讨论**：先收齐、统一揭晓，再 `continue_discussion`，沿用各席原会话。不能把已经看过该题答案的历史当成干净盲测；需要重新盲测该题时另建会话，不是每轮重开。
+
+详细操作见 [工作台与讨论会话](references/workbench.md)。旧版基础调用继续按下文执行。
 
 ## 选择 CLI 与模型
 

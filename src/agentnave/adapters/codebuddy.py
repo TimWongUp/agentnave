@@ -15,3 +15,13 @@ class CodeBuddyAdapter(ClaudeAdapter):
         "agent": "--agent",
         "fallback_model": "--fallback-model",
     }
+
+    _discussion_args = (
+        "--tools",
+        "",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--disallowedTools",
+        "mcp__*",
+    )

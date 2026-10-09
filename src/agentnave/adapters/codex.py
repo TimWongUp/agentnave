@@ -10,6 +10,7 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    discussion_options,
     error_summary,
     failure_status,
     object_dict,
@@ -44,6 +45,7 @@ class CodexAdapter:
     }
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        request, discussion = discussion_options(request)
         unknown = sorted(set(request.provider_options) - self._options)
         if unknown:
             raise ValueError(f"unsupported codex options: {', '.join(unknown)}")
@@ -52,6 +54,17 @@ class CodexAdapter:
         if request.session_id is not None:
             argv.append("resume")
         argv.append("--json")
+        if discussion:
+            # Keep native auth and persistence, but omit user MCP/config and local read tools.
+            argv.extend(("--ignore-user-config", "--skip-git-repo-check"))
+            for feature in ("shell_tool", "unified_exec", "view_image", "apps", "multi_agent"):
+                argv.extend(("--disable", feature))
+            for setting in (
+                'web_search="disabled"',
+                'sandbox_mode="read-only"',
+                'approval_policy="never"',
+            ):
+                argv.extend(("--config", setting))
 
         for key, value in request.provider_options.items():
             if key == "model":

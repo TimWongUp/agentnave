@@ -542,6 +542,6 @@ uv tool uninstall agentnave
 
 For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.
 Remove the companion Skill through its deployment manager, or remove only its installed directory
-or symlink, preserving user-authored additions. AgentNave creates no durable user data and needs no
+or symlink, preserving user-authored additions. The published v0.10.3 runtime creates no durable user data and needs no
 purge operation. Provider CLIs, authentication, configuration, sessions, and user projects remain
 owned by the user and providers.

@@ -8,6 +8,7 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    discussion_options,
     error_summary,
     failure_status,
     normalized_usage,
@@ -30,7 +31,16 @@ class ClaudeAdapter:
         "max_budget_usd": "--max-budget-usd",
     }
 
+    _discussion_args = (
+        "--safe-mode",
+        "--tools",
+        "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+    )
+
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        request, discussion = discussion_options(request)
         argv = [
             self.executable,
             "--print",
@@ -42,6 +52,8 @@ class ClaudeAdapter:
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
         argv.extend(option_args(request, self._options))
+        if discussion:
+            argv.extend(self._discussion_args)
         return PreparedCommand(tuple(argv), request.cwd, request.prompt.encode())
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
