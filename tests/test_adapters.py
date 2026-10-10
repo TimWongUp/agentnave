@@ -535,15 +535,17 @@ def test_claude_non_success_subtype_still_describes_partial_output() -> None:
     assert result.error_message == "error_max_turns"
 
 
-def test_claude_incomplete_stream_preserves_session_without_partial_output() -> None:
-    payload = b"\n".join(
-        (
-            json.dumps(
-                {"type": "system", "subtype": "init", "session_id": "session-partial"}
-            ).encode(),
-            json.dumps({"type": "stream_event", "event": {"type": "content_block_delta"}}).encode(),
-        )
+@pytest.mark.parametrize("filtered", [False, True])
+def test_claude_incomplete_stream_preserves_session_without_partial_output(
+    tmp_path: Path, filtered: bool
+) -> None:
+    lines = (
+        json.dumps({"type": "system", "subtype": "init", "session_id": "session-partial"}).encode(),
+        json.dumps({"type": "stream_event", "event": {"type": "content_block_delta"}}).encode(),
     )
+    capture = ClaudeAdapter().prepare(InvocationRequest("claude", "work", tmp_path)).capture_line
+    assert capture is not None
+    payload = b"".join(map(capture, lines)) if filtered else b"\n".join(lines)
 
     result = ClaudeAdapter().parse(1, payload, b"")
 
