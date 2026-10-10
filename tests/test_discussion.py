@@ -13,7 +13,7 @@ import pytest
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
-from agentnave.discussion import DiscussionRooms, RoomState, Seat
+from agentnave.discussion import DiscussionRooms, Room, RoomState, Seat
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
 from agentnave.workbench import Workbench
 
@@ -28,6 +28,93 @@ def seats() -> list[Seat]:
 def fetch(url: str, *, headers: dict[str, str] | None = None, method: str = "GET") -> bytes:
     with urlopen(Request(url, headers=headers or {}, method=method), timeout=3) as response:
         return response.read()
+
+
+@pytest.mark.asyncio
+async def test_delete_preserves_native_files_and_retries_metadata_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = InvocationManager()
+    rooms = Workbench(manager, tmp_path / "data")
+    external = tmp_path / "external"
+    try:
+        opened = rooms.open(external, "Keep native files", seats(), "blind")
+        rid = opened.room.id
+        room = rooms.get(rid)
+        native = external / "seats" / "old-session"
+        native.mkdir(parents=True)
+        (native / "history.txt").write_text("native history")
+        empty = external / "seats" / "empty-session"
+        empty.mkdir()
+        room.state.archived = True
+        room.state.blind_round_id = "unresolved"
+        with pytest.raises(ValueError, match="Resolve active work"):
+            rooms.delete(rid)
+        room.state.blind_round_id = None
+        rooms.changed(room)
+        entry = rooms.catalog / (rid + ".json")
+        unlink = Path.unlink
+
+        def fail_catalog(path: Path, missing_ok: bool = False) -> None:
+            if path == entry:
+                raise OSError("catalog unavailable")
+            unlink(path, missing_ok=missing_ok)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "unlink", fail_catalog)
+            with pytest.raises(OSError, match="catalog unavailable"):
+                rooms.delete(rid)
+        assert rooms.get(rid).state.archived
+        assert entry.exists() and (external / "room.json").exists()
+        deleted = rooms.delete(rid)
+        assert deleted["retained_paths"] == [str(external)]
+        assert (native / "history.txt").read_text() == "native history"
+        assert not empty.exists()
+        assert not entry.exists() and not (external / "room.json").exists()
+        assert external.exists()
+        with pytest.raises(HTTPError) as error:
+            await asyncio.to_thread(fetch, opened.public_url + "state")
+        assert error.value.code == 404
+    finally:
+        await manager.shutdown()
+        await rooms.shutdown()
+    restored = Workbench(InvocationManager(), tmp_path / "data")
+    try:
+        assert restored.list() == []
+        assert restored.unavailable == []
+    finally:
+        await restored.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_delete_keeps_lock_identity_when_another_writer_opens(tmp_path: Path) -> None:
+    manager = InvocationManager()
+    rooms = Workbench(manager, tmp_path / "data")
+    contenders: list[Room] = []
+    try:
+        opened = rooms.open(tmp_path / "external", "Old room", seats())
+        room = rooms.get(opened.room.id)
+        rooms.update(room.state.id, None, True)
+        close = room.lock.close
+
+        def open_after_unlock() -> None:
+            close()
+            contenders.append(Room(room.directory, "New room", seats()))
+
+        # Reproduce a new writer taking the lock immediately after deletion releases it.
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(room.lock, "close", open_after_unlock)
+            rooms.delete(room.state.id)
+        with pytest.raises(OSError):
+            Room(room.directory, "New room", seats())
+        assert RoomState.model_validate_json((room.directory / "room.json").read_bytes()).title == (
+            "New room"
+        )
+    finally:
+        for contender in contenders:
+            contender.lock.close()
+        await manager.shutdown()
+        await rooms.shutdown()
 
 
 @pytest.mark.asyncio

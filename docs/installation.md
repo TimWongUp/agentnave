@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.11.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.12.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.11.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.12.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -499,6 +499,13 @@ explicitly created; use `blind` for independent answers. Only published dialogue
 seats. Ordinary host exclusions remain in force; explicit discussion rooms permit every registered
 provider, including the host CLI. The Dashboard stays local and read-only. See the
 [conversation contract](discussion-rooms.md) for native restriction limits and recovery behavior.
+
+### Upgrading from v0.11.0 to v0.12.0
+
+Reconnect MCP after upgrading to discover `delete_conversation(room_id)`. This explicit, destructive
+tool requires an archived conversation with no unresolved work. After user authorization it removes
+AgentNave history and finished invocation handles, while preserving native CLI files and external
+root directories. Archiving still preserves history. There is no automatic deletion or migration.
 
 ## Upgrade, repair, and rollback
 

@@ -206,6 +206,15 @@ class InvocationManager:
         ]
         await asyncio.gather(*(self.cancel(item) for item in active), return_exceptions=True)
 
+    def forget_finished(self, invocation_ids: set[str]) -> int:
+        removed = 0
+        for invocation_id in invocation_ids:
+            record = self._records.get(invocation_id)
+            if record is not None and record.task is not None and record.task.done():
+                del self._records[invocation_id]
+                removed += 1
+        return removed
+
     def _record(self, invocation_id: str) -> _InvocationRecord:
         try:
             return self._records[invocation_id]

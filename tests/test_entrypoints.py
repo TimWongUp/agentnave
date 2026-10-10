@@ -106,6 +106,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         "reset_discussion_seat",
         "open_workbench",
         "update_conversation",
+        "delete_conversation",
         "mark_discussion_absent",
         "continue_discussion",
     ]
@@ -404,6 +405,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
         "reset_discussion_seat",
         "open_workbench",
         "update_conversation",
+        "delete_conversation",
         "mark_discussion_absent",
         "continue_discussion",
     ]
@@ -658,3 +660,24 @@ async def test_workbench_auto_collects_private_grouped_tasks_and_restores_histor
         )
         assert resumed["conversation_id"] == rid
         await client.call_tool("wait_agent", {"invocation_id": resumed["invocation_id"]})
+        await client.call_tool("read_conversation", {"room_id": rid})
+        assert (await client.call_tool("delete_conversation", {"room_id": rid})).is_error
+        await client.call_tool("update_conversation", {"room_id": rid, "archived": True})
+        deleted = await client.call_tool("delete_conversation", {"room_id": rid})
+        assert not deleted.is_error
+        assert _payload(deleted.structured_content)["forgotten_invocations"] == 1
+        assert _payload(deleted.structured_content)["retained_paths"] == [str(directory)]
+        assert list(directory.iterdir()) == [directory / ".lock"]
+        assert (await client.call_tool("read_conversation", {"room_id": rid})).is_error
+        assert (
+            await client.call_tool("wait_agent", {"invocation_id": resumed["invocation_id"]})
+        ).is_error
+        with pytest.raises(HTTPError) as error:
+            await asyncio.to_thread(fetch, str(view["director_url"]) + "state")
+        assert error.value.code == 404
+
+    async with Client(mcp) as client:
+        assert (await client.call_tool("read_conversation", {"room_id": rid})).is_error
+        homepage = _payload((await client.call_tool("open_workbench", {})).structured_content)
+        body = await asyncio.to_thread(fetch, str(homepage["workbench_url"]) + "state")
+        assert str(rid) not in body

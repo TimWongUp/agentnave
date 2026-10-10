@@ -6,9 +6,10 @@ import asyncio
 import json
 import os
 import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 from uuid import uuid4
 
 from agentnave.adapters import get_adapter
@@ -16,6 +17,13 @@ from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
 from agentnave.discussion import DiscussionRooms, Room, RoomState, RoomView, Seat, TaskRun
 from agentnave.models import InvocationRequest
+
+
+class DeletionResult(TypedDict):
+    room_id: str
+    deleted_paths: list[str]
+    retained_paths: list[str]
+    forgotten_invocations: int
 
 
 class Workbench(DiscussionRooms):
@@ -152,6 +160,7 @@ class Workbench(DiscussionRooms):
             self.changed(room)
             invocation_id = self.manager.start(request, prepared=prepared)
             run.invocation_id = invocation_id
+            room.invocation_ids.add(invocation_id)
             self.refresh_views(room)
         except Exception:
             for path in prepared.cleanup_paths:
@@ -159,6 +168,57 @@ class Workbench(DiscussionRooms):
             raise
         self.collectors.append(asyncio.create_task(self._collect_task(room, run.id, invocation_id)))
         return invocation_id, self.view(room.state.id)
+
+    def delete(self, room_id: str) -> DeletionResult:
+        room = self.get(room_id)
+        if not room.state.archived:
+            raise ValueError("Archive the conversation before deleting it")
+        if (
+            room.state.blind_round_id is not None
+            or room.state.pending_answers
+            or any(run.status == "running" for run in room.state.tasks)
+            or (room.state.turn and room.state.turn.status in ("running", "ready"))
+            or (room.task is not None and not room.task.done())
+        ):
+            raise ValueError("Resolve active work before deleting the conversation")
+        state_path = room.directory / "room.json"
+        entry = self.catalog / (room_id + ".json")
+        state_path.unlink(missing_ok=True)
+        try:
+            entry.unlink(missing_ok=True)
+        except OSError:
+            # Keep the indexed history readable and the live entry available for retry.
+            room.save()
+            raise
+
+        forgotten = self.manager.forget_finished(room.invocation_ids)
+        self.collectors = [task for task in self.collectors if not task.done()]
+        del self.rooms[room_id]
+        assert self.dashboard is not None
+        self.dashboard.snapshots.pop(room.token, None)
+        self.dashboard.snapshots.pop(room.director_token, None)
+        deleted = [str(state_path), str(entry)]
+        # Only prune empty seat directories; never traverse or remove native CLI files.
+        seats_path = room.directory / "seats"
+        if seats_path.is_dir() and not seats_path.is_symlink():
+            with suppress(OSError):
+                for path in seats_path.iterdir():
+                    if not path.is_symlink():
+                        with suppress(OSError):
+                            path.rmdir()
+                seats_path.rmdir()
+        # A retained directory must keep the same lock inode for future writers.
+        # Unlinking it can allow two processes to lock different files at this path.
+        room.lock.close()
+        for opened in self.rooms.values():
+            self.refresh_views(opened)
+        self.refresh_home()
+        return {
+            "room_id": room_id,
+            "deleted_paths": deleted,
+            "retained_paths": [str(room.directory)],
+            "forgotten_invocations": forgotten,
+        }
 
     async def _collect_task(self, room: Room, task_id: str, invocation_id: str) -> None:
         while True:
