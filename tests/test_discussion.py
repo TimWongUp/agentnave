@@ -515,7 +515,7 @@ async def test_restart_marks_running_turn_interrupted(
         await rooms.shutdown()
 
 
-@pytest.mark.parametrize("provider", ["claude", "grok", "codebuddy", "codex", "antigravity"])
+@pytest.mark.parametrize("provider", ["claude", "grok", "codebuddy", "codex", "antigravity", "pi"])
 def test_native_discussion_profiles_resume_without_enabling_tools(
     tmp_path: Path, provider: str
 ) -> None:
@@ -557,6 +557,15 @@ def test_native_discussion_profiles_resume_without_enabling_tools(
                 "multi_agent",
             } <= set(argv)
             assert "--ephemeral" not in argv
+        elif provider == "pi":
+            assert argv[argv.index("--session") + 1] == "own-seat-session"
+            assert {
+                "--no-tools",
+                "--no-extensions",
+                "--no-mcp",
+                "--no-skills",
+                "--no-prompt-templates",
+            } <= set(argv)
         else:
             assert argv[argv.index("--conversation") + 1] == "own-seat-session"
             assert {"--sandbox=true", "--disable-slash-commands=true"} <= set(argv)

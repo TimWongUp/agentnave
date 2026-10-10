@@ -97,6 +97,7 @@ numbers, for example `1, 3`:
 3. CodeBuddy Code (`codebuddy`)
 4. Codex CLI (`codex`)
 5. Antigravity CLI (`agy`)
+6. Pi Coding Agent (`pi`)
 
 The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.
@@ -129,6 +130,7 @@ that host product, regardless of which model the host is currently using:
 | CodeBuddy Code / WorkBuddy | `codebuddy` |
 | Grok CLI | `grok` |
 | Antigravity | `antigravity` |
+| Pi Coding Agent | `pi` |
 | Other hosts | Explicitly choose exclusions, or use an empty value |
 
 Gemini CLI and OpenCode do not have same-product providers in the current registry; they need no

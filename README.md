@@ -137,11 +137,16 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional.
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, and `grok`. The Skill provides model and effort defaults for the Manager to pass explicitly through
+Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, `grok`, and `pi`. The Skill provides model and effort defaults for the Manager to pass explicitly through
 allowlisted options. User choices override that guidance; omitted options still inherit native
 settings. Exclusions are configured per host process, independently of the model it uses. For Codex calls outside a
 Git repository, the Manager must pass
 `{"skip_git_repo_check": true}` in `provider_options`.
+
+Pi Coding Agent uses `pi --print --mode json`, with prompts on stdin and native session IDs
+for continuation. Install it with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`,
+then run `pi` and `/login`. Omitted model and effort options use Pi's native settings; explicit
+`effort` maps to `--thinking`. Pi runs with the permissions of its launching process.
 
 ### Choosing a model and reasoning effort
 
