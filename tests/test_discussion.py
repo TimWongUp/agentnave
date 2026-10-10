@@ -153,7 +153,9 @@ async def test_shared_board_private_desk_and_independent_session_resume(
         rid, url, desk = opened.room.id, opened.public_url, opened.director_url
         assert url != desk
         assert (await asyncio.to_thread(fetch, url + "avatars.png")).startswith(b"\x89PNG")
-        assert (await asyncio.to_thread(cache_control, url + "avatars.png")) != "no-store"
+        assert (
+            await asyncio.to_thread(cache_control, url + "avatars.png")
+        ) == "private, max-age=86400"
         assert (await asyncio.to_thread(cache_control, url)) == "no-store"
         assert (await asyncio.to_thread(cache_control, url + "state")) == "no-store"
         with pytest.raises(OSError):
