@@ -410,8 +410,10 @@ async def list_conversations(ctx: Context[Runtime]) -> list[RoomSummary]:
 
     Director-only: never send this list to participants. Reopen a saved directory with
     open_discussion after a server restart. Each room keeps independent native seat sessions.
+    writable=false means another AgentNave server holds the record: read it here, but continue it
+    from that host or after that server exits.
     """
-    return ctx.request_context.lifespan_context.rooms.list()
+    return ctx.request_context.lifespan_context.rooms.list(probe=True)
 
 
 @mcp.tool(
@@ -536,8 +538,9 @@ async def reset_discussion_seat(room_id: str, seat_id: str, ctx: Context[Runtime
 async def open_workbench(ctx: Context[Runtime]) -> dict[str, str]:
     """Open the private unified workbench. Local history survives restart, running processes do not.
 
-    Only tasks launched through this MCP runtime are live here. Other hosts' locked histories are
-    listed as unavailable. The dashboard is read-only and never grants shared context to CLIs.
+    Only tasks launched through this MCP runtime are live here. Other hosts' histories stay
+    readable; writes wait for the server holding them to exit. The dashboard is read-only and
+    never grants shared context to CLIs.
     """
     rooms = ctx.request_context.lifespan_context.rooms
     return {"workbench_url": rooms.home(), "storage": str(rooms.directory)}

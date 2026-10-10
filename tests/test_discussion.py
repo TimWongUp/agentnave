@@ -13,7 +13,7 @@ import pytest
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
-from agentnave.discussion import DiscussionRooms, Room, RoomState, Seat
+from agentnave.discussion import DiscussionRooms, Room, RoomState, Seat, TaskRun
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
 from agentnave.workbench import Workbench
 
@@ -95,7 +95,9 @@ async def test_delete_keeps_lock_identity_when_another_writer_opens(tmp_path: Pa
         opened = rooms.open(tmp_path / "external", "Old room", seats())
         room = rooms.get(opened.room.id)
         rooms.update(room.state.id, None, True)
-        close = room.lock.close
+        lock = room.lock
+        assert lock is not None
+        close = lock.close
 
         def open_after_unlock() -> None:
             close()
@@ -103,18 +105,59 @@ async def test_delete_keeps_lock_identity_when_another_writer_opens(tmp_path: Pa
 
         # Reproduce a new writer taking the lock immediately after deletion releases it.
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(room.lock, "close", open_after_unlock)
+            patch.setattr(lock, "close", open_after_unlock)
             rooms.delete(room.state.id)
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError, match="held by another AgentNave server"):
             Room(room.directory, "New room", seats())
         assert RoomState.model_validate_json((room.directory / "room.json").read_bytes()).title == (
             "New room"
         )
     finally:
         for contender in contenders:
-            contender.lock.close()
+            contender.release()
         await manager.shutdown()
         await rooms.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shared_data_directory_indexes_history_and_locks_on_first_write(
+    tmp_path: Path,
+) -> None:
+    first = Workbench(InvocationManager(), tmp_path / "data")
+    second: Workbench | None = None
+    try:
+        held = first.open(first.new_directory(), "Held", [], "task").room.id
+        room = first.get(held)
+        room.state.tasks.append(
+            TaskRun(id="run", provider="claude", cwd=str(tmp_path), session_id="s1", time="t")
+        )
+        room.state.tasks[0].status = "succeeded"
+        first.changed(room)
+        free = first.open(first.new_directory(), "Free", [], "task").room.id
+        # Simulate history the first server indexed but never wrote in this process.
+        first.find(free).release()
+        second = Workbench(InvocationManager(), tmp_path / "data")
+        assert {item.room_id: item.writable for item in second.list(probe=True)} == {
+            held: False,
+            free: True,
+        }
+        with pytest.raises(ValueError, match="held by another AgentNave server"):
+            second.start_task(
+                InvocationRequest(provider="claude", prompt="go", cwd=tmp_path, session_id="s1"),
+                None,
+                None,
+            )
+        with pytest.raises(ValueError, match="held by another AgentNave server"):
+            second.update(held, "Taken", None)
+        assert second.update(free, "Renamed", None).room.title == "Renamed"
+        assert {item.room_id: item.writable for item in first.list(probe=True)}[free] is False
+        assert (await first.read(free)).room.title == "Renamed"
+        late = first.open(first.new_directory(), "Late", [], "task").room.id
+        assert {item.room_id for item in second.list(probe=True)} == {held, free, late}
+    finally:
+        await first.shutdown()
+        if second is not None:
+            await second.shutdown()
 
 
 @pytest.mark.asyncio
@@ -148,7 +191,7 @@ async def test_shared_board_private_desk_and_independent_session_resume(
         rid, url, desk = opened.room.id, opened.public_url, opened.director_url
         assert url != desk
         assert (await asyncio.to_thread(fetch, url + "avatars.png")).startswith(b"\x89PNG")
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError, match="held by another AgentNave server"):
             other.open(tmp_path, "隔离测试", seats())
         rooms.post(rid, "FIRST_PUBLIC_MESSAGE")
         rooms.post(rid, "SECOND_PUBLIC_MESSAGE")

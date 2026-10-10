@@ -9,7 +9,7 @@ import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -105,6 +105,7 @@ class RoomSummary(BaseModel):
     director_url: str
     mode: str = "discussion"
     archived: bool = False
+    writable: bool = True
 
 
 class PublicReply(BaseModel):
@@ -119,26 +120,24 @@ class Room:
         title: str,
         seats: list[Seat],
         mode: Literal["discussion", "blind", "task"] = "discussion",
+        *,
+        write: bool = True,
     ) -> None:
         self.directory = directory
         self.rollback_state: RoomState | None = None
+        self.lock: IO[bytes] | None = None
+        self.token = uuid4().hex
+        self.director_token = uuid4().hex
+        self.task: asyncio.Task[None] | None = None
+        self.invocation_ids: set[str] = set()
+        if not write:
+            # Read-only index entry: acquire() takes the lock before the first write.
+            self.refresh()
+            return
+        path = directory / "room.json"
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        # An OS lock prevents two MCP hosts from writing one room simultaneously.
-        self.lock = (directory / ".lock").open("a+b")
+        self.lock = self._lock()
         try:
-            if os.name == "nt":
-                import msvcrt
-
-                if self.lock.tell() == 0:
-                    self.lock.write(b"0")
-                    self.lock.flush()
-                self.lock.seek(0)
-                msvcrt.locking(self.lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(self.lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            path = directory / "room.json"
             if path.exists():
                 self.state = RoomState.model_validate_json(path.read_bytes())
                 if (
@@ -149,25 +148,86 @@ class Room:
                     raise ValueError(
                         "Existing room configuration differs; use its original title/seats/mode"
                     )
-                if self.state.turn and self.state.turn.status == "running":
-                    self.state.turn.status = "interrupted"
-                    self.state.turn.error = "server_restarted"
-                    self.state.turn.invocation_id = None
             else:
                 self.state = RoomState(id=uuid4().hex, title=title, seats=seats, mode=mode)
-            for run in self.state.tasks:
-                run.invocation_id = None
-                if run.status == "running":
-                    run.status = "interrupted"
-                    run.error = "server_restarted; previous invocation cannot resume"
+            self._recover()
             self.save()
         except Exception:
-            self.lock.close()
+            self.release()
             raise
-        self.token = uuid4().hex
-        self.director_token = uuid4().hex
-        self.task: asyncio.Task[None] | None = None
-        self.invocation_ids: set[str] = set()
+
+    def _lock(self) -> IO[bytes]:
+        # An OS lock prevents two MCP hosts from writing one room simultaneously.
+        lock = (self.directory / ".lock").open("a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if lock.tell() == 0:
+                    lock.write(b"0")
+                    lock.flush()
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock.close()
+            raise ValueError(
+                "Conversation is held by another AgentNave server; continue it from that host "
+                "or after that server exits"
+            ) from None
+        return lock
+
+    def _recover(self) -> None:
+        # Only the lock holder may conclude that an earlier writer's running work has ended.
+        if self.state.turn and self.state.turn.status == "running":
+            self.state.turn.status = "interrupted"
+            self.state.turn.error = "server_restarted"
+            self.state.turn.invocation_id = None
+        for run in self.state.tasks:
+            run.invocation_id = None
+            if run.status == "running":
+                run.status = "interrupted"
+                run.error = "server_restarted; previous invocation cannot resume"
+
+    def acquire(self) -> None:
+        """Become the single writer, reloading what an earlier writer saved."""
+        if self.lock is not None:
+            return
+        self.lock = self._lock()
+        try:
+            self.state = RoomState.model_validate_json((self.directory / "room.json").read_bytes())
+            self._recover()
+            self.save()
+        except Exception:
+            self.release()
+            raise
+
+    def release(self) -> None:
+        if self.lock is not None:
+            self.lock.close()
+            self.lock = None
+
+    def refresh(self) -> bool:
+        """Reload an unheld room from disk and report whether this process could write it."""
+        if self.lock is not None:
+            return True
+        self.state = RoomState.model_validate_json((self.directory / "room.json").read_bytes())
+        try:
+            lock = self._lock()
+        except ValueError:
+            return False
+        if os.name == "nt":
+            import msvcrt
+
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        lock.close()
+        # No live writer: show earlier running work as interrupted; acquire() persists it.
+        self._recover()
+        return True
 
     def save(self) -> None:
         name: str | None = None
@@ -234,11 +294,17 @@ class DiscussionRooms:
         self.rooms: dict[str, Room] = {}
         self.dashboard: Dashboard | None = None
 
-    def get(self, room_id: str) -> Room:
+    def find(self, room_id: str) -> Room:
         try:
             return self.rooms[room_id]
         except KeyError:
             raise ValueError("Unknown room_id; open the room in this MCP process first") from None
+
+    def get(self, room_id: str) -> Room:
+        """Return a room for mutation; the first write takes its lock until server exit."""
+        room = self.find(room_id)
+        room.acquire()
+        return room
 
     def changed(self, room: Room) -> None:
         room.save()
@@ -261,7 +327,7 @@ class DiscussionRooms:
             ),
         )
 
-    def list(self) -> list[RoomSummary]:
+    def list(self, *, probe: bool = False) -> list[RoomSummary]:
         if self.dashboard is None:
             return []
         return [
@@ -272,12 +338,20 @@ class DiscussionRooms:
                 director_url=self.dashboard.url(room.director_token),
                 mode=room.state.mode,
                 archived=room.state.archived,
+                writable=self._writable(room) if probe else True,
             )
             for room in self.rooms.values()
         ]
 
+    @staticmethod
+    def _writable(room: Room) -> bool:
+        try:
+            return room.refresh()
+        except (OSError, ValueError):
+            return False
+
     def view(self, room_id: str) -> RoomView:
-        room = self.get(room_id)
+        room = self.find(room_id)
         assert self.dashboard is not None
         return RoomView(
             room=room.state.model_copy(deep=True),
@@ -321,7 +395,7 @@ class DiscussionRooms:
                 self.refresh_views(opened)
             return self.view(room.state.id)
         except Exception:
-            room.lock.close()
+            room.release()
             raise
 
     def start(self, room_id: str, seat_id: str, instruction: str) -> RoomView:
@@ -493,7 +567,8 @@ class DiscussionRooms:
         return self.view(room_id)
 
     async def read(self, room_id: str) -> RoomView:
-        room = self.get(room_id)
+        room = self.find(room_id)
+        self._writable(room)
         # Let a completed invocation's collector run before returning a stale "running" state.
         await asyncio.sleep(0)
         if room.task and room.task.done():
@@ -631,4 +706,4 @@ class DiscussionRooms:
             if self.dashboard:
                 await asyncio.to_thread(self.dashboard.close)
             for room in self.rooms.values():
-                room.lock.close()
+                room.release()
