@@ -31,6 +31,62 @@ def fetch(url: str, *, headers: dict[str, str] | None = None, method: str = "GET
 
 
 @pytest.mark.asyncio
+async def test_delete_preserves_native_files_and_retries_metadata_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = InvocationManager()
+    rooms = Workbench(manager, tmp_path / "data")
+    external = tmp_path / "external"
+    try:
+        opened = rooms.open(external, "Keep native files", seats(), "blind")
+        rid = opened.room.id
+        room = rooms.get(rid)
+        native = external / "seats" / "old-session"
+        native.mkdir(parents=True)
+        (native / "history.txt").write_text("native history")
+        empty = external / "seats" / "empty-session"
+        empty.mkdir()
+        room.state.archived = True
+        room.state.blind_round_id = "unresolved"
+        with pytest.raises(ValueError, match="Resolve active work"):
+            rooms.delete(rid)
+        room.state.blind_round_id = None
+        rooms.changed(room)
+        entry = rooms.catalog / (rid + ".json")
+        unlink = Path.unlink
+
+        def fail_catalog(path: Path, missing_ok: bool = False) -> None:
+            if path == entry:
+                raise OSError("catalog unavailable")
+            unlink(path, missing_ok=missing_ok)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "unlink", fail_catalog)
+            with pytest.raises(OSError, match="catalog unavailable"):
+                rooms.delete(rid)
+        assert rooms.get(rid).state.archived
+        assert entry.exists() and (external / "room.json").exists()
+        deleted = rooms.delete(rid)
+        assert deleted["retained_paths"] == [str(external)]
+        assert (native / "history.txt").read_text() == "native history"
+        assert not empty.exists()
+        assert not entry.exists() and not (external / "room.json").exists()
+        assert external.exists()
+        with pytest.raises(HTTPError) as error:
+            await asyncio.to_thread(fetch, opened.public_url + "state")
+        assert error.value.code == 404
+    finally:
+        await manager.shutdown()
+        await rooms.shutdown()
+    restored = Workbench(InvocationManager(), tmp_path / "data")
+    try:
+        assert restored.list() == []
+        assert restored.unavailable == []
+    finally:
+        await restored.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_shared_board_private_desk_and_independent_session_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -8,6 +8,8 @@
 
 ## 讨论与会话工具
 
+自 v0.12.0 提供 `delete_conversation(room_id)`。调用方取得用户删除授权后，先归档，再删除无活跃任务、候选稿或未揭晓答案的会话。删除 AgentNave 历史文件、索引、网页投影及对应已结束调用句柄，返回 `deleted_paths`、`retained_paths` 和 `forgotten_invocations`。CLI 文件与非空目录保留，外部根目录不删除；归档本身不删数据。没有自动过期、批量规则或回收站，网页仍只读。元数据删除失败时保留会话入口供重试；磁盘同时无法恢复写入时会报告错误。
+
 1. `open_discussion(directory, title, seats, mode="discussion"|"blind")` 创建或重新打开房间，返回 `room.id`、`public_url` 和 `director_url`。省略目录时使用工作台固定保存位置；显式目录须为绝对路径；2–6 个席位，每席有 `id`、`label`、`provider`、`model`、`effort`。支持 `antigravity`、`claude`、`codebuddy`、`codex`、`grok`。显式节目模式允许宿主自己的 CLI 作为独立选手，普通 `start_agent` 的排除项不影响节目席位。重开提供原配置。`discussion` 逐条公开；独立答题必须选 `blind`，CLI 的有效答案自动封存，仅导演可见。
 2. `list_conversations()` 列出本服务可打开的讨论及任务会话，仅供主控使用；普通任务没有公共地址。新节目用新的空目录；继续节目用原目录与原配置。
 3. `post_discussion_message(room_id, text)` 发布面向全员、署名“主持人”的公开发言（由导演扮演，存储键仍为 `director`）。导演内部工作内容不要用此工具发送。

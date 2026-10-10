@@ -150,6 +150,7 @@ jobs:
                   "reset_discussion_seat",
                   "open_workbench",
                   "update_conversation",
+                  "delete_conversation",
                   "mark_discussion_absent",
                   "continue_discussion",
               ]
@@ -196,6 +197,7 @@ jobs:
                   "reset_discussion_seat",
                   "open_workbench",
                   "update_conversation",
+                  "delete_conversation",
                   "mark_discussion_absent",
                   "continue_discussion",
               ]

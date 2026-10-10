@@ -18,7 +18,7 @@ from agentnave import __version__
 from agentnave.core import InvocationManager
 from agentnave.discussion import RoomSummary, RoomView, Seat
 from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
-from agentnave.workbench import Workbench
+from agentnave.workbench import DeletionResult, Workbench
 
 type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok"]
 
@@ -552,6 +552,22 @@ async def update_conversation(
     """Rename, end or reopen a conversation without deleting history. Resolve active work first."""
     try:
         return ctx.request_context.lifespan_context.rooms.update(room_id, title, archived)
+    except (ValueError, OSError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False)
+)
+async def delete_conversation(room_id: str, ctx: Context[Runtime]) -> DeletionResult:
+    """Permanently delete an archived, inactive conversation after user authorization.
+
+    Removes AgentNave history, index, views and finished invocation handles. Native CLI files
+    and nonempty directories are retained and reported. External root directories are preserved.
+    No automatic retention policy. The browser remains read-only.
+    """
+    try:
+        return ctx.request_context.lifespan_context.rooms.delete(room_id)
     except (ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
 

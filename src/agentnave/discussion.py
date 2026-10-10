@@ -167,6 +167,7 @@ class Room:
         self.token = uuid4().hex
         self.director_token = uuid4().hex
         self.task: asyncio.Task[None] | None = None
+        self.invocation_ids: set[str] = set()
 
     def save(self) -> None:
         name: str | None = None
@@ -414,6 +415,7 @@ class DiscussionRooms:
             self.changed(room)
             raise
         room.state.turn.invocation_id = invocation_id
+        room.invocation_ids.add(invocation_id)
         room.task = asyncio.create_task(
             self._collect(room, invocation_id, [m.id for m in messages])
         )
