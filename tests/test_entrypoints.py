@@ -666,8 +666,8 @@ async def test_workbench_auto_collects_private_grouped_tasks_and_restores_histor
         deleted = await client.call_tool("delete_conversation", {"room_id": rid})
         assert not deleted.is_error
         assert _payload(deleted.structured_content)["forgotten_invocations"] == 1
-        assert _payload(deleted.structured_content)["retained_paths"] == []
-        assert not directory.exists()
+        assert _payload(deleted.structured_content)["retained_paths"] == [str(directory)]
+        assert list(directory.iterdir()) == [directory / ".lock"]
         assert (await client.call_tool("read_conversation", {"room_id": rid})).is_error
         assert (
             await client.call_tool("wait_agent", {"invocation_id": resumed["invocation_id"]})

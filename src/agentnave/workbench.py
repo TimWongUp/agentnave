@@ -197,12 +197,7 @@ class Workbench(DiscussionRooms):
         assert self.dashboard is not None
         self.dashboard.snapshots.pop(room.token, None)
         self.dashboard.snapshots.pop(room.director_token, None)
-        room.lock.close()
         deleted = [str(state_path), str(entry)]
-        lock_path = room.directory / ".lock"
-        with suppress(OSError):
-            lock_path.unlink(missing_ok=True)
-            deleted.append(str(lock_path))
         # Only prune empty seat directories; never traverse or remove native CLI files.
         seats_path = room.directory / "seats"
         if seats_path.is_dir() and not seats_path.is_symlink():
@@ -212,17 +207,16 @@ class Workbench(DiscussionRooms):
                         with suppress(OSError):
                             path.rmdir()
                 seats_path.rmdir()
-        # User-supplied external roots remain even when empty.
-        if room.directory.parent == self.directory / "conversations":
-            with suppress(OSError):
-                room.directory.rmdir()
+        # A retained directory must keep the same lock inode for future writers.
+        # Unlinking it can allow two processes to lock different files at this path.
+        room.lock.close()
         for opened in self.rooms.values():
             self.refresh_views(opened)
         self.refresh_home()
         return {
             "room_id": room_id,
             "deleted_paths": deleted,
-            "retained_paths": [str(room.directory)] if room.directory.exists() else [],
+            "retained_paths": [str(room.directory)],
             "forgotten_invocations": forgotten,
         }
 

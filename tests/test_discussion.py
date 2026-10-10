@@ -13,7 +13,7 @@ import pytest
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
-from agentnave.discussion import DiscussionRooms, RoomState, Seat
+from agentnave.discussion import DiscussionRooms, Room, RoomState, Seat
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
 from agentnave.workbench import Workbench
 
@@ -84,6 +84,37 @@ async def test_delete_preserves_native_files_and_retries_metadata_failure(
         assert restored.unavailable == []
     finally:
         await restored.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_delete_keeps_lock_identity_when_another_writer_opens(tmp_path: Path) -> None:
+    manager = InvocationManager()
+    rooms = Workbench(manager, tmp_path / "data")
+    contenders: list[Room] = []
+    try:
+        opened = rooms.open(tmp_path / "external", "Old room", seats())
+        room = rooms.get(opened.room.id)
+        rooms.update(room.state.id, None, True)
+        close = room.lock.close
+
+        def open_after_unlock() -> None:
+            close()
+            contenders.append(Room(room.directory, "New room", seats()))
+
+        # Reproduce a new writer taking the lock immediately after deletion releases it.
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(room.lock, "close", open_after_unlock)
+            rooms.delete(room.state.id)
+        with pytest.raises(OSError):
+            Room(room.directory, "New room", seats())
+        assert RoomState.model_validate_json((room.directory / "room.json").read_bytes()).title == (
+            "New room"
+        )
+    finally:
+        for contender in contenders:
+            contender.lock.close()
+        await manager.shutdown()
+        await rooms.shutdown()
 
 
 @pytest.mark.asyncio

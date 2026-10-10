@@ -104,7 +104,8 @@ History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DAT
 Since v0.12.0, `delete_conversation(room_id)` lets the calling Agent, after user authorization,
 permanently remove an archived, inactive conversation's AgentNave history, index, dashboard views
 and finished invocation handles. Native CLI files and nonempty directories are retained and
-reported; external root directories are preserved. Archiving alone deletes nothing. There is no
+reported. Conversation roots retain their stable `.lock` file for single-writer protection;
+external root directories are preserved. Archiving alone deletes nothing. There is no
 automatic retention policy.
 
 Independent rounds can explicitly mark unanswered seats with `mark_discussion_absent`, after resolving their active invocation. Revealing a partial round labels it incomplete. After reveal, `continue_discussion` continues together in the same native sessions. See [the conversation guide](docs/discussion-rooms.md) and the [manager Skill](skills/agentnave-manager/SKILL.md).
