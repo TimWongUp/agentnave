@@ -30,6 +30,11 @@ def fetch(url: str, *, headers: dict[str, str] | None = None, method: str = "GET
         return response.read()
 
 
+def cache_control(url: str) -> str | None:
+    with urlopen(url, timeout=3) as response:
+        return response.headers["Cache-Control"]
+
+
 @pytest.mark.asyncio
 async def test_delete_preserves_native_files_and_retries_metadata_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -148,6 +153,11 @@ async def test_shared_board_private_desk_and_independent_session_resume(
         rid, url, desk = opened.room.id, opened.public_url, opened.director_url
         assert url != desk
         assert (await asyncio.to_thread(fetch, url + "avatars.png")).startswith(b"\x89PNG")
+        assert (
+            await asyncio.to_thread(cache_control, url + "avatars.png")
+        ) == "private, max-age=86400"
+        assert (await asyncio.to_thread(cache_control, url)) == "no-store"
+        assert (await asyncio.to_thread(cache_control, url + "state")) == "no-store"
         with pytest.raises(OSError):
             other.open(tmp_path, "隔离测试", seats())
         rooms.post(rid, "FIRST_PUBLIC_MESSAGE")
