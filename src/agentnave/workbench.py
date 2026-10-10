@@ -15,7 +15,7 @@ from uuid import uuid4
 from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
-from agentnave.discussion import DiscussionRooms, Room, RoomState, RoomView, Seat, TaskRun
+from agentnave.discussion import DiscussionRooms, Room, RoomSummary, RoomView, Seat, TaskRun
 from agentnave.models import InvocationRequest
 
 
@@ -36,13 +36,32 @@ class Workbench(DiscussionRooms):
         self.home_token = uuid4().hex
         self.collectors: list[asyncio.Task[None]] = []
         self.unavailable: list[dict[str, str]] = []
+        self.index_catalog()
+
+    def index_catalog(self) -> None:
+        """Index saved records read-only; another server may hold their locks."""
+        known = {room.directory for room in self.rooms.values()}
+        self.unavailable = []
         for entry in sorted(self.catalog.glob("*.json")):
             try:
                 path = Path(json.loads(entry.read_text()))
-                state = RoomState.model_validate_json((path / "room.json").read_bytes())
-                super().open(path, state.title, state.seats, state.mode)
+                if path in known:
+                    continue
+                room = Room(path, "", [], write=False)
+                if room.state.id in self.rooms:
+                    raise ValueError("A copy of this room is already indexed")
             except (OSError, ValueError, TypeError) as exc:
                 self.unavailable.append({"record": entry.stem, "reason": str(exc)})
+                continue
+            if self.dashboard is None:
+                self.dashboard = Dashboard()
+            self.rooms[room.state.id] = room
+            self.refresh_views(room)
+
+    def list(self, *, probe: bool = False) -> list[RoomSummary]:
+        if probe:
+            self.index_catalog()
+        return super().list(probe=probe)
 
     def home(self) -> str:
         if self.dashboard is None:
@@ -131,13 +150,30 @@ class Workbench(DiscussionRooms):
     ) -> tuple[str, RoomView]:
         room = self.get(conversation_id) if conversation_id else None
         if request.session_id:
-            for existing in self.rooms.values():
-                for run in existing.state.tasks:
-                    if run.provider == request.provider and run.session_id == request.session_id:
-                        if run.status == "running":
-                            raise ValueError("This native session already has an active task")
-                        if room is None and not existing.state.archived:
-                            room = existing
+
+            def resumes(run: TaskRun) -> bool:
+                return run.provider == request.provider and run.session_id == request.session_id
+
+            if room is None:
+                # Another server may have created or extended this session's conversation.
+                self.list(probe=True)
+                room = next(
+                    (
+                        existing
+                        for existing in self.rooms.values()
+                        if not existing.state.archived and any(map(resumes, existing.state.tasks))
+                    ),
+                    None,
+                )
+            if room is not None:
+                # Lock before checking: never split one native session into a new conversation.
+                room.acquire()
+            if any(
+                run.status == "running" and resumes(run)
+                for existing in self.rooms.values()
+                for run in existing.state.tasks
+            ):
+                raise ValueError("This native session already has an active task")
         # Validate provider options before creating history; prepare only once.
         prepared = get_adapter(request.provider).prepare(request)
         try:
@@ -209,7 +245,7 @@ class Workbench(DiscussionRooms):
                 seats_path.rmdir()
         # A retained directory must keep the same lock inode for future writers.
         # Unlinking it can allow two processes to lock different files at this path.
-        room.lock.close()
+        room.release()
         for opened in self.rooms.values():
             self.refresh_views(opened)
         self.refresh_home()
