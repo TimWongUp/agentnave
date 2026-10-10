@@ -388,6 +388,44 @@ async def test_grok_image_tool_output_does_not_terminate_invocation(
 
 
 @pytest.mark.asyncio
+async def test_claude_long_tool_stream_does_not_terminate_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class LongClaudeAdapter(ClaudeAdapter):
+        def prepare(self, request: InvocationRequest) -> PreparedCommand:
+            prepared = super().prepare(request)
+            code = (
+                "import json; "
+                "s='long-session'; "
+                "print(json.dumps({'type':'system','subtype':'init','session_id':s})); "
+                "result={'type':'user','session_id':s,'message':{'content':[{'type':'tool_result',"
+                "'tool_use_id':'read','content':'x'*(1024*1024)}]}}; "
+                "[print(json.dumps(result)) for _ in range(10)]; "
+                "delta={'type':'stream_event','session_id':s,'event':{'type':'content_block_delta',"
+                "'delta':{'type':'text_delta','text':'y'}}}; "
+                "[print(json.dumps(delta)) for _ in range(20000)]; "
+                "print(json.dumps({'type':'result','subtype':'success','result':'读完了',"
+                "'session_id':s}))"
+            )
+            return replace(prepared, argv=(sys.executable, "-c", code))
+
+    def adapter_for(_provider: str) -> LongClaudeAdapter:
+        return LongClaudeAdapter()
+
+    monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("claude", "read files", tmp_path))
+    try:
+        result = await asyncio.wait_for(manager.wait(invocation_id), 10)
+        assert result is not None
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert result.output == "读完了"
+        assert result.session_id == "long-session"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_output_limit_terminates_provider_without_unbounded_capture(
     tmp_path: Path, fake_adapter: None
 ) -> None:

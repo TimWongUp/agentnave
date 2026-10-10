@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -15,8 +17,29 @@ from agentnave.adapters.base import (
     object_dict,
     option_args,
     parse_json_lines,
+    parse_json_object,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+
+
+def _result_capture() -> Callable[[bytes], bytes]:
+    last_session: str | None = None
+
+    def capture(line: bytes) -> bytes:
+        nonlocal last_session
+        event = parse_json_object(line.decode(errors="replace"))
+        if event is None:
+            return b""
+        if event.get("type") == "result":
+            return line + b"\n"
+        # Keep only session changes for parse's fallback, not deltas or tool payloads.
+        session_id = event.get("session_id")
+        if not isinstance(session_id, str) or session_id == last_session:
+            return b""
+        last_session = session_id
+        return json.dumps({"session_id": session_id}).encode() + b"\n"
+
+    return capture
 
 
 class ClaudeAdapter:
@@ -54,7 +77,9 @@ class ClaudeAdapter:
         argv.extend(option_args(request, self._options))
         if discussion:
             argv.extend(self._discussion_args)
-        return PreparedCommand(tuple(argv), request.cwd, request.prompt.encode())
+        return PreparedCommand(
+            tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
+        )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
