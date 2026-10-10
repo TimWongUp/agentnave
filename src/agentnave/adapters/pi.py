@@ -53,7 +53,7 @@ def _capture_line(line: bytes) -> bytes:
         kept = {"type": kind}
     else:
         return b""
-    return json.dumps(kept, ensure_ascii=False).encode() + b"\n"
+    return json.dumps(kept).encode() + b"\n"
 
 
 class PiAdapter:

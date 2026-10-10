@@ -1144,7 +1144,7 @@ def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Pa
                 "role": "assistant",
                 "content": [
                     {"type": "thinking", "thinking": "hidden"},
-                    {"type": "text", "text": "final answer"},
+                    {"type": "text", "text": "final answer\u2028next\u2029line\u0085end"},
                 ],
                 "stopReason": "stop",
             },
@@ -1155,7 +1155,10 @@ def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Pa
     assert b"hidden" not in stream and b"image" not in stream
     result = adapter.parse(0, stream, b"")
     assert result.status is InvocationStatus.SUCCEEDED
-    assert result.output == "final answer" and result.session_id == "native-session"
+    assert (
+        result.output == "final answer\u2028next\u2029line\u0085end"
+        and result.session_id == "native-session"
+    )
 
 
 @pytest.mark.parametrize(
