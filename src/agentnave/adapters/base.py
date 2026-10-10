@@ -134,7 +134,7 @@ def discussion_options(request: InvocationRequest) -> tuple[InvocationRequest, b
     if not isinstance(enabled, bool):
         raise ValueError("discussion_mode must be a boolean")
     if enabled:
-        if request.provider not in ("antigravity", "claude", "codebuddy", "codex", "grok"):
+        if request.provider not in ("antigravity", "claude", "codebuddy", "codex", "grok", "pi"):
             raise ValueError("discussion_mode requires a registered provider")
         if set(options) - {"model", "effort"}:
             raise ValueError("discussion_mode accepts only model and effort")

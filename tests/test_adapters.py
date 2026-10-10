@@ -1086,3 +1086,149 @@ def test_terminal_result_survives_invalid_event_discriminators(provider: str) ->
     assert result.session_id == "session-1"
     failed = get_adapter(provider).parse(1, b'{"type": []}\n{"type": {}}', b"")
     assert failed.status is InvocationStatus.FAILED
+
+
+def test_pi_transport_and_explicit_options(tmp_path: Path) -> None:
+    adapter = get_adapter("pi")
+    command = adapter.prepare(request(tmp_path, "pi"))
+    assert command.argv == ("pi", "--print", "--mode", "json")
+    assert command.stdin == b"do the task"
+    resumed = adapter.prepare(
+        request(
+            tmp_path,
+            "pi",
+            session_id="native-session",
+            provider_options={"model": "openai/example", "effort": "high"},
+        )
+    )
+    assert resumed.argv == (
+        "pi",
+        "--print",
+        "--mode",
+        "json",
+        "--session",
+        "native-session",
+        "--model",
+        "openai/example",
+        "--thinking",
+        "high",
+    )
+    with pytest.raises(ValueError, match="unsupported pi options"):
+        adapter.prepare(request(tmp_path, "pi", provider_options={"api_key": "secret"}))
+
+
+def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Path) -> None:
+    adapter = get_adapter("pi")
+    command = adapter.prepare(request(tmp_path, "pi"))
+    assert command.capture_line is not None
+    events = [
+        {"type": "session", "id": "native-session"},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "working"},
+                    {"type": "toolCall", "arguments": {"secret": "hidden"}},
+                ],
+                "stopReason": "toolUse",
+            },
+        },
+        {
+            "type": "tool_execution_end",
+            "result": {"content": [{"type": "image", "data": "x" * 10000}]},
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "hidden"},
+                    {"type": "text", "text": "final answer"},
+                ],
+                "stopReason": "stop",
+            },
+        },
+        {"type": "agent_end", "messages": [{"secret": "hidden"}]},
+    ]
+    stream = b"".join(command.capture_line(json.dumps(event).encode()) for event in events)
+    assert b"hidden" not in stream and b"image" not in stream
+    result = adapter.parse(0, stream, b"")
+    assert result.status is InvocationStatus.SUCCEEDED
+    assert result.output == "final answer" and result.session_id == "native-session"
+
+
+@pytest.mark.parametrize(
+    ("reason", "complete"), [("stop", False), ("length", True), ("toolUse", True), ("error", True)]
+)
+def test_pi_does_not_treat_incomplete_or_failed_reply_as_success(
+    reason: str, complete: bool
+) -> None:
+    events = [
+        {"type": "session", "id": "native-session"},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "partial"}],
+                "stopReason": reason,
+            },
+        },
+    ]
+    if complete:
+        events.append({"type": "agent_end"})
+    result = get_adapter("pi").parse(
+        0, "\n".join(json.dumps(event) for event in events).encode(), b""
+    )
+    assert result.status is InvocationStatus.FAILED
+    assert result.session_id == "native-session"
+
+
+@pytest.mark.parametrize(
+    "error", [b"Authentication required: run /login", b"No API key for openai/example"]
+)
+def test_pi_authentication_failure_is_blocked(error: bytes) -> None:
+    result = get_adapter("pi").parse(1, b"", error)
+    assert result.status is InvocationStatus.BLOCKED
+    assert result.error_message == error.decode()
+
+
+def test_pi_activity_exposes_text_and_tool_names_without_private_payloads() -> None:
+    adapter = get_adapter("pi")
+    delta = adapter.activity(
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "text_delta", "delta": "hello"},
+        }
+    )
+    assert delta is not None and delta.public_output == "hello" and delta.message_delta
+    assert (
+        adapter.activity(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_delta", "delta": "hidden"},
+            }
+        )
+        is None
+    )
+    tool = adapter.activity(
+        {
+            "type": "tool_execution_end",
+            "toolName": "read",
+            "toolCallId": "t1",
+            "result": {"secret": "hidden"},
+            "isError": True,
+        }
+    )
+    assert tool is not None and tool.tool_name == "read" and tool.blocking_error is None
+    assert "hidden" not in json.dumps(tool.to_dict())
+
+
+def test_pi_retryable_message_error_does_not_signal_execution_blocker() -> None:
+    activity = get_adapter("pi").activity(
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "stopReason": "error", "errorMessage": "overloaded"},
+        }
+    )
+    assert activity is not None and activity.blocking_error is None

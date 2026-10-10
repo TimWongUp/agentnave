@@ -23,7 +23,7 @@ class Seat(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     label: str = Field(min_length=1, max_length=80)
-    provider: Literal["antigravity", "claude", "codebuddy", "codex", "grok"]
+    provider: Literal["antigravity", "claude", "codebuddy", "codex", "grok", "pi"]
     model: str = Field(min_length=1)
     effort: str = Field(min_length=1)
 

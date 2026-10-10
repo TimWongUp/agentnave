@@ -6,6 +6,7 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
+from agentnave.adapters.pi import PiAdapter
 
 
 def get_adapter(provider: str) -> ProviderAdapter:
@@ -15,6 +16,7 @@ def get_adapter(provider: str) -> ProviderAdapter:
         "codebuddy": CodeBuddyAdapter(),
         "codex": CodexAdapter(),
         "grok": GrokAdapter(),
+        "pi": PiAdapter(),
     }
     try:
         return adapters[provider]

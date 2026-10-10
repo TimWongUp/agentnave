@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 或 Antigravity CLI 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于工作台、一起聊、各自答、普通任务分组、会话续接与统一揭晓；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于工作台、一起聊、各自答、普通任务分组、会话续接与统一揭晓；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用其他 CLI
@@ -31,6 +31,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Codex CLI | `codex` | [Codex CLI](references/codex.md) |
 | Grok CLI | `grok` | [Grok CLI](references/grok.md) |
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
+| Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 
 参考文件的 JSON 是 `provider_options` 的模型与 effort 默认值，不保证账户可用性。用户指定的字段覆盖对应默认值，未指定字段沿用参考文件；用户要求原生设置时省略对应选项。其他选项只传调用方明确选择的值；权限与工具保持原生设置，除非用户明确要求改变。
 

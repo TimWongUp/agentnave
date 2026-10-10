@@ -20,7 +20,7 @@ from agentnave.discussion import RoomSummary, RoomView, Seat
 from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
 from agentnave.workbench import DeletionResult, Workbench
 
-type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok"]
+type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok", "pi"]
 
 
 def _read_excluded_providers() -> frozenset[str]:
@@ -51,6 +51,7 @@ _PROVIDER_SELECTION = (
     + ". Excluded providers are rejected by start_agent. Explicit discussion rooms may include every provider, including the host CLI."
 )
 _PROVIDER_OPTIONS: dict[ProviderName, str] = {
+    "pi": "provider (model backend; requires model), tools, discussion_mode (boolean; disables tools, extensions and MCP)",
     "claude": "permission_mode, agent, fallback_model, max_budget_usd, discussion_mode (boolean; restricted tools)",
     "codebuddy": "permission_mode, agent, fallback_model, discussion_mode (boolean; restricted tools)",
     "codex": (

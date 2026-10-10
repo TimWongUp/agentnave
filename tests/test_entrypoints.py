@@ -264,6 +264,7 @@ async def test_mcp_schema_rejects_invalid_provider_with_actionable_error(tmp_pat
     assert "codebuddy" in result.content[0].text
     assert "codex" in result.content[0].text
     assert "grok" in result.content[0].text
+    assert "pi" in result.content[0].text
 
 
 @pytest.mark.asyncio
@@ -414,7 +415,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "excluded",
-    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,grok"],
+    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,grok,pi"],
 )
 async def test_stdio_enforces_host_exclusions_before_launch(
     excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
