@@ -41,6 +41,7 @@ class Dashboard:
                     self.send_error(404)
                     return
                 token, resource = parts[1:]
+                cache_control = "no-store"
                 if resource == "state":
                     content_type, body = (
                         "application/json; charset=utf-8",
@@ -58,13 +59,15 @@ class Dashboard:
                     content_type = "application/x-ndjson; charset=utf-8"
                 elif resource in dashboard.assets:
                     content_type, body = dashboard.assets[resource]
+                    if resource:  # Static files never change within one random-port origin.
+                        cache_control = "private, max-age=86400"
                 else:
                     self.send_error(404)
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
+                self.send_header("Cache-Control", cache_control)
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.send_header(
