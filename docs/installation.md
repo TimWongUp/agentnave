@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.12.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.13.0` contains the runtime source, `agentnave-manager` Skill and all five
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.12.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.13.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -506,6 +506,14 @@ Reconnect MCP after upgrading to discover `delete_conversation(room_id)`. This e
 tool requires an archived conversation with no unresolved work. After user authorization it removes
 AgentNave history and finished invocation handles, while preserving native CLI files and external
 root directories. Archiving still preserves history. There is no automatic deletion or migration.
+
+### Upgrading from v0.12.0 to v0.13.0
+
+No new tools or history migration. Hosts sharing one data directory no longer lock every saved
+conversation at startup: each indexes history read-only and locks a record only on its first write.
+`list_conversations` adds `writable`; `false` means another running service holds that record.
+Update runtime and Skill together and reconnect MCP on every host so all services use the new
+locking behavior. The paired Skill now defaults Codex to `gpt-6.1-sol` / `high`.
 
 ## Upgrade, repair, and rollback
 

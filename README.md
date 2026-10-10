@@ -65,7 +65,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.12.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.13.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
@@ -99,7 +99,7 @@ revealed together through `decide_discussion_round`, so later speakers cannot co
 
 `open_workbench` opens a private list of conversations: **一起聊** (discussion), **各自答** (independent answers), and **做任务** (ordinary CLI work). Ordinary `start_agent` calls automatically collect output into task conversations; use `title` for a new conversation and `conversation_id` to group related invocations. Grouping does not share context or alter native tool permissions. Task pages have no public counterpart. The browser remains read-only.
 
-History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DATA_DIR`. Records survive restart; active processes and invocation handles do not. `list_conversations`, `read_conversation` and `update_conversation` inspect, rename, end or reopen saved conversations. Other services' locked histories are not taken over.
+History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DATA_DIR`. Records survive restart; active processes and invocation handles do not. `list_conversations`, `read_conversation` and `update_conversation` inspect, rename, end or reopen saved conversations. Several MCP hosts can share one data directory: each indexes saved records read-only and locks a conversation only on its first write, so another service's conversation stays readable (`writable=false` in `list_conversations`) but is never taken over.
 
 Since v0.12.0, `delete_conversation(room_id)` lets the calling Agent, after user authorization,
 permanently remove an archived, inactive conversation's AgentNave history, index, dashboard views
@@ -112,7 +112,7 @@ Independent rounds can explicitly mark unanswered seats with `mark_discussion_ab
 
 ## The MCP surface
 
-This section describes `v0.12.0`, which retains native Windows process-tree supervision and
+This section describes `v0.13.0`, which retains native Windows process-tree supervision and
 the fixed five-minute wait contract introduced in `v0.9.0`.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.
