@@ -155,6 +155,8 @@ class Workbench(DiscussionRooms):
                 return run.provider == request.provider and run.session_id == request.session_id
 
             if room is None:
+                # Another server may have created or extended this session's conversation.
+                self.list(probe=True)
                 room = next(
                     (
                         existing

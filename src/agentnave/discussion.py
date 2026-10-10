@@ -132,6 +132,7 @@ class Room:
         self.invocation_ids: set[str] = set()
         if not write:
             # Read-only index entry: acquire() takes the lock before the first write.
+            self.state = RoomState.model_validate_json((directory / "room.json").read_bytes())
             self.refresh()
             return
         path = directory / "room.json"
@@ -198,12 +199,19 @@ class Room:
             return
         self.lock = self._lock()
         try:
-            self.state = RoomState.model_validate_json((self.directory / "room.json").read_bytes())
+            self._load()
             self._recover()
             self.save()
         except Exception:
             self.release()
             raise
+
+    def _load(self) -> None:
+        state = RoomState.model_validate_json((self.directory / "room.json").read_bytes())
+        # A deleted record's retained directory may now hold a different room.
+        if state.id != self.state.id:
+            raise ValueError("Conversation record was replaced; list conversations again")
+        self.state = state
 
     def release(self) -> None:
         if self.lock is not None:
@@ -214,20 +222,28 @@ class Room:
         """Reload an unheld room from disk and report whether this process could write it."""
         if self.lock is not None:
             return True
-        self.state = RoomState.model_validate_json((self.directory / "room.json").read_bytes())
         try:
             lock = self._lock()
         except ValueError:
+            self._load()
             return False
+        # Read while probing the lock so a writer that just exited cannot leave a stale running view.
+        try:
+            self._load()
+        finally:
+            self._unlock_probe(lock)
+        # No live writer: show earlier running work as interrupted; acquire() persists it.
+        self._recover()
+        return True
+
+    @staticmethod
+    def _unlock_probe(lock: IO[bytes]) -> None:
         if os.name == "nt":
             import msvcrt
 
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
         lock.close()
-        # No live writer: show earlier running work as interrupted; acquire() persists it.
-        self._recover()
-        return True
 
     def save(self) -> None:
         name: str | None = None
@@ -330,6 +346,10 @@ class DiscussionRooms:
     def list(self, *, probe: bool = False) -> list[RoomSummary]:
         if self.dashboard is None:
             return []
+        # Refresh before summarizing so one response never mixes stale fields with lock status.
+        writable = (
+            {room.state.id: self._writable(room) for room in self.rooms.values()} if probe else {}
+        )
         return [
             RoomSummary(
                 room_id=room.state.id,
@@ -338,17 +358,22 @@ class DiscussionRooms:
                 director_url=self.dashboard.url(room.director_token),
                 mode=room.state.mode,
                 archived=room.state.archived,
-                writable=self._writable(room) if probe else True,
+                writable=writable.get(room.state.id, True),
             )
             for room in self.rooms.values()
         ]
 
-    @staticmethod
-    def _writable(room: Room) -> bool:
+    def _writable(self, room: Room) -> bool:
+        if room.lock is not None:
+            return True
         try:
-            return room.refresh()
+            writable = room.refresh()
         except (OSError, ValueError):
             return False
+        if self.dashboard is not None:
+            # Keep the read-only pages in step with what another writer saved.
+            self.refresh_views(room)
+        return writable
 
     def view(self, room_id: str) -> RoomView:
         room = self.find(room_id)
