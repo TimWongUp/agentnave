@@ -1113,6 +1113,7 @@ def test_pi_transport_and_explicit_options(tmp_path: Path) -> None:
         "--thinking",
         "high",
     )
+    assert resumed.stdin == b"\ndo the task"
     with pytest.raises(ValueError, match="unsupported pi options"):
         adapter.prepare(request(tmp_path, "pi", provider_options={"api_key": "secret"}))
 
@@ -1147,9 +1148,11 @@ def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Pa
                     {"type": "text", "text": "final answer\u2028next\u2029line\u0085end"},
                 ],
                 "stopReason": "stop",
+                "usage": {"cost": {"total": 0.25}},
             },
         },
         {"type": "agent_end", "messages": [{"secret": "hidden"}]},
+        {"type": "agent_settled", "aborted": False},
     ]
     stream = b"".join(command.capture_line(json.dumps(event).encode()) for event in events)
     assert b"hidden" not in stream and b"image" not in stream
@@ -1159,6 +1162,14 @@ def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Pa
         result.output == "final answer\u2028next\u2029line\u0085end"
         and result.session_id == "native-session"
     )
+    assert result.usage == {"total_cost_usd": 0.25}
+
+
+def test_pi_foreign_session_reports_cwd_instead_of_forking() -> None:
+    stderr = b"Session found in different project: /other\nFork? [y/N] Aborted.\n"
+    result = get_adapter("pi").parse(0, b"", stderr)
+    assert result.status is InvocationStatus.FAILED
+    assert result.error_message is not None and "/other" in result.error_message
 
 
 @pytest.mark.parametrize(
@@ -1188,7 +1199,12 @@ def test_pi_does_not_treat_incomplete_or_failed_reply_as_success(
 
 
 @pytest.mark.parametrize(
-    "error", [b"Authentication required: run /login", b"No API key for openai/example"]
+    "error",
+    [
+        b"Authentication required: run /login",
+        b"No API key for openai/example",
+        b"No models available. Use /login to log into a provider",
+    ],
 )
 def test_pi_authentication_failure_is_blocked(error: bytes) -> None:
     result = get_adapter("pi").parse(1, b"", error)

@@ -244,6 +244,7 @@ class InvocationManager:
                     output_exceeded,
                     lambda line: record.observe_event(line, adapter),
                     prepared.capture_line,
+                    prepared.skip_oversized_lines,
                 )
             )
             stderr_task = asyncio.create_task(
@@ -364,9 +365,12 @@ async def _read_limited(
     exceeded_event: asyncio.Event,
     observe_event: Callable[[bytes], None] | None = None,
     capture_line: Callable[[bytes], bytes] | None = None,
+    skip_oversized_lines: bool = False,
 ) -> _CapturedStream:
     if capture_line is not None:
-        return await _read_filtered(stream, limit, exceeded_event, observe_event, capture_line)
+        return await _read_filtered(
+            stream, limit, exceeded_event, observe_event, capture_line, skip_oversized_lines
+        )
     data = bytearray()
     pending = bytearray()
     exceeded = False
@@ -395,10 +399,12 @@ async def _read_filtered(
     exceeded_event: asyncio.Event,
     observe_event: Callable[[bytes], None] | None,
     capture_line: Callable[[bytes], bytes],
+    skip_oversized_lines: bool,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
     exceeded = False
+    discarding = False
 
     def capture(line: bytes) -> None:
         nonlocal exceeded
@@ -417,19 +423,25 @@ async def _read_filtered(
         while b"\n" in pending:
             line, _, remainder = pending.partition(b"\n")
             pending = bytearray(remainder)
-            if len(line) > limit:
-                exceeded = True
+            if discarding:
+                discarding = False
+            elif len(line) > limit:
+                exceeded = not skip_oversized_lines
             else:
                 capture(bytes(line))
             if exceeded:
                 break
         # Bound a single unterminated event independently of retained result bytes.
         if len(pending) > limit:
-            exceeded = True
+            if skip_oversized_lines:
+                discarding = True
+                pending.clear()
+            else:
+                exceeded = True
         if exceeded:
             pending.clear()
             exceeded_event.set()
-    if pending.strip() and not exceeded:
+    if pending.strip() and not exceeded and not discarding:
         capture(bytes(pending))
         if exceeded:
             exceeded_event.set()

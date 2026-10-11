@@ -13,6 +13,7 @@ import pytest
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.grok import GrokAdapter
+from agentnave.adapters.pi import PiAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
 from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
 from agentnave.processes import (
@@ -541,3 +542,19 @@ async def test_grok_filtered_capture_still_bounds_memory(
     finally:
         for path in prepared.cleanup_paths:
             path.unlink()
+
+
+@pytest.mark.asyncio
+async def test_pi_filtered_capture_skips_oversized_lines(tmp_path: Path) -> None:
+    prepared = PiAdapter().prepare(InvocationRequest("pi", "work", tmp_path))
+    assert prepared.capture_line is not None and prepared.skip_oversized_lines
+    stream = asyncio.StreamReader()
+    stream.feed_data(json.dumps({"type": "agent_end", "messages": ["x" * 70_000]}).encode())
+    stream.feed_data(b'\n{"type":"agent_settled","aborted":false}\n')
+    stream.feed_eof()
+    exceeded = asyncio.Event()
+    captured = await _read_limited(
+        stream, 128, exceeded, capture_line=prepared.capture_line, skip_oversized_lines=True
+    )
+    assert not exceeded.is_set() and not captured.exceeded
+    assert captured.data == b'{"type": "agent_settled", "aborted": false}\n'
