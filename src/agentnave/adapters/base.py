@@ -129,15 +129,15 @@ def option_args(request: InvocationRequest, allowlist: dict[str, str]) -> tuple[
     return tuple(args)
 
 
-def discussion_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
+def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
     """Explicit opt-in only; discussion profiles cannot enable other tools."""
     options = dict(request.provider_options)
-    enabled = options.pop("discussion_mode", False)
+    enabled = options.pop("restricted_tools", False)
     if not isinstance(enabled, bool):
-        raise ValueError("discussion_mode must be a boolean")
+        raise ValueError("restricted_tools must be a boolean")
     if enabled:
         if request.provider not in ("antigravity", "claude", "codebuddy", "codex", "grok", "pi"):
-            raise ValueError("discussion_mode requires a registered provider")
+            raise ValueError("restricted_tools requires a registered provider")
         if set(options) - {"model", "effort"}:
-            raise ValueError("discussion_mode accepts only model and effort")
+            raise ValueError("restricted_tools accepts only model and effort")
     return replace(request, provider_options=options), enabled

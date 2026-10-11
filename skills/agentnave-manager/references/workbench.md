@@ -12,7 +12,7 @@
 
 直接 `start_agent(provider, prompt, cwd, provider_options, title?, conversation_id?)`。首个任务创建私有会话，返回 `conversation_id` 与工作台 URL；同一件事后续任务传相同 conversation_id。可并行调用不同会话或不同 CLI；同一原生 session 不可同时执行两个任务。续用原生 session_id 时会尽量归入对应尚未结束的任务会话，也可明确提供 conversation_id。
 
-按主 Skill 等待或取消 invocation。程序自动采集回复和终态，不要求主控复述正文给 Dashboard。任务页无公共 URL，不把任务输出传给其他 CLI。若将结果拿去讨论，由主控明确选定材料并按主持人引用发布，不能冒充选手新发言。保留普通 CLI 原有工具与权限，不套用讨论室的 discussion_mode；宿主对普通 start_agent 的排除规则保持原样。
+按主 Skill 等待或取消 invocation。程序自动采集回复和终态，不要求主控复述正文给 Dashboard。任务页无公共 URL，不把任务输出传给其他 CLI。若将结果拿去讨论，由主控明确选定材料并按主持人引用发布，不能冒充选手新发言。保留普通 CLI 原有工具与权限，不套用讨论室的 restricted_tools；宿主对普通 start_agent 的排除规则保持原样。
 
 `read_conversation` 提供运行任务的 invocation_id 和已知原生 session_id，仅供主控恢复调度；网页不显示这些内部 ID。已回复不代表已经验收。
 

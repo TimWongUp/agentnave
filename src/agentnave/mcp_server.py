@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,11 +13,12 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from agentnave import __version__
 from agentnave.core import InvocationManager
 from agentnave.discussion import RoomSummary, RoomView, Seat
+from agentnave.group import Groups, GroupSeat, Round
 from agentnave.models import InvocationRequest, InvocationResult, ProviderOption
 from agentnave.workbench import DeletionResult, Workbench
 
@@ -51,20 +53,21 @@ _PROVIDER_SELECTION = (
     + ". Excluded providers are rejected by start_agent. Explicit discussion rooms may include every provider, including the host CLI."
 )
 _PROVIDER_OPTIONS: dict[ProviderName, str] = {
-    "pi": "provider (model backend; requires model), tools, discussion_mode (boolean; disables tools, extensions and MCP)",
-    "claude": "permission_mode, agent, fallback_model, max_budget_usd, discussion_mode (boolean; restricted tools)",
-    "codebuddy": "permission_mode, agent, fallback_model, discussion_mode (boolean; restricted tools)",
+    "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
+    "claude": "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)",
+    "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",
     "codex": (
         "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
         "dangerously_bypass_approvals_and_sandbox "
         "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
-        "discussion_mode (boolean; native read/tool restrictions)"
+        "restricted_tools (boolean; native read/tool restrictions)"
     ),
-    "grok": "permission_mode, agent, max_turns, sandbox, discussion_mode (boolean; denies tool execution)",
+    "grok": "permission_mode, agent, max_turns, sandbox, restricted_tools (boolean; denies tool execution)",
     "antigravity": (
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
         "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
-        "discussion_mode (boolean; dedicated tool-free participant profile)"
+        "restricted_tools (boolean; tool-free profile, only in a dedicated seat cwd that already "
+        "contains it)"
     ),
 }
 
@@ -102,9 +105,60 @@ class InvocationPayload(TypedDict):
     session_id: NotRequired[str]
 
 
+class GroupSeatSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
+    provider: ProviderName
+    provider_options: dict[str, ProviderOption] = Field(
+        default_factory=lambda: {},
+        description="Explicit options for this seat's CLI, as for start_agent.",
+    )
+    cwd: str | None = Field(
+        default=None,
+        description="Absolute directory for this seat; defaults to the group cwd.",
+    )
+
+
+class GroupSeatPayload(TypedDict):
+    id: str
+    provider: str
+    cwd: str
+
+
+class GroupPayload(TypedDict):
+    group_id: str
+    seats: list[GroupSeatPayload]
+
+
+class SeatRunPayload(TypedDict):
+    seat_id: str
+    status: Literal[
+        "pending", "running", "succeeded", "failed", "blocked", "cancelled", "not_started"
+    ]
+    invocation_id: NotRequired[str]
+    activity: NotRequired[ActivityPayload]
+    error: NotRequired[InvocationErrorPayload]
+    output: NotRequired[str]
+    output_age_ms: NotRequired[int]
+    session_id: NotRequired[str]
+
+
+class RoundPayload(TypedDict):
+    round_id: str
+    group_id: str
+    round: int
+    order: Literal["parallel", "serial"]
+    status: Literal["running", "finished", "cancelled"]
+    reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
+    elapsed_ms: int
+    seats: list[SeatRunPayload]
+
+
 class Runtime:
     def __init__(self) -> None:
         self.manager = InvocationManager()
+        self.groups = Groups(self.manager)
         self.rooms = Workbench(
             self.manager,
             Path(os.environ.get("AGENTNAVE_DATA_DIR", str(Path.home() / ".agentnave"))),
@@ -118,9 +172,13 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
         yield runtime
     finally:
         try:
-            await runtime.manager.shutdown()
+            # Stop rounds first so serial rounds launch nothing new and commit their results.
+            await runtime.groups.shutdown()
         finally:
-            await runtime.rooms.shutdown()
+            try:
+                await runtime.manager.shutdown()
+            finally:
+                await runtime.rooms.shutdown()
 
 
 mcp = MCPServer(
@@ -130,7 +188,9 @@ mcp = MCPServer(
         "AgentNave launches local CLI subagents. Use the agentnave-manager Skill for CLI usage "
         "and model selection. describe_provider reports permitted status and supported options. "
         "Call start_agent, then wait_agent with its invocation_id; "
-        "cancel_agent stops work. Handles last only for this server process. "
+        "cancel_agent stops work. For several CLIs answering together, open_group then "
+        "run_round (parallel or serial), wait_round and cancel_round. "
+        "Handles last only for this server process. "
         "Optional discussion rooms expose public dialogue on a local read-only Dashboard; "
         "open_discussion opts in. Provider-native permissions remain the security boundary. "
         + _PROVIDER_SELECTION
@@ -372,6 +432,211 @@ async def describe_provider(
         "discussion_permitted": True,
         "supported_options": "model, effort, " + _PROVIDER_OPTIONS[provider],
     }
+
+
+def _groups(ctx: Context[Runtime]) -> Groups:
+    return ctx.request_context.lifespan_context.groups
+
+
+def _round_payload(
+    round_: Round, manager: InvocationManager, reason: str, blocked: bool = False
+) -> RoundPayload:
+    seats: list[SeatRunPayload] = []
+    for run in round_.runs:
+        seat: SeatRunPayload = {"seat_id": run.seat_id, "status": run.status}
+        if run.invocation_id is not None:
+            seat["invocation_id"] = run.invocation_id
+        result = run.result
+        if result is not None:
+            if result.output:
+                seat["output"] = result.output
+            if result.session_id:
+                seat["session_id"] = result.session_id
+            if result.error:
+                seat["error"] = {"code": result.error.code, "message": result.error.message}
+        elif run.launch_error is not None:
+            seat["error"] = {"code": run.launch_error.code, "message": run.launch_error.message}
+        elif run.status == "running" and run.invocation_id is not None:
+            snapshot = manager.snapshot(run.invocation_id)
+            activity = snapshot.last_activity
+            if activity is not None:
+                summary: ActivityPayload = {"kind": activity.kind}
+                if activity.state:
+                    summary["state"] = activity.state
+                if activity.tool_name:
+                    summary["tool_name"] = activity.tool_name
+                if snapshot.last_activity_age_ms is not None:
+                    summary["age_ms"] = snapshot.last_activity_age_ms
+                seat["activity"] = summary
+            output, age = manager.recent_output(run.invocation_id)
+            if output and age is not None:
+                seat["output"] = output
+                seat["output_age_ms"] = age
+            if run.blockers:
+                latest = run.blockers[-1]
+                seat["error"] = {"code": latest.code, "message": latest.message}
+        seats.append(seat)
+    finished = round_.finished
+    return {
+        "round_id": round_.id,
+        "group_id": round_.group.id,
+        "round": round_.number,
+        "order": round_.order,
+        "status": ("cancelled" if round_.cancelling else "finished") if finished else "running",
+        "reason": "finished"
+        if finished
+        else "execution_blocked"
+        if blocked
+        else "started"
+        if reason == "started"
+        else "wait_elapsed",
+        "elapsed_ms": round((time.monotonic() - round_.started_at) * 1000),
+        "seats": seats,
+    }
+
+
+def _unknown_round() -> ToolError:
+    return ToolError(
+        "Unknown round_id. Use a round_id returned by run_round in this server session."
+    )
+
+
+@mcp.tool(
+    title="Open a group of CLI seats",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+async def open_group(
+    cwd: Annotated[
+        str, Field(min_length=1, description="Absolute existing directory seats run in by default.")
+    ],
+    seats: Annotated[list[GroupSeatSpec], Field(min_length=2, max_length=6)],
+    *,
+    ctx: Context[Runtime],
+) -> GroupPayload:
+    """Create an in-memory group of 2–6 CLI seats for collaborative rounds. Nothing is saved.
+
+    Seats are ordinary subagents: native tools and permissions, the given cwd, explicit options.
+    Each seat keeps its own native session across rounds. Excluded providers are rejected.
+    """
+    excluded = sorted({seat.provider for seat in seats} & _EXCLUDED_PROVIDERS)
+    if excluded:
+        raise ToolError(f"Excluded providers: {', '.join(excluded)}. " + _PROVIDER_SELECTION)
+    try:
+        group = _groups(ctx).open(
+            Path(cwd),
+            [
+                GroupSeat(
+                    seat.id,
+                    seat.provider,
+                    dict(seat.provider_options),
+                    Path(seat.cwd if seat.cwd is not None else cwd),
+                )
+                for seat in seats
+            ],
+        )
+    except (OSError, ValueError) as exc:
+        raise ToolError(f"Invalid group: {exc}. Correct the arguments and retry.") from exc
+    return {
+        "group_id": group.id,
+        "seats": [
+            {"id": seat.id, "provider": seat.provider, "cwd": str(seat.cwd)}
+            for seat in group.seats.values()
+        ],
+    }
+
+
+@mcp.tool(
+    title="Run one round of a group",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
+    ),
+)
+async def run_round(
+    group_id: str,
+    seats: Annotated[
+        list[str],
+        Field(min_length=1, description="Ordered seat ids that each answer once this round."),
+    ],
+    order: Annotated[
+        Literal["parallel", "serial"],
+        Field(
+            description=(
+                "parallel: all start together and cannot see each other's answer this round. "
+                "serial: one by one in list order; later seats see earlier answers."
+            )
+        ),
+    ],
+    prompt: Annotated[
+        str, Field(min_length=1, description="Shared task for this round, visible to all seats.")
+    ],
+    instructions: Annotated[
+        dict[str, str] | None,
+        Field(description="Optional private instruction per seat id; never sent to other seats."),
+    ] = None,
+    *,
+    ctx: Context[Runtime],
+) -> RoundPayload:
+    """Start one round without waiting; use wait_round with the returned round_id.
+
+    Seats share only final answers. Each seat receives the entries it has not yet seen: earlier
+    tasks, other seats' answers and absences. Parallel answers are committed together once every
+    seat ends; serial answers are committed one by one. Failed, blocked or cancelled seats are
+    recorded as absent and a serial round continues. No retries or per-seat deadlines.
+    """
+    groups = _groups(ctx)
+    try:
+        round_ = groups.run(group_id, seats, order, prompt, instructions or {})
+    except KeyError as exc:
+        raise ToolError("Unknown group_id. Use a group_id returned by open_group.") from exc
+    except ValueError as exc:
+        raise ToolError(f"Invalid round: {exc}.") from exc
+    return _round_payload(round_, groups.manager, "started")
+
+
+@mcp.tool(
+    title="Wait for a group round",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+async def wait_round(
+    round_id: Annotated[str, Field(min_length=1)], *, ctx: Context[Runtime]
+) -> RoundPayload:
+    """Wait up to five minutes; returns early when the round finishes or a seat reports a blocker.
+
+    Running seats include activity and their latest reply tail. A blocker leaves that seat
+    running: keep waiting, or cancel_agent its invocation_id to record it absent.
+    Finished rounds can be read again.
+    """
+    groups = _groups(ctx)
+    try:
+        round_, blocked = await groups.wait(round_id, WAIT_SECONDS)
+    except KeyError as exc:
+        raise _unknown_round() from exc
+    return _round_payload(round_, groups.manager, "waited", blocked)
+
+
+@mcp.tool(
+    title="Cancel a group round",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
+async def cancel_round(
+    round_id: Annotated[str, Field(min_length=1)], *, ctx: Context[Runtime]
+) -> RoundPayload:
+    """Stop a round: running seats are cancelled and recorded absent, unstarted serial seats skip.
+
+    Answers that already succeeded are kept and committed. Does not undo CLI side effects.
+    """
+    groups = _groups(ctx)
+    try:
+        round_ = await groups.cancel(round_id)
+    except KeyError as exc:
+        raise _unknown_round() from exc
+    return _round_payload(round_, groups.manager, "waited")
 
 
 @mcp.tool(

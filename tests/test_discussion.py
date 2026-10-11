@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from agentnave.adapters import get_adapter
+from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
 from agentnave.discussion import DiscussionRooms, Room, RoomState, Seat, TaskRun
@@ -247,7 +248,7 @@ async def test_shared_board_private_desk_and_independent_session_resume(
         )
         assert (
             requests[0].session_id is None
-            and requests[0].provider_options["discussion_mode"] is True
+            and requests[0].provider_options["restricted_tools"] is True
         )
         assert requests[0].cwd != tmp_path and requests[0].cwd.exists()
         assert url in requests[0].prompt and desk not in requests[0].prompt
@@ -520,15 +521,19 @@ def test_native_discussion_profiles_resume_without_enabling_tools(
     tmp_path: Path, provider: str
 ) -> None:
     adapter = get_adapter(provider)
-    command = adapter.prepare(
-        InvocationRequest(
-            provider,
-            "speak",
-            tmp_path,
-            session_id="own-seat-session",
-            provider_options={"discussion_mode": True, "model": "explicit"},
-        )
+    restricted = InvocationRequest(
+        provider,
+        "speak",
+        tmp_path,
+        session_id="own-seat-session",
+        provider_options={"restricted_tools": True, "model": "explicit"},
     )
+    if provider == "antigravity":
+        with pytest.raises(ValueError, match="dedicated cwd"):
+            adapter.prepare(restricted)
+        assert not (tmp_path / ".agents").exists()
+        write_restricted_profile(tmp_path)
+    command = adapter.prepare(restricted)
     try:
         argv = command.argv
         if provider in ("claude", "grok", "codebuddy"):
@@ -580,7 +585,7 @@ def test_native_discussion_profiles_resume_without_enabling_tools(
                 provider,
                 "speak",
                 tmp_path,
-                provider_options={"discussion_mode": True, "permission_mode": "bypassPermissions"},
+                provider_options={"restricted_tools": True, "permission_mode": "bypassPermissions"},
             )
         )
 

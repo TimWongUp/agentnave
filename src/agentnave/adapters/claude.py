@@ -10,7 +10,6 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
-    discussion_options,
     error_summary,
     failure_status,
     normalized_usage,
@@ -18,6 +17,7 @@ from agentnave.adapters.base import (
     option_args,
     parse_json_lines,
     parse_json_object,
+    restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
@@ -63,7 +63,7 @@ class ClaudeAdapter:
     )
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = discussion_options(request)
+        request, discussion = restricted_options(request)
         argv = [
             self.executable,
             "--print",

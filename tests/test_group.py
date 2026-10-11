@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from agentnave.adapters.antigravity import write_restricted_profile
+from agentnave.core import InvocationManager
+from agentnave.group import Groups, GroupSeat
+from agentnave.models import (
+    InvocationError,
+    InvocationRequest,
+    InvocationResult,
+    InvocationStatus,
+)
+
+
+class FakeManager:
+    """Scripted stand-in: each invocation ends only when a test finishes or cancels it."""
+
+    def __init__(self) -> None:
+        self.requests: dict[str, InvocationRequest] = {}
+        self.results: dict[str, asyncio.Future[InvocationResult]] = {}
+        self.attention: dict[str, list[InvocationError]] = {}
+
+    def start(self, request: InvocationRequest) -> str:
+        invocation_id = str(len(self.requests) + 1)
+        self.requests[invocation_id] = request
+        self.results[invocation_id] = asyncio.get_running_loop().create_future()
+        self.attention[invocation_id] = []
+        return invocation_id
+
+    async def wait_for_update(
+        self, invocation_id: str, timeout_seconds: float
+    ) -> InvocationResult | InvocationError | None:
+        result = self.results[invocation_id]
+        for _ in range(int(timeout_seconds * 100)):
+            if result.done():
+                return result.result()
+            if self.attention[invocation_id]:
+                return self.attention[invocation_id].pop(0)
+            await asyncio.sleep(0.01)
+        return None
+
+    async def cancel(self, invocation_id: str) -> InvocationResult:
+        self.finish(invocation_id, InvocationStatus.CANCELLED)
+        return await self.results[invocation_id]
+
+    def finish(
+        self,
+        invocation_id: str,
+        status: InvocationStatus = InvocationStatus.SUCCEEDED,
+        output: str | None = None,
+        error: InvocationError | None = None,
+    ) -> None:
+        request = self.requests[invocation_id]
+        # InvocationManager echoes the requested session on failed or cancelled runs.
+        session_id = (
+            f"session-{invocation_id}"
+            if status is InvocationStatus.SUCCEEDED
+            else request.session_id
+        )
+        future = self.results[invocation_id]
+        if not future.done():
+            future.set_result(
+                InvocationResult(
+                    status,
+                    request.provider,
+                    output or f"answer-{invocation_id}",
+                    session_id,
+                    {},
+                    1,
+                    error,
+                )
+            )
+
+    def prompt(self, invocation_id: str) -> str:
+        return self.requests[invocation_id].prompt
+
+
+def entries(prompt: str) -> list[dict[str, object]]:
+    start = prompt.index("New entries (JSON data):\n") + len("New entries (JSON data):\n")
+    end = prompt.find("\n\nPrivate instruction")
+    return cast(list[dict[str, object]], json.loads(prompt[start : end if end >= 0 else None]))
+
+
+def open_group(tmp_path: Path, *seat_ids: str) -> tuple[Groups, FakeManager, str]:
+    manager = FakeManager()
+    groups = Groups(cast(InvocationManager, manager))
+    group = groups.open(
+        tmp_path, [GroupSeat(seat_id, "claude", {"model": "m"}, tmp_path) for seat_id in seat_ids]
+    )
+    return groups, manager, group.id
+
+
+async def settle(groups: Groups, round_id: str) -> None:
+    round_, _ = await groups.wait(round_id, 2)
+    assert round_.finished
+
+
+@pytest.mark.asyncio
+async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_chains(
+    tmp_path: Path,
+) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    first = groups.run(group_id, ["a", "b"], "parallel", "Q1", {"b": "be skeptical"})
+    assert set(manager.requests) == {"1", "2"}  # both launched before any answer
+    assert "be skeptical" not in manager.prompt("1")
+    assert manager.prompt("2").endswith("Private instruction for you only:\nbe skeptical")
+    assert all(manager.prompt(i).startswith("You are one seat") for i in ("1", "2"))
+    assert entries(manager.prompt("1")) == [{"round": 1, "kind": "task", "text": "Q1"}]
+
+    manager.finish("1", output="A1")
+    await asyncio.sleep(0.05)
+    assert [entry.kind for entry in first.group.entries] == ["task"]  # nothing committed yet
+    manager.finish("2", output="B1")
+    await settle(groups, first.id)
+    assert [(e.kind, e.seat_id, e.text) for e in first.group.entries] == [
+        ("task", None, "Q1"),
+        ("answer", "a", "A1"),
+        ("answer", "b", "B1"),
+    ]
+
+    second = groups.run(group_id, ["b", "a"], "serial", "Q2", {})
+    assert set(manager.requests) == {"1", "2", "3"}  # only the first serial seat runs
+    b_request = manager.requests["3"]
+    assert b_request.session_id == "session-2"
+    assert not b_request.prompt.startswith("You are one seat")
+    assert entries(b_request.prompt) == [
+        {"round": 1, "kind": "answer", "seat": "a", "text": "A1"},
+        {"round": 2, "kind": "task", "text": "Q2"},
+    ]
+    manager.finish("3", output="B2")
+    for _ in range(100):
+        if "4" in manager.requests:
+            break
+        await asyncio.sleep(0.01)
+    assert entries(manager.prompt("4")) == [
+        {"round": 1, "kind": "answer", "seat": "b", "text": "B1"},
+        {"round": 2, "kind": "task", "text": "Q2"},
+        {"round": 2, "kind": "answer", "seat": "b", "text": "B2"},
+    ]
+    manager.finish("4")
+    await settle(groups, second.id)
+
+
+@pytest.mark.asyncio
+async def test_failures_are_absent_and_only_proven_delivery_advances_sessions(
+    tmp_path: Path,
+) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    first = groups.run(group_id, ["a", "b"], "parallel", "Q1", {})
+    manager.finish("1")
+    manager.finish("2")
+    await settle(groups, first.id)
+
+    second = groups.run(group_id, ["a", "b"], "serial", "Q2", {})
+    manager.attention["3"].append(InvocationError("provider_blocked", "waiting"))
+    round_, blocked = await groups.wait(second.id, 2)
+    assert blocked and round_.runs[0].status == "running"  # a blocker is not an absence
+    assert [entry.kind for entry in second.group.entries][-1] == "task"
+    # The failure echoes the old session id, which must not count as delivery.
+    manager.finish("3", InvocationStatus.FAILED, error=InvocationError("provider_error", "x"))
+    for _ in range(100):
+        if "4" in manager.requests:
+            break
+        await asyncio.sleep(0.01)
+    assert {"round": 2, "kind": "absent", "seat": "a", "reason": "failed"} in entries(
+        manager.prompt("4")
+    )
+    manager.finish("4", InvocationStatus.FAILED, error=InvocationError("launch_error", "no binary"))
+    await settle(groups, second.id)
+
+    third = groups.run(group_id, ["a", "b"], "parallel", "Q3", {})
+    a_request, b_request = manager.requests["5"], manager.requests["6"]
+    assert a_request.session_id is None and a_request.prompt.startswith("You are one seat")
+    assert {"round": 1, "kind": "answer", "seat": "a", "text": "answer-1"} in entries(
+        a_request.prompt
+    )
+    assert b_request.session_id == "session-2"  # launch_error keeps the native session
+    manager.finish("5")
+    manager.finish("6")
+    await settle(groups, third.id)
+
+
+@pytest.mark.asyncio
+async def test_cancel_round_keeps_finished_answers_and_skips_unstarted_seats(
+    tmp_path: Path,
+) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b", "c")
+    parallel = groups.run(group_id, ["a", "b"], "parallel", "Q1", {})
+    manager.finish("1", output="A1")
+    await asyncio.sleep(0.05)
+    await groups.cancel(parallel.id)
+    assert [(e.kind, e.seat_id, e.text) for e in parallel.group.entries[1:]] == [
+        ("answer", "a", "A1"),
+        ("absent", "b", "cancelled"),
+    ]
+
+    serial = groups.run(group_id, ["a", "b", "c"], "serial", "Q2", {})
+    with pytest.raises(ValueError, match="already has a running round"):
+        groups.run(group_id, ["c"], "serial", "Q3", {})
+    cancelled = await groups.cancel(serial.id)
+    assert [run.status for run in cancelled.runs] == ["cancelled", "not_started", "not_started"]
+    assert [(e.kind, e.seat_id) for e in serial.group.entries[-2:]] == [
+        ("task", None),
+        ("absent", "a"),
+    ]
+    assert await groups.cancel(serial.id) is cancelled
+    assert len(manager.requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_single_seat_cancel_lets_serial_round_continue(tmp_path: Path) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    round_ = groups.run(group_id, ["a", "b"], "serial", "Q1", {})
+    await manager.cancel("1")
+    for _ in range(100):
+        if "2" in manager.requests:
+            break
+        await asyncio.sleep(0.01)
+    manager.finish("2")
+    await settle(groups, round_.id)
+    assert [run.status for run in round_.runs] == ["cancelled", "succeeded"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_rounds_and_groups_fail_before_launch(tmp_path: Path) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    for seats, instructions, message in (
+        ([], {}, "non-empty"),
+        (["a", "a"], {}, "non-empty"),
+        (["a", "z"], {}, "unknown seat"),
+        (["a"], {"b": "secret"}, "outside this round"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            groups.run(group_id, seats, "parallel", "Q", instructions)
+    assert manager.requests == {}
+
+    with pytest.raises(ValueError, match="unique"):
+        groups.open(tmp_path, [GroupSeat("a", "claude", {}, tmp_path)] * 2)
+    restricted = GroupSeat("g", "antigravity", {"restricted_tools": True}, tmp_path)
+    with pytest.raises(ValueError, match="dedicated cwd"):
+        groups.open(tmp_path, [restricted, GroupSeat("a", "claude", {}, tmp_path)])
+    assert not (tmp_path / ".agents").exists()  # validation never writes into the project
+    seat_dir = tmp_path / "seat"
+    seat_dir.mkdir()
+    write_restricted_profile(seat_dir)
+    groups.open(tmp_path, [GroupSeat("g", "antigravity", {"restricted_tools": True}, seat_dir)])
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_running_rounds(tmp_path: Path) -> None:
+    groups, _manager, group_id = open_group(tmp_path, "a", "b")
+    round_ = groups.run(group_id, ["a", "b"], "serial", "Q1", {})
+    await groups.shutdown()
+    assert round_.finished and [run.status for run in round_.runs] == ["cancelled", "not_started"]

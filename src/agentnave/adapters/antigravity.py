@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
-    discussion_options,
     error_summary,
     failure_status,
     normalized_usage,
     object_dict,
     parse_json_lines,
+    restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
@@ -32,6 +33,22 @@ You are a conversation participant. Answer the current user request.
 """
 
 
+def _restricted_profile(directory: Path) -> Path:
+    return directory / ".agents" / "agents" / "agentnave-discussion.md"
+
+
+def write_restricted_profile(directory: Path) -> None:
+    """Prepare a dedicated seat directory; callers own that directory and its cleanup."""
+    profile = _restricted_profile(directory)
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    if profile.exists():
+        if profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
+            raise ValueError("Restricted agent profile already exists with different contents")
+        return
+    with profile.open("x", encoding="utf-8") as stream:
+        stream.write(_DISCUSSION_AGENT)
+
+
 class AntigravityAdapter:
     name = "antigravity"
     _options = {
@@ -48,7 +65,7 @@ class AntigravityAdapter:
     _boolean_options = {"disable_slash_commands", "sandbox", "dangerously_skip_permissions"}
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = discussion_options(request)
+        request, discussion = restricted_options(request)
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
         argv = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
@@ -56,16 +73,13 @@ class AntigravityAdapter:
             argv.extend(("--conversation", request.session_id))
         argv.extend(self._option_args(request))
         if discussion:
-            profile = request.cwd / ".agents" / "agents" / "agentnave-discussion.md"
-            if profile.exists():
-                if profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
-                    raise ValueError(
-                        "Discussion agent profile already exists with different contents"
-                    )
-            else:
-                profile.parent.mkdir(parents=True, exist_ok=True)
-                with profile.open("x", encoding="utf-8") as stream:
-                    stream.write(_DISCUSSION_AGENT)
+            # agy loads agents only from cwd; never write into the caller's project here.
+            profile = _restricted_profile(request.cwd)
+            if not profile.is_file() or profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
+                raise ValueError(
+                    "antigravity restricted_tools needs a dedicated cwd prepared with "
+                    "write_restricted_profile"
+                )
             argv.extend(
                 (
                     "--agent",
