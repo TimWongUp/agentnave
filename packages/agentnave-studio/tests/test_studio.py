@@ -505,3 +505,54 @@ async def test_delete_never_follows_symlinks_out_of_seat_folders(
     studio.delete(record.state.id)
     assert (external / "agents" / profile.name).is_file()
     await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_review_save_still_discards_after_restart(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replace = os.replace
+    calls = 0
+
+    def failing_replace(source: str, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls > 2:  # a's launch and result are saved; entering review fails
+            raise OSError("disk full")
+        replace(source, target)
+
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Fragile review",
+                "cwd": str(tmp_path),
+                "review": True,
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        group_id = show["group_id"]
+        monkeypatch.setattr(os, "replace", failing_replace)
+        started = await _call(
+            client,
+            "run_round",
+            {"group_id": group_id, "seats": ["a"], "order": "parallel", "prompt": "go"},
+        )
+        done = await _wait(client, started["round_id"])
+        assert [seat["status"] for seat in _seats(done)] == ["discarded"]
+        monkeypatch.setattr(os, "replace", replace)
+        await _call(client, "post_host_message", {"conversation_id": group_id, "text": "ok"})
+    async with Client(mcp) as client:
+        view = _conversation(
+            await _call(client, "read_conversation", {"conversation_id": group_id})
+        )
+        seat = cast(
+            list[dict[str, object]], cast(list[dict[str, object]], view["rounds"])[0]["seats"]
+        )[0]
+        assert seat["review"] == "discard"
+        await _call(
+            client,
+            "run_round",
+            {"group_id": group_id, "seats": ["b"], "order": "parallel", "prompt": "next"},
+        )

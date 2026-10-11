@@ -116,13 +116,12 @@ class Conversation(BaseModel):
                     self.sessions[seat.seat_id] = SessionRecord()
                 elif seat.status == "pending":
                     seat.status = "not_started"
-                elif (
-                    self.review
-                    and seat.status == "succeeded"
-                    and seat.review is None
-                    and not seat.committed
-                ):
-                    seat.review = "pending"  # ended before its review began
+                elif self.review and seat.status == "succeeded" and not seat.committed:
+                    if round_.status == "cancelled":
+                        if seat.review in (None, "pending"):
+                            seat.review = "discard"  # cancel discards undecided answers
+                    elif seat.review is None:
+                        seat.review = "pending"  # ended before its review began
             if not round_.pending_review():
                 self.commit_ended(round_)
         for task in self.tasks:

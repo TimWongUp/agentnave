@@ -23,6 +23,7 @@ from agentnave_studio.store import (
     Conversation,
     EntryRecord,
     Record,
+    Review,
     RoundRecord,
     SeatRecord,
     SeatRunRecord,
@@ -65,6 +66,7 @@ class Studio(Groups):
         self.tokens: dict[str, tuple[str, str]] = {}  # conversation id -> public, director
         self.home_token = uuid4().hex
         self.refresher: asyncio.Task[None] | None = None
+        self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
 
     # Conversations
 
@@ -253,27 +255,40 @@ class Studio(Groups):
         record.acquire()
         saved = _find(record.state, round_id)
         assert saved is not None
-        seats = {seat.seat_id: seat for seat in saved.seats}
         if not decisions:
             raise ValueError("decisions must name at least one seat")
         live = self._rounds.get(round_id)
         running = live is not None and not live.finished
+        # A running round's reviews live in memory; a stopped one's only in its record.
+        current: dict[str, Review | None] = (
+            self.reviews.setdefault(round_id, {})
+            if running
+            else {seat.seat_id: seat.review for seat in saved.seats}
+        )
         for seat_id, decision in decisions.items():
-            seat = seats.get(seat_id)
-            if seat is None or seat.review is None:
+            review = current.get(seat_id)
+            if review is None:
                 raise ValueError(f"seat {seat_id} has no answer to review in this round")
-            if seat.review not in ("pending", decision):
-                raise ValueError(f"seat {seat_id} was already decided: {seat.review}")
-            if running and live is not None and live.cancelling and seat.review == "pending":
+            if review not in ("pending", decision):
+                raise ValueError(f"seat {seat_id} was already decided: {review}")
+            if running and live is not None and live.cancelling and review == "pending":
                 # Cancel discards undecided answers; a late publish must not slip in.
                 raise ValueError("this round is being cancelled; undecided answers are discarded")
-        for seat_id, decision in decisions.items():
-            seats[seat_id].review = decision
+        before = dict(current)
+        current.update(decisions)
+        for seat in saved.seats:
+            seat.review = current.get(seat.seat_id, seat.review)
         added: list[EntryRecord] = []
         if not running and not saved.pending_review():
             # The round stopped running (restart): commit what it left directly.
             added = record.state.commit_ended(saved)
-        record.save()
+        try:
+            record.save()
+        except OSError:
+            if running:
+                current.clear()
+                current.update(before)
+            raise
         group = self._groups.get(record.state.id)
         if group is not None:
             group.entries.extend(
@@ -480,42 +495,32 @@ class Studio(Groups):
                 error = run.result.error if run.result is not None else run.launch_error
                 seat.error = f"{error.code}: {error.message}" if error is not None else None
                 seat.committed = seat.committed or (round_.number, run.seat_id) in committed
+                seat.review = self.reviews.get(round_.id, {}).get(run.seat_id)
         record.save()
         self._publish(record)
 
     async def _approve(self, round_: Round, runs: list[SeatRun]) -> set[str]:
         seat_ids = {run.seat_id for run in runs}
-        state = self.records[round_.group.id].state
-        if not state.review or not seat_ids:
+        if not self.records[round_.group.id].state.review or not seat_ids:
             return seat_ids
-        self._reviews(round_, seat_ids, "pending")
+        # Kept in memory so a save after a failed one writes the reviews back too.
+        reviews = self.reviews.setdefault(round_.id, {})
+        reviews.update(dict.fromkeys(seat_ids, "pending"))
         self._changed(round_)
         round_.notify()
         while True:
             changed = round_.changed
-            reviews = self._reviews(round_, seat_ids)
-            if round_.cancelling or "pending" not in reviews.values():
+            if round_.cancelling or all(reviews[seat] != "pending" for seat in seat_ids):
                 break
             await changed.wait()
-        # Cancelled or stopped before a decision: the answer is discarded, never published.
-        self._reviews(
-            round_, {seat for seat, review in reviews.items() if review == "pending"}, "discard"
-        )
-        return {seat for seat, review in reviews.items() if review == "publish"}
-
-    def _reviews(
-        self, round_: Round, seat_ids: set[str], value: Literal["pending", "discard"] | None = None
-    ) -> dict[str, str | None]:
-        saved = _find(self.records[round_.group.id].state, round_.id)
-        assert saved is not None
-        for seat in saved.seats:
-            if value is not None and seat.seat_id in seat_ids:
-                seat.review = value
-        return {seat.seat_id: seat.review for seat in saved.seats if seat.seat_id in seat_ids}
+        for seat in seat_ids:
+            if reviews[seat] == "pending":
+                # Cancelled or stopped before a decision: discarded, never published.
+                reviews[seat] = "discard"
+        return {seat for seat in seat_ids if reviews[seat] == "publish"}
 
     def _ready(self, round_: Round) -> str | None:
-        saved = _find(self.records[round_.group.id].state, round_.id)
-        return "review_needed" if saved is not None and saved.pending_review() else None
+        return "review_needed" if "pending" in self.reviews.get(round_.id, {}).values() else None
 
     # Dashboard
 
@@ -586,11 +591,11 @@ class Studio(Groups):
 
     async def _refresh_running(self) -> None:
         # Reply tails live only in memory, so running work is re-projected while it runs;
-        # records held by other servers are re-read now and then.
+        # saved conversations are re-read now and then for other servers' changes.
         for tick in itertools.count(1):
             await asyncio.sleep(1.5)
-            if tick % 5 == 0 and any(record.lock is None for record in self.records.values()):
-                self.scan()
+            if tick % 5 == 0:
+                self.scan()  # also finds conversations other servers created
             for record in list(self.records.values()):
                 group = self._groups.get(record.state.id)
                 if (group is not None and group.active is not None) or any(

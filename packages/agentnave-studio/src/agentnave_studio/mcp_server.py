@@ -309,14 +309,11 @@ class StudioRoundPayload(TypedDict):
 
 def _round_payload(studio: Studio, round_: Round, reason: str) -> StudioRoundPayload:
     payload = cast(StudioRoundPayload, core.round_payload(round_, studio.manager, reason))
-    saved = next(
-        (item for item in studio.records[round_.group.id].state.rounds if item.id == round_.id),
-        None,  # never saved when its first write failed
-    )
-    for seat, record in zip(payload["seats"], saved.seats if saved else [], strict=False):
-        if record.review == "pending":
+    reviews = studio.reviews.get(round_.id, {})
+    for seat in payload["seats"]:
+        if reviews.get(seat["seat_id"]) == "pending":
             seat["status"] = "pending_review"
-        elif record.review == "discard":
+        elif reviews.get(seat["seat_id"]) == "discard":
             seat["status"] = "discarded"
     return payload
 
