@@ -23,6 +23,12 @@ from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivi
 
 # Pi reports this on stderr before asking on stdin whether to fork another project's session.
 _FOREIGN_SESSION = re.compile(r"Session found in different project: ([^\n\x1b]*)")
+# These events repeat whole-run messages or tool results and never decide the final reply.
+_SKIPPABLE_OVERSIZED = (
+    b'{"type":"agent_end"',
+    b'{"type":"turn_end"',
+    b'{"type":"tool_execution_',
+)
 
 
 def _text(message: dict[str, object]) -> str:
@@ -94,13 +100,12 @@ class PiAdapter:
         stdin = request.prompt.encode()
         if request.session_id is not None:
             stdin = b"\n" + stdin
-        # agent_end and tool events repeat full tool results; only small events are needed.
         return PreparedCommand(
             tuple(argv),
             request.cwd,
             stdin=stdin,
             capture_line=_capture_line,
-            skip_oversized_lines=True,
+            skip_oversized_line=lambda head: head.startswith(_SKIPPABLE_OVERSIZED),
         )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:

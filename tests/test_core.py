@@ -545,16 +545,40 @@ async def test_grok_filtered_capture_still_bounds_memory(
 
 
 @pytest.mark.asyncio
-async def test_pi_filtered_capture_skips_oversized_lines(tmp_path: Path) -> None:
+@pytest.mark.parametrize("final_oversized", [False, True])
+async def test_pi_filtered_capture_skips_only_non_result_oversized_lines(
+    tmp_path: Path, final_oversized: bool
+) -> None:
     prepared = PiAdapter().prepare(InvocationRequest("pi", "work", tmp_path))
-    assert prepared.capture_line is not None and prepared.skip_oversized_lines
+    assert prepared.capture_line is not None
+    big = "x" * 70_000
+    final: dict[str, object] = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": big}],
+        "stopReason": "error",
+    }
+    events: list[dict[str, object]] = [
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "content": [], "stopReason": "stop"},
+        },
+        *([{"type": "message_end", "message": final}] if final_oversized else []),
+        {"type": "agent_end", "messages": [big * 3]},
+        {"type": "agent_settled", "aborted": False},
+    ]
     stream = asyncio.StreamReader()
-    stream.feed_data(json.dumps({"type": "agent_end", "messages": ["x" * 70_000]}).encode())
-    stream.feed_data(b'\n{"type":"agent_settled","aborted":false}\n')
+    stream.feed_data(
+        b"".join(json.dumps(event, separators=(",", ":")).encode() + b"\n" for event in events)
+    )
     stream.feed_eof()
     exceeded = asyncio.Event()
     captured = await _read_limited(
-        stream, 128, exceeded, capture_line=prepared.capture_line, skip_oversized_lines=True
+        stream,
+        1024,
+        exceeded,
+        capture_line=prepared.capture_line,
+        skip_oversized_line=prepared.skip_oversized_line,
     )
-    assert not exceeded.is_set() and not captured.exceeded
-    assert captured.data == b'{"type": "agent_settled", "aborted": false}\n'
+    assert exceeded.is_set() is final_oversized
+    if not final_oversized:
+        assert PiAdapter().parse(0, captured.data, b"").status is InvocationStatus.SUCCEEDED

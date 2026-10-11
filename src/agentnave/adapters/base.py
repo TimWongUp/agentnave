@@ -19,8 +19,8 @@ class PreparedCommand:
     stdin: bytes | None = None
     cleanup_paths: tuple[Path, ...] = ()
     capture_line: Callable[[bytes], bytes] | None = None
-    # Only for filtered capture whose result never depends on a line above the capture limit.
-    skip_oversized_lines: bool = False
+    # Given the head of a line above the capture limit, True drops it instead of failing.
+    skip_oversized_line: Callable[[bytes], bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)

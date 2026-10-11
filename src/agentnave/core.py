@@ -244,7 +244,7 @@ class InvocationManager:
                     output_exceeded,
                     lambda line: record.observe_event(line, adapter),
                     prepared.capture_line,
-                    prepared.skip_oversized_lines,
+                    prepared.skip_oversized_line,
                 )
             )
             stderr_task = asyncio.create_task(
@@ -365,11 +365,11 @@ async def _read_limited(
     exceeded_event: asyncio.Event,
     observe_event: Callable[[bytes], None] | None = None,
     capture_line: Callable[[bytes], bytes] | None = None,
-    skip_oversized_lines: bool = False,
+    skip_oversized_line: Callable[[bytes], bool] | None = None,
 ) -> _CapturedStream:
     if capture_line is not None:
         return await _read_filtered(
-            stream, limit, exceeded_event, observe_event, capture_line, skip_oversized_lines
+            stream, limit, exceeded_event, observe_event, capture_line, skip_oversized_line
         )
     data = bytearray()
     pending = bytearray()
@@ -399,12 +399,15 @@ async def _read_filtered(
     exceeded_event: asyncio.Event,
     observe_event: Callable[[bytes], None] | None,
     capture_line: Callable[[bytes], bytes],
-    skip_oversized_lines: bool,
+    skip_oversized_line: Callable[[bytes], bool] | None,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
     exceeded = False
     discarding = False
+
+    def skippable(line: bytes | bytearray) -> bool:
+        return skip_oversized_line is not None and skip_oversized_line(bytes(line[:256]))
 
     def capture(line: bytes) -> None:
         nonlocal exceeded
@@ -426,14 +429,15 @@ async def _read_filtered(
             if discarding:
                 discarding = False
             elif len(line) > limit:
-                exceeded = not skip_oversized_lines
+                exceeded = not skippable(line)
             else:
                 capture(bytes(line))
             if exceeded:
                 break
         # Bound a single unterminated event independently of retained result bytes.
         if len(pending) > limit:
-            if skip_oversized_lines:
+            # Once discarding, pending holds only the tail of the line being dropped.
+            if discarding or skippable(pending):
                 discarding = True
                 pending.clear()
             else:
