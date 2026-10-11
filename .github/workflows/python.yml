@@ -34,7 +34,7 @@ jobs:
           skill = "skills/agentnave-manager"
           required = ["pyproject.toml", "src/agentnave/__init__.py", f"{skill}/SKILL.md"]
           required += [f"{skill}/references/{name}.md" for name in
-                       ("claude", "codebuddy", "codex", "grok", "antigravity")]
+                       ("claude", "codebuddy", "codex", "grok", "antigravity", "pi")]
           archive = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "--", *required])
           with tarfile.open(fileobj=io.BytesIO(archive)) as source:
               for name in required:

@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.13.0` contains the runtime source, `agentnave-manager` Skill and all five
+**Paired release:** `v0.14.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.13.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.14.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -311,7 +311,7 @@ requirements, not claims that every host/version combination has been live-teste
 
 Use the host's Skill installer or existing deployment manager to install
 `skills/agentnave-manager/` from the **same `AGENTNAVE_RELEASE` tag** as the runtime.
-Install the whole directory, including `SKILL.md` and all five files in `references/`.
+Install the whole directory, including `SKILL.md` and every file in `references/`.
 The Skill content is shared across hosts; the destination and discovery scope belong to the host.
 
 The checked macOS user-level discovery locations are listed below as examples; use the host's
@@ -452,7 +452,7 @@ protocol/provider path, not every desktop host's discovery or long-result render
 versions above are observations from 2026-09-08, not an all-version compatibility guarantee.
 
 Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
-and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all five
+and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all six CLI
 references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
 through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
@@ -516,6 +516,13 @@ conversation at startup: each indexes history read-only and locks a record only 
 `list_conversations` adds `writable`; `false` means another running service holds that record.
 Update runtime and Skill together and reconnect MCP on every host so all services use the new
 locking behavior. The paired Skill now defaults Codex to `gpt-6.1-sol` / `high`.
+
+### Upgrading from v0.13.0 to v0.14.0
+
+Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools or history
+migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
+and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
+separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
 
 ## Upgrade, repair, and rollback
 
