@@ -65,7 +65,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.13.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.14.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
@@ -79,7 +79,7 @@ A calling Agent can act as director: choose a seat, send unread public dialogue,
 candidate reply, then publish or discard it. A shared public board collects published dialogue for every participant. A separate director desk
 mirrors that board and additionally shows private instructions, drafts, and turn state. The same mechanism works for technical discussions and an AI show.
 
-Participant profiles support all five CLI adapters, including the director host’s own CLI. Each seat
+Participant profiles support all six CLI adapters, including the director host’s own CLI. Each seat
 resumes its own native session, receiving only unread public messages and the current instruction.
 Provider-specific discussion profiles restrict tools without changing ordinary invocation defaults.
 The director can speak publicly as the host. A tavern-style chat displays original avatars, speaker filters,
@@ -112,7 +112,7 @@ Independent rounds can explicitly mark unanswered seats with `mark_discussion_ab
 
 ## The MCP surface
 
-This section describes `v0.13.0`, which retains native Windows process-tree supervision and
+This section describes `v0.14.0`, which retains native Windows process-tree supervision and
 the fixed five-minute wait contract introduced in `v0.9.0`.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.
