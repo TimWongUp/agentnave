@@ -258,11 +258,10 @@ class Studio(Groups):
         if not decisions:
             raise ValueError("decisions must name at least one seat")
         live = self._rounds.get(round_id)
-        running = live is not None and not live.finished
-        # A running round's reviews live in memory; a stopped one's only in its record.
+        # A round of this process keeps its reviews in memory; a restored one only on disk.
         current: dict[str, Review | None] = (
             self.reviews.setdefault(round_id, {})
-            if running
+            if live is not None
             else {seat.seat_id: seat.review for seat in saved.seats}
         )
         for seat_id, decision in decisions.items():
@@ -271,31 +270,32 @@ class Studio(Groups):
                 raise ValueError(f"seat {seat_id} has no answer to review in this round")
             if review not in ("pending", decision):
                 raise ValueError(f"seat {seat_id} was already decided: {review}")
-            if running and live is not None and live.cancelling and review == "pending":
+            if live is not None and live.cancelling and review == "pending":
                 # Cancel discards undecided answers; a late publish must not slip in.
                 raise ValueError("this round is being cancelled; undecided answers are discarded")
-        before = dict(current)
-        current.update(decisions)
-        for seat in saved.seats:
-            seat.review = current.get(seat.seat_id, seat.review)
-        added: list[EntryRecord] = []
-        if not running and not saved.pending_review():
-            # The round stopped running (restart): commit what it left directly.
-            added = record.state.commit_ended(saved)
-        try:
-            record.save()
-        except OSError:
-            if running:
+        if live is not None:
+            before = dict(current)
+            current.update(decisions)
+            try:
+                self._save(live.group)
+            except OSError:
                 current.clear()
                 current.update(before)
-            raise
-        group = self._groups.get(record.state.id)
-        if group is not None:
-            group.entries.extend(
-                Entry(item.round, item.kind, item.seat, item.text) for item in added
-            )
-        if live is not None:
+                raise
             live.notify()
+        else:
+            for seat in saved.seats:
+                if seat.seat_id in decisions:
+                    seat.review = decisions[seat.seat_id]
+            added: list[EntryRecord] = []
+            if not saved.pending_review():
+                added = record.state.commit_ended(saved)  # what the stopped round left
+            record.save()
+            group = self._groups.get(record.state.id)
+            if group is not None:
+                group.entries.extend(
+                    Entry(item.round, item.kind, item.seat, item.text) for item in added
+                )
         self._publish(record)
         result = _find(record.state, round_id)
         assert result is not None

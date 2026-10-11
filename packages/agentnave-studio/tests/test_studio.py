@@ -556,3 +556,30 @@ async def test_failed_review_save_still_discards_after_restart(
             "run_round",
             {"group_id": group_id, "seats": ["b"], "order": "parallel", "prompt": "next"},
         )
+
+
+@pytest.mark.asyncio
+async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.group import GroupSeat
+
+    studio = Studio(InvocationManager(), data_root)
+    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
+    record = studio.open_show("Rollback", tmp_path, seats, review=True, isolated=False)
+    round_ = studio.run(record.state.id, ["a"], "parallel", "go", {})
+    assert (await studio.wait(round_.id, 30))[1] == "review_needed"
+
+    def failing_replace(source: str, target: Path) -> None:
+        raise OSError("disk full")
+
+    replace = os.replace
+    monkeypatch.setattr(os, "replace", failing_replace)
+    await studio.cancel(round_.id)  # discards in memory; the record still says pending
+    monkeypatch.setattr(os, "replace", replace)
+    with pytest.raises(ValueError, match="already decided: discard"):
+        studio.decide(round_.id, {"a": "publish"})
+    studio.decide(round_.id, {"a": "discard"})
+    assert [entry.kind for entry in record.state.entries] == ["task"]
+    await studio.manager.shutdown()
+    await studio.close()
