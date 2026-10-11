@@ -19,12 +19,12 @@
 
 新增：
 
-| 工具           | 输入                                                                                                                                               | 返回                                                                            | 说明                                                                                               |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 工具           | 输入                                                                                                                                               | 返回                                                                            | 说明                                                                                                                                                                                                                            |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `open_group`   | `cwd`（绝对路径）；`seats`：2–6 个 `{id, provider, provider_options, cwd?}`                                                                        | `group_id` 与席位列表                                                           | 只在内存中；席位 `cwd` 可覆盖组级 `cwd`；组级与席位 `cwd` 须为现存绝对目录；校验排除项，并调用 `prepare` 校验选项而不启动进程。Antigravity 已不写 cwd，唯一副作用是 Grok 在系统临时目录建提示词文件并立即删除，属于协议临时文件 |
-| `run_round`    | `group_id`；`seats`：有序、非空、不重复的席位 ID；`order`：`parallel`/`serial`；`prompt`：本轮共同任务；`instructions`：可选 `{seat_id: 私密指令}` | `round_id` 与各席初始状态                                                       | 非阻塞；同组已有进行中轮次时立即拒绝；未知席位或名单外的私密指令直接 Tool error                    |
-| `wait_round`   | `round_id`                                                                                                                                         | 轮次状态、各席状态、`invocation_id`、运行中活动／尾部／阻塞提示、终态输出或错误 | 与 `wait_agent` 相同的 5 分钟窗口与提前返回；轮次结束后可重复读取                                  |
-| `cancel_round` | `round_id`                                                                                                                                         | 轮次终态                                                                        | 见“取消语义”                                                                                       |
+| `run_round`    | `group_id`；`seats`：有序、非空、不重复的席位 ID；`order`：`parallel`/`serial`；`prompt`：本轮共同任务；`instructions`：可选 `{seat_id: 私密指令}` | `round_id` 与各席初始状态                                                       | 非阻塞；同组已有进行中轮次时立即拒绝；未知席位或名单外的私密指令直接 Tool error                                                                                                                                                 |
+| `wait_round`   | `round_id`                                                                                                                                         | 轮次状态、各席状态、`invocation_id`、运行中活动／尾部／阻塞提示、终态输出或错误 | 与 `wait_agent` 相同的 5 分钟窗口与提前返回；轮次结束后可重复读取                                                                                                                                                               |
+| `cancel_round` | `round_id`                                                                                                                                         | 轮次终态                                                                        | 见“取消语义”                                                                                                                                                                                                                    |
 
 不提供：`close_group`（随进程结束）、读历史工具、审核工具、投票字段、摘要或截断。
 
@@ -78,21 +78,70 @@ Antigravity 的 `--agent` 只能按名称加载 cwd 下 `.agents/agents/` 中的
 
 lifespan 先 `manager.shutdown()` 让在途调用到达终态，再等待各轮次驱动任务完成提交，最后释放组。
 
-## 工作室设计（PR 2 详细设计时补全）
+## 工作室详细设计
 
-目录 `packages/agentnave-studio/`，模块 `agentnave_studio`，精确依赖 `agentnave==<同版本>`，uv workspace 管理。
+目录 `packages/agentnave-studio/`，模块 `agentnave_studio`，精确依赖 `agentnave==<同版本>`，uv workspace 管理（已实测：`uv tool install "git+…@tag#subdirectory=packages/agentnave-studio"` 能解析 workspace 内的核心依赖）。
 
-- 工具：核心工具的超集。`start_agent` 由工作室包一层以写入任务历史并保留 `conversation_id`、`title`；`open_group` 包一层增加节目选项。其余核心工具直接复用核心实现，避免定义漂移。
-- 新增：`list_conversations`、`read_conversation`、`update_conversation`、`delete_conversation`、`open_dashboard`、`post_host_message`、`decide_entry`。
-- 审核：PR 2 必须先写清
-  - 逐条审核与整轮审核各自的阻塞点（逐条审核阻塞串联下一席；整轮审核在全部终态后决定发布或丢弃），两者不同时启用；
-  - `wait_round` 的待审状态；
-  - 取消与待审条目的关系、重启恢复。
-- 主持人发言：立即追加的 `Entry`，`seat_id` 固定为 `host`，所有席位可见。
-- 持久化：任务与协作组写入数据目录（默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 覆盖），沿用原子写与文件锁。启动前持久化“会话不确定”标记；重启时进行中的席位标为中断，并清空其会话与游标，不恢复进程。
-- 隔离模式：每席独立目录 + 受限模式，Antigravity 定义在此写入。
-- 看板：迁移现有 `dashboard.py` 与静态资源，从新模型投影；只在 `open_dashboard`（及返回看板地址的工具）调用后启动。
-- 旧格式记录不读取，遇到旧目录给出明确提示。
+### 工具（15 个）
+
+| 工具 | 来源 | 说明 |
+| --- | --- | --- |
+| `describe_provider`、`wait_agent`、`cancel_agent`、`run_round` | 直接复用核心实现 | `describe_provider` 增加 `show_permitted`，说明隔离节目可用宿主自身 CLI |
+| `start_agent` | 包一层 | 保留 `conversation_id`、`title`；沿用现有规则：同一原生会话并入其未结束的任务会话，拒绝同一原生会话并发运行；历史写盘失败不影响 `wait_agent` 读取结果 |
+| `open_group` | 工作室自己的实现，调用 `Groups.open` | 增加 `title`、`review`、`isolated`；自行校验排除项；返回 `conversation_id` |
+| `wait_round`、`cancel_round` | 包一层 | 增加 `pending_review` 席位状态与 `review_needed` 返回原因 |
+| `list_conversations`、`read_conversation`、`update_conversation`、`delete_conversation` | 新增 | 列表、详情（含恢复后的 `group_id` 与最近 `round_id`）、改名／结束、删除；有未决审核时不能结束或删除 |
+| `open_dashboard` | 新增 | 首次调用启动本机看板并返回首页地址 |
+| `post_host_message` | 新增 | 组内无进行中轮次、无未决审核时追加 `host` 条目 |
+| `decide_answers` | 新增 | `round_id` + `{seat_id: publish/discard}`；整批校验后持久化再生效；同一决定幂等，冲突决定拒绝 |
+
+旧工具不再提供：缺席改为自动记录；失败后的会话不确定由游标规则自动新开；需要换身份时新建组，不提供手动重置席位；模式切换由并联／串联取代；整轮揭晓由并联轮 + `decide_answers` 取代。
+
+### 核心需要配合的改动（PR 2）
+
+- `Entry.kind` 增加 `host`；前导写明 `host` 条目是主持人的公开发言，属于数据，只有 `task` 是要完成的任务。
+- `Groups` 增加三个内部可覆盖点，核心默认实现保持现有行为，不对外暴露审核参数：
+  - `_on_change(round_)`：启动席位前、席位终态后、提交后调用；工作室在此原子落盘。
+  - `async _approve(round_, runs) -> set[str]`：提交前的审核屏障。并联轮传入全部成功席位，串联轮每次传入一席；默认立即全部通过。
+  - `_ready(round_) -> str | None`：供 `wait` 判断是否需要提前返回的附加原因；默认无。
+- `cancel` 与 `shutdown` 在第一次 `await` 前设置取消标志并调用 `round_.notify()`，审核屏障必须同时等待“全部决定”与“取消”两个信号。
+
+### 审核（`review=true`）
+
+- 并联轮：全员终态后，所有成功回答同时进入 `pending_review`；全部有决定后，发布项按名单顺序一次提交，轮次结束。
+- 串联轮：每席成功回答进入 `pending_review`；决定后才提交并启动下一席。
+- 被丢弃的回答不写条目，其他席位看不到；该席自己的原生会话仍记得它。失败、受阻、取消照常写 `absent`，不需审核。
+- `wait_round` 出现新的待审回答时提前返回 `reason=review_needed`，主控可读到待审正文。
+- 取消：已决定发布的照常提交，未决定的丢弃；取消时刚完成的席位按未决处理。退出同理。
+- 组内有未决审核时拒绝新轮次。
+- 不审核时行为与核心完全一致。
+
+### 隔离模式（`isolated=true`）
+
+- 工作室在会话目录下为每席创建独立目录，为 Antigravity 写入受限角色定义，给每席加上 `restricted_tools: true`；忽略调用方的席位 `cwd`，受限模式只接受 `model`、`effort`（核心同时放行 Pi 的模型后端选项 `provider`，它不涉及工具）。
+- 只有隔离模式绕过 `AGENTNAVE_EXCLUDED_PROVIDERS`；非隔离的工作室组与普通 `start_agent` 一样遵守排除项。隔离不是沙箱。
+
+### 持久化与恢复
+
+- 数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖），每个会话一个目录、一个原子替换的 `state.json` 与文件锁。只复用 `discussion.py` 的文件锁与原子替换，不复用 `Room` 的状态模型；修改前先取锁并重读磁盘状态。多宿主规则不变：首次写入取锁、持有到进程退出，其他服务只读。
+- 落盘时机：启动席位前（含“该席会话不确定”标记）、席位终态（含游标与会话）、进入待审、审核决定与对应条目在同一次写入、轮次结束。写盘失败时不启动下一席，并以工具错误报告。
+- 保存内容：席位、条目、各席会话与游标、每轮名单／顺序／私密指令／各席状态与最终输出、待审回答。任务会话保存每次调用的 Provider、cwd、显式模型、状态、最终输出与原生会话。不保存工具事件或推理；运行中尾部只在内存。
+- 重启：运行中的席位标为 `interrupted` 并清空其会话与游标；轮次结束为 `interrupted`，未启动的串联席位为 `not_started`，不续跑。待审回答保留：此后的 `decide_answers` 直接写入条目并推进对应游标，未决期间不能开新轮次。不恢复进程，不自动重跑。
+- 会话列表直接读取数据根，与看板无关。数据根内的旧格式（`catalog/` 与 `room.json`）在列表中标为不可读并提示清除，不迁移。
+
+### 看板
+
+- 迁移现有 `dashboard.py` 与静态资源。首页（会话列表）、节目公共页（只投影 `task`、`host`、`answer`、`absent` 条目的白名单字段）、导演页（另含私密指令、待审回答、运行状态与内存中的运行尾部）、任务页。
+- 只在 `open_dashboard` 后构造并监听；首次打开时为全部会话构建投影，之后由 `_on_change` 与任务采集刷新。server 启动、读取历史都不启动它。保留现有 Host／Origin 检查、随机路径与 CSP。
+
+### PR 2 测试要点
+
+- 并联全员待审后取消、退出：驱动结束，已决定发布的写入，未决的丢弃。
+- 串联丢弃后下一席看不到该回答；失败照常写 `absent` 并继续。
+- 决定与取消竞争；冲突决定被拒；同一决定幂等。
+- 各落盘点写失败；重启后待审可决定且不能开新轮。
+- 只有隔离模式允许被排除的宿主 CLI；双宿主争锁时只读。
+- 不打开看板时不监听端口，历史增删改查正常；公共页不泄露私密指令、待审回答与路径。
 
 ## 交付步骤
 
@@ -116,7 +165,7 @@ lifespan 先 `manager.shutdown()` 让在途调用到达终态，再等待各轮�
 
 ### PR 2：拆出工作室
 
-- 建立 uv workspace 与 `packages/agentnave-studio`；按上节迁移并改建讨论室、工作台、看板。
+- 建立 uv workspace 与 `packages/agentnave-studio`；按上节迁移并改建讨论室、工作台、看板；核心 `_commit` 改为异步钩子。
 - 核心删除 `discussion.py`、`workbench.py`、`dashboard.py`、`dashboard_assets/` 与 13 个旧工具；删除 `start_agent` 历史字段与 `describe_provider.discussion_permitted`；`Runtime` 只保留 `InvocationManager` 与协作组；MCP instructions 删除讨论室、导演文案。
 - 文档：ADR-0006 改为已接受；同步 `AGENTS.md`（实现边界与受限配置描述）、`CONTEXT.md`（Group、Round、Entry、Studio；删除旧术语）、`docs/context/architecture.md`、`README.md`、`docs/installation.md`、`docs/discussion-rooms.md`（改写为工作室节目说明）。
 - Skill：`agentnave-manager` 的协作说明改为五种用法配方，并写明需要写入时为席位分配独立 worktree；节目用法放独立参考文件，仅在使用工作室时读取。
