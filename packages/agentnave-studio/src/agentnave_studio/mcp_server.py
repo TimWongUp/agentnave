@@ -39,7 +39,7 @@ class Runtime(core.Runtime):
     def __init__(self) -> None:
         super().__init__()
         root = Path(os.environ.get("AGENTNAVE_DATA_DIR", str(Path.home() / ".agentnave")))
-        self.studio = Studio(self.manager, root)
+        self.studio = Studio(self.manager, root, EXCLUDED_PROVIDERS)
         # Core round tools reach the studio through the groups attribute.
         self.groups = self.studio
 
@@ -240,12 +240,6 @@ async def open_group(
     native session across rounds, also after a server restart. Excluded providers are rejected
     unless isolated. Isolation restricts tools; it is not an OS sandbox.
     """
-    excluded = sorted({seat.provider for seat in seats} & EXCLUDED_PROVIDERS)
-    if excluded and not isolated:
-        raise ToolError(
-            f"Excluded providers: {', '.join(excluded)}. Use isolated=true for a show with them. "
-            + PROVIDER_SELECTION
-        )
     try:
         record = _studio(ctx).open_show(
             title,

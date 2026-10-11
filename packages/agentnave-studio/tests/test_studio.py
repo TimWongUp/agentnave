@@ -14,7 +14,7 @@ from mcp import Client
 from agentnave.core import InvocationManager
 from agentnave_studio import mcp_server as studio_server
 from agentnave_studio.mcp_server import mcp
-from agentnave_studio.store import Record
+from agentnave_studio.store import Conversation, RoundRecord, SeatRunRecord
 from agentnave_studio.studio import Studio
 
 
@@ -219,6 +219,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         assert [(entry["kind"], entry["seat"]) for entry in entries if entry["round"] == 3] == [
             ("task", None),
             ("answer", "a"),
+            ("absent", "b"),  # still running at the crash
         ]
 
 
@@ -232,7 +233,7 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         excluded = await client.call_tool(
             "open_group", {"title": "Open", "cwd": str(tmp_path), "seats": seats}
         )
-        assert excluded.is_error and "isolated=true" in str(excluded.content)
+        assert excluded.is_error and "only isolated shows" in str(excluded.content)
         invalid = await client.call_tool(
             "open_group",
             {
@@ -372,7 +373,7 @@ async def test_second_server_reads_but_cannot_write_a_held_show(
 
 @pytest.mark.asyncio
 async def test_save_failure_stops_a_serial_round_before_the_next_seat(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with Client(mcp) as client:
         show = await _call(
@@ -384,17 +385,17 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
                 "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
             },
         )
-        save = Record.save
+        replace = os.replace
         calls = 0
 
-        def failing_save(self: Record) -> None:
+        def failing_replace(source: str, target: Path) -> None:
             nonlocal calls
             calls += 1
-            if calls > 1:  # the first save records a's launch; later ones fail
+            if calls > 1:  # the first write records a's launch; later ones fail
                 raise OSError("disk full")
-            save(self)
+            replace(source, target)
 
-        monkeypatch.setattr(Record, "save", failing_save)
+        monkeypatch.setattr(os, "replace", failing_replace)
         started = await _call(
             client,
             "run_round",
@@ -403,3 +404,104 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
         done = await _wait(client, started["round_id"])
         assert "state_write_failed" in str(done["error"])
         assert [seat["status"] for seat in _seats(done)] == ["succeeded", "not_started"]
+        monkeypatch.setattr(os, "replace", replace)
+        # The next successful write restores the whole round, not only the new entry.
+        await _call(
+            client, "post_host_message", {"conversation_id": show["group_id"], "text": "ok"}
+        )
+    saved = json.loads(
+        (data_root / "conversations" / str(show["group_id"]) / "state.json").read_text()
+    )
+    assert [seat["status"] for seat in saved["rounds"][0]["seats"]] == ["succeeded", "not_started"]
+    assert [entry["kind"] for entry in saved["entries"]] == ["task", "answer", "host"]
+    assert saved["sessions"]["a"]["session_id"] is not None
+
+
+@pytest.mark.parametrize("review", [False, True])
+def test_crash_recovery_keeps_answers_that_ended_before_the_crash(review: bool) -> None:
+    state = Conversation(id="c", title="t", kind="show", review=review)
+    state.rounds.append(
+        RoundRecord(
+            id="r",
+            number=1,
+            order="parallel",
+            seats=[
+                SeatRunRecord(seat_id="a", status="succeeded", output="done"),
+                SeatRunRecord(seat_id="b", status="running"),
+            ],
+        )
+    )
+    state.recover()
+    kinds = [(entry.kind, entry.seat, entry.text) for entry in state.entries]
+    if review:
+        # The answer had not reached review yet: it waits for a decision instead of vanishing.
+        assert state.pending_review() and kinds == []
+        state.rounds[0].seats[0].review = "publish"
+        state.commit_ended(state.rounds[0])
+        kinds = [(entry.kind, entry.seat, entry.text) for entry in state.entries]
+    assert kinds == [("answer", "a", "done"), ("absent", "b", "interrupted")]
+    state.recover()  # idempotent
+    assert len(state.entries) == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_a_publish_that_arrives_after_it(
+    tmp_path: Path, data_root: Path
+) -> None:
+    from agentnave.group import GroupSeat
+
+    studio = Studio(InvocationManager(), data_root)
+    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
+    record = studio.open_show("Late", tmp_path, seats, review=True, isolated=False)
+    round_ = studio.run(record.state.id, ["a"], "parallel", "go", {})
+    assert (await studio.wait(round_.id, 30))[1] == "review_needed"
+    cancel = asyncio.create_task(studio.cancel(round_.id))
+    await asyncio.sleep(0)  # cancel has flagged the round; the review barrier has not resumed
+    with pytest.raises(ValueError, match="being cancelled"):
+        studio.decide(round_.id, {"a": "publish"})
+    await cancel
+    assert [entry.kind for entry in record.state.entries] == ["task"]
+    await studio.manager.shutdown()
+    await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_restored_show_keeps_this_hosts_exclusions(tmp_path: Path, data_root: Path) -> None:
+    from agentnave.group import GroupSeat
+
+    first = Studio(InvocationManager(), data_root)
+    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
+    record = first.open_show("Saved", tmp_path, seats, review=False, isolated=False)
+    await first.close()
+    second = Studio(InvocationManager(), data_root, frozenset({"claude"}))
+    with pytest.raises(ValueError, match="Excluded providers: claude"):
+        second.run(record.state.id, ["a"], "parallel", "go", {})
+    await second.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need extra privileges on Windows")
+@pytest.mark.asyncio
+async def test_delete_never_follows_symlinks_out_of_seat_folders(
+    tmp_path: Path, data_root: Path
+) -> None:
+    from agentnave.group import GroupSeat
+
+    studio = Studio(InvocationManager(), data_root)
+    seats = [GroupSeat("a", "claude", {}, tmp_path), GroupSeat("g", "antigravity", {}, tmp_path)]
+    record = studio.open_show("Iso", None, seats, review=False, isolated=True)
+    seat_dirs = data_root / "conversations" / record.state.id / "seats"
+    profile = seat_dirs / "g" / ".agents" / "agents" / "agentnave-discussion.md"
+    external = tmp_path / "external" / ".agents"
+    (external / "agents").mkdir(parents=True)
+    (external / "agents" / profile.name).write_bytes(profile.read_bytes())
+    profile.unlink()
+    for seat in ("a", "g"):
+        target = seat_dirs / seat / ".agents"
+        if target.exists():
+            (target / "agents").rmdir()
+            target.rmdir()
+        target.symlink_to(external, target_is_directory=True)
+    studio.update(record.state.id, None, True)
+    studio.delete(record.state.id)
+    assert (external / "agents" / profile.name).is_file()
+    await studio.close()

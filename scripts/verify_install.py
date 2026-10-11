@@ -36,16 +36,38 @@ STUDIO = [
 ]
 
 
+_WINDOWS_LISTENERS = """
+$ids = @({pid}); $all = Get-CimInstance Win32_Process
+do {{
+  $new = @($all | Where-Object {{ $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId }} | ForEach-Object {{ $_.ProcessId }})
+  $ids += $new
+}} while ($new.Count)
+@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {{ $ids -contains $_.OwningProcess -and $_.OwningProcess -ne {pid} }}).Count
+"""
+
+
 def _listening() -> bool:
-    """Whether a server process started by this script listens on TCP (POSIX only)."""
-    children = subprocess.run(
-        ["pgrep", "-P", str(os.getpid())], capture_output=True, text=True
-    ).stdout.split()
+    """Whether a server process started by this script listens on TCP."""
+    if os.name == "nt":
+        count = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", _WINDOWS_LISTENERS.format(pid=os.getpid())],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        return int(count.strip()) > 0
+    pids: list[str] = []
+    parents = [str(os.getpid())]
+    while parents:  # launchers may start the server as a grandchild
+        parents = subprocess.run(
+            ["pgrep", "-P", ",".join(parents)], capture_output=True, text=True
+        ).stdout.split()
+        pids += parents
     return any(
         subprocess.run(
             ["lsof", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-t"], capture_output=True
         ).stdout.strip()
-        for pid in children
+        for pid in pids
     )
 
 
@@ -56,14 +78,11 @@ async def _check(launcher: str, expected: list[str], home: Path, *, studio: bool
         names = [tool.name for tool in (await client.list_tools()).tools]
         assert names == expected, names
         assert not any(home.iterdir()), f"{launcher} wrote files before any request"
-        posix = os.name != "nt"
-        if posix:
-            assert not _listening(), f"{launcher} listens before open_dashboard"
+        assert not _listening(), f"{launcher} listens before open_dashboard"
         if studio:
             opened = await client.call_tool("open_dashboard", {})
             assert not opened.is_error, opened.content
-            if posix:
-                assert _listening(), "open_dashboard did not start the dashboard"
+            assert _listening(), "open_dashboard did not start the dashboard"
 
 
 async def main(core: str, studio: str) -> None:

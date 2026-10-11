@@ -116,29 +116,48 @@ class Conversation(BaseModel):
                     self.sessions[seat.seat_id] = SessionRecord()
                 elif seat.status == "pending":
                     seat.status = "not_started"
+                elif (
+                    self.review
+                    and seat.status == "succeeded"
+                    and seat.review is None
+                    and not seat.committed
+                ):
+                    seat.review = "pending"  # ended before its review began
             if not round_.pending_review():
-                self.commit_decided(round_)
+                self.commit_ended(round_)
         for task in self.tasks:
             if task.status == "running":
                 task.status = "interrupted"
                 task.error = "server_restarted; previous invocation cannot resume"
 
-    def commit_decided(self, round_: RoundRecord) -> list[EntryRecord]:
-        """Write published answers decided after their round stopped running, in seat order."""
+    def commit_ended(self, round_: RoundRecord) -> list[EntryRecord]:
+        """Commit what a stopped round left uncommitted, in seat order; call once no seat
+        awaits review."""
         added: list[EntryRecord] = []
         for seat in round_.seats:
-            if seat.review is not None and not seat.committed:
-                seat.committed = True
-                if seat.review == "publish":
-                    added.append(
-                        EntryRecord(
-                            round=round_.number,
-                            kind="answer",
-                            seat=seat.seat_id,
-                            text=seat.output,
-                            time=now(),
-                        )
+            if seat.committed or seat.status in ("pending", "running", "not_started"):
+                continue
+            seat.committed = True
+            if seat.status != "succeeded":
+                added.append(
+                    EntryRecord(
+                        round=round_.number,
+                        kind="absent",
+                        seat=seat.seat_id,
+                        text=seat.status,
+                        time=now(),
                     )
+                )
+            elif seat.review != "discard":
+                added.append(
+                    EntryRecord(
+                        round=round_.number,
+                        kind="answer",
+                        seat=seat.seat_id,
+                        text=seat.output,
+                        time=now(),
+                    )
+                )
         self.entries.extend(added)
         return added
 

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import os
 import shutil
+from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal, TypedDict
 from uuid import uuid4
 
 from agentnave.adapters import get_adapter
-from agentnave.adapters.antigravity import restricted_profile, write_restricted_profile
+from agentnave.adapters.antigravity import remove_restricted_profile, write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
 from agentnave.models import InvocationRequest
@@ -48,9 +50,12 @@ class Studio(Groups):
     servers can read it. Running processes never survive a restart.
     """
 
-    def __init__(self, manager: InvocationManager, root: Path) -> None:
+    def __init__(
+        self, manager: InvocationManager, root: Path, excluded: frozenset[str] = frozenset()
+    ) -> None:
         super().__init__(manager)
         self.root = root.resolve()  # created only by the first saved conversation
+        self.excluded = excluded  # this host's exclusions; only isolated shows may bypass them
         self.records: dict[str, Record] = {}
         self.unavailable: list[Unavailable] = []
         self.invocations: dict[str, set[str]] = {}
@@ -69,6 +74,7 @@ class Studio(Groups):
         for conversation_id in set(self.records) - set(found):
             if self.records[conversation_id].lock is None:
                 del self.records[conversation_id]  # deleted by another server
+                self._unpublish(conversation_id)
         writable: dict[str, bool] = {}
         for conversation_id, directory in found.items():
             try:
@@ -79,9 +85,12 @@ class Studio(Groups):
                         raise ValueError("record id does not match its directory")
                     self.records[conversation_id] = record
                 writable[conversation_id] = record.refresh()
+                self._publish(record, home=False)  # show what another server saved
             except (OSError, ValueError) as exc:
                 self.records.pop(conversation_id, None)
+                self._unpublish(conversation_id)
                 self.unavailable.append(Unavailable(path=str(directory), reason=str(exc)))
+        self._publish_home()
         return writable
 
     def record(self, conversation_id: str) -> Record:
@@ -129,8 +138,10 @@ class Studio(Groups):
                 )
                 for seat in seats
             ]
-        elif cwd is None:
-            raise ValueError("cwd is required unless isolated is true")
+        else:
+            self._check_excluded(seat.provider for seat in seats)
+            if cwd is None:
+                raise ValueError("cwd is required unless isolated is true")
         try:
             if isolated:
                 directory.mkdir(parents=True, mode=0o700)
@@ -204,7 +215,18 @@ class Studio(Groups):
             raise ValueError("this conversation has ended; reopen it with update_conversation")
         if state.pending_review():
             raise ValueError("answers are waiting for review; call decide_answers first")
+        if not state.isolated:
+            # A show saved by another host may name providers this host excludes.
+            providers = {seat.id: seat.provider for seat in state.seats}
+            self._check_excluded(providers[seat] for seat in seat_ids if seat in providers)
         return super().run(group_id, seat_ids, order, prompt, instructions)
+
+    def _check_excluded(self, providers: Iterable[str]) -> None:
+        excluded = sorted(set(providers) & self.excluded)
+        if excluded:
+            raise ValueError(
+                f"Excluded providers: {', '.join(excluded)}; only isolated shows may include them"
+            )
 
     def post(self, conversation_id: str, text: str) -> None:
         group = self._group(conversation_id)
@@ -234,24 +256,28 @@ class Studio(Groups):
         seats = {seat.seat_id: seat for seat in saved.seats}
         if not decisions:
             raise ValueError("decisions must name at least one seat")
+        live = self._rounds.get(round_id)
+        running = live is not None and not live.finished
         for seat_id, decision in decisions.items():
             seat = seats.get(seat_id)
             if seat is None or seat.review is None:
                 raise ValueError(f"seat {seat_id} has no answer to review in this round")
             if seat.review not in ("pending", decision):
                 raise ValueError(f"seat {seat_id} was already decided: {seat.review}")
+            if running and live is not None and live.cancelling and seat.review == "pending":
+                # Cancel discards undecided answers; a late publish must not slip in.
+                raise ValueError("this round is being cancelled; undecided answers are discarded")
         for seat_id, decision in decisions.items():
             seats[seat_id].review = decision
-        live = self._rounds.get(round_id)
         added: list[EntryRecord] = []
-        if (live is None or live.finished) and not saved.pending_review():
-            # The round stopped running (restart): commit published answers directly.
-            added = record.state.commit_decided(saved)
+        if not running and not saved.pending_review():
+            # The round stopped running (restart): commit what it left directly.
+            added = record.state.commit_ended(saved)
         record.save()
         group = self._groups.get(record.state.id)
         if group is not None:
             group.entries.extend(
-                Entry(item.round, "answer", item.seat, item.text) for item in added
+                Entry(item.round, item.kind, item.seat, item.text) for item in added
             )
         if live is not None:
             live.notify()
@@ -297,11 +323,12 @@ class Studio(Groups):
             key for key, item in self._rounds.items() if item.group.id == conversation_id
         ]:
             del self._rounds[round_id]
-        if self.dashboard is not None:
-            for token in self.tokens.pop(conversation_id, ()):
-                self.dashboard.snapshots.pop(token, None)
+        self._unpublish(conversation_id)
         if record.state.isolated:
-            _prune_seats(record.directory / "seats")
+            _prune_seats(
+                record.directory / "seats",
+                {seat.id for seat in record.state.seats if seat.provider == "antigravity"},
+            )
         # Keep the directory and its lock file: a removed lock inode could let two servers
         # lock different files at the same path.
         record.release()
@@ -405,9 +432,10 @@ class Studio(Groups):
     # Group hooks
 
     def _on_change(self, round_: Round) -> None:
-        self._save(round_.group, round_)
+        self._save(round_.group)
 
-    def _save(self, group: Group, round_: Round | None = None) -> None:
+    def _save(self, group: Group) -> None:
+        """Write the whole live group, so a save after a failed one restores every round."""
         record = self.records[group.id]
         state = record.state
         state.entries.extend(
@@ -420,7 +448,12 @@ class Studio(Groups):
             seat_id: SessionRecord(session_id=item.session_id, cursor=item.cursor)
             for seat_id, item in group.states.items()
         }
-        if round_ is not None:
+        committed = {
+            (item.round, item.seat_id)
+            for item in group.entries
+            if item.kind in ("answer", "absent")
+        }
+        for round_ in [item for item in self._rounds.values() if item.group is group]:
             saved = _find(state, round_.id)
             if saved is None:
                 saved = RoundRecord(
@@ -441,11 +474,6 @@ class Studio(Groups):
                 else "finished"
             )
             saved.error = round_.error
-            committed = {
-                (item.round, item.seat_id)
-                for item in group.entries
-                if item.kind in ("answer", "absent")
-            }
             for run, seat in zip(round_.runs, saved.seats, strict=True):
                 seat.status = run.status
                 seat.output = run.result.output if run.result is not None else None
@@ -494,9 +522,7 @@ class Studio(Groups):
     def open_dashboard(self) -> str:
         if self.dashboard is None:
             self.dashboard = Dashboard()
-            self.scan()
-            for record in self.records.values():
-                self._publish(record, home=False)
+            self.scan()  # projects every readable conversation
             self.refresher = asyncio.create_task(self._refresh_running())
         self._publish_home()
         return self.dashboard.url(self.home_token)
@@ -536,6 +562,12 @@ class Studio(Groups):
         if home:
             self._publish_home()
 
+    def _unpublish(self, conversation_id: str) -> None:
+        tokens = self.tokens.pop(conversation_id, ())
+        if self.dashboard is not None:
+            for token in tokens:
+                self.dashboard.snapshots.pop(token, None)
+
     def _publish_home(self) -> None:
         if self.dashboard is None:
             return
@@ -553,9 +585,12 @@ class Studio(Groups):
         )
 
     async def _refresh_running(self) -> None:
-        # Reply tails live only in memory, so running work is re-projected while it runs.
-        while True:
+        # Reply tails live only in memory, so running work is re-projected while it runs;
+        # records held by other servers are re-read now and then.
+        for tick in itertools.count(1):
             await asyncio.sleep(1.5)
+            if tick % 5 == 0 and any(record.lock is None for record in self.records.values()):
+                self.scan()
             for record in list(self.records.values()):
                 group = self._groups.get(record.state.id)
                 if (group is not None and group.active is not None) or any(
@@ -581,15 +616,17 @@ def _find(state: Conversation, round_id: str) -> RoundRecord | None:
     return next((round_ for round_ in state.rounds if round_.id == round_id), None)
 
 
-def _prune_seats(seats: Path) -> None:
+def _prune_seats(seats: Path, antigravity: set[str]) -> None:
     """Remove the profiles this studio wrote and empty seat folders; keep any CLI files."""
     if not seats.is_dir() or seats.is_symlink():
         return
     for seat in seats.iterdir():
         if seat.is_symlink() or not seat.is_dir():
             continue
-        with suppress(OSError):
-            restricted_profile(seat).unlink(missing_ok=True)
+        if seat.name in antigravity:
+            with suppress(OSError, ValueError):
+                remove_restricted_profile(seat)
+        # os.walk does not descend into symlinked folders, and rmdir never follows one.
         for directory, _, _ in sorted(os.walk(seat), key=lambda item: -len(item[0])):
             if not Path(directory).is_symlink():
                 with suppress(OSError):
