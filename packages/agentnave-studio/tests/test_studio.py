@@ -579,7 +579,9 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
     monkeypatch.setattr(os, "replace", replace)
     with pytest.raises(ValueError, match="already decided: discard"):
         studio.decide(round_.id, {"a": "publish"})
-    studio.decide(round_.id, {"a": "discard"})
-    assert [entry.kind for entry in record.state.entries] == ["task"]
     await studio.manager.shutdown()
-    await studio.close()
+    await studio.close()  # exiting writes the final state the failed save missed
+    restarted = Studio(InvocationManager(), data_root)
+    with pytest.raises(ValueError, match="already decided: discard"):
+        restarted.decide(round_.id, {"a": "publish"})
+    await restarted.close()

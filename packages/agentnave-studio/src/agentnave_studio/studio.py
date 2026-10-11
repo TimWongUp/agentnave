@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import os
 import shutil
+import sys
 from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
@@ -611,6 +612,16 @@ class Studio(Groups):
             if self.refresher is not None:
                 self.refresher.cancel()
                 await asyncio.gather(self.refresher, return_exceptions=True)
+            # Write each group's final state once more: an earlier failed save may have left
+            # a stale running round or undecided review on disk.
+            for group in {item.group.id: item.group for item in self._rounds.values()}.values():
+                if group.id in self.records:
+                    try:
+                        self._save(group)
+                    except OSError as exc:
+                        print(
+                            f"agentnave-studio: could not save {group.id}: {exc}", file=sys.stderr
+                        )
             if self.dashboard is not None:
                 self.dashboard.close()
             for record in self.records.values():
