@@ -585,3 +585,32 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
     with pytest.raises(ValueError, match="already decided: discard"):
         restarted.decide(round_.id, {"a": "publish"})
     await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_task_keeps_its_native_session_when_saving_the_result_fails(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.models import InvocationRequest
+
+    studio = Studio(InvocationManager(), data_root)
+    invocation_id, conversation_id = studio.start_task(
+        InvocationRequest("claude", "one", tmp_path), "Job", None
+    )
+    replace = os.replace
+
+    def failing_replace(source: str, target: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    await asyncio.gather(*studio.collectors)
+    monkeypatch.setattr(os, "replace", replace)
+    result = await studio.manager.wait(invocation_id)
+    assert result is not None and result.session_id
+    resumed, resumed_conversation = studio.start_task(
+        InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
+    )
+    assert resumed_conversation == conversation_id
+    await studio.manager.wait(resumed)
+    await studio.manager.shutdown()
+    await studio.close()

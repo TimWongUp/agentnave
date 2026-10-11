@@ -429,19 +429,22 @@ class Studio(Groups):
         result = await self.manager.wait(invocation_id)
         assert result is not None
         self.running_tasks.pop(task_id, None)
-        task = next(item for item in record.state.tasks if item.id == task_id)
-        task.status = result.status.value
-        task.output = result.output
-        task.session_id = result.session_id or task.session_id
-        task.elapsed_ms = result.duration_ms
-        task.error = result.error.code if result.error else None
+
+        def finish(status: str, error: str | None) -> None:
+            task = next(item for item in record.state.tasks if item.id == task_id)
+            task.status = status
+            task.output = result.output
+            task.session_id = result.session_id or task.session_id
+            task.elapsed_ms = result.duration_ms
+            task.error = error
+
+        finish(result.status.value, result.error.code if result.error else None)
         try:
             record.save()
         except OSError:
-            task = next(item for item in record.state.tasks if item.id == task_id)
-            task.status = "interrupted"
-            task.error = "history_write_failed; use wait_agent for the invocation result"
-            # Keep this terminal state in memory across later failed saves.
+            # The rollback dropped the result; keep it in memory, marked as not saved, so a
+            # resumed native session still joins this conversation.
+            finish("interrupted", "history_write_failed; use wait_agent for the invocation result")
             record.saved = record.state.model_copy(deep=True)
         self._publish(record)
 
