@@ -27,6 +27,9 @@ from agentnave.processes import spawn_process, terminate_process_tree
 _MAX_STDOUT_BYTES = 8 * 1024 * 1024
 _MAX_STDERR_BYTES = 64 * 1024
 _MAX_ERROR_DETAILS = 16_384
+_OUTPUT_LIMIT_ERROR = InvocationError(
+    "output_limit_exceeded", "provider output exceeded the AgentNave capture limit"
+)
 _PIPE_DRAIN_SECONDS = 1.0
 
 
@@ -275,10 +278,7 @@ class InvocationManager:
             )
             if exceeded_task in done and output_exceeded.is_set():
                 terminal = InvocationStatus.FAILED
-                error = InvocationError(
-                    "output_limit_exceeded",
-                    "provider output exceeded the AgentNave capture limit",
-                )
+                error = _OUTPUT_LIMIT_ERROR
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")
@@ -302,6 +302,10 @@ class InvocationManager:
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)
             stdout, stderr = await _finish_streams(stdout_task, stderr_task)
+            # The provider may exit before the readers notice the limit while draining.
+            if terminal is None and (stdout.exceeded or stderr.exceeded):
+                terminal = InvocationStatus.FAILED
+                error = _OUTPUT_LIMIT_ERROR
             parse_returncode = provider_returncode
             if parse_returncode is None:
                 parse_returncode = process.returncode if process.returncode is not None else 1

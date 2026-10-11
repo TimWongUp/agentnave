@@ -6,7 +6,7 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -442,6 +442,28 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
     assert result.output == ""
     await asyncio.sleep(0.6)
     assert not (tmp_path / "provider-survived").exists()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_output_limit_found_while_draining_after_exit_still_fails(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import core
+
+    original = core._read_limited  # pyright: ignore[reportPrivateUsage]
+
+    async def exceeded_without_signal(*args: Any, **kwargs: Any) -> Any:
+        captured = await original(*args, **kwargs)
+        return replace(captured, exceeded=True)
+
+    monkeypatch.setattr(core, "_read_limited", exceeded_without_signal)
+    manager = InvocationManager()
+    result = await manager.wait(manager.start(InvocationRequest("claude", "work", tmp_path)))
+
+    assert result is not None and result.error is not None
+    assert result.status is InvocationStatus.FAILED
+    assert result.error.code == "output_limit_exceeded"
     await manager.shutdown()
 
 
