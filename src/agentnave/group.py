@@ -127,10 +127,14 @@ class Groups:
         self._rounds: dict[str, Round] = {}
 
     def open(self, cwd: Path, seats: list[GroupSeat]) -> Group:
+        if not cwd.is_absolute() or not cwd.is_dir():
+            raise ValueError(f"group cwd must be an existing absolute directory: {cwd}")
+        cwd = cwd.resolve()
         if len({seat.id for seat in seats}) != len(seats):
             raise ValueError("seat ids must be unique")
         for seat in seats:
-            # Prepare only validates; discard any protocol temp file it created.
+            # Prepare only validates without launching; its only side effect is a protocol
+            # temp file (Grok prompt) outside the project, removed here at once.
             request = InvocationRequest(
                 seat.provider, "validate", seat.cwd, None, seat.provider_options
             )
@@ -187,7 +191,8 @@ class Groups:
             changed = round_.changed
             blocked = False
             for run in round_.runs:
-                if run.reported_blockers < len(run.blockers):
+                # A seat that already ended makes its earlier blockers stale.
+                if run.status == "running" and run.reported_blockers < len(run.blockers):
                     run.reported_blockers = len(run.blockers)
                     blocked = True
             if blocked:
@@ -220,8 +225,11 @@ class Groups:
         return round_
 
     async def shutdown(self) -> None:
-        active = [round_.id for round_ in self._rounds.values() if not round_.finished]
-        await asyncio.gather(*(self.cancel(item) for item in active), return_exceptions=True)
+        active = [round_ for round_ in self._rounds.values() if not round_.finished]
+        # Flag every round before the first await so no driver can launch another seat.
+        for round_ in active:
+            round_.cancelling = True
+        await asyncio.gather(*(self.cancel(item.id) for item in active), return_exceptions=True)
 
     def round(self, round_id: str) -> Round:
         return self._round(round_id)

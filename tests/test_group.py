@@ -24,25 +24,31 @@ class FakeManager:
     def __init__(self) -> None:
         self.requests: dict[str, InvocationRequest] = {}
         self.results: dict[str, asyncio.Future[InvocationResult]] = {}
-        self.attention: dict[str, list[InvocationError]] = {}
+        self.attention: dict[str, asyncio.Queue[InvocationError]] = {}
 
     def start(self, request: InvocationRequest) -> str:
         invocation_id = str(len(self.requests) + 1)
         self.requests[invocation_id] = request
         self.results[invocation_id] = asyncio.get_running_loop().create_future()
-        self.attention[invocation_id] = []
+        self.attention[invocation_id] = asyncio.Queue()
         return invocation_id
 
     async def wait_for_update(
         self, invocation_id: str, timeout_seconds: float
     ) -> InvocationResult | InvocationError | None:
-        result = self.results[invocation_id]
-        for _ in range(int(timeout_seconds * 100)):
-            if result.done():
-                return result.result()
-            if self.attention[invocation_id]:
-                return self.attention[invocation_id].pop(0)
-            await asyncio.sleep(0.01)
+        # Wake on completion or attention like InvocationManager, not by polling.
+        result = asyncio.shield(self.results[invocation_id])
+        attention = asyncio.create_task(self.attention[invocation_id].get())
+        try:
+            await asyncio.wait(
+                (result, attention), timeout=timeout_seconds, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            attention.cancel()
+        if result.done():
+            return result.result()
+        if attention.done() and not attention.cancelled():
+            return attention.result()
         return None
 
     async def cancel(self, invocation_id: str) -> InvocationResult:
@@ -158,7 +164,7 @@ async def test_failures_are_absent_and_only_proven_delivery_advances_sessions(
     await settle(groups, first.id)
 
     second = groups.run(group_id, ["a", "b"], "serial", "Q2", {})
-    manager.attention["3"].append(InvocationError("provider_blocked", "waiting"))
+    manager.attention["3"].put_nowait(InvocationError("provider_blocked", "waiting"))
     round_, blocked = await groups.wait(second.id, 2)
     assert blocked and round_.runs[0].status == "running"  # a blocker is not an absence
     assert [entry.kind for entry in second.group.entries][-1] == "task"
@@ -258,3 +264,40 @@ async def test_shutdown_cancels_running_rounds(tmp_path: Path) -> None:
     round_ = groups.run(group_id, ["a", "b"], "serial", "Q1", {})
     await groups.shutdown()
     assert round_.finished and [run.status for run in round_.runs] == ["cancelled", "not_started"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_never_launches_the_next_serial_seat(tmp_path: Path) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+
+    async def wake_first(invocation_id: str, _timeout: float) -> InvocationResult:
+        return await manager.results[invocation_id]  # one hop, so the driver resumes first
+
+    manager.wait_for_update = wake_first  # type: ignore[method-assign]
+    round_ = groups.run(group_id, ["a", "b"], "serial", "Q1", {})
+    await asyncio.sleep(0)  # the driver now waits on seat a
+    manager.finish("1")  # the driver has been woken but has not run yet
+    await groups.shutdown()
+    assert [run.status for run in round_.runs] == ["succeeded", "not_started"]
+    assert set(manager.requests) == {"1"}
+
+
+@pytest.mark.asyncio
+async def test_blockers_of_finished_seats_do_not_wake_wait(tmp_path: Path) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    round_ = groups.run(group_id, ["a", "b"], "parallel", "Q1", {})
+    manager.attention["1"].put_nowait(InvocationError("provider_blocked", "waiting"))
+    await asyncio.sleep(0.05)
+    manager.finish("1")
+    await asyncio.sleep(0.05)
+    _, blocked = await groups.wait(round_.id, 0.1)
+    assert not blocked and [run.status for run in round_.runs] == ["succeeded", "running"]
+    manager.finish("2")
+    await settle(groups, round_.id)
+
+
+@pytest.mark.parametrize("cwd", ["relative", "/does/not/exist"])
+def test_group_cwd_is_checked_even_when_every_seat_overrides_it(tmp_path: Path, cwd: str) -> None:
+    groups = Groups(cast(InvocationManager, FakeManager()))
+    with pytest.raises(ValueError, match="group cwd"):
+        groups.open(Path(cwd), [GroupSeat(s, "claude", {}, tmp_path) for s in "ab"])
