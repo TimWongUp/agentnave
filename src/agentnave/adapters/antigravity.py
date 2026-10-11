@@ -33,13 +33,13 @@ You are a conversation participant. Answer the current user request.
 """
 
 
-def _restricted_profile(directory: Path) -> Path:
+def restricted_profile(directory: Path) -> Path:
     return directory / ".agents" / "agents" / "agentnave-discussion.md"
 
 
 def write_restricted_profile(directory: Path) -> None:
     """Prepare a dedicated seat directory; callers own that directory and its cleanup."""
-    profile = _restricted_profile(directory)
+    profile = restricted_profile(directory)
     profile.parent.mkdir(parents=True, exist_ok=True)
     if profile.exists():
         if profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
@@ -74,7 +74,7 @@ class AntigravityAdapter:
         argv.extend(self._option_args(request))
         if discussion:
             # agy loads agents only from cwd; never write into the caller's project here.
-            profile = _restricted_profile(request.cwd)
+            profile = restricted_profile(request.cwd)
             if not profile.is_file() or profile.read_text(encoding="utf-8") != _DISCUSSION_AGENT:
                 raise ValueError(
                     "antigravity restricted_tools needs a dedicated cwd prepared with "

@@ -1,11 +1,13 @@
 "use strict";
 const $ = id => document.getElementById(id);
-const labels = {held:"已收存 · 尚未揭晓",idle:"等待主持人开场",running:"正在组织回应",ready:"等待导演发布",failed:"本轮未完成，等待导演处理",cancelled:"本轮已取消",interrupted:"上次运行中断，等待导演继续",published:"台词已发布",discarded:"导演已收回本轮候选台词"};
+const labels = {idle:"等待主持人开场",running:"本轮进行中",review:"回答待导演审核",finished:"本轮已结束",cancelled:"本轮已取消",interrupted:"上次运行中断"};
+const seatStates={pending:"排队中",running:"作答中",succeeded:"已作答",failed:"失败",blocked:"受阻",cancelled:"已取消",not_started:"未开始",interrupted:"已中断"};
+const reviews={pending:"待审核",publish:"已发布",discard:"已丢弃"};
 const host = {id:"director",label:"主持人",model:"导演扮演",provider:"host"};
-const modes={discussion:"一起聊",blind:"各自答",task:"做任务"};
+const modes={show:"节目",task:"做任务"};
 const taskStates={running:"进行中",succeeded:"已回复 · 待验收",failed:"失败",blocked:"需处理",cancelled:"已取消",interrupted:"已中断 · 需处理"};
 let current = null, selected = null, messageKey = "", seatKey = "", previousCount = 0;
-let homeKey = "", taskKey = "", heldKey = "", modeFilter = "all", privateView = false;
+let homeKey = "", taskKey = "", roundKey = "", modeFilter = "all", privateView = false;
 function el(tag, className, text) { const node=document.createElement(tag); node.className=className; if(text!==undefined)node.textContent=text; return node; }
 function avatar(seat) {
   const key=(seat.model+" "+seat.provider).toLowerCase();
@@ -31,11 +33,11 @@ function render(data) {
     renderHome(data);return;
   }
   const director=data.view==="director", cast=[host,...data.seats];
-  $("mode-note").textContent=data.mode==="blind"?"各自答 · 收齐后统一揭晓":isTask?"做任务 · 仅主控可见":"一起聊 · 逐条公开";
+  $("mode-note").textContent=isTask?"做任务 · 仅主控可见":(data.review?"节目 · 导演审核后公开":"节目 · 回答自动公开")+(data.isolated?" · 隔离席位":"");
   $("title").textContent=data.title;document.title=data.title+" · "+(director?"工作台":"对话区");
   $("view-name").textContent=isTask?"做任务 · 私有会话":director?"节目会话 · 主控视角":"公共对话 · 全员可见";
   $("view-note").textContent="选手和主持人的公开发言";
-  $("view-description").textContent=data.mode==="blind"?"未揭晓的答案只在导演后台可见，收齐后统一公开。":"这里与选手收到的公开记录同步，筛选只影响当前页面。";
+  $("view-description").textContent="这里与选手收到的公开记录同步，筛选只影响当前页面。";
   $("view-tabs").hidden=!director||isTask;
   $("director-panel").hidden=!director||isTask||!privateView;
   $("transcript-panel").hidden=isTask||(director&&privateView);
@@ -43,17 +45,14 @@ function render(data) {
   $("backstage-tab").setAttribute("aria-pressed",String(privateView));
   $("public-link").hidden=!director||isTask;
   document.querySelector(".export").hidden=isTask||(director&&privateView);
-  if(director){$("public-link").href=data.public_url;$("instruction").textContent=data.instruction||"尚未下达指令";$("candidate").textContent=data.status==="ready"?data.candidate:"当前没有待发布回答";$("turn-error").textContent=data.error?"本轮提示："+data.error:"";}
-  $("held-panel").hidden=!director||data.mode!=="blind";
-  $("candidate-panel").hidden=data.mode==="blind";
-  const nextHeldKey=JSON.stringify([data.pending_answers,data.absent,data.seats,data.round_id]);
-  if(director&&data.mode==="blind"&&heldKey!==nextHeldKey){
-    heldKey=nextHeldKey;
-    const answers=data.pending_answers||[];
-    $("held-title").textContent=data.round_id?"已封存答案 · "+answers.length+" / "+data.seats.length+" · 仅导演可见":"暂无待揭晓答案";
-    $("held-answers").replaceChildren();
-    Object.entries(data.absent||{}).forEach(([id,reason])=>$("held-answers").append(el("p","history-warning",(cast.find(s=>s.id===id)?.label||id)+" · 本轮未作答："+reason)));
-    answers.forEach(answer=>{const seat=cast.find(s=>s.id===answer.speaker);const row=el("article","held-answer");row.append(el("strong","",seat?.label||answer.speaker),el("p","",answer.text));$("held-answers").append(row);});
+  if(director)$("public-link").href=data.public_url;
+  const nextRoundKey=JSON.stringify([data.round,data.seats]);
+  if(director&&!isTask&&roundKey!==nextRoundKey){
+    roundKey=nextRoundKey;const round=data.round;
+    $("round-title").textContent=round?"第 "+round.number+" 轮 · "+(round.order==="parallel"?"并联":"串联"):"尚未开始";
+    $("round-seats").replaceChildren();
+    (round?round.seats:[]).forEach(run=>{const seat=cast.find(s=>s.id===run.seat_id);const row=el("article","held-answer"),head=el("div","message-head");head.append(el("strong","",seat?.label||run.seat_id),el("span","tag",(run.review?reviews[run.review]:seatStates[run.status])||run.status));row.append(head);if(run.instruction)row.append(el("p","task-meta","私密指令："+run.instruction));row.append(el("p","speech",run.output||(run.status==="running"?"正在等待回复…":"")));if(run.error)row.append(el("p","history-warning",run.error));$("round-seats").append(row);});
+    $("turn-error").textContent=round&&round.error?"本轮提示："+round.error:"";
   }
   if(isTask){
     const nextTaskKey=JSON.stringify(data.tasks);
@@ -64,14 +63,14 @@ function render(data) {
     $("status").textContent=data.archived?"会话已结束 · 历史保留":"输出由 CLI 自动提交；回复不等于验收通过";
     $("count").textContent=(data.tasks||[]).length+" 次任务";return;
   }
-  const nextSeatKey=JSON.stringify([data.seats,data.speaker,data.status,selected]);
+  const nextSeatKey=JSON.stringify([data.seats,data.speaking,selected]);
   if(seatKey!==nextSeatKey){
     $("seats").replaceChildren();
-    cast.forEach(seat=>{const speaking=data.speaker===seat.id&&["running","ready"].includes(data.status);const row=el("button","seat"+(selected===seat.id?" selected":"")+(speaking?" speaking":""));row.type="button";row.setAttribute("aria-pressed",String(selected===seat.id));row.setAttribute("aria-label","只看"+seat.label+"的公开发言");row.onclick=()=>choose(selected===seat.id?null:seat.id);const detail=el("span","seat-detail");detail.append(el("strong","seat-name",seat.label),el("span","seat-model",seat.model));row.append(avatar(seat),detail);$("seats").append(row);});
+    cast.forEach(seat=>{const speaking=(data.speaking||[]).includes(seat.id);const row=el("button","seat"+(selected===seat.id?" selected":"")+(speaking?" speaking":""));row.type="button";row.setAttribute("aria-pressed",String(selected===seat.id));row.setAttribute("aria-label","只看"+seat.label+"的公开发言");row.onclick=()=>choose(selected===seat.id?null:seat.id);const detail=el("span","seat-detail");detail.append(el("strong","seat-name",seat.label),el("span","seat-model",seat.model));row.append(avatar(seat),detail);$("seats").append(row);});
     $("all-seats").setAttribute("aria-pressed",String(selected===null));seatKey=nextSeatKey;
   }
-  const speaker=cast.find(s=>s.id===data.speaker);
-  $("status").textContent=data.archived?"会话已结束 · 历史保留":director?((speaker&&["running","ready"].includes(data.status)?speaker.label+" · ":"")+((data.mode==="blind"&&data.status==="ready"?"会话信息不完整，等待导演处理":labels[data.status])||data.status)):"公开发言 · 全员同步";
+  const speaking=(data.speaking||[]).map(id=>cast.find(s=>s.id===id)?.label||id);
+  $("status").textContent=data.archived?"会话已结束 · 历史保留":director?((speaking.length?speaking.join("、")+" · ":"")+(labels[data.status]||data.status)):"公开发言 · 全员同步";
   $("count").textContent=data.messages.length+" 条公开发言";
   $("filter-note").hidden=selected===null;$("filter-note").textContent=selected?"正在查看 "+(cast.find(s=>s.id===selected)?.label||selected)+" 的发言 · 点击「所有人」恢复全场":"";
   const nextMessageKey=JSON.stringify([data.messages,selected,data.seats]);
@@ -82,7 +81,7 @@ function render(data) {
       const seat=cast.find(s=>s.id===message.speaker)||{id:message.speaker,label:message.speaker,model:"",provider:""};
       const article=el("article","message"+(seat.id==="director"?" host-message":""));
       const bubble=el("div","bubble"),head=el("div","message-head");
-      head.append(el("strong","",seat.label));if(seat.id==="director")head.append(el("span","tag","主持人 · 导演扮演"));
+      head.append(el("strong","",seat.label));if(message.kind==="task")head.append(el("span","tag","第 "+message.round+" 轮任务"));
       const stamp=el("time","timestamp");stamp.dateTime=message.time;stamp.textContent=new Date(message.time).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});head.append(stamp);
       const meta=el("div","message-meta");meta.append(el("span","number","#"+String(index+1).padStart(3,"0")));
       const copy=el("button","copy","复制台词");copy.type="button";copy.setAttribute("aria-label","复制"+seat.label+"的第"+(index+1)+"条台词");copy.onclick=async()=>{try{await navigator.clipboard.writeText(message.text);copy.textContent="已复制";}catch{copy.textContent="请选中文字复制";}};meta.append(copy);
@@ -93,7 +92,7 @@ function render(data) {
   if(hadData&&!privateView&&data.messages.length>previousCount){if(nearBottom&&selected===null)window.scrollTo({top:document.documentElement.scrollHeight,behavior:"instant"});else $("latest").hidden=false;}
   previousCount=data.messages.length;
 }
-const modeDescriptions={all:"全部用途",discussion:"轮流发言，彼此回应",blind:"先独立回答，再统一揭晓",task:"各自执行，结果仅主控可见"};
+const modeDescriptions={all:"全部用途",show:"多个 CLI 并联或串联作答",task:"各自执行，结果仅主控可见"};
 function renderHome(data){
   const shows=data.shows||[];
   const state=$("archive-filter").value, query=$("search").value.trim().toLocaleLowerCase();
@@ -117,7 +116,7 @@ function renderHome(data){
     card.append(info,open);$("conversation-list").append(card);
   });
   if(!matching.length)$("conversation-list").append(el("p","list-empty",shows.length?"没有匹配的会话。试试其他用途、状态或名称。":"还没有会话。展开「如何开始新会话？」查看示例。"));
-  (data.unavailable||[]).forEach(item=>$("conversation-list").append(el("p","history-warning","有一份历史暂不可用，可能被另一服务占用或无法读取。记录："+item.record)));
+  (data.unavailable||[]).forEach(item=>$("conversation-list").append(el("p","history-warning","有一份历史暂不可用："+item.reason+"（"+item.path+"）")));
 }
 for(const mode of ["all",...Object.keys(modes)]){
   const button=el("button","mode-filter");button.type="button";button.dataset.mode=mode;
@@ -125,7 +124,7 @@ for(const mode of ["all",...Object.keys(modes)]){
   button.append(title,el("span","mode-description",modeDescriptions[mode]));
   button.onclick=()=>{modeFilter=mode;if(current)renderHome(current);};$("mode-filters").append(button);
 }
-const examples=["开一个一起聊的节目，让已连接的 CLI 讨论：……","开一个各自答的节目，让各 CLI 独立回答：……，收齐后统一揭晓。","让 CLI 完成任务：……，将结果放进同一个任务会话。"];
+const examples=["开一档节目，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。","让 CLI 完成任务：……，将结果放进同一个任务会话。"];
 examples.forEach((text,index)=>{
   const row=el("div","start-example"), copy=el("button","copy","复制示例");
   copy.type="button";copy.setAttribute("aria-label","复制"+Object.values(modes)[index]+"示例");

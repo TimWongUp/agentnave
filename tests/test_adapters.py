@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from agentnave.adapters import codex, get_adapter
-from agentnave.adapters.antigravity import AntigravityAdapter
+from agentnave.adapters.antigravity import AntigravityAdapter, write_restricted_profile
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
 
 
 @pytest.mark.parametrize(
@@ -1251,3 +1251,83 @@ def test_pi_retryable_message_error_does_not_signal_execution_blocker() -> None:
         }
     )
     assert activity is not None and activity.blocking_error is None
+
+
+@pytest.mark.parametrize("provider", ["claude", "grok", "codebuddy", "codex", "antigravity", "pi"])
+def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provider: str) -> None:
+    adapter = get_adapter(provider)
+    restricted = InvocationRequest(
+        provider,
+        "speak",
+        tmp_path,
+        session_id="own-seat-session",
+        provider_options={"restricted_tools": True, "model": "explicit"},
+    )
+    if provider == "antigravity":
+        with pytest.raises(ValueError, match="dedicated cwd"):
+            adapter.prepare(restricted)
+        assert not (tmp_path / ".agents").exists()
+        write_restricted_profile(tmp_path)
+    command = adapter.prepare(restricted)
+    try:
+        argv = command.argv
+        if provider in ("claude", "grok", "codebuddy"):
+            assert "--resume=own-seat-session" in argv
+            assert argv[argv.index("--tools") + 1] == ""
+        assert "--no-session-persistence" not in argv
+        if provider == "claude":
+            assert {"--safe-mode", "--strict-mcp-config", "--disable-slash-commands"} <= set(argv)
+        elif provider == "grok":
+            assert argv[argv.index("--deny") + 1] == "*"
+            assert {"--no-subagents", "--disable-web-search"} <= set(argv)
+        elif provider == "codebuddy":
+            assert "--safe-mode" not in argv
+            assert "--strict-mcp-config" in argv
+            assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+            assert argv[argv.index("--disallowedTools") + 1] == "mcp__*"
+        elif provider == "codex":
+            assert "resume" in argv and "own-seat-session" in argv
+            assert {
+                "--ignore-user-config",
+                "--skip-git-repo-check",
+                "shell_tool",
+                "unified_exec",
+                "view_image",
+                "apps",
+                "multi_agent",
+            } <= set(argv)
+            assert "--ephemeral" not in argv
+        elif provider == "pi":
+            assert argv[argv.index("--session") + 1] == "own-seat-session"
+            assert {
+                "--no-tools",
+                "--no-extensions",
+                "--no-mcp",
+                "--no-skills",
+                "--no-prompt-templates",
+            } <= set(argv)
+        else:
+            assert argv[argv.index("--conversation") + 1] == "own-seat-session"
+            assert {"--sandbox=true", "--disable-slash-commands=true"} <= set(argv)
+            profile = tmp_path / ".agents" / "agents" / "agentnave-discussion.md"
+            assert "tools: []" in profile.read_text() and "mcpServers: []" in profile.read_text()
+    finally:
+        for path in command.cleanup_paths:
+            path.unlink()
+    with pytest.raises(ValueError, match="only model and effort"):
+        adapter.prepare(
+            InvocationRequest(
+                provider,
+                "speak",
+                tmp_path,
+                provider_options={"restricted_tools": True, "permission_mode": "bypassPermissions"},
+            )
+        )
+
+
+def test_restricted_pi_keeps_only_its_model_backend(tmp_path: Path) -> None:
+    options: dict[str, ProviderOption] = {"restricted_tools": True, "model": "m", "provider": "p"}
+    argv = get_adapter("pi").prepare(InvocationRequest("pi", "speak", tmp_path, None, options)).argv
+    assert argv[argv.index("--provider") + 1] == "p" and "--no-tools" in argv
+    with pytest.raises(ValueError, match="only model and effort"):
+        get_adapter("codex").prepare(InvocationRequest("codex", "speak", tmp_path, None, options))

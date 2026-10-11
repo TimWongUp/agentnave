@@ -1,6 +1,6 @@
 # ADR-0006：核心收敛为子代理与协作轮次，节目、历史与看板拆为工作室包
 
-- 状态：提议（草稿，待审查）
+- 状态：已接受（v0.15.0）
 - 日期：2026-10-11
 - 取代 [ADR-0005](0005-director-controlled-discussion-rooms.md) 的讨论室、统一工作台与 Dashboard 归属；[ADR-0002](0002-lightweight-cli-subagent-adapter.md) 的“Invocation 只在进程内存在”在核心包内恢复为完整约束。
 

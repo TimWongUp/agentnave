@@ -8,8 +8,8 @@
 
 ## Implementation boundaries
 
-- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，提供 CLI 子代理适配、私有任务工作台和显式启用的本地讨论室。讨论室仅负责席位上下文投影、候选台词、导演确认发布、房间持久化和只读 Dashboard；普通任务元信息、会话绑定与最终输出也保存为私有会话，运行中尾部只用于实时展示；规划、角色设定、轮次、审核判断、综合、重试与 worktree 仍由调用方 Manager 决定，不提供面向人的 CLI。
-- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；只允许协议必需参数和调用方显式提供的 allowlist options。`restricted_tools=true` 是显式受限发言配置；普通 Invocation 不继承此配置。
+- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，同仓库发布两个同版本包：核心 `agentnave` 只提供 CLI 子代理适配与进程内的并联／串联协作轮次，不建数据目录、不持久化、不监听端口、不向调用方 cwd 写文件；`agentnave-studio` 在核心之上提供保存历史、可选审核、主持人发言和按需启动的只读看板。规划、角色设定、轮次编排、审核判断、综合、重试与 worktree 仍由调用方 Manager 决定，不提供面向人的 CLI。
+- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；只允许协议必需参数和调用方显式提供的 allowlist options。`restricted_tools=true` 是显式受限配置；普通 Invocation 不继承此配置。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程树内的活跃进程做 best-effort 清理，不引入跨重启恢复。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。
 - macOS／Linux 使用专用 POSIX 进程组 supervisor；Windows 使用挂起创建并先加入
@@ -19,7 +19,7 @@
 ## Setup and verification
 
 - 开发环境：`uv sync --all-groups`。
-- MCP：`uv run agentnave-mcp`。
+- MCP：核心 `uv run agentnave-mcp`，工作室 `uv run agentnave-studio-mcp`。
 - Python 门：`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run pytest`。
 - 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
 
@@ -32,6 +32,6 @@
 
 - 用户明确要求更新本项目版本时，按完整发布任务执行：同一任务完成版本 PR、审查、合并，并等待对应 tag 与 GitHub Release 发布成功；用户明确限制交付范围时遵从该限制。
 
-- 版本 PR 同步更新 `pyproject.toml`、`src/agentnave/__init__.py`、`uv.lock`、安装文档和 `docs/releases/v<version>.md`。
+- 版本 PR 同步更新两个包的版本（`pyproject.toml`、`src/agentnave/__init__.py`、`packages/agentnave-studio/pyproject.toml` 及其对核心的精确依赖、`agentnave_studio/__init__.py`）、`uv.lock`、安装文档和 `docs/releases/v<version>.md`。
 - 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
 - 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。

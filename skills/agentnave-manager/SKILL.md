@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于工作台、一起聊、各自答、普通任务分组、会话续接与统一揭晓；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）以及 AgentNave Studio 节目；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用其他 CLI
@@ -9,16 +9,21 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 用户要求调用上述 CLI 时，优先使用当前宿主的 AgentNave MCP 工具；用户明确选择其他路线时遵从。工具可能带宿主前缀或延迟加载；首次按 AgentNave 或精确工具名发现，复用当前上下文已有 schema，以连接中的实时 schema 为参数真源。工具不可用或所选 CLI 被排除时，报告具体限制，不静默切换调用路线或 Provider。
 
-## 工作台与会话用途
+## 单个任务与协作轮次
 
-普通任务、一起聊、各自答共用私有工作台，但不共用权限或上下文。先通过实时 Tool schema 确认运行时能力；若只有四个基础工具，明确说明缺少工作台能力，不以主控复制答案模拟新功能，也不静默改用源码服务。
+先通过实时 Tool schema 确认运行时能力：核心提供 `start_agent` 系列与 `open_group`、`run_round`、`wait_round`、`cancel_round`；只有旧版讨论室或工作台工具时，报告运行时版本差异，不以主控复制答案模拟协作，也不静默改用源码服务。
 
-- **做任务**：沿用 `start_agent` 原生工具与权限。新任务自动入板；用 `title` 命名新会话、`conversation_id` 将同一件事的多个任务归组。分组仅用于展示，不向 CLI 自动转发其他任务的内容。
-- **各自答**：同题测试、独立评审和需要避免借鉴的回答，创建 `mode="blind"`。CLI 回复由程序自动封存；不要逐条发布或复制给后答者。
-- **一起聊**：明确要求互相讨论、接梗、质疑时用 `mode="discussion"`。仅已经发布的台词进入其他席位的增量输入。
-- **先各自答再讨论**：先收齐、统一揭晓，再 `continue_discussion`，沿用各席原会话。不能把已经看过该题答案的历史当成干净盲测；需要重新盲测该题时另建会话，不是每轮重开。
+协作组的席位是普通子代理：沿用原生工具与权限、各自 `cwd` 和显式 `provider_options`，每席续接自己的原生会话。席位之间只共享已提交的条目（每轮任务、最终回答、失败或取消的缺席记录），私密指令只发给对应席位。按用户要的效果组合名单与顺序：
 
-详细操作见 [工作台与讨论会话](references/workbench.md)。旧版基础调用继续按下文执行。
+1. **做任务**：单个 CLI 用 `start_agent`，不开组。
+2. **各自答**：一轮 `parallel`，同题独立回答，本轮互不可见。
+3. **多轮各自答**：连续多轮 `parallel`；从第二轮起每席都能看到上一轮全部回答。
+4. **轮流聊**：`serial`，按名单依次作答，后者看到前者；多轮即多圈讨论。
+5. **先各自答再讨论**：先一轮 `parallel`，再一轮或多轮 `serial`。
+
+`run_round` 不阻塞，返回 `round_id`；用 `wait_round` 等待，五分钟窗口与提前返回规则同 `wait_agent`，席位的 `invocation_id` 可单独 `cancel_agent`（记为缺席，串联轮继续）。同组同时只有一轮。不重试、不设每席超时，失败如实返回。需要写入项目的并联席位各给独立 worktree 作为席位 `cwd`，避免互相覆盖；只读或纯回答的席位可共用项目目录。核心不保存任何内容，组随 server 进程结束。
+
+需要保存历史、先审核再公开、主持人发言或让用户在网页观看时，使用 AgentNave Studio，按 [工作室节目](references/studio.md) 操作；当前连接没有 `open_dashboard` 等工作室工具时说明需改装工作室包，不自行模拟。
 
 ## 选择 CLI 与模型
 

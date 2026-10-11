@@ -1,0 +1,598 @@
+"""Saved shows and task history on top of core groups: persistence, review and the dashboard."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import shutil
+from contextlib import suppress
+from pathlib import Path
+from typing import Literal, TypedDict
+from uuid import uuid4
+
+from agentnave.adapters import get_adapter
+from agentnave.adapters.antigravity import restricted_profile, write_restricted_profile
+from agentnave.core import InvocationManager
+from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
+from agentnave.models import InvocationRequest
+from agentnave_studio import views
+from agentnave_studio.dashboard import Dashboard
+from agentnave_studio.store import (
+    Conversation,
+    EntryRecord,
+    Record,
+    RoundRecord,
+    SeatRecord,
+    SeatRunRecord,
+    SessionRecord,
+    TaskRecord,
+    Unavailable,
+    now,
+    scan,
+)
+
+type Decision = Literal["publish", "discard"]
+
+
+class DeletionResult(TypedDict):
+    conversation_id: str
+    deleted_paths: list[str]
+    retained_paths: list[str]
+    forgotten_invocations: int
+
+
+class Studio(Groups):
+    """Groups whose state is saved per conversation, plus private task history.
+
+    The first write to a conversation takes its OS lock until this server exits; other
+    servers can read it. Running processes never survive a restart.
+    """
+
+    def __init__(self, manager: InvocationManager, root: Path) -> None:
+        super().__init__(manager)
+        self.root = root.resolve()  # created only by the first saved conversation
+        self.records: dict[str, Record] = {}
+        self.unavailable: list[Unavailable] = []
+        self.invocations: dict[str, set[str]] = {}
+        self.running_tasks: dict[str, str] = {}  # task id -> invocation id
+        self.collectors: list[asyncio.Task[None]] = []
+        self.dashboard: Dashboard | None = None
+        self.tokens: dict[str, tuple[str, str]] = {}  # conversation id -> public, director
+        self.home_token = uuid4().hex
+        self.refresher: asyncio.Task[None] | None = None
+
+    # Conversations
+
+    def scan(self) -> dict[str, bool]:
+        """Load every saved conversation and report which ones this server may write."""
+        found, self.unavailable = scan(self.root)
+        for conversation_id in set(self.records) - set(found):
+            if self.records[conversation_id].lock is None:
+                del self.records[conversation_id]  # deleted by another server
+        writable: dict[str, bool] = {}
+        for conversation_id, directory in found.items():
+            try:
+                record = self.records.get(conversation_id)
+                if record is None:
+                    record = Record.read(directory)
+                    if record.state.id != conversation_id:
+                        raise ValueError("record id does not match its directory")
+                    self.records[conversation_id] = record
+                writable[conversation_id] = record.refresh()
+            except (OSError, ValueError) as exc:
+                self.records.pop(conversation_id, None)
+                self.unavailable.append(Unavailable(path=str(directory), reason=str(exc)))
+        return writable
+
+    def record(self, conversation_id: str) -> Record:
+        if conversation_id not in self.records:
+            self.scan()
+        try:
+            return self.records[conversation_id]
+        except KeyError:
+            raise KeyError(f"unknown conversation_id: {conversation_id}") from None
+
+    def writable(self, conversation_id: str) -> Record:
+        record = self.record(conversation_id)
+        record.acquire()
+        return record
+
+    def _create(self, state: Conversation, directory: Path) -> Record:
+        record = Record.create(directory, state)
+        self.records[state.id] = record
+        self._publish(record)
+        return record
+
+    def _directory(self, conversation_id: str) -> Path:
+        return self.root / "conversations" / conversation_id
+
+    def open_show(
+        self,
+        title: str,
+        cwd: Path | None,
+        seats: list[GroupSeat],
+        *,
+        review: bool,
+        isolated: bool,
+    ) -> Record:
+        conversation_id = uuid4().hex
+        directory = self._directory(conversation_id)
+        if isolated:
+            # Own seat directories make restricted profiles possible and keep seats apart.
+            cwd = directory
+            seats = [
+                GroupSeat(
+                    seat.id,
+                    seat.provider,
+                    {**seat.provider_options, "restricted_tools": True},
+                    directory / "seats" / seat.id,
+                )
+                for seat in seats
+            ]
+        elif cwd is None:
+            raise ValueError("cwd is required unless isolated is true")
+        try:
+            if isolated:
+                directory.mkdir(parents=True, mode=0o700)
+                for seat in seats:
+                    seat.cwd.mkdir(parents=True, mode=0o700)
+                    if seat.provider == "antigravity":
+                        write_restricted_profile(seat.cwd)
+            group = self.open(cwd, seats, conversation_id)
+            state = Conversation(
+                id=conversation_id,
+                title=title,
+                kind="show",
+                cwd=str(group.cwd),
+                review=review,
+                isolated=isolated,
+                seats=[
+                    SeatRecord(
+                        id=seat.id,
+                        provider=seat.provider,
+                        provider_options=dict(seat.provider_options),
+                        cwd=str(seat.cwd),
+                    )
+                    for seat in group.seats.values()
+                ],
+                sessions={seat_id: SessionRecord() for seat_id in group.seats},
+            )
+            return self._create(state, directory)
+        except BaseException:
+            self._groups.pop(conversation_id, None)
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+
+    def _group(self, group_id: str) -> Group:
+        if group_id not in self._groups:
+            record = self.record(group_id)
+            if record.state.kind != "show":
+                raise KeyError(f"conversation {group_id} is not a show")
+            record.acquire()
+            state = record.state
+            assert state.cwd is not None
+            group = Group(
+                state.id,
+                Path(state.cwd),
+                {
+                    seat.id: GroupSeat(
+                        seat.id, seat.provider, dict(seat.provider_options), Path(seat.cwd)
+                    )
+                    for seat in state.seats
+                },
+                [Entry(item.round, item.kind, item.seat, item.text) for item in state.entries],
+                {
+                    seat_id: SeatState(saved.session_id, saved.cursor)
+                    for seat_id, saved in state.sessions.items()
+                },
+                max((round_.number for round_ in state.rounds), default=0),
+            )
+            self.adopt(group)
+        return super()._group(group_id)
+
+    def run(
+        self,
+        group_id: str,
+        seat_ids: list[str],
+        order: RoundOrder,
+        prompt: str,
+        instructions: dict[str, str],
+    ) -> Round:
+        self._group(group_id)
+        state = self.records[group_id].state
+        if state.archived:
+            raise ValueError("this conversation has ended; reopen it with update_conversation")
+        if state.pending_review():
+            raise ValueError("answers are waiting for review; call decide_answers first")
+        return super().run(group_id, seat_ids, order, prompt, instructions)
+
+    def post(self, conversation_id: str, text: str) -> None:
+        group = self._group(conversation_id)
+        state = self.records[conversation_id].state
+        if state.archived or group.active is not None or state.pending_review():
+            raise ValueError("post only in an open show with no running round or pending review")
+        group.entries.append(Entry(group.rounds, "host", text=text))
+        try:
+            self._save(group)
+        except OSError:
+            group.entries.pop()
+            raise
+
+    def decide(self, round_id: str, decisions: dict[str, Decision]) -> RoundRecord:
+        """Validate the whole batch, save it, then let the round (or saved history) apply it."""
+        record = next((item for item in self.records.values() if _find(item.state, round_id)), None)
+        if record is None:
+            self.scan()
+            record = next(
+                (item for item in self.records.values() if _find(item.state, round_id)), None
+            )
+        if record is None:
+            raise KeyError(f"unknown round_id: {round_id}")
+        record.acquire()
+        saved = _find(record.state, round_id)
+        assert saved is not None
+        seats = {seat.seat_id: seat for seat in saved.seats}
+        if not decisions:
+            raise ValueError("decisions must name at least one seat")
+        for seat_id, decision in decisions.items():
+            seat = seats.get(seat_id)
+            if seat is None or seat.review is None:
+                raise ValueError(f"seat {seat_id} has no answer to review in this round")
+            if seat.review not in ("pending", decision):
+                raise ValueError(f"seat {seat_id} was already decided: {seat.review}")
+        for seat_id, decision in decisions.items():
+            seats[seat_id].review = decision
+        live = self._rounds.get(round_id)
+        added: list[EntryRecord] = []
+        if (live is None or live.finished) and not saved.pending_review():
+            # The round stopped running (restart): commit published answers directly.
+            added = record.state.commit_decided(saved)
+        record.save()
+        group = self._groups.get(record.state.id)
+        if group is not None:
+            group.entries.extend(
+                Entry(item.round, "answer", item.seat, item.text) for item in added
+            )
+        if live is not None:
+            live.notify()
+        self._publish(record)
+        result = _find(record.state, round_id)
+        assert result is not None
+        return result
+
+    def busy(self, record: Record) -> bool:
+        group = self._groups.get(record.state.id)
+        return (
+            (group is not None and group.active is not None)
+            or record.state.pending_review()
+            or any(task.status == "running" for task in record.state.tasks)
+        )
+
+    def update(self, conversation_id: str, title: str | None, archived: bool | None) -> Record:
+        record = self.writable(conversation_id)
+        if archived and self.busy(record):
+            raise ValueError("Resolve running work and pending reviews before ending it")
+        if title is not None:
+            if not title.strip() or len(title) > 200:
+                raise ValueError("Title must contain 1–200 characters")
+            record.state.title = title
+        if archived is not None:
+            record.state.archived = archived
+        record.save()
+        self._publish(record)
+        return record
+
+    def delete(self, conversation_id: str) -> DeletionResult:
+        record = self.writable(conversation_id)
+        if not record.state.archived:
+            raise ValueError("End the conversation with update_conversation before deleting it")
+        if self.busy(record):
+            raise ValueError("Resolve running work and pending reviews before deleting it")
+        state_path = record.directory / "state.json"
+        state_path.unlink()
+        forgotten = self.manager.forget_finished(self.invocations.pop(conversation_id, set()))
+        del self.records[conversation_id]
+        self._groups.pop(conversation_id, None)
+        for round_id in [
+            key for key, item in self._rounds.items() if item.group.id == conversation_id
+        ]:
+            del self._rounds[round_id]
+        if self.dashboard is not None:
+            for token in self.tokens.pop(conversation_id, ()):
+                self.dashboard.snapshots.pop(token, None)
+        if record.state.isolated:
+            _prune_seats(record.directory / "seats")
+        # Keep the directory and its lock file: a removed lock inode could let two servers
+        # lock different files at the same path.
+        record.release()
+        self._publish_home()
+        return {
+            "conversation_id": conversation_id,
+            "deleted_paths": [str(state_path)],
+            "retained_paths": [str(record.directory)],
+            "forgotten_invocations": forgotten,
+        }
+
+    # Tasks
+
+    def start_task(
+        self, request: InvocationRequest, title: str | None, conversation_id: str | None
+    ) -> tuple[str, str]:
+        record = self.writable(conversation_id) if conversation_id else None
+        if request.session_id:
+
+            def resumes(task: TaskRecord) -> bool:
+                return task.provider == request.provider and task.session_id == request.session_id
+
+            if record is None:
+                # Another server may have created or extended this session's conversation.
+                self.scan()
+                record = next(
+                    (
+                        item
+                        for item in self.records.values()
+                        if item.state.kind == "task"
+                        and not item.state.archived
+                        and any(map(resumes, item.state.tasks))
+                    ),
+                    None,
+                )
+                if record is not None:
+                    # Lock before checking: never split one native session across conversations.
+                    record.acquire()
+            if any(
+                task.status == "running" and resumes(task)
+                for item in self.records.values()
+                for task in item.state.tasks
+            ):
+                raise ValueError("This native session already has an active task")
+        # Validate options before creating history; prepare only once.
+        prepared = get_adapter(request.provider).prepare(request)
+        try:
+            if record is None:
+                conversation_id = uuid4().hex
+                record = self._create(
+                    Conversation(
+                        id=conversation_id,
+                        title=title or f"{request.provider} 任务",
+                        kind="task",
+                    ),
+                    self._directory(conversation_id),
+                )
+            if record.state.kind != "task" or record.state.archived:
+                raise ValueError("Tasks need an open task conversation")
+            task = TaskRecord(
+                id=uuid4().hex,
+                provider=request.provider,
+                model=str(request.provider_options.get("model", "原生设置")),
+                cwd=str(request.cwd),
+                session_id=request.session_id,
+                time=now(),
+            )
+            record.state.tasks.append(task)
+            record.save()
+            invocation_id = self.manager.start(request, prepared=prepared)
+        except BaseException:
+            for path in prepared.cleanup_paths:
+                Path(path).unlink(missing_ok=True)
+            raise
+        self.invocations.setdefault(record.state.id, set()).add(invocation_id)
+        self.running_tasks[task.id] = invocation_id
+        self._publish(record)
+        self.collectors.append(asyncio.create_task(self._collect(record, task.id, invocation_id)))
+        return invocation_id, record.state.id
+
+    async def _collect(self, record: Record, task_id: str, invocation_id: str) -> None:
+        result = await self.manager.wait(invocation_id)
+        assert result is not None
+        self.running_tasks.pop(task_id, None)
+        task = next(item for item in record.state.tasks if item.id == task_id)
+        task.status = result.status.value
+        task.output = result.output
+        task.session_id = result.session_id or task.session_id
+        task.elapsed_ms = result.duration_ms
+        task.error = result.error.code if result.error else None
+        try:
+            record.save()
+        except OSError:
+            task = next(item for item in record.state.tasks if item.id == task_id)
+            task.status = "interrupted"
+            task.error = "history_write_failed; use wait_agent for the invocation result"
+            # Keep this terminal state in memory across later failed saves.
+            record.saved = record.state.model_copy(deep=True)
+        self._publish(record)
+
+    # Group hooks
+
+    def _on_change(self, round_: Round) -> None:
+        self._save(round_.group, round_)
+
+    def _save(self, group: Group, round_: Round | None = None) -> None:
+        record = self.records[group.id]
+        state = record.state
+        state.entries.extend(
+            EntryRecord(
+                round=item.round, kind=item.kind, seat=item.seat_id, text=item.text, time=now()
+            )
+            for item in group.entries[len(state.entries) :]
+        )
+        state.sessions = {
+            seat_id: SessionRecord(session_id=item.session_id, cursor=item.cursor)
+            for seat_id, item in group.states.items()
+        }
+        if round_ is not None:
+            saved = _find(state, round_.id)
+            if saved is None:
+                saved = RoundRecord(
+                    id=round_.id,
+                    number=round_.number,
+                    order=round_.order,
+                    seats=[
+                        SeatRunRecord(seat_id=run.seat_id, instruction=run.instruction)
+                        for run in round_.runs
+                    ],
+                )
+                state.rounds.append(saved)
+            saved.status = (
+                "running"
+                if group.active is round_
+                else "cancelled"
+                if round_.cancelling
+                else "finished"
+            )
+            saved.error = round_.error
+            committed = {
+                (item.round, item.seat_id)
+                for item in group.entries
+                if item.kind in ("answer", "absent")
+            }
+            for run, seat in zip(round_.runs, saved.seats, strict=True):
+                seat.status = run.status
+                seat.output = run.result.output if run.result is not None else None
+                error = run.result.error if run.result is not None else run.launch_error
+                seat.error = f"{error.code}: {error.message}" if error is not None else None
+                seat.committed = seat.committed or (round_.number, run.seat_id) in committed
+        record.save()
+        self._publish(record)
+
+    async def _approve(self, round_: Round, runs: list[SeatRun]) -> set[str]:
+        seat_ids = {run.seat_id for run in runs}
+        state = self.records[round_.group.id].state
+        if not state.review or not seat_ids:
+            return seat_ids
+        self._reviews(round_, seat_ids, "pending")
+        self._changed(round_)
+        round_.notify()
+        while True:
+            changed = round_.changed
+            reviews = self._reviews(round_, seat_ids)
+            if round_.cancelling or "pending" not in reviews.values():
+                break
+            await changed.wait()
+        # Cancelled or stopped before a decision: the answer is discarded, never published.
+        self._reviews(
+            round_, {seat for seat, review in reviews.items() if review == "pending"}, "discard"
+        )
+        return {seat for seat, review in reviews.items() if review == "publish"}
+
+    def _reviews(
+        self, round_: Round, seat_ids: set[str], value: Literal["pending", "discard"] | None = None
+    ) -> dict[str, str | None]:
+        saved = _find(self.records[round_.group.id].state, round_.id)
+        assert saved is not None
+        for seat in saved.seats:
+            if value is not None and seat.seat_id in seat_ids:
+                seat.review = value
+        return {seat.seat_id: seat.review for seat in saved.seats if seat.seat_id in seat_ids}
+
+    def _ready(self, round_: Round) -> str | None:
+        saved = _find(self.records[round_.group.id].state, round_.id)
+        return "review_needed" if saved is not None and saved.pending_review() else None
+
+    # Dashboard
+
+    def open_dashboard(self) -> str:
+        if self.dashboard is None:
+            self.dashboard = Dashboard()
+            self.scan()
+            for record in self.records.values():
+                self._publish(record, home=False)
+            self.refresher = asyncio.create_task(self._refresh_running())
+        self._publish_home()
+        return self.dashboard.url(self.home_token)
+
+    def urls(self, conversation_id: str) -> tuple[str, str] | None:
+        if self.dashboard is None or conversation_id not in self.tokens:
+            return None
+        public, director = self.tokens[conversation_id]
+        return self.dashboard.url(public), self.dashboard.url(director)
+
+    def _publish(self, record: Record, *, home: bool = True) -> None:
+        if self.dashboard is None:
+            return
+        state = record.state
+        public, director = self.tokens.setdefault(state.id, (uuid4().hex, uuid4().hex))
+        tails: dict[str, str] = {}
+        group = self._groups.get(state.id)
+        if group is not None and group.active is not None:
+            for run in group.active.runs:
+                if run.status == "running" and run.invocation_id is not None:
+                    tails[run.seat_id] = self.manager.recent_output(run.invocation_id)[0]
+        for task in state.tasks:
+            if task.id in self.running_tasks:
+                tails[task.id] = self.manager.recent_output(self.running_tasks[task.id])[0]
+        if state.kind == "show":
+            self.dashboard.update(public, views.public(state))
+        self.dashboard.update(
+            director,
+            views.director(
+                state,
+                public_url=self.dashboard.url(public) if state.kind == "show" else "",
+                home_url=self.dashboard.url(self.home_token),
+                storage=str(record.directory),
+                tails=tails,
+            ),
+        )
+        if home:
+            self._publish_home()
+
+    def _publish_home(self) -> None:
+        if self.dashboard is None:
+            return
+        self.dashboard.update(
+            self.home_token,
+            views.home(
+                [
+                    (record.state, self.dashboard.url(self.tokens[record.state.id][1]))
+                    for record in self.records.values()
+                    if record.state.id in self.tokens
+                ],
+                self.unavailable,
+                str(self.root),
+            ),
+        )
+
+    async def _refresh_running(self) -> None:
+        # Reply tails live only in memory, so running work is re-projected while it runs.
+        while True:
+            await asyncio.sleep(1.5)
+            for record in list(self.records.values()):
+                group = self._groups.get(record.state.id)
+                if (group is not None and group.active is not None) or any(
+                    task.id in self.running_tasks for task in record.state.tasks
+                ):
+                    self._publish(record, home=False)
+
+    async def close(self) -> None:
+        """Run after rounds and the invocation manager have stopped."""
+        try:
+            await asyncio.gather(*self.collectors, return_exceptions=True)
+        finally:
+            if self.refresher is not None:
+                self.refresher.cancel()
+                await asyncio.gather(self.refresher, return_exceptions=True)
+            if self.dashboard is not None:
+                self.dashboard.close()
+            for record in self.records.values():
+                record.release()
+
+
+def _find(state: Conversation, round_id: str) -> RoundRecord | None:
+    return next((round_ for round_ in state.rounds if round_.id == round_id), None)
+
+
+def _prune_seats(seats: Path) -> None:
+    """Remove the profiles this studio wrote and empty seat folders; keep any CLI files."""
+    if not seats.is_dir() or seats.is_symlink():
+        return
+    for seat in seats.iterdir():
+        if seat.is_symlink() or not seat.is_dir():
+            continue
+        with suppress(OSError):
+            restricted_profile(seat).unlink(missing_ok=True)
+        for directory, _, _ in sorted(os.walk(seat), key=lambda item: -len(item[0])):
+            if not Path(directory).is_symlink():
+                with suppress(OSError):
+                    Path(directory).rmdir()
+    with suppress(OSError):
+        seats.rmdir()

@@ -6,8 +6,9 @@
 
 **A thin local bridge from Agent Managers to CLI subagents.**
 
-AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI, or
-Grok CLI through three lifecycle tools and one read-only provider-description tool. Each provider keeps its native authentication,
+AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI,
+Grok CLI, or Pi Coding Agent as subagents, one at a time or as a group answering in parallel or
+serial rounds. Each provider keeps its native authentication,
 configuration, permissions, and session model; AgentNave supplies the adapter and process
 supervision around it.
 
@@ -26,7 +27,7 @@ a compatible MCP host.
 | In-memory invocation lifecycle | Provider and model selection |
 | POSIX process groups / Windows Job Objects | Parallelism, review, and synthesis |
 | Normalized terminal results | Retries, permissions, and worktrees |
-| Private conversation history and read-only Dashboard | Publication decisions and acceptance |
+| In-memory parallel and serial group rounds | Who answers, in what order, and acceptance |
 
 ## Requirements
 
@@ -70,45 +71,35 @@ tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Ho
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
 
-AgentNave saves private conversation history under `~/.agentnave/` by default, including ordinary
-task results. Provider authentication and configuration remain owned by their respective CLIs.
+The `agentnave` package saves nothing: it creates no data directory, listens on no port and writes
+nothing to the caller's working directory. Provider authentication, configuration and native
+sessions remain owned by their respective CLIs.
 
-## Optional discussion rooms
+## Group rounds
 
-A calling Agent can act as director: choose a seat, send unread public dialogue, inspect the
-candidate reply, then publish or discard it. A shared public board collects published dialogue for every participant. A separate director desk
-mirrors that board and additionally shows private instructions, drafts, and turn state. The same mechanism works for technical discussions and an AI show.
+`open_group` registers 2–6 seats in memory. A seat is an ordinary subagent: native tools and
+permissions, the group or its own `cwd`, and explicit provider options. `run_round` asks an ordered
+list of seats to answer one shared task once:
 
-Participant profiles support all six CLI adapters, including the director host’s own CLI. Each seat
-resumes its own native session, receiving only unread public messages and the current instruction.
-Provider-specific discussion profiles restrict tools without changing ordinary invocation defaults.
-The director can speak publicly as the host. A tavern-style chat displays original avatars, speaker filters,
-copyable messages and a separate private director desk. Each show uses its own directory, public history
-and seat sessions; the director can switch among opened shows. Participants receive only their own show.
-These profiles combine public-context projection and native tool restrictions; they are not an OS sandbox.
-Ordinary CLI calls retain their existing defaults. No scheduler, automatic retries, game engine,
-new web framework, account system or cloud service is added.
+- `parallel`: all start together and cannot see each other's answers in this round;
+- `serial`: one after another, each seeing the earlier answers.
 
-See [discussion-room tools and limitations](docs/discussion-rooms.md). Workbench and discussion
-tools are available from v0.11.0.
+Seats share only final answers. Each round's task, answers and absences (failed, blocked or
+cancelled seats) become entries; every seat receives the entries it has not yet seen and resumes
+its own native session, and an optional private instruction goes to one seat only. Independent
+answers, several independent rounds, turn-taking discussion or "answer first, then discuss" are
+combinations of lists and orders, not modes. `wait_round` and `cancel_round` mirror `wait_agent`
+and `cancel_agent`; `cancel_agent` on one seat records it absent and lets a serial round continue.
+Groups last only for the server process. Seats sharing one repository can interfere; give writing
+seats their own worktree through the seat `cwd`.
 
-For independent answers, use `open_discussion(mode="blind")`. Replies are sealed automatically and
-revealed together through `decide_discussion_round`, so later speakers cannot copy earlier answers.
+## AgentNave Studio
 
-### Unified local workbench
-
-`open_workbench` opens a private list of conversations: **一起聊** (discussion), **各自答** (independent answers), and **做任务** (ordinary CLI work). Ordinary `start_agent` calls automatically collect output into task conversations; use `title` for a new conversation and `conversation_id` to group related invocations. Grouping does not share context or alter native tool permissions. Task pages have no public counterpart. The browser remains read-only.
-
-History defaults to `~/.agentnave/`, or the absolute directory in `AGENTNAVE_DATA_DIR`. Records survive restart; active processes and invocation handles do not. `list_conversations`, `read_conversation` and `update_conversation` inspect, rename, end or reopen saved conversations. Several MCP hosts can share one data directory: each indexes saved records read-only and locks a conversation only on its first write, so another service's conversation stays readable (`writable=false` in `list_conversations`) but is never taken over.
-
-Since v0.12.0, `delete_conversation(room_id)` lets the calling Agent, after user authorization,
-permanently remove an archived, inactive conversation's AgentNave history, index, dashboard views
-and finished invocation handles. Native CLI files and nonempty directories are retained and
-reported. Conversation roots retain their stable `.lock` file for single-writer protection;
-external root directories are preserved. Archiving alone deletes nothing. There is no
-automatic retention policy.
-
-Independent rounds can explicitly mark unanswered seats with `mark_discussion_absent`, after resolving their active invocation. Revealing a partial round labels it incomplete. After reveal, `continue_discussion` continues together in the same native sessions. See [the conversation guide](docs/discussion-rooms.md) and the [manager Skill](skills/agentnave-manager/SKILL.md).
+For multi-CLI shows that a person watches, install the separate `agentnave-studio` package
+(entry point `agentnave-studio-mcp`) instead. It includes every core tool and adds saved history
+under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`), optional review of answers before other seats see
+them, host messages, isolated seats with restricted tools, and a local read-only dashboard that
+starts only when `open_dashboard` is called. See the [studio guide](docs/studio.md).
 
 ## The MCP surface
 
@@ -118,7 +109,7 @@ Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
-AgentNave exposes four core tools, plus thirteen conversation and workbench tools. The initial tool metadata contains a compact provider directory;
+AgentNave exposes eight tools: four for single tasks and four for group rounds. The initial tool metadata contains a compact provider directory;
 provider-specific options are returned only when requested. Model defaults live in the Skill's
 per-CLI reference files, loaded only for the selected CLI.
 
