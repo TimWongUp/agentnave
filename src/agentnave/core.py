@@ -27,6 +27,9 @@ from agentnave.processes import spawn_process, terminate_process_tree
 _MAX_STDOUT_BYTES = 8 * 1024 * 1024
 _MAX_STDERR_BYTES = 64 * 1024
 _MAX_ERROR_DETAILS = 16_384
+_OUTPUT_LIMIT_ERROR = InvocationError(
+    "output_limit_exceeded", "provider output exceeded the AgentNave capture limit"
+)
 _PIPE_DRAIN_SECONDS = 1.0
 
 
@@ -244,6 +247,7 @@ class InvocationManager:
                     output_exceeded,
                     lambda line: record.observe_event(line, adapter),
                     prepared.capture_line,
+                    prepared.skip_oversized_line,
                 )
             )
             stderr_task = asyncio.create_task(
@@ -274,10 +278,7 @@ class InvocationManager:
             )
             if exceeded_task in done and output_exceeded.is_set():
                 terminal = InvocationStatus.FAILED
-                error = InvocationError(
-                    "output_limit_exceeded",
-                    "provider output exceeded the AgentNave capture limit",
-                )
+                error = _OUTPUT_LIMIT_ERROR
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")
@@ -301,6 +302,10 @@ class InvocationManager:
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)
             stdout, stderr = await _finish_streams(stdout_task, stderr_task)
+            # The provider may exit before the readers notice the limit while draining.
+            if terminal is None and (stdout.exceeded or stderr.exceeded):
+                terminal = InvocationStatus.FAILED
+                error = _OUTPUT_LIMIT_ERROR
             parse_returncode = provider_returncode
             if parse_returncode is None:
                 parse_returncode = process.returncode if process.returncode is not None else 1
@@ -364,9 +369,12 @@ async def _read_limited(
     exceeded_event: asyncio.Event,
     observe_event: Callable[[bytes], None] | None = None,
     capture_line: Callable[[bytes], bytes] | None = None,
+    skip_oversized_line: Callable[[bytes], bool] | None = None,
 ) -> _CapturedStream:
     if capture_line is not None:
-        return await _read_filtered(stream, limit, exceeded_event, observe_event, capture_line)
+        return await _read_filtered(
+            stream, limit, exceeded_event, observe_event, capture_line, skip_oversized_line
+        )
     data = bytearray()
     pending = bytearray()
     exceeded = False
@@ -395,10 +403,15 @@ async def _read_filtered(
     exceeded_event: asyncio.Event,
     observe_event: Callable[[bytes], None] | None,
     capture_line: Callable[[bytes], bytes],
+    skip_oversized_line: Callable[[bytes], bool] | None,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
     exceeded = False
+    discarding = False
+
+    def skippable(line: bytes | bytearray) -> bool:
+        return skip_oversized_line is not None and skip_oversized_line(bytes(line[:256]))
 
     def capture(line: bytes) -> None:
         nonlocal exceeded
@@ -417,19 +430,26 @@ async def _read_filtered(
         while b"\n" in pending:
             line, _, remainder = pending.partition(b"\n")
             pending = bytearray(remainder)
-            if len(line) > limit:
-                exceeded = True
+            if discarding:
+                discarding = False
+            elif len(line) > limit:
+                exceeded = not skippable(line)
             else:
                 capture(bytes(line))
             if exceeded:
                 break
         # Bound a single unterminated event independently of retained result bytes.
         if len(pending) > limit:
-            exceeded = True
+            # Once discarding, pending holds only the tail of the line being dropped.
+            if discarding or skippable(pending):
+                discarding = True
+                pending.clear()
+            else:
+                exceeded = True
         if exceeded:
             pending.clear()
             exceeded_event.set()
-    if pending.strip() and not exceeded:
+    if pending.strip() and not exceeded and not discarding:
         capture(bytes(pending))
         if exceeded:
             exceeded_event.set()

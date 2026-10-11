@@ -6,13 +6,14 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.grok import GrokAdapter
+from agentnave.adapters.pi import PiAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
 from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
 from agentnave.processes import (
@@ -445,6 +446,28 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
 
 
 @pytest.mark.asyncio
+async def test_output_limit_found_while_draining_after_exit_still_fails(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import core
+
+    original = core._read_limited  # pyright: ignore[reportPrivateUsage]
+
+    async def exceeded_without_signal(*args: Any, **kwargs: Any) -> Any:
+        captured = await original(*args, **kwargs)
+        return replace(captured, exceeded=True)
+
+    monkeypatch.setattr(core, "_read_limited", exceeded_without_signal)
+    manager = InvocationManager()
+    result = await manager.wait(manager.start(InvocationRequest("claude", "work", tmp_path)))
+
+    assert result is not None and result.error is not None
+    assert result.status is InvocationStatus.FAILED
+    assert result.error.code == "output_limit_exceeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor lifecycle assertion")
 async def test_supervisor_still_owns_process_group_when_cleanup_starts(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
@@ -541,3 +564,43 @@ async def test_grok_filtered_capture_still_bounds_memory(
     finally:
         for path in prepared.cleanup_paths:
             path.unlink()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("final_oversized", [False, True])
+async def test_pi_filtered_capture_skips_only_non_result_oversized_lines(
+    tmp_path: Path, final_oversized: bool
+) -> None:
+    prepared = PiAdapter().prepare(InvocationRequest("pi", "work", tmp_path))
+    assert prepared.capture_line is not None
+    big = "x" * 70_000
+    final: dict[str, object] = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": big}],
+        "stopReason": "error",
+    }
+    events: list[dict[str, object]] = [
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "content": [], "stopReason": "stop"},
+        },
+        *([{"type": "message_end", "message": final}] if final_oversized else []),
+        {"type": "agent_end", "messages": [big * 3]},
+        {"type": "agent_settled", "aborted": False},
+    ]
+    stream = asyncio.StreamReader()
+    stream.feed_data(
+        b"".join(json.dumps(event, separators=(",", ":")).encode() + b"\n" for event in events)
+    )
+    stream.feed_eof()
+    exceeded = asyncio.Event()
+    captured = await _read_limited(
+        stream,
+        1024,
+        exceeded,
+        capture_line=prepared.capture_line,
+        skip_oversized_line=prepared.skip_oversized_line,
+    )
+    assert exceeded.is_set() is final_oversized
+    if not final_oversized:
+        assert PiAdapter().parse(0, captured.data, b"").status is InvocationStatus.SUCCEEDED
