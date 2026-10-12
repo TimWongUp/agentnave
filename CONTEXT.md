@@ -25,6 +25,11 @@ Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` �
 
 AgentNave 对 Provider 终态的归一化结果；`output` 只承载 Provider 最终回答，不包含流式过程播报。状态只能是 `succeeded`、`failed`、`blocked` 或 `cancelled`。
 
+## Group / Round / Entry
+
+Group 是 Manager 显式创建、只存在于当前进程内存的协作组，席位是带原生工具的普通子代理。Round 让一份有序名单中的席位各回答一次：`parallel` 同时运行且本轮互不可见，`serial` 依次运行且后席可见前席。Entry 是组内按序提交的记录：本轮共同任务 `task`、席位最终回答 `answer` 或终态失败、受阻、取消的 `absent`。席位之间只共享 Entry，不共享推理或运行过程。各自答、多轮各自答、轮流聊等用法由名单、顺序和私密指令组合，不是核心模式。
+_Avoid_: 讨论模式、游戏引擎
+
 ## Invocation Snapshot
 
 AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段、耗时、最近原生事件和可识别活动及其年龄；单条活动是有来源的观察，不代表所有并发工作的当前状态、完成比例或终态证据。

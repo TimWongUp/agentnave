@@ -14,6 +14,7 @@ AgentNave 只拥有：
 - 从 Provider 原生流事件提取有界活动快照，并归一化终端结果；
 - 执行显式取消和进程树清理；
 - 在 MCP server 生命周期内保存 Invocation 句柄；
+- 在 Manager 显式创建的协作组内，按名单并联或串联运行轮次，只在进程内存中保存各席最终回答与原生会话游标；
 - 在 Manager 显式创建讨论室后，保存房间和每席会话绑定、增量投影公共发言、收集候选台词并执行发布决定；
 - 按需提供独立的公共发言区、导演工作台与公开台词 JSONL 导出。
 
@@ -59,6 +60,16 @@ Adapter 只能添加非交互输出、prompt 传输和 cwd 等协议必需参数
 
 AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Object。Windows Provider 必须挂起创建、成功加入配置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job 后才恢复；任何创建、配置或分配失败都以 `launch_error` 终止，不回退到普通子进程或 `CREATE_NEW_PROCESS_GROUP`。Windows 取消直接终止 supervisor 并关闭 Job，没有伪造 POSIX 的温和树级信号阶段。
 
+## 协作组
+
+取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 在内存中登记 2–6 个席位，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options，遵守宿主排除项。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
+
+`run_round` 非阻塞地运行一轮：本轮共同任务先作为 `task` 条目提交；`parallel` 同步启动全部席位，在全部终态后按名单一次提交；`serial` 逐席启动、逐席提交，后席能看到前席。同组同一时间只有一个轮次。终态 succeeded 提交最终输出为 `answer`，failed、blocked、cancelled 提交 `absent`；运行中的阻塞提醒不提交。不重试、不设每席超时、不摘要或截断。
+
+每席续接自己的原生会话，只收到游标之后、非自己的条目；新会话收到前导与全部条目。只有 succeeded 且带本次 session_id 才推进游标；未启动的 launch_error 保留原会话；其他终态清空会话与游标，下次补全。前导声明其他席位的回答是数据而非指令，私密指令只发给对应席位，但席位复述的内容会随回答传播。
+
+`wait_round` 与 `wait_agent` 相同的五分钟窗口，轮次结束或运行席位出现新阻塞时提前返回，结束后可重读。`cancel_agent` 取消单席后串联轮继续；`cancel_round` 先禁止新启动，再取消在途席位，已成功回答照常提交，未启动的串联席位不写条目。server 退出时先结束所有轮次，再关闭 InvocationManager。
+
 ## 可选讨论室
 
 讨论室合同见 [使用指南](../discussion-rooms.md)，取舍见 [ADR 0005](../adr/0005-director-controlled-discussion-rooms.md)。主控 Agent 仍拥有全部导演判断，讨论室没有自动轮次或多 Agent 调度。
@@ -69,7 +80,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 启动前先持久化原生历史不确定标记，正常终态确认 session_id 后保存已读位置并清除标记；失败、取消、运行中崩溃或持久化失败不静默重试续接。导演显式 reset_discussion_seat 后下一次才新开会话。正常重启恢复完成席位的会话和已读状态，旧 Invocation 句柄不恢复。采集结束但写盘失败时，进程内保留失败/中断终态作为后续修改的回滚基线；再次写盘失败不会把已结束的调用复活为 running。磁盘状态仍按原来的重启恢复规则处理。重置不删除公共记录，不改变其他席位。
 
-显式 discussion_mode=true 保持原生工具限制并允许传入该席位自己的 session_id；只允许 model、effort 附加选项。Claude 使用 safe-mode、空 tools、strict MCP 与禁用 skills，保留原生会话持久化；Grok 使用空 tools、deny-all、禁用子 Agent 和网页工具。防作弊约束禁止读取其他席位私有内容和导演后台；原生通用规则可以存在。Grok 的 deny-all 限制工具执行，不承诺移除工具定义或阻止 MCP 连接。普通 start_agent 不启用这些参数。房间投影不等于操作系统沙箱。
+显式 restricted_tools=true 保持原生工具限制并允许传入该席位自己的 session_id；只允许 model、effort 附加选项。Claude 使用 safe-mode、空 tools、strict MCP 与禁用 skills，保留原生会话持久化；Grok 使用空 tools、deny-all、禁用子 Agent 和网页工具。防作弊约束禁止读取其他席位私有内容和导演后台；原生通用规则可以存在。Grok 的 deny-all 限制工具执行，不承诺移除工具定义或阻止 MCP 连接。普通 start_agent 不启用这些参数。Antigravity 只能从 cwd 加载角色定义，Adapter 因此不写调用方目录：受限模式要求 cwd 已含一致的定义，讨论室在创建席位目录时写入。房间投影不等于操作系统沙箱。
 
 公共发言区可通过公开地址的 state 或 transcript.jsonl 读取；现有 CLI 适配器直接从相同记录补发未读台词，不依赖每个 CLI 配置网页或 MCP 工具。导演工作台额外显示本轮私有内容，CLI 输入中只有公共地址。公开 JSONL 也可供后续只读集成使用；不给参演 CLI 注册导演控制工具。
 

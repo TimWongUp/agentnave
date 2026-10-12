@@ -67,7 +67,7 @@
 
 公开响应没有候选稿、内部指令、调度状态、session_id、Invocation ID 或导演地址。两个网页都不提供控制 API。字幕导出始终只含公开台词。
 
-显式 `discussion_mode=true` 保留工具限制，只允许额外指定 model、effort；可以续接原生 session_id。基于本机 CLI 帮助核验的配置：
+显式 `restricted_tools=true` 保留工具限制，只允许额外指定 model、effort；可以续接原生 session_id。基于本机 CLI 帮助核验的配置：
 
 | CLI | 原生限制 | 边界 |
 | --- | --- | --- |
@@ -99,7 +99,7 @@
 
 本机真实验证：通过源码版 STDIO MCP，Claude Code 2.1.295 与 Grok CLI 1.0.46 各完成两次发言；第二次保留各自原生 session_id，公共区与导演台同步显示五条公开台词。浏览器确认公共区没有本轮私有指令，导演台有独立指令区。平台级对抗性文件隔离和其他操作系统实机验证不在已验证范围内。
 
-补充实测：以全新的合成文件为目标，通过 AgentNave 的 `discussion_mode` 明确要求两种 CLI 读取文件，不在测试 prompt 中加入禁用工具的劝阻。Claude 会话没有文件/终端工具；Grok 实际请求 `read_file`，原生工具结果为 `Denied by permission policy: deny rule on any tool matching "*"`。两者输出均未含测试文件随机标记。这验证了本次原生权限行为，不代表覆盖所有插件、未来版本或同用户恶意进程。规则依据为 [Grok 官方权限文档](https://docs.x.ai/build/features/permissions)。
+补充实测：以全新的合成文件为目标，通过 AgentNave 的 `restricted_tools` 明确要求两种 CLI 读取文件，不在测试 prompt 中加入禁用工具的劝阻。Claude 会话没有文件/终端工具；Grok 实际请求 `read_file`，原生工具结果为 `Denied by permission policy: deny rule on any tool matching "*"`。两者输出均未含测试文件随机标记。这验证了本次原生权限行为，不代表覆盖所有插件、未来版本或同用户恶意进程。规则依据为 [Grok 官方权限文档](https://docs.x.ai/build/features/permissions)。
 
 新增 CLI 的限制依据：[CodeBuddy CLI 参数](https://www.codebuddy.ai/docs/cli/cli-reference)、[Codex 配置参考](https://developers.openai.com/codex/config-reference/)、[Antigravity 角色工具列表](https://antigravity.google/docs/subagents/)。三种 CLI 均通过 AgentNave 对合成文件做读取尝试，输出未含随机测试标记；Codex 明确无文件/终端工具，Antigravity 专用空工具角色返回 BLOCKED，CodeBuddy 输出了未执行的 Read 调用文本。后者不能当作有效节目发言，节目仍须通过 public_text JSON 结构校验。
 

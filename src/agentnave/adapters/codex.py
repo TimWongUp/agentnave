@@ -10,11 +10,11 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
-    discussion_options,
     error_summary,
     failure_status,
     object_dict,
     parse_json_lines,
+    restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
@@ -45,7 +45,7 @@ class CodexAdapter:
     }
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = discussion_options(request)
+        request, discussion = restricted_options(request)
         unknown = sorted(set(request.provider_options) - self._options)
         if unknown:
             raise ValueError(f"unsupported codex options: {', '.join(unknown)}")

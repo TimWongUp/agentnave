@@ -10,13 +10,13 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
-    discussion_options,
     error_summary,
     failure_status,
     normalized_usage,
     option_args,
     parse_json_lines,
     parse_json_object,
+    restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
@@ -56,7 +56,7 @@ class GrokAdapter:
     }
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = discussion_options(request)
+        request, discussion = restricted_options(request)
         options = option_args(request, self._options)
         prompt = request.prompt.encode()
         fd, raw_path = tempfile.mkstemp(prefix="agentnave-prompt-", suffix=".txt")

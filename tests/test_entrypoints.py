@@ -96,6 +96,10 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         "wait_agent",
         "cancel_agent",
         "describe_provider",
+        "open_group",
+        "run_round",
+        "wait_round",
+        "cancel_round",
         "open_discussion",
         "list_conversations",
         "start_discussion_turn",
@@ -193,6 +197,51 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     assert invocation_result["status"] == "succeeded"
     assert invocation_result["output"] == "FINISH"
     assert invocation_result["session_id"] == "session-e2e"
+
+
+@pytest.mark.asyncio
+async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    async with Client(mcp) as client:
+        opened = await client.call_tool(
+            "open_group",
+            {"cwd": str(tmp_path), "seats": [{"id": s, "provider": "claude"} for s in "ab"]},
+        )
+        group_id = _payload(opened.structured_content)["group_id"]
+        started = await client.call_tool(
+            "run_round",
+            {
+                "group_id": group_id,
+                "seats": ["a", "b"],
+                "order": "parallel",
+                "prompt": "compare notes",
+                "instructions": {"b": "argue the other side"},
+            },
+        )
+        started_payload = _payload(started.structured_content)
+        assert started_payload["reason"] == "started"
+        seats = cast(list[dict[str, object]], started_payload["seats"])
+        assert [seat["status"] for seat in seats] == ["running", "running"]
+        async with asyncio.timeout(10):
+            while True:
+                waited = await client.call_tool(
+                    "wait_round", {"round_id": started_payload["round_id"]}
+                )
+                payload = _payload(waited.structured_content)
+                if payload["status"] != "running":
+                    break
+        rejected = await client.call_tool(
+            "run_round",
+            {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "x"},
+        )
+
+    assert payload["status"] == "finished" and payload["reason"] == "finished"
+    outputs = [str(seat["output"]) for seat in cast(list[dict[str, object]], payload["seats"])]
+    assert all("COMPARE NOTES" in output for output in outputs)
+    assert "ARGUE THE OTHER SIDE" not in outputs[0] and "ARGUE THE OTHER SIDE" in outputs[1]
+    assert rejected.is_error is True and "unknown seat ids: c" in str(rejected.content)
 
 
 @pytest.mark.asyncio
@@ -396,6 +445,10 @@ async def test_stdio_entrypoint_exposes_mcp_tools() -> None:
         "wait_agent",
         "cancel_agent",
         "describe_provider",
+        "open_group",
+        "run_round",
+        "wait_round",
+        "cancel_round",
         "open_discussion",
         "list_conversations",
         "start_discussion_turn",
@@ -461,6 +514,15 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         )
         assert rejected.is_error is True
         assert "excluded by this host" in str(rejected.content)
+        grouped = await client.call_tool(
+            "open_group",
+            {
+                "cwd": str(tmp_path),
+                "seats": [{"id": p, "provider": p} for p in ("codex", "grok")],
+            },
+        )
+        assert grouped.is_error is True
+        assert "Excluded providers: codex" in str(grouped.content)
         assert not marker.exists()
         if "claude" in excluded:
             assert (

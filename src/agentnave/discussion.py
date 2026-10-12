@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
 from agentnave.models import InvocationRequest, InvocationStatus
@@ -451,6 +452,8 @@ class DiscussionRooms:
         else:
             workspace = room.directory / "seats" / (seat_id + "-" + uuid4().hex)
             workspace.mkdir(parents=True, mode=0o700)
+            if seat.provider == "antigravity":
+                write_restricted_profile(workspace)
             session = SeatSession(cwd=str(workspace))
             room.state.sessions[seat_id] = session
         previous = session.model_copy(deep=True)
@@ -502,7 +505,7 @@ class DiscussionRooms:
                     provider_options={
                         "model": seat.model,
                         "effort": seat.effort,
-                        "discussion_mode": True,
+                        "restricted_tools": True,
                     },
                 )
             )
