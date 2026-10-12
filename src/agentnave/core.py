@@ -31,6 +31,7 @@ _OUTPUT_LIMIT_ERROR = InvocationError(
     "output_limit_exceeded", "provider output exceeded the AgentNave capture limit"
 )
 _PIPE_DRAIN_SECONDS = 1.0
+_FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 
 @dataclass(slots=True)
@@ -40,6 +41,7 @@ class _InvocationRecord:
     phase: InvocationPhase = InvocationPhase.PREPARING
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[InvocationResult] | None = None
+    cleanup_handle: asyncio.TimerHandle | None = None
     process: asyncio.subprocess.Process | None = None
     last_event_at: float | None = None
     last_activity: ProviderActivity | None = None
@@ -121,7 +123,16 @@ class InvocationManager:
         record = _InvocationRecord(request)
         self._records[invocation_id] = record
         record.task = asyncio.create_task(self._execute(record, adapter, prepared))
+        record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
         return invocation_id
+
+    def _schedule_cleanup(self, invocation_id: str) -> None:
+        record = self._records.get(invocation_id)
+        if self._closed or record is None:
+            return
+        record.cleanup_handle = asyncio.get_running_loop().call_later(
+            _FINISHED_RETENTION_SECONDS, self.forget_finished, {invocation_id}
+        )
 
     async def wait(
         self, invocation_id: str, timeout_seconds: float | None = None
@@ -202,6 +213,9 @@ class InvocationManager:
         if self._closed:
             return
         self._closed = True
+        for record in self._records.values():
+            if record.cleanup_handle is not None:
+                record.cleanup_handle.cancel()
         active = [
             invocation_id
             for invocation_id, record in self._records.items()
@@ -214,6 +228,8 @@ class InvocationManager:
         for invocation_id in invocation_ids:
             record = self._records.get(invocation_id)
             if record is not None and record.task is not None and record.task.done():
+                if record.cleanup_handle is not None:
+                    record.cleanup_handle.cancel()
                 del self._records[invocation_id]
                 removed += 1
         return removed

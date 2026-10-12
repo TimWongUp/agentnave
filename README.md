@@ -128,6 +128,10 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional.
 
+The startup reply also includes `provider`, `model`, and `effort`, without repeating the prompt.
+Model and effort reflect explicit request options, not verified effective CLI settings; omitted
+options are displayed as `继承原生设置` (inherit native settings).
+
 Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, `grok`, and `pi`. The Skill provides model and effort defaults for the Manager to pass explicitly through
 allowlisted options. User choices override that guidance; omitted options still inherit native
 settings. Exclusions are configured per host process, independently of the model it uses. For Codex calls outside a
@@ -215,6 +219,12 @@ Invocation handles live only in the current MCP server process. When the server 
 makes a best-effort attempt to terminate processes that remain in the provider process tree. A
 restart cannot recover old handles, but a retained provider `session_id` can be supplied to a new
 `start_agent` call.
+
+Finished invocation records are automatically removed from memory seven days after completion,
+including unread results. Reads do not extend retention, and active invocations are never expired.
+Keep the final answer and native `session_id` before expiry; waiting or cancelling an expired handle
+returns a Tool error. Cleanup does not delete provider-native sessions, group answers, or Studio's
+saved history.
 
 Running responses help inspect health and direction using a bounded public reply and native
 activity. They do not show every active operation or guarantee progress. Raw streams remain

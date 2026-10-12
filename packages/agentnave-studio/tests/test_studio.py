@@ -279,8 +279,18 @@ async def test_tasks_are_saved_grouped_and_deleted_without_starting_a_dashboard(
         first = await _call(
             client,
             "start_agent",
-            {"provider": "claude", "prompt": "one", "cwd": str(tmp_path), "title": "Job"},
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "title": "Job",
+                "provider_options": {"model": "test-model", "effort": "high"},
+            },
         )
+        assert first["provider"] == "claude"
+        assert first["model"] == "test-model"
+        assert first["effort"] == "high"
+        assert "prompt" not in first
         finished = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
         conversation_id = first["conversation_id"]
         resumed = await _call(

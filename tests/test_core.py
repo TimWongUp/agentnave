@@ -125,6 +125,32 @@ def fake_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_finished_invocations_expire_without_expiring_active_work(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 0.1)
+    manager = InvocationManager()
+    active = manager.start(InvocationRequest("claude", "sleep", tmp_path))
+    finished = manager.start(InvocationRequest("claude", "complete", tmp_path))
+    try:
+        result = await manager.wait(finished)
+        assert result is not None and result.output == "completed"
+        assert await manager.wait_for_update(finished, 0) == result
+        # Expiry runs even when there are no new requests, and reading did not remove it.
+        await asyncio.sleep(0.2)
+        with pytest.raises(KeyError, match="unknown invocation_id"):
+            await manager.wait(finished)
+        assert await manager.wait(active, 0) is None
+        cancelled = await manager.cancel(active)
+        assert cancelled.status is InvocationStatus.CANCELLED
+        await asyncio.sleep(0.2)
+        with pytest.raises(KeyError, match="unknown invocation_id"):
+            await manager.cancel(active)
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_wait_preserves_distinct_blockers_in_one_stdout_burst(
     tmp_path: Path, fake_adapter: None
 ) -> None:

@@ -142,6 +142,8 @@ async def start_agent(
 ) -> TaskStartPayload:
     """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
+    The reply includes the CLI and requested model/effort; omitted options show native inheritance.
+    These are requested settings, not confirmation of the CLI's effective settings.
     The task and its final output are saved in a private task conversation; a resumed native
     session joins its open conversation. No output is shared with another CLI. No runtime
     deadline; use cancel_agent to stop work.
@@ -163,10 +165,7 @@ async def start_agent(
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
     return {
-        "invocation_id": invocation_id,
-        "status": "running",
-        "reason": "started",
-        "elapsed_ms": 0,
+        **core.started_payload(invocation_id, request),
         "conversation_id": saved_id,
     }
 

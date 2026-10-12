@@ -93,6 +93,9 @@ class InvocationPayload(TypedDict):
     status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
     reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
     elapsed_ms: int
+    provider: NotRequired[str]
+    model: NotRequired[str]
+    effort: NotRequired[str]
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
@@ -180,6 +183,7 @@ mcp = MCPServer(
         "cancel_agent stops work. For several CLIs answering together, open_group then "
         "run_round (parallel or serial), wait_round and cancel_round. "
         "Handles and groups last only for this server process; nothing is saved. "
+        "Invocation handles expire seven days after completion. "
         "Provider-native permissions remain the security boundary. " + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
@@ -202,6 +206,18 @@ def _manager(ctx: Context[Runtime]) -> InvocationManager:
     return ctx.request_context.lifespan_context.manager
 
 
+def started_payload(invocation_id: str, request: InvocationRequest) -> InvocationPayload:
+    return {
+        "invocation_id": invocation_id,
+        "status": "running",
+        "reason": "started",
+        "elapsed_ms": 0,
+        "provider": request.provider,
+        "model": str(request.provider_options.get("model", "继承原生设置")),
+        "effort": str(request.provider_options.get("effort", "继承原生设置")),
+    }
+
+
 def finished_payload(invocation_id: str, result: InvocationResult) -> InvocationPayload:
     payload: InvocationPayload = {
         "invocation_id": invocation_id,
@@ -220,8 +236,9 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
 
 def _unknown_invocation() -> ToolError:
     return ToolError(
-        "Unknown invocation_id. Use the invocation_id returned by start_agent during this "
-        "MCP server session."
+        "Unknown or expired invocation_id. Use the invocation_id returned by start_agent during "
+        "this MCP server session; handles expire seven days after completion. "
+        "Keep the final output and native session_id before expiry."
     )
 
 
@@ -274,6 +291,8 @@ async def start_agent(
 ) -> InvocationPayload:
     """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
+    The reply includes the CLI and requested model/effort; omitted options show native inheritance.
+    These are requested settings, not confirmation of the CLI's effective settings.
     AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
     Provider-native limits still apply.
     Active invocations do not accept messages. To continue a finished conversation, pass
@@ -303,12 +322,7 @@ async def start_agent(
         raise ToolError(
             f"Unable to prepare invocation: {exc}. Check local filesystem access."
         ) from exc
-    return {
-        "invocation_id": invocation_id,
-        "status": "running",
-        "reason": "started",
-        "elapsed_ms": 0,
-    }
+    return started_payload(invocation_id, request)
 
 
 @_tool(
@@ -336,6 +350,7 @@ async def wait_agent(
     and silence are not proof the task cannot proceed. Finished responses contain the final reply.
     Wait expiry leaves the invocation running. Call again with the same ID to continue.
     This is request/response waiting, not a background notification subscription.
+    Finished invocation handles expire seven days after completion, even if not yet read.
     """
     manager = _manager(ctx)
     try:
@@ -390,6 +405,7 @@ async def cancel_agent(
     """Stop a task by invocation_id; use wait_agent to observe without stopping.
 
     Returns the cancelled or already-finished result. Does not undo prior CLI side effects.
+    Finished invocation handles expire seven days after completion.
     """
     try:
         result = await _manager(ctx).cancel(invocation_id)
