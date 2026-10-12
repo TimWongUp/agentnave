@@ -7,7 +7,7 @@
 <a id="workbench-link" hidden>← 所有会话</a>
 <div class="heading"><div><p class="eyebrow" id="view-name">公共对话 · 全员可见</p><h1 id="title">正在读取会话…</h1></div><div class="heading-actions"><a id="public-link" class="button-link" hidden target="_blank" rel="noreferrer">选手看到的页面 ↗</a><a class="export" href="./transcript.jsonl" download="transcript.jsonl">导出公开台词 ↓</a></div></div>
 <section id="home-tools" hidden>
-<p class="intro">讨论、独立作答和日常任务，都从这里查看。选手的公开对话与主控的私有内容分开保存。</p>
+<p class="intro">节目和日常任务，都从这里查看。选手的公开对话与主控的私有内容分开保存。</p>
 <div id="mode-filters" class="mode-filters" aria-label="按用途筛选会话"></div>
 <details class="start-guide"><summary>如何开始新会话？</summary><p>在主控 Agent 的对话中说明用途和内容，主控会创建会话；这里自动同步进展。</p><div id="start-examples"></div></details>
 <div class="list-tools"><label class="search-label"><span>查找会话</span><input id="search" type="search" placeholder="搜索会话名称" autocomplete="off"></label><label><span>会话状态</span><select id="archive-filter"><option value="active">未结束</option><option value="ended">已结束</option><option value="all">全部状态</option></select></label></div><p id="list-count" role="status"></p>
@@ -17,9 +17,8 @@
 <div class="now"><span class="live-dot"></span><span id="status" role="status">等待主持人开场</span><span id="count">0 条公开发言</span></div>
 <nav id="view-tabs" class="view-tabs" hidden aria-label="切换会话视图"><button id="conversation-tab" aria-pressed="true">公开对话</button><button id="backstage-tab" aria-pressed="false">导演后台 <span>私有</span></button></nav>
 <section id="director-panel" hidden aria-label="导演后台">
-<div class="desk-heading"><h2>本轮进展</h2><span class="tag">仅主控可见</span></div><p class="desk-note">这里的指令和未公开回答不会同步给其他选手。点名、发布或揭晓，请在主控 Agent 的对话中操作。</p>
-<div class="desk-grid"><div><h3>私有指令</h3><p id="instruction"></p></div><div id="candidate-panel"><h3>候选回答 · 尚未公开</h3><p id="candidate"></p></div></div><p id="turn-error" role="status"></p>
-<section id="held-panel" hidden><h3 id="held-title"></h3><div id="held-answers"></div></section></section>
+<div class="desk-heading"><h2 id="round-title">本轮进展</h2><span class="tag">仅主控可见</span></div><p class="desk-note">私密指令、待审回答和运行中的回复只在这里显示，不会同步给其他选手。发布或丢弃，请在主控 Agent 的对话中操作。</p>
+<div id="round-seats"></div><p id="turn-error" role="status"></p></section>
 <section id="task-list" hidden aria-label="任务结果"></section>
 <section id="transcript-panel" aria-label="公开对话">
 <div class="audience-note"><span id="view-note">全员共享的公共记录</span><p id="view-description">这里只展示已经公开的发言。</p></div>

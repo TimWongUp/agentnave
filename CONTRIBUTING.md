@@ -3,8 +3,9 @@
 Contributions are welcome through GitHub Issues and pull requests. Keep changes focused on
 AgentNave's role as a local STDIO MCP adapter for CLI-based subagents; planning, orchestration,
 review decisions, retries, permissions, and worktree management belong to the calling Agent Manager.
-Optional discussion-room changes must preserve the separate public projection and explicit director
-publication boundary; see [the room contract](docs/discussion-rooms.md).
+The core package keeps no history and starts no web server; saved shows, review and the dashboard
+belong to `packages/agentnave-studio` and must keep public pages limited to committed entries; see
+[the studio guide](docs/studio.md).
 
 ## Report an issue
 

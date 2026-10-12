@@ -165,8 +165,10 @@ async def test_failures_are_absent_and_only_proven_delivery_advances_sessions(
 
     second = groups.run(group_id, ["a", "b"], "serial", "Q2", {})
     manager.attention["3"].put_nowait(InvocationError("provider_blocked", "waiting"))
-    round_, blocked = await groups.wait(second.id, 2)
-    assert blocked and round_.runs[0].status == "running"  # a blocker is not an absence
+    round_, reason = await groups.wait(second.id, 2)
+    assert (
+        reason == "execution_blocked" and round_.runs[0].status == "running"
+    )  # a blocker is not an absence
     assert [entry.kind for entry in second.group.entries][-1] == "task"
     # The failure echoes the old session id, which must not count as delivery.
     manager.finish("3", InvocationStatus.FAILED, error=InvocationError("provider_error", "x"))
@@ -290,8 +292,8 @@ async def test_blockers_of_finished_seats_do_not_wake_wait(tmp_path: Path) -> No
     await asyncio.sleep(0.05)
     manager.finish("1")
     await asyncio.sleep(0.05)
-    _, blocked = await groups.wait(round_.id, 0.1)
-    assert not blocked and [run.status for run in round_.runs] == ["succeeded", "running"]
+    _, reason = await groups.wait(round_.id, 0.1)
+    assert reason is None and [run.status for run in round_.runs] == ["succeeded", "running"]
     manager.finish("2")
     await settle(groups, round_.id)
 

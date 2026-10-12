@@ -64,6 +64,22 @@ AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
 test -x "$AGENTNAVE_MCP"
 ```
 
+To install AgentNave Studio (saved shows, review and a local dashboard; see the
+[studio guide](studio.md)) instead of the core, install its package from the same tag. It depends
+on the same-version core, includes every core tool, and adds the `agentnave-studio-mcp` launcher:
+
+```bash
+uv tool install --python 3.12 \
+  "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}#subdirectory=packages/agentnave-studio"
+
+AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-studio-mcp"
+test -x "$AGENTNAVE_MCP"
+```
+
+Register one of the two launchers per host under the `agentnave` name; the studio replaces the core
+there rather than running beside it. Studio history lives in `~/.agentnave/` unless
+`AGENTNAVE_DATA_DIR` sets another absolute directory; the core keeps no history.
+
 The remaining commands reuse these variables; run them in the same shell or define them again.
 `uv` manages the isolated Python 3.12 runtime. Use a fixed release rather than mutable `main`, and
 register the absolute launcher path rather than a source checkout or development `.venv`.
@@ -204,7 +220,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the four core tools, the twelve conversation/workbench tools and the ordinary-task `codex` exclusion.
+Start a new session and confirm the eight core tools (fifteen with the studio) and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -294,9 +310,9 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all 16 AgentNave tools; a
+tools, then asks whether to enable them. Complete that choice for all AgentNave tools (eight, or fifteen with the studio); a
 successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
-per-tool selection so it includes the new workbench and conversation tools. In noninteractive
+per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
 selection. Restart the host and verify Skill discovery separately.
 
@@ -423,9 +439,9 @@ unless explicitly changed by the user.
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`, and
-   `cancel_agent` plus the twelve [conversation/workbench tools](discussion-rooms.md) are visible
-   (16 total). Confirm `open_workbench`, `list_conversations` and `read_conversation` are included.
+2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`,
+   `cancel_agent`, `open_group`, `run_round`, `wait_round` and `cancel_round` are visible (8 total).
+   The studio adds the seven [show and history tools](studio.md) (15 total).
    Confirm the host also discovers `agentnave-manager` in the intended
    scope and can read its five referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
@@ -500,7 +516,7 @@ Update runtime and Skill together, reconnect MCP, then use `open_workbench`. Dis
 explicitly created; use `blind` for independent answers. Only published dialogue is shared between
 seats. Ordinary host exclusions remain in force; explicit discussion rooms permit every registered
 provider, including the host CLI. The Dashboard stays local and read-only. See the
-[conversation contract](discussion-rooms.md) for native restriction limits and recovery behavior.
+[studio guide](studio.md) for native restriction limits and recovery behavior.
 
 ### Upgrading from v0.11.0 to v0.12.0
 
@@ -523,6 +539,25 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.14.0 to v0.15.0
+
+Breaking release. The package splits in two:
+
+- `agentnave` (core) keeps `describe_provider`, `start_agent`, `wait_agent`, `cancel_agent` and adds
+  in-memory group rounds: `open_group`, `run_round`, `wait_round`, `cancel_round`. It no longer
+  saves history, starts a dashboard or accepts `start_agent` `title`/`conversation_id`.
+  `describe_provider` no longer returns `discussion_permitted`.
+- `agentnave-studio` adds saved shows and tasks, review, host messages, isolated seats and the
+  dashboard; see the [studio guide](studio.md). The thirteen discussion and workbench tools are
+  removed in both packages.
+- The `discussion_mode` provider option is renamed `restricted_tools`. Antigravity's restricted
+  mode now requires a dedicated cwd that already contains its profile; the studio's isolated
+  seats prepare it.
+
+History saved by earlier versions in `~/.agentnave/` is not migrated; the studio lists it as
+unavailable. Delete it once no longer needed. Update the runtime (choose core or studio) and Skill
+together, then reconnect MCP on every host.
 
 ## Upgrade, repair, and rollback
 
@@ -578,6 +613,7 @@ codex mcp remove agentnave
 claude mcp remove --scope user agentnave
 gemini mcp remove agentnave --scope user
 uv tool uninstall agentnave
+uv tool uninstall agentnave-studio  # if installed
 ```
 
 For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.

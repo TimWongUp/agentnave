@@ -130,7 +130,7 @@ def option_args(request: InvocationRequest, allowlist: dict[str, str]) -> tuple[
 
 
 def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
-    """Explicit opt-in only; discussion profiles cannot enable other tools."""
+    """Explicit opt-in only; restricted profiles cannot enable other tools."""
     options = dict(request.provider_options)
     enabled = options.pop("restricted_tools", False)
     if not isinstance(enabled, bool):
@@ -138,6 +138,8 @@ def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, b
     if enabled:
         if request.provider not in ("antigravity", "claude", "codebuddy", "codex", "grok", "pi"):
             raise ValueError("restricted_tools requires a registered provider")
-        if set(options) - {"model", "effort"}:
+        # Pi's provider only picks the model backend; it grants no tools.
+        allowed = {"model", "effort"} | ({"provider"} if request.provider == "pi" else set[str]())
+        if set(options) - allowed:
             raise ValueError("restricted_tools accepts only model and effort")
     return replace(request, provider_options=options), enabled

@@ -32,7 +32,9 @@ jobs:
           import tarfile
 
           skill = "skills/agentnave-manager"
-          required = ["pyproject.toml", "src/agentnave/__init__.py", f"{skill}/SKILL.md"]
+          studio = "packages/agentnave-studio"
+          required = ["pyproject.toml", "src/agentnave/__init__.py", f"{skill}/SKILL.md",
+                      f"{studio}/pyproject.toml", f"{studio}/src/agentnave_studio/__init__.py"]
           required += [f"{skill}/references/{name}.md" for name in
                        ("claude", "codebuddy", "codex", "grok", "antigravity", "pi")]
           archive = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "--", *required])
@@ -57,15 +59,24 @@ jobs:
           version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
           if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
               raise SystemExit("Releases require a stable MAJOR.MINOR.PATCH version")
-          module = ast.parse(Path("src/agentnave/__init__.py").read_text())
-          runtime_versions = [
-              ast.literal_eval(node.value)
-              for node in module.body
-              if isinstance(node, ast.Assign)
-              and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
-          ]
-          if runtime_versions != [version]:
+          def runtime_version(path: str) -> list[object]:
+              module = ast.parse(Path(path).read_text())
+              return [
+                  ast.literal_eval(node.value)
+                  for node in module.body
+                  if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+              ]
+
+          if runtime_version("src/agentnave/__init__.py") != [version]:
               raise SystemExit("pyproject.toml and agentnave.__version__ must match")
+          studio = tomllib.loads(Path("packages/agentnave-studio/pyproject.toml").read_text())["project"]
+          if (
+              studio["version"] != version
+              or f"agentnave=={version}" not in studio["dependencies"]
+              or runtime_version("packages/agentnave-studio/src/agentnave_studio/__init__.py") != [version]
+          ):
+              raise SystemExit("agentnave-studio must share the version and pin agentnave exactly")
           previous = tomllib.loads(subprocess.check_output(
               ["git", "show", f"{os.environ['BASE_SHA']}:pyproject.toml"], text=True
           ))["project"]["version"]
@@ -110,110 +121,31 @@ jobs:
       - name: Test
         run: uv run pytest
       - name: Build distributions
-        run: uv build
-      - name: Verify installed distribution
+        run: uv build --all-packages
+      - name: Verify installed distributions
         if: runner.os != 'Windows'
         env:
           UV_TOOL_DIR: ${{ runner.temp }}/agentnave-tools
           UV_TOOL_BIN_DIR: ${{ runner.temp }}/agentnave-bin
         run: |
-          uv tool install --python 3.12 dist/*.whl
-          AGENTNAVE_MCP="$UV_TOOL_BIN_DIR/agentnave-mcp"
-          AGENTNAVE_PYTHON="$UV_TOOL_DIR/agentnave/bin/python"
-          test -x "$AGENTNAVE_MCP"
-          AGENTNAVE_MCP="$AGENTNAVE_MCP" "$AGENTNAVE_PYTHON" - <<'PY'
-          import asyncio
-          import os
-          from pathlib import Path
-
-          from mcp import Client, StdioServerParameters
-
-
-          async def verify() -> None:
-              launcher = Path(os.environ["AGENTNAVE_MCP"])
-              parameters = StdioServerParameters(command=str(launcher))
-              async with Client(parameters) as client:
-                  result = await client.list_tools()
-
-              assert [tool.name for tool in result.tools] == [
-                  "start_agent",
-                  "wait_agent",
-                  "cancel_agent",
-                  "describe_provider",
-                  "open_group",
-                  "run_round",
-                  "wait_round",
-                  "cancel_round",
-                  "open_discussion",
-                  "list_conversations",
-                  "start_discussion_turn",
-                  "read_conversation",
-                  "decide_discussion_turn",
-                  "decide_discussion_round",
-                  "post_discussion_message",
-                  "reset_discussion_seat",
-                  "open_workbench",
-                  "update_conversation",
-                  "delete_conversation",
-                  "mark_discussion_absent",
-                  "continue_discussion",
-              ]
-
-
-          asyncio.run(verify())
-          PY
-      - name: Verify installed distribution on Windows
+          core=$(ls dist/agentnave-*.whl)
+          uv tool install --python 3.12 "$core"
+          uv tool install --python 3.12 dist/agentnave_studio-*.whl --with "$core"
+          "$UV_TOOL_DIR/agentnave-studio/bin/python" scripts/verify_install.py \
+            "$UV_TOOL_BIN_DIR/agentnave-mcp" "$UV_TOOL_BIN_DIR/agentnave-studio-mcp"
+      - name: Verify installed distributions on Windows
         if: runner.os == 'Windows'
         env:
           UV_TOOL_DIR: ${{ runner.temp }}\agentnave-tools
           UV_TOOL_BIN_DIR: ${{ runner.temp }}\agentnave-bin
         run: |
-          $wheel = (Get-ChildItem -LiteralPath dist -Filter *.whl -File -ErrorAction Stop).FullName
-          uv tool install --python 3.12 $wheel
-          $env:AGENTNAVE_MCP = Join-Path $env:UV_TOOL_BIN_DIR "agentnave-mcp.exe"
-          $agentnavePython = Join-Path $env:UV_TOOL_DIR "agentnave\Scripts\python.exe"
-          if (-not (Test-Path -LiteralPath $env:AGENTNAVE_MCP -PathType Leaf)) {
-            throw "Installed launcher missing: $env:AGENTNAVE_MCP"
-          }
-          $verification = @'
-          import asyncio
-          import os
-          from mcp import Client, StdioServerParameters
-
-
-          async def verify() -> None:
-              parameters = StdioServerParameters(command=os.environ["AGENTNAVE_MCP"])
-              async with Client(parameters) as client:
-                  result = await client.list_tools()
-
-              assert [tool.name for tool in result.tools] == [
-                  "start_agent",
-                  "wait_agent",
-                  "cancel_agent",
-                  "describe_provider",
-                  "open_group",
-                  "run_round",
-                  "wait_round",
-                  "cancel_round",
-                  "open_discussion",
-                  "list_conversations",
-                  "start_discussion_turn",
-                  "read_conversation",
-                  "decide_discussion_turn",
-                  "decide_discussion_round",
-                  "post_discussion_message",
-                  "reset_discussion_seat",
-                  "open_workbench",
-                  "update_conversation",
-                  "delete_conversation",
-                  "mark_discussion_absent",
-                  "continue_discussion",
-              ]
-
-
-          asyncio.run(verify())
-          '@
-          $verification | & $agentnavePython -
+          $core = (Get-ChildItem -LiteralPath dist -Filter "agentnave-*.whl" -File -ErrorAction Stop).FullName
+          $studio = (Get-ChildItem -LiteralPath dist -Filter "agentnave_studio-*.whl" -File -ErrorAction Stop).FullName
+          uv tool install --python 3.12 $core
+          uv tool install --python 3.12 $studio --with $core
+          $python = Join-Path $env:UV_TOOL_DIR "agentnave-studio\Scripts\python.exe"
+          & $python scripts/verify_install.py (Join-Path $env:UV_TOOL_BIN_DIR "agentnave-mcp.exe") (Join-Path $env:UV_TOOL_BIN_DIR "agentnave-studio-mcp.exe")
+          if ($LASTEXITCODE -ne 0) { throw "Installed distribution verification failed" }
 
   release:
     name: Publish version release
