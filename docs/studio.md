@@ -26,6 +26,8 @@
 
 不审核（`review=false`）时，节目与核心协作轮次的行为完全一致，只是多了保存与看板。
 
+`wait_round(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，节目席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
+
 ## 隔离席位
 
 `isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略，席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。隔离节目可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；非隔离节目与 `start_agent` 一样遵守排除项。

@@ -125,6 +125,52 @@ def fake_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_active_native_session_cannot_be_resumed_twice(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    request = InvocationRequest("claude", "sleep", tmp_path, "existing-session")
+    first = manager.start(request)
+    try:
+        with pytest.raises(ValueError, match="active invocation"):
+            manager.start(request)
+        # A different provider's identical session identifier is independent.
+        other = manager.start(InvocationRequest("grok", "complete", tmp_path, request.session_id))
+        assert await manager.wait(other) is not None
+        await manager.cancel(first)
+        resumed = manager.start(
+            InvocationRequest("claude", "complete", tmp_path, request.session_id)
+        )
+        assert await manager.wait(resumed) is not None
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_execution_error_is_a_readable_terminal_result(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_parse(
+        _self: FakeAdapter, _returncode: int, _stdout: bytes, _stderr: bytes
+    ) -> ParsedProviderResult:
+        raise RuntimeError("PRIVATE INTERNAL DETAIL")
+
+    monkeypatch.setattr(FakeAdapter, "parse", broken_parse)
+    manager = InvocationManager()
+    invocation_id = manager.start(InvocationRequest("claude", "complete", tmp_path, "existing"))
+    try:
+        result = await manager.wait_for_update(invocation_id, 3)
+        assert result is not None and not isinstance(result, InvocationError)
+        assert result.status is InvocationStatus.FAILED
+        assert result.error is not None and result.error.code == "internal_error"
+        assert result.session_id == "existing"
+        assert "PRIVATE INTERNAL DETAIL" not in str(result.to_dict())
+        assert await manager.wait(invocation_id) == result
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_finished_invocations_expire_without_expiring_active_work(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -104,6 +105,7 @@ class Round:
     order: RoundOrder
     runs: list[SeatRun]
     started_at: float = field(default_factory=time.monotonic)
+    finished_at: float | None = None
     cancelling: bool = False
     error: str | None = None
     task: asyncio.Task[None] | None = None
@@ -266,9 +268,13 @@ class Groups:
 
     async def _drive(self, round_: Round) -> None:
         group = round_.group
+        finish_tasks: list[asyncio.Task[None]] = []
         try:
             if round_.order == "parallel":
-                await asyncio.gather(*(self._finish(round_, run) for run in round_.runs))
+                finish_tasks = [
+                    asyncio.create_task(self._finish(round_, run)) for run in round_.runs
+                ]
+                await asyncio.gather(*finish_tasks)
                 approved = await self._approve(
                     round_, [run for run in round_.runs if run.status == "succeeded"]
                 )
@@ -285,7 +291,44 @@ class Groups:
                         else set[str]()
                     )
                     self._commit(round_, run, approved)
+        except (Exception, asyncio.CancelledError) as exc:
+            round_.cancelling = True  # stop launch/review before awaiting cleanup
+            if not isinstance(exc, asyncio.CancelledError):
+                logging.getLogger(__name__).exception("Unexpected round failure")
+                round_.error = "round_execution_failed: inspect server logs"
+            round_.notify()
+            for task in finish_tasks:
+                task.cancel()
+            await asyncio.gather(*finish_tasks, return_exceptions=True)
+            running = [run for run in round_.runs if run.status == "running"]
+            results = await asyncio.gather(
+                *(self.manager.cancel(run.invocation_id) for run in running if run.invocation_id),
+                return_exceptions=True,
+            )
+            for run, result in zip(running, results, strict=True):
+                if isinstance(result, InvocationResult):
+                    self._accept_result(round_, run, result)
+                else:
+                    run.status = "failed"
+                    run.launch_error = InvocationError(
+                        "internal_error", "Invocation result unavailable."
+                    )
+                    group.states[run.seat_id] = SeatState()
+            for run in round_.runs:
+                if run.status == "pending":
+                    run.status = "not_started"
+            committed = {
+                entry.seat_id
+                for entry in group.entries
+                if entry.round == round_.number and entry.kind in ("answer", "absent")
+            }
+            for run in round_.runs:
+                if run.seat_id not in committed and run.status != "succeeded":
+                    self._commit(round_, run, set())
+            if isinstance(exc, asyncio.CancelledError):
+                raise
         finally:
+            round_.finished_at = time.monotonic()
             group.active = None
             self._changed(round_)
             round_.notify()
@@ -302,7 +345,12 @@ class Groups:
         self._changed(round_)
         if round_.error is not None:
             run.status = "failed"
-            run.launch_error = InvocationError("state_write_failed", round_.error)
+            code = (
+                "state_write_failed"
+                if round_.error.startswith("state_write_failed:")
+                else "state_update_failed"
+            )
+            run.launch_error = InvocationError(code, round_.error)
             return
         try:
             run.invocation_id = self.manager.start(
@@ -345,6 +393,9 @@ class Groups:
                 round_.notify()
             elif update is not None:
                 break
+        self._accept_result(round_, run, update)
+
+    def _accept_result(self, round_: Round, run: SeatRun, update: InvocationResult) -> None:
         run.result = update
         run.status = _TERMINAL[update.status]
         state = round_.group.states[run.seat_id]
@@ -374,9 +425,13 @@ class Groups:
     def _changed(self, round_: Round) -> None:
         try:
             self._on_change(round_)
-        except OSError as exc:
+        except Exception as exc:
             # Never launch more work whose outcome could not be recorded.
-            round_.error = f"state_write_failed: {exc}"
+            if isinstance(exc, OSError):
+                round_.error = f"state_write_failed: {exc}"
+            else:
+                logging.getLogger(__name__).exception("Unexpected round state failure")
+                round_.error = "state_update_failed: inspect server logs"
             round_.cancelling = True
 
     def _on_change(self, round_: Round) -> None:

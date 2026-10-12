@@ -226,6 +226,13 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
             "run_round",
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "x"},
         )
+        status_only = await client.call_tool(
+            "wait_round", {"round_id": started_payload["round_id"], "include_output": False}
+        )
+        compact = _payload(status_only.structured_content)
+        assert all("output" not in seat for seat in cast(list[dict[str, object]], compact["seats"]))
+        reread = await client.call_tool("wait_round", {"round_id": started_payload["round_id"]})
+        assert _payload(reread.structured_content) == payload
 
     assert payload["status"] == "finished" and payload["reason"] == "finished"
     outputs = [str(seat["output"]) for seat in cast(list[dict[str, object]], payload["seats"])]

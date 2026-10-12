@@ -361,6 +361,7 @@ class Studio(Groups):
     def start_task(
         self, request: InvocationRequest, title: str | None, conversation_id: str | None
     ) -> tuple[str, str]:
+        self.manager.check_start(request)
         record = self.writable(conversation_id) if conversation_id else None
         if request.session_id:
 
@@ -451,6 +452,11 @@ class Studio(Groups):
     # Group hooks
 
     def _on_change(self, round_: Round) -> None:
+        if round_.cancelling and round_.error:
+            reviews = self.reviews.get(round_.id, {})
+            for seat_id, decision in reviews.items():
+                if decision == "pending":
+                    reviews[seat_id] = "discard"
         self._save(round_.group)
 
     def _save(self, group: Group) -> None:
@@ -488,6 +494,8 @@ class Studio(Groups):
             saved.status = (
                 "running"
                 if group.active is round_
+                else "failed"
+                if round_.error
                 else "cancelled"
                 if round_.cancelling
                 else "finished"

@@ -299,15 +299,20 @@ class StudioRoundPayload(TypedDict):
     group_id: str
     round: int
     order: Literal["parallel", "serial"]
-    status: Literal["running", "finished", "cancelled"]
+    status: Literal["running", "finished", "failed", "cancelled"]
     reason: str
     elapsed_ms: int
     seats: list[StudioSeatRunPayload]
     error: NotRequired[str]
 
 
-def _round_payload(studio: Studio, round_: Round, reason: str) -> StudioRoundPayload:
-    payload = cast(StudioRoundPayload, core.round_payload(round_, studio.manager, reason))
+def _round_payload(
+    studio: Studio, round_: Round, reason: str, *, include_output: bool = True
+) -> StudioRoundPayload:
+    payload = cast(
+        StudioRoundPayload,
+        core.round_payload(round_, studio.manager, reason, include_output=include_output),
+    )
     reviews = studio.reviews.get(round_.id, {})
     for seat in payload["seats"]:
         if reviews.get(seat["seat_id"]) == "pending":
@@ -324,12 +329,21 @@ def _round_payload(studio: Studio, round_: Round, reason: str) -> StudioRoundPay
     ),
 )
 async def wait_round(
-    round_id: Annotated[str, Field(min_length=1)], *, ctx: Context[Runtime]
+    round_id: Annotated[str, Field(min_length=1)],
+    include_output: Annotated[
+        bool,
+        Field(
+            description="Include answer bodies and running reply tails; false returns status only."
+        ),
+    ] = True,
+    *,
+    ctx: Context[Runtime],
 ) -> StudioRoundPayload:
     """Wait up to five minutes; returns early when the round finishes, a seat reports a blocker,
     or answers wait for review (reason=review_needed, statuses pending_review).
 
     Review answers by calling decide_answers, then wait again. Finished rounds can be read again.
+    include_output=false omits bodies, including pending review answers; true can read them later.
     """
     studio = _studio(ctx)
     try:
@@ -338,7 +352,7 @@ async def wait_round(
         raise ToolError(
             "Unknown round_id in this server session; read_conversation shows saved rounds."
         ) from exc
-    return _round_payload(studio, round_, reason or "wait_elapsed")
+    return _round_payload(studio, round_, reason or "wait_elapsed", include_output=include_output)
 
 
 @mcp.tool(
