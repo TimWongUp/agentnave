@@ -66,7 +66,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.14.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.15.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
@@ -103,7 +103,7 @@ starts only when `open_dashboard` is called. See the [studio guide](docs/studio.
 
 ## The MCP surface
 
-This section describes `v0.14.0`, which retains native Windows process-tree supervision and
+This section describes `v0.15.0`, which retains native Windows process-tree supervision and
 the fixed five-minute wait contract introduced in `v0.9.0`.
 Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
 update their response handling and paired Skill.

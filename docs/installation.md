@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.14.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.15.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.14.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.15.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -550,7 +550,8 @@ Breaking release. The package splits in two:
   `describe_provider` no longer returns `discussion_permitted`.
 - `agentnave-studio` adds saved shows and tasks, review, host messages, isolated seats and the
   dashboard; see the [studio guide](studio.md). The thirteen discussion and workbench tools are
-  removed in both packages.
+  removed from the core; the studio keeps the conversation tools and its `start_agent` keeps
+  `title`/`conversation_id`.
 - The `discussion_mode` provider option is renamed `restricted_tools`. Antigravity's restricted
   mode now requires a dedicated cwd that already contains its profile; the studio's isolated
   seats prepare it.
