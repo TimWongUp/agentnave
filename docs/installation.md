@@ -70,7 +70,8 @@ on the same-version core, includes every core tool, and adds the `agentnave-stud
 
 ```bash
 uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}#subdirectory=packages/agentnave-studio"
+  "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}#subdirectory=packages/agentnave-studio" \
+  --with "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
 
 AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-studio-mcp"
 test -x "$AGENTNAVE_MCP"
@@ -79,6 +80,9 @@ test -x "$AGENTNAVE_MCP"
 Register one of the two launchers per host under the `agentnave` name; the studio replaces the core
 there rather than running beside it. Studio history lives in `~/.agentnave/` unless
 `AGENTNAVE_DATA_DIR` sets another absolute directory; the core keeps no history.
+
+The Studio command explicitly sources its exact-version core dependency from the same Git tag;
+GitHub Release publication does not publish either package to a package index.
 
 The remaining commands reuse these variables; run them in the same shell or define them again.
 `uv` manages the isolated Python 3.12 runtime. Use a fixed release rather than mutable `main`, and
