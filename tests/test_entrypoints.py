@@ -178,6 +178,10 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     invocation_result = finished_payload
     assert started.is_error is False
     assert started_payload["status"] == "running"
+    assert started_payload["provider"] == "claude"
+    assert started_payload["model"] == "继承原生设置"
+    assert started_payload["effort"] == "继承原生设置"
+    assert "prompt" not in started_payload
     assert finished.is_error is False
     assert finished_payload["reason"] == "finished"
     assert invocation_result["status"] == "succeeded"
@@ -372,6 +376,27 @@ async def test_mcp_reports_preparation_io_failure(
     assert result.is_error is True
     assert "Unable to prepare invocation" in str(result.content)
     assert "Invalid invocation request" not in str(result.content)
+
+
+@pytest.mark.asyncio
+async def test_mcp_expired_invocation_returns_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 0.5)
+    async with Client(mcp) as client:
+        started = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "complete", "cwd": str(tmp_path)}
+        )
+        invocation_id = _payload(started.structured_content)["invocation_id"]
+        finished = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
+        assert _payload(finished.structured_content)["status"] == "succeeded"
+        await asyncio.sleep(0.6)
+        for tool in ("wait_agent", "cancel_agent"):
+            expired = await client.call_tool(tool, {"invocation_id": invocation_id})
+            assert expired.is_error
+            assert "expired" in str(expired.content)
+            assert "seven days" in str(expired.content)
 
 
 @pytest.mark.asyncio
