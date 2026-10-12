@@ -550,7 +550,8 @@ Breaking release. The package splits in two:
   `describe_provider` no longer returns `discussion_permitted`.
 - `agentnave-studio` adds saved shows and tasks, review, host messages, isolated seats and the
   dashboard; see the [studio guide](studio.md). The thirteen discussion and workbench tools are
-  removed in both packages.
+  removed from the core; the studio keeps the conversation tools and its `start_agent` keeps
+  `title`/`conversation_id`.
 - The `discussion_mode` provider option is renamed `restricted_tools`. Antigravity's restricted
   mode now requires a dedicated cwd that already contains its profile; the studio's isolated
   seats prepare it.
