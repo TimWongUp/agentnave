@@ -147,7 +147,7 @@ class RoundPayload(TypedDict):
     group_id: str
     round: int
     order: Literal["parallel", "serial"]
-    status: Literal["running", "finished", "cancelled"]
+    status: Literal["running", "finished", "failed", "cancelled"]
     reason: str
     elapsed_ms: int
     seats: list[SeatRunPayload]
@@ -444,7 +444,9 @@ def _groups(ctx: Context[Runtime]) -> Groups:
     return ctx.request_context.lifespan_context.groups
 
 
-def round_payload(round_: Round, manager: InvocationManager, reason: str) -> RoundPayload:
+def round_payload(
+    round_: Round, manager: InvocationManager, reason: str, *, include_output: bool = True
+) -> RoundPayload:
     seats: list[SeatRunPayload] = []
     for run in round_.runs:
         seat: SeatRunPayload = {"seat_id": run.seat_id, "status": run.status}
@@ -452,7 +454,7 @@ def round_payload(round_: Round, manager: InvocationManager, reason: str) -> Rou
             seat["invocation_id"] = run.invocation_id
         result = run.result
         if result is not None:
-            if result.output:
+            if include_output and result.output:
                 seat["output"] = result.output
             if result.session_id:
                 seat["session_id"] = result.session_id
@@ -472,7 +474,7 @@ def round_payload(round_: Round, manager: InvocationManager, reason: str) -> Rou
                 if snapshot.last_activity_age_ms is not None:
                     summary["age_ms"] = snapshot.last_activity_age_ms
                 seat["activity"] = summary
-            output, age = manager.recent_output(run.invocation_id)
+            output, age = manager.recent_output(run.invocation_id) if include_output else ("", None)
             if output and age is not None:
                 seat["output"] = output
                 seat["output_age_ms"] = age
@@ -486,9 +488,17 @@ def round_payload(round_: Round, manager: InvocationManager, reason: str) -> Rou
         "group_id": round_.group.id,
         "round": round_.number,
         "order": round_.order,
-        "status": ("cancelled" if round_.cancelling else "finished") if finished else "running",
+        "status": ("failed" if round_.error else "cancelled" if round_.cancelling else "finished")
+        if finished
+        else "running",
         "reason": "finished" if finished else reason,
-        "elapsed_ms": round((time.monotonic() - round_.started_at) * 1000),
+        "elapsed_ms": round(
+            (
+                (round_.finished_at if round_.finished_at is not None else time.monotonic())
+                - round_.started_at
+            )
+            * 1000
+        ),
         "seats": seats,
     }
     if round_.error is not None:
@@ -603,20 +613,31 @@ async def run_round(
     ),
 )
 async def wait_round(
-    round_id: Annotated[str, Field(min_length=1)], *, ctx: Context[Runtime]
+    round_id: Annotated[str, Field(min_length=1)],
+    include_output: Annotated[
+        bool,
+        Field(
+            description="Include answer bodies and running reply tails; false returns status only."
+        ),
+    ] = True,
+    *,
+    ctx: Context[Runtime],
 ) -> RoundPayload:
     """Wait up to five minutes; returns early when the round finishes or a seat reports a blocker.
 
     Running seats include activity and their latest reply tail. A blocker leaves that seat
     running: keep waiting, or cancel_agent its invocation_id to record it absent.
-    Finished rounds can be read again.
+    Finished rounds can be read again. Set include_output=false to omit answer bodies and
+    reply tails; later calls with include_output=true still return the full captured answers.
     """
     groups = _groups(ctx)
     try:
         round_, reason = await groups.wait(round_id, WAIT_SECONDS)
     except KeyError as exc:
         raise _unknown_round() from exc
-    return round_payload(round_, groups.manager, reason or "wait_elapsed")
+    return round_payload(
+        round_, groups.manager, reason or "wait_elapsed", include_output=include_output
+    )
 
 
 @_tool(

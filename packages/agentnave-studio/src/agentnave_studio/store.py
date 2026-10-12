@@ -64,7 +64,7 @@ class RoundRecord(BaseModel):
     id: str
     number: int
     order: RoundOrder
-    status: Literal["running", "finished", "cancelled", "interrupted"] = "running"
+    status: Literal["running", "finished", "failed", "cancelled", "interrupted"] = "running"
     seats: list[SeatRunRecord]
     error: str | None = None
 
@@ -117,9 +117,9 @@ class Conversation(BaseModel):
                 elif seat.status == "pending":
                     seat.status = "not_started"
                 elif self.review and seat.status == "succeeded" and not seat.committed:
-                    if round_.status == "cancelled":
+                    if round_.status in ("cancelled", "failed"):
                         if seat.review in (None, "pending"):
-                            seat.review = "discard"  # cancel discards undecided answers
+                            seat.review = "discard"  # stopped rounds discard undecided answers
                     elif seat.review is None:
                         seat.review = "pending"  # ended before its review began
             if not round_.pending_review():

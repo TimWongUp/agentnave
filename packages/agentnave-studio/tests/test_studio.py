@@ -12,6 +12,8 @@ import pytest
 from mcp import Client
 
 from agentnave.core import InvocationManager
+from agentnave.group import GroupSeat
+from agentnave.models import InvocationRequest
 from agentnave_studio import mcp_server as studio_server
 from agentnave_studio.mcp_server import mcp
 from agentnave_studio.store import Conversation, RoundRecord, SeatRunRecord
@@ -110,6 +112,15 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         waited = await _wait(client, first["round_id"])
         assert waited["reason"] == "review_needed"
         assert [seat["status"] for seat in _seats(waited)] == ["pending_review"] * 2
+        compact = await _call(
+            client, "wait_round", {"round_id": first["round_id"], "include_output": False}
+        )
+        assert compact["reason"] == "review_needed"
+        assert all("output" not in seat for seat in _seats(compact))
+        reread = await _wait(client, first["round_id"])
+        assert [seat["output"] for seat in _seats(reread)] == [
+            seat["output"] for seat in _seats(waited)
+        ]
         blocked = await client.call_tool(
             "run_round",
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "too early"},
@@ -335,7 +346,7 @@ async def test_tasks_are_saved_grouped_and_deleted_without_starting_a_dashboard(
                 "session_id": finished["session_id"],
             },
         )
-        assert duplicate.is_error and "active task" in str(duplicate.content)
+        assert duplicate.is_error and "active invocation" in str(duplicate.content)
         assert (
             await client.call_tool(
                 "update_conversation", {"conversation_id": conversation_id, "archived": True}
@@ -425,6 +436,25 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
     assert [seat["status"] for seat in saved["rounds"][0]["seats"]] == ["succeeded", "not_started"]
     assert [entry["kind"] for entry in saved["entries"]] == ["task", "answer", "host"]
     assert saved["sessions"]["a"]["session_id"] is not None
+
+
+@pytest.mark.parametrize("review", [False, True])
+def test_failed_review_round_does_not_resurrect_unapproved_answers(review: bool) -> None:
+    state = Conversation(id="c", title="t", kind="show", review=review)
+    state.rounds.append(
+        RoundRecord(
+            id="r",
+            number=1,
+            order="parallel",
+            status="failed",
+            seats=[SeatRunRecord(seat_id="a", status="succeeded", output="unapproved")],
+        )
+    )
+    state.recover()
+    assert not state.pending_review()
+    assert [(entry.kind, entry.text) for entry in state.entries] == (
+        [] if review else [("answer", "unapproved")]
+    )
 
 
 @pytest.mark.parametrize("review", [False, True])
@@ -598,11 +628,56 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
 
 
 @pytest.mark.asyncio
+async def test_group_and_task_resumes_share_one_session_guard(
+    tmp_path: Path, data_root: Path
+) -> None:
+    studio = Studio(InvocationManager(), data_root)
+    try:
+        record = studio.open_show(
+            "Mixed",
+            tmp_path,
+            [GroupSeat(s, "claude", {}, tmp_path) for s in ("a", "b")],
+            review=False,
+            isolated=False,
+        )
+        first = studio.run(record.state.id, ["a"], "serial", "one", {})
+        await studio.wait(first.id, 3)
+        session_id = first.group.states["a"].session_id
+        assert first.finished and session_id
+        task_id, task_conversation = studio.start_task(
+            InvocationRequest(
+                "claude", "Private instruction for you only:\nSLEEP", tmp_path, session_id
+            ),
+            None,
+            None,
+        )
+        conflict = studio.run(record.state.id, ["a"], "serial", "conflict", {})
+        await studio.wait(conflict.id, 3)
+        assert conflict.runs[0].status == "failed"
+        assert conflict.runs[0].launch_error is not None
+        assert "active invocation" in conflict.runs[0].launch_error.message
+        await studio.manager.cancel(task_id)
+        await asyncio.gather(*studio.collectors)
+
+        active = studio.run(record.state.id, ["a"], "serial", "resume", {"a": "SLEEP"})
+        before = len(studio.records[task_conversation].state.tasks)
+        with pytest.raises(ValueError, match="active invocation"):
+            studio.start_task(
+                InvocationRequest("claude", "conflict", tmp_path, session_id), None, None
+            )
+        assert len(studio.records[task_conversation].state.tasks) == before
+        assert len(studio.records) == 2  # no phantom task conversation
+        await studio.cancel(active.id)
+    finally:
+        await studio.shutdown()
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
 async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave.models import InvocationRequest
-
     studio = Studio(InvocationManager(), data_root)
     invocation_id, conversation_id = studio.start_task(
         InvocationRequest("claude", "one", tmp_path), "Job", None

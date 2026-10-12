@@ -93,6 +93,18 @@ and `cancel_agent`; `cancel_agent` on one seat records it absent and lets a seri
 Groups last only for the server process. Seats sharing one repository can interfere; give writing
 seats their own worktree through the seat `cwd`.
 
+Later rounds receive earlier committed answers, even when every round is parallel. Switching
+from discussion to parallel does not restore blind answers; use new groups and native sessions
+when independence from earlier discussion matters. Serial order intentionally gives later seats
+more information; a final parallel round lets everyone respond to all earlier objections.
+
+`wait_round(include_output=false)` omits answer bodies and running reply tails while keeping
+statuses, activity, errors and session IDs. The default remains `true`; answers can be read again
+with `true`, including Studio answers awaiting review. Finished round elapsed time is fixed.
+Round `finished` means orchestration ended, not that every seat succeeded. Unexpected driver or
+state-write failures return round status `failed` and an error; active seats are settled before
+another round starts.
+
 ## AgentNave Studio
 
 For multi-CLI shows that a person watches, install the separate `agentnave-studio` package

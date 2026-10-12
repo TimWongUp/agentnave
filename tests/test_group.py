@@ -10,6 +10,7 @@ import pytest
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Groups, GroupSeat
+from agentnave.mcp_server import round_payload
 from agentnave.models import (
     InvocationError,
     InvocationRequest,
@@ -124,6 +125,12 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
     assert [entry.kind for entry in first.group.entries] == ["task"]  # nothing committed yet
     manager.finish("2", output="B1")
     await settle(groups, first.id)
+    ended = round_payload(first, cast(InvocationManager, manager), "finished")
+    await asyncio.sleep(0.01)
+    assert (
+        round_payload(first, cast(InvocationManager, manager), "finished")["elapsed_ms"]
+        == ended["elapsed_ms"]
+    )
     assert [(e.kind, e.seat_id, e.text) for e in first.group.entries] == [
         ("task", None, "Q1"),
         ("answer", "a", "A1"),
@@ -151,6 +158,44 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
     ]
     manager.finish("4")
     await settle(groups, second.id)
+
+
+@pytest.mark.asyncio
+async def test_unexpected_state_hook_failure_does_not_leave_a_running_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+
+    def broken_hook(_round: object) -> None:
+        raise RuntimeError("PRIVATE INTERNAL DETAIL")
+
+    monkeypatch.setattr(groups, "_on_change", broken_hook)
+    round_ = groups.run(group_id, ["a", "b"], "serial", "Q", {})
+    await settle(groups, round_.id)
+    payload = round_payload(round_, cast(InvocationManager, manager), "finished")
+    assert payload["status"] == "failed"
+    assert [seat["status"] for seat in payload["seats"]] == ["failed", "not_started"]
+    assert not manager.requests and round_.group.active is None
+    assert "PRIVATE INTERNAL DETAIL" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_driver_failure_settles_other_seats_before_releasing_the_group(
+    tmp_path: Path,
+) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    round_ = groups.run(group_id, ["a", "b"], "parallel", "Q", {})
+    manager.results["1"].set_exception(RuntimeError("broken execution"))
+    await settle(groups, round_.id)
+    payload = round_payload(round_, cast(InvocationManager, manager), "finished")
+    assert payload["status"] == "failed" and "round_execution_failed" in payload.get("error", "")
+    assert [seat["status"] for seat in payload["seats"]] == ["failed", "cancelled"]
+    assert all(result.done() for result in manager.results.values())
+    assert round_.group.active is None
+    next_round = groups.run(group_id, ["a"], "serial", "recover", {})
+    assert manager.requests["3"].session_id is None
+    manager.finish("3")
+    await settle(groups, next_round.id)
 
 
 @pytest.mark.asyncio

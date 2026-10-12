@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections import deque
@@ -115,8 +116,7 @@ class InvocationManager:
         self._closed = False
 
     def start(self, request: InvocationRequest, *, prepared: PreparedCommand | None = None) -> str:
-        if self._closed:
-            raise RuntimeError("invocation manager is closed")
+        self.check_start(request)
         adapter = get_adapter(request.provider)
         prepared = prepared if prepared is not None else adapter.prepare(request)
         invocation_id = str(uuid.uuid4())
@@ -125,6 +125,20 @@ class InvocationManager:
         record.task = asyncio.create_task(self._execute(record, adapter, prepared))
         record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
         return invocation_id
+
+    def check_start(self, request: InvocationRequest) -> None:
+        if self._closed:
+            raise RuntimeError("invocation manager is closed")
+        if request.session_id is not None and any(
+            record.request.provider == request.provider
+            and record.request.session_id == request.session_id
+            and record.task is not None
+            and not record.task.done()
+            for record in self._records.values()
+        ):
+            raise ValueError(
+                "This native session already has an active invocation; wait or cancel it"
+            )
 
     def _schedule_cleanup(self, invocation_id: str) -> None:
         record = self._records.get(invocation_id)
@@ -241,6 +255,25 @@ class InvocationManager:
             raise KeyError(f"unknown invocation_id: {invocation_id}") from exc
 
     async def _execute(
+        self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
+    ) -> InvocationResult:
+        try:
+            return await self._run(record, adapter, prepared)
+        except Exception:
+            logging.getLogger(__name__).exception("Unexpected invocation failure")
+            return InvocationResult(
+                InvocationStatus.FAILED,
+                record.request.provider,
+                "",
+                record.request.session_id,
+                {},
+                _duration_ms(record.started_at),
+                InvocationError(
+                    "internal_error", "Unexpected invocation failure; inspect server logs."
+                ),
+            )
+
+    async def _run(
         self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
     ) -> InvocationResult:
         started = record.started_at
@@ -365,15 +398,19 @@ class InvocationManager:
             )
         finally:
             try:
-                if supervised is not None and supervised.process.returncode is None:
-                    await terminate_process_tree(supervised.process)
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                for path in prepared.cleanup_paths:
-                    Path(path).unlink(missing_ok=True)
+                try:
+                    if supervised is not None and supervised.process.returncode is None:
+                        await terminate_process_tree(supervised.process)
+                finally:
+                    try:
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        if tasks:
+                            await asyncio.gather(*tasks, return_exceptions=True)
+                    finally:
+                        for path in prepared.cleanup_paths:
+                            Path(path).unlink(missing_ok=True)
             finally:
                 record.process = None
                 record.tool_names.clear()
