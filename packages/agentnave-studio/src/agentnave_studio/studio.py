@@ -546,11 +546,15 @@ class Studio(Groups):
 
     # Dashboard
 
-    def open_dashboard(self) -> str:
+    def open_dashboard(self, *, history_loaded: bool = False) -> str:
         if self.dashboard is None:
             self.dashboard = Dashboard()
             try:
-                self.scan()  # projects every readable conversation
+                if history_loaded:
+                    for record in list(self.records.values()):
+                        self._publish(record, home=False)
+                else:
+                    self.scan()  # projects every readable conversation
             except OSError:
                 self.dashboard.close()
                 self.dashboard = None

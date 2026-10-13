@@ -721,7 +721,7 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
 async def test_dashboard_failure_does_not_repeat_or_lose_started_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(_self: Studio) -> str:
+    def fail(_self: Studio, *, history_loaded: bool = False) -> str:
         raise OSError("viewer unavailable")
 
     monkeypatch.setattr(Studio, "open_dashboard", fail)
@@ -870,15 +870,25 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
             "title": "Renamed",
             "archived": False,
         }
+    scans = 0
+    original_scan = Studio.scan
+
+    def count_scan(studio: Studio) -> dict[str, bool]:
+        nonlocal scans
+        scans += 1
+        return original_scan(studio)
+
+    monkeypatch.setattr(Studio, "scan", count_scan)
     async with Client(mcp) as client:
         listed = await _call(client, "list_conversations", {})
+        assert scans == 1
         home = json.loads(await asyncio.to_thread(_fetch, str(listed["dashboard_url"]) + "state"))
         assert home["shows"][0]["title"] == "Renamed"
         assert "director_url" not in listed and "public_url" not in listed
         names = [tool.name for tool in (await client.list_tools()).tools]
         assert len(names) == 14 and "open_dashboard" not in names
 
-    def fail(_self: Studio) -> str:
+    def fail(_self: Studio, *, history_loaded: bool = False) -> str:
         raise OSError("viewer failed")
 
     monkeypatch.setattr(Studio, "open_dashboard", fail)

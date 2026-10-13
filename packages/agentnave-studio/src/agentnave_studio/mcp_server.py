@@ -581,7 +581,7 @@ async def list_conversations(*, ctx: Context[Runtime]) -> ConversationList:
         "unavailable": studio.unavailable,
     }
     try:
-        result["dashboard_url"] = studio.open_dashboard()
+        result["dashboard_url"] = studio.open_dashboard(history_loaded=True)
     except OSError as exc:
         result["dashboard_error"] = str(exc)
     return result
