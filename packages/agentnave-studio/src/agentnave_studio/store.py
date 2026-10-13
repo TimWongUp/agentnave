@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Literal
@@ -194,7 +195,12 @@ class Record:
         """Become the single writer until release, reloading what an earlier writer saved."""
         if self.lock is not None:
             return
-        self.lock = self._lock()
+        try:
+            self.lock = self._lock()
+        except ValueError:
+            # A reader briefly holds the same probe lock; allow one bounded handoff.
+            time.sleep(0.05)
+            self.lock = self._lock()
         try:
             state = self._load(self.directory)
             if state.id != self.state.id:

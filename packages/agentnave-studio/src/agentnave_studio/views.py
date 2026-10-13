@@ -37,7 +37,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
         ],
         "messages": [
             {
-                "speaker": entry.seat or "director",
+                "speaker": "@host" if entry.kind in ("task", "host") else entry.seat,
                 "kind": entry.kind,
                 "round": entry.round,
                 "text": (
@@ -52,8 +52,8 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
     }
 
 
-def public(state: Conversation) -> bytes:
-    return _encode(_show(state, "public"))
+def public(state: Conversation, *, stale: bool = False) -> bytes:
+    return _encode(_show(state, "public") | {"stale": stale})
 
 
 def _round(round_: RoundRecord, tails: dict[str, str]) -> dict[str, object]:
@@ -83,17 +83,21 @@ def director(
     home_url: str,
     storage: str,
     tails: dict[str, str],
+    elapsed: dict[str, int] | None = None,
+    refresh_error: str | None = None,
 ) -> bytes:
     """Private desk view. tails maps running seat or task ids to in-memory reply tails."""
     common: dict[str, object] = {
         "archived": state.archived,
         "workbench_url": home_url,
         "storage": storage,
+        "refresh_error": refresh_error,
     }
     if state.kind == "task":
         tasks = [
             task.model_dump(exclude={"session_id"})
             | ({"output": tails[task.id]} if task.id in tails else {})
+            | ({"elapsed_ms": elapsed[task.id]} if elapsed and task.id in elapsed else {})
             for task in state.tasks
         ]
         return _encode(
@@ -124,7 +128,11 @@ def director(
 
 
 def home(
-    shows: list[tuple[Conversation, str]], unavailable: list[Unavailable], storage: str
+    shows: list[tuple[Conversation, str]],
+    unavailable: list[Unavailable],
+    storage: str,
+    *,
+    refresh_error: str | None = None,
 ) -> bytes:
     return _encode(
         {
@@ -139,9 +147,21 @@ def home(
                     "mode": state.kind,
                     "archived": state.archived,
                     "director_url": url,
+                    "status": (
+                        "review"
+                        if state.pending_review()
+                        else state.rounds[-1].status
+                        if state.rounds
+                        else "running"
+                        if any(task.status == "running" for task in state.tasks)
+                        else state.tasks[-1].status
+                        if state.tasks
+                        else "idle"
+                    ),
                 }
                 for state, url in shows
             ],
+            "refresh_error": refresh_error,
             "unavailable": [item.model_dump() for item in unavailable],
             "storage": storage,
         }

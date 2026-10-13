@@ -3,15 +3,15 @@ const $ = id => document.getElementById(id);
 const labels = {idle:"等待主持人开场",running:"本轮进行中",review:"回答待导演审核",finished:"本轮已结束",cancelled:"本轮已取消",interrupted:"上次运行中断"};
 const seatStates={pending:"排队中",running:"作答中",succeeded:"已作答",failed:"失败",blocked:"受阻",cancelled:"已取消",not_started:"未开始",interrupted:"已中断"};
 const reviews={pending:"待审核",publish:"已发布",discard:"已丢弃"};
-const host = {id:"director",label:"主持人",model:"导演扮演",provider:"host"};
+const host = {id:"@host",label:"主持人",model:"导演扮演",provider:"host"};
 const modes={show:"节目",task:"做任务"};
 const taskStates={running:"进行中",succeeded:"已回复 · 待验收",failed:"失败",blocked:"需处理",cancelled:"已取消",interrupted:"已中断 · 需处理"};
 let current = null, selected = null, messageKey = "", seatKey = "", previousCount = 0;
-let homeKey = "", taskKey = "", roundKey = "", modeFilter = "all", privateView = false;
+let homeKey = "", taskKey = "", roundKey = "", modeFilter = "all", privateView = true;
 function el(tag, className, text) { const node=document.createElement(tag); node.className=className; if(text!==undefined)node.textContent=text; return node; }
 function avatar(seat) {
   const key=(seat.model+" "+seat.provider).toLowerCase();
-  const kind=seat.id==="director"?"host":["claude","gpt","gemini","grok","deepseek"].find(name=>key.includes(name));
+  const kind=seat.provider==="host"?"host":["claude","gpt","gemini","grok","deepseek"].find(name=>key.includes(name));
   const node=el("span","avatar avatar-"+(kind||"unknown"),kind?undefined:seat.label.slice(0,1));
   node.setAttribute("aria-hidden","true");return node;
 }
@@ -51,7 +51,7 @@ function render(data) {
     roundKey=nextRoundKey;const round=data.round;
     $("round-title").textContent=round?"第 "+round.number+" 轮 · "+(round.order==="parallel"?"并联":"串联"):"尚未开始";
     $("round-seats").replaceChildren();
-    (round?round.seats:[]).forEach(run=>{const seat=cast.find(s=>s.id===run.seat_id);const row=el("article","held-answer"),head=el("div","message-head");head.append(el("strong","",seat?.label||run.seat_id),el("span","tag",(run.review?reviews[run.review]:seatStates[run.status])||run.status));row.append(head);if(run.instruction)row.append(el("p","task-meta","私密指令："+run.instruction));row.append(el("p","speech",run.output||(run.status==="running"?"正在等待回复…":"")));if(run.error)row.append(el("p","history-warning",run.error));$("round-seats").append(row);});
+    (round?round.seats:[]).forEach(run=>{const seat=data.seats.find(s=>s.id===run.seat_id);const row=el("article","held-answer"),head=el("div","message-head");head.append(el("strong","",seat?.label||run.seat_id),el("span","tag",(run.review?reviews[run.review]:seatStates[run.status])||run.status));row.append(head);if(run.instruction)row.append(el("p","task-meta","私密指令："+run.instruction));row.append(el("p","speech",run.output||(run.status==="running"?"正在等待回复…":"")));if(run.error)row.append(el("p","history-warning",run.error));$("round-seats").append(row);});
     $("turn-error").textContent=round&&round.error?"本轮提示："+round.error:"";
   }
   if(isTask){
@@ -79,7 +79,7 @@ function render(data) {
     data.messages.forEach((message,index)=>{
       if(selected&&message.speaker!==selected)return;
       const seat=cast.find(s=>s.id===message.speaker)||{id:message.speaker,label:message.speaker,model:"",provider:""};
-      const article=el("article","message"+(seat.id==="director"?" host-message":""));
+      const article=el("article","message"+(seat.provider==="host"?" host-message":""));
       const bubble=el("div","bubble"),head=el("div","message-head");
       head.append(el("strong","",seat.label));if(message.kind==="task")head.append(el("span","tag","第 "+message.round+" 轮任务"));
       const stamp=el("time","timestamp");stamp.dateTime=message.time;stamp.textContent=new Date(message.time).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});head.append(stamp);
@@ -89,7 +89,7 @@ function render(data) {
     });
     $("empty").hidden=$("messages").childElementCount>0;$("empty-text").textContent=selected?"这个角色还没有公开发言。":"主持人开场，选手回应。公开台词会依次留在这里。";messageKey=nextMessageKey;
   }
-  if(hadData&&!privateView&&data.messages.length>previousCount){if(nearBottom&&selected===null)window.scrollTo({top:document.documentElement.scrollHeight,behavior:"instant"});else $("latest").hidden=false;}
+  if(hadData&&!(director&&privateView)&&data.messages.length>previousCount){if(nearBottom&&selected===null)window.scrollTo({top:document.documentElement.scrollHeight,behavior:"instant"});else $("latest").hidden=false;}
   previousCount=data.messages.length;
 }
 const modeDescriptions={all:"全部用途",show:"多个 CLI 并联或串联作答",task:"各自执行，结果仅主控可见"};
@@ -111,7 +111,7 @@ function renderHome(data){
   matching.forEach(show=>{
     const card=el("article","conversation-card"), info=el("div","conversation-info"), title=el("h2");
     const link=el("a","conversation-title",show.title);link.href=show.director_url;title.append(link);
-    info.append(el("span","tag mode-"+show.mode,modes[show.mode]||show.mode),title,el("p","",show.archived?"已结束 · 历史保留":modeDescriptions[show.mode]));
+    info.append(el("span","tag mode-"+show.mode,modes[show.mode]||show.mode),title,el("p","",show.archived?"已结束 · 历史保留":((show.mode==="task"?taskStates[show.status]:labels[show.status])||modeDescriptions[show.mode])));
     const open=el("a","open-conversation",show.mode==="task"?"查看任务 →":"进入主控 →");open.href=show.director_url;open.setAttribute("aria-label",(show.mode==="task"?"查看任务：":"进入主控：")+show.title);
     card.append(info,open);$("conversation-list").append(card);
   });
@@ -137,5 +137,20 @@ $("conversation-tab").onclick=()=>{privateView=false;if(current)render(current);
 $("backstage-tab").onclick=()=>{privateView=true;if(current)render(current);};
 $("all-seats").onclick=()=>choose(null);
 $("latest").onclick=()=>{choose(null);window.scrollTo({top:document.documentElement.scrollHeight,behavior:"smooth"});$("latest").hidden=true;};
-async function refresh(){try{const response=await fetch("./state",{cache:"no-store"});if(!response.ok)throw Error("offline");render(await response.json());$("connection").textContent="本地已连接";}catch{$("connection").textContent="连接断开 · 保留上次画面";}setTimeout(refresh,1500);}
+let refreshTimer=null, refreshing=false;
+async function refresh(){
+  if(document.hidden||refreshing)return;
+  refreshing=true;
+  try{
+    const response=await fetch("./state",{cache:"no-store"});
+    if(!response.ok)throw Error("offline");
+    const data=await response.json();render(data);
+    $("connection").textContent=data.stale||data.refresh_error?"历史读取失败 · 保留上次画面":"本地已连接";
+  }catch{$("connection").textContent="连接断开 · 保留上次画面";}
+  finally{refreshing=false;if(!document.hidden)refreshTimer=setTimeout(refresh,1500);}
+}
+document.addEventListener("visibilitychange",()=>{
+  clearTimeout(refreshTimer);refreshTimer=null;
+  if(!document.hidden)refresh();
+});
 refresh();

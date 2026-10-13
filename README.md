@@ -111,7 +111,7 @@ For multi-CLI shows that a person watches, install the separate `agentnave-studi
 (entry point `agentnave-studio-mcp`) instead. It includes every core tool and adds saved history
 under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`), optional review of answers before other seats see
 them, host messages, isolated seats with restricted tools, and a local read-only dashboard that
-starts only when `open_dashboard` is called. See the [studio guide](docs/studio.md).
+starts automatically after a saved task or show is created or continued. See the [studio guide](docs/studio.md).
 
 ## The MCP surface
 
