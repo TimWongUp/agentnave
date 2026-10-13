@@ -546,11 +546,15 @@ class Studio(Groups):
 
     # Dashboard
 
-    def open_dashboard(self) -> str:
+    def open_dashboard(self, *, history_loaded: bool = False) -> str:
         if self.dashboard is None:
             self.dashboard = Dashboard()
             try:
-                self.scan()  # projects every readable conversation
+                if history_loaded:
+                    for record in list(self.records.values()):
+                        self._publish(record, home=False)
+                else:
+                    self.scan()  # projects every readable conversation
             except OSError:
                 self.dashboard.close()
                 self.dashboard = None
@@ -638,10 +642,10 @@ class Studio(Groups):
                     self.scan()
                 except OSError as exc:
                     self.refresh_error = str(exc)
-                if self.refresh_error != previous_error:
-                    for record in list(self.records.values()):
-                        self._publish(record, home=False)
-                    self._publish_home()
+                    if self.refresh_error != previous_error:
+                        for record in list(self.records.values()):
+                            self._publish(record, home=False)
+                        self._publish_home()
             active = True
             for record in list(self.records.values()):
                 group = self._groups.get(record.state.id)

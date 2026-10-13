@@ -16,7 +16,7 @@ members = [
 
 [[package]]
 name = "agentnave"
-version = "0.15.1"
+version = "0.16.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -45,7 +45,7 @@ dev = [
 
 [[package]]
 name = "agentnave-studio"
-version = "0.15.1"
+version = "0.16.0"
 source = { editable = "packages/agentnave-studio" }
 dependencies = [
     { name = "agentnave" },

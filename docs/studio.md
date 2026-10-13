@@ -12,7 +12,6 @@
 | `decide_answers` | `round_id` + `{seat_id: publish/discard}`，整批校验并保存后生效 |
 | `post_host_message` | 轮次之间以主持人身份发布公开发言 |
 | `list_conversations`、`read_conversation`、`update_conversation`、`delete_conversation` | 列表、详情、改名／结束／重开、删除已结束会话 |
-| `open_dashboard` | 首次调用时启动本机只读看板并返回首页地址 |
 
 旧版的 `open_discussion`、`start_discussion_turn`、`decide_discussion_turn`、`decide_discussion_round`、`mark_discussion_absent`、`continue_discussion`、`reset_discussion_seat`、`open_workbench` 已移除：点名发言由串联轮取代，盲答揭晓由并联轮加审核取代，缺席自动记录，失败后的会话不确定由游标规则自动新开，换身份请新建节目。
 
@@ -57,7 +56,7 @@
 
 ## 看板
 
-看板在成功创建或继续任务／节目后自动启动并返回入口；仅查看历史时可用 `open_dashboard`，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。首页按“节目／做任务”筛选会话；节目页可在“公开对话”和“导演后台”之间切换，“选手看到的页面”打开公开地址；任务页显示各次调用的状态、模型、目录、耗时与回复，“已回复”不等于已验收。重启后地址会更换。
+看板在成功创建或继续任务／节目后自动启动并返回入口；仅查看历史时 `list_conversations` 返回首页入口，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。首页按“节目／做任务”筛选会话；节目页可在“公开对话”和“导演后台”之间切换，“选手看到的页面”打开公开地址；任务页显示各次调用的状态、模型、目录、耗时与回复，“已回复”不等于已验收。重启后地址会更换。
 
 界面采用横向角色筛选、原创角色头像和群聊气泡；支持按角色查看、复制单条台词、回到最新发言、导出完整公共 JSONL。角色筛选只影响当前浏览器画面，不改变选手收到的公共历史；导出不随筛选裁剪。头像是原创插画，不代表厂商官方形象，也不意味着尚未接入的模型已可用。
 
@@ -72,3 +71,5 @@
 `delete_conversation` 只删除已结束且无进行中工作的会话，调用方须先取得用户授权：删除 `state.json` 与已结束的调用句柄，移除隔离席位中工作室写入的角色定义和空目录，保留会话目录及 `.lock`，Provider 原生文件不删。v0.15.0 之前的旧历史（数据根下的 `catalog/` 与含 `room.json` 的目录）不迁移，只在列表中标为不可用，可手动清除。
 
 看板无人浏览时停止周期性全量扫描和运行投影刷新；隐藏标签页暂停轮询，恢复可见时重新读取。历史读取失败会保留已有画面并提示，读取恢复后清除提示。进入主控默认打开导演后台，公共页始终只含已提交条目。
+
+v0.16.0 移除独立的 `open_dashboard` 工具；旧调用改为 `list_conversations`，列表仍只含摘要，首页地址只交给主控。`post_host_message` 返回条目序号，`update_conversation` 返回标题和结束状态，`decide_answers` 返回已保存决定、剩余待审与实际已提交席位；三者不再重复原文或导演状态。审核回执不保证轮次已结束，必要时用 `wait_round(include_output=false)` 确认。

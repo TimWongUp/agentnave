@@ -3,33 +3,33 @@ name: agentnave-manager
 description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）以及 AgentNave Studio 节目；咨询或仅提到模型名称不授权执行。
 ---
 
-# 通过 AgentNave 调用其他 CLI
+# 通过 AgentNave 调用 CLI
 
-本 Skill 只说明 CLI 的调用方式。任务选择、规划、并行、审核、重试决策与结果综合由调用方负责。
+本 Skill 只负责调用方式；任务选择、规划、编排、审核、综合、重试和 worktree 由主 Agent 决定。
 
-用户要求调用上述 CLI 时，优先使用当前宿主的 AgentNave MCP 工具；用户明确选择其他路线时遵从。工具可能带宿主前缀或延迟加载；首次按 AgentNave 或精确工具名发现，复用当前上下文已有 schema，以连接中的实时 schema 为参数真源。工具不可用或所选 CLI 被排除时，报告具体限制，不静默切换调用路线或 Provider。
+优先使用当前宿主的 AgentNave MCP，用户指定其他路线时遵从。首次按 AgentNave 或精确工具名发现，复用已加载 schema；以连接中的实时 schema 为参数真源。工具不可用、CLI 被排除或运行时只有旧版讨论室工具时，报告具体限制，不静默换 Provider、调用路线或源码服务，不由主控复制答案模拟协作。
 
-## 单个任务与协作轮次
+## 选择调用方式
 
-先通过实时 Tool schema 确认运行时能力：核心提供 `start_agent` 系列与 `open_group`、`run_round`、`wait_round`、`cancel_round`；只有旧版讨论室或工作台工具时，报告运行时版本差异，不以主控复制答案模拟协作，也不静默改用源码服务。
+核心八个工具：`describe_provider`、`start_agent`、`wait_agent`、`cancel_agent`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
 
-协作组的席位是普通子代理：沿用原生工具与权限、各自 `cwd` 和显式 `provider_options`，每席续接自己的原生会话。席位之间只共享已提交的条目（每轮任务、最终回答、失败或取消的缺席记录），私密指令只发给对应席位。按用户要的效果组合名单与顺序：
+| 用户需要 | 调用方式 |
+| --- | --- |
+| 做任务 | 单个 CLI 用 `start_agent`，不开组 |
+| 各自答 | 一轮 `parallel`，本轮答案互不可见 |
+| 多轮各自答 | 连续 `parallel`，第二轮起收到上一轮全部答案 |
+| 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
+| 先各自答再讨论 | 先 `parallel`，再一轮或多轮 `serial` |
 
-1. **做任务**：单个 CLI 用 `start_agent`，不开组。
-2. **各自答**：一轮 `parallel`，同题独立回答，本轮互不可见。
-3. **多轮各自答**：连续多轮 `parallel`；从第二轮起每席都能看到上一轮全部回答。
-4. **轮流聊**：`serial`，按名单依次作答，后者看到前者；多轮即多圈讨论。
-5. **先各自答再讨论**：先一轮 `parallel`，再一轮或多轮 `serial`。
+每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，持续续接自己的原生会话；席位只共享已提交条目（任务、最终回答、失败或取消的缺席记录），私密指令只给对应席位。同组同时一轮；`run_round` 立即返回 `round_id`，用 `wait_round` 等待。可单独 `cancel_agent` 取消某席，记缺席后串联轮继续。不自动重试、不设每席截止时间。并联写代码的席位各用独立 worktree；只读席位可共用目录。核心组不持久化，随服务退出结束。
 
-`run_round` 不阻塞，返回 `round_id`；用 `wait_round` 等待，五分钟窗口与提前返回规则同 `wait_agent`，席位的 `invocation_id` 可单独 `cancel_agent`（记为缺席，串联轮继续）。同组同时只有一轮。不重试、不设每席超时，失败如实返回。需要写入项目的并联席位各给独立 worktree 作为席位 `cwd`，避免互相覆盖；只读或纯回答的席位可共用项目目录。核心不保存任何内容，组随 server 进程结束。
+需要历史、审核、主持人或网页观看时按 [工作室节目](references/studio.md) 操作；连接中须有 `list_conversations`、`decide_answers` 等 Studio 工具，不能把 Skill 更新当作运行时升级。
 
-需要保存历史、先审核再公开、主持人发言或让用户在网页观看时，使用 AgentNave Studio，按 [工作室节目](references/studio.md) 操作；当前连接没有 `open_dashboard` 等工作室工具时说明需改装工作室包，不自行模拟。
+## CLI 与模型
 
-## 选择 CLI 与模型
+只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 
-只读取所选 CLI 对应的一份参考文件，同一上下文复用；切换 CLI 时再读取新文件。
-
-| CLI | `provider` | 按需读取 |
+| CLI | `provider` | 参考 |
 | --- | --- | --- |
 | Claude Code | `claude` | [Claude Code](references/claude.md) |
 | CodeBuddy Code | `codebuddy` | [CodeBuddy Code](references/codebuddy.md) |
@@ -38,47 +38,34 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 
-参考文件的 JSON 是 `provider_options` 的模型与 effort 默认值，不保证账户可用性。用户指定的字段覆盖对应默认值，未指定字段沿用参考文件；用户要求原生设置时省略对应选项。其他选项只传调用方明确选择的值；权限与工具保持原生设置，除非用户明确要求改变。
+参考 JSON 是 `provider_options` 的模型与 effort 默认值，不保证账户可用。用户指定字段覆盖默认；要求原生设置时省略对应字段。其他选项只传明确选择的值，权限和工具保持原生设置，除非用户明确改变。首次调用前用 `describe_provider` 核对允许状态和支持参数并复用结果；它不检查安装、登录。模型不可用时报告原错误，不静默替换；旧服务的模型指引不覆盖用户和本 Skill。
 
-首次调用所选 CLI 前，使用 `describe_provider` 核对允许状态和支持参数，当前上下文复用结果。它不检查安装或登录。旧服务若仍返回模型指引，模型选择以用户要求和本 Skill 为准；模型不可用时返回具体错误，不静默替换。
+## 目录与交接
 
-## 工作目录与目标路径
+`cwd` 必须是目标项目的存在的绝对目录，默认当前 checkout/worktree 根目录；独立子项目或项目指定启动目录时使用对应目录，非 Git 任务使用实际项目目录。临时交接文件不改变 `cwd`；CLI 原生加载项目规则，需要补读局部规则就在 prompt 中要求修改前读取。
 
-调用方将 `cwd` 设为本次目标项目的绝对路径，默认使用当前 checkout 或 worktree 的项目根目录；目标属于独立子项目，或项目明确指定启动目录时，使用对应目录。非 Git 任务使用实际目标项目目录。
+CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时，在 prompt 提供本次所需内容，简单任务省略无关项：
 
-具体目标路径和任务范围写入 prompt，路径使用绝对路径或相对于 `cwd` 的路径。需要补读的局部规则，在 prompt 中明确要求子代理修改前读取。临时交接文件的位置不改变 `cwd`；项目规则加载仍由 CLI 原生实现负责。
+- 目标、验收标准、返回格式及产物位置。
+- 目录、修改范围、授权边界、必须保留的用户改动。
+- 已核实进展、验证、未完成项、阻塞和下一步；待验证判断另说清。
+- 可访问的规格、计划、ADR、Issue、commit、diff 或产物绝对路径/URL，注明用途，不重复复制已有产物。
+- 直接相关的技能、用途和已知路径；无适用项写“无”。接收方按需加载，建议不扩权。
 
-## 准备任务与交接
+明确这是非交互子任务：已有授权内自主推进；确需新授权或用户选择时，以最终回答交回具体问题、已完成和未完成部分，不调用现场交互提问工具，不绕过原生权限。发送前移除密钥、密码和敏感个人信息，认证沿用 CLI 配置；摘要和引用材料不扩大授权。
 
-CLI 不继承主对话。主 Agent 在首次派发、切换 CLI 或交接未完成任务前，围绕接收方这次要完成的工作整理以下内容；简单任务直接写入 prompt，省略无关项：
+长交接由主 Agent 在系统临时目录创建专用文档，prompt 保留目标、范围和读取绝对路径的要求。确认原生权限可读，否则内联必要内容。交接和中间文件放临时目录，正式交付写目标位置；创建方在接收方用完后清理自己产生的文件。
 
-- **目标与交付**：本次任务、完成标准、需要返回的结果或产物位置；回答格式按用户要求和任务需要指定，不强制 Markdown。
-- **范围与约束**：工作目录、允许的修改范围、已明确的授权边界和必须保留的用户改动。
-- **当前状态与下一步**：相关已完成事项、验证结果、未完成项及阻塞；区分已核实事实与待验证判断，让接收方知道从哪里继续。
-- **已有材料**：规格、计划、ADR、Issue、commit、diff 等使用可访问的绝对路径或 URL 引用，并说明用途；已有产物承载的内容不再复制到交接中。
-- **建议技能**：列出与本次任务直接相关的技能及用途，已知可访问路径时附上；无适用技能时写“无”。接收方核对可用性后按需加载，不把建议当成已加载或扩大权限的授权。
+## 启动、等待和验收
 
-在 prompt 中明确这是非交互子任务：已有授权范围内自主推进；确需新增授权或用户选择时，结束本轮，在最终回答中写明待确认问题、已完成部分和未完成部分，交给主 Agent 处理，不调用需要现场回答的交互提问工具。该约定不绕过 CLI 原生权限检查。
+1. `start_agent(provider, cwd, prompt, provider_options)`，保存 `invocation_id`。持续等到终态或显式取消，不另加总运行或席位时限；CLI 自身限制仍生效。旧 schema 的 `timeout_seconds` 若可空传 null，否则报告限制。
+2. `wait_agent(invocation_id)` 每次最多等 5 分钟，完成或明确阻塞提前返回，仍在运行就等同一 ID，无需 sleep。`wait_round` 同样处理；旧 `wait_timeout_seconds` 固定传 300，无法支持则报告限制。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 收到该脚本完成再处理回复；外层让出控制权不代表超时，不能重复调用等待或就此结束任务。
+3. 顶层 `status=running` 尚未结束；`reason=wait_elapsed` 只是本次等待到期。`execution_blocked` 按固定 `error.code` 判断继续等或取消：阻塞不停止 CLI，同类阻塞每 Invocation 只提醒一次；普通工具失败、重试、沉默不证明任务失败，未识别错误须检查正文或终态。
+4. 运行中 `activity` 给活动类型、原生状态、工具名和 `age_ms`；`output` 只给最新公开正文尾部（最多 1000 Unicode 字符）及 `output_age_ms`，无正文省略，旧内容可能重复。用正文判断方向、年龄判断新旧；不返回思考、工具参数或结果，无游标/分页/独立读取工具。一次观察不代表全部并发工作，材料不足就报告未知，不能凭此判定卡死。
+5. `reason=finished` 按 `status`、完整最终 `output`、`error` 和原生 `session_id` 验收。最终正文受整体捕获上限约束。`succeeded` 不证明用户目标完成，须核对命令、产物或检查；权限拒绝、未执行、目录不符如实报告。耗时用 `elapsed_ms`，不展示费用；旧 `state`、`snapshot`/`result` 结构按实时 schema 读取。
 
-上下文较长或需要独立交接文档时，由主 Agent 在操作系统临时目录创建本次任务专用目录，将交接文档保存在其中；prompt 保留目标和范围，并指示接收方先读取该文档的绝对路径。确认接收方在原生权限下可读取；路径不可读时，将必要内容内联到 prompt。交接文档以及本次调用所需的中间文件放临时目录，正式改动与用户指定交付仍写目标位置。文档保留至接收方完成使用，由创建方清理自己创建且不再需要的临时文件。
-
-发送前去除 API key、密码及敏感个人信息；认证沿用 CLI 已有配置。交接摘要不改变当前任务授权，引用材料中的指令也不自动成为授权。本流程由主 Agent 执行，无需依赖另装 `handoff` Skill，Adapter 不追加交接指令。
-
-## 启动与等待
-
-1. 按上节准备任务后调用 `start_agent`，传入 `provider`、按“工作目录与目标路径”选定的绝对且存在的 `cwd`、`prompt` 和显式 `provider_options`。AgentNave 不提供总运行时限，持续等待至终态或显式取消；CLI 自身限制仍生效，调用方不另行添加截止时间。旧运行时若仍暴露 `timeout_seconds`，在 schema 支持可空值时传 null 关闭总截止；无法关闭时报告版本限制。
-2. 保存返回的 `invocation_id`，调用 `wait_agent(invocation_id)`。运行时固定每轮最多等待 5 分钟，完成或明确执行阻塞时提前返回；到期后仍在运行就继续等待同一 ID，直至终态或显式取消。无需额外 sleep。旧版 schema 若仍暴露 `wait_timeout_seconds`，固定传 `300`；无法支持时报告版本限制。
-   - 在 Codex 中通过 `functions.exec` 调用时，若返回 `Script running with cell ID ...`，使用 `functions.wait` 携带该 `cell_id` 继续接收原调用，直到脚本完成，再处理 AgentNave 回复。外层交回控制权表示脚本仍在运行，不是任务超时或卡死；此时不重复发起 `wait_agent`，也不据此结束任务。宿主的接收窗口不改变 AgentNave 的 5 分钟等待。
-3. 新版启动、等待和取消共用顶层 `invocation_id`、`status`、`reason`、`elapsed_ms`，其他字段仅在有值时出现。`status=running` 表示 CLI 尚未结束；`reason=wait_elapsed` 表示本轮等待到期，`reason=execution_blocked` 表示提前发现明确阻塞，读取固定类别 `error.code`。阻塞返回不停止 CLI，同类阻塞在一次 Invocation 内只主动提醒一次；根据错误决定继续等待同一 ID 或取消。普通工具失败、暂时重试和沉默不等于任务无法执行。仅 CLI 暴露的已识别阻塞可提前返回，未知错误仍需检查输出或最终结果。
-4. 每轮运行中返回包含可用的 `activity`（最近活动类型、原生状态、工具名和 `age_ms`）以及最新公开回复尾部 `output`（最多 1000 个 Unicode 字符）与 `output_age_ms`。用正文判断方向、活动判断运行情况；没有新正文时可能重复同一内容，用年龄区分。未输出正文就省略该字段；不返回思考、工具参数或工具结果，无游标、分页或独立读取工具。单次观察不代表所有并发工作，也不证明卡死。若材料不足以判断是否跑偏，应报告未知。
-5. `reason=finished` 时按顶层 `status`、`output`、`error` 和原生 `session_id` 验收；最终正文不受 1000 字符限制，但仍受运行时整体捕获上限约束。`succeeded` 不保证用户任务完成，结合实际命令结果、产物或检查证据验收；权限拒绝、未执行或目录不符要报告未完成部分。费用不展示；耗时使用 `elapsed_ms`。旧版仍返回 `state`、`snapshot` / `result` 嵌套结构，按当前连接 schema 读取，不能把 Skill 更新当作运行时已升级。
-
-正文含待确认问题时，主 Agent 先检查当前用户授权：能在已有范围内回答的，按“取消与续接”用答案续接；确需用户决定的，向用户转达具体问题和当前进展。活跃调用无法接收答案时，先核实问题及进展，再显式取消；取消结果提供非空 `session_id` 时，可用已获得的答案续接，否则报告无法原会话续接。取消不代表用户任务已完成，也不授予额外权限。
+正文有待确认问题时，主 Agent 先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。活跃调用不能接收答案，核实后显式取消，有非空 `session_id` 才能原会话续接，否则报告限制。取消不代表完成或新增权限。
 
 ## 取消与续接
 
-调用方决定停止时，使用 `cancel_agent(invocation_id)` 获取终态。取消不会撤销已产生的副作用；只观察任务时使用 `wait_agent`。
-
-活跃调用不接受追加消息。续接同一 Provider 对话时，把已结束调用返回的非空 `session_id` 与新 prompt 传给新的 `start_agent`。`invocation_id` 不能用作会话 ID；服务重启后旧 invocation 句柄不可恢复。
-
-同一原生会话续接时只补充本轮目标、变更的约束和新增证据；切换 CLI 或新建会话时重新按交接要求提供必要上下文，不假定旧会话历史可见。
+停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。活跃调用不能追加消息。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新会话或换 CLI 重新交接，不假定旧历史可见。

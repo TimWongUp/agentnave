@@ -1,5 +1,5 @@
 """Check installed launchers: exact tool lists, no files before a write, no port before
-open_dashboard. Usage: python verify_install.py <agentnave-mcp> <agentnave-studio-mcp>"""
+first saved operation or history listing. Usage: python verify_install.py <agentnave-mcp> <agentnave-studio-mcp>"""
 
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ STUDIO = [
     "read_conversation",
     "update_conversation",
     "delete_conversation",
-    "open_dashboard",
 ]
 
 
@@ -78,11 +77,11 @@ async def _check(launcher: str, expected: list[str], home: Path, *, studio: bool
         names = [tool.name for tool in (await client.list_tools()).tools]
         assert names == expected, names
         assert not any(home.iterdir()), f"{launcher} wrote files before any request"
-        assert not _listening(), f"{launcher} listens before open_dashboard"
+        assert not _listening(), f"{launcher} listens before a saved operation or history listing"
         if studio:
-            opened = await client.call_tool("open_dashboard", {})
+            opened = await client.call_tool("list_conversations", {})
             assert not opened.is_error, opened.content
-            assert _listening(), "open_dashboard did not start the dashboard"
+            assert _listening(), "history listing did not start the dashboard"
 
 
 async def main(core: str, studio: str) -> None:
