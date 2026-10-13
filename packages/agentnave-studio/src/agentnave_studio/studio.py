@@ -81,20 +81,28 @@ class Studio(Groups):
                 del self.records[conversation_id]  # deleted by another server
                 self._unpublish(conversation_id)
         writable: dict[str, bool] = {}
+        read_error: str | None = None
         for conversation_id, directory in found.items():
+            record = self.records.get(conversation_id)
             try:
-                record = self.records.get(conversation_id)
                 if record is None:
                     record = Record.read(directory)
                     if record.state.id != conversation_id:
                         raise ValueError("record id does not match its directory")
                     self.records[conversation_id] = record
                 writable[conversation_id] = record.refresh()
-                self._publish(record, home=False)  # show what another server saved
             except (OSError, ValueError) as exc:
-                self.records.pop(conversation_id, None)
-                self._unpublish(conversation_id)
+                if isinstance(exc, OSError) and record is not None:
+                    # Keep the last readable state and its URLs through transient I/O failures.
+                    read_error = str(exc)
+                    writable[conversation_id] = False
+                else:
+                    self.records.pop(conversation_id, None)
+                    self._unpublish(conversation_id)
                 self.unavailable.append(Unavailable(path=str(directory), reason=str(exc)))
+        self.refresh_error = read_error
+        for record in list(self.records.values()):
+            self._publish(record, home=False)
         self._publish_home()
         return writable
 
@@ -630,8 +638,6 @@ class Studio(Groups):
                     self.scan()
                 except OSError as exc:
                     self.refresh_error = str(exc)
-                else:
-                    self.refresh_error = None
                 if self.refresh_error != previous_error:
                     for record in list(self.records.values()):
                         self._publish(record, home=False)

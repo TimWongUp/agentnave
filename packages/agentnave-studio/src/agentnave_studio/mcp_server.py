@@ -465,7 +465,9 @@ async def decide_answers(
             "round_id": round_id,
             "decisions": dict(decisions),
             "pending_review": [seat.seat_id for seat in saved.seats if seat.review == "pending"],
-            "committed": [seat.seat_id for seat in saved.seats if seat.committed],
+            "committed": [
+                seat.seat_id for seat in saved.seats if seat.committed and seat.review != "discard"
+            ],
         }
     except KeyError as exc:
         raise ToolError("Unknown round_id; read_conversation lists saved rounds.") from exc
