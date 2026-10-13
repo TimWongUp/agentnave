@@ -137,9 +137,13 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "too early"},
         )
         assert blocked.is_error and "decide_answers" in str(blocked.content)
-        await _call(
+        receipt = await _call(
             client, "decide_answers", {"round_id": first["round_id"], "decisions": {"a": "publish"}}
         )
+        assert receipt["decisions"] == {"a": "publish"}
+        assert receipt["pending_review"] == ["b"]
+        assert receipt["committed"] == []
+        assert "output" not in str(receipt) and "SECRET-B" not in str(receipt)
         assert (await _wait(client, first["round_id"]))["reason"] == "review_needed"
         conflict = await client.call_tool(
             "decide_answers", {"round_id": first["round_id"], "decisions": {"a": "discard"}}
@@ -175,7 +179,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         ]
         assert "SECRET-B" not in prompt
 
-        dashboard = await _call(client, "open_dashboard", {})
+        dashboard = await _call(client, "list_conversations", {})
         view = await _call(client, "read_conversation", {"conversation_id": group_id})
         public = await asyncio.to_thread(_fetch, str(view["public_url"]) + "state")
         director = await asyncio.to_thread(_fetch, str(view["director_url"]) + "state")
@@ -836,3 +840,49 @@ def test_writer_can_acquire_after_brief_probe_lock(
         assert writer.lock is not None
     finally:
         writer.release()
+
+
+@pytest.mark.asyncio
+async def test_write_receipts_are_small_and_old_history_has_a_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "History",
+                "cwd": str(tmp_path),
+                "seats": [{"id": s, "provider": "claude"} for s in ("a", "b")],
+            },
+        )
+        posted = await _call(
+            client,
+            "post_host_message",
+            {"conversation_id": show["group_id"], "text": "PRIVATE-HISTORY-" * 200},
+        )
+        assert posted == {"conversation_id": show["group_id"], "entry_index": 0}
+        renamed = await _call(
+            client, "update_conversation", {"conversation_id": show["group_id"], "title": "Renamed"}
+        )
+        assert renamed == {
+            "conversation_id": show["group_id"],
+            "title": "Renamed",
+            "archived": False,
+        }
+    async with Client(mcp) as client:
+        listed = await _call(client, "list_conversations", {})
+        home = json.loads(await asyncio.to_thread(_fetch, str(listed["dashboard_url"]) + "state"))
+        assert home["shows"][0]["title"] == "Renamed"
+        assert "director_url" not in listed and "public_url" not in listed
+        names = [tool.name for tool in (await client.list_tools()).tools]
+        assert len(names) == 14 and "open_dashboard" not in names
+
+    def fail(_self: Studio) -> str:
+        raise OSError("viewer failed")
+
+    monkeypatch.setattr(Studio, "open_dashboard", fail)
+    async with Client(mcp) as client:
+        listed = await _call(client, "list_conversations", {})
+        assert listed["dashboard_error"] == "viewer failed"
+        assert cast(list[dict[str, object]], listed["conversations"])[0]["title"] == "Renamed"

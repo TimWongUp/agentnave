@@ -31,7 +31,7 @@ from agentnave.mcp_server import (
 )
 from agentnave.models import InvocationRequest, ProviderOption
 from agentnave_studio import __version__
-from agentnave_studio.store import Conversation, RoundRecord, Unavailable
+from agentnave_studio.store import Conversation, Unavailable
 from agentnave_studio.studio import Decision, DeletionResult, Studio
 
 
@@ -68,8 +68,8 @@ mcp = MCPServer(
         "task conversations. open_group opens a saved show; run_round, wait_round and "
         "cancel_round drive it. With review=true, wait_round returns review_needed and "
         "decide_answers publishes or discards each answer before other seats see it. "
-        "open_dashboard starts a local read-only page for the user to watch; nothing listens "
-        "before it is called. History survives restart; running processes do not. "
+        "Saved operations and list_conversations provide local read-only dashboard links; "
+        "nothing listens before these are called. History survives restart; processes do not. "
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
         + PROVIDER_SELECTION
         + " Isolated shows may include excluded providers, including the host CLI."
@@ -86,11 +86,14 @@ def _rejected(exc: Exception) -> ToolError:
     return ToolError(f"{exc}. Correct the request and retry.")
 
 
-class DashboardLinks(TypedDict):
+class ViewerLinks(TypedDict):
     dashboard_url: NotRequired[str]
+    dashboard_error: NotRequired[str]
+
+
+class DashboardLinks(ViewerLinks):
     public_url: NotRequired[str]
     director_url: NotRequired[str]
-    dashboard_error: NotRequired[str]
 
 
 def _dashboard_links(studio: Studio, conversation_id: str) -> DashboardLinks:
@@ -427,6 +430,13 @@ async def cancel_round(
     return _round_payload(studio, round_, "finished")
 
 
+class ReviewReceipt(TypedDict):
+    round_id: str
+    decisions: dict[str, Decision]
+    pending_review: list[str]
+    committed: list[str]
+
+
 @mcp.tool(
     title="Publish or discard answers under review",
     annotations=ToolAnnotations(
@@ -441,19 +451,37 @@ async def decide_answers(
     ],
     *,
     ctx: Context[Runtime],
-) -> RoundRecord:
+) -> ReviewReceipt:
     """Decide answers held for review; the whole batch is checked and saved before it applies.
 
     Published answers become visible to other seats; discarded ones never do. Repeating a
     decision is idempotent; changing one is rejected. Parallel rounds commit once every
     answer is decided; a serial round continues with its next seat.
+    The receipt confirms saved decisions, not round completion; wait_round to confirm.
     """
     try:
-        return _studio(ctx).decide(round_id, decisions)
+        saved = _studio(ctx).decide(round_id, decisions)
+        return {
+            "round_id": round_id,
+            "decisions": dict(decisions),
+            "pending_review": [seat.seat_id for seat in saved.seats if seat.review == "pending"],
+            "committed": [seat.seat_id for seat in saved.seats if seat.committed],
+        }
     except KeyError as exc:
         raise ToolError("Unknown round_id; read_conversation lists saved rounds.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
+
+
+class HostReceipt(TypedDict):
+    conversation_id: str
+    entry_index: int
+
+
+class UpdateReceipt(TypedDict):
+    conversation_id: str
+    title: str
+    archived: bool
 
 
 class ConversationView(TypedDict):
@@ -474,7 +502,7 @@ async def post_host_message(
     text: Annotated[str, Field(min_length=1, max_length=12000)],
     *,
     ctx: Context[Runtime],
-) -> ConversationView:
+) -> HostReceipt:
     """Add a public host remark that every seat receives as data with its next round.
 
     Only between rounds, with no answers pending review.
@@ -486,7 +514,10 @@ async def post_host_message(
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    return _view(studio, conversation_id, True)
+    return {
+        "conversation_id": conversation_id,
+        "entry_index": len(studio.records[conversation_id].state.entries) - 1,
+    }
 
 
 def _view(studio: Studio, conversation_id: str, writable: bool) -> ConversationView:
@@ -511,7 +542,7 @@ class ConversationSummary(TypedDict):
     created: str
 
 
-class ConversationList(TypedDict):
+class ConversationList(ViewerLinks):
     conversations: list[ConversationSummary]
     unavailable: list[Unavailable]
 
@@ -529,8 +560,11 @@ async def list_conversations(*, ctx: Context[Runtime]) -> ConversationList:
     there or after that server exits. unavailable lists unreadable or legacy records.
     """
     studio = _studio(ctx)
-    writable = studio.scan()
-    return {
+    try:
+        writable = studio.scan()
+    except OSError as exc:
+        raise _rejected(exc) from exc
+    result: ConversationList = {
         "conversations": [
             {
                 "conversation_id": record.state.id,
@@ -544,6 +578,11 @@ async def list_conversations(*, ctx: Context[Runtime]) -> ConversationList:
         ],
         "unavailable": studio.unavailable,
     }
+    try:
+        result["dashboard_url"] = studio.open_dashboard()
+    except OSError as exc:
+        result["dashboard_error"] = str(exc)
+    return result
 
 
 @mcp.tool(
@@ -579,17 +618,21 @@ async def update_conversation(
     archived: bool | None = None,
     *,
     ctx: Context[Runtime],
-) -> ConversationView:
+) -> UpdateReceipt:
     """Rename, end (archived=true) or reopen a conversation. Ending needs no running work or
     pending review."""
     studio = _studio(ctx)
     try:
-        studio.update(conversation_id, title, archived)
+        record = studio.update(conversation_id, title, archived)
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    return _view(studio, conversation_id, True)
+    return {
+        "conversation_id": conversation_id,
+        "title": record.state.title,
+        "archived": record.state.archived,
+    }
 
 
 @mcp.tool(
@@ -609,26 +652,6 @@ async def delete_conversation(conversation_id: str, *, ctx: Context[Runtime]) ->
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-
-
-class DashboardPayload(TypedDict):
-    dashboard_url: str
-    storage: str
-
-
-@mcp.tool(
-    title="Open the local dashboard",
-    annotations=ToolAnnotations(
-        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
-    ),
-)
-async def open_dashboard(*, ctx: Context[Runtime]) -> DashboardPayload:
-    """Start the read-only local dashboard on first call and return its home page for the user.
-
-    Each show has a public page (committed entries only) and a private director page.
-    """
-    studio = _studio(ctx)
-    return {"dashboard_url": studio.open_dashboard(), "storage": str(studio.root)}
 
 
 def main() -> None:

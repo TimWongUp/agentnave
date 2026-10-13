@@ -1,16 +1,18 @@
 # 工作室节目
 
-仅在当前连接提供 AgentNave Studio 工具（`open_dashboard`、`decide_answers` 等）时使用。核心协作轮次的规则照常适用，本文件只补充工作室多出的部分。
+仅在当前连接提供 AgentNave Studio 工具（`list_conversations`、`decide_answers` 等）时使用。核心协作轮次的规则照常适用，本文件只补充工作室多出的部分。
 
 ## 保存与查看
 
 工作室把普通任务和节目都保存到数据目录（默认 `~/.agentnave/`，由服务启动环境 `AGENTNAVE_DATA_DIR` 指定）。只保存任务元信息、原生会话绑定、条目和最终回复，不保存思考或原始工具事件；运行中回复尾部只用于实时展示。记录跨重启保留，进程和 invocation_id 不恢复；中断后由主控检查再决定，不自动重试。
 
 - `start_agent` 另接受 `title`（新任务会话名）和 `conversation_id`（归入同一件事）；续用原生 `session_id` 会归入对应未结束的任务会话。分组只用于展示，不向其他 CLI 转发内容。同一原生会话不可同时执行两个任务。
-- `list_conversations` 列出会话；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等该服务退出，不抢占、不另开会话拆散历史。`unavailable` 中的旧版记录不迁移。
+- `list_conversations` 列出会话并启动看板、返回首页地址；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等该服务退出，不抢占、不另开会话拆散历史。`unavailable` 中的旧版记录不迁移。
 - `read_conversation` 返回完整状态，含私密指令、待审回答和原生会话 ID，只给主控。
 - `update_conversation` 改名、结束（`archived=true`）或重开；有运行中工作或待审回答时不能结束。`delete_conversation` 只删除已结束的会话，执行前须取得用户授权。
-- 新建或继续会话会自动返回看板地址，只给主控或用户；仅查看旧历史时调用 `open_dashboard`。看板失败不回滚任务，不重发已启动的调用。
+- 新建或继续会话会自动返回看板地址，只给主控或用户；仅查看旧历史时调用 `list_conversations`。看板失败不回滚任务，不重发已启动的调用。
+
+写入回执保持简短：主持人返回条目序号，改名/结束返回标题和状态，审核返回已保存决定、剩余待审和实际已提交席位。回执不含正文或导演状态；需要时再 `read_conversation`。审核回执不是轮次终态，继续 `wait_round(include_output=false)` 确认。Studio 共 14 个工具（核心八个加历史/审核六个），不另设看板打开工具。
 
 ## 开节目
 
