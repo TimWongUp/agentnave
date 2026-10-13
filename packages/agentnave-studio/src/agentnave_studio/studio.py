@@ -642,10 +642,10 @@ class Studio(Groups):
                     self.scan()
                 except OSError as exc:
                     self.refresh_error = str(exc)
-                if self.refresh_error != previous_error:
-                    for record in list(self.records.values()):
-                        self._publish(record, home=False)
-                    self._publish_home()
+                    if self.refresh_error != previous_error:
+                        for record in list(self.records.values()):
+                            self._publish(record, home=False)
+                        self._publish_home()
             active = True
             for record in list(self.records.values()):
                 group = self._groups.get(record.state.id)
