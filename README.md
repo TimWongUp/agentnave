@@ -66,7 +66,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.16.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.16.1`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
@@ -224,6 +224,18 @@ active provider work; `wait_agent` observes without cancelling.
 All tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
 errors with retry guidance; provider launch and execution outcomes remain structured Invocation
 Results.
+
+### Output size
+
+Each invocation retains at most 1 MiB of stdout (including required protocol data) and
+64 KiB of stderr. Exceeding either limit fails the invocation with `output_limit_exceeded`
+and stops its process tree. Filtered providers retain the existing 8 MiB per-event parsing
+bound so large discarded tool/image events do not consume the reply budget. These are
+byte limits, not token or reply-length budgets.
+The Manager should request concise replies and account for all seats together. For large
+reports or attachments, a CLI with file tools can write an explicitly requested file and
+return a summary plus its absolute path; AgentNave does not transfer attachments or
+automatically save oversized replies. Isolated shows cannot rely on file tools.
 
 ## Lifecycle and security
 
