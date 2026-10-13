@@ -836,3 +836,41 @@ def test_writer_can_acquire_after_brief_probe_lock(
         assert writer.lock is not None
     finally:
         writer.release()
+
+
+@pytest.mark.asyncio
+async def test_history_io_failure_keeps_urls_until_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "history"
+    creator = Record.create(
+        root / "conversations" / "known",
+        Conversation(id="known", title="Known", kind="show", created="now"),
+    )
+    creator.release()
+    manager = InvocationManager()
+    studio = Studio(manager, root)
+    try:
+        studio.open_dashboard()
+        urls = studio.urls("known")
+        assert urls is not None
+        original_load = Record._load  # pyright: ignore[reportPrivateUsage]
+
+        def fail(_directory: Path) -> Conversation:
+            raise OSError("temporary history read failure")
+
+        monkeypatch.setattr(Record, "_load", staticmethod(fail))
+        assert studio.scan()["known"] is False
+        assert studio.urls("known") == urls
+        failed = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
+        assert failed["stale"] is True and failed["title"] == "Known"
+        assert "temporary history read failure" not in str(failed)
+        assert studio.refresh_error == "temporary history read failure"
+        monkeypatch.setattr(Record, "_load", staticmethod(original_load))
+        assert studio.scan()["known"] is True
+        assert studio.urls("known") == urls
+        recovered = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
+        assert recovered["stale"] is False and studio.refresh_error is None
+    finally:
+        await studio.close()
+        await manager.shutdown()
