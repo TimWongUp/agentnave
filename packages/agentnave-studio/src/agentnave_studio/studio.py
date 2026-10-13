@@ -7,6 +7,7 @@ import itertools
 import os
 import shutil
 import sys
+import time
 from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
@@ -67,6 +68,7 @@ class Studio(Groups):
         self.tokens: dict[str, tuple[str, str]] = {}  # conversation id -> public, director
         self.home_token = uuid4().hex
         self.refresher: asyncio.Task[None] | None = None
+        self.refresh_error: str | None = None
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
 
     # Conversations
@@ -79,20 +81,28 @@ class Studio(Groups):
                 del self.records[conversation_id]  # deleted by another server
                 self._unpublish(conversation_id)
         writable: dict[str, bool] = {}
+        read_error: str | None = None
         for conversation_id, directory in found.items():
+            record = self.records.get(conversation_id)
             try:
-                record = self.records.get(conversation_id)
                 if record is None:
                     record = Record.read(directory)
                     if record.state.id != conversation_id:
                         raise ValueError("record id does not match its directory")
                     self.records[conversation_id] = record
                 writable[conversation_id] = record.refresh()
-                self._publish(record, home=False)  # show what another server saved
             except (OSError, ValueError) as exc:
-                self.records.pop(conversation_id, None)
-                self._unpublish(conversation_id)
+                if isinstance(exc, OSError) and record is not None:
+                    # Keep the last readable state and its URLs through transient I/O failures.
+                    read_error = str(exc)
+                    writable[conversation_id] = False
+                else:
+                    self.records.pop(conversation_id, None)
+                    self._unpublish(conversation_id)
                 self.unavailable.append(Unavailable(path=str(directory), reason=str(exc)))
+        self.refresh_error = read_error
+        for record in list(self.records.values()):
+            self._publish(record, home=False)
         self._publish_home()
         return writable
 
@@ -539,7 +549,13 @@ class Studio(Groups):
     def open_dashboard(self) -> str:
         if self.dashboard is None:
             self.dashboard = Dashboard()
-            self.scan()  # projects every readable conversation
+            try:
+                self.scan()  # projects every readable conversation
+            except OSError:
+                self.dashboard.close()
+                self.dashboard = None
+                self.tokens.clear()
+                raise
             self.refresher = asyncio.create_task(self._refresh_running())
         self._publish_home()
         return self.dashboard.url(self.home_token)
@@ -556,6 +572,7 @@ class Studio(Groups):
         state = record.state
         public, director = self.tokens.setdefault(state.id, (uuid4().hex, uuid4().hex))
         tails: dict[str, str] = {}
+        elapsed: dict[str, int] = {}
         group = self._groups.get(state.id)
         if group is not None and group.active is not None:
             for run in group.active.runs:
@@ -563,9 +580,11 @@ class Studio(Groups):
                     tails[run.seat_id] = self.manager.recent_output(run.invocation_id)[0]
         for task in state.tasks:
             if task.id in self.running_tasks:
-                tails[task.id] = self.manager.recent_output(self.running_tasks[task.id])[0]
+                invocation_id = self.running_tasks[task.id]
+                tails[task.id] = self.manager.recent_output(invocation_id)[0]
+                elapsed[task.id] = self.manager.snapshot(invocation_id).elapsed_ms
         if state.kind == "show":
-            self.dashboard.update(public, views.public(state))
+            self.dashboard.update(public, views.public(state, stale=self.refresh_error is not None))
         self.dashboard.update(
             director,
             views.director(
@@ -574,6 +593,8 @@ class Studio(Groups):
                 home_url=self.dashboard.url(self.home_token),
                 storage=str(record.directory),
                 tails=tails,
+                elapsed=elapsed,
+                refresh_error=self.refresh_error,
             ),
         )
         if home:
@@ -598,16 +619,30 @@ class Studio(Groups):
                 ],
                 self.unavailable,
                 str(self.root),
+                refresh_error=self.refresh_error,
             ),
         )
 
     async def _refresh_running(self) -> None:
         # Reply tails live only in memory, so running work is re-projected while it runs;
         # saved conversations are re-read now and then for other servers' changes.
+        active = False
         for tick in itertools.count(1):
             await asyncio.sleep(1.5)
-            if tick % 5 == 0:
-                self.scan()  # also finds conversations other servers created
+            if self.dashboard is None or time.monotonic() - self.dashboard.last_access > 10:
+                active = False
+                continue
+            if not active or tick % 5 == 0:
+                previous_error = self.refresh_error
+                try:
+                    self.scan()
+                except OSError as exc:
+                    self.refresh_error = str(exc)
+                if self.refresh_error != previous_error:
+                    for record in list(self.records.values()):
+                        self._publish(record, home=False)
+                    self._publish_home()
+            active = True
             for record in list(self.records.values()):
                 group = self._groups.get(record.state.id)
                 if (group is not None and group.active is not None) or any(

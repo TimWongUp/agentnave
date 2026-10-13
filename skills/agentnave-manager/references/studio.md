@@ -10,7 +10,7 @@
 - `list_conversations` 列出会话；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等该服务退出，不抢占、不另开会话拆散历史。`unavailable` 中的旧版记录不迁移。
 - `read_conversation` 返回完整状态，含私密指令、待审回答和原生会话 ID，只给主控。
 - `update_conversation` 改名、结束（`archived=true`）或重开；有运行中工作或待审回答时不能结束。`delete_conversation` 只删除已结束的会话，执行前须取得用户授权。
-- 用户要观看时调用 `open_dashboard`，把返回的首页地址交给用户；看板在此之前不启动。
+- 新建或继续会话会自动返回看板地址，只给主控或用户；仅查看旧历史时调用 `open_dashboard`。看板失败不回滚任务，不重发已启动的调用。
 
 ## 开节目
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
@@ -12,6 +13,7 @@ from typing import cast
 class Dashboard:
     def __init__(self) -> None:
         self.snapshots: dict[str, bytes] = {}
+        self.last_access = 0.0
         assets = Path(__file__).with_name("dashboard_assets")
         self.assets = {
             "": ("text/html; charset=utf-8", (assets / "index.html").read_bytes()),
@@ -37,18 +39,20 @@ class Dashboard:
                     self.send_error(403)
                     return
                 parts = self.path.split("/")
-                if len(parts) != 3 or parts[1] not in dashboard.snapshots:
+                snapshot = dashboard.snapshots.get(parts[1]) if len(parts) == 3 else None
+                if snapshot is None:
                     self.send_error(404)
                     return
-                token, resource = parts[1:]
+                resource = parts[2]
                 cache_control = "no-store"
                 if resource == "state":
+                    dashboard.last_access = time.monotonic()
                     content_type, body = (
                         "application/json; charset=utf-8",
-                        dashboard.snapshots[token],
+                        snapshot,
                     )
                 elif resource == "transcript.jsonl":
-                    data = cast(dict[str, object], json.loads(dashboard.snapshots[token]))
+                    data = cast(dict[str, object], json.loads(snapshot))
                     if data.get("view") == "workbench" or data.get("mode") == "task":
                         self.send_error(404)
                         return
@@ -77,7 +81,7 @@ class Dashboard:
                 self.end_headers()
                 self.wfile.write(body)
 
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.host = f"127.0.0.1:{self.server.server_port}"
         self.origin = f"http://{self.host}"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

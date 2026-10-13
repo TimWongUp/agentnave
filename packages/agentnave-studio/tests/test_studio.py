@@ -15,8 +15,17 @@ from agentnave.core import InvocationManager
 from agentnave.group import GroupSeat
 from agentnave.models import InvocationRequest
 from agentnave_studio import mcp_server as studio_server
+from agentnave_studio import views
+from agentnave_studio.dashboard import Dashboard
 from agentnave_studio.mcp_server import mcp
-from agentnave_studio.store import Conversation, RoundRecord, SeatRunRecord
+from agentnave_studio.store import (
+    Conversation,
+    EntryRecord,
+    Record,
+    RoundRecord,
+    SeatRecord,
+    SeatRunRecord,
+)
 from agentnave_studio.studio import Studio
 
 
@@ -98,6 +107,8 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         )
         group_id = show["group_id"]
         assert show["conversation_id"] == group_id
+        assert str(show["dashboard_url"]).startswith("http://127.0.0.1:")
+        assert show["public_url"] != show["director_url"]
         first = await _call(
             client,
             "run_round",
@@ -283,7 +294,7 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
 
 
 @pytest.mark.asyncio
-async def test_tasks_are_saved_grouped_and_deleted_without_starting_a_dashboard(
+async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_links(
     tmp_path: Path, data_root: Path
 ) -> None:
     async with Client(mcp) as client:
@@ -299,6 +310,7 @@ async def test_tasks_are_saved_grouped_and_deleted_without_starting_a_dashboard(
             },
         )
         assert first["provider"] == "claude"
+        assert "director_url" in first and "public_url" not in first
         assert first["model"] == "test-model"
         assert first["effort"] == "high"
         assert "prompt" not in first
@@ -699,3 +711,166 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     await studio.manager.wait(resumed)
     await studio.manager.shutdown()
     await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_failure_does_not_repeat_or_lose_started_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_self: Studio) -> str:
+        raise OSError("viewer unavailable")
+
+    monkeypatch.setattr(Studio, "open_dashboard", fail)
+    async with Client(mcp) as client:
+        started = await _call(
+            client, "start_agent", {"provider": "claude", "prompt": "once", "cwd": str(tmp_path)}
+        )
+        assert started["dashboard_error"] == "viewer unavailable"
+        done = await _call(client, "wait_agent", {"invocation_id": started["invocation_id"]})
+        assert done["status"] == "succeeded"
+        view = await _call(
+            client, "read_conversation", {"conversation_id": started["conversation_id"]}
+        )
+        assert len(cast(list[object], _conversation(view)["tasks"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_refresh_sleeps_when_idle_and_recovers_read_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = InvocationManager()
+    studio = Studio(manager, tmp_path / "history")
+    studio.open_dashboard()
+    assert studio.dashboard is not None and studio.refresher is not None
+    studio.refresher.cancel()
+    await asyncio.gather(studio.refresher, return_exceptions=True)
+    dashboard = studio.dashboard
+    original_sleep = asyncio.sleep
+    sleeps = 0
+    scans = 0
+    original_scan = studio.scan
+
+    async def step(_delay: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        # No reader at tick 1. Tick 2 requests state, tick 5 recovers.
+        if sleeps == 2:
+            await asyncio.to_thread(_fetch, dashboard.url(studio.home_token) + "state")
+        if sleeps == 3:
+            assert studio.refresh_error == "read failed"
+            state = json.loads(
+                await asyncio.to_thread(_fetch, dashboard.url(studio.home_token) + "state")
+            )
+            assert state["refresh_error"] == "read failed"
+        if sleeps == 6:
+            assert studio.refresh_error is None
+            raise asyncio.CancelledError
+        await original_sleep(0)
+
+    def scan() -> dict[str, bool]:
+        nonlocal scans
+        scans += 1
+        if scans == 1:
+            raise OSError("read failed")
+        return original_scan()
+
+    monkeypatch.setattr(studio, "scan", scan)
+    monkeypatch.setattr(asyncio, "sleep", step)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await studio._refresh_running()  # pyright: ignore[reportPrivateUsage]
+        assert scans == 2
+    finally:
+        await studio.close()
+        await manager.shutdown()
+
+
+def test_host_projection_does_not_collide_with_director_seat() -> None:
+    state = Conversation(
+        id="show",
+        title="show",
+        kind="show",
+        created="now",
+        seats=[SeatRecord(id="director", provider="claude", provider_options={}, cwd="/tmp")],
+        entries=[
+            EntryRecord(round=1, kind="host", text="host", time="now"),
+            EntryRecord(round=1, kind="answer", seat="director", text="seat", time="now"),
+        ],
+    )
+    projected = json.loads(views.public(state))
+    assert [m["speaker"] for m in projected["messages"]] == ["@host", "director"]
+
+
+def test_idle_http_connection_does_not_block_state_requests() -> None:
+    import socket
+
+    dashboard = Dashboard()
+    dashboard.update("test", b'{"view":"public"}')
+    try:
+        with (
+            socket.create_connection(("127.0.0.1", dashboard.server.server_port)),
+            urlopen(dashboard.url("test") + "state", timeout=0.5) as response,
+        ):
+            assert response.status == 200
+    finally:
+        dashboard.close()
+
+
+def test_writer_can_acquire_after_brief_probe_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    creator = Record.create(
+        tmp_path, Conversation(id="test", title="test", kind="show", created="now")
+    )
+    creator.release()
+    reader = Record.read(tmp_path)
+    writer = Record.read(tmp_path)
+    probe = reader._lock()  # pyright: ignore[reportPrivateUsage]
+
+    def release_probe(_delay: float) -> None:
+        reader._unlock(probe)  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr("agentnave_studio.store.time.sleep", release_probe)
+    try:
+        writer.acquire()
+        assert writer.lock is not None
+    finally:
+        writer.release()
+
+
+@pytest.mark.asyncio
+async def test_history_io_failure_keeps_urls_until_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "history"
+    creator = Record.create(
+        root / "conversations" / "known",
+        Conversation(id="known", title="Known", kind="show", created="now"),
+    )
+    creator.release()
+    manager = InvocationManager()
+    studio = Studio(manager, root)
+    try:
+        studio.open_dashboard()
+        urls = studio.urls("known")
+        assert urls is not None
+        original_load = Record._load  # pyright: ignore[reportPrivateUsage]
+
+        def fail(_directory: Path) -> Conversation:
+            raise OSError("temporary history read failure")
+
+        monkeypatch.setattr(Record, "_load", staticmethod(fail))
+        assert studio.scan()["known"] is False
+        assert studio.urls("known") == urls
+        failed = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
+        assert failed["stale"] is True and failed["title"] == "Known"
+        assert "temporary history read failure" not in str(failed)
+        assert studio.refresh_error == "temporary history read failure"
+        monkeypatch.setattr(Record, "_load", staticmethod(original_load))
+        assert studio.scan()["known"] is True
+        assert studio.urls("known") == urls
+        recovered = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
+        assert recovered["stale"] is False and studio.refresh_error is None
+    finally:
+        await studio.close()
+        await manager.shutdown()

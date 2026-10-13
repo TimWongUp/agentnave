@@ -5,7 +5,7 @@ local read-only dashboard, for multi-CLI shows that a human watches. It includes
 AgentNave tool; use the plain `agentnave` package when an agent only needs subagents.
 
 Entry point: `agentnave-studio-mcp`. History lives in `~/.agentnave` (override with
-`AGENTNAVE_DATA_DIR`). The dashboard starts only when the manager calls `open_dashboard`.
+`AGENTNAVE_DATA_DIR`). Saved tasks and shows return dashboard links automatically. Use `open_dashboard` to view existing history without starting new work.
 
 See the [repository](https://github.com/TimWongUp/agentnave) for installation and the
 show guide.

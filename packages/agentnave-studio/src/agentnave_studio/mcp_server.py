@@ -86,7 +86,29 @@ def _rejected(exc: Exception) -> ToolError:
     return ToolError(f"{exc}. Correct the request and retry.")
 
 
-class TaskStartPayload(InvocationPayload):
+class DashboardLinks(TypedDict):
+    dashboard_url: NotRequired[str]
+    public_url: NotRequired[str]
+    director_url: NotRequired[str]
+    dashboard_error: NotRequired[str]
+
+
+def _dashboard_links(studio: Studio, conversation_id: str) -> DashboardLinks:
+    """A saved operation stays successful even if the optional viewer cannot start."""
+    try:
+        home = studio.open_dashboard()
+    except OSError as exc:
+        return {"dashboard_error": str(exc)}
+    links: DashboardLinks = {"dashboard_url": home}
+    urls = studio.urls(conversation_id)
+    if urls is not None:
+        links["director_url"] = urls[1]
+        if studio.records[conversation_id].state.kind == "show":
+            links["public_url"] = urls[0]
+    return links
+
+
+class TaskStartPayload(InvocationPayload, DashboardLinks):
     conversation_id: str
 
 
@@ -167,6 +189,7 @@ async def start_agent(
     return {
         **core.started_payload(invocation_id, request),
         "conversation_id": saved_id,
+        **_dashboard_links(_studio(ctx), saved_id),
     }
 
 
@@ -198,7 +221,7 @@ async def describe_provider(
     return {**await core.describe_provider(provider), "show_permitted": True}
 
 
-class ShowPayload(TypedDict):
+class ShowPayload(DashboardLinks):
     group_id: str
     conversation_id: str
     seats: list[core.GroupSeatPayload]
@@ -259,6 +282,7 @@ async def open_group(
         raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc
     state = record.state
     return {
+        **_dashboard_links(_studio(ctx), state.id),
         "group_id": state.id,
         "conversation_id": state.id,
         "seats": [
@@ -266,9 +290,6 @@ async def open_group(
         ],
     }
 
-
-_title, _annotations = TOOL_OPTIONS["run_round"]
-mcp.add_tool(core.run_round, title=_title, annotations=_annotations)
 
 type StudioSeatStatus = Literal[
     "pending",
@@ -294,7 +315,7 @@ class StudioSeatRunPayload(TypedDict):
     session_id: NotRequired[str]
 
 
-class StudioRoundPayload(TypedDict):
+class StudioRoundPayload(DashboardLinks):
     round_id: str
     group_id: str
     round: int
@@ -320,6 +341,35 @@ def _round_payload(
         elif reviews.get(seat["seat_id"]) == "discard":
             seat["status"] = "discarded"
     return payload
+
+
+_title, _annotations = TOOL_OPTIONS["run_round"]
+
+
+@mcp.tool(title=_title, annotations=_annotations)
+async def run_round(
+    group_id: str,
+    seats: Annotated[list[str], Field(min_length=1)],
+    order: Literal["parallel", "serial"],
+    prompt: Annotated[str, Field(min_length=1)],
+    instructions: dict[str, str] | None = None,
+    *,
+    ctx: Context[Runtime],
+) -> StudioRoundPayload:
+    """Start a saved show round, then wait_round; only committed answers reach other seats.
+
+    parallel starts together and seals answers until all end; serial follows seat order.
+    Private instructions go only to their seat. Includes viewer links for the manager only.
+    """
+    studio = _studio(ctx)
+    try:
+        round_ = studio.run(group_id, seats, order, prompt, instructions or {})
+    except KeyError as exc:
+        raise ToolError("Unknown group_id; use list_conversations.") from exc
+    except (OSError, ValueError) as exc:
+        raise _rejected(exc) from exc
+    payload = _round_payload(studio, round_, "started")
+    return {**payload, **_dashboard_links(studio, group_id)}
 
 
 @mcp.tool(
