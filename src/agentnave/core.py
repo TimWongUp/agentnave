@@ -25,7 +25,8 @@ from agentnave.models import (
 )
 from agentnave.processes import spawn_process, terminate_process_tree
 
-_MAX_STDOUT_BYTES = 8 * 1024 * 1024
+_MAX_STDOUT_BYTES = 1024 * 1024
+_MAX_EVENT_BYTES = 8 * 1024 * 1024
 _MAX_STDERR_BYTES = 64 * 1024
 _MAX_ERROR_DETAILS = 16_384
 _OUTPUT_LIMIT_ERROR = InvocationError(
@@ -297,6 +298,7 @@ class InvocationManager:
                     lambda line: record.observe_event(line, adapter),
                     prepared.capture_line,
                     prepared.skip_oversized_line,
+                    event_limit=_MAX_EVENT_BYTES,
                 )
             )
             stderr_task = asyncio.create_task(
@@ -423,10 +425,18 @@ async def _read_limited(
     observe_event: Callable[[bytes], None] | None = None,
     capture_line: Callable[[bytes], bytes] | None = None,
     skip_oversized_line: Callable[[bytes], bool] | None = None,
+    *,
+    event_limit: int | None = None,
 ) -> _CapturedStream:
     if capture_line is not None:
         return await _read_filtered(
-            stream, limit, exceeded_event, observe_event, capture_line, skip_oversized_line
+            stream,
+            limit,
+            exceeded_event,
+            observe_event,
+            capture_line,
+            skip_oversized_line,
+            limit if event_limit is None else event_limit,
         )
     data = bytearray()
     pending = bytearray()
@@ -457,6 +467,7 @@ async def _read_filtered(
     observe_event: Callable[[bytes], None] | None,
     capture_line: Callable[[bytes], bytes],
     skip_oversized_line: Callable[[bytes], bool] | None,
+    event_limit: int,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
@@ -485,14 +496,14 @@ async def _read_filtered(
             pending = bytearray(remainder)
             if discarding:
                 discarding = False
-            elif len(line) > limit:
+            elif len(line) > event_limit:
                 exceeded = not skippable(line)
             else:
                 capture(bytes(line))
             if exceeded:
                 break
         # Bound a single unterminated event independently of retained result bytes.
-        if len(pending) > limit:
+        if len(pending) > event_limit:
             # Once discarding, pending holds only the tail of the line being dropped.
             if discarding or skippable(pending):
                 discarding = True

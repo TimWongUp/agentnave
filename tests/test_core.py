@@ -33,11 +33,12 @@ class FakeAdapter(ClaudeAdapter):
                 "subprocess.Popen([sys.executable, '-c', "
                 f"\"import pathlib,time; time.sleep(0.5); pathlib.Path({str(marker)!r}).write_text('survived')\"] )"
             )
-        elif request.prompt == "large_output":
+        elif request.prompt in {"at_output_limit", "large_output"}:
             marker = request.cwd / "provider-survived"
+            size = 1024 * 1024 + (request.prompt == "large_output")
             code = (
                 "import pathlib,sys,time; "
-                "sys.stdout.buffer.write(b'x' * (9 * 1024 * 1024)); sys.stdout.flush(); "
+                f"sys.stdout.buffer.write(b'x' * {size}); sys.stdout.flush(); "
                 f"time.sleep(0.5); pathlib.Path({str(marker)!r}).write_text('survived')"
             )
         elif request.prompt == "kill_supervisor":
@@ -499,21 +500,27 @@ async def test_claude_long_tool_stream_does_not_terminate_invocation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prompt, exceeds", [("at_output_limit", False), ("large_output", True)])
 async def test_output_limit_terminates_provider_without_unbounded_capture(
-    tmp_path: Path, fake_adapter: None
+    tmp_path: Path, fake_adapter: None, prompt: str, exceeds: bool
 ) -> None:
     manager = InvocationManager()
-    invocation_id = manager.start(InvocationRequest("claude", "large_output", tmp_path))
+    invocation_id = manager.start(InvocationRequest("claude", prompt, tmp_path))
 
     result = await asyncio.wait_for(manager.wait(invocation_id), 3)
 
     assert result is not None
-    assert result.status is InvocationStatus.FAILED
-    assert result.error is not None
-    assert result.error.code == "output_limit_exceeded"
-    assert result.output == ""
+    if exceeds:
+        assert result.status is InvocationStatus.FAILED
+        assert result.error is not None
+        assert result.error.code == "output_limit_exceeded"
+        assert result.output == ""
+    else:
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert result.error is None
+        assert result.output == "x" * (1024 * 1024)
     await asyncio.sleep(0.6)
-    assert not (tmp_path / "provider-survived").exists()
+    assert (tmp_path / "provider-survived").exists() is not exceeds
     await manager.shutdown()
 
 
