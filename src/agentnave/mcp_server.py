@@ -48,7 +48,7 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". Excluded providers are rejected by start_agent and open_group."
+    + ". start_agent rejects excluded providers; groups may seat any provider."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
@@ -430,8 +430,8 @@ async def describe_provider(
 ) -> ProviderDescriptionPayload:
     """Read one provider's permitted status and supported options.
 
-    Does not launch a CLI or check installation/login. permitted applies to start_agent and
-    open_group.
+    Does not launch a CLI or check installation/login. permitted applies to start_agent;
+    open_group accepts every provider.
     """
     return {
         "provider": provider,
@@ -529,11 +529,8 @@ async def open_group(
     """Create an in-memory group of 2–6 CLI seats for collaborative rounds. Nothing is saved.
 
     Seats are ordinary subagents: native tools and permissions, the given cwd, explicit options.
-    Each seat keeps its own native session across rounds. Excluded providers are rejected.
+    Each seat keeps its own native session across rounds. Host exclusions do not apply to seats.
     """
-    excluded = sorted({seat.provider for seat in seats} & EXCLUDED_PROVIDERS)
-    if excluded:
-        raise ToolError(f"Excluded providers: {', '.join(excluded)}. " + PROVIDER_SELECTION)
     try:
         group = _groups(ctx).open(
             Path(cwd),

@@ -39,7 +39,7 @@ class Runtime(core.Runtime):
     def __init__(self) -> None:
         super().__init__()
         root = Path(os.environ.get("AGENTNAVE_DATA_DIR", str(Path.home() / ".agentnave")))
-        self.studio = Studio(self.manager, root, EXCLUDED_PROVIDERS)
+        self.studio = Studio(self.manager, root)
         # Core round tools reach the studio through the groups attribute.
         self.groups = self.studio
 
@@ -72,7 +72,6 @@ mcp = MCPServer(
         "nothing listens before these are called. History survives restart; processes do not. "
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
         + PROVIDER_SELECTION
-        + " Isolated shows may include excluded providers, including the host CLI."
     ),
     lifespan=_lifespan,
 )
@@ -218,8 +217,8 @@ async def describe_provider(
 ) -> StudioProviderPayload:
     """Read one provider's permitted status and supported options without launching it.
 
-    permitted applies to start_agent and ordinary shows; show_permitted to isolated shows,
-    which may include the host CLI.
+    permitted applies to start_agent; show_permitted to shows, which may seat any provider,
+    including the host CLI.
     """
     return {**await core.describe_provider(provider), "show_permitted": True}
 
@@ -262,8 +261,8 @@ async def open_group(
     """Create a saved show of 2–6 CLI seats; drive it with run_round. group_id is the conversation id.
 
     Seats are subagents with native tools and permissions unless isolated. Each keeps its own
-    native session across rounds, also after a server restart. Excluded providers are rejected
-    unless isolated. Isolation restricts tools; it is not an OS sandbox.
+    native session across rounds, also after a server restart. Host exclusions apply only to
+    start_agent, so any show may seat them. Isolation restricts tools; it is not an OS sandbox.
     """
     try:
         record = _studio(ctx).open_show(

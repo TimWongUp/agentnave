@@ -256,10 +256,6 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
     monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     seats = [{"id": "a", "provider": "claude"}, {"id": "g", "provider": "antigravity"}]
     async with Client(mcp) as client:
-        excluded = await client.call_tool(
-            "open_group", {"title": "Open", "cwd": str(tmp_path), "seats": seats}
-        )
-        assert excluded.is_error and "only isolated shows" in str(excluded.content)
         invalid = await client.call_tool(
             "open_group",
             {
@@ -295,6 +291,16 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         deleted = await _call(client, "delete_conversation", {"conversation_id": group_id})
         assert not (data_root / "conversations" / group_id / "seats").exists()
         assert deleted["retained_paths"] == [str(data_root / "conversations" / group_id)]
+        # Host exclusions limit start_agent only; ordinary shows may seat the host CLI too.
+        ordinary = await _call(
+            client, "open_group", {"title": "Open", "cwd": str(tmp_path), "seats": seats}
+        )
+        started = await _call(
+            client,
+            "run_round",
+            {"group_id": ordinary["group_id"], "seats": ["a"], "order": "parallel", "prompt": "hi"},
+        )
+        assert _seats(await _wait(client, started["round_id"]))[0]["status"] == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -519,20 +525,6 @@ async def test_cancel_rejects_a_publish_that_arrives_after_it(
     assert [entry.kind for entry in record.state.entries] == ["task"]
     await studio.manager.shutdown()
     await studio.close()
-
-
-@pytest.mark.asyncio
-async def test_restored_show_keeps_this_hosts_exclusions(tmp_path: Path, data_root: Path) -> None:
-    from agentnave.group import GroupSeat
-
-    first = Studio(InvocationManager(), data_root)
-    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
-    record = first.open_show("Saved", tmp_path, seats, review=False, isolated=False)
-    await first.close()
-    second = Studio(InvocationManager(), data_root, frozenset({"claude"}))
-    with pytest.raises(ValueError, match="Excluded providers: claude"):
-        second.run(record.state.id, ["a"], "parallel", "go", {})
-    await second.close()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlinks need extra privileges on Windows")
