@@ -109,6 +109,20 @@ class InvocationSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class InvocationListing:
+    """Metadata of one retained invocation; never its prompt or output."""
+
+    invocation_id: str
+    provider: str
+    cwd: Path
+    elapsed_ms: int
+    events_seen: bool
+    phase: InvocationPhase | None = None
+    status: InvocationStatus | None = None
+    session_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class InvocationResult:
     status: InvocationStatus
     provider: str

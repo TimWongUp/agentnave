@@ -6,7 +6,7 @@
 
 | 工具 | 说明 |
 | --- | --- |
-| `start_agent`、`wait_agent`、`cancel_agent`、`describe_provider` | 与核心相同；`start_agent` 另接受 `title`、`conversation_id`，任务自动保存为私有任务会话；`describe_provider` 另返回 `show_permitted` |
+| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | 与核心相同；`start_agent` 另接受 `title`、`conversation_id`，任务自动保存为私有任务会话；`describe_provider` 另返回 `show_permitted` |
 | `open_group` | 创建保存的节目：`title`、2–6 个席位、`cwd`，可选 `review`、`isolated`；返回的 `group_id` 就是会话 ID |
 | `run_round`、`wait_round`、`cancel_round` | 与核心相同的并联／串联轮次；审核节目中 `wait_round` 返回 `review_needed`，席位状态出现 `pending_review`、`discarded` |
 | `decide_answers` | `round_id` + `{seat_id: publish/discard}`，整批校验并保存后生效 |

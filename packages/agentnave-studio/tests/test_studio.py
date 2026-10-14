@@ -886,7 +886,8 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         assert home["shows"][0]["title"] == "Renamed"
         assert "director_url" not in listed and "public_url" not in listed
         names = [tool.name for tool in (await client.list_tools()).tools]
-        assert len(names) == 14 and "open_dashboard" not in names
+        assert len(names) == 16 and "open_dashboard" not in names
+        assert {"wait_any", "list_invocations"} <= set(names)
 
     def fail(_self: Studio, *, history_loaded: bool = False) -> str:
         raise OSError("viewer failed")

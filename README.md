@@ -121,7 +121,7 @@ Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
-AgentNave exposes eight tools: four for single tasks and four for group rounds. The initial tool metadata contains a compact provider directory;
+AgentNave exposes ten tools: six for single tasks and four for group rounds. The initial tool metadata contains a compact provider directory;
 provider-specific options are returned only when requested. Model defaults live in the Skill's
 per-CLI reference files, loaded only for the selected CLI.
 
@@ -216,10 +216,28 @@ Wait expiry never terminates the invocation. AgentNave has no total runtime dead
 `start_agent` has no runtime-limit parameter. Keep waiting for the result or use `cancel_agent`
 to stop work explicitly. Provider-native limits still apply.
 
+### `wait_any`
+
+Waits on several distinct, known `invocation_ids` with the same fixed five-minute window; an
+empty, repeated, unknown or expired ID rejects the whole call before waiting. It returns
+`{"reason": "ready" | "wait_elapsed", "updates": [...]}`, where each update has the
+`wait_agent` shape. `ready` lists every invocation that has finished or has an unread blocker at
+that moment; the others keep running and are omitted. Only blockers placed in the reply are
+consumed. Finished invocations stay ready on every call, so drop them from the next list.
+`wait_elapsed` returns a running snapshot of each invocation and consumes nothing.
+
 ### `cancel_agent`
 
 Stops an invocation and returns its terminal result. Use it only when the Manager intends to end
 active provider work; `wait_agent` observes without cancelling.
+
+### `list_invocations`
+
+Read-only list of this server's active invocations and finished ones within the seven-day
+retention, oldest first: `invocation_id`, `provider`, `cwd`, `status`, `elapsed_ms` (fixed once
+finished) and `events_seen` (whether any structured provider event arrived), plus `phase` while
+active and a non-empty native `session_id` once finished. Prompts, replies and tool data are not
+returned; read results with `wait_agent` or `wait_any`.
 
 All tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
 errors with retry guidance; provider launch and execution outcomes remain structured Invocation
