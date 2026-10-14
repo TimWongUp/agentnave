@@ -8,6 +8,25 @@
 
 对应 `agy` CLI。原生 `print_timeout` 由 CLI 执行，与 AgentNave 的单次等待时长是不同参数；仅在用户明确要求时设置。
 
+## 显式受限工具
+
+`restricted_tools=true` 要求专用 `cwd` 事先含 `.agents/agents/agentnave-discussion.md`，内容须与下列定义一致；缺失或不符时 Adapter 返回错误，不代写角色文件。Studio 的隔离席位会自动准备；单任务由调用方在专用目录中准备，保持现有项目目录不变。
+
+```markdown
+---
+name: agentnave-discussion
+description: Dialogue-only participant for AgentNave discussion rooms.
+tools: []
+mcpServers: []
+skills: []
+plugins: []
+mainAgent: true
+subagent: false
+commandExecutionPolicy: off
+---
+You are a conversation participant. Answer the current user request.
+```
+
 ## 项目目录
 
 在项目内执行任务时，将项目绝对路径传给 `cwd`，并在交接 prompt 中明确同一路径。要求 CLI 将终端工具的 `Cwd` 显式设为该绝对路径，先执行只读 `pwd`，确认一致后再进行项目操作；后续项目命令沿用该目录。目录不符或无法设置时，停止项目操作并报告实际目录。临时交接文件的位置不改变目标目录。

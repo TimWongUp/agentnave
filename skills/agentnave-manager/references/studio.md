@@ -19,9 +19,9 @@
 `open_group(title, seats, cwd, review?, isolated?)` 返回的 `group_id` 也是会话 ID，后续 `run_round` 直接使用；重启后仍可用同一 ID 继续，各席续接自己的原生会话。
 
 - **审核**（`review=true`）：成功回答先待审，`wait_round` 以 `reason=review_needed` 提前返回、席位状态为 `pending_review`。读取正文后用 `decide_answers(round_id, {seat_id: "publish"|"discard"})` 决定；并联轮全部决定后一次公开，串联轮决定后才轮到下一席。被丢弃的回答其他席位看不到，但该席自己记得。有待审回答时不能开新轮次、发主持人消息或结束会话；`cancel_round` 或服务退出时未决回答丢弃。只能发布或丢弃原文，不改写答案；需要重答就丢弃后再开一轮。
-- **隔离**（`isolated=true`）：每席使用工作室准备的独立空目录并启用 `restricted_tools`，只能指定 `model`、`effort`（Pi 另可 `provider`）；调用方 `cwd` 被忽略。只有隔离节目可以加入宿主被排除的 CLI，包括宿主自己的 CLI。用于防作弊的节目；需要读代码或改文件的协作不要隔离。
+- **隔离**（`isolated=true`）：仅在用户明确要求工具层面限制访问，并同时要求工作室准备独立席位目录时启用；日常讨论按主 Skill 的“讨论范围与工具”约定处理。每席使用工作室准备的独立空目录并启用 `restricted_tools`，只能指定 `model`、`effort`（Pi 另可 `provider`）；调用方 `cwd` 被忽略。只有隔离节目可以加入宿主被排除的 CLI，包括宿主自己的 CLI。需要读代码或改文件的协作不要隔离。
 - **主持人**：`post_host_message(conversation_id, text)` 在轮次之间发公开发言，所有席位下一轮作为数据收到。私密信息放 `run_round` 的 `instructions`，不要写进公开任务或主持人发言。
 
 ## 边界
 
-导演页地址、`read_conversation` 结果、待审回答、私密指令、原生 ID 和数据目录路径不可交给参演 CLI；公开页只含已提交条目。原生工具限制和隔离目录不等于操作系统沙箱，原生通用规则仍可能加载。按用户是否需要独立回答选择并联或串联，不因有看板就默认逐条公开。
+导演页地址、`read_conversation` 结果、待审回答、私密指令、原生 ID 和数据目录路径不可交给参演 CLI；公开页只含已提交条目。工具限制和独立目录不清除旧会话历史，也不统一禁止原生规则或上下文文件加载，不等于操作系统沙箱。按用户是否需要独立回答选择并联或串联，不因有看板就默认逐条公开。

@@ -25,6 +25,16 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 需要历史、审核、主持人或网页观看时按 [工作室节目](references/studio.md) 操作；连接中须有 `list_conversations`、`decide_answers` 等 Studio 工具，不能把 Skill 更新当作运行时升级。
 
+## 讨论范围与工具
+
+日常讨论、头脑风暴和方案比较保留 CLI 原生环境，用 prompt 约定范围；不因“讨论”“各自答”或“只看给定材料”自动启用 `restricted_tools`、`isolated`，也不为普通讨论另建隔离目录。派发时写清：
+
+- 按用户要求使用资料：允许查证时只读核验；要求只看给定材料时，仅依据这些材料作答。
+- 只讨论和核验，不改文件、发送或部署；其他操作需用户另行授权。
+- 查证结果附出处，推测明确标注；声称执行成功时核对实际调用或产物，不以模型自报代替证据。
+
+仅在用户明确要求从工具层面限制访问时，显式设置 `provider_options.restricted_tools=true`；用户同时明确要求工作室准备独立席位目录时，才按 [工作室节目](references/studio.md) 使用 `isolated=true`。可用选项先由 `describe_provider` 核对。prompt 是协作约定，执行权限仍由 CLI 原生机制控制；受限配置不清除旧会话历史，也不统一禁止加载上下文文件。
+
 ## CLI 与模型
 
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
