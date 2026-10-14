@@ -49,7 +49,7 @@ _Avoid_: 房间、工作台
 
 ## Isolated Seat
 
-隔离节目中的席位：每席使用会话目录下的独立空目录并启用 `restricted_tools`，只接受模型与 effort（Pi 另可选模型后端）。隔离节目可包含被宿主排除的 Provider；它限制工具，不是操作系统沙箱。
+隔离节目中的席位：每席使用会话目录下的独立空目录并启用 `restricted_tools`，只接受模型与 effort（Pi 另可选模型后端）。它限制工具，不是操作系统沙箱。
 
 ## Host
 
