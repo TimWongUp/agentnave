@@ -33,7 +33,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - 只讨论和核验，不改文件、发送或部署；其他操作需用户另行授权。
 - 查证结果附出处，推测明确标注；声称执行成功时核对实际调用或产物，不以模型自报代替证据。
 
-仅在用户明确要求从工具层面限制访问时，显式设置 `provider_options.restricted_tools=true`；需要工作室为每席准备独立目录时，再按 [工作室节目](references/studio.md) 使用 `isolated=true`。可用选项先由 `describe_provider` 核对。prompt 是协作约定，执行权限仍由 CLI 原生机制控制；受限配置不清除旧会话历史，也不统一禁止加载上下文文件。
+仅在用户明确要求从工具层面限制访问时，显式设置 `provider_options.restricted_tools=true`；用户同时明确要求工作室准备独立席位目录时，才按 [工作室节目](references/studio.md) 使用 `isolated=true`。可用选项先由 `describe_provider` 核对。prompt 是协作约定，执行权限仍由 CLI 原生机制控制；受限配置不清除旧会话历史，也不统一禁止加载上下文文件。
 
 ## CLI 与模型
 

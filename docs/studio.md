@@ -29,7 +29,7 @@
 
 ## 隔离席位
 
-普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。`restricted_tools` 限制当前调用的工具，`isolated` 额外准备席位目录；仅在用户明确要求这些限制时启用，不因“各自答”或“只看给定材料”自动隔离。
+普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求工作室准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
 `isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略，席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。隔离节目可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；非隔离节目与 `start_agent` 一样遵守排除项。
 
@@ -40,8 +40,8 @@
 | Claude Code 2.1.295 | safe-mode、空 tools、strict-mcp-config、disable-slash-commands | 保留会话持久化；管理员策略仍可能生效 |
 | CodeBuddy Code 2.142.0 | 空 tools、strict-mcp-config、显式空 MCP 配置、拒绝 mcp__* | 通过自己的 Claude-compatible resume 续接；不使用 Claude 专属 safe-mode 参数。空 tools 与仅启用 Read 的初始化清单都列出全部工具；实际读取以调用记录和文件内容核对 |
 | Codex CLI（本机桌面版 0.162.0-alpha.17.2） | ignore-user-config、关闭 shell/unified_exec/view_image/apps/multi_agent、禁用 web search、只读 sandbox 与 never approval | 保留认证与会话；不加载用户 MCP 配置。受限初次调用与续接均成功，本地读取和终端工具不可用，其他框架工具仍存在 |
-| Antigravity CLI 1.3.4 | 每席工作目录中创建 tools=[]、mcpServers=[] 的专用 agent，关闭命令执行策略与 slash commands、开启 sandbox | --conversation 按本席 ID 续接；不同内容的同名 profile 会拒绝覆盖。单任务也可使用 restricted_tools，但 cwd 必须事先含匹配的角色定义，Adapter 不代写 |
-| Grok CLI 1.0.46 | 空 tools、deny `*`、no-subagents、disable-web-search、permission-mode dontAsk | 工具定义仍包含 read_file 等工具；本次真实读取被 deny 规则拒绝，不能把限制执行说成移除定义 |
+| Antigravity CLI 1.3.4 | 每席工作目录中创建 tools=[]、mcpServers=[] 的专用 agent，关闭命令执行策略与 slash commands、开启 sandbox | --conversation 按本席 ID 续接；不同内容的同名 profile 会拒绝覆盖。单任务也可使用 restricted_tools，但 cwd 必须事先含匹配的角色定义，Adapter 不代写；定义见 [CLI 参考](../skills/agentnave-manager/references/antigravity.md#显式受限工具) |
+| Grok CLI 1.0.46 | 空 tools、deny `*`、no-subagents、disable-web-search、permission-mode dontAsk | 工具定义仍包含 read_file 等工具；本次真实读取被 deny 规则拒绝，不能把限制执行说成移除定义。当前受限参数不禁用 MCP 连接 |
 | Pi Coding Agent 1.1.0 | no-tools、no-extensions、no-mcp、no-skills、no-prompt-templates | 当前配置仍自动加载工作目录中的 AGENTS.md；同一 session_id 跨 cwd 续接失败，需回原目录续接 |
 
 独立目录和工具限制不清除旧会话历史，也不统一禁止加载原生规则或上下文文件，不等于操作系统沙箱。切换受限配置不能把已接收外部材料的会话变成新的独立作答；需要排除旧历史时使用新会话。私密指令只保证不被直接转发，席位若在回答中复述，会随公开回答传播，审核时应留意。
