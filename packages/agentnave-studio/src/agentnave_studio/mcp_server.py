@@ -261,8 +261,8 @@ async def open_group(
     """Create a saved show of 2–6 CLI seats; drive it with run_round. group_id is the conversation id.
 
     Seats are subagents with native tools and permissions unless isolated. Each keeps its own
-    native session across rounds, also after a server restart. Excluded providers are rejected
-    unless isolated. Isolation restricts tools; it is not an OS sandbox.
+    native session across rounds, also after a server restart. Host exclusions apply only to
+    start_agent, so any show may seat them. Isolation restricts tools; it is not an OS sandbox.
     """
     try:
         record = _studio(ctx).open_show(

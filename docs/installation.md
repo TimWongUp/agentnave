@@ -159,7 +159,8 @@ automatic exclusion. Sharing a model vendor is not the same as sharing a host pr
 Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespace, letter case, and
 duplicates are normalized; empty items are ignored. An unset or empty value excludes nothing.
 Unknown IDs prevent server startup so a typo cannot silently disable the intended restriction.
-All five providers may be excluded; the tools remain discoverable, but no invocation is allowed.
+Every provider may be excluded; the tools remain discoverable, but `start_agent` then accepts none.
+Groups and shows still run, since exclusions apply to single tasks only.
 
 Exclusions are fixed when the server starts. Restart it after changing configuration. MCP tool
 metadata lists permitted and excluded providers. A permitted provider is not necessarily installed
