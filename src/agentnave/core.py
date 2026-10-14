@@ -212,13 +212,16 @@ class InvocationManager:
                 asyncio.create_task(record.attention_event.wait()) for record in records.values()
             ]
             try:
-                await asyncio.wait(
+                done, _ = await asyncio.wait(
                     (*tasks, *waiters), timeout=remaining, return_when=asyncio.FIRST_COMPLETED
                 )
             finally:
                 for waiter in waiters:
                     waiter.cancel()
                 await asyncio.gather(*waiters, return_exceptions=True)
+            # An expired window returns snapshots: a blocker landing now stays unread.
+            if not done or loop.time() >= deadline:
+                return {}
 
     def list_invocations(self) -> list[InvocationListing]:
         listings: list[InvocationListing] = []

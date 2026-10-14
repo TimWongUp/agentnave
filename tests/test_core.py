@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -15,7 +16,12 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
-from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
+from agentnave.models import (
+    InvocationError,
+    InvocationPhase,
+    InvocationRequest,
+    InvocationStatus,
+)
 from agentnave.processes import (
     _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
 )
@@ -247,6 +253,26 @@ async def test_wait_any_returns_ready_subset_without_consuming_other_blockers(
         assert codes[2] == {late: "authentication_failed"}
         assert await manager.wait_for_any(watched, 0.05) == {}
         assert terminal == {done: finished}
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wait_any_leaves_blocker_unread_when_it_lands_after_the_window(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    late = manager.start(InvocationRequest("claude", "late_blocker", tmp_path))
+    try:
+        async with asyncio.timeout(5):
+            while manager.snapshot(late).phase is not InvocationPhase.RUNNING:
+                await asyncio.sleep(0.01)
+            waiting = asyncio.create_task(manager.wait_for_any([late], 0.05))
+            await asyncio.sleep(0)
+            time.sleep(1.5)  # stall the loop until both the window and the blocker are due
+            assert await waiting == {}
+            later = await manager.wait_for_any([late], 600)
+        assert cast(InvocationError, later[late]).code == "authentication_failed"
     finally:
         await manager.shutdown()
 
