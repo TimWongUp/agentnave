@@ -70,9 +70,11 @@ class FakeAdapter(ClaudeAdapter):
                 )
                 + "\n"
             )
+            written = request.cwd / "blocker-written"
             code = (
-                f"import sys,time; time.sleep({delay}); "
-                f"sys.stdout.write({wire!r}); sys.stdout.flush(); time.sleep(30)"
+                f"import pathlib,sys,time; time.sleep({delay}); "
+                f"sys.stdout.write({wire!r}); sys.stdout.flush(); "
+                f"pathlib.Path({str(written)!r}).touch(); time.sleep(30)"
             )
         elif request.prompt == "streaming_message":
             events = [
@@ -269,7 +271,11 @@ async def test_wait_any_leaves_blocker_unread_when_it_lands_after_the_window(
                 await asyncio.sleep(0.01)
             waiting = asyncio.create_task(manager.wait_for_any([late], 0.05))
             await asyncio.sleep(0)
-            time.sleep(1.5)  # stall the loop until both the window and the blocker are due
+            # Stall the loop until both the window and the blocker are due.
+            started = time.monotonic()
+            while not (tmp_path / "blocker-written").exists() or time.monotonic() - started < 0.1:
+                assert time.monotonic() - started < 5
+                time.sleep(0.01)
             assert await waiting == {}
             later = await manager.wait_for_any([late], 600)
         assert cast(InvocationError, later[late]).code == "authentication_failed"
