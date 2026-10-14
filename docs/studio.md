@@ -31,7 +31,7 @@
 
 普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求工作室准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
-`isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略，席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。隔离节目可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；非隔离节目与 `start_agent` 一样遵守排除项。
+`isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略，席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。节目（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
 
 各 CLI 的原生限制（下列版本已核对本机帮助与受限调用；精确参数以 Adapter 为准，版本或配置变化后复核受影响项）：
 

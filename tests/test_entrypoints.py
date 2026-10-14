@@ -517,8 +517,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
                 "seats": [{"id": p, "provider": p} for p in ("codex", "grok")],
             },
         )
-        assert grouped.is_error is True
-        assert "Excluded providers: codex" in str(grouped.content)
+        assert grouped.is_error is False  # exclusions limit start_agent, not group seats
         assert not marker.exists()
         if "claude" in excluded:
             assert "Providers permitted by this host configuration: none" in description

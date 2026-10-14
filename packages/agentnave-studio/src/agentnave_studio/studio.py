@@ -8,7 +8,6 @@ import os
 import shutil
 import sys
 import time
-from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -53,12 +52,9 @@ class Studio(Groups):
     servers can read it. Running processes never survive a restart.
     """
 
-    def __init__(
-        self, manager: InvocationManager, root: Path, excluded: frozenset[str] = frozenset()
-    ) -> None:
+    def __init__(self, manager: InvocationManager, root: Path) -> None:
         super().__init__(manager)
         self.root = root.resolve()  # created only by the first saved conversation
-        self.excluded = excluded  # this host's exclusions; only isolated shows may bypass them
         self.records: dict[str, Record] = {}
         self.unavailable: list[Unavailable] = []
         self.invocations: dict[str, set[str]] = {}
@@ -151,10 +147,8 @@ class Studio(Groups):
                 )
                 for seat in seats
             ]
-        else:
-            self._check_excluded(seat.provider for seat in seats)
-            if cwd is None:
-                raise ValueError("cwd is required unless isolated is true")
+        elif cwd is None:
+            raise ValueError("cwd is required unless isolated is true")
         try:
             if isolated:
                 directory.mkdir(parents=True, mode=0o700)
@@ -228,18 +222,7 @@ class Studio(Groups):
             raise ValueError("this conversation has ended; reopen it with update_conversation")
         if state.pending_review():
             raise ValueError("answers are waiting for review; call decide_answers first")
-        if not state.isolated:
-            # A show saved by another host may name providers this host excludes.
-            providers = {seat.id: seat.provider for seat in state.seats}
-            self._check_excluded(providers[seat] for seat in seat_ids if seat in providers)
         return super().run(group_id, seat_ids, order, prompt, instructions)
-
-    def _check_excluded(self, providers: Iterable[str]) -> None:
-        excluded = sorted(set(providers) & self.excluded)
-        if excluded:
-            raise ValueError(
-                f"Excluded providers: {', '.join(excluded)}; only isolated shows may include them"
-            )
 
     def post(self, conversation_id: str, text: str) -> None:
         group = self._group(conversation_id)

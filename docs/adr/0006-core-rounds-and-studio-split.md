@@ -3,6 +3,7 @@
 - 状态：已接受（v0.15.0）
 - 日期：2026-10-11
 - 取代 [ADR-0005](0005-director-controlled-discussion-rooms.md) 的讨论室、统一工作台与 Dashboard 归属；[ADR-0002](0002-lightweight-cli-subagent-adapter.md) 的“Invocation 只在进程内存在”在核心包内恢复为完整约束。
+- 核心协作组遵守 Provider 排除配置的条款已移除：排除项只约束 `start_agent`，当前合同见[架构与边界](../context/architecture.md)。
 
 ## 背景
 

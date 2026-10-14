@@ -165,7 +165,9 @@ Exclusions are fixed when the server starts. Restart it after changing configura
 metadata lists permitted and excluded providers. A permitted provider is not necessarily installed
 or authenticated. `start_agent` rejects an excluded provider before creating an invocation; a call
 cannot override the exclusion and the server never substitutes a different provider. If no permitted
-provider is usable, the Manager reports the blocker.
+provider is usable, the Manager reports the blocker. Exclusions apply to single tasks only: the host
+can run its own native subagents for those, while groups and shows may seat any provider, including
+the host's own CLI.
 
 This is a restriction on calls through this MCP server, not a sandbox preventing the host from
 executing commands through its other tools.
@@ -451,7 +453,7 @@ After registration or upgrade:
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `describe_provider` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.
-4. A call selecting an excluded provider must return a Tool error without starting a CLI.
+4. A `start_agent` call selecting an excluded provider must return a Tool error without starting a CLI.
 5. With authorization for any provider quota consumption, run a small task through a permitted
    provider and verify its final result using `wait_agent`. Check actual task evidence as well as
    status: a provider can finish its conversation successfully after a tool was denied.

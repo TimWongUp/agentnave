@@ -36,7 +36,7 @@ MCP Host 拥有 AgentNave 的注册、作用域、启停、移除；能使用 Ho
 
 MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态与支持的选项，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。`describe_provider` 返回 `provider`、`permitted` 与 `supported_options`，不承载模型推荐。模型与 effort 由 Skill 的所选 CLI 参考文件和用户要求决定，使用推荐值时作为显式 Provider Options 传入；默认决策不下沉到 Adapter。
 
-每个 Host 通过 `AGENTNAVE_EXCLUDED_PROVIDERS` 显式配置逗号分隔的 Provider 排除项，以排除与宿主同类的 CLI。按宿主产品对应的 CLI 配置，不按当前模型判断，也不猜测客户端身份。排除项在 server 启动时固定并验证，未知名称使启动失败；未配置或空值不排除任何 Provider。MCP 向 Manager 公布允许项与排除项；被排除的调用在创建 Invocation 前返回 Tool error，不能通过单次调用参数覆盖，也不自动回退。允许项不代表 CLI 已安装或认证。
+每个 Host 通过 `AGENTNAVE_EXCLUDED_PROVIDERS` 显式配置逗号分隔的 Provider 排除项，以排除与宿主同类的 CLI。按宿主产品对应的 CLI 配置，不按当前模型判断，也不猜测客户端身份。排除项在 server 启动时固定并验证，未知名称使启动失败；未配置或空值不排除任何 Provider。MCP 向 Manager 公布允许项与排除项；排除项只约束单任务 `start_agent`：宿主自己能开原生子代理完成单任务，而协作讨论需要同类 CLI 入席，因此核心协作组与工作室节目（含非隔离节目）都可加入被排除的 Provider。被排除的 `start_agent` 在创建 Invocation 前返回 Tool error，不能通过单次调用参数覆盖，也不自动回退。允许项不代表 CLI 已安装或认证。
 
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
@@ -68,7 +68,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 ## 协作组
 
-取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 在内存中登记 2–6 个席位，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options，遵守宿主排除项。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
+取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 在内存中登记 2–6 个席位，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options；宿主排除项不约束席位。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
 
 `run_round` 非阻塞地运行一轮：本轮共同任务先作为 `task` 条目提交；`parallel` 同步启动全部席位，在全部终态后按名单一次提交；`serial` 逐席启动、逐席提交，后席能看到前席。同组同一时间只有一个轮次。终态 succeeded 提交最终输出为 `answer`，failed、blocked、cancelled 提交 `absent`；运行中的阻塞提醒不提交。不重试、不设每席超时、不摘要或截断。
 
@@ -94,7 +94,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 审核：并联轮全员终态后成功回答一起待审，全部决定后按名单提交；串联轮逐席待审，决定后才启动下一席。`decide_answers` 整批校验后保存再生效；同一决定幂等，改变决定被拒。被丢弃的回答不写条目，其他席位看不到，席位自己的原生会话仍记得它。主持人发言只能在无进行中轮次、无待审回答时追加为 `host` 条目。
 
-隔离节目在会话目录下为每席创建独立目录，为 Antigravity 写入受限角色定义，给每席加 `restricted_tools`，忽略调用方 cwd。只有隔离节目可包含 `AGENTNAVE_EXCLUDED_PROVIDERS` 中的 Provider；`describe_provider.show_permitted` 表达这一作用域。
+隔离节目在会话目录下为每席创建独立目录，为 Antigravity 写入受限角色定义，给每席加 `restricted_tools`，忽略调用方 cwd。节目（隔离与否）都可包含 `AGENTNAVE_EXCLUDED_PROVIDERS` 中的 Provider；`describe_provider.show_permitted` 恒为 true 以保持兼容。
 
 任务会话保存普通 `start_agent` 的 Provider、cwd、显式模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一原生会话并入其未结束的任务会话，并发续接同一会话被拒。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait_agent` 仍能读取结果。删除只针对已结束且无进行中工作的会话：删除 `state.json`、遗忘已结束的调用句柄、移除隔离席位中工作室写入的角色定义与空目录，保留会话目录及 `.lock` 以维持锁身份，Provider 原生文件不删。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
 
