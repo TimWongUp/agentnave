@@ -90,6 +90,9 @@ class CodexAdapter:
                 str(event_type),
                 blocking_error="provider_failed" if event_type == "turn.failed" else None,
             )
+        if event_type == "error":
+            # Retries may still recover (for example via the HTTPS fallback), so never a blocker.
+            return ProviderActivity("retry", "error", "retrying")
         if event_type not in ("item.started", "item.updated", "item.completed"):
             return None
         item = object_dict(event.get("item"))
@@ -165,6 +168,10 @@ class CodexAdapter:
             else f"codex exited with status {returncode}"
         )
         message = error_summary(raw_error, fallback)
-        return ParsedProviderResult(
-            failure_status(message), output, session_id, error_message=message
+        # A turn that failed on a rejected credential needs the user to sign in again.
+        status = (
+            InvocationStatus.BLOCKED
+            if "401 unauthorized" in message.lower()
+            else failure_status(message)
         )
+        return ParsedProviderResult(status, output, session_id, error_message=message)

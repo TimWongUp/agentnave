@@ -270,5 +270,9 @@ class ClaudeAdapter:
             message = error_summary(
                 str(raw_error or ""), f"{self.name} exited with status {returncode}"
             )
-            status = failure_status(message)
+            status = (
+                InvocationStatus.BLOCKED
+                if message.lower().startswith("not logged in")
+                else failure_status(message)
+            )
         return ParsedProviderResult(status, output, session_id, usage, message)
