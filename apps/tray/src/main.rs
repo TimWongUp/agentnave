@@ -16,7 +16,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, Rect, RunEvent, Url, WebviewUrl, WebviewWindow,
+    AppHandle, LogicalPosition, Manager, Rect, RunEvent, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
 
@@ -25,6 +25,7 @@ use data::{CSP, Overview, Reader};
 const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
+const PUBLIC: &str = "public";
 const PANEL_SIZE: (f64, f64) = (360.0, 520.0);
 const POLL: Duration = Duration::from_secs(2);
 /// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
@@ -247,39 +248,57 @@ fn toggle_panel(app: &AppHandle, icon: Rect) {
 
 /// Center the panel under the icon (above it when the taskbar is at the bottom), on screen.
 fn place(panel: &WebviewWindow, icon: Rect) {
-    let monitor = panel
+    // Work in logical points: the icon rect is physical at its own screen's scale, and
+    // monitors with different scales cannot share one physical coordinate space.
+    let screen = panel
         .available_monitors()
         .unwrap_or_default()
         .into_iter()
-        .find(|monitor| {
-            let (origin, size) = (monitor.position(), monitor.size());
-            let point = icon.position.to_physical::<f64>(monitor.scale_factor());
-            point.x >= origin.x as f64
-                && point.x < origin.x as f64 + size.width as f64
-                && point.y >= origin.y as f64
-                && point.y < origin.y as f64 + size.height as f64
+        .find_map(|monitor| {
+            let scale = monitor.scale_factor();
+            let point = icon.position.to_logical::<f64>(scale);
+            let origin = monitor.position().to_logical::<f64>(scale);
+            let size = monitor.size().to_logical::<f64>(scale);
+            (point.x >= origin.x
+                && point.x < origin.x + size.width
+                && point.y >= origin.y
+                && point.y < origin.y + size.height)
+                .then_some((scale, origin, size))
         });
-    let scale = monitor.as_ref().map_or(1.0, |m| m.scale_factor());
-    let at = icon.position.to_physical::<f64>(scale);
-    let size = icon.size.to_physical::<f64>(scale);
-    let (width, height) = (PANEL_SIZE.0 * scale, PANEL_SIZE.1 * scale);
-    let gap = 6.0 * scale;
+    let scale = screen.map_or_else(|| panel.scale_factor().unwrap_or(1.0), |(s, _, _)| s);
+    let at = icon.position.to_logical::<f64>(scale);
+    let size = icon.size.to_logical::<f64>(scale);
+    let (width, height) = PANEL_SIZE;
+    let gap = 6.0;
     let mut x = at.x + size.width / 2.0 - width / 2.0;
     let mut y = at.y + size.height + gap;
-    if let Some(monitor) = monitor {
-        let (origin, area) = (monitor.position(), monitor.size());
-        let (left, top) = (origin.x as f64, origin.y as f64);
-        if at.y > top + area.height as f64 / 2.0 {
-            y = at.y - height - gap;
+    if let Some((_, origin, area)) = screen {
+        if at.y > origin.y + area.height / 2.0 {
+            y = at.y - height - gap; // taskbar at the bottom: open upwards
         }
-        x = x.clamp(left + gap, left + area.width as f64 - width - gap);
+        x = x
+            .min(origin.x + area.width - width - gap)
+            .max(origin.x + gap);
     }
-    let _ = panel.set_position(PhysicalPosition::new(x, y));
+    let position = LogicalPosition::new(x, y);
+    // macOS positions windows in global points; elsewhere convert at the icon's scale.
+    #[cfg(target_os = "macos")]
+    let _ = panel.set_position(position);
+    #[cfg(not(target_os = "macos"))]
+    let _ = panel.set_position(position.to_physical::<f64>(scale));
+}
+
+/// The public window only ever shows public views, whatever a link in a reply points at.
+fn allowed(label: &str, target: &Url) -> bool {
+    ours(target) && (label != PUBLIC || target.path().starts_with("/p/"))
 }
 
 /// Show `path` in the window `label`, creating it on first use.
 fn open(app: &AppHandle, label: &str, path: &str) {
     let target = url(path);
+    if !allowed(label, &target) {
+        return;
+    }
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.navigate(target);
         let _ = window.unminimize();
@@ -293,12 +312,17 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         .title("AgentNave")
         .inner_size(1180.0, 800.0)
         .min_inner_size(420.0, 480.0)
-        .on_navigation(ours)
+        .on_navigation({
+            let label = label.to_owned();
+            move |target| allowed(&label, target)
+        })
         .on_new_window(move |target, _| {
             if ours(&target) {
-                // "选手视角 ↗" opens the public view beside the workbench.
-                let app = handle.clone();
-                thread::spawn(move || open(&app, "public", target.path()));
+                // "选手视角 ↗" opens the public view beside the workbench; nothing else may.
+                if target.path().starts_with("/p/") {
+                    let app = handle.clone();
+                    thread::spawn(move || open(&app, PUBLIC, target.path()));
+                }
             } else if matches!(target.scheme(), "http" | "https") {
                 browse(&target);
             }
@@ -370,4 +394,22 @@ fn download_path(url: &Url) -> PathBuf {
         path = folder.join(format!("agentnave-{id}-{n}.jsonl"));
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_window_stays_on_public_views() {
+        assert!(allowed(PUBLIC, &url("/p/a1/")));
+        for path in ["/", "/c/a1/", "/panel/", "/app/quit"] {
+            assert!(!allowed(PUBLIC, &url(path)), "{path}");
+            assert!(allowed("main", &url(path)), "{path}");
+        }
+        assert!(!allowed(
+            "main",
+            &Url::parse("https://example.com/").unwrap()
+        ));
+    }
 }

@@ -6,6 +6,7 @@ const ROUND = {
   idle: ["等待开场", "idle"],
   running: ["进行中", "run"],
   review: ["待审核", "review"],
+  failed: ["失败", "bad"],
   finished: ["已结束", "done"],
   cancelled: ["已取消", "idle"],
   interrupted: ["中断", "bad"],

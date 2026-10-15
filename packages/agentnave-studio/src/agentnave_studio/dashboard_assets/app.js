@@ -7,6 +7,7 @@ const ROUND = {
   running: ["进行中", "run"],
   review: ["待审核", "review"],
   finished: ["本轮已结束", "done"],
+  failed: ["本轮失败", "bad"],
   cancelled: ["已取消", "idle"],
   interrupted: ["上次中断", "bad"],
 };
@@ -58,7 +59,7 @@ const app = {
   open: new Set(),
   offline: false,
   keys: {},
-  seen: 0,
+  seen: null, // public messages already shown; null until the conversation first loads
 };
 
 // DOM ------------------------------------------------------------------------------------
@@ -251,35 +252,52 @@ async function load(url) {
 const dir = (href, base) => new URL(href, base || location.href);
 const same = (a, b) => !!a && !!b && a.href === b.href;
 
+// One poller. Every reply carries the generation it was asked in, so a slow reply for a
+// conversation left meanwhile, or an older workbench list, is dropped.
 let timer = null,
   busy = false,
-  ticks = 0;
+  again = false,
+  ticks = 0,
+  generation = 0,
+  homeAsked = 0,
+  homeShown = 0;
 async function tick() {
   clearTimeout(timer);
-  if (document.hidden || busy) return;
+  if (document.hidden) return;
+  if (busy) {
+    again = true;
+    return;
+  }
   busy = true;
   try {
     const jobs = [];
-    const url = app.detailUrl;
+    const asked = generation,
+      url = app.detailUrl;
     if (url)
       jobs.push(
         load(url).then((data) => {
-          if (same(url, app.detailUrl)) app.detail = data; // ignore a reply for a conversation left meanwhile
+          if (asked === generation) app.detail = data;
         }),
       );
-    if (app.homeUrl && (ticks % 2 === 0 || !app.home))
+    if (app.homeUrl && (ticks % 2 === 0 || !app.home)) {
+      const order = ++homeAsked;
       jobs.push(
         load(app.homeUrl).then((data) => {
-          app.home = data;
+          if (order > homeShown) {
+            homeShown = order;
+            app.home = data;
+          }
         }),
       );
+    }
     const results = await Promise.allSettled(jobs);
     app.offline = results.some((result) => result.status === "rejected");
     ticks++;
     paint();
   } finally {
     busy = false;
-    if (!document.hidden) timer = setTimeout(tick, TICK);
+    if (!document.hidden) timer = setTimeout(tick, again ? 0 : TICK);
+    again = false;
   }
 }
 document.addEventListener("visibilitychange", () => {
@@ -288,14 +306,14 @@ document.addEventListener("visibilitychange", () => {
 
 function select(url, push = true) {
   if (same(url, app.detailUrl) && app.detail) return;
+  generation++;
   app.detailUrl = url;
   app.detail = null;
   app.speaker = null;
-  app.seen = 0;
+  app.seen = null;
   if (push) history.pushState(null, "", url || app.homeUrl);
   scroller().scrollTop = 0;
   paint(true);
-  busy = false;
   tick();
 }
 window.addEventListener("popstate", () => {
@@ -392,10 +410,11 @@ function followTranscript(nearBottom) {
     detail && detail.mode !== "task" && currentTab(detail) === "transcript";
   if (!reading) {
     $("jump").hidden = true;
-    app.seen = count;
+    if (detail) app.seen = count;
     return;
   }
-  if (app.seen && count > app.seen) {
+  // Only growth after the first load counts as new, including a first message in an empty record.
+  if (app.seen !== null && count > app.seen) {
     if (nearBottom && !app.speaker) scrollToEnd();
     else $("jump").hidden = false;
   }
