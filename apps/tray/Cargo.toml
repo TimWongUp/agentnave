@@ -1,0 +1,26 @@
+[package]
+name = "agentnave-tray"
+version = "0.16.1"
+description = "AgentNave menu bar and tray app: a read-only view of saved Studio conversations"
+license = "MIT"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+dirs = "6"
+serde_json = "1"
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2.5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

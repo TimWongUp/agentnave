@@ -75,6 +75,18 @@
 
 托盘应用所需的数据由工作室写出：每个会话目录中的 `views.json` 视图快照，以及有工作运行时数据根下 `live/` 中的运行文件（结束即删除）；见 [ADR-0008](adr/0008-tray-app-reads-studio-snapshots.md)。
 
+## 托盘应用（预览）
+
+`apps/tray` 是只读的菜单栏应用（Tauri 2，目前先支持 macOS），不必启动 MCP 服务即可查看数据根中全部宿主的会话。菜单栏标题在有工作时显示运行中与待审核数量；菜单列出最近 10 个未结束的会话，点开即导演视图，另有“打开工作台…”和“退出 AgentNave”。窗口复用浏览器看板的同一份前端，“选手看到的页面”在单独窗口打开，导出的公共 JSONL 保存到“下载”并在访达中定位。应用不调用工具、不写数据根，也不监听端口；再次启动只会打开工作台。
+
+当前须从源码构建（需 Rust 与 Node）：
+
+```bash
+cd apps/tray && npx @tauri-apps/cli@2 build --bundles app
+```
+
+产物位于 `apps/tray/target/release/bundle/macos/AgentNave.app`。从访达启动时不继承 shell 环境，总是读取 `~/.agentnave`；使用 `AGENTNAVE_DATA_DIR` 须从终端运行应用内的可执行文件。安装包、Windows 托盘与发布产物见后续版本。
+
 看板无人浏览时停止周期性全量扫描和运行投影刷新；隐藏标签页暂停轮询，恢复可见时重新读取。历史读取失败会保留已有画面并提示，读取恢复后清除提示。进入主控默认打开导演后台，公共页始终只含已提交条目。
 
 v0.16.0 移除独立的 `open_dashboard` 工具；旧调用改为 `list_conversations`，列表仍只含摘要，首页地址只交给主控。`post_host_message` 返回条目序号，`update_conversation` 返回标题和结束状态，`decide_answers` 返回已保存决定、剩余待审与实际已提交席位；三者不再重复原文或导演状态。审核回执不保证轮次已结束，必要时用 `wait_round(include_output=false)` 确认。
