@@ -1,6 +1,6 @@
 # AgentNave Studio：可观看的多 CLI 节目
 
-自 v0.15.0 起，节目、历史与看板从核心拆为独立发行包 `agentnave-studio`（入口 `agentnave-studio-mcp`）。它与核心 `agentnave` 同版本发布，包含全部核心工具，另加保存历史、可选审核、主持人发言、隔离席位和本机只读看板。只需要子代理时安装核心即可；取舍见 [ADR-0006](adr/0006-core-rounds-and-studio-split.md)。
+节目、历史与看板属于工作室入口 `agentnave-studio-mcp`，与核心入口 `agentnave-mcp` 由同一个 `agentnave` 包安装。工作室包含全部核心工具，另加保存历史、可选审核、主持人发言、隔离席位和本机只读看板。只需要子代理时注册核心入口即可；取舍见 [ADR-0006](adr/0006-core-rounds-and-studio-split.md) 与 [ADR-0009](adr/0009-single-package-two-entry-points.md)。
 
 ## 工具
 

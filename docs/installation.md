@@ -64,25 +64,21 @@ AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-mcp"
 test -x "$AGENTNAVE_MCP"
 ```
 
-To install AgentNave Studio (saved shows, review and a local dashboard; see the
-[studio guide](studio.md)) instead of the core, install its package from the same tag. It depends
-on the same-version core, includes every core tool, and adds the `agentnave-studio-mcp` launcher:
+The same package also installs the `agentnave-studio-mcp` launcher for AgentNave Studio (saved
+shows, review and a local dashboard; see the [studio guide](studio.md)). It includes every core
+tool. To use it, point `AGENTNAVE_MCP` at that launcher instead:
 
 ```bash
-uv tool install --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}#subdirectory=packages/agentnave-studio" \
-  --with "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
-
 AGENTNAVE_MCP="$(uv tool dir --bin)/agentnave-studio-mcp"
 test -x "$AGENTNAVE_MCP"
 ```
 
 Register one of the two launchers per host under the `agentnave` name; the studio replaces the core
 there rather than running beside it. Studio history lives in `~/.agentnave/` unless
-`AGENTNAVE_DATA_DIR` sets another absolute directory; the core keeps no history.
+`AGENTNAVE_DATA_DIR` sets another absolute directory; the core launcher keeps no history, opens no
+port and never loads the studio code.
 
-The Studio command explicitly sources its exact-version core dependency from the same Git tag;
-GitHub Release publication does not publish either package to a package index.
+GitHub Release publication does not publish the package to a package index.
 
 The remaining commands reuse these variables; run them in the same shell or define them again.
 `uv` manages the isolated Python 3.12 runtime. Use a fixed release rather than mutable `main`, and
@@ -547,6 +543,19 @@ migration. Update runtime and Skill together and reconnect MCP so `start_agent`,
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
 
+### Upgrading from v0.16.x to the single-package release
+
+The studio is no longer a separate `agentnave-studio` package: `agentnave` installs both
+`agentnave-mcp` and `agentnave-studio-mcp`. Tools, history and launcher names are unchanged, so
+host registrations keep working. Replace the two installations with one, then reconnect MCP on
+every host:
+
+```bash
+uv tool uninstall agentnave-studio  # if installed
+uv tool install --force --python 3.12 \
+  "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
+```
+
 ### Upgrading from v0.14.0 to v0.15.0
 
 Breaking release. The package splits in two:
@@ -621,7 +630,7 @@ codex mcp remove agentnave
 claude mcp remove --scope user agentnave
 gemini mcp remove agentnave --scope user
 uv tool uninstall agentnave
-uv tool uninstall agentnave-studio  # if installed
+uv tool uninstall agentnave-studio  # releases before the single package
 ```
 
 For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.

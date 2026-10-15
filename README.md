@@ -107,8 +107,8 @@ another round starts.
 
 ## AgentNave Studio
 
-For multi-CLI shows that a person watches, install the separate `agentnave-studio` package
-(entry point `agentnave-studio-mcp`) instead. It includes every core tool and adds saved history
+For multi-CLI shows that a person watches, register the `agentnave-studio-mcp` launcher instead;
+the same `agentnave` package installs it. It includes every core tool and adds saved history
 under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`), optional review of answers before other seats see
 them, host messages, isolated seats with restricted tools, and a local read-only dashboard that
 starts automatically after a saved task or show is created or continued. See the [studio guide](docs/studio.md).

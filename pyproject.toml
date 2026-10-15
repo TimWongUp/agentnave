@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentnave"
 version = "0.16.1"
-description = "Local MCP server for CLI-based subagents"
+description = "Local MCP server for CLI-based subagents, with an optional studio for saved multi-CLI shows"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -21,6 +21,7 @@ Issues = "https://github.com/TimWongUp/agentnave/issues"
 
 [project.scripts]
 agentnave-mcp = "agentnave.mcp_server:main"
+agentnave-studio-mcp = "agentnave_studio.mcp_server:main"
 
 [dependency-groups]
 dev = [
@@ -28,21 +29,14 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.25",
   "ruff>=0.11",
-  "agentnave-studio",
 ]
 
-[tool.uv.workspace]
-members = ["packages/agentnave-studio"]
-
-[tool.uv.sources]
-agentnave-studio = { workspace = true }
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentnave"]
+packages = ["src/agentnave", "src/agentnave_studio"]
 
 [tool.ruff]
 target-version = "py312"
-src = ["src", "packages/agentnave-studio/src"]
+src = ["src"]
 line-length = 100
 
 [tool.ruff.lint]
@@ -52,9 +46,9 @@ ignore = ["E501"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
-include = ["src", "tests", "packages/agentnave-studio/src", "packages/agentnave-studio/tests"]
-extraPaths = ["src", "packages/agentnave-studio/src"]
+include = ["src", "tests"]
+extraPaths = ["src"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
-testpaths = ["tests", "packages/agentnave-studio/tests"]
+testpaths = ["tests"]

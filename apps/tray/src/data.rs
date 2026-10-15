@@ -17,7 +17,7 @@ macro_rules! asset {
     ($name:literal) => {
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../packages/agentnave-studio/src/agentnave_studio/dashboard_assets/",
+            "/../../src/agentnave_studio/dashboard_assets/",
             $name
         ))
     };

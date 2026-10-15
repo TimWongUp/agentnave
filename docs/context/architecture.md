@@ -16,7 +16,7 @@ AgentNave 只拥有：
 - 在 MCP server 生命周期内保存 Invocation 句柄；
 - 在 Manager 显式创建的协作组内，按名单并联或串联运行轮次，只在进程内存中保存各席最终回答与原生会话游标。
 
-核心包 `agentnave` 不建数据目录、不持久化业务数据、不监听端口、不向调用方 cwd 写文件。保存历史、审核、主持人发言与看板属于同版本的另一个发行包 `agentnave-studio`（见下文“工作室”），核心不依赖它。
+核心包 `agentnave` 不建数据目录、不持久化业务数据、不监听端口、不向调用方 cwd 写文件。保存历史、审核、主持人发言与看板属于同一发行包中的工作室入口 `agentnave-studio-mcp`（见下文“工作室”），核心不依赖、不导入它。
 
 AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用只读展示工作室数据，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)。
 
@@ -88,7 +88,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 ## 工作室
 
-工作室包 `agentnave-studio`（入口 `agentnave-studio-mcp`）与核心同版本、同仓库发布，精确依赖同版本核心，包含全部核心工具，另加保存历史、可选审核、主持人发言与本机只读看板，供人观看多 CLI 节目。取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)，用法见 [工作室节目说明](../studio.md)。
+工作室（模块 `agentnave_studio`，入口 `agentnave-studio-mcp`）与核心同在发行包 `agentnave` 中，宿主二选一注册入口；它包含全部核心工具，另加保存历史、可选审核、主持人发言与本机只读看板，供人观看多 CLI 节目。取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md) 与 [ADR-0009](../adr/0009-single-package-two-entry-points.md)，用法见 [工作室节目说明](../studio.md)。
 
 工作室通过核心 `Groups` 的三个内部覆盖点接入，不改变核心行为：`_on_change` 在席位启动前、终态后、每次提交与轮次结束时原子落盘；`_approve` 是提交前的审核屏障；`_ready` 让等待在有待审回答时提前返回 `review_needed`。取消与退出在第一次等待前置位并唤醒屏障，未决回答丢弃。
 
