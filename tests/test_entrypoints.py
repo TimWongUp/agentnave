@@ -312,6 +312,7 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
             "elapsed_ms": update["elapsed_ms"],
             "events_seen": True,
             "session_id": "session-e2e",
+            "result_read": True,
         }
         assert "private task text" not in str(listed).lower()
 

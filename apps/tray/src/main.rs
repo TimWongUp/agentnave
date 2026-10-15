@@ -218,6 +218,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         thread::spawn(move || match path.as_str() {
             // The panel stays open: its notice shows the progress or "已复制".
             "/app/update" => update::act(&app),
+            "/app/upgrade-service" => update::upgrade_service(&app),
             "/app/copy-service-command" => update::copy_service_command(),
             _ => {
                 if let Some(panel) = app.get_webview_window(PANEL) {

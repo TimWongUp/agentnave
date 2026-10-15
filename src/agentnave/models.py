@@ -120,6 +120,7 @@ class InvocationListing:
     phase: InvocationPhase | None = None
     status: InvocationStatus | None = None
     session_id: str | None = None
+    result_read: bool = False
 
 
 @dataclass(frozen=True, slots=True)

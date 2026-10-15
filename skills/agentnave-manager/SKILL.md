@@ -78,7 +78,7 @@ CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时�
 
 1. `start_agent(provider, cwd, prompt, provider_options)`，保存 `invocation_id`。持续等到终态或显式取消，不另加总运行或席位时限；CLI 自身限制仍生效。旧 schema 的 `timeout_seconds` 若可空传 null，否则报告限制。
 2. `wait_agent(invocation_id)` 每次最多等 5 分钟，完成或明确阻塞提前返回，仍在运行就等同一 ID，无需 sleep。`wait_round` 同样处理；旧 `wait_timeout_seconds` 固定传 300，无法支持则报告限制。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 收到该脚本完成再处理回复；外层让出控制权不代表超时，不能重复调用等待或就此结束任务。
-   同时等多个 Invocation 用 `wait_any(invocation_ids)`，同样 5 分钟：任一完成或阻塞即返回 `reason=ready`，`updates` 只含已就绪的项（形状同 `wait_agent`），其余继续运行，下次再等；已终态 ID 每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。名单须非空、不重复、全部有效，否则整批报错。连接中没有该工具时逐个 `wait_agent`。丢失句柄或核对在途调用时用 `list_invocations`，它只列 provider、cwd、状态、耗时与 `events_seen`（是否收到过结构化事件），不含 prompt 和正文；结果仍用等待工具读取。
+   同时等多个 Invocation 用 `wait_any(invocation_ids)`，同样 5 分钟：任一完成或阻塞即返回 `reason=ready`，`updates` 只含已就绪的项（形状同 `wait_agent`），其余继续运行，下次再等；已终态 ID 每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。名单须非空、不重复、全部有效，否则整批报错。连接中没有该工具时逐个 `wait_agent`。丢失句柄或核对在途调用时用 `list_invocations`，它只列 provider、cwd、状态、耗时、`events_seen`（是否收到过结构化事件）与终态的 `result_read`（结果是否已读过），不含 prompt 和正文；结果仍用等待工具读取。
 3. 顶层 `status=running` 尚未结束；`reason=wait_elapsed` 只是本次等待到期。`execution_blocked` 按固定 `error.code` 判断继续等或取消：阻塞不停止 CLI，同类阻塞每 Invocation 只提醒一次；普通工具失败、重试、沉默不证明任务失败，未识别错误须检查正文或终态。
 4. 运行中 `activity` 给活动类型、原生状态、工具名和 `age_ms`；`output` 只给最新公开正文尾部（最多 1000 Unicode 字符）及 `output_age_ms`，无正文省略，旧内容可能重复。用正文判断方向、年龄判断新旧；不返回思考、工具参数或结果，无游标/分页/独立读取工具。一次观察不代表全部并发工作，材料不足就报告未知，不能凭此判定卡死。
 5. `reason=finished` 按 `status`、完整最终 `output`、`error` 和原生 `session_id` 验收。最终正文受整体捕获上限约束。`succeeded` 不证明用户目标完成，须核对命令、产物或检查；权限拒绝、未执行、目录不符如实报告。耗时用 `elapsed_ms`，不展示费用；旧 `state`、`snapshot`/`result` 结构按实时 schema 读取。

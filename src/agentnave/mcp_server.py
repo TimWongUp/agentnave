@@ -122,6 +122,7 @@ class InvocationListItem(TypedDict):
     events_seen: bool
     phase: NotRequired[Literal["preparing", "running", "stopping"]]
     session_id: NotRequired[str]
+    result_read: NotRequired[bool]
 
 
 class InvocationListPayload(TypedDict):
@@ -514,8 +515,9 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
     """List this server's active invocations and finished ones not yet expired, oldest first.
 
     Metadata only: no prompt, reply or tool data. events_seen tells whether the CLI has emitted
-    any structured event. Active entries include phase; finished ones keep a fixed elapsed_ms
-    and include a non-empty native session_id. Use wait_agent or wait_any to read results.
+    any structured event. Active entries include phase; finished ones keep a fixed elapsed_ms,
+    tell with result_read whether a wait or cancel has returned the final result, and include
+    a non-empty native session_id. Use wait_agent or wait_any to read results.
     """
     items: list[InvocationListItem] = []
     for listing in _manager(ctx).list_invocations():
@@ -529,6 +531,8 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
         }
         if listing.phase is not None:
             item["phase"] = listing.phase.value
+        else:
+            item["result_read"] = listing.result_read
         if listing.session_id:
             item["session_id"] = listing.session_id
         items.append(item)
