@@ -32,9 +32,8 @@ jobs:
           import tarfile
 
           skill = "skills/agentnave-manager"
-          studio = "packages/agentnave-studio"
           required = ["pyproject.toml", "src/agentnave/__init__.py", f"{skill}/SKILL.md",
-                      f"{studio}/pyproject.toml", f"{studio}/src/agentnave_studio/__init__.py"]
+                      "src/agentnave_studio/mcp_server.py"]
           required += [f"{skill}/references/{name}.md" for name in
                        ("claude", "codebuddy", "codex", "grok", "antigravity", "pi")]
           archive = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "--", *required])
@@ -70,13 +69,6 @@ jobs:
 
           if runtime_version("src/agentnave/__init__.py") != [version]:
               raise SystemExit("pyproject.toml and agentnave.__version__ must match")
-          studio = tomllib.loads(Path("packages/agentnave-studio/pyproject.toml").read_text())["project"]
-          if (
-              studio["version"] != version
-              or f"agentnave=={version}" not in studio["dependencies"]
-              or runtime_version("packages/agentnave-studio/src/agentnave_studio/__init__.py") != [version]
-          ):
-              raise SystemExit("agentnave-studio must share the version and pin agentnave exactly")
           previous = tomllib.loads(subprocess.check_output(
               ["git", "show", f"{os.environ['BASE_SHA']}:pyproject.toml"], text=True
           ))["project"]["version"]
@@ -121,17 +113,15 @@ jobs:
       - name: Test
         run: uv run pytest
       - name: Build distributions
-        run: uv build --all-packages
+        run: uv build
       - name: Verify installed distributions
         if: runner.os != 'Windows'
         env:
           UV_TOOL_DIR: ${{ runner.temp }}/agentnave-tools
           UV_TOOL_BIN_DIR: ${{ runner.temp }}/agentnave-bin
         run: |
-          core=$(ls dist/agentnave-*.whl)
-          uv tool install --python 3.12 "$core"
-          uv tool install --python 3.12 dist/agentnave_studio-*.whl --with "$core"
-          "$UV_TOOL_DIR/agentnave-studio/bin/python" scripts/verify_install.py \
+          uv tool install --python 3.12 dist/agentnave-*.whl
+          "$UV_TOOL_DIR/agentnave/bin/python" scripts/verify_install.py \
             "$UV_TOOL_BIN_DIR/agentnave-mcp" "$UV_TOOL_BIN_DIR/agentnave-studio-mcp"
       - name: Verify installed distributions on Windows
         if: runner.os == 'Windows'
@@ -139,11 +129,9 @@ jobs:
           UV_TOOL_DIR: ${{ runner.temp }}\agentnave-tools
           UV_TOOL_BIN_DIR: ${{ runner.temp }}\agentnave-bin
         run: |
-          $core = (Get-ChildItem -LiteralPath dist -Filter "agentnave-*.whl" -File -ErrorAction Stop).FullName
-          $studio = (Get-ChildItem -LiteralPath dist -Filter "agentnave_studio-*.whl" -File -ErrorAction Stop).FullName
-          uv tool install --python 3.12 $core
-          uv tool install --python 3.12 $studio --with $core
-          $python = Join-Path $env:UV_TOOL_DIR "agentnave-studio\Scripts\python.exe"
+          $wheel = (Get-ChildItem -LiteralPath dist -Filter "agentnave-*.whl" -File -ErrorAction Stop).FullName
+          uv tool install --python 3.12 $wheel
+          $python = Join-Path $env:UV_TOOL_DIR "agentnave\Scripts\python.exe"
           & $python scripts/verify_install.py (Join-Path $env:UV_TOOL_BIN_DIR "agentnave-mcp.exe") (Join-Path $env:UV_TOOL_BIN_DIR "agentnave-studio-mcp.exe")
           if ($LASTEXITCODE -ne 0) { throw "Installed distribution verification failed" }
 

@@ -36,7 +36,7 @@ AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段�
 
 ## Studio
 
-AgentNave Studio（发行包 `agentnave-studio`，入口 `agentnave-studio-mcp`）与核心同版本发布，包含全部核心能力，另加保存历史、可选审核、主持人发言和只读看板，供人观看多 CLI 节目。核心不依赖、不感知 Studio。
+AgentNave Studio（入口 `agentnave-studio-mcp`，与核心同在发行包 `agentnave` 中）包含全部核心能力，另加保存历史、可选审核、主持人发言和只读看板，供人观看多 CLI 节目。核心不依赖、不感知 Studio。
 
 ## Conversation
 

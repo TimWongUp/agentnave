@@ -14,6 +14,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import Field
 
+from agentnave import __version__
 from agentnave import mcp_server as core
 from agentnave.group import GroupSeat, Round
 from agentnave.mcp_server import (
@@ -30,7 +31,6 @@ from agentnave.mcp_server import (
     ProviderName,
 )
 from agentnave.models import InvocationRequest, ProviderOption
-from agentnave_studio import __version__
 from agentnave_studio.store import Conversation, Unavailable
 from agentnave_studio.studio import Decision, DeletionResult, Studio
 
