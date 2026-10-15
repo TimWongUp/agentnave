@@ -353,6 +353,23 @@ def test_codex_adapter_preserves_final_message_and_session() -> None:
     assert result.usage == {}
 
 
+def test_codex_adapter_fails_turn_without_reply_or_usage() -> None:
+    usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+    payload = b"\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-1"}).encode(),
+            json.dumps({"type": "turn.started"}).encode(),
+            json.dumps({"type": "turn.completed", "usage": usage}).encode(),
+        )
+    )
+
+    result = CodexAdapter().parse(0, payload, b"")
+
+    assert result.status is InvocationStatus.FAILED
+    assert result.session_id == "session-1"
+    assert result.error_message == "codex turn completed without a reply or token usage"
+
+
 def test_codex_adapter_preserves_blocked_failure() -> None:
     payload = b"\n".join(
         (
