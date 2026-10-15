@@ -147,6 +147,14 @@ class CodexAdapter:
         )
 
         if returncode == 0 and terminal is not None and terminal.get("type") == "turn.completed":
+            # Codex can close a turn whose model response never arrived: no reply, zero usage.
+            if not output and not any(object_dict(terminal.get("usage")).values()):
+                return ParsedProviderResult(
+                    InvocationStatus.FAILED,
+                    output,
+                    session_id,
+                    error_message="codex turn completed without a reply or token usage",
+                )
             return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
 
         error_event = next(
