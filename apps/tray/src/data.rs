@@ -78,6 +78,13 @@ impl Response {
         }
     }
 
+    pub fn json(value: &serde_json::Value) -> Self {
+        Self::ok(
+            "application/json; charset=utf-8",
+            value.to_string().into_bytes(),
+        )
+    }
+
     fn not_found() -> Self {
         Self {
             status: 404,
@@ -205,10 +212,7 @@ impl Reader {
             return Response::not_found();
         };
         match resource {
-            "state" => Response::ok(
-                "application/json; charset=utf-8",
-                view.to_string().into_bytes(),
-            ),
+            "state" => Response::json(&view),
             "transcript.jsonl" => {
                 // As in the browser view: only show transcripts, never the workbench or tasks.
                 if view["view"] == "workbench" || view["mode"] == "task" {

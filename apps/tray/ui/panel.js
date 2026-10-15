@@ -114,6 +114,50 @@ function voices(detail) {
     });
 }
 
+// Notices about this app's own update and an outdated local service, above the list.
+function notices(status) {
+  const blocks = [];
+  const update = status?.update;
+  if (update?.state === "available")
+    blocks.push(
+      notice(
+        `AgentNave v${update.version} 可用`,
+        `当前 v${status.version}，更新后自动重启`,
+        "更新并重启",
+        "/app/update",
+      ),
+    );
+  else if (update?.state === "installing")
+    blocks.push(notice("正在下载更新", "完成后自动重启"));
+  else if (update?.state === "failed")
+    blocks.push(notice("更新失败", "检查网络后重试", "重试", "/app/update"));
+  const service = status?.service;
+  if (service)
+    blocks.push(
+      notice(
+        `本机服务 v${service.version} 比托盘 v${status.version} 旧`,
+        "在终端运行升级命令，再让各宿主重连 MCP",
+        "复制命令",
+        "/app/copy-service-command",
+      ),
+    );
+  return blocks;
+}
+function notice(title, detail, action, href) {
+  const button = action && h("a.notice-action", { href }, action);
+  if (button && href === "/app/copy-service-command")
+    button.addEventListener("click", () => {
+      button.textContent = "已复制";
+      setTimeout(() => (button.textContent = action), 2000);
+    });
+  return h(
+    "div.notice",
+    {},
+    h("div.notice-text", {}, h("strong", {}, title), h("small", {}, detail)),
+    button,
+  );
+}
+
 let last = "";
 async function refresh() {
   let home;
@@ -123,6 +167,7 @@ async function refresh() {
     $("summary").textContent = "无法读取工作室数据";
     return;
   }
+  const status = await load("/app/status").catch(() => null);
   const shows = (home.shows || []).filter((show) => !show.archived);
   const running = shows.filter((show) => statusOf(show)[1] === "run");
   const review = shows.filter((show) => statusOf(show)[1] === "review");
@@ -131,7 +176,7 @@ async function refresh() {
   const details = await Promise.all(
     hot.map((show) => load(link(show) + "state").catch(() => null)),
   );
-  const key = JSON.stringify([home.shows, details]);
+  const key = JSON.stringify([home.shows, details, status]);
   if (key === last) return;
   last = key;
 
@@ -157,7 +202,7 @@ async function refresh() {
       ? `${greeting} · ${[running.length && `${running.length} 个会话正在进行`, review.length && `${review.length} 个等你审核`].filter(Boolean).join("，")}`
       : `${greeting} · 眼下没有进行中的工作`;
 
-  const blocks = [];
+  const blocks = notices(status);
   if (hot.length) {
     blocks.push(h("p.label", {}, "正在发生"));
     hot.forEach((show, index) => {
@@ -204,7 +249,7 @@ async function refresh() {
     blocks.push(h("p.label", {}, "最近"));
     recent.forEach((show) => blocks.push(row(show)));
   }
-  if (!blocks.length)
+  if (!shows.length)
     blocks.push(
       h(
         "div.calm",

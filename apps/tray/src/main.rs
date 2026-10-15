@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod data;
+mod update;
 
 use std::fs;
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ use tauri::{
 };
 
 use data::{CSP, Overview, Reader};
+use update::Updates;
 
 const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
@@ -43,11 +45,17 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             open(app, "main", "/")
         }))
-        .register_asynchronous_uri_scheme_protocol(SCHEME, move |_, request, responder| {
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let reader = served.clone();
+            let app = ctx.app_handle().clone();
             let path = request.uri().path().to_owned();
             thread::spawn(move || {
-                let reply = reader.respond(&path);
+                let reply = if path == "/app/status" {
+                    data::Response::json(&update::status(&app))
+                } else {
+                    reader.respond(&path)
+                };
                 let response = Response::builder()
                     .status(reply.status)
                     .header(header::CONTENT_TYPE, reply.content_type)
@@ -71,13 +79,16 @@ fn main() {
             build_panel(handle)?;
             let overview = reader.overview();
             // Left click opens the panel; right click shows this short menu.
+            let check = MenuItem::with_id(handle, "update", "检查更新…", true, None::<&str>)?;
             let menu = Menu::with_items(
                 handle,
                 &[
                     &MenuItem::with_id(handle, "open", "打开工作台", true, None::<&str>)?,
+                    &check,
                     &MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?,
                 ],
             )?;
+            app.manage(Updates::new(check));
             TrayIconBuilder::with_id(TRAY)
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
                 .icon_as_template(true)
@@ -87,6 +98,7 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => open(app, "main", "/"),
+                    "update" => update::act(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -103,7 +115,14 @@ fn main() {
                 })
                 .build(app)?;
             let handle = handle.clone();
+            let checker = handle.clone();
             thread::spawn(move || poll(handle, reader, overview));
+            thread::spawn(move || {
+                loop {
+                    update::check(&checker, false);
+                    thread::sleep(update::EVERY);
+                }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -191,19 +210,24 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
     .skip_taskbar(true)
     .visible(false)
     .on_navigation(move |target| {
-        // Panel links name workbench routes: open them in the main window instead.
+        // Panel links name workbench routes or app actions; none navigates the panel itself.
         if !ours(target) || target.path().starts_with("/panel/") {
             return ours(target);
         }
         let (app, path) = (handle.clone(), target.path().to_owned());
-        thread::spawn(move || {
-            if let Some(panel) = app.get_webview_window(PANEL) {
-                let _ = panel.hide();
-            }
-            if path == "/app/quit" {
-                app.exit(0);
-            } else {
-                open(&app, "main", &path);
+        thread::spawn(move || match path.as_str() {
+            // The panel stays open: its notice shows the progress or "已复制".
+            "/app/update" => update::act(&app),
+            "/app/copy-service-command" => update::copy_service_command(),
+            _ => {
+                if let Some(panel) = app.get_webview_window(PANEL) {
+                    let _ = panel.hide();
+                }
+                if path == "/app/quit" {
+                    app.exit(0);
+                } else {
+                    open(&app, "main", &path);
+                }
             }
         });
         false
