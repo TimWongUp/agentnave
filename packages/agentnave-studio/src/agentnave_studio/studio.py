@@ -685,8 +685,11 @@ class Studio(Groups):
                     print(f"agentnave-studio: could not write live views: {exc}", file=sys.stderr)
                 await asyncio.sleep(_LIVE_SECONDS)
         finally:
-            self.live_path.unlink(missing_ok=True)
-            self.live_writer = None
+            self.live_writer = None  # first, so a failed removal cannot stop the next writer
+            try:
+                self.live_path.unlink(missing_ok=True)
+            except OSError as exc:
+                print(f"agentnave-studio: could not remove live views: {exc}", file=sys.stderr)
 
     def _prune_live(self) -> None:
         # A server that crashed leaves its file; the tray ignores it, and it goes after an hour.

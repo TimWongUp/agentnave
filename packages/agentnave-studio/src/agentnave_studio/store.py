@@ -182,7 +182,8 @@ class Record:
     """One conversation directory. Only the lock holder writes; others read.
 
     views.json beside state.json is the tray app's projection of the same state, written with
-    every save and filled in under the probe lock when missing or older than state.json.
+    every save and rewritten under the probe lock whenever it differs from the current
+    projection (missing, stale, or a crashed writer's running work now shown as interrupted).
     """
 
     project: ClassVar[Callable[[Record], bytes] | None] = None
@@ -247,11 +248,7 @@ class Record:
         try:
             self.state = self._load(self.directory)
             self.state.recover()  # shown as interrupted; acquire() persists it
-            views = self.directory / "views.json"
-            if not views.is_file() or views.stat().st_mtime < (
-                (self.directory / "state.json").stat().st_mtime
-            ):
-                self._write_views()
+            self._write_views(only_if_changed=True)
         finally:
             self._unlock(lock)
         return True
@@ -275,11 +272,16 @@ class Record:
                 Path(name).unlink(missing_ok=True)
         self._write_views()
 
-    def _write_views(self) -> None:
+    def _write_views(self, *, only_if_changed: bool = False) -> None:
         if Record.project is None:
             return
+        path = self.directory / "views.json"
         try:
-            write_file(self.directory / "views.json", Record.project(self))
+            data = Record.project(self)
+            # Compared by content: timestamps can tie or run backwards.
+            if only_if_changed and path.is_file() and path.read_bytes() == data:
+                return
+            write_file(path, data)
         except OSError as exc:
             # Derived data: the saved state stands, and the next save writes the views again.
             print(

@@ -214,10 +214,16 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
     last["seats"][0].update(review="pending", committed=False)
     last["seats"][1].update(status="running", review=None, output=None)
     state_file.write_text(json.dumps(saved))
+    # The crashed writer's last views.json is newer than its state and still says running.
+    views_file = state_file.with_name("views.json")
+    stale = json.loads(views_file.read_text())
+    stale["summary"]["status"] = "running"
+    views_file.write_text(json.dumps(stale))
     async with Client(mcp) as client:
         view = _conversation(
             await _call(client, "read_conversation", {"conversation_id": group_id})
         )
+        assert json.loads(views_file.read_text())["summary"]["status"] == "review"
         restored = cast(list[dict[str, object]], view["rounds"])[-1]
         assert restored["status"] == "interrupted"
         assert [seat["status"] for seat in cast(list[dict[str, object]], restored["seats"])] == [
