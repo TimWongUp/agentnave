@@ -23,6 +23,10 @@ macro_rules! asset {
     };
 }
 
+const PANEL_HTML: &[u8] = include_bytes!("../ui/panel.html");
+const PANEL_JS: &[u8] = include_bytes!("../ui/panel.js");
+const PANEL_CSS: &[u8] = include_bytes!("../ui/panel.css");
+
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 /// Same rule as the Studio MCP server: `AGENTNAVE_DATA_DIR`, else `~/.agentnave`.
@@ -63,7 +67,6 @@ pub struct Response {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
-    pub cacheable: bool,
 }
 
 impl Response {
@@ -72,7 +75,6 @@ impl Response {
             status: 200,
             content_type,
             body,
-            cacheable: false,
         }
     }
 
@@ -81,7 +83,6 @@ impl Response {
             status: 404,
             content_type: "text/plain; charset=utf-8",
             body: b"not found".to_vec(),
-            cacheable: false,
         }
     }
 }
@@ -106,10 +107,6 @@ impl Reader {
             root,
             summaries: Mutex::new(HashMap::new()),
         }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     pub fn overview(&self) -> Overview {
@@ -175,6 +172,14 @@ impl Reader {
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        if let ["panel", resource] = parts.as_slice() {
+            return match *resource {
+                "" => Response::ok("text/html; charset=utf-8", PANEL_HTML.to_vec()),
+                "panel.js" => Response::ok("text/javascript; charset=utf-8", PANEL_JS.to_vec()),
+                "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
+                _ => Response::not_found(),
+            };
+        }
         let (scope, resource) = match parts.as_slice() {
             [resource] => (Scope::Home, *resource),
             ["c", id, resource] if valid_id(id) => (Scope::Director(id), *resource),
@@ -189,10 +194,7 @@ impl Reader {
             _ => None,
         };
         if let Some((content_type, body)) = asset {
-            return Response {
-                cacheable: !resource.is_empty(),
-                ..Response::ok(content_type, body.to_vec())
-            };
+            return Response::ok(content_type, body.to_vec());
         }
         let view = match scope {
             Scope::Home => Some(self.home()),
@@ -407,6 +409,7 @@ mod tests {
         );
         assert_eq!(state(&reader, "/p/a1/state")["view"], "public");
         assert_eq!(reader.respond("/c/a1/").status, 200);
+        assert_eq!(reader.respond("/panel/").status, 200);
         assert_eq!(
             reader.respond("/p/a1/transcript.jsonl").body,
             b"{\"text\":\"hi\"}\n"
@@ -419,6 +422,7 @@ mod tests {
             "/c/a1",
             "/c/zz/state",
             "/x/a1/state",
+            "/panel/state",
         ] {
             assert_eq!(reader.respond(path).status, 404, "{path}");
         }

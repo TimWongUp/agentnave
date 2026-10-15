@@ -5,25 +5,35 @@ mod data;
 
 use std::fs;
 use std::path::PathBuf;
-#[cfg(any(target_os = "macos", windows))]
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::http::{Response, header};
 use tauri::image::Image;
-use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{DownloadEvent, NewWindowResponse};
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, Rect, RunEvent, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 
 use data::{CSP, Overview, Reader};
 
 const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
+const PANEL: &str = "panel";
+const PANEL_SIZE: (f64, f64) = (360.0, 520.0);
 const POLL: Duration = Duration::from_secs(2);
-const MENU_ITEMS: usize = 10;
+/// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
+const REOPEN_GUARD: Duration = Duration::from_millis(300);
+
+struct Tray {
+    reader: Arc<Reader>,
+    panel_hidden: Mutex<Option<Instant>>,
+}
 
 fn main() {
     let reader = Arc::new(Reader::new(data::data_root()));
@@ -37,15 +47,10 @@ fn main() {
             let path = request.uri().path().to_owned();
             thread::spawn(move || {
                 let reply = reader.respond(&path);
-                let cache = if reply.cacheable {
-                    "private, max-age=86400"
-                } else {
-                    "no-store"
-                };
                 let response = Response::builder()
                     .status(reply.status)
                     .header(header::CONTENT_TYPE, reply.content_type)
-                    .header(header::CACHE_CONTROL, cache)
+                    .header(header::CACHE_CONTROL, "no-store")
                     .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
                     .header(header::REFERRER_POLICY, "no-referrer")
                     .header(header::CONTENT_SECURITY_POLICY, CSP)
@@ -54,28 +59,49 @@ fn main() {
                 responder.respond(response);
             });
         })
-        .manage(reader.clone())
+        .manage(Tray {
+            reader: reader.clone(),
+            panel_hidden: Mutex::new(None),
+        })
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let handle = app.handle();
+            build_panel(handle)?;
             let overview = reader.overview();
+            // Left click opens the panel; right click shows this short menu.
+            let menu = Menu::with_items(
+                handle,
+                &[
+                    &MenuItem::with_id(handle, "open", "打开工作台", true, None::<&str>)?,
+                    &MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?,
+                ],
+            )?;
             TrayIconBuilder::with_id(TRAY)
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
                 .icon_as_template(true)
                 .tooltip(headline(&overview))
                 .title(title(&overview).unwrap_or_default())
-                .menu(&menu(app.handle(), &reader, &overview)?)
-                .show_menu_on_left_click(true)
+                .menu(&menu)
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => open(app, "main", "/"),
                     "quit" => app.exit(0),
-                    id => {
-                        if let Some(path) = id.strip_prefix("open:") {
-                            open(app, "main", path);
-                        }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        rect,
+                        ..
+                    } = event
+                    {
+                        toggle_panel(tray.app_handle(), rect);
                     }
                 })
                 .build(app)?;
-            let handle = app.handle().clone();
+            let handle = handle.clone();
             thread::spawn(move || poll(handle, reader, overview));
             Ok(())
         })
@@ -97,10 +123,9 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
         thread::sleep(POLL);
         let overview = reader.overview();
         if overview == shown {
-            continue; // rebuilding an open menu would close it
+            continue;
         }
-        if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY), menu(&app, &reader, &overview)) {
-            let _ = tray.set_menu(Some(menu));
+        if let Some(tray) = app.tray_by_id(TRAY) {
             let _ = tray.set_title(title(&overview));
             let _ = tray.set_tooltip(Some(headline(&overview)));
         }
@@ -122,85 +147,14 @@ fn title(overview: &Overview) -> Option<String> {
 }
 
 fn headline(overview: &Overview) -> String {
+    if overview.missing {
+        return "AgentNave · 尚未找到工作室数据".to_owned();
+    }
     format!(
         "AgentNave · 运行中 {} · 待审核 {}",
         overview.count("running"),
         overview.count("review")
     )
-}
-
-fn menu(app: &AppHandle, reader: &Reader, overview: &Overview) -> tauri::Result<Menu<Wry>> {
-    let mut items: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
-    let note = if overview.missing {
-        format!("未找到数据目录 {}", reader.root().display())
-    } else {
-        headline(overview)
-    };
-    items.push(Box::new(MenuItem::with_id(
-        app,
-        "headline",
-        note,
-        false,
-        None::<&str>,
-    )?));
-    items.push(Box::new(PredefinedMenuItem::separator(app)?));
-    let active: Vec<_> = overview
-        .items
-        .iter()
-        .filter(|item| !item.archived)
-        .take(MENU_ITEMS)
-        .collect();
-    if active.is_empty() {
-        items.push(Box::new(MenuItem::with_id(
-            app,
-            "empty",
-            "暂无未结束的会话",
-            false,
-            None::<&str>,
-        )?));
-    }
-    for item in active {
-        let mode = if item.mode == "task" {
-            "任务"
-        } else {
-            "节目"
-        };
-        let state = match item.status.as_str() {
-            "running" => " · 进行中",
-            "review" => " · 待审核",
-            "failed" | "blocked" | "interrupted" => " · 需处理",
-            _ => "",
-        };
-        let mut title: String = item.title.chars().take(36).collect();
-        if title.len() < item.title.len() {
-            title.push('…');
-        }
-        let label = format!("{mode}｜{title}{state}");
-        items.push(Box::new(MenuItem::with_id(
-            app,
-            format!("open:/c/{}/", item.id),
-            label,
-            true,
-            None::<&str>,
-        )?));
-    }
-    items.push(Box::new(PredefinedMenuItem::separator(app)?));
-    items.push(Box::new(MenuItem::with_id(
-        app,
-        "open:/",
-        "打开工作台…",
-        true,
-        None::<&str>,
-    )?));
-    items.push(Box::new(MenuItem::with_id(
-        app,
-        "quit",
-        "退出 AgentNave",
-        true,
-        None::<&str>,
-    )?));
-    let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
-    Menu::with_items(app, &refs)
 }
 
 fn url(path: &str) -> Url {
@@ -219,6 +173,110 @@ fn ours(target: &Url) -> bool {
     target.scheme() == base.scheme() && target.host_str() == base.host_str()
 }
 
+/// The menu bar panel: created hidden at start, so a click shows it at once.
+fn build_panel(app: &AppHandle) -> tauri::Result<()> {
+    let glass = cfg!(target_os = "macos");
+    let handle = app.clone();
+    let builder = WebviewWindowBuilder::new(
+        app,
+        PANEL,
+        WebviewUrl::CustomProtocol(url(if glass { "/panel/?glass" } else { "/panel/" })),
+    )
+    .title("AgentNave")
+    .inner_size(PANEL_SIZE.0, PANEL_SIZE.1)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .on_navigation(move |target| {
+        // Panel links name workbench routes: open them in the main window instead.
+        if !ours(target) || target.path().starts_with("/panel/") {
+            return ours(target);
+        }
+        let (app, path) = (handle.clone(), target.path().to_owned());
+        thread::spawn(move || {
+            if let Some(panel) = app.get_webview_window(PANEL) {
+                let _ = panel.hide();
+            }
+            if path == "/app/quit" {
+                app.exit(0);
+            } else {
+                open(&app, "main", &path);
+            }
+        });
+        false
+    });
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true).effects(
+        tauri::window::EffectsBuilder::new()
+            .effect(tauri::window::Effect::Popover)
+            .state(tauri::window::EffectState::Active)
+            .radius(12.0)
+            .build(),
+    );
+    let panel = builder.build()?;
+    let app = app.clone();
+    panel.on_window_event(move |event| {
+        if let WindowEvent::Focused(false) = event
+            && let Some(panel) = app.get_webview_window(PANEL)
+        {
+            let _ = panel.hide();
+            *app.state::<Tray>().panel_hidden.lock().unwrap() = Some(Instant::now());
+        }
+    });
+    Ok(())
+}
+
+fn toggle_panel(app: &AppHandle, icon: Rect) {
+    let Some(panel) = app.get_webview_window(PANEL) else {
+        return;
+    };
+    if panel.is_visible().unwrap_or(false) {
+        let _ = panel.hide();
+        return;
+    }
+    let hidden = *app.state::<Tray>().panel_hidden.lock().unwrap();
+    if hidden.is_some_and(|at| at.elapsed() < REOPEN_GUARD) {
+        return;
+    }
+    place(&panel, icon);
+    let _ = panel.show();
+    let _ = panel.set_focus();
+}
+
+/// Center the panel under the icon (above it when the taskbar is at the bottom), on screen.
+fn place(panel: &WebviewWindow, icon: Rect) {
+    let monitor = panel
+        .available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|monitor| {
+            let (origin, size) = (monitor.position(), monitor.size());
+            let point = icon.position.to_physical::<f64>(monitor.scale_factor());
+            point.x >= origin.x as f64
+                && point.x < origin.x as f64 + size.width as f64
+                && point.y >= origin.y as f64
+                && point.y < origin.y as f64 + size.height as f64
+        });
+    let scale = monitor.as_ref().map_or(1.0, |m| m.scale_factor());
+    let at = icon.position.to_physical::<f64>(scale);
+    let size = icon.size.to_physical::<f64>(scale);
+    let (width, height) = (PANEL_SIZE.0 * scale, PANEL_SIZE.1 * scale);
+    let gap = 6.0 * scale;
+    let mut x = at.x + size.width / 2.0 - width / 2.0;
+    let mut y = at.y + size.height + gap;
+    if let Some(monitor) = monitor {
+        let (origin, area) = (monitor.position(), monitor.size());
+        let (left, top) = (origin.x as f64, origin.y as f64);
+        if at.y > top + area.height as f64 / 2.0 {
+            y = at.y - height - gap;
+        }
+        x = x.clamp(left + gap, left + area.width as f64 - width - gap);
+    }
+    let _ = panel.set_position(PhysicalPosition::new(x, y));
+}
+
 /// Show `path` in the window `label`, creating it on first use.
 fn open(app: &AppHandle, label: &str, path: &str) {
     let target = url(path);
@@ -230,17 +288,19 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         return;
     }
     let handle = app.clone();
-    let reader = app.state::<Arc<Reader>>().inner().clone();
+    let reader = app.state::<Tray>().reader.clone();
     let built = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
         .title("AgentNave")
-        .inner_size(1120.0, 820.0)
+        .inner_size(1180.0, 800.0)
         .min_inner_size(420.0, 480.0)
         .on_navigation(ours)
         .on_new_window(move |target, _| {
-            // "选手看到的页面 ↗" opens the public view beside the director view.
             if ours(&target) {
+                // "选手视角 ↗" opens the public view beside the workbench.
                 let app = handle.clone();
                 thread::spawn(move || open(&app, "public", target.path()));
+            } else if matches!(target.scheme(), "http" | "https") {
+                browse(&target);
             }
             NewWindowResponse::Deny
         })
@@ -264,6 +324,16 @@ fn open(app: &AppHandle, label: &str, path: &str) {
     if let Ok(window) = built {
         let _ = window.set_focus();
     }
+}
+
+/// Links in replies open in the default browser.
+fn browse(target: &Url) {
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(target.as_str()).spawn();
+    #[cfg(windows)]
+    let _ = Command::new("explorer").arg(target.as_str()).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = Command::new("xdg-open").arg(target.as_str()).spawn();
 }
 
 /// Write an export into Downloads and show it in the file manager.

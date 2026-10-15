@@ -6,11 +6,16 @@
     "windows": [],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "nsis"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "AgentNave 会话的只读菜单栏视图",
     "icon": [

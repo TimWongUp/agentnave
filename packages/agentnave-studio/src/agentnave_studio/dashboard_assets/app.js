@@ -1,156 +1,1235 @@
 "use strict";
-const $ = id => document.getElementById(id);
-const labels = {idle:"等待主持人开场",running:"本轮进行中",review:"回答待导演审核",finished:"本轮已结束",cancelled:"本轮已取消",interrupted:"上次运行中断"};
-const seatStates={pending:"排队中",running:"作答中",succeeded:"已作答",failed:"失败",blocked:"受阻",cancelled:"已取消",not_started:"未开始",interrupted:"已中断"};
-const reviews={pending:"待审核",publish:"已发布",discard:"已丢弃"};
-const host = {id:"@host",label:"主持人",model:"导演扮演",provider:"host"};
-const modes={show:"节目",task:"做任务"};
-const taskStates={running:"进行中",succeeded:"已回复 · 待验收",failed:"失败",blocked:"需处理",cancelled:"已取消",interrupted:"已中断 · 需处理"};
-let current = null, selected = null, messageKey = "", seatKey = "", previousCount = 0;
-let homeKey = "", taskKey = "", roundKey = "", modeFilter = "all", privateView = true;
-function el(tag, className, text) { const node=document.createElement(tag); node.className=className; if(text!==undefined)node.textContent=text; return node; }
-function avatar(seat) {
-  const key=(seat.model+" "+seat.provider).toLowerCase();
-  const kind=seat.provider==="host"?"host":["claude","gpt","gemini","grok","deepseek"].find(name=>key.includes(name));
-  const node=el("span","avatar avatar-"+(kind||"unknown"),kind?undefined:seat.label.slice(0,1));
-  node.setAttribute("aria-hidden","true");return node;
+// AgentNave workbench. Read-only: renders the `state` JSON of the workbench, director and
+// public views; every action happens in the host Agent's conversation.
+
+const ROUND = {
+  idle: ["等待开场", "idle"],
+  running: ["进行中", "run"],
+  review: ["待审核", "review"],
+  finished: ["本轮已结束", "done"],
+  cancelled: ["已取消", "idle"],
+  interrupted: ["上次中断", "bad"],
+};
+const TASK = {
+  idle: ["尚无任务", "idle"],
+  running: ["进行中", "run"],
+  succeeded: ["已回复 · 待验收", "done"],
+  failed: ["失败", "bad"],
+  blocked: ["需处理", "bad"],
+  cancelled: ["已取消", "idle"],
+  interrupted: ["已中断", "bad"],
+};
+const SEAT = {
+  pending: ["排队中", "idle"],
+  running: ["作答中", "run"],
+  succeeded: ["已作答", "done"],
+  failed: ["失败", "bad"],
+  blocked: ["受阻", "bad"],
+  cancelled: ["已取消", "idle"],
+  not_started: ["未开始", "idle"],
+  interrupted: ["已中断", "bad"],
+};
+const REVIEW = {
+  pending: ["待审核", "review"],
+  publish: ["已发布", "done"],
+  discard: ["已丢弃", "idle"],
+};
+const HOST = { id: "@host", label: "主持人", model: "导演", provider: "host" };
+const EXAMPLES = [
+  [
+    "节目",
+    "开一档节目，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。",
+  ],
+  ["做任务", "让 CLI 完成任务：……，将结果放进同一个任务会话。"],
+];
+const TICK = 1500;
+
+const app = {
+  layout: "loading",
+  home: null,
+  homeUrl: null, // workbench state and its page URL
+  detail: null,
+  detailUrl: null, // selected conversation and its page URL
+  mode: "all",
+  showEnded: false,
+  query: "",
+  tabs: {},
+  speaker: null,
+  open: new Set(),
+  offline: false,
+  keys: {},
+  seen: 0,
+};
+
+// DOM ------------------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+function h(tag, props, ...kids) {
+  const [base, id] = tag.split("#");
+  const [name, ...classes] = base.split(".");
+  const node = document.createElement(name || "div");
+  if (classes.length) node.className = classes.join(" ");
+  if (id) node.id = id;
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value == null || value === false) continue;
+    if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (key === "class")
+      node.className = (node.className + " " + value).trim();
+    else if (key === "style") node.style.cssText = value;
+    else node.setAttribute(key, value === true ? "" : value);
+  }
+  node.append(
+    ...kids.flat(Infinity).filter((kid) => kid != null && kid !== false),
+  );
+  return node;
 }
-function choose(id) { selected=id; seatKey="";messageKey="";if(current)render(current); }
-function render(data) {
-  const nearBottom=window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-160;
-  const hadData=current!==null;current=data;
-  const isHome=data.view==="workbench", isTask=data.mode==="task";
-  document.body.classList.toggle("home-view",isHome);document.body.classList.toggle("task-view",isTask);
-  $("conversation-list").hidden=!isHome;$("task-list").hidden=!isTask;
-  $("workbench-link").hidden=!data.workbench_url;$("workbench-link").href=data.workbench_url||"./";
-  $("home-tools").hidden=!isHome;
-  $("storage-details").hidden=!data.storage;$("storage-note").textContent=data.storage||"";
-  $("brand-link").href=data.workbench_url||"./";
-  document.querySelector(".brand-sub").textContent=data.view==="public"?"公共对话":"工作台";
-  $("footer-note").textContent=isHome?"本地工作台 · 操作由主控 Agent 执行":isTask?"任务结果 · 仅主控可见":data.view==="director"?"主控工作台 · 网页只读":"公开对话 · 网页只读";
-  if(isHome){
-    document.title="AgentNave · 工作台";$("title").textContent="所有会话";$("view-name").textContent="我的工作台";
-    renderHome(data);return;
-  }
-  const director=data.view==="director", cast=[host,...data.seats];
-  $("mode-note").textContent=isTask?"做任务 · 仅主控可见":(data.review?"节目 · 导演审核后公开":"节目 · 回答自动公开")+(data.isolated?" · 隔离席位":"");
-  $("title").textContent=data.title;document.title=data.title+" · "+(director?"工作台":"对话区");
-  $("view-name").textContent=isTask?"做任务 · 私有会话":director?"节目会话 · 主控视角":"公共对话 · 全员可见";
-  $("view-note").textContent="选手和主持人的公开发言";
-  $("view-description").textContent="这里与选手收到的公开记录同步，筛选只影响当前页面。";
-  $("view-tabs").hidden=!director||isTask;
-  $("director-panel").hidden=!director||isTask||!privateView;
-  $("transcript-panel").hidden=isTask||(director&&privateView);
-  $("conversation-tab").setAttribute("aria-pressed",String(!privateView));
-  $("backstage-tab").setAttribute("aria-pressed",String(privateView));
-  $("public-link").hidden=!director||isTask;
-  document.querySelector(".export").hidden=isTask||(director&&privateView);
-  if(director)$("public-link").href=data.public_url;
-  const nextRoundKey=JSON.stringify([data.round,data.seats]);
-  if(director&&!isTask&&roundKey!==nextRoundKey){
-    roundKey=nextRoundKey;const round=data.round;
-    $("round-title").textContent=round?"第 "+round.number+" 轮 · "+(round.order==="parallel"?"并联":"串联"):"尚未开始";
-    $("round-seats").replaceChildren();
-    (round?round.seats:[]).forEach(run=>{const seat=data.seats.find(s=>s.id===run.seat_id);const row=el("article","held-answer"),head=el("div","message-head");head.append(el("strong","",seat?.label||run.seat_id),el("span","tag",(run.review?reviews[run.review]:seatStates[run.status])||run.status));row.append(head);if(run.instruction)row.append(el("p","task-meta","私密指令："+run.instruction));row.append(el("p","speech",run.output||(run.status==="running"?"正在等待回复…":"")));if(run.error)row.append(el("p","history-warning",run.error));$("round-seats").append(row);});
-    $("turn-error").textContent=round&&round.error?"本轮提示："+round.error:"";
-  }
-  if(isTask){
-    const nextTaskKey=JSON.stringify(data.tasks);
-    if(taskKey!==nextTaskKey){
-    taskKey=nextTaskKey;$("task-list").replaceChildren();
-    (data.tasks||[]).forEach(run=>{const seat={id:run.provider,label:run.provider,model:run.model,provider:run.provider};const card=el("article","message");const bubble=el("div","bubble");const head=el("div","message-head");head.append(el("strong","",run.provider),el("span","tag",taskStates[run.status]||run.status));bubble.append(head,el("p","task-meta",run.model+" · "+Math.round(run.elapsed_ms/1000)+" 秒"),el("p","task-meta",run.cwd),el("p","speech",run.output||"正在等待回复…"));if(run.error)bubble.append(el("p","history-warning",run.error));card.append(avatar(seat),bubble);$("task-list").append(card);});
-    }
-    $("status").textContent=data.archived?"会话已结束 · 历史保留":"输出由 CLI 自动提交；回复不等于验收通过";
-    $("count").textContent=(data.tasks||[]).length+" 次任务";return;
-  }
-  const nextSeatKey=JSON.stringify([data.seats,data.speaking,selected]);
-  if(seatKey!==nextSeatKey){
-    $("seats").replaceChildren();
-    cast.forEach(seat=>{const speaking=(data.speaking||[]).includes(seat.id);const row=el("button","seat"+(selected===seat.id?" selected":"")+(speaking?" speaking":""));row.type="button";row.setAttribute("aria-pressed",String(selected===seat.id));row.setAttribute("aria-label","只看"+seat.label+"的公开发言");row.onclick=()=>choose(selected===seat.id?null:seat.id);const detail=el("span","seat-detail");detail.append(el("strong","seat-name",seat.label),el("span","seat-model",seat.model));row.append(avatar(seat),detail);$("seats").append(row);});
-    $("all-seats").setAttribute("aria-pressed",String(selected===null));seatKey=nextSeatKey;
-  }
-  const speaking=(data.speaking||[]).map(id=>cast.find(s=>s.id===id)?.label||id);
-  $("status").textContent=data.archived?"会话已结束 · 历史保留":director?((speaking.length?speaking.join("、")+" · ":"")+(labels[data.status]||data.status)):"公开发言 · 全员同步";
-  $("count").textContent=data.messages.length+" 条公开发言";
-  $("filter-note").hidden=selected===null;$("filter-note").textContent=selected?"正在查看 "+(cast.find(s=>s.id===selected)?.label||selected)+" 的发言 · 点击「所有人」恢复全场":"";
-  const nextMessageKey=JSON.stringify([data.messages,selected,data.seats]);
-  if(messageKey!==nextMessageKey){
-    $("messages").replaceChildren();
-    data.messages.forEach((message,index)=>{
-      if(selected&&message.speaker!==selected)return;
-      const seat=cast.find(s=>s.id===message.speaker)||{id:message.speaker,label:message.speaker,model:"",provider:""};
-      const article=el("article","message"+(seat.provider==="host"?" host-message":""));
-      const bubble=el("div","bubble"),head=el("div","message-head");
-      head.append(el("strong","",seat.label));if(message.kind==="task")head.append(el("span","tag","第 "+message.round+" 轮任务"));
-      const stamp=el("time","timestamp");stamp.dateTime=message.time;stamp.textContent=new Date(message.time).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});head.append(stamp);
-      const meta=el("div","message-meta");meta.append(el("span","number","#"+String(index+1).padStart(3,"0")));
-      const copy=el("button","copy","复制台词");copy.type="button";copy.setAttribute("aria-label","复制"+seat.label+"的第"+(index+1)+"条台词");copy.onclick=async()=>{try{await navigator.clipboard.writeText(message.text);copy.textContent="已复制";}catch{copy.textContent="请选中文字复制";}};meta.append(copy);
-      bubble.append(head,el("p","speech",message.text),meta);article.append(avatar(seat),bubble);$("messages").append(article);
-    });
-    $("empty").hidden=$("messages").childElementCount>0;$("empty-text").textContent=selected?"这个角色还没有公开发言。":"主持人开场，选手回应。公开台词会依次留在这里。";messageKey=nextMessageKey;
-  }
-  if(hadData&&!(director&&privateView)&&data.messages.length>previousCount){if(nearBottom&&selected===null)window.scrollTo({top:document.documentElement.scrollHeight,behavior:"instant"});else $("latest").hidden=false;}
-  previousCount=data.messages.length;
-}
-const modeDescriptions={all:"全部用途",show:"多个 CLI 并联或串联作答",task:"各自执行，结果仅主控可见"};
-function renderHome(data){
-  const shows=data.shows||[];
-  const state=$("archive-filter").value, query=$("search").value.trim().toLocaleLowerCase();
-  const nextKey=JSON.stringify([shows,data.unavailable,modeFilter,state,query]);
-  if(homeKey===nextKey)return;
-  homeKey=nextKey;
-  const scope=shows.filter(show=>state==="all"||(state==="ended"?show.archived:!show.archived));
-  for(const button of $("mode-filters").children){
-    const mode=button.dataset.mode;
-    button.setAttribute("aria-pressed",String(modeFilter===mode));
-    button.querySelector(".mode-count").textContent=scope.filter(show=>mode==="all"||show.mode===mode).length;
-  }
-  const matching=scope.filter(show=>(modeFilter==="all"||show.mode===modeFilter)&&show.title.toLocaleLowerCase().includes(query));
-  $("list-count").textContent=matching.length+" 个会话";
-  $("conversation-list").replaceChildren();
-  matching.forEach(show=>{
-    const card=el("article","conversation-card"), info=el("div","conversation-info"), title=el("h2");
-    const link=el("a","conversation-title",show.title);link.href=show.director_url;title.append(link);
-    info.append(el("span","tag mode-"+show.mode,modes[show.mode]||show.mode),title,el("p","",show.archived?"已结束 · 历史保留":((show.mode==="task"?taskStates[show.status]:labels[show.status])||modeDescriptions[show.mode])));
-    const open=el("a","open-conversation",show.mode==="task"?"查看任务 →":"进入主控 →");open.href=show.director_url;open.setAttribute("aria-label",(show.mode==="task"?"查看任务：":"进入主控：")+show.title);
-    card.append(info,open);$("conversation-list").append(card);
+const tone = ([label, kind]) => ({ label, kind });
+const pill = ({ label, kind }) =>
+  h("span.pill.tone-" + kind, {}, h("i.dot.tone-" + kind), label);
+const dot = (kind) => h("i.dot.tone-" + kind);
+const statusOf = (mode, status) =>
+  tone((mode === "task" ? TASK : ROUND)[status] || [status || "—", "idle"]);
+const urgent = (kind) => kind === "run" || kind === "review" || kind === "bad";
+
+function when(iso) {
+  if (!iso) return "";
+  const date = new Date(iso),
+    now = new Date();
+  const time = date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
   });
-  if(!matching.length)$("conversation-list").append(el("p","list-empty",shows.length?"没有匹配的会话。试试其他用途、状态或名称。":"还没有会话。展开「如何开始新会话？」查看示例。"));
-  (data.unavailable||[]).forEach(item=>$("conversation-list").append(el("p","history-warning","有一份历史暂不可用："+item.reason+"（"+item.path+"）")));
+  if (date.toDateString() === now.toDateString()) return time;
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
 }
-for(const mode of ["all",...Object.keys(modes)]){
-  const button=el("button","mode-filter");button.type="button";button.dataset.mode=mode;
-  const title=el("span","mode-title",mode==="all"?"全部":modes[mode]);title.append(el("span","mode-count","0"));
-  button.append(title,el("span","mode-description",modeDescriptions[mode]));
-  button.onclick=()=>{modeFilter=mode;if(current)renderHome(current);};$("mode-filters").append(button);
+function duration(ms) {
+  const s = Math.max(0, Math.round((ms || 0) / 1000));
+  if (s < 60) return `${s} 秒`;
+  const m = Math.floor(s / 60);
+  return m < 60
+    ? `${m} 分 ${s % 60} 秒`
+    : `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
-const examples=["开一档节目，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。","让 CLI 完成任务：……，将结果放进同一个任务会话。"];
-examples.forEach((text,index)=>{
-  const row=el("div","start-example"), copy=el("button","copy","复制示例");
-  copy.type="button";copy.setAttribute("aria-label","复制"+Object.values(modes)[index]+"示例");
-  copy.onclick=async()=>{try{await navigator.clipboard.writeText(text);copy.textContent="已复制，粘贴到主控对话";}catch{copy.textContent="请选中文字复制";}};
-  row.append(el("p","",text),copy);$("start-examples").append(row);
+function avatar(seat, size = "") {
+  const key = `${seat.model || ""} ${seat.provider || ""}`.toLowerCase();
+  const known =
+    seat.provider === "host"
+      ? "host"
+      : ["claude", "gpt", "gemini", "grok", "deepseek"].find((name) =>
+          key.includes(name),
+        ) || { codex: "gpt", antigravity: "gemini" }[seat.provider];
+  if (known)
+    return h(`span.avatar.av-${known}${size}`, { "aria-hidden": "true" });
+  const label = seat.label || seat.provider || "?";
+  let hue = 0;
+  for (const char of label) hue = (hue * 31 + char.charCodeAt(0)) % 360;
+  return h(
+    `span.avatar.av-plain${size}`,
+    { "aria-hidden": "true", style: `--hue:${hue}` },
+    label.slice(0, 1).toUpperCase(),
+  );
+}
+function copyButton(text, label = "复制") {
+  const button = h("button.icon-btn", { type: "button" }, label);
+  button.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      button.textContent = "已复制";
+    } catch {
+      button.textContent = "请手动选中复制";
+    }
+    setTimeout(() => {
+      button.textContent = label;
+    }, 1600);
+  };
+  return button;
+}
+
+// Minimal Markdown: fences, headings, lists, quotes, inline code and bold. Builds DOM nodes
+// only, so model output can never inject markup.
+function inline(text) {
+  const out = [],
+    pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
+  let last = 0,
+    match;
+  while ((match = pattern.exec(text))) {
+    if (match.index > last) out.push(text.slice(last, match.index));
+    const token = match[0];
+    const link = token.match(/^\[([^\]]+)\]\((.+)\)$/);
+    out.push(
+      link
+        ? h("a", { href: link[2], target: "_blank", rel: "noreferrer", title: link[2] }, link[1])
+        : token[0] === "`"
+          ? h("code", {}, token.slice(1, -1))
+          : h("strong", {}, token.slice(2, -2)),
+    );
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+function md(text) {
+  const root = h("div.md"),
+    lines = String(text || "")
+      .replace(/\r\n/g, "\n")
+      .split("\n");
+  let para = [],
+    list = null;
+  const flush = () => {
+    if (para.length) root.append(h("p", {}, inline(para.join("\n"))));
+    para = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flush();
+      list = null;
+      const code = [];
+      while (++i < lines.length && !/^\s*```/.test(lines[i]))
+        code.push(lines[i]);
+      root.append(h("pre", {}, h("code", {}, code.join("\n"))));
+      continue;
+    }
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    const item = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flush();
+      list = null;
+      root.append(h("hr"));
+    } else if (heading) {
+      flush();
+      list = null;
+      root.append(h("h4", {}, inline(heading[1])));
+    } else if (item) {
+      flush();
+      const tag = /\d/.test(item[1]) ? "ol" : "ul";
+      if (!list || list.tagName.toLowerCase() !== tag)
+        root.append((list = h(tag)));
+      list.append(h("li", {}, inline(item[2])));
+    } else if (/^\s*>/.test(line)) {
+      flush();
+      list = null;
+      root.append(h("blockquote", {}, inline(line.replace(/^\s*>\s?/, ""))));
+    } else if (!line.trim()) {
+      flush();
+      list = null;
+    } else {
+      list = null;
+      para.push(line);
+    }
+  }
+  flush();
+  return root;
+}
+// Long text folds behind "展开全文"; the choice survives re-renders by key.
+function foldable(key, text) {
+  const long =
+    (text || "").length > 900 || (text || "").split("\n").length > 14;
+  const body = h(
+    "div.clamp" + (long && !app.open.has(key) ? ".folded" : ""),
+    {},
+    md(text),
+  );
+  if (!long) return body;
+  const more = h(
+    "button.more",
+    { type: "button" },
+    app.open.has(key) ? "收起" : "展开全文",
+  );
+  more.onclick = () => {
+    app.open.has(key) ? app.open.delete(key) : app.open.add(key);
+    paint(true);
+  };
+  return [body, more];
+}
+
+// Data -----------------------------------------------------------------------------------
+async function load(url) {
+  const response = await fetch(new URL("state", url), { cache: "no-store" });
+  if (!response.ok) throw new Error(String(response.status));
+  return response.json();
+}
+const dir = (href, base) => new URL(href, base || location.href);
+const same = (a, b) => !!a && !!b && a.href === b.href;
+
+let timer = null,
+  busy = false,
+  ticks = 0;
+async function tick() {
+  clearTimeout(timer);
+  if (document.hidden || busy) return;
+  busy = true;
+  try {
+    const jobs = [];
+    const url = app.detailUrl;
+    if (url)
+      jobs.push(
+        load(url).then((data) => {
+          if (same(url, app.detailUrl)) app.detail = data; // ignore a reply for a conversation left meanwhile
+        }),
+      );
+    if (app.homeUrl && (ticks % 2 === 0 || !app.home))
+      jobs.push(
+        load(app.homeUrl).then((data) => {
+          app.home = data;
+        }),
+      );
+    const results = await Promise.allSettled(jobs);
+    app.offline = results.some((result) => result.status === "rejected");
+    ticks++;
+    paint();
+  } finally {
+    busy = false;
+    if (!document.hidden) timer = setTimeout(tick, TICK);
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) tick();
 });
-$("search").oninput=()=>{if(current)renderHome(current);};
-$("archive-filter").onchange=()=>{if(current)renderHome(current);};
-$("conversation-tab").onclick=()=>{privateView=false;if(current)render(current);};
-$("backstage-tab").onclick=()=>{privateView=true;if(current)render(current);};
-$("all-seats").onclick=()=>choose(null);
-$("latest").onclick=()=>{choose(null);window.scrollTo({top:document.documentElement.scrollHeight,behavior:"smooth"});$("latest").hidden=true;};
-let refreshTimer=null, refreshing=false;
-async function refresh(){
-  if(document.hidden||refreshing)return;
-  refreshing=true;
-  try{
-    const response=await fetch("./state",{cache:"no-store"});
-    if(!response.ok)throw Error("offline");
-    const data=await response.json();render(data);
-    $("connection").textContent=data.stale||data.refresh_error?"历史读取失败 · 保留上次画面":"本地已连接";
-  }catch{$("connection").textContent="连接断开 · 保留上次画面";}
-  finally{refreshing=false;if(!document.hidden)refreshTimer=setTimeout(refresh,1500);}
+
+function select(url, push = true) {
+  if (same(url, app.detailUrl) && app.detail) return;
+  app.detailUrl = url;
+  app.detail = null;
+  app.speaker = null;
+  app.seen = 0;
+  if (push) history.pushState(null, "", url || app.homeUrl);
+  scroller().scrollTop = 0;
+  paint(true);
+  busy = false;
+  tick();
 }
-document.addEventListener("visibilitychange",()=>{
-  clearTimeout(refreshTimer);refreshTimer=null;
-  if(!document.hidden)refresh();
+window.addEventListener("popstate", () => {
+  const here = dir("./");
+  select(same(here, app.homeUrl) ? null : here, false);
 });
-refresh();
+function navLink(href, className, kids, label) {
+  const url = dir(href, app.homeUrl);
+  return h(
+    "a." + className,
+    {
+      href: url.href,
+      "aria-label": label,
+      "aria-current": same(url, app.detailUrl) ? "page" : null,
+      onclick: (event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button)
+          return;
+        event.preventDefault();
+        select(same(url, app.homeUrl) ? null : url);
+      },
+    },
+    kids,
+  );
+}
+
+// Rendering ------------------------------------------------------------------------------
+function paint(force = false) {
+  document.body.dataset.layout = app.layout;
+  document.body.classList.toggle("picked", !!app.detailUrl);
+  const detail = app.detail,
+    problem = app.offline
+      ? "连接中断，显示的是上次读取的画面"
+      : detail?.stale || detail?.refresh_error || app.home?.refresh_error
+        ? "部分历史读取失败，显示的是上次读取的画面"
+        : "";
+  $("banner").hidden = !problem;
+  $("banner").textContent = problem;
+  if (app.layout === "workbench")
+    update(
+      "side",
+      [
+        app.home,
+        app.mode,
+        app.query,
+        app.showEnded,
+        app.detailUrl?.href,
+        app.offline,
+      ],
+      renderSidebar,
+      $("sidebar"),
+      force,
+    );
+  const view =
+    app.layout === "public"
+      ? renderPublic
+      : !app.detailUrl
+        ? renderOverview
+        : !detail
+          ? renderLoading
+          : detail.mode === "task"
+            ? renderTask
+            : renderShow;
+  const key = [
+    view.name,
+    detail,
+    app.home && !app.detailUrl ? app.home : null,
+    app.tabs,
+    app.speaker,
+    [...app.open],
+  ];
+  const main = scroller(),
+    nearBottom = main.scrollHeight - main.scrollTop - main.clientHeight < 140;
+  const before = main.scrollTop;
+  if (update("view", key, view, $("view"), force)) {
+    main.scrollTop = before;
+    followTranscript(nearBottom);
+  }
+  document.title = app.detail?.title
+    ? `${app.detail.title} · AgentNave`
+    : "AgentNave · 工作台";
+}
+function update(slot, key, render, target, force) {
+  const next = JSON.stringify(key);
+  if (!force && app.keys[slot] === next) return false;
+  app.keys[slot] = next;
+  const nodes = [render()].flat().filter(Boolean);
+  if (nodes.length) target.replaceChildren(...nodes);
+  return true;
+}
+function followTranscript(nearBottom) {
+  const detail = app.detail,
+    count = detail?.messages?.length || 0;
+  const reading =
+    detail && detail.mode !== "task" && currentTab(detail) === "transcript";
+  if (!reading) {
+    $("jump").hidden = true;
+    app.seen = count;
+    return;
+  }
+  if (app.seen && count > app.seen) {
+    if (nearBottom && !app.speaker) scrollToEnd();
+    else $("jump").hidden = false;
+  }
+  app.seen = count;
+}
+const scroller = () =>
+  app.layout === "public" ? document.scrollingElement : $("main");
+function scrollToEnd() {
+  const main = scroller();
+  main.scrollTo({ top: main.scrollHeight });
+  $("jump").hidden = true;
+}
+$("jump").onclick = scrollToEnd;
+
+function renderLoading() {
+  return h(
+    "div.page",
+    {},
+    h("div.empty", {}, h("span.mark", {}, "N"), h("p", {}, "正在读取会话…")),
+  );
+}
+
+function renderSidebar() {
+  const shows = app.home?.shows || [];
+  const query = app.query.trim().toLocaleLowerCase();
+  const inMode = (show) => app.mode === "all" || show.mode === app.mode;
+  const matches = shows.filter(
+    (show) => inMode(show) && show.title.toLocaleLowerCase().includes(query),
+  );
+  const active = matches.filter((show) => !show.archived);
+  const ended = matches.filter((show) => show.archived);
+  const hot = active.filter((show) =>
+    urgent(statusOf(show.mode, show.status).kind),
+  );
+  const calm = active.filter((show) => !hot.includes(show));
+  const count = (mode) =>
+    shows.filter(
+      (show) => !show.archived && (mode === "all" || show.mode === mode),
+    ).length;
+
+  const segment = h(
+    "div.segment",
+    { role: "group", "aria-label": "按用途筛选" },
+    [
+      ["all", "全部"],
+      ["show", "节目"],
+      ["task", "任务"],
+    ].map(([mode, label]) =>
+      h(
+        "button",
+        {
+          type: "button",
+          "aria-pressed": String(app.mode === mode),
+          onclick: () => {
+            app.mode = mode;
+            paint();
+          },
+        },
+        label,
+        h("b", {}, count(mode)),
+      ),
+    ),
+  );
+  const item = (show) => {
+    const state = statusOf(show.mode, show.status);
+    return navLink(
+      show.director_url,
+      "conv",
+      [
+        h("span.glyph." + show.mode, {}, show.mode === "task" ? "任" : "节"),
+        h(
+          "span.conv-body",
+          {},
+          h("span.conv-title", {}, show.title || "未命名会话"),
+          h(
+            "span.conv-meta",
+            {},
+            dot(show.archived ? "idle" : state.kind),
+            show.archived ? "已结束" : state.label,
+          ),
+        ),
+      ],
+      show.title,
+    );
+  };
+  const group = (title, items, extra) =>
+    items.length
+      ? [h("div.group-title", {}, title, extra), items.map(item)]
+      : [];
+  const list = h(
+    "nav",
+    { "aria-label": "会话" },
+    group("需要关注", hot),
+    group(hot.length ? "其他会话" : "会话", calm),
+    ended.length
+      ? h(
+          "div.group-title",
+          {},
+          `已结束 · ${ended.length}`,
+          h(
+            "button",
+            {
+              type: "button",
+              onclick: () => {
+                app.showEnded = !app.showEnded;
+                paint();
+              },
+            },
+            app.showEnded ? "收起" : "展开",
+          ),
+        )
+      : null,
+    app.showEnded ? ended.map(item) : null,
+    !matches.length
+      ? h(
+          "p.side-empty",
+          {},
+          shows.length
+            ? "没有匹配的会话"
+            : "还没有会话。在主控 Agent 的对话中开始一档节目或一个任务。",
+        )
+      : null,
+  );
+  const unavailable = app.home?.unavailable || [];
+  const foot = [
+    unavailable.length
+      ? h(
+          "details",
+          {},
+          h("summary", {}, `${unavailable.length} 份历史暂不可用`),
+          unavailable.map((entry) =>
+            h("p", {}, `${entry.reason}（${entry.path}）`),
+          ),
+        )
+      : null,
+    app.home?.storage
+      ? h("span.path", { title: "数据位置" }, app.home.storage)
+      : null,
+  ];
+  // The head with the search box is built once, so typing never loses focus.
+  $("side-state").replaceChildren(
+    dot(app.offline ? "bad" : "done"),
+    app.offline ? "已断开" : "已同步",
+  );
+  $("side-segment").replaceChildren(segment);
+  $("side-list").replaceChildren(list);
+  $("side-foot").replaceChildren(...foot.filter(Boolean));
+  return null;
+}
+function sidebarShell() {
+  const search = h("input", {
+    type: "search",
+    placeholder: "搜索会话",
+    "aria-label": "搜索会话",
+    autocomplete: "off",
+  });
+  search.oninput = () => {
+    app.query = search.value;
+    paint();
+  };
+  $("sidebar").replaceChildren(
+    h(
+      "div.side-head",
+      {},
+      h(
+        "div.side-top",
+        {},
+        navLink(
+          app.homeUrl.href,
+          "brand",
+          [h("span.mark", {}, "N"), h("span", {}, "AgentNave")],
+          "工作台",
+        ),
+        h("span.link-state#side-state"),
+      ),
+      h("label.search", {}, search),
+      h("div#side-segment"),
+    ),
+    h("div.side-list#side-list"),
+    h("div.side-foot#side-foot"),
+  );
+}
+
+function renderOverview() {
+  const shows = (app.home?.shows || []).filter((show) => !show.archived);
+  const states = shows.map((show) => ({
+    show,
+    state: statusOf(show.mode, show.status),
+  }));
+  const running = states.filter(({ state }) => state.kind === "run");
+  const review = states.filter(({ state }) => state.kind === "review");
+  const attention = states.filter(({ state }) => urgent(state.kind));
+  const hour = new Date().getHours();
+  const greeting =
+    hour < 6
+      ? "夜深了"
+      : hour < 12
+        ? "早上好"
+        : hour < 18
+          ? "下午好"
+          : "晚上好";
+  const summary =
+    running.length || review.length
+      ? [
+          running.length && `${running.length} 个会话正在进行`,
+          review.length && `${review.length} 个等待你审核`,
+        ]
+          .filter(Boolean)
+          .join("，") + "。"
+      : "眼下一切安静，没有进行中的工作。";
+  const tile = (label, value, kind, mode) =>
+    h(
+      "button.tile" + (kind ? ".tone-" + kind : ""),
+      {
+        type: "button",
+        onclick: () => {
+          app.mode = mode;
+          paint();
+        },
+      },
+      h("span", {}, kind ? dot(value ? kind : "idle") : null, label),
+      h("strong", {}, value),
+    );
+  return h(
+    "div.page",
+    {},
+    h(
+      "header.hero",
+      {},
+      h("p.eyebrow", {}, "工作台"),
+      h("h1", {}, greeting),
+      h("p", {}, summary),
+    ),
+    h(
+      "div.tiles",
+      {},
+      tile("进行中", running.length, "run", "all"),
+      tile("待审核", review.length, "review", "all"),
+      tile(
+        "节目",
+        shows.filter((show) => show.mode === "show").length,
+        "",
+        "show",
+      ),
+      tile(
+        "任务",
+        shows.filter((show) => show.mode === "task").length,
+        "",
+        "task",
+      ),
+    ),
+    h(
+      "section.section",
+      {},
+      h("h2", {}, "需要关注"),
+      attention.length
+        ? h(
+            "div.cards",
+            {},
+            attention.map(({ show, state }) =>
+              navLink(
+                show.director_url,
+                "card",
+                [
+                  h(
+                    "span.glyph." + show.mode,
+                    {},
+                    show.mode === "task" ? "任" : "节",
+                  ),
+                  h(
+                    "span.conv-body",
+                    {},
+                    h("span.conv-title", {}, show.title),
+                    h(
+                      "span.conv-meta",
+                      {},
+                      show.mode === "task" ? "任务" : "节目",
+                    ),
+                  ),
+                  pill(state),
+                  h("span.arrow", {}, "→"),
+                ],
+                show.title,
+              ),
+            ),
+          )
+        : h(
+            "div.calm",
+            {},
+            h("strong", {}, "没有需要处理的事"),
+            "运行中、待审核或出错的会话会出现在这里。",
+          ),
+    ),
+    h(
+      "details.guide",
+      {},
+      h("summary", {}, "如何开始新会话"),
+      h(
+        "p",
+        {},
+        "在主控 Agent 的对话中说明用途和内容，主控会创建会话，这里自动同步。",
+      ),
+      EXAMPLES.map(([label, text]) =>
+        h(
+          "div.example",
+          {},
+          h(
+            "p",
+            {},
+            h("span.badge." + (label === "节目" ? "show" : "task"), {}, label),
+            " ",
+            text,
+          ),
+          copyButton(text, "复制示例"),
+        ),
+      ),
+    ),
+  );
+}
+
+function header(detail, eyebrow, pillState, meta, actions) {
+  return h(
+    "header.detail-head",
+    {},
+    app.layout === "workbench"
+      ? navLink(app.homeUrl.href, "back", "← 所有会话", "返回所有会话")
+      : null,
+    h("p.eyebrow", {}, eyebrow),
+    h("h1", {}, detail.title || "未命名会话"),
+    h(
+      "div.head-row",
+      {},
+      pillState ? pill(pillState) : null,
+      meta ? h("span.meta", {}, meta) : null,
+      h("span.spacer"),
+      actions,
+    ),
+  );
+}
+function currentTab(detail) {
+  if (detail.view === "public") return "transcript";
+  if (app.tabs[detail.id]) return app.tabs[detail.id];
+  const live =
+    detail.round && ["running", "review"].includes(detail.round.status);
+  return live || !detail.messages.length ? "live" : "transcript";
+}
+
+function renderShow() {
+  const detail = app.detail,
+    round = detail.round;
+  const cast = [HOST, ...detail.seats];
+  const runs = Object.fromEntries(
+    (round?.seats || []).map((run) => [run.seat_id, run]),
+  );
+  const state = detail.archived
+    ? tone(["已结束", "idle"])
+    : statusOf("show", detail.status);
+  const speaking = (detail.speaking || []).map(
+    (id) => cast.find((seat) => seat.id === id)?.label || id,
+  );
+  const tab = currentTab(detail);
+  const choose = (next) => {
+    app.tabs[detail.id] = next;
+    paint();
+  };
+  const flags = [
+    detail.review ? "导演审核后公开" : "回答自动公开",
+    detail.isolated ? "隔离席位" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return h(
+    "div.page",
+    {},
+    header(
+      detail,
+      [h("span.badge.show", {}, "节目"), flags],
+      state,
+      [
+        speaking.length ? `${speaking.join("、")} 作答中 · ` : "",
+        `${detail.seats.length} 位选手 · ${detail.messages.length} 条公开发言`,
+      ].join(""),
+      [
+        detail.public_url
+          ? h(
+              "a.btn",
+              { href: detail.public_url, target: "_blank", rel: "noreferrer" },
+              "选手视角 ↗",
+            )
+          : null,
+        h(
+          "a.btn",
+          {
+            href: new URL("transcript.jsonl", app.detailUrl).href,
+            download: "transcript.jsonl",
+          },
+          "导出 JSONL",
+        ),
+      ],
+    ),
+    h(
+      "div.cast",
+      { "aria-label": "席位" },
+      cast.map((seat) => {
+        const run = runs[seat.id];
+        const kind = run
+          ? run.review === "pending"
+            ? "review"
+            : (SEAT[run.status] || ["", "idle"])[1]
+          : "";
+        const ring = h(
+          "span.ring" + (kind ? ".tone-" + kind : ""),
+          { style: "position:relative;display:grid;border-radius:9px" },
+          avatar(seat),
+        );
+        return h(
+          "div.seat",
+          {
+            title: run
+              ? run.review
+                ? REVIEW[run.review]?.[0]
+                : SEAT[run.status]?.[0]
+              : "",
+          },
+          ring,
+          h(
+            "span.seat-text",
+            {},
+            h("strong", {}, seat.label),
+            h("small", {}, seat.model),
+          ),
+        );
+      }),
+    ),
+    h(
+      "nav.tabs",
+      { "aria-label": "视图" },
+      h(
+        "button",
+        {
+          type: "button",
+          "aria-pressed": String(tab === "live"),
+          onclick: () => choose("live"),
+        },
+        "本轮现场",
+        h("span.private", {}, "私有"),
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          "aria-pressed": String(tab === "transcript"),
+          onclick: () => choose("transcript"),
+        },
+        "公开记录",
+        h("b", {}, detail.messages.length),
+      ),
+    ),
+    tab === "live" ? renderDesk(detail, cast) : renderTranscript(detail, cast),
+  );
+}
+
+function renderDesk(detail, cast) {
+  const round = detail.round;
+  if (!round)
+    return h(
+      "div.empty",
+      {},
+      h("strong", {}, "还没有开始第一轮"),
+      "主控发起轮次后，各席位的进展会实时出现在这里。",
+    );
+  const state = statusOf("show", round.status);
+  return [
+    h(
+      "div.round-head",
+      {},
+      h("h3", {}, `第 ${round.number} 轮`),
+      h("span.badge.show", {}, round.order === "parallel" ? "并联" : "串联"),
+      pill(state),
+    ),
+    round.error ? h("p.error", {}, "本轮提示：" + round.error) : null,
+    h(
+      "div.desk",
+      {},
+      round.seats.map((run) => {
+        const seat = cast.find((item) => item.id === run.seat_id) || {
+          id: run.seat_id,
+          label: run.seat_id,
+          model: "",
+          provider: "",
+        };
+        const runState = run.review
+          ? tone(REVIEW[run.review] || [run.review, "idle"])
+          : tone(SEAT[run.status] || [run.status, "idle"]);
+        const key = `desk:${detail.id}:${round.number}:${run.seat_id}`;
+        return h(
+          "article.run.tone-" + runState.kind,
+          {},
+          h(
+            "div.run-head",
+            {},
+            avatar(seat),
+            h(
+              "span.who",
+              {},
+              h("strong", {}, seat.label),
+              h("small", {}, seat.model),
+            ),
+            pill(runState),
+          ),
+          run.instruction
+            ? h("div.instruction", {}, h("b", {}, "私密指令 "), run.instruction)
+            : null,
+          run.output
+            ? foldable(key, run.output)
+            : run.status === "running"
+              ? h(
+                  "div.waiting",
+                  {},
+                  h("span.typing", {}, h("i"), h("i"), h("i")),
+                  "正在等待回复…",
+                )
+              : null,
+          run.error ? h("p.error", {}, run.error) : null,
+        );
+      }),
+    ),
+    detail.review
+      ? h(
+          "p.meta",
+          { style: "color:var(--faint);font-size:12px;margin-top:16px" },
+          "发布或丢弃回答，请在主控 Agent 的对话中操作。",
+        )
+      : null,
+  ];
+}
+
+function renderTranscript(detail, cast) {
+  const messages = detail.messages || [];
+  const speakers = cast.filter((seat) =>
+    messages.some((message) => message.speaker === seat.id),
+  );
+  const filters =
+    speakers.length > 1
+      ? h(
+          "div.filters",
+          { role: "group", "aria-label": "按角色查看" },
+          h(
+            "button",
+            {
+              type: "button",
+              "aria-pressed": String(!app.speaker),
+              onclick: () => {
+                app.speaker = null;
+                paint();
+              },
+            },
+            "所有人",
+          ),
+          speakers.map((seat) =>
+            h(
+              "button",
+              {
+                type: "button",
+                "aria-pressed": String(app.speaker === seat.id),
+                onclick: () => {
+                  app.speaker = app.speaker === seat.id ? null : seat.id;
+                  paint();
+                },
+              },
+              seat.label,
+            ),
+          ),
+        )
+      : null;
+  const shown = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => !app.speaker || message.speaker === app.speaker);
+  if (!shown.length)
+    return [
+      filters,
+      h(
+        "div.empty",
+        {},
+        h("span.mark", {}, "N"),
+        h(
+          "strong",
+          {},
+          app.speaker ? "这位还没有公开发言" : "好戏，从一句话开始",
+        ),
+        app.speaker
+          ? "换一个角色看看。"
+          : "主持人开场、选手回应，公开发言会依次留在这里。",
+      ),
+    ];
+  let round = null;
+  const items = [];
+  for (const { message, index } of shown) {
+    if (message.round !== round) {
+      round = message.round;
+      items.push(h("div.divider", {}, `第 ${round} 轮`));
+    }
+    const seat = cast.find((item) => item.id === message.speaker) || {
+      id: message.speaker,
+      label: message.speaker,
+      model: "",
+      provider: "",
+    };
+    items.push(
+      h(
+        "article.msg" +
+          (seat.provider === "host" ? ".host" : "") +
+          (message.kind === "absent" ? ".absent" : ""),
+        {},
+        avatar(seat, ".lg"),
+        h(
+          "div.msg-body",
+          {},
+          h(
+            "div.msg-head",
+            {},
+            h("strong", {}, seat.label),
+            message.kind === "task"
+              ? h("span.badge.show", {}, "本轮任务")
+              : null,
+            h("time", { datetime: message.time }, when(message.time)),
+            h("span.num", {}, "#" + String(index + 1).padStart(3, "0")),
+            h("span.tools", {}, copyButton(message.text)),
+          ),
+          foldable(`msg:${detail.id}:${index}`, message.text),
+        ),
+      ),
+    );
+  }
+  return [filters, h("div.timeline", {}, items)];
+}
+
+function renderTask() {
+  const detail = app.detail,
+    tasks = detail.tasks || [];
+  const running = tasks.filter((task) => task.status === "running").length;
+  const latest = tasks[tasks.length - 1];
+  const state = detail.archived
+    ? tone(["已结束", "idle"])
+    : running
+      ? tone(["进行中", "run"])
+      : statusOf("task", latest?.status || "idle");
+  return h(
+    "div.page",
+    {},
+    header(
+      detail,
+      [h("span.badge.task", {}, "任务"), "仅主控可见 · 回复不等于验收通过"],
+      state,
+      `${tasks.length} 次调用${running ? ` · ${running} 个运行中` : ""}`,
+      null,
+    ),
+    tasks.length
+      ? h(
+          "div.runs",
+          {},
+          [...tasks].reverse().map((task) => {
+            const taskState = statusOf("task", task.status);
+            const seat = {
+              label: task.provider,
+              provider: task.provider,
+              model: task.model,
+            };
+            return h(
+              "article.task-run.tone-" + taskState.kind,
+              {},
+              h(
+                "header",
+                {},
+                avatar(seat, ".lg"),
+                h(
+                  "span.who",
+                  {},
+                  h("strong", {}, task.provider),
+                  h(
+                    "small",
+                    {},
+                    `${when(task.time)} · ${task.status === "running" ? "已运行 " : "用时 "}${duration(task.elapsed_ms)}`,
+                  ),
+                ),
+                pill(taskState),
+              ),
+              h(
+                "div.chips",
+                {},
+                h("span.chip", { title: "模型" }, task.model || "原生设置"),
+                h("span.chip", { title: task.cwd }, task.cwd),
+              ),
+              h(
+                "div.body",
+                {},
+                task.output
+                  ? foldable(`task:${detail.id}:${task.id}`, task.output)
+                  : task.status === "running"
+                    ? h(
+                        "div.waiting",
+                        {},
+                        h("span.typing", {}, h("i"), h("i"), h("i")),
+                        "正在等待回复…",
+                      )
+                    : h(
+                        "p.meta",
+                        { style: "color:var(--faint);margin:0" },
+                        "没有回复内容",
+                      ),
+                task.error ? h("p.error", {}, task.error) : null,
+                task.output
+                  ? h(
+                      "div",
+                      { style: "display:flex;justify-content:flex-end" },
+                      copyButton(task.output, "复制回复"),
+                    )
+                  : null,
+              ),
+            );
+          }),
+        )
+      : h(
+          "div.empty",
+          {},
+          h("strong", {}, "还没有任务"),
+          "主控派发的任务会出现在这里。",
+        ),
+  );
+}
+
+function renderPublic() {
+  const detail = app.detail;
+  if (!detail) return renderLoading();
+  const cast = [HOST, ...detail.seats];
+  return [
+    h(
+      "div.public-bar",
+      {},
+      h(
+        "span.brand",
+        {},
+        h("span.mark", {}, "N"),
+        "AgentNave",
+        h("small", {}, "公开对话"),
+      ),
+      h(
+        "a.btn",
+        {
+          href: new URL("transcript.jsonl", app.detailUrl).href,
+          download: "transcript.jsonl",
+        },
+        "导出 JSONL",
+      ),
+    ),
+    h(
+      "div.page",
+      {},
+      h(
+        "header.detail-head",
+        {},
+        h(
+          "p.eyebrow",
+          {},
+          h("span.badge.show", {}, "节目"),
+          "全员可见的公开记录",
+        ),
+        h("h1", {}, detail.title),
+        h(
+          "div.head-row",
+          {},
+          h(
+            "span.meta",
+            {},
+            `${detail.seats.length} 位选手 · ${detail.messages.length} 条公开发言`,
+          ),
+        ),
+      ),
+      h(
+        "div.cast",
+        {},
+        cast.map((seat) =>
+          h(
+            "div.seat",
+            {},
+            avatar(seat),
+            h(
+              "span.seat-text",
+              {},
+              h("strong", {}, seat.label),
+              h("small", {}, seat.model),
+            ),
+          ),
+        ),
+      ),
+      renderTranscript(detail, cast),
+    ),
+  ];
+}
+
+// Boot -----------------------------------------------------------------------------------
+async function boot() {
+  const here = dir("./");
+  let data;
+  try {
+    data = await load(here);
+  } catch {
+    $("view").replaceChildren(
+      h(
+        "div.boot",
+        {},
+        h("span.mark", {}, "N"),
+        h("p", {}, "无法连接到工作室，请稍后刷新。"),
+      ),
+    );
+    setTimeout(boot, 3000);
+    return;
+  }
+  if (data.view === "public") {
+    app.layout = "public";
+    app.detail = data;
+    app.detailUrl = here;
+  } else if (data.view === "workbench") {
+    app.layout = "workbench";
+    app.home = data;
+    app.homeUrl = here;
+  } else {
+    app.layout = "workbench";
+    app.detail = data;
+    app.detailUrl = here;
+    app.homeUrl = dir(data.workbench_url || "./", here);
+  }
+  if (app.layout === "workbench") sidebarShell();
+  paint(true);
+  tick();
+}
+boot();
