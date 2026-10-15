@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -15,7 +16,12 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
-from agentnave.models import InvocationError, InvocationRequest, InvocationStatus
+from agentnave.models import (
+    InvocationError,
+    InvocationPhase,
+    InvocationRequest,
+    InvocationStatus,
+)
 from agentnave.processes import (
     _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
 )
@@ -52,7 +58,8 @@ class FakeAdapter(ClaudeAdapter):
                 code = (
                     "import os,signal,time; os.kill(os.getppid(), signal.SIGKILL); time.sleep(0.1)"
                 )
-        elif request.prompt in {"progress", "multiple_blockers"}:
+        elif request.prompt in {"progress", "multiple_blockers", "late_blocker"}:
+            delay = 1.0 if request.prompt == "late_blocker" else 0
             errors = ["authentication_failed"]
             if request.prompt == "multiple_blockers":
                 errors += ["permission_denied", "authentication_failed"]
@@ -63,8 +70,11 @@ class FakeAdapter(ClaudeAdapter):
                 )
                 + "\n"
             )
+            written = request.cwd / "blocker-written"
             code = (
-                f"import sys,time; sys.stdout.write({wire!r}); sys.stdout.flush(); time.sleep(30)"
+                f"import pathlib,sys,time; time.sleep({delay}); "
+                f"sys.stdout.write({wire!r}); sys.stdout.flush(); "
+                f"pathlib.Path({str(written)!r}).touch(); time.sleep(30)"
             )
         elif request.prompt == "streaming_message":
             events = [
@@ -211,6 +221,64 @@ async def test_wait_preserves_distinct_blockers_in_one_stdout_burst(
         assert isinstance(second, InvocationError)
         assert [first.code, second.code] == ["authentication_failed", "permission_denied"]
         assert await manager.wait_for_update(invocation_id, 0.02) is None
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wait_any_returns_ready_subset_without_consuming_other_blockers(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    fast = manager.start(InvocationRequest("claude", "progress", tmp_path))
+    burst = manager.start(InvocationRequest("claude", "multiple_blockers", tmp_path))
+    late = manager.start(InvocationRequest("claude", "late_blocker", tmp_path))
+    done = manager.start(InvocationRequest("claude", "complete", tmp_path))
+    watched = [fast, burst, late]
+    try:
+        async with asyncio.timeout(5):
+            while any(manager.snapshot(item).last_event_age_ms is None for item in (fast, burst)):
+                await asyncio.sleep(0.01)
+            first = await manager.wait_for_any(watched, 600)
+            second = await manager.wait_for_any(watched, 600)
+            third = await manager.wait_for_any(watched, 600)
+            finished = await manager.wait(done)
+            terminal = await manager.wait_for_any([late, done], 600)
+        codes = [
+            {key: cast(InvocationError, value).code for key, value in updates.items()}
+            for updates in (first, second, third)
+        ]
+        # Every ready invocation is returned together, but each gives up only one blocker.
+        assert codes[0] == {fast: "authentication_failed", burst: "authentication_failed"}
+        assert codes[1] == {burst: "permission_denied"}
+        # Earlier returns did not swallow the later blocker of the slower invocation.
+        assert codes[2] == {late: "authentication_failed"}
+        assert await manager.wait_for_any(watched, 0.05) == {}
+        assert terminal == {done: finished}
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wait_any_leaves_blocker_unread_when_it_lands_after_the_window(
+    tmp_path: Path, fake_adapter: None
+) -> None:
+    manager = InvocationManager()
+    late = manager.start(InvocationRequest("claude", "late_blocker", tmp_path))
+    try:
+        async with asyncio.timeout(5):
+            while manager.snapshot(late).phase is not InvocationPhase.RUNNING:
+                await asyncio.sleep(0.01)
+            waiting = asyncio.create_task(manager.wait_for_any([late], 0.05))
+            await asyncio.sleep(0)
+            # Stall the loop until both the window and the blocker are due.
+            started = time.monotonic()
+            while not (tmp_path / "blocker-written").exists() or time.monotonic() - started < 0.1:
+                assert time.monotonic() - started < 5
+                time.sleep(0.01)
+            assert await waiting == {}
+            later = await manager.wait_for_any([late], 600)
+        assert cast(InvocationError, later[late]).code == "authentication_failed"
     finally:
         await manager.shutdown()
 

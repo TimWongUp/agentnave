@@ -94,7 +94,9 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert [tool.name for tool in result.tools] == [
         "start_agent",
         "wait_agent",
+        "wait_any",
         "cancel_agent",
+        "list_invocations",
         "describe_provider",
         "open_group",
         "run_round",
@@ -112,8 +114,12 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     wait_properties = _payload(result.tools[1].input_schema["properties"])
     assert set(wait_properties) == {"invocation_id"}
     assert mcp_server.WAIT_SECONDS == 300
-    assert result.tools[2].annotations is not None
-    assert result.tools[2].annotations.destructive_hint is True
+    assert result.tools[3].annotations is not None
+    assert result.tools[3].annotations.destructive_hint is True
+    assert all(
+        tool.annotations is not None and tool.annotations.read_only_hint is True
+        for tool in (result.tools[2], result.tools[4])
+    )
 
 
 @pytest.mark.asyncio
@@ -262,6 +268,66 @@ async def test_mcp_preserves_terminal_result_when_provider_usage_is_malformed(
     assert invocation_result["output"] == "MALFORMED USAGE"
     assert invocation_result["session_id"] == "session-e2e"
     assert "provider_usage" not in invocation_result
+
+
+@pytest.mark.asyncio
+async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 1.0)
+    async with Client(mcp) as client:
+        ids: list[object] = []
+        for prompt in ("sleep", "private task text"):
+            started = await client.call_tool(
+                "start_agent", {"provider": "claude", "prompt": prompt, "cwd": str(tmp_path)}
+            )
+            ids.append(_payload(started.structured_content)["invocation_id"])
+        sleeping, finished = ids
+        async with asyncio.timeout(3):
+            for invalid in ([], [finished, finished], [sleeping, "missing"]):
+                rejected = await client.call_tool("wait_any", {"invocation_ids": invalid})
+                assert rejected.is_error is True
+            ready = await client.call_tool("wait_any", {"invocation_ids": [sleeping, finished]})
+        ready_payload = _payload(ready.structured_content)
+        assert ready_payload["reason"] == "ready"
+        (update,) = cast(list[dict[str, object]], ready_payload["updates"])
+        assert update["invocation_id"] == finished
+        assert (update["status"], update["reason"]) == ("succeeded", "finished")
+
+        listed = _payload((await client.call_tool("list_invocations", {})).structured_content)
+        active, done = cast(list[dict[str, object]], listed["invocations"])
+        assert active["invocation_id"] == sleeping
+        assert (active["status"], active["phase"], active["events_seen"]) == (
+            "running",
+            "running",
+            False,
+        )
+        assert "session_id" not in active
+        assert done == {
+            "invocation_id": finished,
+            "provider": "claude",
+            "cwd": str(tmp_path),
+            "status": "succeeded",
+            "elapsed_ms": update["elapsed_ms"],
+            "events_seen": True,
+            "session_id": "session-e2e",
+        }
+        assert "private task text" not in str(listed).lower()
+
+        monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.2)
+        elapsed = _payload(
+            (await client.call_tool("wait_any", {"invocation_ids": [sleeping]})).structured_content
+        )
+        assert elapsed["reason"] == "wait_elapsed"
+        (running,) = cast(list[dict[str, object]], elapsed["updates"])
+        assert (running["invocation_id"], running["status"]) == (sleeping, "running")
+        await asyncio.sleep(1.0)
+        listed = _payload((await client.call_tool("list_invocations", {})).structured_content)
+        assert [
+            item["invocation_id"] for item in cast(list[dict[str, object]], listed["invocations"])
+        ] == [sleeping]
+        await client.call_tool("cancel_agent", {"invocation_id": sleeping})
 
 
 @pytest.mark.asyncio
@@ -466,7 +532,9 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
     assert [tool.name for tool in result.tools] == [
         "start_agent",
         "wait_agent",
+        "wait_any",
         "cancel_agent",
+        "list_invocations",
         "describe_provider",
         "open_group",
         "run_round",

@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -16,6 +16,7 @@ from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
 from agentnave.models import (
     InvocationError,
+    InvocationListing,
     InvocationPhase,
     InvocationRequest,
     InvocationResult,
@@ -102,6 +103,17 @@ class _InvocationRecord:
             self.last_activity = activity
             self.last_activity_at = self.last_event_at
 
+    def take_update(self) -> InvocationResult | InvocationError | None:
+        """Return the final result, else consume the oldest unread blocker."""
+        if self.task is not None and self.task.done():
+            return self.task.result()
+        if not self.pending_attention:
+            return None
+        attention = self.pending_attention.popleft()
+        if not self.pending_attention:
+            self.attention_event.clear()
+        return attention
+
 
 @dataclass(frozen=True, slots=True)
 class _CapturedStream:
@@ -164,29 +176,72 @@ class InvocationManager:
     async def wait_for_update(
         self, invocation_id: str, timeout_seconds: float
     ) -> InvocationResult | InvocationError | None:
-        record = self._record(invocation_id)
-        if record.task is None:
-            raise RuntimeError("invocation task was not initialized")
-        try:
-            async with asyncio.timeout(timeout_seconds):
-                while True:
-                    if record.task.done():
-                        return record.task.result()
-                    if record.pending_attention:
-                        attention = record.pending_attention.popleft()
-                        if not record.pending_attention:
-                            record.attention_event.clear()
-                        return attention
-                    attention_task = asyncio.create_task(record.attention_event.wait())
-                    try:
-                        await asyncio.wait(
-                            (record.task, attention_task), return_when=asyncio.FIRST_COMPLETED
-                        )
-                    finally:
-                        attention_task.cancel()
-                        await asyncio.gather(attention_task, return_exceptions=True)
-        except TimeoutError:
-            return None
+        updates = await self.wait_for_any((invocation_id,), timeout_seconds)
+        return updates.get(invocation_id)
+
+    async def wait_for_any(
+        self, invocation_ids: Sequence[str], timeout_seconds: float
+    ) -> dict[str, InvocationResult | InvocationError]:
+        """Return every listed invocation that has finished or has an unread blocker.
+
+        Each scan runs without awaiting, so only blockers placed in the result are consumed.
+        An empty result means the wait elapsed.
+        """
+        if not invocation_ids:
+            raise ValueError("invocation_ids must not be empty")
+        if len(set(invocation_ids)) != len(invocation_ids):
+            raise ValueError("invocation_ids must not repeat")
+        records = {invocation_id: self._record(invocation_id) for invocation_id in invocation_ids}
+        tasks: list[asyncio.Task[InvocationResult]] = []
+        for record in records.values():
+            if record.task is None:
+                raise RuntimeError("invocation task was not initialized")
+            tasks.append(record.task)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        while True:
+            updates: dict[str, InvocationResult | InvocationError] = {}
+            for invocation_id, record in records.items():
+                update = record.take_update()
+                if update is not None:
+                    updates[invocation_id] = update
+            remaining = deadline - loop.time()
+            if updates or remaining <= 0:
+                return updates
+            waiters = [
+                asyncio.create_task(record.attention_event.wait()) for record in records.values()
+            ]
+            try:
+                done, _ = await asyncio.wait(
+                    (*tasks, *waiters), timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                for waiter in waiters:
+                    waiter.cancel()
+                await asyncio.gather(*waiters, return_exceptions=True)
+            # An expired window returns snapshots: a blocker landing now stays unread.
+            if not done or loop.time() >= deadline:
+                return {}
+
+    def list_invocations(self) -> list[InvocationListing]:
+        listings: list[InvocationListing] = []
+        for invocation_id, record in self._records.items():
+            result = (
+                record.task.result() if record.task is not None and record.task.done() else None
+            )
+            listings.append(
+                InvocationListing(
+                    invocation_id,
+                    record.request.provider,
+                    record.request.cwd,
+                    _duration_ms(record.started_at) if result is None else result.duration_ms,
+                    record.last_event_at is not None,
+                    phase=record.phase if result is None else None,
+                    status=None if result is None else result.status,
+                    session_id=None if result is None else result.session_id,
+                )
+            )
+        return listings
 
     def snapshot(self, invocation_id: str) -> InvocationSnapshot:
         record = self._record(invocation_id)

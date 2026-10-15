@@ -15,7 +15,9 @@ from mcp import Client, StdioServerParameters
 CORE = [
     "start_agent",
     "wait_agent",
+    "wait_any",
     "cancel_agent",
+    "list_invocations",
     "describe_provider",
     "open_group",
     "run_round",
@@ -23,7 +25,7 @@ CORE = [
     "cancel_round",
 ]
 STUDIO = [
-    *CORE[:6],
+    *CORE[:8],
     "wait_round",
     "cancel_round",
     "decide_answers",
