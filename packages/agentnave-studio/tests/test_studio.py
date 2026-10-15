@@ -85,6 +85,15 @@ def _conversation(view: dict[str, object]) -> dict[str, object]:
     return _data(view["conversation"])
 
 
+async def _live(data_root: Path) -> dict[str, object]:
+    for _ in range(100):
+        files = list((data_root / "live").glob("*.json"))
+        if files:
+            return cast(dict[str, object], json.loads(files[0].read_text(encoding="utf-8")))
+        await asyncio.sleep(0.02)
+    raise AssertionError("no live views were written")
+
+
 def _fetch(url: str) -> str:
     with urlopen(url, timeout=3) as response:
         return response.read().decode()
@@ -326,6 +335,12 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
         assert "prompt" not in first
         finished = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
         conversation_id = first["conversation_id"]
+        directory = data_root / "conversations" / str(conversation_id)
+        await asyncio.sleep(0.05)  # let the collector save the result
+        saved_views = json.loads((directory / "views.json").read_text(encoding="utf-8"))
+        assert saved_views["summary"]["status"] == "succeeded"
+        assert saved_views["director"]["workbench_url"] == "/"
+        assert saved_views["public"] is None
         resumed = await _call(
             client,
             "start_agent",
@@ -369,6 +384,13 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
             },
         )
         assert duplicate.is_error and "active invocation" in str(duplicate.content)
+        live = await _live(data_root)
+        assert live["pid"] == os.getpid()
+        live_views = cast(dict[str, dict[str, dict[str, object]]], live["conversations"])
+        tasks_live = cast(
+            list[dict[str, object]], live_views[str(conversation_id)]["director"]["tasks"]
+        )
+        assert tasks_live[-1]["status"] == "running"
         assert (
             await client.call_tool(
                 "update_conversation", {"conversation_id": conversation_id, "archived": True}
@@ -388,7 +410,9 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
             await client.call_tool("wait_agent", {"invocation_id": first["invocation_id"]})
         ).is_error
         assert "dashboard_url" not in str(deleted)
-    assert not (data_root / "conversations" / str(conversation_id) / "state.json").exists()
+        assert not (directory / "views.json").exists()
+    assert not (directory / "state.json").exists()
+    assert not list((data_root / "live").glob("*.json"))  # removed once nothing runs
 
 
 @pytest.mark.asyncio
@@ -405,7 +429,13 @@ async def test_second_server_reads_but_cannot_write_a_held_show(
     with pytest.raises(ValueError, match="held by another"):
         second.post(record.state.id, "hello")
     first.post(record.state.id, "hello")
+    views_path = record.directory / "views.json"
+    public = json.loads(views_path.read_text(encoding="utf-8"))["public"]
+    assert [message["text"] for message in public["messages"]] == ["hello"]
     await first.close()
+    views_path.unlink()
+    second.scan()
+    assert views_path.is_file()  # filled in under the probe lock once nobody holds the record
     second.post(record.state.id, "after exit")
     assert [entry.kind for entry in second.records[record.state.id].state.entries] == [
         "host",

@@ -4,6 +4,7 @@
 - 日期：2026-08-25
 - 公开接口条款由 [ADR-0003](0003-agent-only-stdio-mcp-server.md) 取代
 - 总运行时限已移除，当前取消与等待合同见[架构与边界](../context/architecture.md)。
+- “不提供桌面状态 App”由 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 取代：托盘应用只读展示工作室数据。
 
 ## 背景
 
