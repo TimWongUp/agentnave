@@ -1,6 +1,6 @@
 [package]
 name = "agentnave-tray"
-version = "0.16.1"
+version = "0.17.0"
 description = "AgentNave menu bar and tray app: a read-only view of saved Studio conversations"
 license = "MIT"
 edition = "2024"
