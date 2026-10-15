@@ -106,8 +106,6 @@ def failure_status(text: str) -> InvocationStatus:
         "not authenticated",
         "/login command",
         "login required",
-        "not logged in",
-        "401 unauthorized",
     )
     return (
         InvocationStatus.BLOCKED

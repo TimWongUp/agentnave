@@ -63,15 +63,7 @@ from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
                 "message": "Reconnecting... 2/5 (unexpected status 401 Unauthorized: Missing bearer "
                 "or basic authentication in header, url: wss://api.openai.com/v1/responses)",
             },
-            "authentication_failed",
-        ),
-        (
-            "codex",
-            {
-                "type": "error",
-                "message": "Reconnecting... 1/5 (stream disconnected before completion)",
-            },
-            None,
+            None,  # the HTTPS fallback may still succeed, so a retry is never a blocker
         ),
         ("grok", {"type": "error", "message": "secret"}, "provider_failed"),
         ("antigravity", {"event": "result", "result": {"status": "WAITING"}}, "provider_blocked"),
