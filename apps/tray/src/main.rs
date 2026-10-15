@@ -28,7 +28,7 @@ const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
 const PUBLIC: &str = "public";
-const PANEL_SIZE: (f64, f64) = (360.0, 520.0);
+const PANEL_SIZE: (f64, f64) = (380.0, 600.0);
 const POLL: Duration = Duration::from_secs(2);
 /// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
 const REOPEN_GUARD: Duration = Duration::from_millis(300);

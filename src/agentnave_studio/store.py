@@ -94,6 +94,7 @@ class TaskRecord(BaseModel):
     provider: str
     model: str
     cwd: str
+    prompt: str | None = None  # absent in tasks saved before v0.18.0
     session_id: str | None = None
     status: str = "running"
     output: str = ""

@@ -423,6 +423,7 @@ class Studio(Groups):
                 provider=request.provider,
                 model=str(request.provider_options.get("model", "原生设置")),
                 cwd=str(request.cwd),
+                prompt=request.prompt,
                 session_id=request.session_id,
                 time=now(),
             )

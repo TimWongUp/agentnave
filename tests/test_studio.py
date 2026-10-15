@@ -345,6 +345,8 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
         await asyncio.sleep(0.05)  # let the collector save the result
         saved_views = json.loads((directory / "views.json").read_text(encoding="utf-8"))
         assert saved_views["summary"]["status"] == "succeeded"
+        assert saved_views["summary"]["updated"] >= saved_views["director"]["tasks"][0]["time"]
+        assert saved_views["director"]["tasks"][0]["prompt"] == "one"
         assert saved_views["director"]["workbench_url"] == "/"
         assert saved_views["public"] is None
         resumed = await _call(

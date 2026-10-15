@@ -132,58 +132,128 @@ main {
   letter-spacing: 0.08em;
   color: var(--faint);
 }
-.live {
-  display: block;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--card);
-  margin-bottom: 6px;
+.thread {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 12px 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 0;
 }
-.live:hover,
-.row:hover {
+.thread span:last-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thread .glyph {
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  border-radius: 5px;
+}
+.thread:hover {
+  color: var(--ink);
+}
+.msg {
+  display: flex;
+  gap: 9px;
+  padding: 6px 6px;
+  border-radius: 10px;
+  min-width: 0;
+}
+.msg:hover,
+.row:hover,
+.sys:hover {
   background: var(--card-hover);
 }
-.live-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.live-head .title {
-  flex: 1;
-  min-width: 0;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.live-head small {
-  color: var(--muted);
+.msg .avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   font-size: 11px;
-  white-space: nowrap;
+  margin-top: 1px;
 }
-.voice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 7px;
-  min-width: 0;
-}
-.voice .who {
-  flex: none;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--soft);
-  max-width: 86px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.voice .tail {
+.msg-body {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
+}
+.msg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
   color: var(--muted);
+  min-width: 0;
+}
+.msg-meta strong {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--soft);
+  white-space: nowrap;
+}
+.msg.host .msg-meta strong {
+  color: var(--accent);
+}
+.msg-meta time {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.badge {
+  padding: 0 6px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--review);
+  background: color-mix(in srgb, var(--review) 16%, transparent);
+}
+.writing {
+  color: var(--run);
+  font-size: 10.5px;
+}
+.msg-text {
+  margin-top: 3px;
+  padding: 7px 10px;
+  border-radius: 4px 11px 11px 11px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 7;
+  overflow: hidden;
+}
+.msg.host .msg-text {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.msg-text.typing-text {
+  -webkit-line-clamp: 3;
+  color: var(--soft);
+  border: 1px dashed color-mix(in srgb, var(--run) 45%, transparent);
+}
+.msg-body > .typing {
+  margin: 8px 0 2px;
+}
+.sys {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0;
+  padding: 4px 8px 4px 39px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--tone, var(--muted));
+  min-width: 0;
+}
+.sys small {
+  color: var(--faint);
+  font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

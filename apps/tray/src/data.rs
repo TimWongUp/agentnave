@@ -44,6 +44,8 @@ pub struct Item {
     pub mode: String,
     pub archived: bool,
     pub status: String,
+    /// Last activity as Studio recorded it (RFC 3339); empty in older snapshots.
+    pub updated: String,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -243,6 +245,7 @@ impl Reader {
                 "archived": item.archived,
                 "director_url": format!("/c/{}/", item.id),
                 "status": item.status,
+                "updated": item.updated,
             })).collect::<Vec<_>>(),
             "refresh_error": if overview.missing { Some("未找到工作室数据目录") } else { None },
             "unavailable": overview.unavailable.iter().map(|(path, reason)| json!({"path": path, "reason": reason})).collect::<Vec<_>>(),
@@ -319,6 +322,7 @@ fn summary(snapshot: &Value) -> Option<Item> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         status: text("status").unwrap_or_default(),
+        updated: text("updated").unwrap_or_default(),
     })
 }
 
@@ -329,7 +333,7 @@ mod tests {
     fn snapshot(id: &str, status: &str) -> Value {
         json!({
             "version": 1,
-            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "archived": false, "status": status},
+            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "archived": false, "status": status, "updated": "2026-10-15T00:00:00+00:00"},
             "director": {"view": "director", "mode": "show", "status": status, "messages": [{"text": "hi"}]},
             "public": {"view": "public", "mode": "show", "messages": [{"text": "hi"}]},
         })
@@ -409,7 +413,8 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|s| s["director_url"] == "/c/a1/")
+                .any(|s| s["director_url"] == "/c/a1/"
+                    && s["updated"] == "2026-10-15T00:00:00+00:00")
         );
         assert_eq!(state(&reader, "/p/a1/state")["view"], "public");
         assert_eq!(reader.respond("/c/a1/").status, 200);
