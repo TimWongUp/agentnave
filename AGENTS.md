@@ -21,6 +21,7 @@
 - 开发环境：`uv sync --all-groups`。
 - MCP：核心 `uv run agentnave-mcp`，工作室 `uv run agentnave-studio-mcp`。
 - Python 门：`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run pytest`。
+- 托盘门（改动 `apps/tray` 或看板前端时，在 `apps/tray` 下）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。
 - 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
 
 ## Context change gate
@@ -32,6 +33,6 @@
 
 - 用户明确要求更新本项目版本时，按完整发布任务执行：同一任务完成版本 PR、审查、合并，并等待对应 tag 与 GitHub Release 发布成功；用户明确限制交付范围时遵从该限制。
 
-- 版本 PR 同步更新两个包的版本（`pyproject.toml`、`src/agentnave/__init__.py`、`packages/agentnave-studio/pyproject.toml` 及其对核心的精确依赖、`agentnave_studio/__init__.py`）、`uv.lock`、安装文档和 `docs/releases/v<version>.md`。
+- 版本 PR 同步更新两个包的版本（`pyproject.toml`、`src/agentnave/__init__.py`、`packages/agentnave-studio/pyproject.toml` 及其对核心的精确依赖、`agentnave_studio/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档和 `docs/releases/v<version>.md`。
 - 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
 - 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。
