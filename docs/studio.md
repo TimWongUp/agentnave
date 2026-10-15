@@ -73,6 +73,8 @@
 
 `delete_conversation` 只删除已结束且无进行中工作的会话，调用方须先取得用户授权：删除 `state.json` 与已结束的调用句柄，移除隔离席位中工作室写入的角色定义和空目录，保留会话目录及 `.lock`，Provider 原生文件不删。v0.15.0 之前的旧历史（数据根下的 `catalog/` 与含 `room.json` 的目录）不迁移，只在列表中标为不可用，可手动清除。
 
+托盘应用所需的数据由工作室写出：每个会话目录中的 `views.json` 视图快照，以及有工作运行时数据根下 `live/` 中的运行文件（结束即删除）；见 [ADR-0008](adr/0008-tray-app-reads-studio-snapshots.md)。
+
 看板无人浏览时停止周期性全量扫描和运行投影刷新；隐藏标签页暂停轮询，恢复可见时重新读取。历史读取失败会保留已有画面并提示，读取恢复后清除提示。进入主控默认打开导演后台，公共页始终只含已提交条目。
 
 v0.16.0 移除独立的 `open_dashboard` 工具；旧调用改为 `list_conversations`，列表仍只含摘要，首页地址只交给主控。`post_host_message` 返回条目序号，`update_conversation` 返回标题和结束状态，`decide_answers` 返回已保存决定、剩余待审与实际已提交席位；三者不再重复原文或导演状态。审核回执不保证轮次已结束，必要时用 `wait_round(include_output=false)` 确认。

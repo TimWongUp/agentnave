@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import os
 import shutil
 import sys
@@ -33,9 +34,24 @@ from agentnave_studio.store import (
     Unavailable,
     now,
     scan,
+    write_file,
 )
 
 type Decision = Literal["publish", "discard"]
+
+_LIVE_SECONDS = 1.5  # also how often the dashboard re-projects running work
+_STALE_LIVE_SECONDS = 3600
+
+
+def _project(record: Record) -> bytes:
+    return _json(views.snapshot(record.state, str(record.directory)))
+
+
+def _json(data: object) -> bytes:
+    return json.dumps(data, ensure_ascii=False).encode()
+
+
+Record.project = _project
 
 
 class DeletionResult(TypedDict):
@@ -66,6 +82,9 @@ class Studio(Groups):
         self.refresher: asyncio.Task[None] | None = None
         self.refresh_error: str | None = None
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
+        # While work runs, its reply tails are written here for the tray app, then removed.
+        self.live_path = self.root / "live" / f"{os.getpid()}-{uuid4().hex[:8]}.json"
+        self.live_writer: asyncio.Task[None] | None = None
 
     # Conversations
 
@@ -325,6 +344,7 @@ class Studio(Groups):
             raise ValueError("Resolve running work and pending reviews before deleting it")
         state_path = record.directory / "state.json"
         state_path.unlink()
+        (record.directory / "views.json").unlink(missing_ok=True)
         forgotten = self.manager.forget_finished(self.invocations.pop(conversation_id, set()))
         del self.records[conversation_id]
         self._groups.pop(conversation_id, None)
@@ -553,23 +573,35 @@ class Studio(Groups):
         public, director = self.tokens[conversation_id]
         return self.dashboard.url(public), self.dashboard.url(director)
 
-    def _publish(self, record: Record, *, home: bool = True) -> None:
-        if self.dashboard is None:
-            return
-        state = record.state
-        public, director = self.tokens.setdefault(state.id, (uuid4().hex, uuid4().hex))
+    def _running(self, record: Record) -> bool:
+        group = self._groups.get(record.state.id)
+        return (group is not None and group.active is not None) or any(
+            task.id in self.running_tasks for task in record.state.tasks
+        )
+
+    def _tails(self, record: Record) -> tuple[dict[str, str], dict[str, int]]:
         tails: dict[str, str] = {}
         elapsed: dict[str, int] = {}
-        group = self._groups.get(state.id)
+        group = self._groups.get(record.state.id)
         if group is not None and group.active is not None:
             for run in group.active.runs:
                 if run.status == "running" and run.invocation_id is not None:
                     tails[run.seat_id] = self.manager.recent_output(run.invocation_id)[0]
-        for task in state.tasks:
+        for task in record.state.tasks:
             if task.id in self.running_tasks:
                 invocation_id = self.running_tasks[task.id]
                 tails[task.id] = self.manager.recent_output(invocation_id)[0]
                 elapsed[task.id] = self.manager.snapshot(invocation_id).elapsed_ms
+        return tails, elapsed
+
+    def _publish(self, record: Record, *, home: bool = True) -> None:
+        if self.live_writer is None and self._running(record):
+            self.live_writer = asyncio.create_task(self._write_live())
+        if self.dashboard is None:
+            return
+        state = record.state
+        public, director = self.tokens.setdefault(state.id, (uuid4().hex, uuid4().hex))
+        tails, elapsed = self._tails(record)
         if state.kind == "show":
             self.dashboard.update(public, views.public(state, stale=self.refresh_error is not None))
         self.dashboard.update(
@@ -631,20 +663,50 @@ class Studio(Groups):
                         self._publish_home()
             active = True
             for record in list(self.records.values()):
-                group = self._groups.get(record.state.id)
-                if (group is not None and group.active is not None) or any(
-                    task.id in self.running_tasks for task in record.state.tasks
-                ):
+                if self._running(record):
                     self._publish(record, home=False)
+
+    async def _write_live(self) -> None:
+        """Keep live_path current while work runs; remove it once nothing runs."""
+        try:
+            self._prune_live()
+            while running := [r for r in self.records.values() if self._running(r)]:
+                conversations: dict[str, object] = {}
+                for record in running:
+                    tails, elapsed = self._tails(record)
+                    conversations[record.state.id] = views.snapshot(
+                        record.state, str(record.directory), tails=tails, elapsed=elapsed
+                    )
+                payload = {"version": 1, "pid": os.getpid(), "updated_at": now()}
+                try:
+                    self.live_path.parent.mkdir(mode=0o700, exist_ok=True)
+                    write_file(self.live_path, _json(payload | {"conversations": conversations}))
+                except OSError as exc:
+                    print(f"agentnave-studio: could not write live views: {exc}", file=sys.stderr)
+                await asyncio.sleep(_LIVE_SECONDS)
+        finally:
+            self.live_writer = None  # first, so a failed removal cannot stop the next writer
+            try:
+                self.live_path.unlink(missing_ok=True)
+            except OSError as exc:
+                print(f"agentnave-studio: could not remove live views: {exc}", file=sys.stderr)
+
+    def _prune_live(self) -> None:
+        # A server that crashed leaves its file; the tray ignores it, and it goes after an hour.
+        with suppress(OSError):
+            for path in self.live_path.parent.glob("*.json"):
+                if time.time() - path.stat().st_mtime > _STALE_LIVE_SECONDS:
+                    path.unlink(missing_ok=True)
 
     async def close(self) -> None:
         """Run after rounds and the invocation manager have stopped."""
         try:
             await asyncio.gather(*self.collectors, return_exceptions=True)
         finally:
-            if self.refresher is not None:
-                self.refresher.cancel()
-                await asyncio.gather(self.refresher, return_exceptions=True)
+            for task in (self.refresher, self.live_writer):
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
             # Write each group's final state once more: an earlier failed save may have left
             # a stale running round or undecided review on disk.
             for group in {item.group.id: item.group for item in self._rounds.values()}.values():

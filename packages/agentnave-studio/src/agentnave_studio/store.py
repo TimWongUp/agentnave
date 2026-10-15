@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Literal
+from typing import IO, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +21,20 @@ type Review = Literal["pending", "publish", "discard"]
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def write_file(path: Path, data: bytes) -> None:
+    """Replace path atomically; readers see the old or the new bytes, never a partial file."""
+    name: str | None = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=f".{path.stem}-", dir=path.parent)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+        os.replace(name, path)
+        name = None
+    finally:
+        if name is not None:
+            Path(name).unlink(missing_ok=True)
 
 
 class SeatRecord(BaseModel):
@@ -163,7 +179,14 @@ class Conversation(BaseModel):
 
 
 class Record:
-    """One conversation directory. Only the lock holder writes; others read."""
+    """One conversation directory. Only the lock holder writes; others read.
+
+    views.json beside state.json is the tray app's projection of the same state, written with
+    every save and rewritten under the probe lock whenever it differs from the current
+    projection (missing, stale, or a crashed writer's running work now shown as interrupted).
+    """
+
+    project: ClassVar[Callable[[Record], bytes] | None] = None
 
     def __init__(self, directory: Path, state: Conversation) -> None:
         self.directory = directory
@@ -224,9 +247,10 @@ class Record:
         # Read while holding the probe so a writer that just exited leaves no stale running view.
         try:
             self.state = self._load(self.directory)
+            self.state.recover()  # shown as interrupted; acquire() persists it
+            self._write_views(only_if_changed=True)
         finally:
             self._unlock(lock)
-        self.state.recover()  # shown as interrupted; acquire() persists it
         return True
 
     def save(self) -> None:
@@ -246,6 +270,24 @@ class Record:
         finally:
             if name is not None:
                 Path(name).unlink(missing_ok=True)
+        self._write_views()
+
+    def _write_views(self, *, only_if_changed: bool = False) -> None:
+        if Record.project is None:
+            return
+        path = self.directory / "views.json"
+        try:
+            data = Record.project(self)
+            # Compared by content: timestamps can tie or run backwards.
+            if only_if_changed and path.is_file() and path.read_bytes() == data:
+                return
+            write_file(path, data)
+        except OSError as exc:
+            # Derived data: the saved state stands, and the next save writes the views again.
+            print(
+                f"agentnave-studio: could not write views for {self.state.id}: {exc}",
+                file=sys.stderr,
+            )
 
     def release(self) -> None:
         if self.lock is not None:
