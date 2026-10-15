@@ -90,6 +90,16 @@ class CodexAdapter:
                 str(event_type),
                 blocking_error="provider_failed" if event_type == "turn.failed" else None,
             )
+        if event_type == "error":
+            message = event.get("message")
+            # Codex retries a rejected credential several times before turn.failed; none can succeed.
+            unauthorized = isinstance(message, str) and "401 unauthorized" in message.lower()
+            return ProviderActivity(
+                "retry",
+                "error",
+                "retrying",
+                blocking_error="authentication_failed" if unauthorized else None,
+            )
         if event_type not in ("item.started", "item.updated", "item.completed"):
             return None
         item = object_dict(event.get("item"))

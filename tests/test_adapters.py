@@ -56,6 +56,23 @@ from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
             "permission_denied",
         ),
         ("codex", {"type": "turn.failed", "error": {"message": "secret"}}, "provider_failed"),
+        (
+            "codex",
+            {
+                "type": "error",
+                "message": "Reconnecting... 2/5 (unexpected status 401 Unauthorized: Missing bearer "
+                "or basic authentication in header, url: wss://api.openai.com/v1/responses)",
+            },
+            "authentication_failed",
+        ),
+        (
+            "codex",
+            {
+                "type": "error",
+                "message": "Reconnecting... 1/5 (stream disconnected before completion)",
+            },
+            None,
+        ),
         ("grok", {"type": "error", "message": "secret"}, "provider_failed"),
         ("antigravity", {"event": "result", "result": {"status": "WAITING"}}, "provider_blocked"),
         ("antigravity", {"event": "result", "result": {"status": "ERROR"}}, None),
@@ -362,6 +379,32 @@ def test_codex_adapter_preserves_blocked_failure() -> None:
     assert result.status is InvocationStatus.BLOCKED
     assert result.session_id == "session-1"
     assert result.error_message == "Approval required for command execution"
+
+
+def test_codex_adapter_marks_rejected_credentials_blocked() -> None:
+    payload = json.dumps(
+        {
+            "type": "turn.failed",
+            "error": {
+                "message": "unexpected status 401 Unauthorized: Missing bearer authentication"
+            },
+        }
+    ).encode()
+
+    assert CodexAdapter().parse(1, payload, b"").status is InvocationStatus.BLOCKED
+
+
+def test_claude_logged_out_result_is_blocked() -> None:
+    payload = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "result": "Not logged in · Please run /login",
+    }
+
+    result = ClaudeAdapter().parse(1, json.dumps(payload).encode(), b"")
+
+    assert result.status is InvocationStatus.BLOCKED
 
 
 def test_codex_adapter_preserves_standalone_error() -> None:
