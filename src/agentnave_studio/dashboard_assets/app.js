@@ -16,7 +16,7 @@ const TASK = {
   running: ["进行中", "run"],
   succeeded: ["已回复 · 待验收", "done"],
   failed: ["失败", "bad"],
-  blocked: ["需处理", "bad"],
+  blocked: ["受阻", "bad"],
   cancelled: ["已取消", "idle"],
   interrupted: ["已中断", "bad"],
 };
@@ -89,7 +89,8 @@ const pill = ({ label, kind }) =>
 const dot = (kind) => h("i.dot.tone-" + kind);
 const statusOf = (mode, status) =>
   tone((mode === "task" ? TASK : ROUND)[status] || [status || "—", "idle"]);
-const urgent = (kind) => kind === "run" || kind === "review" || kind === "bad";
+// A failed or interrupted result is history the host already received, not a to-do.
+const urgent = (kind) => kind === "run" || kind === "review";
 
 function when(iso) {
   if (!iso) return "";
@@ -1108,6 +1109,14 @@ function renderTask() {
                 h("span.chip", { title: "模型" }, task.model || "原生设置"),
                 h("span.chip", { title: task.cwd }, task.cwd),
               ),
+              task.prompt
+                ? h(
+                    "div.body.prompt",
+                    {},
+                    h("p.meta", {}, "主控派发"),
+                    foldable(`prompt:${detail.id}:${task.id}`, task.prompt),
+                  )
+                : null,
               h(
                 "div.body",
                 {},

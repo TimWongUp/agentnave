@@ -66,7 +66,7 @@ AgentNave 不是沙箱或同用户恶意进程隔离边界。POSIX 上已获得�
 
 ## Provider Adapter
 
-Adapter 只能添加非交互输出、prompt 传输和 cwd 等协议必需参数。Provider stderr 仅在失败结果中以有界详情返回；prompt 不写入 AgentNave 日志或持久存储。AgentNave 自身的中间文件使用系统临时目录：目前仅 Grok prompt 使用标准库临时文件，调用结束清理；其余 prompt 走 stdin，运行中尾部留在内存。Manager 创建的任务交接/中间文件同样使用任务临时目录并管理读取生命周期，不强制回答正文格式。项目正式产物与 Provider 自己的会话、缓存不属于此临时文件所有权。绝对 `cwd` 传给 Provider 进程，项目规则加载仍由 Provider 原生实现负责，不能把临时文件目录替代为 cwd。
+Adapter 只能添加非交互输出、prompt 传输和 cwd 等协议必需参数。Provider stderr 仅在失败结果中以有界详情返回；核心不把 prompt 写入日志或持久存储，工作室只在任务历史中保存主控发出的任务原文（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）。AgentNave 自身的中间文件使用系统临时目录：目前仅 Grok prompt 使用标准库临时文件，调用结束清理；其余 prompt 走 stdin，运行中尾部留在内存。Manager 创建的任务交接/中间文件同样使用任务临时目录并管理读取生命周期，不强制回答正文格式。项目正式产物与 Provider 自己的会话、缓存不属于此临时文件所有权。绝对 `cwd` 传给 Provider 进程，项目规则加载仍由 Provider 原生实现负责，不能把临时文件目录替代为 cwd。
 
 AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Object。Windows Provider 必须挂起创建、成功加入配置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job 后才恢复；任何创建、配置或分配失败都以 `launch_error` 终止，不回退到普通子进程或 `CREATE_NEW_PROCESS_GROUP`。Windows 取消直接终止 supervisor 并关闭 Job，没有伪造 POSIX 的温和树级信号阶段。
 
@@ -104,4 +104,4 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 看板在成功创建或继续任务／节目后自动启动并返回入口；仅查看历史时 `list_conversations` 返回首页入口，随 server 退出；启动时为全部可读会话构建投影，之后由落盘与 1.5 秒的运行刷新更新。只监听 127.0.0.1 随机端口，以随机路径及精确 Host/Origin 检查限制访问，不提供写入或文件映射接口；CSP 禁止外部加载与内联脚本，页面用 textContent 渲染。节目公开页只投影已提交条目的白名单字段，导演页另含私密指令、待审回答与运行尾部，任务页只给 Manager；页面不显示原生会话或调用 ID。用于本机查看与录屏，不作网络托管。
 
-托盘数据（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）：持锁写入会话时，在 `state.json` 旁原子写出 `views.json`（版本 1：摘要、导演视图、公开视图，链接指向托盘路由 `/`、`/c/<id>/`、`/p/<id>/`），投影只来自 `views.py`；未被持有的会话在扫描时于探测锁下补写缺失或早于 `state.json` 的快照，写入失败不回滚状态。有工作运行时，每个服务每 1.5 秒原子写出 `live/<pid>-<随机>.json`（版本、进程号、更新时间、运行中会话含尾部与耗时的快照），无运行工作或退出时删除，并在写入前清理一小时以上的残留。托盘应用只读这些文件，不调用工具、不写数据根；浏览器看板保留为无托盘环境的后备。托盘应用位于 `apps/tray`（Tauri 2），经 `agentnave` 自定义协议在原生 webview 中提供同一份看板资源与只读 `state`／`transcript.jsonl`，另有托盘专属的菜单栏面板（`apps/tray/ui`），忽略超过约 10 秒未更新的运行文件；不开放 IPC 命令、不监听端口，导航限于自身协议。应用内更新只访问本仓库 GitHub Release，用户确认后才安装；本机服务版本只读比对、提示升级命令，不由托盘执行。
+托盘数据（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）：持锁写入会话时，在 `state.json` 旁原子写出 `views.json`（版本 1：含最近活动时间的摘要、导演视图、公开视图，链接指向托盘路由 `/`、`/c/<id>/`、`/p/<id>/`），投影只来自 `views.py`；未被持有的会话在扫描时于探测锁下补写缺失或早于 `state.json` 的快照，写入失败不回滚状态。有工作运行时，每个服务每 1.5 秒原子写出 `live/<pid>-<随机>.json`（版本、进程号、更新时间、运行中会话含尾部与耗时的快照），无运行工作或退出时删除，并在写入前清理一小时以上的残留。托盘应用只读这些文件，不调用工具、不写数据根；浏览器看板保留为无托盘环境的后备。托盘应用位于 `apps/tray`（Tauri 2），经 `agentnave` 自定义协议在原生 webview 中提供同一份看板资源与只读 `state`／`transcript.jsonl`，另有托盘专属的群聊式菜单栏面板（`apps/tray/ui`），忽略超过约 10 秒未更新的运行文件；不开放 IPC 命令、不监听端口，导航限于自身协议。应用内更新只访问本仓库 GitHub Release，用户确认后才安装；本机服务版本只读比对、提示升级命令，不由托盘执行。

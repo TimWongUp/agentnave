@@ -1,6 +1,7 @@
 "use strict";
-// Menu bar panel: what runs now, what waits for review, what changed lately. Links go to
-// workbench routes; the tray app opens them in the main window instead of navigating here.
+// Menu bar panel: a live group chat of recent work — what the host Agent sent, what each
+// model is writing or answered — plus update notices. Links go to workbench routes; the tray
+// app opens them in the main window instead of navigating here.
 
 const ROUND = {
   idle: ["等待开场", "idle"],
@@ -16,12 +17,15 @@ const TASK = {
   running: ["进行中", "run"],
   succeeded: ["已回复", "done"],
   failed: ["失败", "bad"],
-  blocked: ["需处理", "bad"],
+  blocked: ["受阻", "bad"],
   cancelled: ["已取消", "idle"],
   interrupted: ["已中断", "bad"],
 };
 const RECENT = 6;
-const LIVE = 4;
+// The chat follows conversations that run, wait for review or changed within WINDOW.
+const WINDOW = 2 * 60 * 60 * 1000;
+const THREADS = 8;
+const MESSAGES = 40;
 
 if (new URLSearchParams(location.search).has("glass"))
   document.body.classList.add("glass");
@@ -68,14 +72,24 @@ function avatar(provider, model) {
     (provider || "?").slice(0, 1).toUpperCase(),
   );
 }
-// The newest line of a reply, stripped of Markdown punctuation, for a one-line preview.
-function tail(text) {
-  const lines = String(text || "")
+// Reply text for a chat bubble: Markdown punctuation dropped, blank runs collapsed.
+function plain(text) {
+  return String(text || "")
     .split("\n")
-    .map((line) => line.replace(/[#>*`_|-]+/g, " ").trim())
-    .filter(Boolean);
-  return lines.length ? lines[lines.length - 1] : "";
+    .filter((line) => !/^\s*```/.test(line))
+    .map((line) =>
+      line
+        .replace(/^\s{0,3}(#{1,6}|>)\s*/, "")
+        .replace(/(\*\*|__|`)/g, "")
+        .trimEnd(),
+    )
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
+// The newest lines of a reply still being written.
+const latest = (text, lines = 3) =>
+  plain(text).split("\n").filter(Boolean).slice(-lines).join("\n");
 
 async function load(path) {
   const response = await fetch(path, { cache: "no-store" });
@@ -83,35 +97,79 @@ async function load(path) {
   return response.json();
 }
 
-// Speakers of one running or reviewed conversation, from its director view.
-function voices(detail) {
+const HOST = { who: "主控", host: true };
+const at = (iso) => {
+  const time = Date.parse(iso || "");
+  return Number.isNaN(time) ? 0 : time;
+};
+
+// One conversation's messages, from its director view, in the order they happened.
+function chat(show, detail) {
   if (!detail) return [];
+  const thread = { href: link(show), title: show.title, mode: show.mode };
+  const now = Date.now();
+  const out = [];
+  const say = (time, voice, text, extra) =>
+    out.push({ ...thread, time, ...voice, text, ...extra });
   if (detail.mode === "task") {
-    return (detail.tasks || [])
-      .filter((task) => task.status === "running")
-      .map((task) => ({
+    for (const task of detail.tasks || []) {
+      const start = at(task.time);
+      const end = start + (task.elapsed_ms || 0);
+      const voice = {
         who: task.provider,
         provider: task.provider,
         model: task.model,
-        text: tail(task.output),
-        running: true,
-      }));
+      };
+      if (task.prompt) say(start, HOST, task.prompt, { to: task.provider });
+      if (task.status === "running")
+        say(now, voice, latest(task.output), { typing: true });
+      else if (task.output) say(end, voice, task.output);
+      if (task.status !== "running" && task.status !== "succeeded") {
+        const [label, tone] = TASK[task.status] || [task.status, "idle"];
+        say(end, { system: true, tone }, `${task.provider} ${label}`, {
+          detail: task.error,
+        });
+      }
+    }
+    return out;
   }
   const seats = Object.fromEntries(
-    (detail.seats || []).map((seat) => [seat.id, seat]),
-  );
-  return (detail.round?.seats || [])
-    .filter((run) => run.status === "running" || run.review === "pending")
-    .map((run) => {
-      const seat = seats[run.seat_id] || {};
-      return {
-        who: seat.label || run.seat_id,
+    (detail.seats || []).map((seat) => [
+      seat.id,
+      {
+        who: seat.label || seat.id,
         provider: seat.provider,
         model: seat.model,
-        text: run.status === "running" ? tail(run.output) : "回答待审核",
-        running: run.status === "running",
-      };
-    });
+      },
+    ]),
+  );
+  for (const message of detail.messages || []) {
+    const time = at(message.time);
+    if (message.kind === "absent")
+      say(
+        time,
+        { system: true, tone: "bad" },
+        `${message.speaker} ${message.text}`,
+      );
+    else if (message.speaker === "@host")
+      say(time, HOST, message.text, {
+        to: message.kind === "task" ? `第 ${message.round} 轮` : null,
+      });
+    else
+      say(
+        time,
+        seats[message.speaker] || { who: message.speaker },
+        message.text,
+      );
+  }
+  for (const run of detail.round?.seats || []) {
+    const voice = seats[run.seat_id] || { who: run.seat_id };
+    if (run.status === "running")
+      say(now, voice, latest(run.output), { typing: true });
+    else if (run.review === "pending")
+      say(now, voice, run.output, { badge: "待审核" });
+  }
+  return out;
 }
 
 // Notices about this app's own update and an outdated local service, above the list.
@@ -171,10 +229,16 @@ async function refresh() {
   const shows = (home.shows || []).filter((show) => !show.archived);
   const running = shows.filter((show) => statusOf(show)[1] === "run");
   const review = shows.filter((show) => statusOf(show)[1] === "review");
-  const trouble = shows.filter((show) => statusOf(show)[1] === "bad");
-  const hot = [...running, ...review].slice(0, LIVE);
+  // Shows arrive most recently changed first.
+  const threads = shows
+    .filter(
+      (show) =>
+        ["run", "review"].includes(statusOf(show)[1]) ||
+        Date.now() - at(show.updated) < WINDOW,
+    )
+    .slice(0, THREADS);
   const details = await Promise.all(
-    hot.map((show) => load(link(show) + "state").catch(() => null)),
+    threads.map((show) => load(link(show) + "state").catch(() => null)),
   );
   const key = JSON.stringify([home.shows, details, status]);
   if (key === last) return;
@@ -202,63 +266,96 @@ async function refresh() {
       ? `${greeting} · ${[running.length && `${running.length} 个会话正在进行`, review.length && `${review.length} 个等你审核`].filter(Boolean).join("，")}`
       : `${greeting} · 眼下没有进行中的工作`;
 
+  const messages = threads
+    .flatMap((show, index) => chat(show, details[index]))
+    .sort((a, b) => a.time - b.time)
+    .slice(-MESSAGES);
   const blocks = notices(status);
-  if (hot.length) {
-    blocks.push(h("p.label", {}, "正在发生"));
-    hot.forEach((show, index) => {
-      const [text, tone] = statusOf(show);
-      const detail = details[index];
-      const round = detail?.round ? `第 ${detail.round.number} 轮 · ` : "";
+  let thread = null;
+  for (const message of messages) {
+    if (message.href !== thread) {
+      thread = message.href;
       blocks.push(
         h(
-          "a.live",
-          { href: link(show) },
-          h(
-            "div.live-head",
-            {},
-            glyph(show.mode),
-            h("span.title", {}, show.title),
-            h("small", {}, round + text),
-            dot(tone),
-          ),
-          voices(detail)
-            .slice(0, 4)
-            .map((voice) =>
-              h(
-                "div.voice",
-                {},
-                avatar(voice.provider, voice.model),
-                h("span.who", {}, voice.who),
-                voice.running && !voice.text
-                  ? typing()
-                  : h("span.tail", {}, voice.text || "…"),
-              ),
-            ),
+          "a.thread",
+          { href: message.href },
+          glyph(message.mode),
+          h("span", {}, message.title),
         ),
       );
-    });
+    }
+    blocks.push(bubble(message));
   }
-  if (trouble.length) {
-    blocks.push(h("p.label", {}, "需要处理"));
-    trouble.forEach((show) => blocks.push(row(show)));
-  }
-  const recent = shows
-    .filter((show) => !hot.includes(show) && !trouble.includes(show))
-    .slice(0, RECENT);
-  if (recent.length) {
-    blocks.push(h("p.label", {}, "最近"));
-    recent.forEach((show) => blocks.push(row(show)));
-  }
-  if (!shows.length)
+  if (!messages.length) {
     blocks.push(
       h(
         "div.calm",
         {},
-        h("strong", {}, "还没有会话"),
-        "在主控 Agent 的对话中开始一档节目或一个任务。",
+        h("strong", {}, shows.length ? "最近两小时没有动静" : "还没有会话"),
+        shows.length
+          ? "主控派出任务或开始节目后，对话会实时出现在这里。"
+          : "在主控 Agent 的对话中开始一档节目或一个任务。",
       ),
     );
-  $("list").replaceChildren(...blocks);
+    if (shows.length) {
+      blocks.push(h("p.label", {}, "最近"));
+      shows.slice(0, RECENT).forEach((show) => blocks.push(row(show)));
+    }
+  }
+  const list = $("list");
+  const following =
+    !list.childElementCount ||
+    list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+  list.replaceChildren(...blocks);
+  if (following) list.scrollTop = list.scrollHeight;
+}
+
+function clock(time) {
+  if (!time) return "";
+  const date = new Date(time);
+  const hm = date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return date.toDateString() === new Date().toDateString()
+    ? hm
+    : `${date.getMonth() + 1}/${date.getDate()} ${hm}`;
+}
+function bubble(message) {
+  if (message.system)
+    return h(
+      "a.sys.tone-" + message.tone,
+      { href: message.href, title: message.detail },
+      dot(message.tone),
+      h("span", {}, message.text),
+      message.detail && h("small", {}, message.detail),
+    );
+  const text = message.typing ? message.text : plain(message.text);
+  return h(
+    "a.msg" + (message.host ? ".host" : ""),
+    { href: message.href },
+    message.host
+      ? h("span.avatar.av-host")
+      : avatar(message.provider, message.model),
+    h(
+      "div.msg-body",
+      {},
+      h(
+        "div.msg-meta",
+        {},
+        h("strong", {}, message.who),
+        message.to && h("span", {}, "→ " + message.to),
+        message.badge && h("span.badge", {}, message.badge),
+        message.typing ? h("span.writing", {}, "正在输入") : null,
+        h("time", {}, message.typing ? "" : clock(message.time)),
+      ),
+      text
+        ? h("div.msg-text" + (message.typing ? ".typing-text" : ""), {}, text)
+        : message.typing
+          ? typing()
+          : null,
+    ),
+  );
 }
 function row(show) {
   const [text, tone] = statusOf(show);

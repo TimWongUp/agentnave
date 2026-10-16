@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 
 from agentnave_studio.store import Conversation, RoundRecord, Unavailable
 
@@ -161,6 +162,25 @@ def _status(state: Conversation) -> str:
     )
 
 
+def _updated(state: Conversation) -> str:
+    """When the conversation last saw activity: a message, a task start or a task end."""
+    times = [_time(state.created)] + [_time(entry.time) for entry in state.entries]
+    times += [
+        start + timedelta(milliseconds=task.elapsed_ms)
+        for task in state.tasks
+        if (start := _time(task.time)) is not None
+    ]
+    known = [time for time in times if time is not None]
+    return max(known).isoformat() if known else state.created
+
+
+def _time(text: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def snapshot(
     state: Conversation,
     storage: str,
@@ -178,6 +198,7 @@ def snapshot(
             "mode": state.kind,
             "archived": state.archived,
             "status": _status(state),
+            "updated": _updated(state),
         },
         "director": _director(
             state,
