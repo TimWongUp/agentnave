@@ -1,13 +1,13 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）以及 AgentNave Studio 节目；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及 AgentNave Studio 节目；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用 CLI
 
 本 Skill 只负责调用方式；任务选择、规划、编排、审核、综合、重试和 worktree 由主 Agent 决定。
 
-被 AgentNave 启动的子代理，未经 Manager 明确授权，不再调用 `start_agent` 或 `open_group` 派发任务或建组。
+编排单向：主控是宿主里的 Agent，由主控自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，服务端也对它们禁用编排工具，无例外。
 
 优先使用当前宿主的 AgentNave MCP，用户指定其他路线时遵从。首次按 AgentNave 或精确工具名发现，复用已加载 schema；以连接中的实时 schema 为参数真源。工具不可用、CLI 被排除或运行时只有旧版讨论室工具时，报告具体限制，不静默换 Provider、调用路线或源码服务，不由主控复制答案模拟协作。
 
@@ -26,6 +26,21 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，持续续接自己的原生会话；席位只共享已提交条目（任务、最终回答、失败或取消的缺席记录），私密指令只给对应席位。同组同时一轮；`run_round` 立即返回 `round_id`，用 `wait_round` 等待。可单独 `cancel_agent` 取消某席，记缺席后串联轮继续。不自动重试、不设每席截止时间。并联写代码的席位各用独立 worktree；只读席位可共用目录。核心组不持久化，随服务退出结束。
 
 需要历史、审核、主持人或网页观看时按 [工作室节目](references/studio.md) 操作；连接中须有 `list_conversations`、`decide_answers` 等 Studio 工具，不能把 Skill 更新当作运行时升级。
+
+## 编排场景
+
+场景只是现有调用方式的组合，不是新机制。选谁执行：用户点名优先，否则主控自定。
+
+| 场景 | 做法 |
+| --- | --- |
+| 问意见 | 派一个 CLI 只分析，给结论与理由，不改文件。prompt 约定不是保证；用户要求工具层面保证时才显式 `restricted_tools=true` |
+| 交叉复核 | 一个 CLI 做，另一个审其成果。主控先自行验收，再交给复核方，交接给出 diff、产物绝对路径与验收标准；复核意见由主控裁决 |
+| 分头做 | 多个 CLI 各用独立 worktree 做不同子任务（`start_agent` + `wait_any`），主控合并并验收 |
+| 同题多做择优 | 同一任务在多个独立 worktree 并行做（分头做的一种），主控按事先写明的验收标准挑一份 |
+| 分歧收敛 | 先一轮 `parallel` 各自答；主控归纳分歧，用 `serial` 或私密指令把分歧交给对方。一致或达到轮数上限（用户未指定默认 3 轮）即止，可保留异议。向用户汇报结论、各方分歧及处理方式 |
+| 接力 | 按“目录与交接”清单让另一个 CLI 续做；换 CLI 重新交接，不假定历史可见 |
+
+通则：每个场景都由主控验收，`succeeded` 不等于完成；失败、取消或缺席时由主控决定重派或排除，不自动重试。
 
 ## 讨论范围与工具
 
@@ -61,6 +76,7 @@ CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时�
 - 目标、验收标准、返回格式及产物位置。
 - 目录、修改范围、授权边界、必须保留的用户改动。
 - 已核实进展、验证、未完成项、阻塞和下一步；待验证判断另说清。
+- 试过什么、为何放弃；已定决策及理由。
 - 可访问的规格、计划、ADR、Issue、commit、diff 或产物绝对路径/URL，注明用途，不重复复制已有产物。
 - 直接相关的技能、用途和已知路径；无适用项写“无”。接收方按需加载，建议不扩权。
 
