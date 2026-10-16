@@ -108,8 +108,12 @@ async def test_supervisor_sets_own_marker_and_ancestry_survives_filtered_env(
             marker, parent, marked_status, status = json.loads(
                 await supervised.process.stdout.readline()
             )
-            assert marker == str(supervised.process.pid)
-            assert parent == supervised.process.pid
+            if os.name == "posix":
+                assert marker == str(supervised.process.pid)
+                assert parent == supervised.process.pid
+            else:
+                # venv python.exe launchers sit between Popen, the supervisor and the provider.
+                assert marker.isdigit()
             assert marked_status == "nested"
             if os.name == "posix":
                 assert status == "nested"
