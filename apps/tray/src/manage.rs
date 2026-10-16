@@ -260,8 +260,18 @@ mod tests {
         for name in [".lock", "other.json", "seats/a/output.txt"] {
             assert!(path.join(name).is_file());
         }
-        // A handle opened before cleanup still excludes a handle opened afterward.
-        lock.try_lock().unwrap();
+        // A handle opened before cleanup still excludes a handle opened afterward. A process
+        // another test spawns meanwhile briefly inherits cleanup's descriptor until its exec
+        // closes it, so allow the same short retry as cleanup itself.
+        let mut locked = lock.try_lock();
+        for _ in 1..ATTEMPTS {
+            if !matches!(locked, Err(TryLockError::WouldBlock)) {
+                break;
+            }
+            thread::sleep(RETRY);
+            locked = lock.try_lock();
+        }
+        locked.unwrap();
         assert!(matches!(
             lock_file(&path).unwrap().try_lock(),
             Err(TryLockError::WouldBlock)

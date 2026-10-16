@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from agentnave.adapters.base import provider_bin_dirs
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderCompletion:
@@ -47,6 +49,7 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
             pass_fds=(status_write,),
+            env=provider_environment(argv),
         )
     except Exception:
         os.close(status_read)
@@ -55,6 +58,24 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
         os.close(status_write)
     completion = asyncio.create_task(_read_completion(status_read))
     return SupervisedProcess(process, completion)
+
+
+def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
+    """Inherited environment with PATH completed for the provider only.
+
+    Hosts may pass a minimal PATH; `#!/usr/bin/env node` style CLIs then fail even
+    when their absolute path was found. Prepend the executable's directory and the
+    existing common install directories, keeping the inherited order after them.
+    """
+    env = dict(os.environ)
+    inherited = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
+    leading = [os.path.dirname(argv[0])] if argv and os.path.isabs(argv[0]) else []
+    path: list[str] = []
+    for entry in (*leading, *provider_bin_dirs(), *inherited):
+        if entry not in path:
+            path.append(entry)
+    env["PATH"] = os.pathsep.join(path)
+    return env
 
 
 async def terminate_process_tree(

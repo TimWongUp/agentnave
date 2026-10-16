@@ -173,7 +173,8 @@ to explicitly disable the flag. Only enable it when the user authorizes permissi
 On macOS, AgentNave prefers the executable CLI bundled with the ChatGPT desktop app,
 then the Codex desktop app, checking `/Applications` before `~/Applications` for each.
 This follows desktop app updates instead of selecting an independently installed CLI by PATH.
-If no executable bundle is found, or on other platforms, AgentNave uses `codex` from PATH.
+If no executable bundle is found, or on other platforms, AgentNave uses `codex` from PATH,
+then from the common install directories listed in the installation guide.
 AgentNave does not install or upgrade Codex, compare version numbers, or change its model settings.
 
 用户可在单次任务中点名 CLI、模型与 effort，由主控显式传入 `provider_options`，覆盖 App 默认值但仍须处于该模式允许范围。长期默认值在 App 中维护；要继承 CLI 原生设置，应清除对应 App 默认字段并在调用时省略，单纯省略参数仍会套用已配置的默认值。新增模型可直接使用其精确 ID；若模式限制模型，须先在 App 中启用。模型不可用时报告原错误，不静默替换。

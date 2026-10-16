@@ -17,6 +17,7 @@ from agentnave.adapters.base import (
     option_args,
     parse_json_lines,
     parse_json_object,
+    resolve_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -68,7 +69,7 @@ class ClaudeAdapter:
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
         argv = [
-            self.executable,
+            resolve_executable(self.executable),
             "--print",
             "--output-format",
             "stream-json",

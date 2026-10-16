@@ -2,8 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod data;
+mod detect;
 mod manage;
-mod profiles;
+mod members;
 mod update;
 
 use std::fs;
@@ -52,19 +53,28 @@ fn main() {
             let reader = served.clone();
             let app = ctx.app_handle().clone();
             let path = request.uri().path().to_owned();
+            let refresh = request
+                .uri()
+                .query()
+                .is_some_and(|query| query.split('&').any(|pair| pair == "refresh=1"));
             thread::spawn(move || {
-                let reply = if request.method() == "GET" && path == "/app/status" {
-                    data::Response::json(&update::status(&app))
-                } else {
-                    reader.request(
-                        request.method().as_str(),
-                        &path,
-                        request
-                            .headers()
-                            .get("X-AgentNave-Action")
-                            .and_then(|v| v.to_str().ok()),
-                        request.body(),
-                    )
+                let method = request.method().as_str();
+                let action = request
+                    .headers()
+                    .get("X-AgentNave-Action")
+                    .and_then(|v| v.to_str().ok());
+                let reply = match (method, path.as_str()) {
+                    ("GET", "/app/status") => data::Response::json(&update::status(&app)),
+                    ("GET", "/settings/members") => reader.members(refresh),
+                    (_, "/app/update/check" | "/app/update/apply") if method != "POST" => {
+                        data::Response::error(405, "此操作只接受 POST")
+                    }
+                    (_, "/app/update/check" | "/app/update/apply") if action != Some("1") => {
+                        data::Response::error(403, "缺少操作请求头")
+                    }
+                    (_, "/app/update/check") => data::Response::json(&update::check_now(&app)),
+                    (_, "/app/update/apply") => data::Response::json(&update::apply(&app)),
+                    _ => reader.request(method, &path, action, request.body()),
                 };
                 let response = Response::builder()
                     .status(reply.status)
@@ -130,6 +140,8 @@ fn main() {
                 .build(app)?;
             let handle = handle.clone();
             let checker = handle.clone();
+            let resumer = handle.clone();
+            thread::spawn(move || update::resume(&resumer));
             thread::spawn(move || poll(handle, reader, overview));
             thread::spawn(move || {
                 loop {

@@ -1,0 +1,21 @@
+# ADR-0014：托盘维护组员配置、探测 CLI 模型，并一键全部更新
+
+- 状态：已接受
+- 日期：2026-10-16
+- 修订 [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md) 第 6 条与“后果”中“只在用户点击后执行”的范围；修订 [ADR-0012](0012-tray-conversation-cleanup.md) 修订段的托盘写入对象。
+
+## 背景
+
+AgentNave 转向“App 优先”：用户在托盘里决定每种模式能派出哪些组员（模型 + CLI）及其默认参数，服务端按此套用与强制。手填模型 ID 容易出错，用户需要看到本机每个 CLI 实际列出的模型。版本更新原先分两步：先更新托盘并重启，再看到“本机服务较旧”提示后另点一次“一键升级”；用户希望一次点击完成。
+
+## 决定
+
+1. 托盘是数据根下 `members.json` 的唯一写入方：`POST /app/members` 只做结构与引用校验（未知键、模型引用、默认模型与默认 effort 是否在允许范围），通过后经同目录临时文件、sync 与 rename 原子替换；不做 Provider 语义校验，参数是否有效以服务端 Adapter 为准。服务端每次调用现读，从不写入。旧的 `profiles.json` 在首次读取且 `members.json` 不存在时迁移一次：每条档案只转为共享模型配置 `clis.<provider>.models.<model>`，不创建 `modes`，迁移前后服务行为一致；无模型或重复的档案跳过，以 `migration_skipped` 在接口里报告，原文件改名为 `profiles.json.migrated` 保留。顶层 `version`、`clis`、`modes` 三项必填，与服务端一致。
+2. 托盘探测 CLI 时只读取 Provider 自己的缓存或运行其列举／帮助命令：Codex 读 `~/.codex/models_cache.json`（`CODEX_HOME` 可覆盖），Grok `grok models`，Antigravity `agy models`，Pi `pi --list-models`，CodeBuddy `codebuddy --help`；Claude 没有列举命令，只给出别名。命令一律以空 stdin、系统临时目录为 cwd、15 秒超时运行，绝不发起模型调用。可执行文件按与 Python Adapter 相同的规则查找（macOS 上 Codex 先查桌面应用附带的 CLI，然后 PATH，再查常见安装目录），并为子进程补齐 PATH。结果缓存在内存，用户要求刷新时才重新探测。努力档位用静态表（按各 CLI `--help` 核对），Codex 有模型缓存时，每个模型另带缓存中的 `efforts`，Provider 级档位取可见模型的并集，页面优先用模型级档位。
+3. “全部更新”仍须用户点击，但一次点击覆盖 App 与本机服务：有 App 更新时，先在 App 自己的数据目录写入“重启后升级本机服务”标记，再下载、校验签名、安装并重启；新版本启动时发现标记即清除；只有服务确由 uv 安装且版本比新托盘旧时，才执行与原“一键升级”相同的 uv 命令，未由 uv 安装或已是最新的服务不动。下载安装失败时清除标记，避免以后无关的重启触发升级。只有服务较旧时直接升级服务。原有的“更新并重启”“一键升级”与“复制命令”入口保持可用。
+
+## 后果
+
+- 托盘写入数据根的对象从 `profiles.json` 换为 `members.json`；会话清理边界不变。整份保存，并发编辑以最后一次保存为准。
+- 探测结果依赖各 CLI 的输出格式，格式变化时该 CLI 显示探测失败、模型列表为空，用户仍可手填模型 ID；探测会运行本机 CLI 的列举命令，部分命令可能联网查询账户可用模型。
+- 重启后的服务升级发生在用户点击之后、无需再次确认；标记不在 AgentNave 数据根，卸载托盘时随 App 数据处理。服务未由 uv 安装或已是最新时，标记只被清除。

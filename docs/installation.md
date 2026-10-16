@@ -97,9 +97,12 @@ Use `$AgentNaveMcp` wherever the POSIX examples below use `$AGENTNAVE_MCP`. Nati
 invocations use Job Object process-tree ownership; WSL is not required.
 
 Provider CLIs are separate programs. Install and authenticate only those you intend to call, using
-their official instructions. The MCP server must inherit a `PATH` that can locate them. Desktop
-hosts may have a different environment from your terminal; set an explicit `PATH` in the server's
-host configuration if necessary, retaining the directories needed by the CLIs and their runtimes.
+their official instructions. On macOS and Linux, AgentNave looks for each CLI on the inherited
+`PATH`, then in `~/.local/bin`, `~/.grok/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.bun/bin`,
+`~/.npm-global/bin`, `~/.volta/bin` and `~/.cargo/bin`, and puts the CLI's directory and those
+directories ahead of the inherited `PATH` for the provider process only. Desktop hosts may have a
+different environment from your terminal; set an explicit `PATH` in the server's host configuration
+if a CLI or its runtime lives elsewhere, or on Windows.
 AgentNave does not install providers or change their login, permissions, or configuration.
 
 ### Select installed CLIs before locating them

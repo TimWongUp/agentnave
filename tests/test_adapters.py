@@ -7,13 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from agentnave.adapters import codex, get_adapter
+from agentnave.adapters import base, codex, get_adapter
 from agentnave.adapters.antigravity import AntigravityAdapter, write_restricted_profile
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
+from agentnave.processes import provider_environment
+
+
+@pytest.fixture(autouse=True)
+def no_installed_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Argv assertions use bare names; keep real CLIs on this machine out of resolution.
+    monkeypatch.setenv("PATH", str(tmp_path / "no-bin"))
 
 
 @pytest.mark.parametrize(
@@ -285,6 +292,61 @@ def test_codex_adapter_uses_path_outside_macos(
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(desktop),))
 
     assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
+
+
+def _fake_executable(directory: Path, name: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows keeps resolving bare names")
+def test_provider_executable_prefers_path_then_common_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(base, "PROVIDER_BIN_DIRS", ("~/.local/bin", "~/.grok/bin"))
+    monkeypatch.setattr(codex.sys, "platform", "linux")
+
+    assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == "grok"
+    later = _fake_executable(home / ".grok" / "bin", "grok")
+    assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == str(later)
+    earlier = _fake_executable(home / ".local" / "bin", "grok")
+    assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == str(earlier)
+    on_path = _fake_executable(tmp_path / "path-bin", "grok")
+    monkeypatch.setenv("PATH", str(on_path.parent))
+    assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == str(on_path)
+
+    common_codex = _fake_executable(home / ".local" / "bin", "codex")
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == str(common_codex)
+    monkeypatch.setattr(codex.sys, "platform", "darwin")
+    desktop = _fake_executable(tmp_path / "desktop", "codex")
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(desktop),))
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == str(desktop)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows keeps the inherited environment")
+def test_provider_environment_prepends_executable_and_common_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    common = tmp_path / "common"
+    common.mkdir()
+    monkeypatch.setattr(base, "PROVIDER_BIN_DIRS", (str(common), str(tmp_path / "absent")))
+    monkeypatch.setenv("PATH", os.pathsep.join(("/usr/bin", str(common), "/bin")))
+    executable = tmp_path / "cli" / "grok"
+
+    env = provider_environment((str(executable), "--help"))
+
+    assert env["PATH"].split(os.pathsep) == [
+        str(executable.parent),
+        str(common),
+        "/usr/bin",
+        "/bin",
+    ]
+    assert os.environ["PATH"] == os.pathsep.join(("/usr/bin", str(common), "/bin"))
 
 
 def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:
