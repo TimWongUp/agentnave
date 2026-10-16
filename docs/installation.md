@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.18.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.19.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.18.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.19.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -543,6 +543,16 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.18.0 to v0.19.0
+
+No history migration. Reinstall the runtime and Skill from the tag; each relay switches to the new
+server on its own once idle. Reconnect MCP on a host to see the new `list_profiles` tool (core 11
+tools, studio 17) and the updated Skill text. A server started inside a provider launched by
+AgentNave now exposes no tools, so a CLI that registers AgentNave globally can no longer nest
+orchestration. Studio conversations release their lock once idle, so another host can continue
+them without restarting the first. The menu bar app gains conversation cleanup and a settings page
+that writes `profiles.json` in the data root.
 
 ### Upgrading from v0.17.0 to v0.18.0
 
