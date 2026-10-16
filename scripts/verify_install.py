@@ -19,7 +19,7 @@ CORE = [
     "cancel_agent",
     "list_invocations",
     "describe_provider",
-    "list_profiles",
+    "list_members",
     "open_group",
     "run_round",
     "wait_round",
@@ -27,7 +27,7 @@ CORE = [
 ]
 STUDIO = [
     *CORE[:5],
-    "list_profiles",
+    "list_members",
     "describe_provider",
     *CORE[7:],
     "decide_answers",

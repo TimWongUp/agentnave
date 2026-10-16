@@ -13,7 +13,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-核心十一个工具：`list_profiles`、`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
+核心十一个工具：`list_members`、`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
 
 | 用户需要 | 调用方式 |
 | --- | --- |
@@ -54,7 +54,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## CLI 与模型
 
-用户未点名 CLI 时，先调用 `list_profiles` 按档案说明选择，再把 `provider` 与 `provider_options` 显式传给 `start_agent` 或席位；档案无效或无匹配时向用户说明。用户本轮要求优先，跳过审批、绕过沙箱等权限参数只在用户本轮明确要求时传入。
+用户未点名时先 `list_members`，按该模式的组员与说明选择，未传 model/effort 时服务会套用 App 默认值并在回执注明。
 
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 
@@ -67,7 +67,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 
-参考 JSON 是 `provider_options` 的模型与 effort 默认值，不保证账户可用。用户指定字段覆盖默认；要求原生设置时省略对应字段。其他选项只传明确选择的值，权限和工具保持原生设置，除非用户明确改变。首次调用前用 `describe_provider` 核对允许状态和支持参数并复用结果；它不检查安装、登录。模型不可用时报告原错误，不静默替换；旧服务的模型指引不覆盖用户和本 Skill。
+参考 JSON 仅作补充指引，不保证账户可用；优先使用当前模式的 App 组员配置。用户指定字段覆盖默认，但不得超出允许范围；省略字段仍会套用 App 默认值，要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设定的默认 options 或用户本轮明确要求，主控不得自行追加；App 默认值会被套用并在 `defaults_applied` 注明，续接也适用。其他选项只显式传明确选择的值。首次调用前用 `describe_provider` 核对允许状态和支持参数并复用结果；它不检查安装、登录。模型不可用时报告原错误，不静默替换；旧服务的模型指引不覆盖用户和本 Skill。
 
 ## 目录与交接
 

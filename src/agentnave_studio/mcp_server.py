@@ -19,7 +19,6 @@ from agentnave import mcp_server as core
 from agentnave.group import GroupSeat, Round
 from agentnave.mcp_server import (
     EXCLUDED_PROVIDERS,
-    PROVIDER_OPTIONS,
     PROVIDER_SELECTION,
     TOOL_OPTIONS,
     WAIT_SECONDS,
@@ -30,6 +29,7 @@ from agentnave.mcp_server import (
     ProviderDescriptionPayload,
     ProviderName,
 )
+from agentnave.members import MemberFileError, apply_member, read_members, validate_provider_options
 from agentnave.models import InvocationRequest, ProviderOption
 from agentnave.nesting import detect_nesting
 from agentnave_studio.store import Conversation, Unavailable
@@ -39,8 +39,8 @@ from agentnave_studio.studio import Decision, DeletionResult, Studio
 class Runtime(core.Runtime):
     def __init__(self) -> None:
         super().__init__()
-        root = Path(os.environ.get("AGENTNAVE_DATA_DIR", str(Path.home() / ".agentnave")))
-        self.studio = Studio(self.manager, root)
+        root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+        self.studio = Studio(self.manager, root, host=core.HOST)
         # Core round tools reach the studio through the groups attribute.
         self.groups = self.studio
 
@@ -67,8 +67,8 @@ mcp = MCPServer(
         "AgentNave Studio launches local CLI subagents and saves their history. Use the "
         "agentnave-manager Skill. start_agent/wait_agent/cancel_agent run tasks, saved as private "
         "task conversations; wait_any waits on several and list_invocations lists handles. "
-        "list_profiles reads user orchestration rules; apply current user requirements first "
-        "and pass selected provider/options explicitly, permissions only when requested this turn. "
+        "list_members reads App members by mode; omitted model/effort/options use App defaults "
+        "reported in defaults_applied. Explicit arguments take priority within allowed ranges. "
         "open_group opens a saved show; run_round, wait_round and cancel_round drive it. "
         "With review=true, wait_round returns review_needed and decide_answers publishes or "
         "discards each answer before other seats see it. "
@@ -155,7 +155,7 @@ async def start_agent(
         Field(
             description=(
                 "Explicit options for the selected CLI. Call describe_provider(provider) for "
-                "supported keys. Omitted options inherit native CLI settings."
+                "supported keys. Omitted options use configured App defaults, then native CLI settings."
             )
         ),
     ] = None,
@@ -170,30 +170,28 @@ async def start_agent(
 ) -> TaskStartPayload:
     """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
-    The reply includes the CLI and requested model/effort; omitted options show native inheritance.
+    The reply includes the CLI and requested model/effort. defaults_applied reports App defaults;
+    otherwise omitted settings inherit the native CLI configuration.
     These are requested settings, not confirmation of the CLI's effective settings.
     The task and its final output are saved in a private task conversation; a resumed native
     session joins its open conversation. No output is shared with another CLI. No runtime
     deadline; use cancel_agent to stop work.
     """
-    if provider in EXCLUDED_PROVIDERS:
-        raise ToolError(f"Provider '{provider}' is excluded by this host. " + PROVIDER_SELECTION)
     try:
-        request = InvocationRequest(provider, prompt, Path(cwd), session_id, provider_options or {})
+        options, defaults_applied = apply_member(
+            read_members(), "task", provider, provider_options or {}, EXCLUDED_PROVIDERS
+        )
+        request = InvocationRequest(provider, prompt, Path(cwd), session_id, options)
+        validate_provider_options(request)
         invocation_id, saved_id = _studio(ctx).start_task(request, title, conversation_id)
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except ValueError as exc:
-        supported = (
-            f" Supported {provider} options: model, effort, {PROVIDER_OPTIONS[provider]}."
-            if "option" in str(exc)
-            else ""
-        )
-        raise ToolError(f"Invalid invocation request: {exc}.{supported}") from exc
+        raise core.invocation_request_error(provider, exc) from exc
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
     return {
-        **core.started_payload(invocation_id, request),
+        **core.started_payload(invocation_id, request, defaults_applied),
         "conversation_id": saved_id,
         **_dashboard_links(_studio(ctx), saved_id),
     }
@@ -204,7 +202,7 @@ for _tool in (
     core.wait_any,
     core.cancel_agent,
     core.list_invocations,
-    core.list_profiles,
+    core.list_members,
 ):
     _title, _annotations = TOOL_OPTIONS[_tool.__name__]
     mcp.add_tool(_tool, title=_title, annotations=_annotations)
@@ -227,10 +225,18 @@ async def describe_provider(
 ) -> StudioProviderPayload:
     """Read one provider's permitted status and supported options without launching it.
 
-    permitted applies to start_agent; show_permitted to shows, which may seat any provider,
-    including the host CLI.
+    permitted applies to start_agent. show_permitted reads the current discussion CLI limits;
+    host exclusions do not apply to shows. Model limits still apply when opening seats.
     """
-    return {**await core.describe_provider(provider), "show_permitted": True}
+    try:
+        document = read_members()
+    except MemberFileError as exc:
+        raise ToolError(str(exc)) from exc
+    allowed = document.modes.get("discussion") if document is not None else None
+    return {
+        **await core.describe_provider(provider),
+        "show_permitted": allowed is None or provider in allowed,
+    }
 
 
 class ShowPayload(DashboardLinks):
@@ -272,24 +278,39 @@ async def open_group(
 
     Seats are subagents with native tools and permissions unless isolated. Each keeps its own
     native session across rounds, also after a server restart. Host exclusions apply only to
-    start_agent, so any show may seat them. Isolation restricts tools; it is not an OS sandbox.
+    start_agent. Shows follow discussion member limits. Isolation restricts tools; it is not
+    an OS sandbox.
     """
     try:
-        record = _studio(ctx).open_show(
-            title,
-            Path(cwd) if cwd is not None else None,
-            [
+        document = read_members()
+        prepared_seats: list[GroupSeat] = []
+        defaults: dict[str, list[str]] = {}
+        for seat in seats:
+            options, defaults[seat.id] = apply_member(
+                document,
+                "discussion",
+                seat.provider,
+                seat.provider_options,
+                EXCLUDED_PROVIDERS,
+                restricted=isolated,
+            )
+            prepared_seats.append(
                 GroupSeat(
                     seat.id,
                     seat.provider,
-                    dict(seat.provider_options),
+                    options,
                     Path(seat.cwd if seat.cwd is not None else cwd or "."),
                 )
-                for seat in seats
-            ],
+            )
+        record = _studio(ctx).open_show(
+            title,
+            Path(cwd) if cwd is not None else None,
+            prepared_seats,
             review=review,
             isolated=isolated,
         )
+    except MemberFileError as exc:
+        raise ToolError(str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc
     state = record.state
@@ -298,7 +319,19 @@ async def open_group(
         "group_id": state.id,
         "conversation_id": state.id,
         "seats": [
-            {"id": seat.id, "provider": seat.provider, "cwd": seat.cwd} for seat in state.seats
+            {
+                "id": seat.id,
+                "provider": seat.provider,
+                "cwd": seat.cwd,
+                "model": str(seat.provider_options["model"])
+                if "model" in seat.provider_options
+                else None,
+                "effort": str(seat.provider_options["effort"])
+                if "effort" in seat.provider_options
+                else None,
+                "defaults_applied": defaults[seat.id],
+            }
+            for seat in state.seats
         ],
     }
 

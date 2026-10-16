@@ -121,31 +121,23 @@ Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
-AgentNave exposes eleven tools: six for single tasks, four for group rounds and one for user profiles. The initial tool metadata contains a compact provider directory;
-provider-specific options are returned only when requested. Model defaults live in the Skill's
-per-CLI reference files, loaded only for the selected CLI.
+AgentNave exposes eleven tools: six for single tasks, four for group rounds and one for configured members. The initial tool metadata contains a compact provider directory;
+provider-specific options are returned only when requested. App member defaults are applied by mode; CLI references provide supplementary guidance.
 
 ### `describe_provider`
 
 Call with the selected `provider` before its first use in the current context. Returns that
-provider's permitted status and supported options.
+provider's permitted status, supported options, and detected `host` / `host_source`.
 Reuse the result for later calls with the same provider. This tool neither launches a CLI nor
 checks installation or authentication; it does not consume provider quota or change the tool list.
 
 For example: `describe_provider({"provider": "grok"})` → `start_agent(...)` → `wait_agent(...)`.
 
-### `list_profiles`
+### `list_members`
 
-Read user orchestration rules from `profiles.json` in `AGENTNAVE_DATA_DIR` (default
-`~/.agentnave`) on each call, without creating files or launching a CLI. Missing files return
-`{"profiles": []}`; malformed files return a Tool error. Each profile includes Adapter option
-validation (`valid`, `error`) and host `permitted` status. This does not check installation,
-authentication or model availability. Manage profiles in the tray's Settings page.
+每次现读数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`，返回 `configured`、`host`、`host_source` 与 task／discussion 两种模式的生效组员配置。每个组员以 `(provider, model)` 为身份，包含默认标志、努力档位、参数、说明及 Adapter 校验的 `valid`／`error`。task 的 `permitted` 反映宿主排除集合，discussion 恒为 true；组员名单本身表达模式限制。工具不创建文件、不启动 CLI、不检查安装、认证或模型是否可用。
 
-Current user requirements take priority. The Manager chooses by the profile's notes and passes
-`provider` and `provider_options` explicitly to `start_agent` or group seats; the server never
-applies a profile by name. Permission options require the user's explicit request in the current
-turn. Excluded providers remain usable as group seats.
+模式键缺失表示不限制，空模式对象表示禁止全部 CLI，CLI 的空模型列表表示不限模型；除已配置模型外，还用 `model="*"` 的空配置条目说明不限模型。文件缺失时 `configured=false`，两种模式均不受限且名单为空；文件损坏返回 Tool error，需在 App 中修复。App 保存组员配置并迁移旧档案，服务不再提供 `list_profiles` 或读取 `profiles.json`。
 
 ### `start_agent`
 
@@ -153,19 +145,13 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional.
 
-The startup reply also includes `provider`, `model`, and `effort`, without repeating the prompt.
-Model and effort reflect explicit request options, not verified effective CLI settings; omitted
-options are displayed as `继承原生设置` (inherit native settings).
+启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。`open_group` 每席使用 discussion 配置，并返回 model、effort（未配置时为 null）与 `defaults_applied`。
 
-Supported providers are `antigravity`, `claude`, `codebuddy`, `codex`, `grok`, and `pi`. The Skill provides model and effort defaults for the Manager to pass explicitly through
-allowlisted options. User choices override that guidance; omitted options still inherit native
-settings. Exclusions are configured per host process, independently of the model it uses. For Codex calls outside a
-Git repository, the Manager must pass
-`{"skip_git_repo_check": true}` in `provider_options`.
+支持的 Provider 为 `antigravity`、`claude`、`codebuddy`、`codex`、`grok`、`pi`。宿主识别优先 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层匹配 CLI 或应用包；Windows 只读环境变量。未知宿主不做自我排除，未知环境变量值使启动失败。宿主 Provider（WorkBuddy 对应 codebuddy）与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，只限制 task，不限制讨论席位；discussion 自身的组员名单仍生效。Codex 在非 Git 目录可显式传 `{"skip_git_repo_check": true}`，或在 App 组员 options 中保存该默认值。
 
 Pi Coding Agent uses `pi --print --mode json`, with prompts on stdin and native session IDs
 for continuation. Install it with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`,
-then run `pi` and `/login`. Omitted model and effort options use Pi's native settings; explicit
+then run `pi` and `/login`. Without App defaults, omitted model and effort options use Pi's native settings; explicit
 `effort` maps to `--thinking`. Pi runs with the permissions of its launching process.
 
 ### Choosing a model and reasoning effort
@@ -174,13 +160,13 @@ For Codex, explicitly pass `{"dangerously_bypass_approvals_and_sandbox": true}` 
 `provider_options` to enable native YOLO (`--dangerously-bypass-approvals-and-sandbox`).
 This skips approval prompts and disables sandboxing for that invocation, including when
 resuming a session. Only enable it when the user authorizes both effects. Passing `false`
-or omitting the option adds no flag and inherits native settings; it does not force a sandbox
+or omitting it when no App default exists adds no flag and inherits native settings; it does not force a sandbox
 or approvals back on. The CLI's saved configuration is unchanged.
 
 For Antigravity, explicitly pass `{"dangerously_skip_permissions": true}` in
 `provider_options` to enable native YOLO (`--dangerously-skip-permissions`) for one invocation.
 This auto-approves all native tool permission requests for that invocation without changing
-the CLI's saved configuration. Omit the option to inherit native settings, or pass `false`
+the CLI's saved configuration. With no App default, omit the option to inherit native settings, or pass `false`
 to explicitly disable the flag. Only enable it when the user authorizes permission bypass;
 `mode` and `sandbox` are separate options and do not imply YOLO.
 
@@ -190,18 +176,7 @@ This follows desktop app updates instead of selecting an independently installed
 If no executable bundle is found, or on other platforms, AgentNave uses `codex` from PATH.
 AgentNave does not install or upgrade Codex, compare version numbers, or change its model settings.
 
-To override the defaults for one task, tell your calling Agent the provider, model ID, and
-reasoning effort. For example: “Use Codex CLI with model `gpt-6-astra` and effort `medium`.”
-The Agent passes `{"model": "gpt-6-astra", "effort": "medium"}` in `provider_options`.
-Only specified fields override the Skill guidance. To keep your choices across tasks, put the
-same preference in your calling Agent's personal instructions. To use the CLI's native settings,
-explicitly ask the Agent to omit the corresponding options.
-
-When a new model becomes available, use its exact ID from that provider's model list; updating
-AgentNave is not required to pass a new model ID. If you maintain a source installation and want
-to change the bundled defaults, edit the selected CLI file in
-`skills/agentnave-manager/references/`, then reload the Skill in a fresh context. An unavailable
-model should be reported rather than silently replaced.
+用户可在单次任务中点名 CLI、模型与 effort，由主控显式传入 `provider_options`，覆盖 App 默认值但仍须处于该模式允许范围。长期默认值在 App 中维护；要继承 CLI 原生设置，应清除对应 App 默认字段并在调用时省略，单纯省略参数仍会套用已配置的默认值。新增模型可直接使用其精确 ID；若模式限制模型，须先在 App 中启用。模型不可用时报告原错误，不静默替换。
 
 ### `wait_agent`
 

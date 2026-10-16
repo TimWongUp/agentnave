@@ -18,6 +18,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from agentnave import __version__
 from agentnave.core import InvocationManager
 from agentnave.group import Groups, GroupSeat, Round
+from agentnave.host import HostName, HostSource, detect_host
+from agentnave.members import (
+    AdapterOptionsError,
+    MemberFileError,
+    MemberList,
+    ProviderExcludedError,
+    ProviderName,
+    apply_member,
+    read_members,
+    validate_provider_options,
+)
+from agentnave.members import list_members as read_member_list
 from agentnave.models import (
     InvocationError,
     InvocationRequest,
@@ -25,10 +37,6 @@ from agentnave.models import (
     ProviderOption,
 )
 from agentnave.nesting import detect_nesting
-from agentnave.profiles import ProfileList
-from agentnave.profiles import list_profiles as read_profiles
-
-type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok", "pi"]
 
 
 def _read_excluded_providers() -> frozenset[str]:
@@ -40,11 +48,13 @@ def _read_excluded_providers() -> frozenset[str]:
     unknown = excluded.difference(get_args(ProviderName.__value__))
     if unknown:
         raise ValueError("Unknown AGENTNAVE_EXCLUDED_PROVIDERS: " + ", ".join(sorted(unknown)))
-    return excluded
+    host_provider = HOST.provider
+    return excluded if host_provider is None else excluded | {host_provider}
 
 
 WAIT_SECONDS = 300
 
+HOST = detect_host()
 EXCLUDED_PROVIDERS = _read_excluded_providers()
 PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
@@ -56,7 +66,7 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". start_agent rejects excluded providers; groups may seat any provider."
+    + ". start_agent rejects excluded providers; groups follow discussion member limits without host exclusions."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
@@ -82,6 +92,8 @@ class ProviderDescriptionPayload(TypedDict):
     provider: ProviderName
     permitted: bool
     supported_options: str
+    host: HostName | None
+    host_source: HostSource
 
 
 class InvocationErrorPayload(TypedDict):
@@ -104,6 +116,7 @@ class InvocationPayload(TypedDict):
     provider: NotRequired[str]
     model: NotRequired[str]
     effort: NotRequired[str]
+    defaults_applied: NotRequired[list[str]]
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
@@ -139,7 +152,7 @@ class GroupSeatSpec(BaseModel):
     provider: ProviderName
     provider_options: dict[str, ProviderOption] = Field(
         default_factory=lambda: {},
-        description="Explicit options for this seat's CLI, as for start_agent.",
+        description="Options for this seat's CLI; omitted keys use discussion member defaults.",
     )
     cwd: str | None = Field(
         default=None,
@@ -151,6 +164,9 @@ class GroupSeatPayload(TypedDict):
     id: str
     provider: str
     cwd: str
+    model: str | None
+    effort: str | None
+    defaults_applied: list[str]
 
 
 class GroupPayload(TypedDict):
@@ -208,8 +224,8 @@ mcp = MCPServer(
     instructions=(
         "AgentNave launches local CLI subagents. Use the agentnave-manager Skill for CLI usage "
         "and model selection. describe_provider reports permitted status and supported options. "
-        "list_profiles reads user orchestration rules; apply current user requirements first "
-        "and pass selected provider/options explicitly, permissions only when requested this turn. "
+        "list_members reads App members by mode; omitted model/effort/options use App defaults "
+        "reported in defaults_applied. Explicit arguments take priority within allowed ranges. "
         "Call start_agent, then wait_agent with its invocation_id, or wait_any for several; "
         "cancel_agent stops work and list_invocations lists handles. "
         "For several CLIs answering together, open_group then "
@@ -238,16 +254,34 @@ def _manager(ctx: Context[Runtime]) -> InvocationManager:
     return ctx.request_context.lifespan_context.manager
 
 
-def started_payload(invocation_id: str, request: InvocationRequest) -> InvocationPayload:
+def started_payload(
+    invocation_id: str, request: InvocationRequest, defaults_applied: list[str] | None = None
+) -> InvocationPayload:
     return {
         "invocation_id": invocation_id,
         "status": "running",
         "reason": "started",
         "elapsed_ms": 0,
         "provider": request.provider,
+        "defaults_applied": defaults_applied or [],
         "model": str(request.provider_options.get("model", "继承原生设置")),
         "effort": str(request.provider_options.get("effort", "继承原生设置")),
     }
+
+
+def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolError:
+    if isinstance(exc, MemberFileError):
+        return ToolError(str(exc))
+    if isinstance(exc, ProviderExcludedError):
+        return ToolError(str(exc) + ". " + PROVIDER_SELECTION)
+    supported = (
+        f" Supported {provider} options: model, effort, {PROVIDER_OPTIONS[provider]}."
+        if isinstance(exc, AdapterOptionsError)
+        else ""
+    )
+    return ToolError(
+        f"Invalid invocation request: {exc}.{supported} Correct the arguments and retry."
+    )
 
 
 def finished_payload(invocation_id: str, result: InvocationResult) -> InvocationPayload:
@@ -348,7 +382,7 @@ async def start_agent(
         Field(
             description=(
                 "Explicit options for the selected CLI. Call describe_provider(provider) for "
-                "supported keys. Omitted options inherit native CLI settings."
+                "supported keys. Omitted options use configured App defaults, then native CLI settings."
             )
         ),
     ] = None,
@@ -357,38 +391,34 @@ async def start_agent(
 ) -> InvocationPayload:
     """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
 
-    The reply includes the CLI and requested model/effort; omitted options show native inheritance.
+    The reply includes the CLI and requested model/effort. defaults_applied reports App defaults;
+    otherwise omitted settings inherit the native CLI configuration.
     These are requested settings, not confirmation of the CLI's effective settings.
     AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
     Provider-native limits still apply.
     Active invocations do not accept messages. To continue a finished conversation, pass
     its returned native session_id with a new prompt to a new start_agent call.
     """
-    if provider in EXCLUDED_PROVIDERS:
-        raise ToolError(f"Provider '{provider}' is excluded by this host. " + PROVIDER_SELECTION)
     try:
+        options, defaults_applied = apply_member(
+            read_members(), "task", provider, provider_options or {}, EXCLUDED_PROVIDERS
+        )
         request = InvocationRequest(
             provider=provider,
             prompt=prompt,
             cwd=Path(cwd),
             session_id=session_id,
-            provider_options=provider_options or {},
+            provider_options=options,
         )
+        validate_provider_options(request)
         invocation_id = _manager(ctx).start(request)
     except ValueError as exc:
-        supported = (
-            f" Supported {provider} options: model, effort, {PROVIDER_OPTIONS[provider]}."
-            if "option" in str(exc)
-            else ""
-        )
-        raise ToolError(
-            f"Invalid invocation request: {exc}.{supported} Correct the arguments and retry."
-        ) from exc
+        raise invocation_request_error(provider, exc) from exc
     except OSError as exc:
         raise ToolError(
             f"Unable to prepare invocation: {exc}. Check local filesystem access."
         ) from exc
-    return started_payload(invocation_id, request)
+    return started_payload(invocation_id, request, defaults_applied)
 
 
 @_tool(
@@ -561,40 +591,33 @@ async def describe_provider(
     """Read one provider's permitted status and supported options.
 
     Does not launch a CLI or check installation/login. permitted applies to start_agent;
-    open_group accepts every provider.
+    Group membership is controlled separately by the discussion mode.
     """
     return {
         "provider": provider,
         "permitted": provider not in EXCLUDED_PROVIDERS,
         "supported_options": "model, effort, " + PROVIDER_OPTIONS[provider],
+        "host": HOST.name,
+        "host_source": HOST.source,
     }
 
 
 @_tool(
-    title="Read user orchestration profiles",
+    title="Read configured members by mode",
     annotations=ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )
-async def list_profiles() -> ProfileList:
-    """Read profiles.json afresh: user orchestration rules with Adapter validation and host permission.
+async def list_members() -> MemberList:
+    """Read members.json afresh, with effective defaults, mode limits and host permission.
 
-    Current user requirements take priority. Choose by notes and explicitly pass provider and
-    provider_options to start_agent or a seat; the server never applies a profile by name.
-    Pass permission options (approval skipping or sandbox bypass) only when the user explicitly
-    requests them in the current turn. valid checks supported options, not CLI installation,
-    authentication, model availability or task cwd. permitted applies to start_agent; group
-    seats may use excluded providers. Missing files return an empty list; invalid files error.
+    valid checks Adapter options, not installation, authentication or model availability.
+    Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
     """
     try:
-        return read_profiles(EXCLUDED_PROVIDERS)
+        return read_member_list(EXCLUDED_PROVIDERS, HOST)
     except (OSError, ValueError) as exc:
-        raise ToolError(
-            f"Unable to read profiles.json: {exc}. Check or repair the user profiles file."
-        ) from exc
+        raise ToolError(str(exc)) from exc
 
 
 def _groups(ctx: Context[Runtime]) -> Groups:
@@ -686,27 +709,45 @@ async def open_group(
     """Create an in-memory group of 2–6 CLI seats for collaborative rounds. Nothing is saved.
 
     Seats are ordinary subagents: native tools and permissions, the given cwd, explicit options.
-    Each seat keeps its own native session across rounds. Host exclusions do not apply to seats.
+    Each seat keeps its own native session across rounds. Discussion member limits apply,
+    while host exclusions do not apply to seats.
     """
     try:
-        group = _groups(ctx).open(
-            Path(cwd),
-            [
+        document = read_members()
+        prepared_seats: list[GroupSeat] = []
+        defaults: dict[str, list[str]] = {}
+        for seat in seats:
+            options, defaults[seat.id] = apply_member(
+                document, "discussion", seat.provider, seat.provider_options, EXCLUDED_PROVIDERS
+            )
+            prepared_seats.append(
                 GroupSeat(
                     seat.id,
                     seat.provider,
-                    dict(seat.provider_options),
+                    options,
                     Path(seat.cwd if seat.cwd is not None else cwd),
                 )
-                for seat in seats
-            ],
-        )
+            )
+        group = _groups(ctx).open(Path(cwd), prepared_seats)
+    except MemberFileError as exc:
+        raise ToolError(str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise ToolError(f"Invalid group: {exc}. Correct the arguments and retry.") from exc
     return {
         "group_id": group.id,
         "seats": [
-            {"id": seat.id, "provider": seat.provider, "cwd": str(seat.cwd)}
+            {
+                "id": seat.id,
+                "provider": seat.provider,
+                "cwd": str(seat.cwd),
+                "model": str(seat.provider_options["model"])
+                if "model" in seat.provider_options
+                else None,
+                "effort": str(seat.provider_options["effort"])
+                if "effort" in seat.provider_options
+                else None,
+                "defaults_applied": defaults[seat.id],
+            }
             for seat in group.seats.values()
         ],
     }

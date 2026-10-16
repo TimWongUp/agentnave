@@ -1,6 +1,8 @@
 # Pi Coding Agent
 
-`provider: "pi"`；省略模型和 effort 时沿用 Pi 原生设置，不指定默认模型。
+App 中配置了组员时以 `list_members` 为准，超出模式范围会被拒绝。
+
+`provider: "pi"`；未配置 App 默认值且省略模型和 effort 时沿用 Pi 原生设置，不指定默认模型。
 用户选择模型时传 `model`（可用 `provider/model`）；选择思考等级时传 `effort`，映射为 `--thinking`，支持 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。
 
 首次使用先调用 `describe_provider("pi")`。支持的其他选项为 `provider`（模型后端，须同时提供 `model`）、`tools`（原生工具允许列表）和布尔 `restricted_tools`。普通任务保留原生工具与配置；Pi 没有内置的文件或进程权限隔离。

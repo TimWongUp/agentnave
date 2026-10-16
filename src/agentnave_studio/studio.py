@@ -19,6 +19,7 @@ from agentnave.adapters import get_adapter
 from agentnave.adapters.antigravity import remove_restricted_profile, write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
+from agentnave.host import Host, detect_host
 from agentnave.models import InvocationRequest
 from agentnave_studio import views
 from agentnave_studio.dashboard import Dashboard
@@ -42,6 +43,8 @@ type Decision = Literal["publish", "discard"]
 
 _LIVE_SECONDS = 1.5  # also how often the dashboard re-projects running work
 _STALE_LIVE_SECONDS = 3600
+_MANAGER_SESSION = uuid4().hex
+_MANAGER_STARTED_AT = now()
 
 
 def _project(record: Record) -> bytes:
@@ -69,8 +72,11 @@ class Studio(Groups):
     Running processes never survive a restart.
     """
 
-    def __init__(self, manager: InvocationManager, root: Path) -> None:
+    def __init__(self, manager: InvocationManager, root: Path, *, host: Host | None = None) -> None:
         super().__init__(manager)
+        self.host = host if host is not None else detect_host()
+        self.manager_session = _MANAGER_SESSION
+        self.manager_started_at = _MANAGER_STARTED_AT
         self.root = root.resolve()  # created only by the first saved conversation
         self.records: dict[str, Record] = {}
         self.unavailable: list[Unavailable] = []
@@ -188,6 +194,9 @@ class Studio(Groups):
             return self._group(group_id)
 
     def _create(self, state: Conversation, directory: Path) -> Record:
+        state.host = self.host.name
+        state.host_source = self.host.source
+        state.manager_session = self.manager_session
         record = Record.create(directory, state)
         self.records[state.id] = record
         self._publish(record)
@@ -747,7 +756,15 @@ class Studio(Groups):
                     conversations[record.state.id] = views.snapshot(
                         record.state, str(record.directory), tails=tails, elapsed=elapsed
                     )
-                payload = {"version": 1, "pid": os.getpid(), "updated_at": now()}
+                payload = {
+                    "version": 1,
+                    "pid": os.getpid(),
+                    "updated_at": now(),
+                    "host": self.host.name,
+                    "host_source": self.host.source,
+                    "manager_session": self.manager_session,
+                    "manager_started_at": self.manager_started_at,
+                }
                 try:
                     self.live_path.parent.mkdir(mode=0o700, exist_ok=True)
                     write_file(self.live_path, _json(payload | {"conversations": conversations}))

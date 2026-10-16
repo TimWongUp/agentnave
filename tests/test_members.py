@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from agentnave.members import (
+    MemberFile,
+    MemberFileError,
+    ProviderExcludedError,
+    apply_member,
+    read_members,
+)
+
+
+def test_member_structure_references_and_effective_overrides() -> None:
+    shared = {"efforts": ["medium", "high"], "effort": "high", "options": {"agent": "shared"}}
+    document: dict[str, object] = {
+        "version": 1,
+        "clis": {"claude": {"models": {"chosen": shared}}},
+        "modes": {
+            "task": {
+                "claude": {
+                    "models": ["chosen"],
+                    "default": "chosen",
+                    "overrides": {"chosen": {"effort": "medium", "options": {}}},
+                }
+            }
+        },
+    }
+    parsed = MemberFile.model_validate(document)
+    options, defaults = parsed.apply("task", "claude", {}, frozenset())
+    assert options == {"model": "chosen", "effort": "medium"}
+    assert defaults == ["model", "effort"]
+    # A missing mode is unrestricted, and shared defaults still apply to a known model.
+    assert parsed.apply("discussion", "claude", {"model": "chosen"}, frozenset({"claude"})) == (
+        {"model": "chosen", "effort": "high", "agent": "shared"},
+        ["effort", "agent"],
+    )
+    assert parsed.apply("discussion", "grok", {}, frozenset({"grok"})) == ({}, [])
+    with pytest.raises(ProviderExcludedError, match="excluded by this host"):
+        parsed.apply("task", "claude", {}, frozenset({"claude"}))
+    # Fresh copies cover structural rules without depending on Adapter semantics.
+    invalid: list[dict[str, object]] = [
+        dict(document, unknown=True),
+        dict(document, version=True),
+        dict(document, clis={"unknown": {"models": {}}}),
+        dict(document, modes={"unknown": {}}),
+        dict(document, modes={"task": {"claude": {"models": ["missing"]}}}),
+        dict(document, modes={"task": {"claude": {"models": [], "default": "missing"}}}),
+        dict(document, modes={"task": {"claude": {"models": [], "extra": True}}}),
+        dict(document, modes={"task": {"claude": {"models": [], "overrides": {"missing": {}}}}}),
+        dict(document, clis={"claude": {"models": {"chosen": {"options": {"model": "x"}}}}}),
+        dict(document, clis={"claude": {"models": {"chosen": {"options": {"effort": "high"}}}}}),
+        dict(document, clis={"claude": {"models": {"chosen": {"options": {"agent": []}}}}}),
+        dict(
+            document,
+            clis={"claude": {"models": {"chosen": {"efforts": ["high"], "effort": "low"}}}},
+        ),
+        dict(
+            document,
+            modes={
+                "task": {"claude": {"models": [], "overrides": {"chosen": {"efforts": ["low"]}}}}
+            },
+        ),
+    ]
+    invalid.extend(
+        {key: value for key, value in document.items() if key != missing}
+        for missing in ("version", "clis", "modes")
+    )
+    for value in invalid:
+        with pytest.raises(ValidationError):
+            MemberFile.model_validate_json(json.dumps(value))
+
+
+def test_missing_members_leave_parameters_native_and_ignore_legacy_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "data"
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
+    assert read_members() is None and not root.exists()
+    assert apply_member(None, "task", "claude", {"model": "explicit"}, frozenset()) == (
+        {"model": "explicit"},
+        [],
+    )
+    with pytest.raises(ValueError, match="excluded"):
+        apply_member(None, "task", "claude", {}, frozenset({"claude"}))
+    root.mkdir()
+    (root / "profiles.json").write_text("broken legacy data", encoding="utf-8")
+    assert read_members() is None
+    assert list(root.iterdir()) == [root / "profiles.json"]
+
+
+def test_model_allowlist_requires_a_model_and_restricted_defaults_preserve_pi_backend() -> None:
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {
+                "pi": {
+                    "models": {
+                        "chosen": {
+                            "effort": "high",
+                            "options": {"provider": "backend", "tools": "read"},
+                        }
+                    }
+                }
+            },
+            "modes": {
+                "task": {"pi": {"models": ["chosen"]}},
+                "discussion": {"pi": {"models": ["chosen"]}},
+            },
+        }
+    )
+    for mode in ("task", "discussion"):
+        with pytest.raises(ValueError, match="Model is required.*allowed models: chosen"):
+            apply_member(document, mode, "pi", {}, frozenset())
+    assert apply_member(
+        document, "discussion", "pi", {"model": "chosen"}, frozenset(), restricted=True
+    ) == ({"model": "chosen", "effort": "high", "provider": "backend"}, ["effort", "provider"])
+    assert apply_member(
+        document,
+        "discussion",
+        "pi",
+        {"model": "chosen", "provider": "explicit"},
+        frozenset(),
+        restricted=True,
+    ) == ({"model": "chosen", "provider": "explicit", "effort": "high"}, ["effort"])
+
+
+def test_member_file_errors_are_typed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "members.json"
+    path.write_text("{", encoding="utf-8")
+    with pytest.raises(MemberFileError, match="Invalid members.json"):
+        read_members()
+    path.unlink()
+    path.mkdir()
+    with pytest.raises(MemberFileError, match="Unable to read members.json"):
+        read_members()
