@@ -2,10 +2,10 @@
 //! defaults. The tray is its only writer; Python servers read it on every call. Checks here are
 //! structural and referential only; Python Adapters validate option semantics.
 
-use std::collections::HashSet;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
+use std::sync::Mutex;
 
 use serde_json::{Map, Value, json};
 
@@ -13,6 +13,17 @@ pub const PROVIDERS: [&str; 6] = ["antigravity", "claude", "codebuddy", "codex",
 const MODES: [&str; 2] = ["task", "discussion"];
 const FILE: &str = "members.json";
 const LEGACY: &str = "profiles.json";
+/// Permission-type option keys (case-insensitive substrings) never carried over from profiles.
+const PERMISSION_KEYS: [&str; 6] = [
+    "dangerously",
+    "permission",
+    "sandbox",
+    "yolo",
+    "skip_permissions",
+    "bypass",
+];
+/// Serializes the read-then-migrate step of concurrent `GET /settings/members` requests.
+static MIGRATION: Mutex<()> = Mutex::new(());
 
 pub fn empty() -> Value {
     json!({"version": 1, "clis": {}, "modes": {}})
@@ -39,21 +50,15 @@ fn settings(value: &Value, what: &str) -> Result<(), String> {
         let list = efforts
             .as_array()
             .ok_or_else(|| format!("{what} 的 efforts 必须为数组"))?;
-        let mut seen = HashSet::new();
-        for effort in list {
-            let effort = effort
-                .as_str()
-                .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| format!("{what} 的 efforts 只能含非空字符串"))?;
-            if !seen.insert(effort) {
-                return Err(format!("{what} 的 efforts 不可重复"));
-            }
+        if !list.iter().all(Value::is_string) {
+            return Err(format!("{what} 的 efforts 只能含字符串"));
         }
     }
-    if let Some(effort) = fields.get("effort")
-        && !effort.as_str().is_some_and(|s| !s.trim().is_empty())
+    if fields
+        .get("effort")
+        .is_some_and(|effort| !effort.is_string())
     {
-        return Err(format!("{what} 的 effort 必须为非空字符串"));
+        return Err(format!("{what} 的 effort 必须为字符串"));
     }
     if let Some(options) = fields.get("options") {
         let options = object(options, &format!("{what} 的 options"))?;
@@ -150,27 +155,23 @@ pub fn validate(document: &Value) -> Result<(), String> {
                     if !known.contains_key(model) {
                         return Err(format!("{what} 引用了未配置的模型 {model}"));
                     }
-                    if listed.contains(&model) {
-                        return Err(format!("{what}.models 不可重复"));
-                    }
                     listed.push(model);
                 }
             }
-            let allowed = |model: &str| {
-                known.contains_key(model) && (listed.is_empty() || listed.contains(&model))
-            };
             if let Some(default) = fields.get("default") {
                 let default = default
                     .as_str()
                     .ok_or_else(|| format!("{what}.default 必须为字符串"))?;
-                if !allowed(default) {
+                if !known.contains_key(default) || !(listed.is_empty() || listed.contains(&default))
+                {
                     return Err(format!("{what} 的默认模型 {default} 不在允许的模型中"));
                 }
             }
             if let Some(overrides) = fields.get("overrides") {
                 for (model, modal) in object(overrides, &format!("{what}.overrides"))? {
-                    if !allowed(model) {
-                        return Err(format!("{what} 覆盖了不在允许列表中的模型 {model}"));
+                    // Like the server, an override only needs a configured model.
+                    if !known.contains_key(model) {
+                        return Err(format!("{what} 覆盖了未配置的模型 {model}"));
                     }
                     let what = format!("{what} / {model}");
                     settings(modal, &what)?;
@@ -215,8 +216,8 @@ pub fn save(root: &Path, document: &Value) -> Result<(), String> {
 }
 
 /// Turn each legacy orchestration profile into a shared model configuration. Modes stay absent,
-/// so behavior is unchanged. Profiles without a model, or repeating a CLI + model pair, are
-/// skipped and reported.
+/// so every mode remains unrestricted. Profiles without a model, profiles repeating a CLI + model
+/// pair, and permission-type options are skipped and reported.
 fn convert(legacy: &Value) -> (Value, Vec<String>) {
     let mut document = empty();
     let mut skipped = Vec::new();
@@ -254,7 +255,14 @@ fn convert(legacy: &Value) -> (Value, Vec<String>) {
         {
             shared.insert("effort".into(), json!(effort));
         }
-        options.retain(|_, value| value.is_string() || value.is_number() || value.is_boolean());
+        options.retain(|key, value| {
+            let lowered = key.to_lowercase();
+            if PERMISSION_KEYS.iter().any(|word| lowered.contains(word)) {
+                skipped.push(format!("{label}：未迁移权限类参数 {key}"));
+                return false;
+            }
+            value.is_string() || value.is_number() || value.is_boolean()
+        });
         if !options.is_empty() {
             shared.insert("options".into(), Value::Object(options));
         }
@@ -289,6 +297,9 @@ pub fn migrate(root: &Path) -> Option<(Value, Vec<String>)> {
 
 /// The editable document, why it cannot be saved, and the outcome of a first-read migration.
 fn document_state(root: &Path) -> (Value, Value, bool, Vec<String>) {
+    let _migrating = MIGRATION
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     match read(root) {
         Ok(Some(document)) => (document, Value::Null, false, Vec::new()),
         Err(error) => (empty(), json!(error), false, Vec::new()),
@@ -371,10 +382,7 @@ mod tests {
             ),
             ("/clis/codex/models/gpt-6-luna/options", json!({"x": []})),
             ("/clis/codex/models/gpt-6.1-sol/effort", json!("low")),
-            (
-                "/clis/codex/models/gpt-6.1-sol/efforts",
-                json!(["high", "high"]),
-            ),
+            ("/clis/codex/models/gpt-6.1-sol/efforts", json!(["high", 1])),
             ("/modes/review", json!({})),
             ("/modes/discussion/grok", json!({"models": ["grok-4.7"]})),
             (
@@ -386,10 +394,8 @@ mod tests {
                 "/modes/task/codex/overrides",
                 json!({"gpt-6.1-sol": {"effort": "low"}}),
             ),
-            (
-                "/modes/task/codex/overrides",
-                json!({"gpt-6-luna": {"effort": "low"}}),
-            ),
+            ("/modes/task/codex/overrides", json!({"missing": {}})),
+            ("/clis/codex/models/ ", json!({})),
             ("/modes/task/codex/extra", json!(1)),
         ];
         for (pointer, value) in cases {
@@ -403,6 +409,11 @@ mod tests {
         widened["modes"]["task"]["codex"]["overrides"]["gpt-6.1-sol"] =
             json!({"efforts": ["low"], "effort": "low"});
         validate(&widened).unwrap();
+        // An override only needs a configured model, as on the server; duplicates are tolerated.
+        let mut lenient = document();
+        lenient["modes"]["task"]["codex"]["overrides"]["gpt-6-luna"] = json!({"effort": ""});
+        lenient["modes"]["task"]["codex"]["models"] = json!(["gpt-6.1-sol", "gpt-6.1-sol"]);
+        validate(&lenient).unwrap();
         // With no listed models, the default only has to be configured.
         let mut open = document();
         open["modes"]["task"]["codex"] = json!({"models": [], "default": "gpt-6-luna"});
@@ -481,7 +492,8 @@ mod tests {
         assert!(migrate(root).is_none());
         let legacy = json!({"version": 1, "profiles": [
             {"id": "a", "name": "核验", "provider": "codex",
-             "provider_options": {"model": "gpt-6.1-sol", "effort": "high", "skip_git_repo_check": true},
+             "provider_options": {"model": "gpt-6.1-sol", "effort": "high", "skip_git_repo_check": true,
+                                  "Dangerously_Bypass_Approvals_And_Sandbox": true, "permission_mode": "plan"},
              "notes": "只读核验"},
             {"id": "b", "name": "无模型", "provider": "grok", "provider_options": {"effort": "high"}, "notes": ""},
             {"id": "c", "name": "重复", "provider": "codex", "provider_options": {"model": "gpt-6.1-sol"}, "notes": ""},
@@ -498,8 +510,10 @@ mod tests {
         assert_eq!(document["clis"]["pi"]["models"]["magpie/x"], json!({}));
         // Migration never restricts a mode: behavior stays as before.
         assert_eq!(document["modes"], json!({}));
-        assert_eq!(skipped.len(), 2);
-        assert!(skipped[0].starts_with("无模型") && skipped[1].starts_with("重复"));
+        assert_eq!(skipped.len(), 4);
+        assert!(skipped[0].contains("Dangerously_Bypass_Approvals_And_Sandbox"));
+        assert!(skipped[1].contains("permission_mode"));
+        assert!(skipped[2].starts_with("无模型") && skipped[3].starts_with("重复"));
         assert_eq!(read(root).unwrap(), Some(document));
         assert!(!root.join(LEGACY).exists());
         assert!(root.join("profiles.json.migrated").exists());

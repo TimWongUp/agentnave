@@ -64,14 +64,15 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     """Inherited environment with PATH completed for the provider only.
 
     Hosts may pass a minimal PATH; `#!/usr/bin/env node` style CLIs then fail even
-    when their absolute path was found. Prepend the executable's directory and the
-    existing common install directories, keeping the inherited order after them.
+    when their absolute path was found. Put the executable's directory first, then the
+    inherited PATH (so the host's toolchain choice wins), then the existing common
+    install directories.
     """
     env = dict(os.environ)
     inherited = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
     leading = [os.path.dirname(argv[0])] if argv and os.path.isabs(argv[0]) else []
     path: list[str] = []
-    for entry in (*leading, *provider_bin_dirs(), *inherited):
+    for entry in (*leading, *inherited, *provider_bin_dirs()):
         if entry not in path:
             path.append(entry)
     env["PATH"] = os.pathsep.join(path)

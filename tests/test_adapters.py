@@ -329,24 +329,24 @@ def test_provider_executable_prefers_path_then_common_dirs(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows keeps the inherited environment")
-def test_provider_environment_prepends_executable_and_common_dirs(
+def test_provider_environment_orders_executable_inherited_then_common_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     common = tmp_path / "common"
     common.mkdir()
     monkeypatch.setattr(base, "PROVIDER_BIN_DIRS", (str(common), str(tmp_path / "absent")))
-    monkeypatch.setenv("PATH", os.pathsep.join(("/usr/bin", str(common), "/bin")))
+    monkeypatch.setenv("PATH", os.pathsep.join(("/usr/bin", "/bin", "/usr/bin")))
     executable = tmp_path / "cli" / "grok"
 
     env = provider_environment((str(executable), "--help"))
 
     assert env["PATH"].split(os.pathsep) == [
         str(executable.parent),
-        str(common),
         "/usr/bin",
         "/bin",
+        str(common),
     ]
-    assert os.environ["PATH"] == os.pathsep.join(("/usr/bin", str(common), "/bin"))
+    assert os.environ["PATH"] == os.pathsep.join(("/usr/bin", "/bin", "/usr/bin"))
 
 
 def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:

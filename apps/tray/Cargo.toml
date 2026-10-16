@@ -18,6 +18,9 @@ tauri-plugin-single-instance = "2.5"
 tauri-plugin-updater = "2"
 tempfile = "3"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 codegen-units = 1
 lto = true

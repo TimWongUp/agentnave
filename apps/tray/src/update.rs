@@ -24,6 +24,8 @@ const UPGRADED_NOTE: Duration = Duration::from_secs(10 * 60);
 const UPGRADE_MARKER: &str = "upgrade-service-after-restart";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
 const CHECK_WAIT: Duration = Duration::from_secs(60);
+/// Bounds the update check request; downloads keep the updater's own behavior.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Default, PartialEq)]
 enum Phase {
@@ -50,6 +52,8 @@ pub struct Updates {
     state: Mutex<(Phase, Option<Update>)>,
     upgrade: Mutex<Upgrade>,
     checked: Mutex<Option<SystemTime>>,
+    /// Why the post-restart service upgrade could not be promised for the current install.
+    marker_error: Mutex<Option<String>>,
 }
 
 impl Updates {
@@ -59,11 +63,12 @@ impl Updates {
             state: Mutex::new((Phase::Idle, None)),
             upgrade: Mutex::new(Upgrade::Idle),
             checked: Mutex::new(None),
+            marker_error: Mutex::new(None),
         }
     }
 
-    fn set(&self, phase: Phase, pending: Option<Update>) {
-        let (text, enabled) = match &phase {
+    fn label(&self, phase: &Phase) {
+        let (text, enabled) = match phase {
             Phase::Idle => ("检查更新…".to_owned(), true),
             Phase::Checking => ("正在检查更新…".to_owned(), false),
             Phase::Latest => (format!("已是最新版本 v{VERSION}"), true),
@@ -73,7 +78,42 @@ impl Updates {
         };
         let _ = self.item.set_text(text);
         let _ = self.item.set_enabled(enabled);
+    }
+
+    fn set(&self, phase: Phase, pending: Option<Update>) {
+        self.label(&phase);
         *self.state.lock().unwrap() = (phase, pending);
+    }
+
+    /// Mark a check as started, unless one is already checking or installing.
+    fn begin(&self) -> Option<Phase> {
+        let mut state = self.state.lock().unwrap();
+        if matches!(state.0, Phase::Checking | Phase::Installing(_)) {
+            return None;
+        }
+        let before = std::mem::replace(&mut state.0, Phase::Checking);
+        state.1 = None;
+        drop(state);
+        self.label(&Phase::Checking);
+        Some(before)
+    }
+
+    /// Take the found update and mark it installing, so concurrent clicks install it once.
+    fn start_install(&self) -> Option<Update> {
+        let mut state = self.state.lock().unwrap();
+        if matches!(state.0, Phase::Checking | Phase::Installing(_)) {
+            return None;
+        }
+        let update = state.1.take()?;
+        state.0 = Phase::Installing(update.version.clone());
+        drop(state);
+        self.label(&Phase::Installing(update.version.clone()));
+        Some(update)
+    }
+
+    fn busy(&self) -> bool {
+        matches!(self.phase(), Phase::Checking | Phase::Installing(_))
+            || matches!(*self.upgrade.lock().unwrap(), Upgrade::Running)
     }
 
     fn phase(&self) -> Phase {
@@ -81,18 +121,8 @@ impl Updates {
     }
 }
 
-/// Mark a check as started, unless one is already checking or installing.
-fn begin(updates: &Updates) -> Option<Phase> {
-    let before = updates.phase();
-    if matches!(before, Phase::Checking | Phase::Installing(_)) {
-        return None;
-    }
-    updates.set(Phase::Checking, None);
-    Some(before)
-}
-
 async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
-    let found = match app.updater() {
+    let found = match app.updater_builder().timeout(CHECK_TIMEOUT).build() {
         Ok(updater) => updater.check().await,
         Err(error) => Err(error),
     };
@@ -118,7 +148,7 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
 /// Look for a newer release. Automatic checks stay silent when offline or before any release
 /// carries an update manifest; a check from the menu reports the failure.
 pub fn check(app: &AppHandle, manual: bool) {
-    let Some(before) = begin(&app.state::<Updates>()) else {
+    let Some(before) = app.state::<Updates>().begin() else {
         return;
     };
     tauri::async_runtime::spawn(finish_check(app.clone(), manual, before));
@@ -127,7 +157,7 @@ pub fn check(app: &AppHandle, manual: bool) {
 /// `POST /app/update/check`: check now and answer with the result. The service version is
 /// read again by every status.
 pub fn check_now(app: &AppHandle) -> Value {
-    match begin(&app.state::<Updates>()) {
+    match app.state::<Updates>().begin() {
         Some(before) => tauri::async_runtime::block_on(finish_check(app.clone(), true, before)),
         None => {
             let started = Instant::now();
@@ -141,14 +171,16 @@ pub fn check_now(app: &AppHandle) -> Value {
     status(app)
 }
 
-/// `POST /app/update/apply`: update everything with one click. With an app update, remember to
-/// upgrade the service after the restart, then install; otherwise upgrade an older service now.
+/// `POST /app/update/apply`: update everything with one click: install a found app update
+/// (see `act`), otherwise upgrade an older service now. While a check, an install or a service
+/// upgrade is running it only reports the status.
 pub fn apply(app: &AppHandle) -> Value {
-    let pending = app.state::<Updates>().state.lock().unwrap().1.is_some();
+    let updates = app.state::<Updates>();
+    if updates.busy() {
+        return status(app);
+    }
+    let pending = updates.state.lock().unwrap().1.is_some();
     if pending {
-        if let Some(dir) = marker_dir(app) {
-            let _ = write_marker(&dir);
-        }
         act(app);
     } else if service(&tool_dir()).is_object() && claim_upgrade(app) {
         let app = app.clone();
@@ -182,15 +214,25 @@ fn brief(text: &str) -> String {
     text.chars().take(200).collect()
 }
 
-/// The menu and the panel share one action: install a found update, otherwise check.
+/// The menu, the panel and "全部更新" share one action: install a found update after recording
+/// the post-restart service upgrade, otherwise check. Does nothing while checking or installing.
 pub fn act(app: &AppHandle) {
     let updates = app.state::<Updates>();
-    let pending = updates.state.lock().unwrap().1.clone();
-    let Some(update) = pending else {
+    if matches!(updates.phase(), Phase::Checking | Phase::Installing(_)) {
+        return;
+    }
+    let Some(update) = updates.start_install() else {
         check(app, true);
         return;
     };
-    updates.set(Phase::Installing(update.version.clone()), None);
+    let recorded = marker_dir(app)
+        .ok_or_else(|| "找不到应用数据目录".to_owned())
+        .and_then(|dir| write_marker(&dir).map_err(|error| error.to_string()));
+    *updates.marker_error.lock().unwrap() = recorded.err().map(|error| {
+        brief(&format!(
+            "无法记录重启后升级本机服务（{error}），重启后请手动升级"
+        ))
+    });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         match update.download_and_install(|_, _| {}, || {}).await {
@@ -219,6 +261,9 @@ pub fn status(app: &AppHandle) -> Value {
         .as_ref()
         .map(|updates| updates.upgrade.lock().unwrap().clone())
         .unwrap_or_default();
+    let marker_error = updates
+        .as_ref()
+        .and_then(|updates| updates.marker_error.lock().unwrap().clone());
     let checked = updates.and_then(|updates| *updates.checked.lock().unwrap());
     let update = match phase {
         Phase::Idle => Value::Null,
@@ -228,7 +273,7 @@ pub fn status(app: &AppHandle) -> Value {
             json!({"state": "available", "version": version, "error": null})
         }
         Phase::Installing(version) => {
-            json!({"state": "installing", "version": version, "error": null})
+            json!({"state": "installing", "version": version, "error": marker_error})
         }
         Phase::Failed(error) => json!({"state": "failed", "version": null, "error": error}),
     };

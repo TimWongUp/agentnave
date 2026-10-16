@@ -55,30 +55,33 @@ const CLAUDE_ALIASES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
 
 static CACHE: Mutex<Option<Value>> = Mutex::new(None);
 
-/// Probe results for all providers, kept until `refresh` asks for a new probe.
+/// Probe results for all providers, kept until `refresh` asks for a new probe. Probes run
+/// outside the lock, so concurrent first reads may probe twice; the last result wins.
 pub fn detected(refresh: bool) -> Value {
-    let mut cache = CACHE.lock().unwrap_or_else(|poison| poison.into_inner());
-    if refresh || cache.is_none() {
-        let results: Vec<(&str, Value)> = thread::scope(|scope| {
-            let probes: Vec<_> = PROVIDERS
-                .iter()
-                .map(|provider| (*provider, scope.spawn(|| probe(provider))))
-                .collect();
-            probes
-                .into_iter()
-                .map(|(provider, probe)| {
-                    let failed = || failure(provider, None, "探测异常结束");
-                    (provider, probe.join().unwrap_or_else(|_| failed()))
-                })
-                .collect()
-        });
-        let mut all = Map::new();
-        for (provider, result) in results {
-            all.insert(provider.to_owned(), result);
-        }
-        *cache = Some(Value::Object(all));
+    let cache = || CACHE.lock().unwrap_or_else(|poison| poison.into_inner());
+    if !refresh && let Some(cached) = cache().clone() {
+        return cached;
     }
-    cache.clone().unwrap_or(Value::Null)
+    let results: Vec<(&str, Value)> = thread::scope(|scope| {
+        let probes: Vec<_> = PROVIDERS
+            .iter()
+            .map(|provider| (*provider, scope.spawn(|| probe(provider))))
+            .collect();
+        probes
+            .into_iter()
+            .map(|(provider, probe)| {
+                let failed = || failure(provider, None, "探测异常结束");
+                (provider, probe.join().unwrap_or_else(|_| failed()))
+            })
+            .collect()
+    });
+    let mut all = Map::new();
+    for (provider, result) in results {
+        all.insert(provider.to_owned(), result);
+    }
+    let all = Value::Object(all);
+    *cache() = Some(all.clone());
+    all
 }
 
 fn efforts(provider: &str) -> Vec<String> {
@@ -202,8 +205,9 @@ fn find(name: &str) -> Option<PathBuf> {
         .find(|path| executable(path))
 }
 
-/// PATH for a probe: the CLI's own directory and the common directories before the inherited
-/// PATH, so `#!/usr/bin/env node` launchers work from an app started by the Finder.
+/// PATH for a probe: the CLI's own directory, then the inherited PATH, then the common
+/// directories, so `#!/usr/bin/env node` launchers work from an app started by the Finder
+/// without overriding the toolchain the inherited PATH selects.
 fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs: Vec<PathBuf> = executable
@@ -211,10 +215,7 @@ fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
         .map(Path::to_path_buf)
         .into_iter()
         .collect();
-    for dir in common_dirs()
-        .into_iter()
-        .chain(std::env::split_paths(&inherited))
-    {
+    for dir in std::env::split_paths(&inherited).chain(common_dirs()) {
         if !dirs.contains(&dir) {
             dirs.push(dir);
         }
@@ -239,6 +240,9 @@ fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
+    // Its own process group, so a timeout also stops descendants holding the pipes.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let (sender, receiver) = mpsc::channel();
     for (stream, pipe) in [
@@ -272,24 +276,30 @@ fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
-                let _ = child.kill();
+                kill_group(&mut child);
                 let _ = child.wait();
                 return Err(format!("{} 秒内未完成", TIMEOUT.as_secs()));
             }
             Err(error) => return Err(error.to_string()),
         }
     };
-    // A descendant holding the pipes open must not stall the settings page.
+    // A descendant still holding the pipes a second after the CLI exited is stopped with its
+    // group; the group outlives its reaped leader while members remain, so its ID stays reserved.
     let (mut stdout, mut stderr) = (String::new(), String::new());
-    for _ in 0..2 {
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .max(Duration::from_secs(1));
-        match receiver.recv_timeout(wait) {
+    let mut received = 0;
+    let mut killed = false;
+    while received < 2 {
+        match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok((0, text)) => stdout = text,
             Ok((_, text)) => stderr = text,
+            Err(_) if !killed => {
+                kill_group(&mut child);
+                killed = true;
+                continue;
+            }
             Err(_) => break,
         }
+        received += 1;
     }
     if status.success() {
         return Ok(stdout);
@@ -301,6 +311,21 @@ fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
         .find(|line| !line.is_empty())
         .map_or_else(|| format!("退出码 {status}"), str::to_owned);
     Err(reason.chars().take(200).collect())
+}
+
+#[cfg(unix)]
+fn kill_group(child: &mut std::process::Child) {
+    if let Ok(group) = libc::pid_t::try_from(child.id()) {
+        // SAFETY: kill(2) only sends a signal; a negative ID names the probe's process group.
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(child: &mut std::process::Child) {
+    let _ = child.kill();
 }
 
 /// Codex's own model cache: listed models by priority, and the effort levels they support.
@@ -433,6 +458,8 @@ fn pi_models(text: &str) -> Vec<Value> {
 
 /// `codebuddy --help`: the list in "Currently supported: (…)" under `--model`.
 fn codebuddy_models(text: &str) -> Vec<Value> {
+    // Help text may wrap at any space, including inside the marker.
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let Some(start) = text.find("Currently supported: (") else {
         return Vec::new();
     };
@@ -513,6 +540,9 @@ mod tests {
             ["hy4-preview", "glm-5.3", "kimi-k2.7"]
         );
         assert!(codebuddy_models("Usage: codebuddy").is_empty());
+        let wrapped = "  --model <model>   Please provide the model ID. Currently\n      \
+            supported: (hy4-preview,\n      glm-5.3)\n";
+        assert_eq!(ids(&codebuddy_models(wrapped)), ["hy4-preview", "glm-5.3"]);
     }
 
     #[cfg(unix)]
@@ -531,12 +561,36 @@ mod tests {
         let out = run(&script, &[]).unwrap();
         let mut lines = out.lines();
         assert_eq!(lines.next(), Some("empty-stdin"));
-        assert!(
-            lines
-                .next()
-                .unwrap()
-                .starts_with(&directory.path().display().to_string())
-        );
+        // The CLI's own directory, then the inherited PATH ahead of the common directories.
+        let path: Vec<String> = lines
+            .next()
+            .unwrap()
+            .split(':')
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(path[0], directory.path().display().to_string());
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        if let Some(first) = inherited
+            .split(':')
+            .find(|dir| *dir != path[0] && !dir.is_empty())
+        {
+            assert_eq!(path[1], first);
+        }
         assert_eq!(run(&script, &["fail"]).unwrap_err(), "boom");
+
+        // A grandchild keeping the pipe open after the CLI exited is stopped with its group.
+        let lingering = directory.path().join("lingering");
+        std::fs::write(
+            &lingering,
+            "#!/bin/sh
+echo listed
+sleep 30 &
+",
+        )
+        .unwrap();
+        std::fs::set_permissions(&lingering, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = Instant::now();
+        assert_eq!(run(&lingering, &[]).unwrap(), "listed\n");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
