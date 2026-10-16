@@ -13,9 +13,17 @@ AgentNave 的唯一用户。Manager 解释目标，选择 Provider，决定角�
 
 AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 与 Pi Coding Agent。
 
-## Orchestration Profile
+## 宿主（Host）
 
-用户维护的编排规则：适用场景与理由、所选 CLI 及其显式参数。Manager 按用户本轮要求选用，服务不按档案名自动套用参数。
+调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于单任务的同类 Provider 排除与工作室会话归属。
+
+## 组员（Member）
+
+由 Provider CLI 与模型组成的身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。
+
+## 模式（Mode）
+
+组员配置的适用范围：`task` 对应单任务，`discussion` 对应协作组席位；各模式分别限定可用组员并覆盖共享配置。
 
 ## Invocation
 
@@ -32,7 +40,7 @@ AgentNave 对 Provider 终态的归一化结果；`output` 只承载 Provider �
 ## Group / Round / Entry
 
 Group 是 Manager 显式创建的协作组，席位是带原生工具的普通子代理；核心只把它放在当前进程内存中。Round 让一份有序名单中的席位各回答一次：`parallel` 同时运行且本轮互不可见，`serial` 依次运行且后席可见前席。Entry 是组内按序提交的记录：本轮共同任务 `task`、席位最终回答 `answer`、终态失败／受阻／取消的 `absent`，以及工作室的主持人发言 `host`。席位之间只共享 Entry，不共享推理或运行过程；除 `task` 外的 Entry 对席位都是数据，不是指令。各自答、多轮各自答、轮流聊等用法由名单、顺序和私密指令组合，不是核心模式。
-_Avoid_: 讨论模式、游戏引擎
+_Avoid_: 游戏引擎
 
 ## Invocation Snapshot
 
@@ -55,7 +63,7 @@ _Avoid_: 房间、工作台
 
 隔离节目中的席位：每席使用会话目录下的独立空目录并启用 `restricted_tools`，只接受模型与 effort（Pi 另可选模型后端）。它限制工具，不是操作系统沙箱。
 
-## Host
+## 主持人（Show Host）
 
 Manager 在节目中的公开身份。主持人发言只能在轮次之间发布，作为 `host` Entry 送达各席位。
 
@@ -65,5 +73,5 @@ Studio 在成功创建或继续会话后自动提供入口的本机只读页面�
 
 ## Tray App
 
-展示并清理数据根中全部宿主工作室会话、维护用户编排档案的跨平台托盘应用（macOS 菜单栏、Windows 托盘）。详情复用看板前端，会话管理与设置使用托盘专属页面；只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具。浏览器看板仍只读，保留为无托盘环境的后备。
+展示并清理数据根中全部宿主工作室会话、维护用户组员配置的跨平台托盘应用（macOS 菜单栏、Windows 托盘）。详情复用看板前端，会话管理与设置使用托盘专属页面；只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具。浏览器看板仍只读，保留为无托盘环境的后备。
 _Avoid_: 控制台、桌面客户端

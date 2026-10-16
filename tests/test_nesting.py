@@ -17,6 +17,94 @@ from agentnave.nesting import (
 from agentnave.processes import spawn_process, terminate_process_tree
 
 
+def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentnave import host
+
+    monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
+    monkeypatch.setattr(host.sys, "platform", "win32")
+    assert host.detect_host() == host.Host()
+    for name, provider in (
+        ("codex", "codex"),
+        ("workbuddy", "codebuddy"),
+        ("gemini", None),
+        ("opencode", None),
+        ("hermes", None),
+    ):
+        monkeypatch.setenv("AGENTNAVE_HOST", name)
+        identified = host.detect_host()
+        assert identified.name == name and identified.source == "env"
+        assert identified.provider == provider
+    for value in ("unknown", "", "CODEX"):
+        monkeypatch.setenv("AGENTNAVE_HOST", value)
+        with pytest.raises(ValueError, match="Unknown AGENTNAVE_HOST"):
+            host.detect_host()
+
+
+def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
+    from agentnave.host import Host, _detect_parent  # pyright: ignore[reportPrivateUsage]
+
+    parents = {80: 70, 70: 60, 60: 50, 50: 40, 40: 1}
+    table: dict[int, tuple[str, ...]] = {
+        80: ("/usr/bin/python3.12", "/venv/bin/agentnave-studio-mcp"),
+        70: ("/bin/zsh",),
+        60: ("/usr/bin/env",),
+        50: ("/usr/bin/node", "/pkg/server.js"),
+        40: ("/Applications/WorkBuddy.app/Contents/MacOS/Electron",),
+    }
+    assert _detect_parent(80, parents.__getitem__, table.__getitem__) == Host("workbuddy", "parent")
+    for executable, name in (
+        ("/usr/bin/codex", "codex"),
+        ("claude", "claude"),
+        ("codebuddy", "codebuddy"),
+        ("grok", "grok"),
+        ("agy", "antigravity"),
+        ("pi", "pi"),
+        ("gemini", "gemini"),
+        ("opencode", "opencode"),
+        ("hermes", "hermes"),
+        ("/Applications/Codex.app/Contents/MacOS/Electron", "codex"),
+        ("/Applications/Claude.app/Contents/MacOS/Claude", "claude"),
+        ("/Applications/Antigravity.app/Contents/MacOS/Electron", "antigravity"),
+        ("/Users/test/.local/share/claude/versions/2.1.295", "claude"),
+    ):
+        table[40] = (executable,)
+        assert _detect_parent(80, parents.__getitem__, table.__getitem__).name == name
+    table[40] = ("/Applications/Antigravity.app/Contents/MacOS/Electron",)
+    for interpreter, script, expected in (
+        ("node", "/pkg/codebuddy.js", "codebuddy"),
+        ("bun", "/pkg/pi.mjs", "pi"),
+        ("python", "/pkg/hermes.py", "hermes"),
+        ("python3.12", "/pkg/gemini.py", "gemini"),
+        ("deno", "/pkg/opencode.cjs", "opencode"),
+        ("uvx", "hermes", "hermes"),
+        ("npx", "codebuddy", "codebuddy"),
+    ):
+        table[50] = (interpreter, "--quiet", script, "prompt mentions claude")
+        assert _detect_parent(80, parents.__getitem__, table.__getitem__).name == expected
+    # An unrecognized non-wrapper is a boundary, even with an outer GUI host.
+    table[50] = ("custom-cli", "codex")
+    assert _detect_parent(80, parents.__getitem__, table.__getitem__) == Host()
+    table[50] = ("node", "other.js", "codex")
+    table[40] = ("custom-cli",)
+    assert _detect_parent(80, parents.__getitem__, table.__getitem__) == Host()
+    assert (
+        _detect_parent(100, lambda p: p - 1, lambda p: ("codex",) if p == 68 else ("sh",)) == Host()
+    )
+    assert _detect_parent(20, lambda _: 20, lambda _: ("sh",)) == Host()
+
+    def argv(pid: int) -> Sequence[str]:
+        if pid == 80:
+            raise PermissionError("unreadable argv")
+        return ("codebuddy",)
+
+    assert _detect_parent(80, parents.__getitem__, argv) == Host("codebuddy", "parent")
+
+    def denied_parent(_pid: int) -> int:
+        raise PermissionError("unreadable parent")
+
+    assert _detect_parent(80, denied_parent, argv) == Host()
+
+
 def test_posix_signals_use_script_position_and_validate_marker() -> None:
     supervisor = ("/usr/bin/python3.12", "-I", "/pkg/agentnave/supervisor.py", "8")
     table = {

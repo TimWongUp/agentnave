@@ -6,8 +6,8 @@
 
 | 工具 | 说明 |
 | --- | --- |
-| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | 与核心相同；`start_agent` 另接受 `title`、`conversation_id`，任务自动保存为私有任务会话；`describe_provider` 另返回 `show_permitted` |
-| `list_profiles` | 与核心共用只读档案工具；每次现读 `profiles.json`，返回参数校验与宿主允许状态，不套用参数 |
+| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | 与核心相同；`start_agent` 另接受 `title`、`conversation_id`，任务自动保存为私有任务会话，模型按套用 App 默认值后的参数记录；`describe_provider` 另返回按当前 discussion CLI 名单计算的 `show_permitted` |
+| `list_members` | 与核心共用只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态 |
 | `open_group` | 创建保存的节目：`title`、2–6 个席位、`cwd`，可选 `review`、`isolated`；返回的 `group_id` 就是会话 ID |
 | `run_round`、`wait_round`、`cancel_round` | 与核心相同的并联／串联轮次；审核节目中 `wait_round` 返回 `review_needed`，席位状态出现 `pending_review`、`discarded` |
 | `decide_answers` | `round_id` + `{seat_id: publish/discard}`，整批校验并保存后生效 |
@@ -26,13 +26,15 @@
 
 不审核（`review=false`）时，节目与核心协作轮次的行为完全一致，只是多了保存与看板。
 
+`start_agent` 使用 task 配置，`open_group` 每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建节目回执的各席另含 model、effort（未配置时为 null）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、节目与工作室 Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
+
 `wait_round(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，节目席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
 
 ## 隔离席位
 
 普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求工作室准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
-`isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略，席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。节目（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
+`isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。节目（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
 
 各 CLI 的原生限制（下列版本已核对本机帮助与受限调用；精确参数以 Adapter 为准，版本或配置变化后复核受影响项）：
 
@@ -70,7 +72,7 @@
 
 ## 保存与恢复
 
-数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。每个会话一个目录，含原子替换的 `state.json` 与 `.lock` 文件锁。每次写入前取锁并在锁内重读磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list_conversations` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话的 `state.json` 已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。
+数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。每个会话一个目录，含原子替换的 `state.json` 与 `.lock` 文件锁。新任务与节目保存创建者的 `host`、`host_source` 和 UUID hex `manager_session`，后续接手沿用创建归属；旧记录缺失时兼容读取为 null／unknown／null。`views.json` 摘要及 live 中的会话摘要带同样字段，live 顶层另带当前服务身份、主控会话标识与开始时间。每次写入前取锁并在锁内重读磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list_conversations` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话的 `state.json` 已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。
 
 重启后节目按保存的条目、席位会话与游标继续；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
 
@@ -80,15 +82,16 @@
 
 ## 托盘应用（预览）
 
-`apps/tray` 是可查看并清理会话记录的菜单栏应用（Tauri 2，目前先支持 macOS），不必启动 MCP 服务即可查看数据根中全部宿主的会话。菜单栏标题在有工作时显示运行中与待审核数量。左键点击图标弹出面板，像群聊一样按时间显示进行中、待审核和近两小时有活动的会话：主控派出的任务与题目、各模型正在写的内容（“正在输入”）与完成的回答，以及失败、缺席提示；长回答折叠显示，点任一条在工作台窗口中打开对应会话。近两小时没有动静时列出最近会话；右键菜单有“打开工作台”、“管理会话…”、“设置…”、“检查更新”和“退出 AgentNave”。工作台窗口与浏览器看板是同一份前端，“选手视角”在单独窗口打开，回复中的链接用默认浏览器打开，导出的公共 JSONL 保存到“下载”并在访达中定位。应用不调用工具，不监听端口；对数据根的写入限于下述会话清理与用户编排档案；再次启动只会打开工作台。
+`apps/tray` 是可查看并清理会话记录的菜单栏应用（Tauri 2，目前先支持 macOS），不必启动 MCP 服务即可查看数据根中全部宿主的会话。菜单栏标题在有工作时显示运行中与待审核数量。左键点击图标弹出面板，像群聊一样按时间显示进行中、待审核和近两小时有活动的会话：主控派出的任务与题目、各模型正在写的内容（“正在输入”）与完成的回答，以及失败、缺席提示；长回答折叠显示，点任一条在工作台窗口中打开对应会话。近两小时没有动静时列出最近会话；右键菜单有“打开工作台”、“管理会话…”、“设置…”、“检查更新”和“退出 AgentNave”。工作台窗口与浏览器看板是同一份前端，“选手视角”在单独窗口打开，回复中的链接用默认浏览器打开，导出的公共 JSONL 保存到“下载”并在访达中定位。应用不调用工具，不监听端口；对数据根的写入限于下述会话清理与用户组员配置；再次启动只会打开工作台。
 
 “管理会话…”在主窗口打开托盘专属页面，也可从面板底部进入。列表包含标题、类型、状态、最近活动时间和是否已结束；可按“已结束 / 空闲 / 失败 / 全部”及活动早于日期筛选。空闲指未结束、当前未占用且无待审回答的会话，失败筛选包含受阻与中断。单选或多选后点击“删除所选”，先在页面中核对并确认；“清理 N 天前的会话”针对**全部会话**中早于该天数且可删的记录，不受当前列表筛选限制，同样先确认。运行中、待审及被宿主占用的记录不可勾选，并显示原因；列表定期刷新，读取失败会保留画面并暂停删除，删除后刷新并逐条显示结果。缺少视图快照时回退到状态文件，最近活动时间回退到状态文件的修改时间。
 
 托盘删除不要求先结束会话。Rust 在会话 `.lock` 上取得与 Python 工作室相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。只删除 `state.json` 和 `views.json`，保留会话目录、`.lock`、全部席位及其文件；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或具体文件错误；两个文件的删除不保证同时成功，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
 
-“设置…”在主窗口打开托盘专属设置页，与管理会话页在页头互相链接。首个分区“编排档案”可新增、编辑、删除规则，填写名称、CLI、模型、effort、其他键值参数与适用场景／理由；其他参数的值可选字符串、数字或布尔。保存通过带操作请求头的 POST 原子替换数据根下的 `profiles.json`（版本 1），模型与 effort 均在 `provider_options` 内，编辑保留档案 ID。Rust 仅校验结构与字段类型，参数是否有效以主控调用 `list_profiles` 时的 Adapter 校验为准；文件损坏时显示错误并禁止页面保存，需先修复文件再重新读取。
+“设置…”在主窗口打开托盘专属设置页，与管理会话页在页头互相链接。组员配置存于数据根下的 `members.json`（版本 1），以 CLI 与模型作为身份，分别维护 task 与 discussion 的可用组员、默认模型、努力档位、其他参数及说明。模式 override 的字段整体替换共享值，其他参数中的 options 也整体替换。App 负责原子保存与旧 `profiles.json` 迁移，服务只读且每次现读，不创建缺失文件。
 
-核心与工作室都可读取这些用户规则，不创建缺失文件。主控按用户本轮要求优先，按说明选档案，再显式传入 CLI 与参数；服务不按档案名自动套用。跳过审批、绕过沙箱等权限参数仅在用户本轮明确要求时传入。`permitted=false` 表示该宿主的单任务排除项，不限制组席位；`valid=true` 不证明安装、登录、模型可用或任务目录符合要求。设置页整份保存，外部编辑后请重新读取；并发编辑以最后一次保存为准。
+主控未获点名时先读 `list_members`，按模式中的组员与说明选择。`permitted=false` 反映 task 的宿主排除项，discussion 恒为 true；模式允许范围由名单本身表达；受限模式中某 CLI 不限模型时，另以空配置的 `model="*"` 条目说明。`valid=true` 只表示 Adapter 参数校验通过，不证明安装、登录、模型可用或任务目录符合要求。服务不再提供 `list_profiles`，旧 `profiles.json` 不会由服务读取。
+
 
 从包含托盘的版本起，每个 GitHub Release 附带 macOS 通用安装包 `AgentNave_<版本>_universal.dmg`：打开后把 AgentNave 拖进“应用程序”。应用未经 Apple 签名公证，首次打开须在访达中右键“打开”放行。
 

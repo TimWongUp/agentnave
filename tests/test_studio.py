@@ -31,6 +31,13 @@ from agentnave_studio.studio import Studio
 
 @pytest.fixture(autouse=True)
 def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from agentnave.host import Host
+
+    monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
+    monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
+    monkeypatch.setattr(studio_server.core, "HOST", Host())
+    monkeypatch.setattr(studio_server.core, "EXCLUDED_PROVIDERS", frozenset[str]())
+    monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset[str]())
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
     # A fake claude that reports what it saw; a SLEEP private instruction keeps it running.
@@ -269,6 +276,35 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    data_root.mkdir()
+    (data_root / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "claude": {
+                        "models": {
+                            "chosen": {
+                                "effort": "high",
+                                "options": {
+                                    "permission_mode": "bypassPermissions",
+                                    "agent": "reviewer",
+                                },
+                            }
+                        }
+                    },
+                    "antigravity": {"models": {"chosen": {"options": {"sandbox": True}}}},
+                },
+                "modes": {
+                    "discussion": {
+                        "claude": {"models": ["chosen"], "default": "chosen"},
+                        "antigravity": {"models": ["chosen"], "default": "chosen"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     seats = [{"id": "a", "provider": "claude"}, {"id": "g", "provider": "antigravity"}]
     async with Client(mcp) as client:
         invalid = await client.call_tool(
@@ -287,6 +323,10 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         show = await _call(
             client, "open_group", {"title": "Isolated", "isolated": True, "seats": seats}
         )
+        receipt_seats = _seats(show)
+        assert receipt_seats[0]["defaults_applied"] == ["model", "effort"]
+        assert receipt_seats[1]["defaults_applied"] == ["model"]
+        assert receipt_seats[0]["model"] == "chosen" and receipt_seats[0]["effort"] == "high"
         group_id = str(show["group_id"])
         seat_dirs = {
             str(seat["id"]): Path(str(seat["cwd"]))
@@ -301,6 +341,10 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         )
         seen = _seen(_seats(await _wait(client, started["round_id"]))[0])
         assert Path(str(seen["cwd"])).resolve() == seat_dirs["a"].resolve()
+        argv = cast(list[str], seen["argv"])
+        assert "--permission-mode" not in argv and "--agent" not in argv
+        assert argv[argv.index("--model") + 1] == "chosen"
+        assert argv[argv.index("--effort") + 1] == "high"
         assert "--safe-mode" in cast(list[str], seen["argv"])
         await _call(client, "update_conversation", {"conversation_id": group_id, "archived": True})
         deleted = await _call(client, "delete_conversation", {"conversation_id": group_id})
@@ -315,7 +359,10 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
             "run_round",
             {"group_id": ordinary["group_id"], "seats": ["a"], "order": "parallel", "prompt": "hi"},
         )
-        assert _seats(await _wait(client, started["round_id"]))[0]["status"] == "succeeded"
+        done = _seats(await _wait(client, started["round_id"]))[0]
+        assert done["status"] == "succeeded"
+        ordinary_argv = cast(list[str], _seen(done)["argv"])
+        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "bypassPermissions"
 
 
 @pytest.mark.asyncio
@@ -1055,7 +1102,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         assert "director_url" not in listed and "public_url" not in listed
         names = [tool.name for tool in (await client.list_tools()).tools]
         assert len(names) == 17 and "open_dashboard" not in names
-        assert {"wait_any", "list_invocations", "list_profiles"} <= set(names)
+        assert {"wait_any", "list_invocations", "list_members"} <= set(names)
 
     def fail(_self: Studio, *, history_loaded: bool = False) -> str:
         raise OSError("viewer failed")
@@ -1150,28 +1197,195 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
 
 
 @pytest.mark.asyncio
-async def test_studio_reuses_readonly_core_profiles(data_root: Path) -> None:
+async def test_studio_reuses_readonly_core_members(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 17
-        annotations = tools["list_profiles"].annotations
+        assert len(tools) == 17 and "list_profiles" not in tools
+        annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
-        assert await _call(client, "list_profiles", {}) == {"profiles": []}
+        assert (await _call(client, "list_members", {}))["configured"] is False
         assert not data_root.exists()
         data_root.mkdir()
         document: dict[str, object] = {
             "version": 1,
-            "profiles": [
-                {
-                    "id": "one",
-                    "name": "核验",
-                    "provider": "claude",
-                    "provider_options": {},
-                    "notes": "只读核验",
-                }
-            ],
+            "clis": {"claude": {"models": {"chosen": {"notes": "只读核验"}}}},
+            "modes": {},
         }
-        (data_root / "profiles.json").write_text(json.dumps(document), encoding="utf-8")
-        result = await _call(client, "list_profiles", {})
-        assert result == (await studio_server.core.list_profiles()).model_dump()
-        assert list(data_root.iterdir()) == [data_root / "profiles.json"]
+        (data_root / "members.json").write_text(json.dumps(document), encoding="utf-8")
+        result = await _call(client, "list_members", {})
+        assert result == (await studio_server.core.list_members()).model_dump()
+        assert list(data_root.iterdir()) == [data_root / "members.json"]
+
+
+@pytest.mark.asyncio
+async def test_studio_enforces_discussion_defaults_before_saving(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host
+
+    monkeypatch.setattr(studio_server.core, "HOST", Host("claude", "parent"))
+    monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    data_root.mkdir()
+    path = data_root / "members.json"
+    document: dict[str, object] = {
+        "version": 1,
+        "clis": {"claude": {"models": {"chosen": {"effort": "high"}}}},
+        "modes": {"discussion": {"claude": {"models": ["chosen"], "default": "chosen"}}},
+    }
+    path.write_text(json.dumps(document), encoding="utf-8")
+    seats = [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}]
+    async with Client(mcp) as client:
+        show = await _call(
+            client, "open_group", {"title": "Defaulted", "cwd": str(tmp_path), "seats": seats}
+        )
+        assert all(
+            seat["model"] == "chosen"
+            and seat["effort"] == "high"
+            and seat["defaults_applied"] == ["model", "effort"]
+            for seat in _seats(show)
+        )
+        directory = data_root / "conversations" / str(show["group_id"])
+        saved = json.loads((directory / "state.json").read_text(encoding="utf-8"))
+        assert saved["host"] == "claude" and saved["host_source"] == "parent"
+        assert saved["manager_session"]
+        assert all(
+            seat["provider_options"] == {"model": "chosen", "effort": "high"}
+            for seat in saved["seats"]
+        )
+        assert (
+            json.loads((directory / "views.json").read_text())["summary"]["manager_session"]
+            == saved["manager_session"]
+        )
+        result = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "x", "cwd": str(tmp_path)}
+        )
+        assert result.is_error and "excluded by this host" in str(result.content)
+        assert studio_server.PROVIDER_SELECTION in str(result.content)
+        # Existing records retain their creator's manager identity when another server reads them.
+        old = Conversation.model_validate(
+            {
+                key: value
+                for key, value in saved.items()
+                if key not in {"host", "host_source", "manager_session"}
+            }
+        )
+        assert old.host is None and old.host_source == "unknown" and old.manager_session is None
+        assert views.snapshot(old, str(directory))["summary"]
+        cast(dict[str, object], document["modes"])["discussion"] = {}
+        path.write_text(json.dumps(document), encoding="utf-8")
+        before = set((data_root / "conversations").iterdir())
+        rejected = await client.call_tool(
+            "open_group", {"title": "Rejected", "isolated": True, "seats": seats}
+        )
+        assert rejected.is_error and "allowed members: none" in str(rejected.content)
+        path.write_text("{", encoding="utf-8")
+        for tool, arguments in (
+            ("open_group", {"title": "Broken", "isolated": True, "seats": seats}),
+            ("start_agent", {"provider": "claude", "prompt": "x", "cwd": str(tmp_path)}),
+        ):
+            result = await client.call_tool(tool, arguments)
+            assert result.is_error and "AgentNave App" in str(result.content)
+            assert "Invalid invocation request" not in str(result.content)
+            assert "Correct the arguments" not in str(result.content)
+        assert set((data_root / "conversations").iterdir()) == before
+
+
+@pytest.mark.asyncio
+async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host
+
+    monkeypatch.setattr(studio_server.core, "HOST", Host("codex", "env"))
+
+    def unavailable(_studio: Studio) -> str:
+        raise OSError("viewer unavailable")
+
+    monkeypatch.setattr(Studio, "open_dashboard", unavailable)
+    data_root.mkdir()
+    (data_root / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "claude": {
+                        "models": {"chosen": {"effort": "high", "options": {"agent": "reviewer"}}}
+                    }
+                },
+                "modes": {"task": {"claude": {"models": ["chosen"], "default": "chosen"}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    async with Client(mcp) as client:
+        first = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "Private instruction for you only:\nSLEEP",
+                "cwd": str(tmp_path),
+            },
+        )
+        assert first["dashboard_error"] == "viewer unavailable"
+        assert first["model"] == "chosen" and first["effort"] == "high"
+        assert first["defaults_applied"] == ["model", "effort", "agent"]
+        directory = data_root / "conversations" / str(first["conversation_id"])
+        saved = json.loads((directory / "state.json").read_text())
+        assert saved["host"] == "codex" and saved["host_source"] == "env"
+        manager_session = saved["manager_session"]
+        assert len(manager_session) == 32 and int(manager_session, 16) >= 0
+        assert saved["tasks"][0]["model"] == "chosen"
+        summary = json.loads((directory / "views.json").read_text())["summary"]
+        assert {key: summary[key] for key in ("host", "host_source", "manager_session")} == {
+            "host": "codex",
+            "host_source": "env",
+            "manager_session": manager_session,
+        }
+        live = await _live(data_root)
+        assert live["manager_session"] == manager_session and live["manager_started_at"]
+        assert live["host"] == "codex" and live["host_source"] == "env"
+        conversations = cast(dict[str, dict[str, dict[str, object]]], live["conversations"])
+        assert (
+            conversations[str(first["conversation_id"])]["summary"]["manager_session"]
+            == manager_session
+        )
+        await _call(client, "cancel_agent", {"invocation_id": first["invocation_id"]})
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Same manager",
+                "cwd": str(tmp_path),
+                "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+            },
+        )
+        show_saved = json.loads(
+            (data_root / "conversations" / str(show["group_id"]) / "state.json").read_text()
+        )
+        assert show_saved["manager_session"] == manager_session
+        assert show_saved["host"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_show_permission_reads_current_discussion_members(data_root: Path) -> None:
+    async with Client(mcp) as client:
+        assert (await _call(client, "describe_provider", {"provider": "claude"}))[
+            "show_permitted"
+        ] is True
+        data_root.mkdir()
+        path = data_root / "members.json"
+        cases: list[tuple[dict[str, object], bool]] = [
+            ({}, True),
+            ({"discussion": {}}, False),
+            ({"discussion": {"claude": {"models": []}}}, True),
+        ]
+        for modes, permitted in cases:
+            path.write_text(
+                json.dumps({"version": 1, "clis": {}, "modes": modes}), encoding="utf-8"
+            )
+            result = await _call(client, "describe_provider", {"provider": "claude"})
+            assert result["show_permitted"] is permitted
+        path.write_text("{", encoding="utf-8")
+        rejected = await client.call_tool("describe_provider", {"provider": "claude"})
+        assert rejected.is_error and "AgentNave App" in str(rejected.content)

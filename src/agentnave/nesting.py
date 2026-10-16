@@ -217,6 +217,24 @@ def _windows_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def read_process_parent(pid: int) -> int:
+    """Read a POSIX process's parent for host identification."""
+    if sys.platform == "darwin":
+        return _macos_info(pid).ppid
+    if sys.platform.startswith("linux"):
+        return _linux_info(pid).ppid
+    raise OSError(f"unsupported process platform: {sys.platform}")
+
+
+def read_process_argv(pid: int) -> Sequence[str]:
+    """Read POSIX argv using the same platform readers as nesting detection."""
+    if sys.platform == "darwin":
+        return _macos_argv(pid)
+    if sys.platform.startswith("linux"):
+        return _linux_argv(pid)
+    raise OSError(f"unsupported process platform: {sys.platform}")
+
+
 def detect_nesting() -> NestingResult:
     marker: int | None = None
     try:

@@ -136,8 +136,9 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-Set `AGENTNAVE_EXCLUDED_PROVIDERS` in each host's MCP server environment to exclude the CLI matching
-that host product, regardless of which model the host is currently using:
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`，未知值使启动失败；无法自动识别时保持未知、不自我排除。`describe_provider` 与 `list_members` 的 `host`／`host_source` 可核对识别结果。
+
+宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
 | Host product | Exclusion value |
 | --- | --- |
@@ -153,7 +154,7 @@ Gemini CLI and OpenCode do not have same-product providers in the current regist
 automatic exclusion. Sharing a model vendor is not the same as sharing a host product.
 
 Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespace, letter case, and
-duplicates are normalized; empty items are ignored. An unset or empty value excludes nothing.
+duplicates are normalized; empty items are ignored. An unset or empty value adds no exclusions beyond the detected host provider.
 Unknown IDs prevent server startup so a typo cannot silently disable the intended restriction.
 Every provider may be excluded; the tools remain discoverable, but `start_agent` then accepts none.
 Groups and shows still run, since exclusions apply to single tasks only.
@@ -431,18 +432,14 @@ A development Skill used with v0.5.0 does not change that older runtime's behavi
 
 ## 5. Verify MCP and Skill discovery
 
-The Manager chooses a permitted provider and explicitly passes `model` and `effort` in
-`provider_options`. Read the selected CLI reference from the Skill for model/effort defaults;
-call `describe_provider(provider)` for permitted status and supported option names, reusing its
-result in the current context. User-specified values override the corresponding defaults.
-When the user requests native settings, the Manager omits those options. The adapters do not inject
-defaults; omitted values retain provider-native behavior. Permissions and tools remain inherited
-unless explicitly changed by the user.
+主控先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `describe_provider` 核对参数与宿主身份。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
+
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；核心仍为 11 个工具，工作室仍为 17 个工具。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `list_profiles`, `describe_provider`, `start_agent`,
+2. Restart the server/session and confirm `list_members`, `describe_provider`, `start_agent`,
    `wait_agent`, `wait_any`, `cancel_agent`, `list_invocations`, `open_group`, `run_round`,
    `wait_round` and `cancel_round` are visible (11 total).
    The studio adds six [show and history tools](studio.md) (17 total).
@@ -547,12 +544,13 @@ separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it
 ### Upgrading from v0.18.0 to v0.19.0
 
 No history migration. Reinstall the runtime and Skill from the tag; each relay switches to the new
-server on its own once idle. Reconnect MCP on a host to see the new `list_profiles` tool (core 11
+server on its own once idle. Reconnect MCP on a host to refresh the tool schemas (core 11
 tools, studio 17) and the updated Skill text. A server started inside a provider launched by
 AgentNave now exposes no tools, so a CLI that registers AgentNave globally can no longer nest
 orchestration. Studio conversations release their lock once idle, so another host can continue
 them without restarting the first. The menu bar app gains conversation cleanup and a settings page
-that writes `profiles.json` in the data root.
+that originally wrote `profiles.json` in the data root. Current member settings use `members.json`,
+and `list_members` replaces the former profile tool; the App handles migration.
 
 ### Upgrading from v0.17.0 to v0.18.0
 

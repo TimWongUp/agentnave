@@ -15,10 +15,22 @@ from agentnave import __version__, mcp_server
 from agentnave.mcp_server import mcp
 
 
+@pytest.fixture(autouse=True)
+def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentnave.host import Host
+
+    monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
+    monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_server, "HOST", Host())
+    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
+
+
 def _server_args(module: str, status: str) -> list[str]:
     # Model the host context explicitly: the test runner itself may be a dispatched CLI.
     return [
         "-c",
+        "import os; os.environ.setdefault('AGENTNAVE_HOST', 'gemini'); "
         f"import {module} as server; "
         "from agentnave.nesting import NestingResult; "
         f"server.detect_nesting = lambda: NestingResult({status!r}, 'test context'); "
@@ -109,7 +121,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         "cancel_agent",
         "list_invocations",
         "describe_provider",
-        "list_profiles",
+        "list_members",
         "open_group",
         "run_round",
         "wait_round",
@@ -154,6 +166,8 @@ async def test_provider_details_are_disclosed_only_on_request(
             "provider",
             "permitted",
             "supported_options",
+            "host",
+            "host_source",
         }
         assert "permission_mode" in str(payload["supported_options"])
         assert "gpt-6-astra" not in str(payload)
@@ -393,7 +407,7 @@ async def test_mcp_schema_rejects_invalid_provider_with_actionable_error(tmp_pat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cwd", ["relative", "~", "~missing-user"])
+@pytest.mark.parametrize("cwd", ["relative", "~", "~missing-user", "option"])
 async def test_mcp_rejects_non_absolute_cwd_with_retry_guidance(cwd: str) -> None:
     async with Client(mcp) as client:
         result = await client.call_tool(
@@ -406,6 +420,7 @@ async def test_mcp_rejects_non_absolute_cwd_with_retry_guidance(cwd: str) -> Non
     assert isinstance(result.content[0], TextContent)
     assert "absolute" in result.content[0].text
     assert "retry" in result.content[0].text
+    assert "Supported " not in result.content[0].text
 
 
 @pytest.mark.asyncio
@@ -549,7 +564,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
         "cancel_agent",
         "list_invocations",
         "describe_provider",
-        "list_profiles",
+        "list_members",
         "open_group",
         "run_round",
         "wait_round",
@@ -658,7 +673,7 @@ async def test_entrypoint_disables_all_tools_without_side_effects(
 
 
 @pytest.mark.asyncio
-async def test_profiles_read_missing_and_fresh_files_without_preparing_commands(
+async def test_members_read_missing_and_fresh_files_without_preparing_commands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
@@ -671,82 +686,283 @@ async def test_profiles_read_missing_and_fresh_files_without_preparing_commands(
     monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
 
     def no_prepare(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("list_profiles must not prepare CLI commands or create prompt files")
+        raise AssertionError("list_members must not prepare CLI commands or discover executables")
 
     monkeypatch.setattr(GrokAdapter, "prepare", no_prepare)
     monkeypatch.setattr(AntigravityAdapter, "prepare", no_prepare)
     monkeypatch.setattr("agentnave.adapters.codex._codex_executable", no_prepare)
     async with Client(mcp) as client:
-        missing = await client.call_tool("list_profiles", {})
+        missing = await client.call_tool("list_members", {})
         assert not missing.is_error
-        assert _payload(missing.structured_content) == {"profiles": []}
+        missing_payload = _payload(missing.structured_content)
+        assert missing_payload["configured"] is False
+        assert missing_payload["modes"] == {
+            "task": {"restricted": False, "members": []},
+            "discussion": {"restricted": False, "members": []},
+        }
         assert not root.exists()
         root.mkdir()
-        profiles: list[dict[str, object]] = [
-            {
-                "id": provider,
-                "name": "编排规则",
-                "provider": provider,
-                "provider_options": {"model": "chosen", "effort": "high"},
-                "notes": "适用场景与理由",
-            }
+        clis: dict[str, dict[str, dict[str, dict[str, object]]]] = {
+            provider: {"models": {"chosen": {"effort": "high", "notes": "核验"}}}
             for provider in ("codex", "claude", "codebuddy", "grok", "antigravity", "pi")
-        ]
-        # Restricted Antigravity options validate independently of its task directory.
-        profiles[4]["provider_options"] = {"restricted_tools": True}
-        profiles.extend(
-            [
-                {**profiles[0], "id": "bad-option", "provider_options": {"unknown": True}},
-                {
-                    **profiles[0],
-                    "id": "bad-type",
-                    "provider_options": {"skip_git_repo_check": "true"},
-                },
-                {
-                    **profiles[4],
-                    "id": "bad-restricted",
-                    "provider_options": {"restricted_tools": True, "sandbox": True},
-                },
-            ]
-        )
-        content = json.dumps({"version": 1, "profiles": profiles}, ensure_ascii=False)
-        path = root / "profiles.json"
+        }
+        document: dict[str, object] = {"version": 1, "clis": clis, "modes": {}}
+        clis["antigravity"]["models"]["chosen"] = {"options": {"restricted_tools": True}}
+        clis["codex"]["models"]["bad-option"] = {"options": {"unknown": True}}
+        clis["codex"]["models"]["bad-type"] = {"options": {"skip_git_repo_check": "true"}}
+        clis["antigravity"]["models"]["bad-restricted"] = {
+            "options": {"restricted_tools": True, "sandbox": True}
+        }
+        content = json.dumps(document, ensure_ascii=False)
+        path = root / "members.json"
         path.write_text(content, encoding="utf-8")
-        listed = await client.call_tool("list_profiles", {})
+        listed = await client.call_tool("list_members", {})
         assert not listed.is_error
-        items = cast(list[dict[str, object]], _payload(listed.structured_content)["profiles"])
-        for source, result in zip(profiles, items, strict=True):
-            assert {key: result[key] for key in source} == source
-        assert all(item["valid"] is True and item["error"] is None for item in items[:6])
-        assert items[0]["permitted"] is False and items[1]["permitted"] is True
-        assert all(item["valid"] is False and item["error"] for item in items[6:])
-        assert "unsupported codex options" in str(items[6]["error"])
-        assert "boolean" in str(items[7]["error"])
-        assert "only model and effort" in str(items[8]["error"])
+        modes = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["modes"])
+        items = cast(list[dict[str, object]], modes["task"]["members"])
+        valid = [item for item in items if item["model"] == "chosen"]
+        assert len(valid) == 6
+        assert all(item["valid"] is True and item["error"] is None for item in valid)
+        assert valid[0]["permitted"] is False and valid[1]["permitted"] is True
+        invalid = [item for item in items if str(item["model"]).startswith("bad-")]
+        assert len(invalid) == 3 and all(
+            item["valid"] is False and item["error"] for item in invalid
+        )
+        discussion = cast(list[dict[str, object]], modes["discussion"]["members"])
+        assert all(item["permitted"] for item in discussion)
         assert path.read_text(encoding="utf-8") == content
         assert list(root.iterdir()) == [path]
-        path.write_text('{"version": 1, "profiles": []}', encoding="utf-8")
-        fresh = await client.call_tool("list_profiles", {})
-        assert _payload(fresh.structured_content) == {"profiles": []}
+        path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
+        fresh = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert fresh["configured"] is True
+        assert fresh["modes"] == {
+            "task": {"restricted": False, "members": []},
+            "discussion": {"restricted": True, "members": []},
+        }
 
 
 @pytest.mark.asyncio
-async def test_profiles_report_corrupt_files_without_overwriting_them(
+async def test_members_report_corrupt_files_without_overwriting_them(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
-    path = tmp_path / "profiles.json"
+    path = tmp_path / "members.json"
     async with Client(mcp) as client:
         for content in (
             "{",
-            '{"version": 2, "profiles": []}',
-            '{"version": true, "profiles": []}',
-            '{"version": 1, "profiles": [{}]}',
+            '{"version": 2, "clis": {}, "modes": {}}',
+            '{"version": true, "clis": {}, "modes": {}}',
+            '{"version": 1, "clis": {"claude": {"models": {"chosen": {"options": {"model": "bad"}}}}}, "modes": {}}',
+            '{"version": 1, "clis": {}, "modes": {"task": {"unknown": {"models": []}}}}',
         ):
             path.write_text(content, encoding="utf-8")
-            result = await client.call_tool("list_profiles", {})
-            assert result.is_error and "profiles.json" in str(result.content)
+            result = await client.call_tool("list_members", {})
+            assert result.is_error and "members.json" in str(result.content)
+            assert "AgentNave App" in str(result.content)
+            for tool, arguments in (
+                ("start_agent", {"provider": "claude", "prompt": "x", "cwd": str(tmp_path)}),
+                (
+                    "open_group",
+                    {
+                        "cwd": str(tmp_path),
+                        "seats": [
+                            {"id": "a", "provider": "claude"},
+                            {"id": "b", "provider": "claude"},
+                        ],
+                    },
+                ),
+            ):
+                rejected = await client.call_tool(tool, arguments)
+                assert rejected.is_error and "AgentNave App" in str(rejected.content)
+                assert "Invalid invocation request" not in str(rejected.content)
+                assert "Correct the arguments" not in str(rejected.content)
+                assert "Supported " not in str(rejected.content)
             assert path.read_text(encoding="utf-8") == content
         path.write_bytes(b"\xff")
-        result = await client.call_tool("list_profiles", {})
-        assert result.is_error and "profiles.json" in str(result.content)
+        result = await client.call_tool("list_members", {})
+        assert result.is_error and "members.json" in str(result.content)
+
+
+@pytest.mark.asyncio
+async def test_members_apply_defaults_and_enforce_each_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "members.json"
+    document: dict[str, object] = {
+        "version": 1,
+        "clis": {
+            "claude": {
+                "models": {
+                    "chosen": {
+                        "efforts": ["low", "medium", "high"],
+                        "effort": "high",
+                        "options": {"permission_mode": "default"},
+                        "notes": "共享",
+                    }
+                }
+            }
+        },
+        "modes": {
+            "task": {
+                "claude": {
+                    "models": ["chosen"],
+                    "default": "chosen",
+                    "overrides": {
+                        "chosen": {
+                            "effort": "medium",
+                            "efforts": ["medium", "high"],
+                            "options": {"agent": "reviewer"},
+                            "notes": "任务",
+                        }
+                    },
+                }
+            },
+            "discussion": {"claude": {"models": [], "default": "chosen"}},
+        },
+    }
+    path.write_text(json.dumps(document), encoding="utf-8")
+    async with Client(mcp) as client:
+
+        async def start(
+            options: dict[str, object], session_id: str | None = None
+        ) -> dict[str, object]:
+            result = await client.call_tool(
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": "ok",
+                    "cwd": str(tmp_path),
+                    "provider_options": options,
+                    "session_id": session_id,
+                },
+            )
+            assert not result.is_error, result.content
+            payload = _payload(result.structured_content)
+            await client.call_tool("wait_agent", {"invocation_id": payload["invocation_id"]})
+            return payload
+
+        monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        modes = cast(dict[str, dict[str, object]], listed["modes"])
+        task_member = cast(list[dict[str, object]], modes["task"]["members"])[0]
+        assert task_member == {
+            "provider": "claude",
+            "model": "chosen",
+            "default": True,
+            "effort": "medium",
+            "efforts": ["medium", "high"],
+            "options": {"agent": "reviewer"},
+            "notes": "任务",
+            "permitted": False,
+            "valid": True,
+            "error": None,
+        }
+        discussion = cast(list[dict[str, object]], modes["discussion"]["members"])
+        assert discussion[-1] == {
+            "provider": "claude",
+            "model": "*",
+            "default": False,
+            "effort": None,
+            "efforts": [],
+            "options": {},
+            "notes": "不限模型",
+            "permitted": True,
+            "valid": True,
+            "error": None,
+        }
+        monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
+        defaulted = await start({})
+        assert defaulted["model"] == "chosen" and defaulted["effort"] == "medium"
+        assert defaulted["defaults_applied"] == ["model", "effort", "agent"]
+        resumed = await start({}, "session-e2e")
+        assert resumed["defaults_applied"] == ["model", "effort", "agent"]
+        explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
+        assert explicit["defaults_applied"] == [] and explicit["effort"] == "high"
+        for options in ({"model": "outside"}, {"effort": "low"}, {"unknown": True}):
+            result = await client.call_tool(
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": "ok",
+                    "cwd": str(tmp_path),
+                    "provider_options": options,
+                },
+            )
+            assert result.is_error
+        rejected = await client.call_tool(
+            "start_agent", {"provider": "codex", "prompt": "ok", "cwd": str(tmp_path)}
+        )
+        assert rejected.is_error and "claude/chosen" in str(rejected.content)
+        monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+        rejected = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "ok", "cwd": str(tmp_path)}
+        )
+        assert rejected.is_error and "excluded by this host" in str(rejected.content)
+        assert mcp_server.PROVIDER_SELECTION in str(rejected.content)
+        grouped = await client.call_tool(
+            "open_group",
+            {
+                "cwd": str(tmp_path),
+                "seats": [
+                    {"id": "a", "provider": "claude"},
+                    {"id": "b", "provider": "claude", "provider_options": {"model": "outside"}},
+                ],
+            },
+        )
+        assert not grouped.is_error, grouped.content
+        seats = cast(list[dict[str, object]], _payload(grouped.structured_content)["seats"])
+        assert seats[0]["model"] == "chosen" and seats[0]["effort"] == "high"
+        assert seats[0]["defaults_applied"] == ["model", "effort", "permission_mode"]
+        assert seats[1]["model"] == "outside" and seats[1]["effort"] is None
+        cast(dict[str, object], document["modes"])["discussion"] = {}
+        path.write_text(json.dumps(document), encoding="utf-8")
+        rejected = await client.call_tool(
+            "open_group",
+            {
+                "cwd": str(tmp_path),
+                "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+            },
+        )
+        assert rejected.is_error and "allowed members: none" in str(rejected.content)
+
+
+def test_host_startup_merges_exclusions_and_reports_identity(tmp_path: Path) -> None:
+    import json
+
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"AGENTNAVE_HOST", "AGENTNAVE_EXCLUDED_PROVIDERS"}
+    }
+    environment.update(AGENTNAVE_HOST="workbuddy", AGENTNAVE_EXCLUDED_PROVIDERS="grok")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio, json; from agentnave import mcp_server as s; "
+            "print(json.dumps([asyncio.run(s.describe_provider('codebuddy')), "
+            "sorted(s.EXCLUDED_PROVIDERS), s.PROVIDER_SELECTION]))",
+        ],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    description, excluded, instructions = json.loads(completed.stdout)
+    assert description["host"] == "workbuddy" and description["host_source"] == "env"
+    assert description["permitted"] is False and excluded == ["codebuddy", "grok"]
+    assert "Excluded providers: codebuddy, grok" in instructions
+    environment["AGENTNAVE_HOST"] = "unknown"
+    invalid = subprocess.run(
+        [sys.executable, "-c", "import agentnave.mcp_server"],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert invalid.returncode != 0 and "Unknown AGENTNAVE_HOST" in invalid.stderr
