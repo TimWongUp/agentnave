@@ -47,24 +47,55 @@ enum Upgrade {
     Failed(String),
 }
 
+/// The app update and the service upgrade share one lock, so every entry checks and claims
+/// both at once: an app install never overlaps a service upgrade.
+#[derive(Default)]
+struct State {
+    phase: Phase,
+    pending: Option<Update>,
+    upgrade: Upgrade,
+    /// Why the post-restart service upgrade could not be promised for the current install.
+    marker_error: Option<String>,
+}
+
+impl State {
+    fn installing(&self) -> bool {
+        matches!(self.phase, Phase::Installing(_))
+    }
+
+    fn busy(&self) -> bool {
+        matches!(self.phase, Phase::Checking | Phase::Installing(_))
+            || matches!(self.upgrade, Upgrade::Running)
+    }
+}
+
+/// What a click on "更新并重启" or "全部更新" may start.
+enum Claim {
+    Install(Box<Update>),
+    Upgrade,
+    Busy,
+    Nothing,
+}
+
 pub struct Updates {
     item: MenuItem<Wry>,
-    state: Mutex<(Phase, Option<Update>)>,
-    upgrade: Mutex<Upgrade>,
+    state: Mutex<State>,
     checked: Mutex<Option<SystemTime>>,
-    /// Why the post-restart service upgrade could not be promised for the current install.
-    marker_error: Mutex<Option<String>>,
 }
 
 impl Updates {
     pub fn new(item: MenuItem<Wry>) -> Self {
         Self {
             item,
-            state: Mutex::new((Phase::Idle, None)),
-            upgrade: Mutex::new(Upgrade::Idle),
+            state: Mutex::new(State::default()),
             checked: Mutex::new(None),
-            marker_error: Mutex::new(None),
         }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     fn label(&self, phase: &Phase) {
@@ -82,42 +113,59 @@ impl Updates {
 
     fn set(&self, phase: Phase, pending: Option<Update>) {
         self.label(&phase);
-        *self.state.lock().unwrap() = (phase, pending);
+        let mut state = self.lock();
+        state.phase = phase;
+        state.pending = pending;
     }
 
-    /// Mark a check as started, unless one is already checking or installing.
+    /// Mark a check as started, unless one is already checking or installing. A running service
+    /// upgrade does not conflict with a check, which installs nothing.
     fn begin(&self) -> Option<Phase> {
-        let mut state = self.state.lock().unwrap();
-        if matches!(state.0, Phase::Checking | Phase::Installing(_)) {
+        let mut state = self.lock();
+        if matches!(state.phase, Phase::Checking | Phase::Installing(_)) {
             return None;
         }
-        let before = std::mem::replace(&mut state.0, Phase::Checking);
-        state.1 = None;
+        let before = std::mem::replace(&mut state.phase, Phase::Checking);
+        state.pending = None;
+        state.marker_error = None;
         drop(state);
         self.label(&Phase::Checking);
         Some(before)
     }
 
-    /// Take the found update and mark it installing, so concurrent clicks install it once.
-    fn start_install(&self) -> Option<Update> {
-        let mut state = self.state.lock().unwrap();
-        if matches!(state.0, Phase::Checking | Phase::Installing(_)) {
-            return None;
+    /// Decide and claim in one step. `upgrade` allows falling back to a service upgrade when no
+    /// app update is pending; `outdated` is whether the installed service is older.
+    fn claim(&self, upgrade: bool, outdated: bool) -> Claim {
+        let mut state = self.lock();
+        if state.busy() {
+            return Claim::Busy;
         }
-        let update = state.1.take()?;
-        state.0 = Phase::Installing(update.version.clone());
-        drop(state);
-        self.label(&Phase::Installing(update.version.clone()));
-        Some(update)
+        if let Some(update) = state.pending.take() {
+            state.phase = Phase::Installing(update.version.clone());
+            state.marker_error = None;
+            drop(state);
+            self.label(&Phase::Installing(update.version.clone()));
+            return Claim::Install(Box::new(update));
+        }
+        if upgrade && outdated {
+            state.upgrade = Upgrade::Running;
+            return Claim::Upgrade;
+        }
+        Claim::Nothing
     }
 
-    fn busy(&self) -> bool {
-        matches!(self.phase(), Phase::Checking | Phase::Installing(_))
-            || matches!(*self.upgrade.lock().unwrap(), Upgrade::Running)
+    /// Mark the service upgrade as running, unless it already is or the app is installing.
+    fn claim_upgrade(&self) -> bool {
+        let mut state = self.lock();
+        if state.installing() || matches!(state.upgrade, Upgrade::Running) {
+            return false;
+        }
+        state.upgrade = Upgrade::Running;
+        true
     }
 
     fn phase(&self) -> Phase {
-        self.state.lock().unwrap().0.clone()
+        self.lock().phase.clone()
     }
 }
 
@@ -175,16 +223,14 @@ pub fn check_now(app: &AppHandle) -> Value {
 /// (see `act`), otherwise upgrade an older service now. While a check, an install or a service
 /// upgrade is running it only reports the status.
 pub fn apply(app: &AppHandle) -> Value {
-    let updates = app.state::<Updates>();
-    if updates.busy() {
-        return status(app);
-    }
-    let pending = updates.state.lock().unwrap().1.is_some();
-    if pending {
-        act(app);
-    } else if service(&tool_dir()).is_object() && claim_upgrade(app) {
-        let app = app.clone();
-        thread::spawn(move || finish_upgrade(&app));
+    let outdated = service(&tool_dir()).is_object();
+    match app.state::<Updates>().claim(true, outdated) {
+        Claim::Install(update) => install(app, *update),
+        Claim::Upgrade => {
+            let app = app.clone();
+            thread::spawn(move || finish_upgrade(&app));
+        }
+        Claim::Busy | Claim::Nothing => {}
     }
     status(app)
 }
@@ -214,21 +260,23 @@ fn brief(text: &str) -> String {
     text.chars().take(200).collect()
 }
 
-/// The menu, the panel and "全部更新" share one action: install a found update after recording
-/// the post-restart service upgrade, otherwise check. Does nothing while checking or installing.
+/// The menu and the panel's "更新并重启": install a found update like "全部更新", otherwise
+/// check. Does nothing while checking, installing or upgrading the service.
 pub fn act(app: &AppHandle) {
-    let updates = app.state::<Updates>();
-    if matches!(updates.phase(), Phase::Checking | Phase::Installing(_)) {
-        return;
+    match app.state::<Updates>().claim(false, false) {
+        Claim::Install(update) => install(app, *update),
+        Claim::Nothing => check(app, true),
+        Claim::Busy | Claim::Upgrade => {}
     }
-    let Some(update) = updates.start_install() else {
-        check(app, true);
-        return;
-    };
+}
+
+/// Record the post-restart service upgrade, then download, install and restart.
+fn install(app: &AppHandle, update: Update) {
+    let updates = app.state::<Updates>();
     let recorded = marker_dir(app)
         .ok_or_else(|| "找不到应用数据目录".to_owned())
         .and_then(|dir| write_marker(&dir).map_err(|error| error.to_string()));
-    *updates.marker_error.lock().unwrap() = recorded.err().map(|error| {
+    updates.lock().marker_error = recorded.err().map(|error| {
         brief(&format!(
             "无法记录重启后升级本机服务（{error}），重启后请手动升级"
         ))
@@ -253,17 +301,17 @@ pub fn act(app: &AppHandle) {
 /// service, and when the last check succeeded.
 pub fn status(app: &AppHandle) -> Value {
     let updates = app.try_state::<Updates>();
-    let phase = updates
+    let (phase, upgrade, marker_error) = updates
         .as_ref()
-        .map(|updates| updates.phase())
+        .map(|updates| {
+            let state = updates.lock();
+            (
+                state.phase.clone(),
+                state.upgrade.clone(),
+                state.marker_error.clone(),
+            )
+        })
         .unwrap_or_default();
-    let upgrade = updates
-        .as_ref()
-        .map(|updates| updates.upgrade.lock().unwrap().clone())
-        .unwrap_or_default();
-    let marker_error = updates
-        .as_ref()
-        .and_then(|updates| updates.marker_error.lock().unwrap().clone());
     let checked = updates.and_then(|updates| *updates.checked.lock().unwrap());
     let update = match phase {
         Phase::Idle => Value::Null,
@@ -331,25 +379,14 @@ fn rfc3339(at: SystemTime) -> String {
 /// Install this release's service with uv, replacing the legacy studio tool if present. Hosts
 /// switch on their own: since v0.18.0 each launcher relays to a server it restarts when idle.
 pub fn upgrade_service(app: &AppHandle) {
-    if claim_upgrade(app) {
+    if app.state::<Updates>().claim_upgrade() {
         finish_upgrade(app);
     }
 }
 
-/// Mark the upgrade as running, unless one already is.
-fn claim_upgrade(app: &AppHandle) -> bool {
-    let updates = app.state::<Updates>();
-    let mut upgrade = updates.upgrade.lock().unwrap();
-    if matches!(*upgrade, Upgrade::Running) {
-        return false;
-    }
-    *upgrade = Upgrade::Running;
-    true
-}
-
 fn finish_upgrade(app: &AppHandle) {
     let outcome = install_service();
-    *app.state::<Updates>().upgrade.lock().unwrap() = match outcome {
+    app.state::<Updates>().lock().upgrade = match outcome {
         Ok(()) => Upgrade::Done(Instant::now()),
         Err(error) => Upgrade::Failed(error),
     };
