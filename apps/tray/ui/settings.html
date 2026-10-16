@@ -13,44 +13,123 @@
 <main>
   <header class="top">
     <a class="brand" href="/"><span class="mark">N</span>AgentNave <span class="back">/ 设置</span></a>
-    <nav aria-label="页面导航"><a href="/manage/">管理会话 ↗</a><button id="refresh" type="button">重新读取</button></nav>
+    <nav aria-label="页面导航">
+      <a href="/manage/">管理会话 ↗</a>
+    </nav>
   </header>
+
   <section class="intro">
-    <div><p class="eyebrow">本机偏好 · 主控编排</p><h1>编排档案<span id="total">—</span></h1></div>
-    <p class="scope">为不同任务留下 CLI、参数与选择理由。<br>主控读取后，按本轮要求显式传参。</p>
+    <div>
+      <p class="eyebrow">本机偏好 · 托盘管理</p>
+      <h1>设置</h1>
+    </div>
+    <div class="tabs" role="tablist" aria-label="设置分区">
+      <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型</button>
+      <button id="tab-updates" class="tab-btn" role="tab" aria-selected="false" type="button">版本与更新<span id="update-badge" class="badge-dot" hidden></span></button>
+    </div>
   </section>
-  <div id="notice" role="status" aria-live="polite">正在读取档案…</div>
-  <p class="guidance">参数是否有效以主控读取时的校验为准。档案不自动生效；跳过审批、绕过沙箱等权限参数，仅在用户本轮明确要求时传入。</p>
-  <div class="workspace">
-    <section class="profiles" aria-label="编排档案列表">
-      <div class="selection"><h2>我的档案</h2><button id="add" type="button" disabled>＋ 新增档案</button></div>
-      <div id="list"></div>
-      <p id="empty" class="empty" hidden>还没有档案。<br>从常用的任务场景开始。</p>
-    </section>
-    <section class="editor" aria-label="编辑编排档案">
-      <p id="placeholder" class="empty">选择一条档案，或新增自己的编排规则。</p>
-      <form id="editor" hidden>
-        <h2 id="editor-title">新增档案</h2>
-        <fieldset id="fields">
-          <label>名称<input id="name" type="text" required autocomplete="off" placeholder="例如：代码审查"></label>
-          <div class="pair">
-            <label>CLI<select id="provider"><option value="codex">Codex CLI</option><option value="claude">Claude Code</option><option value="codebuddy">CodeBuddy Code</option><option value="grok">Grok CLI</option><option value="antigravity">Antigravity CLI</option><option value="pi">Pi Coding Agent</option></select></label>
-            <label>模型<input id="model" type="text" autocomplete="off" placeholder="留空继承原生设置"></label>
-          </div>
-          <label>effort<input id="effort" type="text" autocomplete="off" placeholder="留空继承原生设置"></label>
-          <div class="option-heading"><h3>其他参数</h3><button id="add-option" type="button">＋ 参数</button></div>
-          <p class="field-hint">填写 CLI 的参数键；值可选字符串、数字或布尔。</p>
-          <div id="options"></div>
-          <label>说明<textarea id="notes" rows="4" placeholder="适用什么任务，为什么选择这个 CLI 与这些参数？"></textarea></label>
-        </fieldset>
-        <div class="editor-actions"><button id="delete" class="danger" type="button">删除档案…</button><span id="dirty" role="status"></span><button id="cancel" type="button">取消编辑</button><button id="save" class="primary" type="submit">保存档案</button></div>
-      </form>
-      <section id="confirmation" class="confirmation" aria-label="确认删除档案" tabindex="-1" hidden>
-        <h2 id="confirm-title"></h2><p>删除后，主控将不再读取这条编排规则。</p>
-        <div class="confirm-actions"><button id="keep" type="button">保留档案</button><button id="confirm" class="danger" type="button">确认删除</button></div>
-      </section>
-    </section>
+
+  <div id="notice" role="status" aria-live="polite">正在读取设置…</div>
+
+  <div id="error-banner" class="banner error" hidden>
+    <div class="banner-content">
+      <strong id="error-title">配置文件存在错误</strong>
+      <p id="error-desc"></p>
+    </div>
   </div>
+
+  <!-- 分区 1：执行者与模型 -->
+  <section id="pane-members" class="tab-pane active" role="tabpanel" aria-labelledby="tab-members">
+    <div id="migration-banner" class="banner migration" hidden>
+      <div class="banner-content">
+        <strong id="migration-title">已将原编排档案的模型与说明迁移；两种模式当前未限制，如需限制再开启</strong>
+        <div id="migration-skipped-container"></div>
+      </div>
+      <button id="dismiss-migration" type="button">我知道了</button>
+    </div>
+
+    <div class="members-toolbar">
+      <div class="mode-control">
+        <div class="segment-control" role="radiogroup" aria-label="编排模式">
+          <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">任务</button>
+          <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">讨论</button>
+        </div>
+        <div class="mode-restrict-wrap">
+          <label class="restrict-toggle-label">
+            <input type="checkbox" id="mode-restrict-toggle">
+            <span id="mode-restrict-title">限制此模式</span>
+          </label>
+          <span id="mode-restrict-hint" class="mode-hint">未限制：所有 CLI 都可用</span>
+        </div>
+      </div>
+      <button id="refresh-detection" type="button">刷新检测</button>
+    </div>
+
+    <p class="guidance">参数是否有效以主控读取时（list_members）的校验为准；主控没指定模型和努力程度时，会使用这里的默认值。</p>
+
+    <!-- 6 个 Provider 卡片容器 -->
+    <div id="cli-cards" class="cli-cards"></div>
+
+    <!-- 底部固定保存条 -->
+    <aside class="sticky-save-bar">
+      <div class="save-bar-inner">
+        <div class="save-bar-info">
+          <span id="dirty-text" class="dirty-label"></span>
+          <span id="permission-summary" class="permission-summary-tag" hidden></span>
+          <span id="save-feedback" class="save-feedback"></span>
+        </div>
+        <div class="save-bar-actions">
+          <button id="save-btn" class="primary" type="button" disabled>保存设置</button>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- 分区 2：版本与更新 -->
+  <section id="pane-updates" class="tab-pane" role="tabpanel" aria-labelledby="tab-updates" hidden>
+    <div class="updates-panel">
+      <div class="updates-card">
+        <h2>应用与服务状态</h2>
+        <div class="status-grid">
+          <div class="status-item">
+            <span class="status-label">AgentNave 托盘应用</span>
+            <div class="status-val-wrap">
+              <strong id="app-version" class="status-value">—</strong>
+              <span id="app-badge" class="tag" hidden></span>
+            </div>
+          </div>
+          <div class="status-item">
+            <span class="status-label">本机服务 (agentnave)</span>
+            <div class="status-val-wrap">
+              <strong id="service-version" class="status-value">—</strong>
+              <span id="service-badge" class="tag" hidden></span>
+            </div>
+            <p id="service-msg" class="status-desc" hidden></p>
+          </div>
+          <div class="status-item full-width">
+            <span class="status-label">上次检查时间</span>
+            <span id="last-checked" class="status-value status-time">—</span>
+          </div>
+        </div>
+
+        <div id="update-action-area" class="update-action-area">
+          <div class="btn-group">
+            <button id="btn-check-update" class="primary" type="button">检查更新</button>
+            <button id="btn-apply-update" class="accent-btn" type="button" hidden>全部更新</button>
+          </div>
+          <p id="update-hint" class="field-hint" hidden>会先更新 App 并自动重启，重启后自动升级本机服务。</p>
+          <div id="update-progress-box" class="progress-box" hidden>
+            <span class="spinner-dot"></span>
+            <span id="update-progress-text">正在检查更新…</span>
+          </div>
+          <div id="update-error-box" class="update-error" role="status" aria-live="polite" hidden>
+            <span id="update-error-text"></span>
+            <button id="btn-retry-update" type="button">重试</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 </body>
 </html>

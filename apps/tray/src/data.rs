@@ -101,7 +101,7 @@ impl Response {
         }
     }
 
-    fn error(status: u16, message: &str) -> Self {
+    pub fn error(status: u16, message: &str) -> Self {
         let mut response = Self::json(&json!({"error": message}));
         response.status = status;
         response
@@ -132,7 +132,7 @@ impl Reader {
 
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
-        if path == "/app/profiles" {
+        if path == "/app/members" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
             }
@@ -142,10 +142,10 @@ impl Reader {
             let Ok(payload) = serde_json::from_slice::<Value>(body) else {
                 return Response::error(400, "请求必须为 JSON");
             };
-            if let Err(error) = crate::profiles::validate(&payload) {
+            if let Err(error) = crate::members::validate(&payload) {
                 return Response::error(400, &error);
             }
-            return match crate::profiles::save(&self.root, &payload) {
+            return match crate::members::save(&self.root, &payload) {
                 Ok(()) => Response::json(&json!({"saved": true})),
                 Err(error) => Response::error(500, &error),
             };
@@ -175,6 +175,11 @@ impl Reader {
             return Response::error(405, "此路由只接受 GET");
         }
         self.respond(path)
+    }
+
+    /// `GET /settings/members`, re-probing the CLIs when `refresh` is set.
+    pub fn members(&self, refresh: bool) -> Response {
+        Response::json(&crate::members::state(&self.root, refresh))
     }
 
     pub fn overview(&self) -> Overview {
@@ -247,10 +252,6 @@ impl Reader {
                     Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec())
                 }
                 "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
-                "state" => match crate::profiles::read(&self.root) {
-                    Ok(document) => Response::json(&document),
-                    Err(error) => Response::error(500, &error),
-                },
                 _ => Response::not_found(),
             };
         }

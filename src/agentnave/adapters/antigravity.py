@@ -14,6 +14,7 @@ from agentnave.adapters.base import (
     normalized_usage,
     object_dict,
     parse_json_lines,
+    resolve_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -77,7 +78,13 @@ class AntigravityAdapter:
         request, discussion = restricted_options(request)
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
-        argv = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
+        argv = [
+            resolve_executable("agy"),
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+        ]
         if request.session_id is not None:
             argv.extend(("--conversation", request.session_id))
         argv.extend(self.option_args(request))

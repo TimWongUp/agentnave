@@ -4,12 +4,54 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable
+import os
+import shutil
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol, cast
 
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+
+# Common install locations for provider CLIs when the host passes a minimal PATH.
+PROVIDER_BIN_DIRS = (
+    "~/.local/bin",
+    "~/.grok/bin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "~/.bun/bin",
+    "~/.npm-global/bin",
+    "~/.volta/bin",
+    "~/.cargo/bin",
+)
+
+
+def provider_bin_dirs() -> list[str]:
+    """Existing common install directories, resolved on every call."""
+    found: list[str] = []
+    for entry in PROVIDER_BIN_DIRS:
+        path = os.path.expanduser(entry)
+        if os.path.isdir(path) and path not in found:
+            found.append(path)
+    return found
+
+
+def resolve_executable(name: str, preferred: Iterable[str] = ()) -> str:
+    """Absolute provider path, or the bare name so launch reports it as missing.
+
+    Resolution runs on every prepare, so installing or removing a CLI takes effect
+    on the next call. Windows keeps resolving the bare name inside its supervisor.
+    """
+    for candidate in preferred:
+        executable = shutil.which(os.path.expanduser(candidate))
+        if executable is not None:
+            return executable
+    if os.name == "nt":
+        return name
+    executable = shutil.which(name)
+    if executable is None:
+        executable = shutil.which(name, path=os.pathsep.join(provider_bin_dirs()))
+    return os.path.abspath(executable) if executable is not None else name
 
 
 @dataclass(frozen=True, slots=True)

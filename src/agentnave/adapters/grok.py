@@ -16,6 +16,7 @@ from agentnave.adapters.base import (
     option_args,
     parse_json_lines,
     parse_json_object,
+    resolve_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -71,7 +72,7 @@ class GrokAdapter:
             path.unlink(missing_ok=True)
             raise
         argv = [
-            "grok",
+            resolve_executable("grok"),
             "--prompt-file",
             str(path),
             "--output-format",

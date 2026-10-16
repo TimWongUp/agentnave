@@ -17,6 +17,7 @@ from agentnave.adapters.base import (
     option_args,
     parse_json_lines,
     parse_json_object,
+    resolve_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -84,7 +85,7 @@ class PiAdapter:
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
-        argv = ["pi", "--print", "--mode", "json"]
+        argv = [resolve_executable("pi"), "--print", "--mode", "json"]
         if request.session_id is not None:
             argv.extend(("--session", request.session_id))
         argv.extend(self.option_args(request))

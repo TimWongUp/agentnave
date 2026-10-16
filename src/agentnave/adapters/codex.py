@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import shutil
 import sys
-from pathlib import Path
 
 from agentnave.adapters.base import (
     ParsedProviderResult,
@@ -14,6 +12,7 @@ from agentnave.adapters.base import (
     failure_status,
     object_dict,
     parse_json_lines,
+    resolve_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -27,12 +26,8 @@ _DESKTOP_CODEX_PATHS = (
 
 
 def _codex_executable() -> str:
-    if sys.platform == "darwin":
-        for candidate in _DESKTOP_CODEX_PATHS:
-            executable = shutil.which(str(Path(candidate).expanduser()))
-            if executable is not None:
-                return executable
-    return "codex"
+    # Desktop bundles stay ahead of PATH and the common install directories.
+    return resolve_executable("codex", _DESKTOP_CODEX_PATHS if sys.platform == "darwin" else ())
 
 
 class CodexAdapter:
