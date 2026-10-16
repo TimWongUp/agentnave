@@ -104,6 +104,8 @@ let expandedModel = null; // { provider: string, model: string } | null
 let appStatus = null;
 let statusPollTimer = null;
 let lastMigrationData = { migrated: false, migration_skipped: [] };
+// Keep unfinished option edits across drawer/mode changes without writing invalid values.
+const optionDrafts = new WeakMap();
 
 // Determine mock mode
 const isMock =
@@ -382,18 +384,84 @@ function hasEmptyRestrictedMode() {
   return false;
 }
 
-// Check whether current options contain invalid numbers
-function hasInvalidOptionInputs() {
-  const badInputs = document.querySelectorAll(".input-error");
-  return badInputs.length > 0;
+function optionRows(config) {
+  return optionDrafts.get(config) || Object.entries(config.options || {}).map(([key, value]) => ({
+    key, type: typeof value, raw: String(value),
+  }));
+}
+
+function parseOptionRows(rows) {
+  const entries = [];
+  const errors = [];
+  const keys = new Set();
+  for (const [index, row] of rows.entries()) {
+    const label = `参数第 ${index + 1} 行`;
+    if (!row.key.trim()) errors.push(`${label}：请填写参数键`);
+    if (keys.has(row.key)) errors.push(`${label}：参数键 ${row.key} 重复`);
+    if (["model", "effort"].includes(row.key)) errors.push(`${label}：不能使用 ${row.key} 键`);
+    keys.add(row.key);
+    let value = row.raw;
+    if (row.type === "number") {
+      value = Number(row.raw);
+      if (!row.raw.trim() || !Number.isFinite(value)) errors.push(`${label}：必须为有效有限数字`);
+    } else if (row.type === "boolean") {
+      value = row.raw === "true";
+    }
+    entries.push([row.key, value]);
+  }
+  return { options: Object.fromEntries(entries), errors };
+}
+
+function effortError(config) {
+  if (Object.hasOwn(config, "effort") && !config.effort) {
+    return "默认努力档位不可为空，请选择具体档位或清除默认设置（覆盖时选择继承）";
+  }
+  if (Object.hasOwn(config, "effort") && config.efforts?.length && !config.efforts.includes(config.effort)) {
+    return `默认努力档位“${config.effort}”不在允许档位中，请重新选择默认档位或调整允许档位（覆盖时也可改为继承）`;
+  }
+  return null;
+}
+
+// Validate every mode, including collapsed drawers and inherited defaults in other modes.
+function configurationErrors() {
+  const errors = [];
+  const add = (provider, model, scope, message) => {
+    if (message) errors.push({ provider, model, scope, message: `${scope} / ${provider} / ${model}：${message}` });
+  };
+  const check = (config, provider, model, scope) => {
+    add(provider, model, scope, effortError(config));
+    for (const error of parseOptionRows(optionRows(config)).errors) add(provider, model, scope, error);
+  };
+  for (const [provider, cli] of Object.entries(currentDoc.clis || {})) {
+    for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, "共享");
+  }
+  for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
+    const scope = mode === "task" ? "任务模式" : "讨论模式";
+    for (const [provider, selection] of Object.entries(providers)) {
+      const models = currentDoc.clis?.[provider]?.models || {};
+      for (const model of selection.models) {
+        if (!Object.hasOwn(models, model)) add(provider, model, scope, "模型尚未配置");
+      }
+      if (Object.hasOwn(selection, "default") &&
+          (!Object.hasOwn(models, selection.default) || (selection.models.length && !selection.models.includes(selection.default)))) {
+        add(provider, selection.default, scope, "默认模型不在允许范围内");
+      }
+      for (const [model, override] of Object.entries(selection.overrides || {})) {
+        if (!Object.hasOwn(models, model)) add(provider, model, scope, "覆盖的模型尚未配置");
+        add(provider, model, scope, effortError({ ...models[model], ...override }));
+        for (const error of parseOptionRows(optionRows(override)).errors) add(provider, model, scope, error);
+      }
+    }
+  }
+  return errors;
 }
 
 function updateControls() {
   $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
 
   const emptyRestricted = hasEmptyRestrictedMode();
-  const invalidInputs = hasInvalidOptionInputs();
-  const canSave = !busy && dirty && !documentError && !emptyRestricted && !invalidInputs;
+  const errors = configurationErrors();
+  const canSave = !busy && dirty && !documentError && !emptyRestricted && errors.length === 0;
 
   $("save-btn").disabled = !canSave;
   $("refresh-detection").disabled = busy;
@@ -403,9 +471,15 @@ function updateControls() {
   if (emptyRestricted) {
     feedback.textContent = "受限模式至少启用一个 CLI，或关闭限制";
     feedback.className = "save-feedback error";
-  } else if (invalidInputs) {
-    feedback.textContent = "存在非法的数字参数，请检查标红输入框";
+    feedback.dataset.validation = "true";
+  } else if (errors.length) {
+    feedback.textContent = errors[0].message;
     feedback.className = "save-feedback error";
+    feedback.dataset.validation = "true";
+  } else if (feedback.dataset.validation === "true") {
+    delete feedback.dataset.validation;
+    feedback.textContent = "";
+    feedback.className = "save-feedback";
   } else if (!dirty && !feedback.classList.contains("success")) {
     feedback.textContent = "";
     feedback.className = "save-feedback";
@@ -518,8 +592,10 @@ function ensureCliModel(provider, modelId) {
   if (!currentDoc.clis) currentDoc.clis = {};
   if (!currentDoc.clis[provider]) currentDoc.clis[provider] = { models: {} };
   if (!currentDoc.clis[provider].models) currentDoc.clis[provider].models = {};
-  if (!currentDoc.clis[provider].models[modelId]) {
-    currentDoc.clis[provider].models[modelId] = {};
+  if (!Object.hasOwn(currentDoc.clis[provider].models, modelId)) {
+    Object.defineProperty(currentDoc.clis[provider].models, modelId, {
+      value: {}, enumerable: true, configurable: true, writable: true,
+    });
   }
 }
 
@@ -542,7 +618,7 @@ function getAllModelIds(provider) {
   for (const m of detectedModels) modelIdSet.add(m.id);
   for (const id of configuredModels) modelIdSet.add(id);
   for (const id of modeModels) modelIdSet.add(id);
-  return Array.from(modelIdSet);
+  return Array.from(modelIdSet).filter((id) => typeof id === "string" && id.trim());
 }
 
 function toggleModelAllowed(provider, modelId, allowed) {
@@ -608,41 +684,27 @@ function toggleUnlimitedModels(provider, unlimited) {
       }
       provConf.models = [targetModel];
     }
+    for (const model of provConf.models) ensureCliModel(provider, model);
   }
   incDocVersion();
   renderCards();
 }
 
 function setModelDefault(provider, modelId) {
+  if (!isModeRestricted()) {
+    showNotice("开启“限制此模式”后才能设置默认模型");
+    return;
+  }
+  const provConf = currentDoc.modes[currentMode]?.[provider];
+  if (!provConf) return;
   ensureCliModel(provider, modelId);
-
-  // If in restricted mode
-  if (isModeRestricted()) {
-    const provConf = currentDoc.modes[currentMode]?.[provider];
-    if (!provConf) return;
-
-    if (provConf.default === modelId) {
-      delete provConf.default;
-    } else {
-      provConf.default = modelId;
-      // Do NOT force modelId into provConf.models if models is empty (unlimited)
-      if (Array.isArray(provConf.models) && provConf.models.length > 0) {
-        if (!provConf.models.includes(modelId)) {
-          provConf.models.push(modelId);
-        }
-      }
-    }
+  if (provConf.default === modelId) {
+    delete provConf.default;
   } else {
-    // In unrestricted mode, default can be stored if provider config exists, or kept in clis
-    ensureModeContainer(currentMode);
-    if (!currentDoc.modes[currentMode][provider]) {
-      currentDoc.modes[currentMode][provider] = { models: [] };
-    }
-    const provConf = currentDoc.modes[currentMode][provider];
-    if (provConf.default === modelId) {
-      delete provConf.default;
-    } else {
-      provConf.default = modelId;
+    provConf.default = modelId;
+    // An empty list must stay empty: it means unlimited models.
+    if (provConf.models.length && !provConf.models.includes(modelId)) {
+      provConf.models.push(modelId);
     }
   }
   incDocVersion();
@@ -651,19 +713,22 @@ function setModelDefault(provider, modelId) {
 
 function isModelOverridden(provider, modelId) {
   if (!isModeRestricted()) return false;
-  return Boolean(currentDoc.modes[currentMode]?.[provider]?.overrides?.[modelId]);
+  return Object.hasOwn(currentDoc.modes[currentMode]?.[provider]?.overrides || {}, modelId);
 }
 
 function toggleModelOverride(provider, modelId, override) {
   if (!isModeRestricted()) return;
   const provConf = currentDoc.modes[currentMode]?.[provider];
   if (!provConf) return;
+  ensureCliModel(provider, modelId);
   if (!provConf.overrides) provConf.overrides = {};
 
   if (override) {
-    if (!provConf.overrides[modelId]) {
+    if (!Object.hasOwn(provConf.overrides, modelId)) {
       // Create empty override (all fields default to inherit)
-      provConf.overrides[modelId] = {};
+      Object.defineProperty(provConf.overrides, modelId, {
+        value: {}, enumerable: true, configurable: true, writable: true,
+      });
     }
   } else {
     delete provConf.overrides[modelId];
@@ -690,9 +755,84 @@ function addCustomModel(provider, modelId) {
   renderCards();
 }
 
-function ensureModeContainer(mode) {
-  if (!currentDoc.modes) currentDoc.modes = {};
-  if (!currentDoc.modes[mode]) currentDoc.modes[mode] = {};
+function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModelErrors) {
+  const inherited = overridden && !Object.hasOwn(targetConfig, "options");
+  const rows = optionRows(inherited ? sharedConfig : targetConfig);
+  if (!inherited) optionDrafts.set(targetConfig, rows);
+  const list = el("div", { className: `options-list${inherited ? " field-inherited-area" : ""}` });
+  const sync = () => {
+    const result = parseOptionRows(rows);
+    if (!result.errors.length) targetConfig.options = result.options;
+    incDocVersion();
+    refreshModelErrors();
+  };
+  const renderRow = (draft) => {
+    const key = el("input", { type: "text", value: draft.key, placeholder: "参数键", disabled: inherited });
+    const type = el("select", { disabled: inherited },
+      ...[["string", "字符串"], ["number", "数字"], ["boolean", "布尔"]].map(([value, label]) => el("option", { value }, label)));
+    type.value = draft.type;
+    const valueBox = el("span", { className: "option-value" });
+    const warning = el("div", { className: "option-permission-warning", hidden: !isPermissionOptionKey(draft.key) },
+      "权限类参数：保存后会对该组员在此范围内的每次调用生效，主控不会再逐次征求你的同意。");
+    const renderValue = () => {
+      const value = draft.type === "boolean"
+        ? el("select", { disabled: inherited }, el("option", { value: "true" }, "true"), el("option", { value: "false" }, "false"))
+        : el("input", { type: "text", value: draft.raw, placeholder: "参数值", disabled: inherited });
+      value.value = draft.raw;
+      value.dataset.optionVal = "";
+      const markInvalid = () => value.classList.toggle("input-error",
+        draft.type === "number" && (!draft.raw.trim() || !Number.isFinite(Number(draft.raw))));
+      markInvalid();
+      const updateValue = () => {
+        draft.raw = value.value; // Strings retain intentional whitespace.
+        markInvalid();
+        sync();
+      };
+      value.addEventListener("input", updateValue);
+      value.addEventListener("change", updateValue);
+      valueBox.replaceChildren(value);
+    };
+    renderValue();
+    type.addEventListener("change", () => {
+      draft.type = type.value;
+      if (draft.type === "boolean") draft.raw = "true";
+      renderValue();
+      sync();
+    });
+    key.addEventListener("input", () => {
+      draft.key = key.value;
+      warning.hidden = !isPermissionOptionKey(draft.key);
+      sync();
+    });
+    const row = el("div", { className: "option-row" }, key, type, valueBox,
+      el("button", { type: "button", className: "btn-remove-option", disabled: inherited, onClick: () => {
+        rows.splice(rows.indexOf(draft), 1);
+        row.remove();
+        sync();
+      } }, "移除"), warning);
+    return row;
+  };
+  for (const row of rows) list.appendChild(renderRow(row));
+  const heading = el("div", { className: "options-heading" }, el("h4", {}, "其他参数 (options)"));
+  if (overridden) {
+    heading.appendChild(el("label", { className: "field-inherit-label" }, el("input", {
+      type: "checkbox", checked: inherited, onChange: (e) => {
+        optionDrafts.delete(targetConfig);
+        if (e.target.checked) delete targetConfig.options;
+        else targetConfig.options = { ...sharedConfig.options };
+        incDocVersion();
+        renderCards();
+      },
+    }), textNode(" 继承共享设置")));
+  }
+  heading.appendChild(el("button", { type: "button", disabled: inherited, onClick: () => {
+    const draft = { key: "", type: "string", raw: "" };
+    rows.push(draft);
+    list.appendChild(renderRow(draft));
+    sync();
+  } }, "＋ 添加参数"));
+  return el("div", { className: "detail-field" }, heading,
+    el("p", { className: "field-hint" }, "参数键不可重复，也不能使用 model 或 effort；字符串保留原有空格。"), list);
 }
 
 // Render model detail form with tri-state inheritance
@@ -704,6 +844,14 @@ function renderModelDetail(provider, modelId) {
   const overrideConfig = overridden ? provConf.overrides[modelId] : null;
 
   const detailBox = el("div", { className: "model-detail" });
+  const validationMessage = el("p", { className: "field-error", role: "status", hidden: true });
+  const refreshModelErrors = () => {
+    const errors = configurationErrors().filter((error) => error.provider === provider && error.model === modelId);
+    validationMessage.textContent = errors.map((error) => error.message).join("；");
+    validationMessage.hidden = errors.length === 0;
+  };
+  refreshModelErrors();
+  detailBox.appendChild(validationMessage);
 
   // Mode override switch (only active in restricted mode)
   if (isModeRestricted()) {
@@ -733,13 +881,18 @@ function renderModelDetail(provider, modelId) {
   // 1. Efforts Field (checklist)
   const detectedModelObj = (detected[provider]?.models || []).find((m) => m.id === modelId);
   const modelEfforts = detectedModelObj?.efforts;
-  const candidateEfforts =
+  const detectedEfforts =
     Array.isArray(modelEfforts) && modelEfforts.length > 0
       ? modelEfforts
       : detected[provider]?.efforts || [];
+  // Preserve configured values even when a probe no longer lists them.
+  const candidateEfforts = [...new Set([
+    ...detectedEfforts, ...(sharedConfig.efforts || []), ...(overrideConfig?.efforts || []),
+    ...[sharedConfig.effort, overrideConfig?.effort].filter((effort) => typeof effort === "string" && effort),
+  ])];
 
   const effortsInherited = overridden && !("efforts" in overrideConfig);
-  if (candidateEfforts.length > 0) {
+  {
     const activeEfforts = effortsInherited
       ? (Array.isArray(sharedConfig.efforts) ? sharedConfig.efforts : [])
       : (Array.isArray(targetConfig.efforts) ? targetConfig.efforts : []);
@@ -762,8 +915,9 @@ function renderModelDetail(provider, modelId) {
           }
           targetConfig.efforts = list; // In override, keep empty array [] if cleared
 
-          // Clear default effort if selected default is no longer in active efforts
-          if (targetConfig.effort && list.length > 0 && !list.includes(targetConfig.effort)) {
+          // Clearing shared efforts also clears its default. Other conflicts stay visible
+          // until the user explicitly resolves them, including defaults inherited by a mode.
+          if (!overridden && list.length === 0) {
             delete targetConfig.effort;
           }
           incDocVersion();
@@ -798,7 +952,7 @@ function renderModelDetail(provider, modelId) {
       { className: "detail-field" },
       el("div", { className: "field-heading-with-inherit" }, ...headingKids),
       checklist,
-      el("p", { className: "field-hint" }, "不勾选表示不限制努力档位；勾选时主控调用仅允许选中的档位。")
+      el("p", { className: "field-hint" }, "未勾选档位 = 不限；勾选后仅允许所选档位。")
     );
     detailBox.appendChild(effortsField);
   }
@@ -827,12 +981,19 @@ function renderModelDetail(provider, modelId) {
         targetConfig.effort = val;
       }
       incDocVersion();
+      renderCards();
     },
   });
 
   // If not in override, or if in override setting specific value, populate options
-  if (!overridden) {
+  if (!overridden || (effortInherited && activeEffortVal === undefined)) {
     effortSelect.appendChild(el("option", { value: "" }, "不设置（继承原生默认）"));
+  }
+
+  const unavailableEffort = activeEffortVal !== undefined && !effortDropdownChoices.includes(activeEffortVal);
+  if (unavailableEffort) {
+    effortSelect.appendChild(el("option", { value: "__unavailable_effort__", disabled: true, selected: true },
+      `当前值：${activeEffortVal || "空值"}（不在允许档位中）`));
   }
 
   for (const eff of effortDropdownChoices) {
@@ -840,6 +1001,7 @@ function renderModelDetail(provider, modelId) {
     if (activeEffortVal === eff) opt.selected = true;
     effortSelect.appendChild(opt);
   }
+  effortSelect.value = unavailableEffort ? "__unavailable_effort__" : (activeEffortVal ?? "");
 
   const effortHeadingKids = [el("h4", {}, "默认努力档位 (effort)")];
   if (overridden) {
@@ -851,7 +1013,8 @@ function renderModelDetail(provider, modelId) {
           delete overrideConfig.effort;
         } else {
           // In override, effort must be a concrete choice, not empty
-          overrideConfig.effort = effortDropdownChoices[0] || "medium";
+          overrideConfig.effort = effortDropdownChoices.includes(sharedConfig.effort)
+            ? sharedConfig.effort : effortDropdownChoices[0];
         }
         incDocVersion();
         renderCards();
@@ -872,199 +1035,7 @@ function renderModelDetail(provider, modelId) {
   detailBox.appendChild(defaultEffortField);
 
   // 3. Other Options Field
-  const optionsInherited = overridden && !("options" in overrideConfig);
-  const optionsHeadingKids = [el("h4", {}, "其他参数 (options)")];
-
-  const addOptionBtn = el("button", {
-    type: "button",
-    disabled: optionsInherited,
-    onClick: () => {
-      if (overridden && optionsInherited) return;
-      if (!targetConfig.options) targetConfig.options = {};
-      optionsContainer.appendChild(renderOptionRow("", ""));
-      incDocVersion();
-    },
-  }, "＋ 添加参数");
-
-  if (overridden) {
-    const inheritOptionsCheckbox = el("input", {
-      type: "checkbox",
-      checked: optionsInherited,
-      onChange: (e) => {
-        if (e.target.checked) {
-          delete overrideConfig.options;
-        } else {
-          overrideConfig.options = JSON.parse(JSON.stringify(sharedConfig.options || {}));
-        }
-        incDocVersion();
-        renderCards();
-      },
-    });
-    optionsHeadingKids.push(
-      el("label", { className: "field-inherit-label" }, inheritOptionsCheckbox, textNode(" 继承共享设置"))
-    );
-  }
-  optionsHeadingKids.push(addOptionBtn);
-
-  const optionsContainer = el("div", {
-    className: `options-list${optionsInherited ? " field-inherited-area" : ""}`,
-  });
-
-  const renderOptionRow = (key, val) => {
-    let currentVal = val;
-    let currentType = typeof val === "boolean" ? "boolean" : typeof val === "number" ? "number" : "string";
-
-    const keyInput = el("input", {
-      type: "text",
-      value: key,
-      placeholder: "参数键",
-      disabled: optionsInherited,
-      dataset: { optionKey: "" },
-    });
-
-    const typeSelect = el(
-      "select",
-      { disabled: optionsInherited },
-      el("option", { value: "string" }, "字符串"),
-      el("option", { value: "number" }, "数字"),
-      el("option", { value: "boolean" }, "布尔")
-    );
-    typeSelect.value = currentType;
-
-    let valInput;
-    if (currentType === "boolean") {
-      valInput = el(
-        "select",
-        { disabled: optionsInherited, dataset: { optionVal: "" } },
-        el("option", { value: "true" }, "true"),
-        el("option", { value: "false" }, "false")
-      );
-      valInput.value = String(currentVal) === "true" ? "true" : "false";
-    } else {
-      valInput = el("input", {
-        type: "text",
-        value: currentVal != null ? String(currentVal) : "",
-        placeholder: "参数值",
-        disabled: optionsInherited,
-        dataset: { optionVal: "" },
-      });
-      if (currentType === "number") {
-        const num = Number(currentVal);
-        if (currentVal === "" || !Number.isFinite(num)) {
-          valInput.classList.add("input-error");
-        }
-      }
-    }
-
-    const removeBtn = el("button", {
-      type: "button",
-      className: "btn-remove-option",
-      disabled: optionsInherited,
-      onClick: () => {
-        row.remove();
-        syncOptions();
-      },
-    }, "移除");
-
-    const isWarning = isPermissionOptionKey(key);
-    const warningBox = el(
-      "div",
-      { className: "option-permission-warning", hidden: !isWarning },
-      "权限类参数：保存后会对该组员在此范围内的每次调用生效，主控不会再逐次征求你的同意。"
-    );
-
-    const updateWarning = () => {
-      const k = keyInput.value.trim();
-      warningBox.hidden = !isPermissionOptionKey(k);
-    };
-
-    const syncOptions = () => {
-      const rows = optionsContainer.querySelectorAll(".option-row");
-      const nextOptions = {};
-      for (const r of rows) {
-        const k = r.querySelector("[data-option-key]").value.trim();
-        const t = r.querySelector("select").value;
-        const inputElem = r.querySelector("[data-option-val]");
-        const raw = inputElem ? inputElem.value.trim() : "";
-        if (!k) continue;
-
-        let finalVal = raw;
-        if (t === "number") {
-          const num = Number(raw);
-          if (raw === "" || !Number.isFinite(num)) {
-            inputElem?.classList.add("input-error");
-          } else {
-            inputElem?.classList.remove("input-error");
-            finalVal = num;
-          }
-        } else if (t === "boolean") {
-          finalVal = raw === "true";
-        }
-        nextOptions[k] = finalVal;
-      }
-      targetConfig.options = nextOptions;
-      incDocVersion();
-    };
-
-    typeSelect.addEventListener("change", () => {
-      const nextType = typeSelect.value;
-      let newValElem;
-      if (nextType === "boolean") {
-        newValElem = el(
-          "select",
-          { dataset: { optionVal: "" } },
-          el("option", { value: "true" }, "true"),
-          el("option", { value: "false" }, "false")
-        );
-      } else {
-        newValElem = el("input", {
-          type: "text",
-          placeholder: "参数值",
-          dataset: { optionVal: "" },
-        });
-        if (nextType === "number") {
-          newValElem.classList.add("input-error");
-        }
-      }
-      valInput.replaceWith(newValElem);
-      valInput = newValElem;
-      valInput.addEventListener("input", syncOptions);
-      valInput.addEventListener("change", syncOptions);
-      syncOptions();
-    });
-
-    keyInput.addEventListener("input", updateWarning);
-    keyInput.addEventListener("input", syncOptions);
-    valInput.addEventListener("input", syncOptions);
-    valInput.addEventListener("change", syncOptions);
-
-    const row = el(
-      "div",
-      { className: "option-row" },
-      keyInput,
-      typeSelect,
-      valInput,
-      removeBtn,
-      warningBox
-    );
-    return row;
-  };
-
-  const activeOptions = optionsInherited ? (sharedConfig.options || {}) : (targetConfig.options || {});
-  for (const [k, v] of Object.entries(activeOptions)) {
-    if (k !== "model" && k !== "effort") {
-      optionsContainer.appendChild(renderOptionRow(k, v));
-    }
-  }
-
-  const optionsField = el(
-    "div",
-    { className: "detail-field" },
-    el("div", { className: "options-heading" }, ...optionsHeadingKids),
-    el("p", { className: "field-hint" }, "用于为该模型传递专属参数（不可包含 model 或 effort 键）。"),
-    optionsContainer
-  );
-  detailBox.appendChild(optionsField);
+  detailBox.appendChild(renderOptionsField(targetConfig, sharedConfig, overridden, refreshModelErrors));
 
   // 4. Notes Field
   const notesInherited = overridden && !("notes" in overrideConfig);
@@ -1212,6 +1183,9 @@ function renderCards() {
       }
 
       // Collect all models
+      if (!modeRestricted) {
+        body.appendChild(el("p", { className: "field-hint" }, "开启“限制此模式”后才能设置默认模型"));
+      }
       const detectedModels = info.models || [];
       const allModelIds = getAllModelIds(provider);
 
@@ -1261,12 +1235,14 @@ function renderCards() {
           type: "radio",
           name: `default-${provider}-${currentMode}`,
           checked: isDefault,
+          disabled: !modeRestricted,
           onClick: () => setModelDefault(provider, modelId),
         });
 
         const defaultLabel = el(
           "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为当前模式默认模型（再次点击可清除）" },
+          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: modeRestricted
+            ? "设为当前模式默认模型（再次点击可清除）" : "开启“限制此模式”后才能设置默认模型" },
           radioInput,
           textNode("默认")
         );
@@ -1371,7 +1347,13 @@ function renderCards() {
 
 // Save members.json with race version checking
 async function saveMembers() {
-  if (busy || !dirty || documentError || hasEmptyRestrictedMode() || hasInvalidOptionInputs()) return;
+  if (busy || !dirty || documentError || hasEmptyRestrictedMode()) return;
+  const errors = configurationErrors();
+  if (errors.length) {
+    showNotice(errors[0].message, true);
+    updateControls();
+    return;
+  }
   busy = true;
   updateControls();
   const feedback = $("save-feedback");
@@ -1381,22 +1363,6 @@ async function saveMembers() {
   const savingVersion = docVersion;
 
   try {
-    // Validate options
-    for (const [prov, cliConf] of Object.entries(currentDoc.clis || {})) {
-      for (const [mId, mConf] of Object.entries(cliConf.models || {})) {
-        if (mConf.options) {
-          if ("model" in mConf.options || "effort" in mConf.options) {
-            throw new Error(`${prov} 模型 ${mId} 的 options 不能包含 model 或 effort 键`);
-          }
-          for (const [k, v] of Object.entries(mConf.options)) {
-            if (typeof v === "number" && !Number.isFinite(v)) {
-              throw new Error(`${prov} 模型 ${mId} 的参数 ${k} 必须为有效有限数字`);
-            }
-          }
-        }
-      }
-    }
-
     await apiPostMembers(currentDoc);
     if (savingVersion === docVersion) {
       dirty = false;
@@ -1564,6 +1530,7 @@ function renderUpdates() {
   $("app-version").textContent = appStatus.version ? `v${appStatus.version}` : "—";
   const appBadge = $("app-badge");
   const updateInfo = appStatus.update;
+  const installWarning = updateInfo?.state === "installing" && Boolean(updateInfo.error);
 
   if (updateInfo?.state === "available") {
     appBadge.hidden = false;
@@ -1617,7 +1584,9 @@ function renderUpdates() {
       serviceBadge.className = "tag outdated";
       serviceBadge.textContent = "比托盘旧（建议升级）";
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "升级后各宿主会在空闲时自动切换到新版本。";
+      serviceMsg.textContent = installWarning
+        ? "重启后请手动升级本机服务"
+        : "升级后各宿主会在空闲时自动切换到新版本。";
     } else if (serviceInfo.state === "done") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag done";
@@ -1658,7 +1627,9 @@ function renderUpdates() {
   updateHint.hidden = !hasUpdate;
 
   if (hasUpdate) {
-    if (hasAppUpdate) {
+    if (installWarning) {
+      updateHint.textContent = "重启后请手动升级本机服务";
+    } else if (hasAppUpdate) {
       updateHint.textContent = "会先更新 App 并自动重启，重启后自动升级本机服务。";
     } else {
       updateHint.textContent = "将升级本机服务。";
@@ -1679,7 +1650,9 @@ function renderUpdates() {
   }
 
   const hasError = updateInfo?.state === "failed" || serviceInfo?.state === "failed" || Boolean(updateInfo?.error);
-  if (hasError && !isUpdating) {
+  errorBox.classList.toggle("warning", installWarning);
+  $("btn-retry-update").hidden = isUpdating;
+  if (hasError && (!isUpdating || installWarning)) {
     errorBox.hidden = false;
     errorText.textContent = updateInfo?.error || serviceInfo?.error || "操作失败，请重试。";
   } else {
