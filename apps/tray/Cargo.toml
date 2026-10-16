@@ -1,7 +1,7 @@
 [package]
 name = "agentnave-tray"
 version = "0.18.0"
-description = "AgentNave menu bar and tray app: a read-only view of saved Studio conversations"
+description = "AgentNave menu bar and tray app: view and clean up saved Studio conversations"
 license = "MIT"
 edition = "2024"
 rust-version = "1.90"

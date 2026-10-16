@@ -18,7 +18,7 @@ AgentNave 只拥有：
 
 核心包 `agentnave` 不建数据目录、不持久化业务数据、不监听端口、不向调用方 cwd 写文件。保存历史、审核、主持人发言与看板属于同一发行包中的工作室入口 `agentnave-studio-mcp`（见下文“工作室”），核心不依赖、不导入它。
 
-AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用只读展示工作室数据，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)。
+AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用展示工作室数据，并可在原生锁保护下清理会话记录，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md) 与 [ADR-0012](../adr/0012-tray-conversation-cleanup.md)。
 
 ## 单向编排
 
@@ -52,7 +52,7 @@ macOS 的 Codex Adapter 优先选择桌面应用附带的可执行 CLI：先 Cha
 
 内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
-STDIO MCP 是唯一控制接口，基础工具为 `describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent` 和只读的 `list_invocations`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。全部 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent(session_id=...)` 完成。
+STDIO MCP 是任务与协作的唯一控制接口，基础工具为 `describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent` 和只读的 `list_invocations`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。全部 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent(session_id=...)` 完成。
 
 启动回复另含 provider、model、effort，不重复 prompt。model 与 effort 只回显请求中的显式值，省略时显示“继承原生设置”，不声称已核实 Provider 实际生效的设置；等待与取消回复不重复这三项。
 
@@ -108,8 +108,14 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 隔离节目在会话目录下为每席创建独立目录，为 Antigravity 写入受限角色定义，给每席加 `restricted_tools`，忽略调用方 cwd。节目（隔离与否）都可包含 `AGENTNAVE_EXCLUDED_PROVIDERS` 中的 Provider；`describe_provider.show_permitted` 恒为 true 以保持兼容。
 
-任务会话保存普通 `start_agent` 的 Provider、cwd、显式模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一原生会话并入其未结束的任务会话，并发续接同一会话被拒。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait_agent` 仍能读取结果。删除只针对已结束且无进行中工作的会话：删除 `state.json`、遗忘已结束的调用句柄、移除隔离席位中工作室写入的角色定义与空目录，保留会话目录及 `.lock` 以维持锁身份，Provider 原生文件不删。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
+任务会话保存普通 `start_agent` 的 Provider、cwd、显式模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一原生会话并入其未结束的任务会话，并发续接同一会话被拒。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait_agent` 仍能读取结果。MCP 的删除只针对已结束且无进行中工作的会话：删除 `state.json`、遗忘已结束的调用句柄、移除隔离席位中工作室写入的角色定义与空目录，保留会话目录及 `.lock` 以维持锁身份，Provider 原生文件不删。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
 
 看板在成功创建或继续任务／节目后自动启动并返回入口；仅查看历史时 `list_conversations` 返回首页入口，随 server 退出；启动时为全部可读会话构建投影，之后由落盘与 1.5 秒的运行刷新更新。只监听 127.0.0.1 随机端口，以随机路径及精确 Host/Origin 检查限制访问，不提供写入或文件映射接口；CSP 禁止外部加载与内联脚本，页面用 textContent 渲染。节目公开页只投影已提交条目的白名单字段，导演页另含私密指令、待审回答与运行尾部，任务页只给 Manager；页面不显示原生会话或调用 ID。用于本机查看与录屏，不作网络托管。
 
-托盘数据（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）：持锁写入会话时，在 `state.json` 旁原子写出 `views.json`（版本 1：含最近活动时间的摘要、导演视图、公开视图，链接指向托盘路由 `/`、`/c/<id>/`、`/p/<id>/`），投影只来自 `views.py`；未被持有的会话在扫描时于探测锁下补写缺失或早于 `state.json` 的快照，写入失败不回滚状态。有工作运行时，每个服务每 1.5 秒原子写出 `live/<pid>-<随机>.json`（版本、进程号、更新时间、运行中会话含尾部与耗时的快照），无运行工作或退出时删除，并在写入前清理一小时以上的残留。托盘应用只读这些文件，不调用工具、不写数据根；浏览器看板保留为无托盘环境的后备。托盘应用位于 `apps/tray`（Tauri 2），经 `agentnave` 自定义协议在原生 webview 中提供同一份看板资源与只读 `state`／`transcript.jsonl`，另有托盘专属的群聊式菜单栏面板（`apps/tray/ui`），忽略超过约 10 秒未更新的运行文件；不开放 IPC 命令、不监听端口，导航限于自身协议。应用内更新只访问本仓库 GitHub Release，用户确认后才安装；本机服务较旧时，用户点击“一键升级”后托盘才执行 uv 安装命令（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+托盘数据（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）：持锁写入会话时，在 `state.json` 旁原子写出 `views.json`（版本 1：含最近活动时间的摘要、导演视图、公开视图，链接指向托盘路由 `/`、`/c/<id>/`、`/p/<id>/`），投影只来自 `views.py`；未被持有的会话在扫描时于探测锁下补写缺失或早于 `state.json` 的快照，写入失败不回滚状态。有工作运行时，每个服务每 1.5 秒原子写出 `live/<pid>-<随机>.json`（版本、进程号、更新时间、运行中会话含尾部与耗时的快照），无运行工作或退出时删除，并在写入前清理一小时以上的残留。托盘应用读取这些文件，不调用工具；数据根的写入仅限下述会话清理；浏览器看板保留为无托盘环境的后备。托盘应用位于 `apps/tray`（Tauri 2），经 `agentnave` 自定义协议在原生 webview 中提供同一份看板资源与只读 `state`／`transcript.jsonl`，另有托盘专属的群聊式菜单栏面板（`apps/tray/ui`），忽略超过约 10 秒未更新的运行文件；不开放 IPC 命令、不监听端口，导航限于自身协议。应用内更新只访问本仓库 GitHub Release，用户确认后才安装；本机服务较旧时，用户点击“一键升级”后托盘才执行 uv 安装命令（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+
+托盘会话管理（[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）使用独立的 `/manage/` 页面，在主窗口打开，不加入浏览器看板共享前端。列表复用 Reader 的摘要与运行快照，并读取 `state.json` 的必要字段；没有快照时仍列出可读状态，无法识别的状态只提示、不删除，快照版本不变。页面提供结束状态、空闲、失败及活动时间筛选，单选／多选删除和按天数清理，均须先在页面内确认。
+
+删除由 Rust 原生完成，不依赖 Python 安装：对 `conversations/<id>/.lock` 使用 `File::try_lock`，与工作室共用同一把 OS 锁；POSIX 对应 `flock`，Windows 对应 `LockFileEx`，预期与 Python 的 `msvcrt.locking` 第 0 字节区间互斥，仍需 Windows 实机验证。取锁失败时最多重试约 1 秒以避开扫描探针，然后逐项返回 `in_use`。取得锁后重读 `state.json`：任一轮席位 `review=pending` 拒绝为 `pending_review`；未结束但空闲可直接删除，磁盘仍标 running 的记录视为崩溃残留允许删除。只删除 `views.json` 与 `state.json`，保留目录、`.lock` 的 inode、全部席位文件及其他文件，不修改 live 文件或进程内调用句柄；其他宿主后续写入按缺失状态拒绝，不重建历史。
+
+托盘写入路由仅为自定义协议的 `POST /app/conversations/delete`，要求 `X-AgentNave-Action: 1` 与 JSON `{"ids": [...]}`，对整批先校验 ID，返回逐项 `deleted / in_use / pending_review / missing / error`。GET 导航不能触发删除；其余数据路由只接受 GET。不开放 Tauri IPC 命令、不放宽 CSP、不新增 HTTP 服务。删除两个文件并非原子事务：先删除派生视图，出错则保留权威状态供重试；缺失视图也允许清理。

@@ -1,4 +1,4 @@
-//! Read-only access to Studio's view snapshots (ADR-0008); never writes to the data root.
+//! Studio snapshots (ADR-0008) and the tray-only management routes (ADR-0012).
 
 use std::collections::HashMap;
 use std::fs;
@@ -26,6 +26,9 @@ macro_rules! asset {
 const PANEL_HTML: &[u8] = include_bytes!("../ui/panel.html");
 const PANEL_JS: &[u8] = include_bytes!("../ui/panel.js");
 const PANEL_CSS: &[u8] = include_bytes!("../ui/panel.css");
+const MANAGE_HTML: &[u8] = include_bytes!("../ui/manage.html");
+const MANAGE_JS: &[u8] = include_bytes!("../ui/manage.js");
+const MANAGE_CSS: &[u8] = include_bytes!("../ui/manage.css");
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -94,6 +97,12 @@ impl Response {
             body: b"not found".to_vec(),
         }
     }
+
+    fn error(status: u16, message: &str) -> Self {
+        let mut response = Self::json(&json!({"error": message}));
+        response.status = status;
+        response
+    }
 }
 
 enum Scope<'a> {
@@ -116,6 +125,35 @@ impl Reader {
             root,
             summaries: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Writes require an explicit POST and action header; navigation can never delete.
+    pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        if path == "/app/conversations/delete" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            let Some(ids) = payload.get("ids").and_then(Value::as_array).filter(|ids| {
+                !ids.is_empty() && ids.iter().all(|id| id.as_str().is_some_and(valid_id))
+            }) else {
+                return Response::error(400, "ids 必须为非空的有效会话 ID 数组");
+            };
+            let results: Vec<Value> = ids
+                .iter()
+                .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
+                .collect();
+            return Response::json(&json!({"results": results}));
+        }
+        if method != "GET" {
+            return Response::error(405, "此路由只接受 GET");
+        }
+        self.respond(path)
     }
 
     pub fn overview(&self) -> Overview {
@@ -181,6 +219,15 @@ impl Reader {
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        if let ["manage", resource] = parts.as_slice() {
+            return match *resource {
+                "" => Response::ok("text/html; charset=utf-8", MANAGE_HTML.to_vec()),
+                "manage.js" => Response::ok("text/javascript; charset=utf-8", MANAGE_JS.to_vec()),
+                "manage.css" => Response::ok("text/css; charset=utf-8", MANAGE_CSS.to_vec()),
+                "state" => Response::json(&crate::manage::list(&self.root, self.overview())),
+                _ => Response::not_found(),
+            };
+        }
         if let ["panel", resource] = parts.as_slice() {
             return match *resource {
                 "" => Response::ok("text/html; charset=utf-8", PANEL_HTML.to_vec()),
@@ -293,7 +340,7 @@ impl Reader {
     }
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id
@@ -419,6 +466,9 @@ mod tests {
         assert_eq!(state(&reader, "/p/a1/state")["view"], "public");
         assert_eq!(reader.respond("/c/a1/").status, 200);
         assert_eq!(reader.respond("/panel/").status, 200);
+        for path in ["/manage/", "/manage/manage.js", "/manage/manage.css"] {
+            assert_eq!(reader.respond(path).status, 200, "{path}");
+        }
         assert_eq!(
             reader.respond("/p/a1/transcript.jsonl").body,
             b"{\"text\":\"hi\"}\n"
@@ -432,6 +482,7 @@ mod tests {
             "/c/zz/state",
             "/x/a1/state",
             "/panel/state",
+            "/manage/unknown",
         ] {
             assert_eq!(reader.respond(path).status, 404, "{path}");
         }
