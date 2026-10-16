@@ -388,9 +388,8 @@ mod tests {
         use std::process::{Command, Stdio};
         let root = tempfile::tempdir().unwrap();
         let path = fixture(root.path(), "python");
-        // Use the preinstalled project environment, with no AgentNave/Provider invocation.
-        let python = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/python");
-        let mut child = Command::new(python)
+        // Any Python 3 works: only the standard library's fcntl is used, as store.py does.
+        let mut child = Command::new("python3")
             .arg("-c")
             .arg(
                 r#"
