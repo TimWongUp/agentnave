@@ -71,11 +71,27 @@ const SOURCE_LABELS = {
   none: "未检测到",
 };
 
+// Permission-related keywords for sensitive options
+const PERMISSION_KEYWORDS = [
+  "dangerously",
+  "permission",
+  "sandbox",
+  "yolo",
+  "skip_permissions",
+  "bypass",
+];
+
+function isPermissionOptionKey(key) {
+  if (!key) return false;
+  const lower = String(key).toLowerCase();
+  return PERMISSION_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 // Application state
 let currentDoc = {
   version: 1,
   clis: {},
-  modes: { task: {}, discussion: {} },
+  modes: {},
 };
 let detected = {};
 let currentMode = "task"; // "task" | "discussion"
@@ -83,16 +99,22 @@ let currentTab = "members"; // "members" | "updates"
 let dirty = false;
 let busy = false;
 let documentError = null;
+let docVersion = 0; // Monotonic counter for save race detection
 let expandedModel = null; // { provider: string, model: string } | null
 let appStatus = null;
 let statusPollTimer = null;
+let lastMigrationData = { migrated: false, migration_skipped: [] };
 
 // Determine mock mode
 const isMock =
   new URLSearchParams(location.search).has("mock") ||
   location.protocol === "file:";
 
-// Mock data compliant with contract.md
+// Mock data covering:
+// 1. Task mode restricted, discussion mode unrestricted (omitted key).
+// 2. Codex in task mode has models: [] (unlimited models) with default set.
+// 3. Override tri-state example.
+// 4. migration_skipped with migrated=false.
 const mockMembersData = {
   document: {
     version: 1,
@@ -108,13 +130,14 @@ const mockMembersData = {
             },
             notes: "多文件实现、需要跑测试的任务",
           },
+          "gpt-5.4-turbo": {},
         },
       },
       claude: {
         models: {
           "claude-3-7-sonnet": {
             effort: "high",
-            options: {},
+            options: { custom_timeout: 60 },
             notes: "通用编码与复杂重构",
           },
         },
@@ -123,27 +146,31 @@ const mockMembersData = {
     modes: {
       task: {
         codex: {
-          models: ["gpt-6.1-sol"],
+          models: [], // Unlimited models
           default: "gpt-6.1-sol",
           overrides: {},
         },
         claude: {
           models: ["claude-3-7-sonnet"],
           default: "claude-3-7-sonnet",
-          overrides: {},
+          overrides: {
+            // Tri-state override example: effort customized, notes customized, efforts & options inherit
+            "claude-3-7-sonnet": {
+              effort: "medium",
+              notes: "本模式专用说明",
+            },
+          },
         },
       },
-      discussion: {
-        codex: {
-          models: ["gpt-6.1-sol"],
-          default: "gpt-6.1-sol",
-        },
-      },
+      // discussion is omitted => unrestricted mode
     },
   },
   error: null,
-  migrated: true,
-  migration_skipped: ["档案“旧脚本测试”未指定模型，已跳过迁移"],
+  migrated: false,
+  migration_skipped: [
+    "档案“旧脚本测试”未指定模型，已跳过迁移",
+    "档案“危险跳过项”包含权限类参数 sandbox_bypass，已跳过迁移",
+  ],
   detected: {
     codex: {
       installed: true,
@@ -312,27 +339,13 @@ function showNotice(msg, isError = false) {
   notice.classList.toggle("error", isError);
 }
 
-function markDirty() {
+function incDocVersion() {
+  docVersion++;
   dirty = true;
   updateControls();
 }
 
-// Permission-related keywords for sensitive options
-const PERMISSION_KEYWORDS = [
-  "dangerously",
-  "permission",
-  "sandbox",
-  "yolo",
-  "skip_permissions",
-  "bypass",
-];
-
-function isPermissionOptionKey(key) {
-  if (!key) return false;
-  const lower = String(key).toLowerCase();
-  return PERMISSION_KEYWORDS.some((kw) => lower.includes(kw));
-}
-
+// Count permission-related options across entire document
 function countPermissionOptions() {
   let count = 0;
   for (const cli of Object.values(currentDoc.clis || {})) {
@@ -358,11 +371,47 @@ function countPermissionOptions() {
   return count;
 }
 
+// Check if any restricted mode has 0 enabled CLIs
+function hasEmptyRestrictedMode() {
+  if (!currentDoc.modes) return false;
+  for (const [mode, clisObj] of Object.entries(currentDoc.modes)) {
+    if (clisObj && typeof clisObj === "object" && Object.keys(clisObj).length === 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check whether current options contain invalid numbers
+function hasInvalidOptionInputs() {
+  const badInputs = document.querySelectorAll(".input-error");
+  return badInputs.length > 0;
+}
+
 function updateControls() {
   $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
-  $("save-btn").disabled = busy || !dirty || Boolean(documentError);
+
+  const emptyRestricted = hasEmptyRestrictedMode();
+  const invalidInputs = hasInvalidOptionInputs();
+  const canSave = !busy && dirty && !documentError && !emptyRestricted && !invalidInputs;
+
+  $("save-btn").disabled = !canSave;
   $("refresh-detection").disabled = busy;
 
+  // Feedback hints
+  const feedback = $("save-feedback");
+  if (emptyRestricted) {
+    feedback.textContent = "受限模式至少启用一个 CLI，或关闭限制";
+    feedback.className = "save-feedback error";
+  } else if (invalidInputs) {
+    feedback.textContent = "存在非法的数字参数，请检查标红输入框";
+    feedback.className = "save-feedback error";
+  } else if (!dirty && !feedback.classList.contains("success")) {
+    feedback.textContent = "";
+    feedback.className = "save-feedback";
+  }
+
+  // Permission summary tag
   const permCount = countPermissionOptions();
   const permSummary = $("permission-summary");
   if (permSummary) {
@@ -373,6 +422,12 @@ function updateControls() {
       permSummary.hidden = true;
       permSummary.textContent = "";
     }
+  }
+
+  // Readonly state if document error
+  const paneMembers = $("pane-members");
+  if (paneMembers) {
+    paneMembers.classList.toggle("pane-readonly", Boolean(documentError));
   }
 }
 
@@ -399,21 +454,52 @@ function setMode(mode) {
   $("mode-task").setAttribute("aria-checked", mode === "task" ? "true" : "false");
   $("mode-discussion").classList.toggle("active", mode === "discussion");
   $("mode-discussion").setAttribute("aria-checked", mode === "discussion" ? "true" : "false");
+  renderModeToolbar();
   renderCards();
 }
 
-// Member data helpers
-function ensureModeContainer(mode) {
-  if (!currentDoc.modes) currentDoc.modes = {};
-  if (!currentDoc.modes[mode]) currentDoc.modes[mode] = {};
+// Check if mode is restricted
+function isModeRestricted(mode = currentMode) {
+  return Boolean(currentDoc.modes && (mode in currentDoc.modes));
 }
 
-function isProviderEnabled(provider) {
+function renderModeToolbar() {
+  const restricted = isModeRestricted();
+  const toggle = $("mode-restrict-toggle");
+  const hint = $("mode-restrict-hint");
+  if (toggle) toggle.checked = restricted;
+  if (hint) {
+    hint.textContent = restricted
+      ? "已限制：仅允许下方启用的 CLI 与模型"
+      : "未限制：所有 CLI 都可用";
+  }
+}
+
+function toggleModeRestricted(restricted) {
+  if (!currentDoc.modes) currentDoc.modes = {};
+  if (restricted) {
+    currentDoc.modes[currentMode] = {};
+    // Pre-enable all installed CLIs with models: [] (unlimited models)
+    for (const p of PROVIDERS) {
+      if (detected[p]?.installed) {
+        currentDoc.modes[currentMode][p] = { models: [], overrides: {} };
+      }
+    }
+  } else {
+    delete currentDoc.modes[currentMode];
+  }
+  incDocVersion();
+  renderModeToolbar();
+  renderCards();
+}
+
+function isProviderEnabledInMode(provider) {
+  if (!isModeRestricted()) return true; // Unrestricted mode => all available
   return Boolean(currentDoc.modes?.[currentMode]?.[provider]);
 }
 
-function toggleProvider(provider, enabled) {
-  ensureModeContainer(currentMode);
+function toggleProviderInMode(provider, enabled) {
+  if (!isModeRestricted()) return;
   if (enabled) {
     if (!currentDoc.modes[currentMode][provider]) {
       currentDoc.modes[currentMode][provider] = {
@@ -424,7 +510,7 @@ function toggleProvider(provider, enabled) {
   } else {
     delete currentDoc.modes[currentMode][provider];
   }
-  markDirty();
+  incDocVersion();
   renderCards();
 }
 
@@ -437,11 +523,33 @@ function ensureCliModel(provider, modelId) {
   }
 }
 
+// Model allowed in current mode
+function isModelAllowed(provider, modelId) {
+  if (!isModeRestricted()) return true;
+  const provConf = currentDoc.modes[currentMode]?.[provider];
+  if (!provConf) return false;
+  if (!Array.isArray(provConf.models) || provConf.models.length === 0) return true; // Empty models => unlimited
+  return provConf.models.includes(modelId);
+}
+
+function getAllModelIds(provider) {
+  const info = detected[provider] || {};
+  const detectedModels = info.models || [];
+  const configuredModels = Object.keys(currentDoc.clis?.[provider]?.models || {});
+  const modeModels = currentDoc.modes?.[currentMode]?.[provider]?.models || [];
+
+  const modelIdSet = new Set();
+  for (const m of detectedModels) modelIdSet.add(m.id);
+  for (const id of configuredModels) modelIdSet.add(id);
+  for (const id of modeModels) modelIdSet.add(id);
+  return Array.from(modelIdSet);
+}
+
 function toggleModelAllowed(provider, modelId, allowed) {
-  ensureCliModel(provider, modelId);
-  ensureModeContainer(currentMode);
-  const provConf = currentDoc.modes[currentMode][provider];
+  if (!isModeRestricted()) return;
+  const provConf = currentDoc.modes[currentMode]?.[provider];
   if (!provConf) return;
+  ensureCliModel(provider, modelId);
   if (!Array.isArray(provConf.models)) provConf.models = [];
 
   if (allowed) {
@@ -449,53 +557,118 @@ function toggleModelAllowed(provider, modelId, allowed) {
       provConf.models.push(modelId);
     }
   } else {
+    // If only 1 model left, do not allow unchecking
+    const uniqueModels = Array.from(new Set(provConf.models));
+    if (uniqueModels.length <= 1 && uniqueModels.includes(modelId)) {
+      showNotice("至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”", true);
+      renderCards();
+      return;
+    }
     provConf.models = provConf.models.filter((m) => m !== modelId);
+    // If unchecked, delete override in this mode and clear default if it was default
+    if (provConf.overrides) {
+      delete provConf.overrides[modelId];
+    }
     if (provConf.default === modelId) {
       delete provConf.default;
     }
   }
-  markDirty();
+  incDocVersion();
+  renderCards();
+}
+
+function toggleUnlimitedModels(provider, unlimited) {
+  if (!isModeRestricted()) return;
+  const provConf = currentDoc.modes[currentMode]?.[provider];
+  if (!provConf) return;
+
+  if (unlimited) {
+    provConf.models = [];
+  } else {
+    const allModelIds = getAllModelIds(provider);
+    if (allModelIds.length === 0) {
+      showNotice("列表中没有可用模型，请先添加模型", true);
+      renderCards();
+      return;
+    }
+    const currentChecked = Array.isArray(provConf.models)
+      ? provConf.models.filter((m) => allModelIds.includes(m))
+      : [];
+    if (currentChecked.length > 0) {
+      provConf.models = currentChecked;
+    } else {
+      // Pick default model, or first model in candidate list
+      const info = detected[provider] || {};
+      let targetModel = null;
+      if (provConf.default && allModelIds.includes(provConf.default)) {
+        targetModel = provConf.default;
+      } else {
+        const detectedDefault = info.models?.find((m) => m.default && allModelIds.includes(m.id))?.id;
+        targetModel = detectedDefault || allModelIds[0];
+      }
+      provConf.models = [targetModel];
+    }
+  }
+  incDocVersion();
   renderCards();
 }
 
 function setModelDefault(provider, modelId) {
-  ensureModeContainer(currentMode);
-  const provConf = currentDoc.modes[currentMode][provider];
-  if (!provConf) return;
+  ensureCliModel(provider, modelId);
 
-  if (provConf.default === modelId) {
-    delete provConf.default;
-  } else {
-    ensureCliModel(provider, modelId);
-    if (!Array.isArray(provConf.models)) provConf.models = [];
-    if (!provConf.models.includes(modelId)) {
-      provConf.models.push(modelId);
+  // If in restricted mode
+  if (isModeRestricted()) {
+    const provConf = currentDoc.modes[currentMode]?.[provider];
+    if (!provConf) return;
+
+    if (provConf.default === modelId) {
+      delete provConf.default;
+    } else {
+      provConf.default = modelId;
+      // Do NOT force modelId into provConf.models if models is empty (unlimited)
+      if (Array.isArray(provConf.models) && provConf.models.length > 0) {
+        if (!provConf.models.includes(modelId)) {
+          provConf.models.push(modelId);
+        }
+      }
     }
-    provConf.default = modelId;
+  } else {
+    // In unrestricted mode, default can be stored if provider config exists, or kept in clis
+    ensureModeContainer(currentMode);
+    if (!currentDoc.modes[currentMode][provider]) {
+      currentDoc.modes[currentMode][provider] = { models: [] };
+    }
+    const provConf = currentDoc.modes[currentMode][provider];
+    if (provConf.default === modelId) {
+      delete provConf.default;
+    } else {
+      provConf.default = modelId;
+    }
   }
-  markDirty();
+  incDocVersion();
   renderCards();
 }
 
 function isModelOverridden(provider, modelId) {
-  return Boolean(currentDoc.modes?.[currentMode]?.[provider]?.overrides?.[modelId]);
+  if (!isModeRestricted()) return false;
+  return Boolean(currentDoc.modes[currentMode]?.[provider]?.overrides?.[modelId]);
 }
 
 function toggleModelOverride(provider, modelId, override) {
-  ensureModeContainer(currentMode);
-  const provConf = currentDoc.modes[currentMode][provider];
+  if (!isModeRestricted()) return;
+  const provConf = currentDoc.modes[currentMode]?.[provider];
   if (!provConf) return;
   if (!provConf.overrides) provConf.overrides = {};
 
   if (override) {
     if (!provConf.overrides[modelId]) {
-      const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
-      provConf.overrides[modelId] = JSON.parse(JSON.stringify(shared));
+      // Create empty override (all fields default to inherit)
+      provConf.overrides[modelId] = {};
     }
   } else {
     delete provConf.overrides[modelId];
   }
-  markDirty();
+  incDocVersion();
   renderCards();
 }
 
@@ -503,64 +676,83 @@ function addCustomModel(provider, modelId) {
   const trimmed = modelId.trim();
   if (!trimmed) return;
   ensureCliModel(provider, trimmed);
-  ensureModeContainer(currentMode);
-  const provConf = currentDoc.modes[currentMode][provider];
-  if (provConf) {
-    if (!Array.isArray(provConf.models)) provConf.models = [];
-    if (!provConf.models.includes(trimmed)) {
-      provConf.models.push(trimmed);
+
+  if (isModeRestricted()) {
+    const provConf = currentDoc.modes[currentMode]?.[provider];
+    if (provConf && Array.isArray(provConf.models) && provConf.models.length > 0) {
+      if (!provConf.models.includes(trimmed)) {
+        provConf.models.push(trimmed);
+      }
     }
   }
   expandedModel = { provider, model: trimmed };
-  markDirty();
+  incDocVersion();
   renderCards();
 }
 
-// Render model detail form
+function ensureModeContainer(mode) {
+  if (!currentDoc.modes) currentDoc.modes = {};
+  if (!currentDoc.modes[mode]) currentDoc.modes[mode] = {};
+}
+
+// Render model detail form with tri-state inheritance
 function renderModelDetail(provider, modelId) {
   ensureCliModel(provider, modelId);
   const overridden = isModelOverridden(provider, modelId);
   const provConf = currentDoc.modes?.[currentMode]?.[provider];
-  const targetConfig = overridden
-    ? provConf.overrides[modelId]
-    : currentDoc.clis[provider].models[modelId] || {};
+  const sharedConfig = currentDoc.clis[provider]?.models?.[modelId] || {};
+  const overrideConfig = overridden ? provConf.overrides[modelId] : null;
 
   const detailBox = el("div", { className: "model-detail" });
 
-  // Override switch
-  const overrideCheckbox = el("input", {
-    type: "checkbox",
-    checked: overridden,
-    onChange: (e) => toggleModelOverride(provider, modelId, e.target.checked),
-  });
-  const overrideToggle = el(
-    "div",
-    { className: "detail-override-toggle" },
-    el("label", {}, overrideCheckbox, textNode(" 仅在当前模式使用不同设置")),
-    el(
-      "p",
-      { className: "field-hint" },
-      overridden
-        ? "当前处于模式专属设置（覆盖共享设置）；关闭开关将清除本模式覆盖并恢复共享设置。"
-        : "开启后可为当前模式指定单独的努力程度档位、默认档位与参数；关闭时使用共享设置。"
-    )
-  );
-  detailBox.appendChild(overrideToggle);
+  // Mode override switch (only active in restricted mode)
+  if (isModeRestricted()) {
+    const overrideCheckbox = el("input", {
+      type: "checkbox",
+      checked: overridden,
+      onChange: (e) => toggleModelOverride(provider, modelId, e.target.checked),
+    });
+    const overrideToggle = el(
+      "div",
+      { className: "detail-override-toggle" },
+      el("label", {}, overrideCheckbox, textNode(" 仅在当前模式使用不同设置")),
+      el(
+        "p",
+        { className: "field-hint" },
+        overridden
+          ? "模式覆盖已开启：下方各字段可独立选择“继承共享设置”或设定本模式值。"
+          : "开启后可在此模式下覆盖该模型的档位、默认档位、参数或说明；关闭时完全使用共享设置。"
+      )
+    );
+    detailBox.appendChild(overrideToggle);
+  }
 
-  // Efforts checklist (prioritize model-level efforts, fall back to provider-level efforts)
+  // Target object to edit
+  const targetConfig = overridden ? overrideConfig : sharedConfig;
+
+  // 1. Efforts Field (checklist)
   const detectedModelObj = (detected[provider]?.models || []).find((m) => m.id === modelId);
   const modelEfforts = detectedModelObj?.efforts;
-  const detectedEfforts =
+  const candidateEfforts =
     Array.isArray(modelEfforts) && modelEfforts.length > 0
       ? modelEfforts
       : detected[provider]?.efforts || [];
-  if (detectedEfforts.length > 0) {
-    const activeEfforts = Array.isArray(targetConfig.efforts) ? targetConfig.efforts : [];
-    const checklist = el("div", { className: "efforts-checklist" });
-    for (const eff of detectedEfforts) {
+
+  const effortsInherited = overridden && !("efforts" in overrideConfig);
+  if (candidateEfforts.length > 0) {
+    const activeEfforts = effortsInherited
+      ? (Array.isArray(sharedConfig.efforts) ? sharedConfig.efforts : [])
+      : (Array.isArray(targetConfig.efforts) ? targetConfig.efforts : []);
+
+    const checklist = el("div", {
+      className: `efforts-checklist${effortsInherited ? " field-inherited-area" : ""}`,
+    });
+
+    for (const eff of candidateEfforts) {
       const effBox = el("input", {
         type: "checkbox",
         checked: activeEfforts.includes(eff),
+        disabled: effortsInherited,
         onChange: (e) => {
           let list = Array.isArray(targetConfig.efforts) ? [...targetConfig.efforts] : [];
           if (e.target.checked) {
@@ -568,31 +760,65 @@ function renderModelDetail(provider, modelId) {
           } else {
             list = list.filter((item) => item !== eff);
           }
-          if (list.length === 0) {
-            delete targetConfig.efforts;
-          } else {
-            targetConfig.efforts = list;
+          targetConfig.efforts = list; // In override, keep empty array [] if cleared
+
+          // Clear default effort if selected default is no longer in active efforts
+          if (targetConfig.effort && list.length > 0 && !list.includes(targetConfig.effort)) {
+            delete targetConfig.effort;
           }
-          markDirty();
+          incDocVersion();
+          renderCards();
         },
       });
-      checklist.appendChild(
-        el("label", { className: "effort-item" }, effBox, textNode(eff))
+      checklist.appendChild(el("label", { className: "effort-item" }, effBox, textNode(eff)));
+    }
+
+    const headingKids = [el("h4", {}, "允许的努力档位 (efforts)")];
+    if (overridden) {
+      const inheritEffortsCheckbox = el("input", {
+        type: "checkbox",
+        checked: effortsInherited,
+        onChange: (e) => {
+          if (e.target.checked) {
+            delete overrideConfig.efforts;
+          } else {
+            overrideConfig.efforts = Array.isArray(sharedConfig.efforts) ? [...sharedConfig.efforts] : [];
+          }
+          incDocVersion();
+          renderCards();
+        },
+      });
+      headingKids.push(
+        el("label", { className: "field-inherit-label" }, inheritEffortsCheckbox, textNode(" 继承共享设置"))
       );
     }
 
     const effortsField = el(
       "div",
       { className: "detail-field" },
-      el("label", {}, "允许的努力档位（efforts）"),
+      el("div", { className: "field-heading-with-inherit" }, ...headingKids),
       checklist,
-      el("p", { className: "field-hint" }, "不勾选表示不限制努力档位；若勾选，主控调用时仅允许选中的档位。")
+      el("p", { className: "field-hint" }, "不勾选表示不限制努力档位；勾选时主控调用仅允许选中的档位。")
     );
     detailBox.appendChild(effortsField);
   }
 
-  // Default effort select
+  // 2. Default Effort Field
+  const effortInherited = overridden && !("effort" in overrideConfig);
+  const activeEffortVal = effortInherited ? sharedConfig.effort : targetConfig.effort;
+
+  const currentConfiguredEfforts = effortsInherited
+    ? sharedConfig.efforts
+    : targetConfig.efforts;
+
+  // Option candidate list for default effort
+  const effortDropdownChoices =
+    Array.isArray(currentConfiguredEfforts) && currentConfiguredEfforts.length > 0
+      ? currentConfiguredEfforts
+      : (candidateEfforts.length > 0 ? candidateEfforts : ["minimal", "low", "medium", "high", "xhigh"]);
+
   const effortSelect = el("select", {
+    disabled: effortInherited,
     onChange: (e) => {
       const val = e.target.value;
       if (!val) {
@@ -600,34 +826,90 @@ function renderModelDetail(provider, modelId) {
       } else {
         targetConfig.effort = val;
       }
-      markDirty();
+      incDocVersion();
     },
   });
-  effortSelect.appendChild(el("option", { value: "" }, "不设置（继承原生默认）"));
-  const effortChoices = detectedEfforts.length > 0 ? detectedEfforts : ["minimal", "low", "medium", "high", "xhigh"];
-  for (const eff of effortChoices) {
+
+  // If not in override, or if in override setting specific value, populate options
+  if (!overridden) {
+    effortSelect.appendChild(el("option", { value: "" }, "不设置（继承原生默认）"));
+  }
+
+  for (const eff of effortDropdownChoices) {
     const opt = el("option", { value: eff }, eff);
-    if (targetConfig.effort === eff) opt.selected = true;
+    if (activeEffortVal === eff) opt.selected = true;
     effortSelect.appendChild(opt);
   }
-  // If targetConfig.effort is not in choices, append it
-  if (targetConfig.effort && !effortChoices.includes(targetConfig.effort)) {
-    const opt = el("option", { value: targetConfig.effort }, targetConfig.effort);
-    opt.selected = true;
-    effortSelect.appendChild(opt);
+
+  const effortHeadingKids = [el("h4", {}, "默认努力档位 (effort)")];
+  if (overridden) {
+    const inheritEffortCheckbox = el("input", {
+      type: "checkbox",
+      checked: effortInherited,
+      onChange: (e) => {
+        if (e.target.checked) {
+          delete overrideConfig.effort;
+        } else {
+          // In override, effort must be a concrete choice, not empty
+          overrideConfig.effort = effortDropdownChoices[0] || "medium";
+        }
+        incDocVersion();
+        renderCards();
+      },
+    });
+    effortHeadingKids.push(
+      el("label", { className: "field-inherit-label" }, inheritEffortCheckbox, textNode(" 继承共享设置"))
+    );
   }
 
   const defaultEffortField = el(
     "div",
     { className: "detail-field" },
-    el("label", {}, "默认努力档位（effort）"),
-    effortSelect,
-    el("p", { className: "field-hint" }, "主控未指定 effort 且模式未覆盖时套用此默认值。")
+    el("div", { className: "field-heading-with-inherit" }, ...effortHeadingKids),
+    el("div", { className: effortInherited ? "field-inherited-area" : "" }, effortSelect),
+    el("p", { className: "field-hint" }, "主控未指定 effort 时套用此默认值。")
   );
   detailBox.appendChild(defaultEffortField);
 
-  // Other options
-  const optionsContainer = el("div", { className: "options-list" });
+  // 3. Other Options Field
+  const optionsInherited = overridden && !("options" in overrideConfig);
+  const optionsHeadingKids = [el("h4", {}, "其他参数 (options)")];
+
+  const addOptionBtn = el("button", {
+    type: "button",
+    disabled: optionsInherited,
+    onClick: () => {
+      if (overridden && optionsInherited) return;
+      if (!targetConfig.options) targetConfig.options = {};
+      optionsContainer.appendChild(renderOptionRow("", ""));
+      incDocVersion();
+    },
+  }, "＋ 添加参数");
+
+  if (overridden) {
+    const inheritOptionsCheckbox = el("input", {
+      type: "checkbox",
+      checked: optionsInherited,
+      onChange: (e) => {
+        if (e.target.checked) {
+          delete overrideConfig.options;
+        } else {
+          overrideConfig.options = JSON.parse(JSON.stringify(sharedConfig.options || {}));
+        }
+        incDocVersion();
+        renderCards();
+      },
+    });
+    optionsHeadingKids.push(
+      el("label", { className: "field-inherit-label" }, inheritOptionsCheckbox, textNode(" 继承共享设置"))
+    );
+  }
+  optionsHeadingKids.push(addOptionBtn);
+
+  const optionsContainer = el("div", {
+    className: `options-list${optionsInherited ? " field-inherited-area" : ""}`,
+  });
+
   const renderOptionRow = (key, val) => {
     let currentVal = val;
     let currentType = typeof val === "boolean" ? "boolean" : typeof val === "number" ? "number" : "string";
@@ -636,58 +918,53 @@ function renderModelDetail(provider, modelId) {
       type: "text",
       value: key,
       placeholder: "参数键",
+      disabled: optionsInherited,
       dataset: { optionKey: "" },
     });
 
     const typeSelect = el(
       "select",
-      {},
+      { disabled: optionsInherited },
       el("option", { value: "string" }, "字符串"),
       el("option", { value: "number" }, "数字"),
       el("option", { value: "boolean" }, "布尔")
     );
     typeSelect.value = currentType;
 
-    const valInput = el("input", {
-      type: "text",
-      value: String(currentVal),
-      placeholder: "参数值",
-      dataset: { optionVal: "" },
-    });
+    let valInput;
+    if (currentType === "boolean") {
+      valInput = el(
+        "select",
+        { disabled: optionsInherited, dataset: { optionVal: "" } },
+        el("option", { value: "true" }, "true"),
+        el("option", { value: "false" }, "false")
+      );
+      valInput.value = String(currentVal) === "true" ? "true" : "false";
+    } else {
+      valInput = el("input", {
+        type: "text",
+        value: currentVal != null ? String(currentVal) : "",
+        placeholder: "参数值",
+        disabled: optionsInherited,
+        dataset: { optionVal: "" },
+      });
+      if (currentType === "number") {
+        const num = Number(currentVal);
+        if (currentVal === "" || !Number.isFinite(num)) {
+          valInput.classList.add("input-error");
+        }
+      }
+    }
 
     const removeBtn = el("button", {
       type: "button",
       className: "btn-remove-option",
+      disabled: optionsInherited,
       onClick: () => {
         row.remove();
         syncOptions();
       },
     }, "移除");
-
-    const syncOptions = () => {
-      const rows = optionsContainer.querySelectorAll(".option-row");
-      const nextOptions = {};
-      for (const r of rows) {
-        const k = r.querySelector("[data-option-key]").value.trim();
-        const t = r.querySelector("select").value;
-        const raw = r.querySelector("[data-option-val]").value.trim();
-        if (!k) continue;
-        let finalVal = raw;
-        if (t === "number") {
-          const num = Number(raw);
-          finalVal = Number.isFinite(num) ? num : raw;
-        } else if (t === "boolean") {
-          finalVal = raw.toLowerCase() === "true";
-        }
-        nextOptions[k] = finalVal;
-      }
-      if (Object.keys(nextOptions).length === 0) {
-        delete targetConfig.options;
-      } else {
-        targetConfig.options = nextOptions;
-      }
-      markDirty();
-    };
 
     const isWarning = isPermissionOptionKey(key);
     const warningBox = el(
@@ -701,10 +978,65 @@ function renderModelDetail(provider, modelId) {
       warningBox.hidden = !isPermissionOptionKey(k);
     };
 
+    const syncOptions = () => {
+      const rows = optionsContainer.querySelectorAll(".option-row");
+      const nextOptions = {};
+      for (const r of rows) {
+        const k = r.querySelector("[data-option-key]").value.trim();
+        const t = r.querySelector("select").value;
+        const inputElem = r.querySelector("[data-option-val]");
+        const raw = inputElem ? inputElem.value.trim() : "";
+        if (!k) continue;
+
+        let finalVal = raw;
+        if (t === "number") {
+          const num = Number(raw);
+          if (raw === "" || !Number.isFinite(num)) {
+            inputElem?.classList.add("input-error");
+          } else {
+            inputElem?.classList.remove("input-error");
+            finalVal = num;
+          }
+        } else if (t === "boolean") {
+          finalVal = raw === "true";
+        }
+        nextOptions[k] = finalVal;
+      }
+      targetConfig.options = nextOptions;
+      incDocVersion();
+    };
+
+    typeSelect.addEventListener("change", () => {
+      const nextType = typeSelect.value;
+      let newValElem;
+      if (nextType === "boolean") {
+        newValElem = el(
+          "select",
+          { dataset: { optionVal: "" } },
+          el("option", { value: "true" }, "true"),
+          el("option", { value: "false" }, "false")
+        );
+      } else {
+        newValElem = el("input", {
+          type: "text",
+          placeholder: "参数值",
+          dataset: { optionVal: "" },
+        });
+        if (nextType === "number") {
+          newValElem.classList.add("input-error");
+        }
+      }
+      valInput.replaceWith(newValElem);
+      valInput = newValElem;
+      valInput.addEventListener("input", syncOptions);
+      valInput.addEventListener("change", syncOptions);
+      syncOptions();
+    });
+
     keyInput.addEventListener("input", updateWarning);
     keyInput.addEventListener("input", syncOptions);
-    typeSelect.addEventListener("change", syncOptions);
     valInput.addEventListener("input", syncOptions);
+    valInput.addEventListener("change", syncOptions);
 
     const row = el(
       "div",
@@ -718,55 +1050,61 @@ function renderModelDetail(provider, modelId) {
     return row;
   };
 
-  const existingOptions = targetConfig.options || {};
-  for (const [k, v] of Object.entries(existingOptions)) {
+  const activeOptions = optionsInherited ? (sharedConfig.options || {}) : (targetConfig.options || {});
+  for (const [k, v] of Object.entries(activeOptions)) {
     if (k !== "model" && k !== "effort") {
       optionsContainer.appendChild(renderOptionRow(k, v));
     }
   }
 
-  const addOptionBtn = el("button", {
-    type: "button",
-    onClick: () => {
-      optionsContainer.appendChild(renderOptionRow("", ""));
-      markDirty();
-    },
-  }, "＋ 添加参数");
-
   const optionsField = el(
     "div",
     { className: "detail-field" },
-    el(
-      "div",
-      { className: "options-heading" },
-      el("h4", {}, "其他参数 (options)"),
-      addOptionBtn
-    ),
+    el("div", { className: "options-heading" }, ...optionsHeadingKids),
     el("p", { className: "field-hint" }, "用于为该模型传递专属参数（不可包含 model 或 effort 键）。"),
     optionsContainer
   );
   detailBox.appendChild(optionsField);
 
-  // Notes field
+  // 4. Notes Field
+  const notesInherited = overridden && !("notes" in overrideConfig);
+  const activeNotes = notesInherited ? (sharedConfig.notes || "") : (targetConfig.notes || "");
+
   const notesText = el("textarea", {
     placeholder: "填写适用任务或选择理由…",
+    disabled: notesInherited,
     onInput: (e) => {
-      const text = e.target.value.trim();
-      if (!text) {
-        delete targetConfig.notes;
-      } else {
-        targetConfig.notes = e.target.value;
-      }
-      markDirty();
+      targetConfig.notes = e.target.value;
+      incDocVersion();
     },
   });
-  notesText.value = targetConfig.notes || "";
+  notesText.value = activeNotes;
+
+  const notesHeadingKids = [el("h4", {}, "说明与适用场景 (notes)")];
+  if (overridden) {
+    const inheritNotesCheckbox = el("input", {
+      type: "checkbox",
+      checked: notesInherited,
+      onChange: (e) => {
+        if (e.target.checked) {
+          delete overrideConfig.notes;
+        } else {
+          overrideConfig.notes = sharedConfig.notes || "";
+        }
+        incDocVersion();
+        renderCards();
+      },
+    });
+    notesHeadingKids.push(
+      el("label", { className: "field-inherit-label" }, inheritNotesCheckbox, textNode(" 继承共享设置"))
+    );
+  }
 
   const notesField = el(
     "div",
     { className: "detail-field" },
-    el("label", {}, "说明与适用场景 (notes)"),
-    notesText
+    el("div", { className: "field-heading-with-inherit" }, ...notesHeadingKids),
+    el("div", { className: notesInherited ? "field-inherited-area" : "" }, notesText)
   );
   detailBox.appendChild(notesField);
 
@@ -778,6 +1116,8 @@ function renderCards() {
   const container = $("cli-cards");
   container.replaceChildren();
 
+  const modeRestricted = isModeRestricted();
+
   for (const provider of PROVIDERS) {
     const info = detected[provider] || {
       installed: false,
@@ -787,7 +1127,7 @@ function renderCards() {
       models: [],
       efforts: [],
     };
-    const isEnabled = isProviderEnabled(provider);
+    const isEnabled = isProviderEnabledInMode(provider);
     const card = el("div", {
       className: `cli-card${info.installed ? "" : " uninstalled"}`,
       dataset: { provider },
@@ -801,11 +1141,21 @@ function renderCards() {
     const sourceLabel = SOURCE_LABELS[info.source] || info.source;
     const sourceBadge = el("span", { className: "badge badge-muted" }, `来源: ${sourceLabel}`);
 
-    const enableCheckbox = el("input", {
-      type: "checkbox",
-      checked: isEnabled,
-      onChange: (e) => toggleProvider(provider, e.target.checked),
-    });
+    let enableControl;
+    if (!modeRestricted) {
+      enableControl = el(
+        "span",
+        { className: "badge badge-run" },
+        "未限制：默认可用"
+      );
+    } else {
+      const enableCheckbox = el("input", {
+        type: "checkbox",
+        checked: isEnabled,
+        onChange: (e) => toggleProviderInMode(provider, e.target.checked),
+      });
+      enableControl = el("label", {}, enableCheckbox, textNode(" 在当前模式启用"));
+    }
 
     const header = el(
       "div",
@@ -817,15 +1167,11 @@ function renderCards() {
         statusBadge,
         sourceBadge
       ),
-      el(
-        "div",
-        { className: "cli-enable-area" },
-        el("label", {}, enableCheckbox, textNode(" 在当前模式启用"))
-      )
+      el("div", { className: "cli-enable-area" }, enableControl)
     );
     card.appendChild(header);
 
-    // Metadata (path or detection error)
+    // Metadata
     if (info.path || info.error) {
       const metaRow = el("div", { className: "cli-meta-row" });
       if (info.path) {
@@ -837,7 +1183,7 @@ function renderCards() {
       card.appendChild(metaRow);
     }
 
-    // Body (models list)
+    // Body
     const body = el("div", {
       className: `cli-body${isEnabled ? "" : " disabled"}`,
     });
@@ -847,39 +1193,68 @@ function renderCards() {
         el("p", { className: "cli-disabled-hint" }, "当前模式未启用该 CLI；启用后可配置允许调用的模型。")
       );
     } else {
+      const provConf = modeRestricted ? currentDoc.modes[currentMode]?.[provider] : null;
+      const isUnlimited = modeRestricted && Array.isArray(provConf?.models) && provConf.models.length === 0;
+
+      // Unlimited models toggle (only in restricted mode)
+      if (modeRestricted) {
+        const unlimitedBox = el("input", {
+          type: "checkbox",
+          checked: isUnlimited,
+          onChange: (e) => toggleUnlimitedModels(provider, e.target.checked),
+        });
+        const unlimitedWrap = el(
+          "div",
+          { className: "cli-unlimited-wrap" },
+          el("label", { className: "cli-unlimited-label" }, unlimitedBox, textNode(" 不限模型（允许调用该 CLI 支持的任意模型）"))
+        );
+        body.appendChild(unlimitedWrap);
+      }
+
       // Collect all models
       const detectedModels = info.models || [];
-      const configuredModels = Object.keys(currentDoc.clis?.[provider]?.models || {});
-      const modeModels = currentDoc.modes?.[currentMode]?.[provider]?.models || [];
-
-      const modelIdSet = new Set();
-      for (const m of detectedModels) modelIdSet.add(m.id);
-      for (const id of configuredModels) modelIdSet.add(id);
-      for (const id of modeModels) modelIdSet.add(id);
-      const allModelIds = Array.from(modelIdSet);
+      const allModelIds = getAllModelIds(provider);
 
       const modelList = el("div", { className: "model-list" });
+      const checkedCount = new Set(provConf?.models || []).size;
 
       for (const modelId of allModelIds) {
         const isDetected = detectedModels.some((m) => m.id === modelId);
-        const isAllowed = modeModels.includes(modelId);
-        const isDefault = currentDoc.modes?.[currentMode]?.[provider]?.default === modelId;
+        // "已不在列表" only if CLI installed and source in command, codex-cache, help
+        const isStale =
+          !isDetected &&
+          info.installed &&
+          ["command", "codex-cache", "help"].includes(info.source);
+
+        const isAllowed = isModelAllowed(provider, modelId);
+        const isDefault = provConf ? provConf.default === modelId : false;
         const hasOverride = isModelOverridden(provider, modelId);
         const isExpanded =
           expandedModel &&
           expandedModel.provider === provider &&
           expandedModel.model === modelId;
 
+        const isLastChecked =
+          modeRestricted &&
+          !isUnlimited &&
+          checkedCount === 1 &&
+          Array.isArray(provConf?.models) &&
+          provConf.models.includes(modelId);
+
         const modelItem = el("div", {
           className: `model-item${hasOverride ? " has-override" : ""}`,
         });
 
         // Model Checkbox
-        const checkInput = el("input", {
-          type: "checkbox",
-          checked: isAllowed,
-          onChange: (e) => toggleModelAllowed(provider, modelId, e.target.checked),
-        });
+        let checkInput;
+        if (modeRestricted) {
+          checkInput = el("input", {
+            type: "checkbox",
+            checked: isAllowed,
+            disabled: isUnlimited || isLastChecked,
+            onChange: (e) => toggleModelAllowed(provider, modelId, e.target.checked),
+          });
+        }
 
         // Default Radio
         const radioInput = el("input", {
@@ -891,14 +1266,14 @@ function renderCards() {
 
         const defaultLabel = el(
           "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为当前模式默认模型" },
+          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为当前模式默认模型（再次点击可清除）" },
           radioInput,
           textNode("默认")
         );
 
         // Tags
         const tags = [];
-        if (!isDetected) {
+        if (isStale) {
           tags.push(el("span", { className: "badge badge-warning" }, "已不在列表"));
         }
         if (hasOverride) {
@@ -915,16 +1290,39 @@ function renderCards() {
           },
         }, isExpanded ? "收起" : "配置");
 
+        const controlsKids = [];
+        if (modeRestricted) {
+          const checkLabelAttrs = { className: "model-check-label" };
+          if (isLastChecked) {
+            checkLabelAttrs.title = "至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”";
+          } else if (isUnlimited) {
+            checkLabelAttrs.title = "当前为不限模型模式";
+          }
+          controlsKids.push(
+            el("label", checkLabelAttrs, checkInput, el("span", { className: "model-id" }, modelId))
+          );
+        } else {
+          controlsKids.push(el("span", { className: "model-id" }, modelId));
+        }
+        controlsKids.push(defaultLabel, ...tags);
+
+        if (isLastChecked) {
+          controlsKids.push(
+            el(
+              "span",
+              {
+                className: "model-single-hint",
+                title: "至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”",
+              },
+              "至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”"
+            )
+          );
+        }
+
         const row = el(
           "div",
           { className: "model-row" },
-          el(
-            "div",
-            { className: "model-controls" },
-            el("label", { className: "model-check-label" }, checkInput, el("span", { className: "model-id" }, modelId)),
-            defaultLabel,
-            ...tags
-          ),
+          el("div", { className: "model-controls" }, ...controlsKids),
           el("div", { className: "model-actions" }, detailBtn)
         );
         modelItem.appendChild(row);
@@ -971,14 +1369,16 @@ function renderCards() {
   updateControls();
 }
 
-// Save members.json
+// Save members.json with race version checking
 async function saveMembers() {
-  if (busy || !dirty || documentError) return;
+  if (busy || !dirty || documentError || hasEmptyRestrictedMode() || hasInvalidOptionInputs()) return;
   busy = true;
   updateControls();
   const feedback = $("save-feedback");
   feedback.textContent = "正在保存…";
   feedback.className = "save-feedback";
+
+  const savingVersion = docVersion;
 
   try {
     // Validate options
@@ -988,12 +1388,19 @@ async function saveMembers() {
           if ("model" in mConf.options || "effort" in mConf.options) {
             throw new Error(`${prov} 模型 ${mId} 的 options 不能包含 model 或 effort 键`);
           }
+          for (const [k, v] of Object.entries(mConf.options)) {
+            if (typeof v === "number" && !Number.isFinite(v)) {
+              throw new Error(`${prov} 模型 ${mId} 的参数 ${k} 必须为有效有限数字`);
+            }
+          }
         }
       }
     }
 
     await apiPostMembers(currentDoc);
-    dirty = false;
+    if (savingVersion === docVersion) {
+      dirty = false;
+    }
     feedback.textContent = "设置已保存 · 参数是否有效以主控读取时的校验为准";
     feedback.className = "save-feedback success";
     showNotice("设置已保存");
@@ -1007,6 +1414,61 @@ async function saveMembers() {
   }
 }
 
+// Render migration banner & skipped reasons
+function renderMigrationBanner(data) {
+  const banner = $("migration-banner");
+  const title = $("migration-title");
+  const container = $("migration-skipped-container");
+  if (!banner || !container) return;
+
+  container.replaceChildren();
+
+  const hasSkipped = Array.isArray(data.migration_skipped) && data.migration_skipped.length > 0;
+
+  if (data.migrated) {
+    banner.hidden = false;
+    banner.className = "banner migration";
+    if (title) {
+      title.textContent = "已将原编排档案的模型与说明迁移；两种模式当前未限制，如需限制再开启";
+    }
+  } else if (hasSkipped) {
+    banner.hidden = false;
+    banner.className = "banner error";
+    if (title) {
+      title.textContent = "旧档案未迁移，保存后将不再自动迁移";
+    }
+  } else {
+    banner.hidden = true;
+    return;
+  }
+
+  if (hasSkipped) {
+    const details = el(
+      "details",
+      { className: "migration-skipped-details", open: !data.migrated },
+      el("summary", {}, `未能迁移的档案（${data.migration_skipped.length} 条）`),
+      el(
+        "ul",
+        { className: "migration-skipped-list" },
+        ...data.migration_skipped.map((reason) => el("li", {}, reason))
+      )
+    );
+    container.appendChild(details);
+  }
+}
+
+function renderErrorBanner() {
+  const errBanner = $("error-banner");
+  const errDesc = $("error-desc");
+  if (!errBanner) return;
+  if (documentError) {
+    errBanner.hidden = false;
+    if (errDesc) errDesc.textContent = documentError;
+  } else {
+    errBanner.hidden = true;
+  }
+}
+
 // Refresh detection
 async function refreshDetection() {
   if (busy) return;
@@ -1016,9 +1478,14 @@ async function refreshDetection() {
   try {
     const data = await apiGetMembers(true);
     detected = data.detected || {};
-    // If user has not modified document, update it
-    if (!dirty && data.document) {
-      currentDoc = data.document;
+    // If no unsaved modifications, reload entire data including doc, error & migration
+    if (!dirty) {
+      currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+      documentError = data.error || null;
+      lastMigrationData = data;
+      renderMigrationBanner(data);
+      renderErrorBanner();
+      renderModeToolbar();
     }
     showNotice("检测结果已刷新");
     renderCards();
@@ -1038,32 +1505,14 @@ async function loadMembers() {
     detected = data.detected || {};
     currentDoc = data.document || { version: 1, clis: {}, modes: {} };
     documentError = data.error || null;
+    lastMigrationData = data;
 
-    if (data.migrated) {
-      $("migration-banner").hidden = false;
-      const skippedContainer = $("migration-skipped-container");
-      if (skippedContainer) {
-        skippedContainer.replaceChildren();
-        if (Array.isArray(data.migration_skipped) && data.migration_skipped.length > 0) {
-          const details = el(
-            "details",
-            { className: "migration-skipped-details" },
-            el("summary", {}, `部分档案未能迁移（${data.migration_skipped.length} 条）`),
-            el(
-              "ul",
-              { className: "migration-skipped-list" },
-              ...data.migration_skipped.map((reason) => el("li", {}, reason))
-            )
-          );
-          skippedContainer.appendChild(details);
-        }
-      }
-    }
+    renderMigrationBanner(data);
+    renderErrorBanner();
+    renderModeToolbar();
 
     if (documentError) {
-      $("error-banner").hidden = false;
-      $("error-desc").textContent = documentError;
-      showNotice(`配置文件损坏: ${documentError}。当前禁止保存。`, true);
+      showNotice(`配置文件损坏: ${documentError}。当前只读，禁止保存。`, true);
     } else {
       showNotice("已载入执行者与模型配置");
     }
@@ -1071,9 +1520,9 @@ async function loadMembers() {
     renderCards();
   } catch (err) {
     documentError = err.message;
-    $("error-banner").hidden = false;
-    $("error-desc").textContent = err.message;
+    renderErrorBanner();
     showNotice(`读取失败: ${err.message}`, true);
+    updateControls();
   }
 }
 
@@ -1139,45 +1588,57 @@ function renderUpdates() {
   const serviceInfo = appStatus.service;
   const serviceBadge = $("service-badge");
   const serviceMsg = $("service-msg");
-  const serviceVer = serviceInfo?.version || appStatus.version;
-  $("service-version").textContent = serviceVer ? `v${serviceVer}` : "—";
 
-  const isServiceOutdated =
-    serviceInfo?.state === "outdated" ||
-    (serviceInfo?.version && isVersionOlder(serviceInfo.version, appStatus.version));
-
-  if (serviceInfo?.state === "upgrading") {
-    serviceBadge.hidden = false;
-    serviceBadge.className = "tag upgrading";
-    serviceBadge.textContent = "正在升级…";
-    serviceMsg.hidden = false;
-    serviceMsg.textContent = "正在从 GitHub 升级本机服务，约需一分钟…";
-  } else if (serviceInfo?.state === "failed") {
-    serviceBadge.hidden = false;
-    serviceBadge.className = "tag failed";
-    serviceBadge.textContent = "升级失败";
-    serviceMsg.hidden = false;
-    serviceMsg.textContent = serviceInfo.error || "升级服务失败，请重试";
-  } else if (isServiceOutdated) {
-    serviceBadge.hidden = false;
-    serviceBadge.className = "tag outdated";
-    serviceBadge.textContent = "比托盘旧（建议升级）";
-    serviceMsg.hidden = false;
-    serviceMsg.textContent = "升级后各宿主会在空闲时自动切换到新版本。";
-  } else if (serviceInfo?.state === "done") {
-    serviceBadge.hidden = false;
-    serviceBadge.className = "tag done";
-    serviceBadge.textContent = "已是最新";
-    serviceMsg.hidden = true;
-  } else {
+  if (!serviceInfo) {
+    $("service-version").textContent = "—";
     serviceBadge.hidden = true;
-    serviceMsg.hidden = true;
+    serviceMsg.hidden = false;
+    serviceMsg.textContent = "本机服务与托盘一致或未通过 uv 安装";
+  } else {
+    $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
+    const isServiceOutdated =
+      serviceInfo.state === "outdated" ||
+      (serviceInfo.version && isVersionOlder(serviceInfo.version, appStatus.version));
+
+    if (serviceInfo.state === "upgrading") {
+      serviceBadge.hidden = false;
+      serviceBadge.className = "tag upgrading";
+      serviceBadge.textContent = "正在升级…";
+      serviceMsg.hidden = false;
+      serviceMsg.textContent = "正在从 GitHub 升级本机服务，约需一分钟…";
+    } else if (serviceInfo.state === "failed") {
+      serviceBadge.hidden = false;
+      serviceBadge.className = "tag failed";
+      serviceBadge.textContent = "升级失败";
+      serviceMsg.hidden = false;
+      serviceMsg.textContent = serviceInfo.error || "升级服务失败，请重试";
+    } else if (isServiceOutdated) {
+      serviceBadge.hidden = false;
+      serviceBadge.className = "tag outdated";
+      serviceBadge.textContent = "比托盘旧（建议升级）";
+      serviceMsg.hidden = false;
+      serviceMsg.textContent = "升级后各宿主会在空闲时自动切换到新版本。";
+    } else if (serviceInfo.state === "done") {
+      serviceBadge.hidden = false;
+      serviceBadge.className = "tag done";
+      serviceBadge.textContent = "已是最新";
+      serviceMsg.hidden = true;
+    } else {
+      serviceBadge.hidden = true;
+      serviceMsg.hidden = true;
+    }
   }
 
   $("last-checked").textContent = formatTime(appStatus.last_checked);
 
   // Update action buttons and progress
-  const hasUpdate = updateInfo?.state === "available" || isServiceOutdated;
+  const hasAppUpdate = updateInfo?.state === "available";
+  const isServiceOutdated =
+    serviceInfo &&
+    (serviceInfo.state === "outdated" ||
+      (serviceInfo.version && isVersionOlder(serviceInfo.version, appStatus.version)));
+  const hasUpdate = hasAppUpdate || Boolean(isServiceOutdated);
+
   const isUpdating =
     updateInfo?.state === "checking" ||
     updateInfo?.state === "installing" ||
@@ -1196,6 +1657,14 @@ function renderUpdates() {
   btnApply.disabled = isUpdating;
   updateHint.hidden = !hasUpdate;
 
+  if (hasUpdate) {
+    if (hasAppUpdate) {
+      updateHint.textContent = "会先更新 App 并自动重启，重启后自动升级本机服务。";
+    } else {
+      updateHint.textContent = "将升级本机服务。";
+    }
+  }
+
   if (isUpdating) {
     progressBox.hidden = false;
     if (updateInfo?.state === "checking") {
@@ -1209,7 +1678,7 @@ function renderUpdates() {
     progressBox.hidden = true;
   }
 
-  const hasError = updateInfo?.state === "failed" || serviceInfo?.state === "failed";
+  const hasError = updateInfo?.state === "failed" || serviceInfo?.state === "failed" || Boolean(updateInfo?.error);
   if (hasError && !isUpdating) {
     errorBox.hidden = false;
     errorText.textContent = updateInfo?.error || serviceInfo?.error || "操作失败，请重试。";
@@ -1241,12 +1710,11 @@ async function triggerCheckUpdate() {
   try {
     showNotice("正在检查更新…");
     appStatus = await apiCheckUpdate();
-    renderUpdates();
     showNotice("检查更新完成");
   } catch (err) {
     showNotice(`检查更新失败: ${err.message}`, true);
   } finally {
-    btnCheck.disabled = false;
+    renderUpdates();
   }
 }
 
@@ -1259,7 +1727,7 @@ async function triggerApplyUpdate() {
     renderUpdates();
   } catch (err) {
     showNotice(`触发更新失败: ${err.message}`, true);
-    btnApply.disabled = false;
+    renderUpdates();
   }
 }
 
@@ -1268,6 +1736,7 @@ $("tab-members").addEventListener("click", () => setTab("members"));
 $("tab-updates").addEventListener("click", () => setTab("updates"));
 $("mode-task").addEventListener("click", () => setMode("task"));
 $("mode-discussion").addEventListener("click", () => setMode("discussion"));
+$("mode-restrict-toggle").addEventListener("change", (e) => toggleModeRestricted(e.target.checked));
 $("refresh-detection").addEventListener("click", refreshDetection);
 $("save-btn").addEventListener("click", saveMembers);
 

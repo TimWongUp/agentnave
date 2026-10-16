@@ -31,14 +31,6 @@
 
   <div id="notice" role="status" aria-live="polite">正在读取设置…</div>
 
-  <div id="migration-banner" class="banner migration" hidden>
-    <div class="banner-content">
-      <strong>已将原编排档案的模型、参数与说明迁移到执行者与模型；请在各模式中启用需要的 CLI</strong>
-      <div id="migration-skipped-container"></div>
-    </div>
-    <button id="dismiss-migration" type="button">我知道了</button>
-  </div>
-
   <div id="error-banner" class="banner error" hidden>
     <div class="banner-content">
       <strong id="error-title">配置文件存在错误</strong>
@@ -48,13 +40,27 @@
 
   <!-- 分区 1：执行者与模型 -->
   <section id="pane-members" class="tab-pane active" role="tabpanel" aria-labelledby="tab-members">
+    <div id="migration-banner" class="banner migration" hidden>
+      <div class="banner-content">
+        <strong id="migration-title">已将原编排档案的模型与说明迁移；两种模式当前未限制，如需限制再开启</strong>
+        <div id="migration-skipped-container"></div>
+      </div>
+      <button id="dismiss-migration" type="button">我知道了</button>
+    </div>
+
     <div class="members-toolbar">
       <div class="mode-control">
         <div class="segment-control" role="radiogroup" aria-label="编排模式">
           <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">任务</button>
           <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">讨论</button>
         </div>
-        <p class="mode-hint">任务对应派单个 CLI 做事，讨论对应多人轮次；两种模式分别设置。</p>
+        <div class="mode-restrict-wrap">
+          <label class="restrict-toggle-label">
+            <input type="checkbox" id="mode-restrict-toggle">
+            <span id="mode-restrict-title">限制此模式</span>
+          </label>
+          <span id="mode-restrict-hint" class="mode-hint">未限制：所有 CLI 都可用</span>
+        </div>
       </div>
       <button id="refresh-detection" type="button">刷新检测</button>
     </div>
