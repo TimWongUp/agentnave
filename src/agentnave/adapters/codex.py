@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 
 from agentnave.adapters.base import (
@@ -12,6 +14,7 @@ from agentnave.adapters.base import (
     failure_status,
     object_dict,
     parse_json_lines,
+    parse_json_object,
     resolve_executable,
     restricted_options,
 )
@@ -23,6 +26,46 @@ _DESKTOP_CODEX_PATHS = (
     "/Applications/Codex.app/Contents/Resources/codex",
     "~/Applications/Codex.app/Contents/Resources/codex",
 )
+
+# Tool items carry full command/tool output; activity sees them, the retained result does not.
+_TOOL_ITEM = re.compile(
+    rb'"type"\s*:\s*"(?:command_execution|mcp_tool_call|web_search|file_change|reasoning|todo_list)"'
+)
+_ITEM_EVENT = re.compile(rb'"type"\s*:\s*"item\.(?:started|updated|completed)"')
+# Anything that may be a reply or a terminal event is never skipped.
+_KEPT_EVENT = re.compile(rb'"type"\s*:\s*"(?:agent_message|turn\.|thread\.|error)')
+
+
+def _capture_line(line: bytes) -> bytes:
+    """Retain only the fields parse() reads, never tool item payloads."""
+    event = parse_json_object(line.decode(errors="replace"))
+    if event is None:
+        return b""
+    kind = event.get("type")
+    if kind == "thread.started":
+        kept: dict[str, object] = {"type": kind, "thread_id": event.get("thread_id")}
+    elif kind == "item.completed":
+        item = object_dict(event.get("item"))
+        if item.get("type") != "agent_message":
+            return b""
+        kept = {"type": kind, "item": {"type": "agent_message", "text": item.get("text")}}
+    elif kind == "turn.completed":
+        kept = {"type": kind, "usage": event.get("usage")}
+    elif kind in ("turn.failed", "error"):
+        # parse() falls back from "error" to "message"; an absent key must stay absent.
+        kept = {key: event[key] for key in ("type", "error", "message") if key in event}
+    else:
+        return b""
+    return json.dumps(kept, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+
+
+def _skip_oversized_line(head: bytes) -> bool:
+    # Only a positively identified tool item event may be dropped; anything else fails.
+    return (
+        _ITEM_EVENT.search(head) is not None
+        and _TOOL_ITEM.search(head) is not None
+        and _KEPT_EVENT.search(head) is None
+    )
 
 
 def _codex_executable() -> str:
@@ -80,7 +123,13 @@ class CodexAdapter:
         if request.session_id is not None:
             argv.append(request.session_id)
         argv.append("-")
-        return PreparedCommand(tuple(argv), request.cwd, request.prompt.encode())
+        return PreparedCommand(
+            tuple(argv),
+            request.cwd,
+            request.prompt.encode(),
+            capture_line=_capture_line,
+            skip_oversized_line=_skip_oversized_line,
+        )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
