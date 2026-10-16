@@ -13,7 +13,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-核心十个工具：`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
+核心十一个工具：`list_profiles`、`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
 
 | 用户需要 | 调用方式 |
 | --- | --- |
@@ -53,6 +53,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 仅在用户明确要求从工具层面限制访问时，显式设置 `provider_options.restricted_tools=true`；用户同时明确要求工作室准备独立席位目录时，才按 [工作室节目](references/studio.md) 使用 `isolated=true`。可用选项先由 `describe_provider` 核对。prompt 是协作约定，执行权限仍由 CLI 原生机制控制；受限配置不清除旧会话历史，也不统一禁止加载上下文文件。
 
 ## CLI 与模型
+
+用户未点名 CLI 时，先调用 `list_profiles` 按档案说明选择，再把 `provider` 与 `provider_options` 显式传给 `start_agent` 或席位；档案无效或无匹配时向用户说明。用户本轮要求优先，跳过审批、绕过沙箱等权限参数只在用户本轮明确要求时传入。
 
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 

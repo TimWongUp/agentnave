@@ -62,6 +62,9 @@ class ClaudeAdapter:
         "--disable-slash-commands",
     )
 
+    def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
+        return option_args(request, self._options)
+
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
         argv = [
@@ -74,7 +77,7 @@ class ClaudeAdapter:
         ]
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
-        argv.extend(option_args(request, self._options))
+        argv.extend(self.option_args(request))
         if discussion:
             argv.extend(self._discussion_args)
         return PreparedCommand(

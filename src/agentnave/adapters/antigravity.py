@@ -80,7 +80,7 @@ class AntigravityAdapter:
         argv = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
         if request.session_id is not None:
             argv.extend(("--conversation", request.session_id))
-        argv.extend(self._option_args(request))
+        argv.extend(self.option_args(request))
         if discussion:
             # agy loads agents only from cwd; never write into the caller's project here.
             profile = _restricted_profile(request.cwd)
@@ -236,7 +236,7 @@ class AntigravityAdapter:
             status = failure_status(message)
         return ParsedProviderResult(status, output, session_id, usage, message)
 
-    def _option_args(self, request: InvocationRequest) -> tuple[str, ...]:
+    def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         unknown = sorted(set(request.provider_options) - set(self._options))
         if unknown:
             raise ValueError(f"unsupported antigravity options: {', '.join(unknown)}")

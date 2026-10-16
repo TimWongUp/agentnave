@@ -223,7 +223,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the ten core tools (sixteen with the studio) and the `codex` exclusion.
+Start a new session and confirm the eleven core tools (seventeen with the studio) and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -313,7 +313,7 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all AgentNave tools (ten, or sixteen with the studio); a
+tools, then asks whether to enable them. Complete that choice for all AgentNave tools (eleven, or seventeen with the studio); a
 successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
 per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
@@ -442,9 +442,10 @@ unless explicitly changed by the user.
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `describe_provider`, `start_agent`, `wait_agent`,
-   `cancel_agent`, `open_group`, `run_round`, `wait_round` and `cancel_round` are visible (8 total).
-   The studio adds the seven [show and history tools](studio.md) (15 total).
+2. Restart the server/session and confirm `list_profiles`, `describe_provider`, `start_agent`,
+   `wait_agent`, `wait_any`, `cancel_agent`, `list_invocations`, `open_group`, `run_round`,
+   `wait_round` and `cancel_round` are visible (11 total).
+   The studio adds six [show and history tools](studio.md) (17 total).
    Confirm the host also discovers `agentnave-manager` in the intended
    scope and can read its five referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.

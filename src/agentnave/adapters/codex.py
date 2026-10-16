@@ -44,12 +44,26 @@ class CodexAdapter:
         "dangerously_bypass_approvals_and_sandbox",
     }
 
-    def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+    def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         unknown = sorted(set(request.provider_options) - self._options)
         if unknown:
             raise ValueError(f"unsupported codex options: {', '.join(unknown)}")
 
+        argv: list[str] = []
+        for key, value in request.provider_options.items():
+            if key == "model":
+                argv.extend(("--model", str(value)))
+            elif key == "effort":
+                argv.extend(("--config", f"model_reasoning_effort={value}"))
+            elif not isinstance(value, bool):
+                raise ValueError(f"codex option {key} must be a boolean")
+            elif value:
+                argv.append("--" + key.replace("_", "-"))
+
+        return tuple(argv)
+
+    def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        request, discussion = restricted_options(request)
         argv = [_codex_executable(), "exec"]
         if request.session_id is not None:
             argv.append("resume")
@@ -66,15 +80,7 @@ class CodexAdapter:
             ):
                 argv.extend(("--config", setting))
 
-        for key, value in request.provider_options.items():
-            if key == "model":
-                argv.extend(("--model", str(value)))
-            elif key == "effort":
-                argv.extend(("--config", f"model_reasoning_effort={value}"))
-            elif not isinstance(value, bool):
-                raise ValueError(f"codex option {key} must be a boolean")
-            elif value:
-                argv.append("--" + key.replace("_", "-"))
+        argv.extend(self.option_args(request))
 
         if request.session_id is not None:
             argv.append(request.session_id)

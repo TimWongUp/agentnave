@@ -109,6 +109,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         "cancel_agent",
         "list_invocations",
         "describe_provider",
+        "list_profiles",
         "open_group",
         "run_round",
         "wait_round",
@@ -548,6 +549,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
         "cancel_agent",
         "list_invocations",
         "describe_provider",
+        "list_profiles",
         "open_group",
         "run_round",
         "wait_round",
@@ -653,3 +655,98 @@ async def test_entrypoint_disables_all_tools_without_side_effects(
             assert "test context" in client.instructions
             assert ("无法确认" in client.instructions) == (status == "unavailable")
         assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_profiles_read_missing_and_fresh_files_without_preparing_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from agentnave.adapters.antigravity import AntigravityAdapter
+    from agentnave.adapters.grok import GrokAdapter
+
+    root = tmp_path / "data"
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
+    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+
+    def no_prepare(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("list_profiles must not prepare CLI commands or create prompt files")
+
+    monkeypatch.setattr(GrokAdapter, "prepare", no_prepare)
+    monkeypatch.setattr(AntigravityAdapter, "prepare", no_prepare)
+    monkeypatch.setattr("agentnave.adapters.codex._codex_executable", no_prepare)
+    async with Client(mcp) as client:
+        missing = await client.call_tool("list_profiles", {})
+        assert not missing.is_error
+        assert _payload(missing.structured_content) == {"profiles": []}
+        assert not root.exists()
+        root.mkdir()
+        profiles: list[dict[str, object]] = [
+            {
+                "id": provider,
+                "name": "编排规则",
+                "provider": provider,
+                "provider_options": {"model": "chosen", "effort": "high"},
+                "notes": "适用场景与理由",
+            }
+            for provider in ("codex", "claude", "codebuddy", "grok", "antigravity", "pi")
+        ]
+        # Restricted Antigravity options validate independently of its task directory.
+        profiles[4]["provider_options"] = {"restricted_tools": True}
+        profiles.extend(
+            [
+                {**profiles[0], "id": "bad-option", "provider_options": {"unknown": True}},
+                {
+                    **profiles[0],
+                    "id": "bad-type",
+                    "provider_options": {"skip_git_repo_check": "true"},
+                },
+                {
+                    **profiles[4],
+                    "id": "bad-restricted",
+                    "provider_options": {"restricted_tools": True, "sandbox": True},
+                },
+            ]
+        )
+        content = json.dumps({"version": 1, "profiles": profiles}, ensure_ascii=False)
+        path = root / "profiles.json"
+        path.write_text(content, encoding="utf-8")
+        listed = await client.call_tool("list_profiles", {})
+        assert not listed.is_error
+        items = cast(list[dict[str, object]], _payload(listed.structured_content)["profiles"])
+        for source, result in zip(profiles, items, strict=True):
+            assert {key: result[key] for key in source} == source
+        assert all(item["valid"] is True and item["error"] is None for item in items[:6])
+        assert items[0]["permitted"] is False and items[1]["permitted"] is True
+        assert all(item["valid"] is False and item["error"] for item in items[6:])
+        assert "unsupported codex options" in str(items[6]["error"])
+        assert "boolean" in str(items[7]["error"])
+        assert "only model and effort" in str(items[8]["error"])
+        assert path.read_text(encoding="utf-8") == content
+        assert list(root.iterdir()) == [path]
+        path.write_text('{"version": 1, "profiles": []}', encoding="utf-8")
+        fresh = await client.call_tool("list_profiles", {})
+        assert _payload(fresh.structured_content) == {"profiles": []}
+
+
+@pytest.mark.asyncio
+async def test_profiles_report_corrupt_files_without_overwriting_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "profiles.json"
+    async with Client(mcp) as client:
+        for content in (
+            "{",
+            '{"version": 2, "profiles": []}',
+            '{"version": true, "profiles": []}',
+            '{"version": 1, "profiles": [{}]}',
+        ):
+            path.write_text(content, encoding="utf-8")
+            result = await client.call_tool("list_profiles", {})
+            assert result.is_error and "profiles.json" in str(result.content)
+            assert path.read_text(encoding="utf-8") == content
+        path.write_bytes(b"\xff")
+        result = await client.call_tool("list_profiles", {})
+        assert result.is_error and "profiles.json" in str(result.content)

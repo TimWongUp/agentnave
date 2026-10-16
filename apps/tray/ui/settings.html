@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>设置 · AgentNave</title>
+<link rel="stylesheet" href="/manage/manage.css">
+<link rel="stylesheet" href="./settings.css">
+<script src="./settings.js" defer></script>
+</head>
+<body>
+<main>
+  <header class="top">
+    <a class="brand" href="/"><span class="mark">N</span>AgentNave <span class="back">/ 设置</span></a>
+    <nav aria-label="页面导航"><a href="/manage/">管理会话 ↗</a><button id="refresh" type="button">重新读取</button></nav>
+  </header>
+  <section class="intro">
+    <div><p class="eyebrow">本机偏好 · 主控编排</p><h1>编排档案<span id="total">—</span></h1></div>
+    <p class="scope">为不同任务留下 CLI、参数与选择理由。<br>主控读取后，按本轮要求显式传参。</p>
+  </section>
+  <div id="notice" role="status" aria-live="polite">正在读取档案…</div>
+  <p class="guidance">参数是否有效以主控读取时的校验为准。档案不自动生效；跳过审批、绕过沙箱等权限参数，仅在用户本轮明确要求时传入。</p>
+  <div class="workspace">
+    <section class="profiles" aria-label="编排档案列表">
+      <div class="selection"><h2>我的档案</h2><button id="add" type="button" disabled>＋ 新增档案</button></div>
+      <div id="list"></div>
+      <p id="empty" class="empty" hidden>还没有档案。<br>从常用的任务场景开始。</p>
+    </section>
+    <section class="editor" aria-label="编辑编排档案">
+      <p id="placeholder" class="empty">选择一条档案，或新增自己的编排规则。</p>
+      <form id="editor" hidden>
+        <h2 id="editor-title">新增档案</h2>
+        <fieldset id="fields">
+          <label>名称<input id="name" type="text" required autocomplete="off" placeholder="例如：代码审查"></label>
+          <div class="pair">
+            <label>CLI<select id="provider"><option value="codex">Codex CLI</option><option value="claude">Claude Code</option><option value="codebuddy">CodeBuddy Code</option><option value="grok">Grok CLI</option><option value="antigravity">Antigravity CLI</option><option value="pi">Pi Coding Agent</option></select></label>
+            <label>模型<input id="model" type="text" autocomplete="off" placeholder="留空继承原生设置"></label>
+          </div>
+          <label>effort<input id="effort" type="text" autocomplete="off" placeholder="留空继承原生设置"></label>
+          <div class="option-heading"><h3>其他参数</h3><button id="add-option" type="button">＋ 参数</button></div>
+          <p class="field-hint">填写 CLI 的参数键；值可选字符串、数字或布尔。</p>
+          <div id="options"></div>
+          <label>说明<textarea id="notes" rows="4" placeholder="适用什么任务，为什么选择这个 CLI 与这些参数？"></textarea></label>
+        </fieldset>
+        <div class="editor-actions"><button id="delete" class="danger" type="button">删除档案…</button><span id="dirty" role="status"></span><button id="cancel" type="button">取消编辑</button><button id="save" class="primary" type="submit">保存档案</button></div>
+      </form>
+      <section id="confirmation" class="confirmation" aria-label="确认删除档案" tabindex="-1" hidden>
+        <h2 id="confirm-title"></h2><p>删除后，主控将不再读取这条编排规则。</p>
+        <div class="confirm-actions"><button id="keep" type="button">保留档案</button><button id="confirm" class="danger" type="button">确认删除</button></div>
+      </section>
+    </section>
+  </div>
+</main>
+</body>
+</html>

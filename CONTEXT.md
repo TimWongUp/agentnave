@@ -13,6 +13,10 @@ AgentNave 的唯一用户。Manager 解释目标，选择 Provider，决定角�
 
 AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 与 Pi Coding Agent。
 
+## Orchestration Profile
+
+用户维护的编排规则：适用场景与理由、所选 CLI 及其显式参数。Manager 按用户本轮要求选用，服务不按档案名自动套用参数。
+
 ## Invocation
 
 一次 Provider 进程调用。它由 prompt、cwd、可选 Provider Session 和显式 Provider Options 构成，只在当前 AgentNave 进程内拥有句柄。
@@ -61,5 +65,5 @@ Studio 在成功创建或继续会话后自动提供入口的本机只读页面�
 
 ## Tray App
 
-展示并清理数据根中全部宿主工作室会话的跨平台托盘应用（macOS 菜单栏、Windows 托盘）。详情复用看板前端，会话管理使用托盘专属页面；只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具。浏览器看板仍只读，保留为无托盘环境的后备。
+展示并清理数据根中全部宿主工作室会话、维护用户编排档案的跨平台托盘应用（macOS 菜单栏、Windows 托盘）。详情复用看板前端，会话管理与设置使用托盘专属页面；只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具。浏览器看板仍只读，保留为无托盘环境的后备。
 _Avoid_: 控制台、桌面客户端

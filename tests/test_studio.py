@@ -1054,8 +1054,8 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         assert home["shows"][0]["title"] == "Renamed"
         assert "director_url" not in listed and "public_url" not in listed
         names = [tool.name for tool in (await client.list_tools()).tools]
-        assert len(names) == 16 and "open_dashboard" not in names
-        assert {"wait_any", "list_invocations"} <= set(names)
+        assert len(names) == 17 and "open_dashboard" not in names
+        assert {"wait_any", "list_invocations", "list_profiles"} <= set(names)
 
     def fail(_self: Studio, *, history_loaded: bool = False) -> str:
         raise OSError("viewer failed")
@@ -1147,3 +1147,31 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
             await _call(client, "read_conversation", {"conversation_id": "restored"})
         )
         assert [entry["seat"] for entry in cast(list[dict[str, object]], view["entries"])] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_studio_reuses_readonly_core_profiles(data_root: Path) -> None:
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        assert len(tools) == 17
+        annotations = tools["list_profiles"].annotations
+        assert annotations is not None and annotations.read_only_hint is True
+        assert await _call(client, "list_profiles", {}) == {"profiles": []}
+        assert not data_root.exists()
+        data_root.mkdir()
+        document: dict[str, object] = {
+            "version": 1,
+            "profiles": [
+                {
+                    "id": "one",
+                    "name": "核验",
+                    "provider": "claude",
+                    "provider_options": {},
+                    "notes": "只读核验",
+                }
+            ],
+        }
+        (data_root / "profiles.json").write_text(json.dumps(document), encoding="utf-8")
+        result = await _call(client, "list_profiles", {})
+        assert result == (await studio_server.core.list_profiles()).model_dump()
+        assert list(data_root.iterdir()) == [data_root / "profiles.json"]
