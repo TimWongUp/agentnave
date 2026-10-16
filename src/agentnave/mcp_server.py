@@ -24,6 +24,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
+from agentnave.nesting import detect_nesting
 
 type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok", "pi"]
 
@@ -784,7 +785,13 @@ async def cancel_round(
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    nesting = detect_nesting()
+    if nesting.status != "not_nested":
+        MCPServer("AgentNave", version=__version__, instructions=nesting.instructions).run(
+            transport="stdio"
+        )
+    else:
+        mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,17 @@ from agentnave import __version__, mcp_server
 from agentnave.mcp_server import mcp
 
 
+def _server_args(module: str, status: str) -> list[str]:
+    # Model the host context explicitly: the test runner itself may be a dispatched CLI.
+    return [
+        "-c",
+        f"import {module} as server; "
+        "from agentnave.nesting import NestingResult; "
+        f"server.detect_nesting = lambda: NestingResult({status!r}, 'test context'); "
+        "server.main()",
+    ]
+
+
 def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     script = tmp_path / ("claude.py" if os.name == "nt" else "claude")
     script.write_text(
@@ -518,7 +529,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
     home.mkdir()
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "agentnave.mcp_server"],
+        args=_server_args("agentnave.mcp_server", "not_nested"),
         env={"HOME": str(home), "USERPROFILE": str(home)},
         cwd=tmp_path,
     )
@@ -559,7 +570,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
     fake_codex.chmod(0o755)
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "agentnave.mcp_server"],
+        args=_server_args("agentnave.mcp_server", "not_nested"),
         env={
             "PATH": os.environ["PATH"],
             "AGENTNAVE_EXCLUDED_PROVIDERS": excluded,
@@ -617,3 +628,28 @@ def test_stdio_rejects_unknown_exclusion_configuration() -> None:
     assert completed.returncode != 0
     assert completed.stdout == ""
     assert "Unknown AGENTNAVE_EXCLUDED_PROVIDERS: codxe" in completed.stderr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["agentnave.mcp_server", "agentnave_studio.mcp_server"])
+async def test_entrypoint_disables_all_tools_without_side_effects(
+    module: str, tmp_path: Path
+) -> None:
+    for status in ("nested", "unavailable"):
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=_server_args(module, status),
+            env={
+                "HOME": str(tmp_path),
+                "USERPROFILE": str(tmp_path),
+                "AGENTNAVE_DATA_DIR": str(tmp_path / "data"),
+            },
+            cwd=tmp_path,
+        )
+        async with Client(parameters) as client:
+            assert (await client.list_tools()).tools == []
+            assert client.instructions is not None
+            assert "已禁用编排工具" in client.instructions
+            assert "test context" in client.instructions
+            assert ("无法确认" in client.instructions) == (status == "unavailable")
+        assert not list(tmp_path.iterdir())

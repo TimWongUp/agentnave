@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -241,6 +242,7 @@ def main() -> int:
         return 2
     status_path = Path(sys.argv[1])
     ready_path = Path(sys.argv[2])
+    os.environ["AGENTNAVE_SUPERVISOR"] = str(os.getpid())
     try:
         kind, returncode, message = _run_provider(sys.argv[3:], ready_path)
         payload: dict[str, object] = {"kind": kind}

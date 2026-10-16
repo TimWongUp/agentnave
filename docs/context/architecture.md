@@ -20,6 +20,14 @@ AgentNave 只拥有：
 
 AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用只读展示工作室数据，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)。
 
+## 单向编排
+
+AgentNave 派出的 Provider CLI 及其原生子代理不能再通过 AgentNave 编排其他 CLI。两个服务入口在启动运行时前检测：确认嵌套或检测不可用时，只启动带原因说明的零工具 MCP 服务，不挂载业务 lifespan、不建数据目录、不监听端口、不写文件。宿主直接启动且确认非嵌套的服务保持完整能力；中继只转发，不参与判定。取舍见 [ADR-0011](../adr/0011-disable-nested-orchestration.md)。
+
+POSIX 与 Windows supervisor 在自己的环境中设置 `AGENTNAVE_SUPERVISOR=<自身 PID>`，由 Provider 继承，不改变父服务环境。服务验证标记进程仍存活，POSIX 还验证其确为 AgentNave supervisor；过期标记忽略。macOS／Linux 同时沿同用户祖先链检查 supervisor，以覆盖 CLI 过滤自定义环境变量的情况；只识别 Python 脚本位置参数，不在整条命令行或 prompt 中搜索路径。同用户祖先无法读取或链未能在层数上限内确认时禁用工具，其他用户祖先不要求读取参数。
+
+Windows 第一版只依赖环境标记及其 PID 存活检查，标记被过滤时无法检测；借助树外守护进程启动 MCP 也会失去祖先链信号。此边界不抵御同用户恶意绕过，不扩大 AgentNave 的沙箱承诺。
+
 ## 安装与激活边界
 
 运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，每个 CLI 的模型与 effort 默认值放在独立参考文件中，选中后才读取。MCP instructions 与 Tool 描述只保留轻量调用合同，`describe_provider` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。

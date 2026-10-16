@@ -31,6 +31,7 @@ from agentnave.mcp_server import (
     ProviderName,
 )
 from agentnave.models import InvocationRequest, ProviderOption
+from agentnave.nesting import detect_nesting
 from agentnave_studio.store import Conversation, Unavailable
 from agentnave_studio.studio import Decision, DeletionResult, Studio
 
@@ -657,7 +658,13 @@ async def delete_conversation(conversation_id: str, *, ctx: Context[Runtime]) ->
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    nesting = detect_nesting()
+    if nesting.status != "not_nested":
+        MCPServer("AgentNave Studio", version=__version__, instructions=nesting.instructions).run(
+            transport="stdio"
+        )
+    else:
+        mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":
