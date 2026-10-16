@@ -190,29 +190,67 @@ function notices(status) {
   else if (update?.state === "failed")
     blocks.push(notice("更新失败", "检查网络后重试", "重试", "/app/update"));
   const service = status?.service;
-  if (service)
+  if (service?.state === "upgrading")
+    blocks.push(
+      notice(
+        "正在升级本机服务",
+        `从 GitHub 安装 v${status.version}，约需一分钟`,
+      ),
+    );
+  else if (service?.state === "done")
+    blocks.push(
+      notice(
+        `本机服务已升级到 v${service.version}`,
+        "各宿主会在空闲时自动切换到新版本",
+      ),
+    );
+  else if (service?.state === "failed")
+    blocks.push(
+      notice(
+        "升级本机服务失败",
+        service.error,
+        "重试",
+        "/app/upgrade-service",
+        ["复制命令", "/app/copy-service-command"],
+      ),
+    );
+  else if (service)
     blocks.push(
       notice(
         `本机服务 v${service.version} 比托盘 v${status.version} 旧`,
-        "在终端运行升级命令，再让各宿主重连 MCP",
-        "复制命令",
-        "/app/copy-service-command",
+        older(service.version, "0.18.0")
+          ? "升级后需重启一次各宿主，此后宿主会自动切换"
+          : "升级后各宿主会在空闲时自动切换",
+        "一键升级",
+        "/app/upgrade-service",
       ),
     );
   return blocks;
 }
-function notice(title, detail, action, href) {
-  const button = action && h("a.notice-action", { href }, action);
-  if (button && href === "/app/copy-service-command")
-    button.addEventListener("click", () => {
-      button.textContent = "已复制";
-      setTimeout(() => (button.textContent = action), 2000);
-    });
+// Services before v0.18.0 run without the relay that restarts them after an upgrade.
+function older(version, than) {
+  const a = String(version).split(".").map(Number);
+  const b = than.split(".").map(Number);
+  for (let i = 0; i < b.length; i++)
+    if ((a[i] || 0) !== b[i]) return (a[i] || 0) < b[i];
+  return false;
+}
+function notice(title, detail, action, href, secondary) {
+  const button = (label, target) => {
+    const link = h("a.notice-action", { href: target }, label);
+    if (target === "/app/copy-service-command")
+      link.addEventListener("click", () => {
+        link.textContent = "已复制";
+        setTimeout(() => (link.textContent = label), 2000);
+      });
+    return link;
+  };
   return h(
     "div.notice",
     {},
     h("div.notice-text", {}, h("strong", {}, title), h("small", {}, detail)),
-    button,
+    secondary && button(...secondary),
+    action && button(action, href),
   );
 }
 

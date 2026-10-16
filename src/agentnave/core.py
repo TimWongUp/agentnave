@@ -58,6 +58,9 @@ class _InvocationRecord:
     output_tail: str = ""
     output_at: float | None = None
     output_event_type: str | None = None
+    # Whether a caller has received the final result; lets the relay restart only when no
+    # unread result would be lost.
+    result_read: bool = False
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -205,6 +208,7 @@ class InvocationManager:
                 update = record.take_update()
                 if update is not None:
                     updates[invocation_id] = update
+                    record.result_read |= isinstance(update, InvocationResult)
             remaining = deadline - loop.time()
             if updates or remaining <= 0:
                 return updates
@@ -239,6 +243,7 @@ class InvocationManager:
                     phase=record.phase if result is None else None,
                     status=None if result is None else result.status,
                     session_id=None if result is None else result.session_id,
+                    result_read=record.result_read,
                 )
             )
         return listings
@@ -277,6 +282,7 @@ class InvocationManager:
         result = await self.wait(invocation_id)
         if result is None:
             raise RuntimeError("cancelled invocation did not terminate")
+        record.result_read = True
         return result
 
     async def shutdown(self) -> None:

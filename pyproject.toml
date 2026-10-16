@@ -20,8 +20,8 @@ Repository = "https://github.com/TimWongUp/agentnave"
 Issues = "https://github.com/TimWongUp/agentnave/issues"
 
 [project.scripts]
-agentnave-mcp = "agentnave.mcp_server:main"
-agentnave-studio-mcp = "agentnave_studio.mcp_server:main"
+agentnave-mcp = "agentnave.relay:core"
+agentnave-studio-mcp = "agentnave_studio.relay:main"
 
 [dependency-groups]
 dev = [

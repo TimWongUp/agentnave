@@ -1,9 +1,10 @@
-//! In-app updates of the tray itself, and a read-only note when the local AgentNave service
-//! installed by `uv` is older than the tray.
+//! In-app updates of the tray itself, and a one-click upgrade of the local AgentNave service
+//! installed by `uv` when it is older than the tray.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tauri::menu::MenuItem;
@@ -14,6 +15,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Automatic checks run at start and then once a day; the menu can check at any time.
 pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 const REPOSITORY: &str = "https://github.com/TimWongUp/agentnave.git";
+/// How long the panel keeps saying the service was upgraded.
+const UPGRADED_NOTE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Default, PartialEq)]
 enum Phase {
@@ -26,9 +29,19 @@ enum Phase {
     Failed,
 }
 
+#[derive(Clone, Default)]
+enum Upgrade {
+    #[default]
+    Idle,
+    Running,
+    Done(Instant),
+    Failed(String),
+}
+
 pub struct Updates {
     item: MenuItem<Wry>,
     state: Mutex<(Phase, Option<Update>)>,
+    upgrade: Mutex<Upgrade>,
 }
 
 impl Updates {
@@ -36,6 +49,7 @@ impl Updates {
         Self {
             item,
             state: Mutex::new((Phase::Idle, None)),
+            upgrade: Mutex::new(Upgrade::Idle),
         }
     }
 
@@ -110,9 +124,13 @@ pub fn act(app: &AppHandle) {
 
 /// What the panel shows about versions: the update state and any outdated local service.
 pub fn status(app: &AppHandle) -> Value {
-    let phase = app
-        .try_state::<Updates>()
+    let updates = app.try_state::<Updates>();
+    let phase = updates
+        .as_ref()
         .map(|updates| updates.phase())
+        .unwrap_or_default();
+    let upgrade = updates
+        .map(|updates| updates.upgrade.lock().unwrap().clone())
         .unwrap_or_default();
     let update = match phase {
         Phase::Available(version) => json!({"state": "available", "version": version}),
@@ -120,7 +138,104 @@ pub fn status(app: &AppHandle) -> Value {
         Phase::Failed => json!({"state": "failed"}),
         _ => Value::Null,
     };
-    json!({"version": VERSION, "update": update, "service": service(&tool_dir())})
+    let mut service = service(&tool_dir());
+    match upgrade {
+        Upgrade::Running => service = json!({"state": "upgrading"}),
+        Upgrade::Failed(error) if service.is_object() => {
+            service["state"] = json!("failed");
+            service["error"] = json!(error);
+        }
+        Upgrade::Done(at) if service.is_null() && at.elapsed() < UPGRADED_NOTE => {
+            service = json!({"state": "done", "version": VERSION});
+        }
+        _ => {}
+    }
+    json!({"version": VERSION, "update": update, "service": service})
+}
+
+/// Install this release's service with uv, replacing the legacy studio tool if present. Hosts
+/// switch on their own: since v0.18.0 each launcher relays to a server it restarts when idle.
+pub fn upgrade_service(app: &AppHandle) {
+    let updates = app.state::<Updates>();
+    {
+        let mut upgrade = updates.upgrade.lock().unwrap();
+        if matches!(*upgrade, Upgrade::Running) {
+            return;
+        }
+        *upgrade = Upgrade::Running;
+    }
+    let outcome = install_service();
+    *updates.upgrade.lock().unwrap() = match outcome {
+        Ok(()) => Upgrade::Done(Instant::now()),
+        Err(error) => Upgrade::Failed(error),
+    };
+}
+
+fn install_service() -> Result<(), String> {
+    let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
+    if tool_dir().is_some_and(|tools| tools.join("agentnave-studio").is_dir()) {
+        run(&uv, &["tool", "uninstall", "agentnave-studio"])?;
+    }
+    let source = format!("git+{REPOSITORY}@v{VERSION}");
+    run(
+        &uv,
+        &["tool", "install", "--force", "--python", "3.12", &source],
+    )
+}
+
+fn run(uv: &Path, args: &[&str]) -> Result<(), String> {
+    let mut command = Command::new(uv);
+    command.args(args);
+    // Apps started from the Finder get a bare PATH; uv needs git to fetch the release.
+    #[cfg(not(windows))]
+    if let Some(dir) = uv.parent() {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut dirs = vec![
+            dir.to_path_buf(),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ];
+        dirs.extend(std::env::split_paths(&path));
+        if let Ok(joined) = std::env::join_paths(dirs) {
+            command.env("PATH", joined);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let reason = stderr
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("uv 返回失败");
+    Err(reason.chars().take(200).collect())
+}
+
+/// uv on PATH, else where its installers put it.
+fn find_uv() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "uv.exe" } else { "uv" };
+    let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(name))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local").join("bin").join(name));
+        candidates.push(home.join(".cargo").join("bin").join(name));
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin").join(name));
+    candidates.push(PathBuf::from("/usr/local/bin").join(name));
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 /// The `uv` tool directory, following uv's own defaults.
