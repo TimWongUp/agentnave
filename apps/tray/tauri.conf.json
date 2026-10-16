@@ -17,7 +17,7 @@
       "nsis"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "AgentNave 会话的只读菜单栏视图",
+    "shortDescription": "AgentNave 会话查看与清理",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

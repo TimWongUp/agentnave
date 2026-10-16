@@ -1,7 +1,8 @@
-//! AgentNave tray: a read-only menu bar view of the Studio conversations on this machine.
+//! AgentNave tray: view and clean up this machine's saved Studio conversations.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod data;
+mod manage;
 mod update;
 
 use std::fs;
@@ -51,10 +52,18 @@ fn main() {
             let app = ctx.app_handle().clone();
             let path = request.uri().path().to_owned();
             thread::spawn(move || {
-                let reply = if path == "/app/status" {
+                let reply = if request.method() == "GET" && path == "/app/status" {
                     data::Response::json(&update::status(&app))
                 } else {
-                    reader.respond(&path)
+                    reader.request(
+                        request.method().as_str(),
+                        &path,
+                        request
+                            .headers()
+                            .get("X-AgentNave-Action")
+                            .and_then(|v| v.to_str().ok()),
+                        request.body(),
+                    )
                 };
                 let response = Response::builder()
                     .status(reply.status)
@@ -84,6 +93,7 @@ fn main() {
                 handle,
                 &[
                     &MenuItem::with_id(handle, "open", "打开工作台", true, None::<&str>)?,
+                    &MenuItem::with_id(handle, "manage", "管理会话…", true, None::<&str>)?,
                     &check,
                     &MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?,
                 ],
@@ -98,6 +108,7 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => open(app, "main", "/"),
+                    "manage" => open(app, "main", "/manage/"),
                     "update" => update::act(app),
                     "quit" => app.exit(0),
                     _ => {}
@@ -428,7 +439,7 @@ mod tests {
     #[test]
     fn public_window_stays_on_public_views() {
         assert!(allowed(PUBLIC, &url("/p/a1/")));
-        for path in ["/", "/c/a1/", "/panel/", "/app/quit"] {
+        for path in ["/", "/c/a1/", "/panel/", "/manage/", "/app/quit"] {
             assert!(!allowed(PUBLIC, &url(path)), "{path}");
             assert!(allowed("main", &url(path)), "{path}");
         }
