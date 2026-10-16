@@ -832,35 +832,39 @@ def test_antigravity_soft_permission_denial_is_blocked() -> None:
     ],
 )
 def test_antigravity_recovered_error_succeeds_only_after_final_reply(
-    last_step: dict[str, object], status: InvocationStatus
+    tmp_path: Path, last_step: dict[str, object], status: InvocationStatus
 ) -> None:
     stale_error = "API error (attempt 1): request failed: EOF"
-    stdout = b"\n".join(
-        (
-            json.dumps(
-                {
-                    "event": "step_update",
-                    "step_update": {
-                        "step_type": "agent_response",
-                        "state": "DONE",
-                        "text_delta": "OK",
-                    },
-                }
-            ).encode(),
-            json.dumps({"event": "step_update", "step_update": last_step}).encode(),
-            json.dumps(
-                {
-                    "event": "result",
-                    "result": {
-                        "conversation_id": "conversation-6",
-                        "status": "ERROR",
-                        "response": "OK\n",
-                        "error": stale_error,
-                    },
-                }
-            ).encode(),
-        )
+    tool_step = {"step_type": "tool", "state": "DONE", "tool_info": {"output": "hidden" * 9}}
+    lines = (
+        json.dumps({"event": "step_update", "step_update": tool_step}).encode(),
+        json.dumps(
+            {
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "agent_response",
+                    "state": "DONE",
+                    "text_delta": "OK",
+                },
+            }
+        ).encode(),
+        json.dumps({"event": "step_update", "step_update": last_step}).encode(),
+        json.dumps(
+            {
+                "event": "result",
+                "result": {
+                    "conversation_id": "conversation-6",
+                    "status": "ERROR",
+                    "response": "OK\n",
+                    "error": stale_error,
+                },
+            }
+        ).encode(),
     )
+    capture = AntigravityAdapter().prepare(request(tmp_path, "antigravity")).capture_line
+    assert capture is not None
+    stdout = b"".join(capture(line) for line in lines)
+    assert b"hidden" not in stdout
 
     result = AntigravityAdapter().parse(0, stdout, b"")
 
@@ -868,6 +872,26 @@ def test_antigravity_recovered_error_succeeds_only_after_final_reply(
     assert result.output == "OK\n"
     assert result.session_id == "conversation-6"
     assert result.error_message == (None if status is InvocationStatus.SUCCEEDED else stale_error)
+
+
+def test_antigravity_capture_keeps_session_after_result(tmp_path: Path) -> None:
+    events: list[dict[str, object]] = [
+        {"event": "init", "conversation_id": "conversation-b"},
+        {
+            "event": "result",
+            "conversation_id": "conversation-a",
+            "result": {"status": "SUCCESS", "response": "OK"},
+        },
+        {"event": "step_update", "conversation_id": "conversation-b", "step_update": {}},
+    ]
+    lines = [json.dumps(event).encode() for event in events]
+    capture = AntigravityAdapter().prepare(request(tmp_path, "antigravity")).capture_line
+    assert capture is not None
+
+    raw = AntigravityAdapter().parse(0, b"\n".join(lines), b"")
+    captured = AntigravityAdapter().parse(0, b"".join(capture(line) for line in lines), b"")
+
+    assert captured.session_id == raw.session_id == "conversation-b"
 
 
 def test_antigravity_stream_without_result_is_failed() -> None:

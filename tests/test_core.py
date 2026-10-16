@@ -13,9 +13,14 @@ import pytest
 
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
+from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
-from agentnave.core import InvocationManager, _read_limited  # pyright: ignore[reportPrivateUsage]
+from agentnave.core import (
+    _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
+    InvocationManager,
+    _read_limited,  # pyright: ignore[reportPrivateUsage]
+)
 from agentnave.models import (
     InvocationError,
     InvocationPhase,
@@ -751,3 +756,64 @@ async def test_pi_filtered_capture_skips_only_non_result_oversized_lines(
     assert exceeded.is_set() is final_oversized
     if not final_oversized:
         assert PiAdapter().parse(0, captured.data, b"").status is InvocationStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_oversized", [False, True])
+async def test_codex_filtered_capture_drops_tool_output_but_not_replies(
+    tmp_path: Path, reply_oversized: bool
+) -> None:
+    prepared = CodexAdapter().prepare(InvocationRequest("codex", "review", tmp_path))
+    event_limit = 256 * 1024
+
+    def command(output: str) -> dict[str, object]:
+        item = {"id": "item_1", "type": "command_execution", "aggregated_output": output}
+        return {"type": "item.completed", "item": item}
+
+    answer = "x" * (event_limit + 1) if reply_oversized else "审查完成" * 1000
+    events: list[dict[str, object]] = [
+        {"type": "thread.started", "thread_id": "codex-session"},
+        *(command("d" * 200_000) for _ in range(8)),
+        command("d" * (event_limit + 1)),
+        {
+            "type": "item.completed",
+            "item": {"id": "item_2", "type": "agent_message", "text": answer},
+        },
+        {"type": "turn.completed", "usage": {"input_tokens": 9, "output_tokens": 2}},
+    ]
+    stream = asyncio.StreamReader()
+    lines = [
+        json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode() for event in events
+    ]
+    # The skipped tool event may use spaces between keys and values.
+    lines[9] = json.dumps(events[9]).encode()
+    stream.feed_data(b"".join(line + b"\n" for line in lines))
+    stream.feed_eof()
+    exceeded = asyncio.Event()
+    observed: list[bytes] = []
+    captured = await _read_limited(
+        stream,
+        _MAX_STDOUT_BYTES,
+        exceeded,
+        observed.append,
+        prepared.capture_line,
+        prepared.skip_oversized_line,
+        event_limit=event_limit,
+    )
+
+    assert exceeded.is_set() is reply_oversized
+    if not reply_oversized:
+        assert len(observed) == len(events) - 1
+        result = CodexAdapter().parse(0, captured.data, b"")
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert (result.output, result.session_id) == (answer, "codex-session")
+        # Retained replies are never larger than the provider's own line (no ASCII escaping).
+        assert prepared.capture_line is not None
+        assert len(prepared.capture_line(lines[10])) <= len(lines[10]) + 1
+    # A terminal event is never skipped, even when a nested field names a tool type.
+    assert prepared.skip_oversized_line is not None
+    assert not prepared.skip_oversized_line(
+        b'{"error":{"type":"command_execution","message":"'
+        + b"x" * 300
+        + b'"},"type":"turn.failed"}'
+    )

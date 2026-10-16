@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from agentnave.adapters.base import (
@@ -14,6 +15,7 @@ from agentnave.adapters.base import (
     normalized_usage,
     object_dict,
     parse_json_lines,
+    parse_json_object,
     resolve_executable,
     restricted_options,
 )
@@ -32,6 +34,43 @@ commandExecutionPolicy: off
 ---
 You are a conversation participant. Answer the current user request.
 """
+
+
+def _compact(value: dict[str, object]) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def _result_capture() -> Callable[[bytes], bytes]:
+    """Retain result envelopes, session changes and step boundaries, not tool payloads."""
+    last_session: str | None = None
+    last_step: bytes | None = None
+
+    def capture(line: bytes) -> bytes:
+        nonlocal last_session, last_step
+        event = parse_json_object(line.decode(errors="replace"))
+        if event is None:
+            return b""
+        if event.get("event") == "result":
+            # Keep dedup in step with the session id parse() may read from this envelope.
+            if isinstance(session_id := event.get("conversation_id"), str) and session_id:
+                last_session = session_id
+            return line + b"\n"
+        retained = b""
+        session_id = event.get("conversation_id")
+        if isinstance(session_id, str) and session_id and session_id != last_session:
+            last_session = session_id
+            retained += _compact({"conversation_id": session_id}) + b"\n"
+        if event.get("event") == "step_update":
+            step = object_dict(event.get("step_update"))
+            compact = {"step_type": step.get("step_type"), "state": step.get("state")}
+            # parse() reads only the last step's type and state.
+            record = _compact({"event": "step_update", "step_update": compact})
+            if record != last_step:
+                last_step = record
+                retained += record + b"\n"
+        return retained
+
+    return capture
 
 
 def _restricted_profile(directory: Path) -> Path:
@@ -104,7 +143,7 @@ class AntigravityAdapter:
                     "--disable-slash-commands=true",
                 )
             )
-        return PreparedCommand(tuple(argv), request.cwd, prompt)
+        return PreparedCommand(tuple(argv), request.cwd, prompt, capture_line=_result_capture())
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("event")
