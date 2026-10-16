@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentnave"
-version = "0.18.0"
+version = "0.19.0"
 description = "Local MCP server for CLI-based subagents, with an optional studio for saved multi-CLI shows"
 readme = "README.md"
 license = "MIT"
