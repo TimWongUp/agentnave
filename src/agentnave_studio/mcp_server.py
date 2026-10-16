@@ -337,7 +337,15 @@ def _round_payload(
         StudioRoundPayload,
         core.round_payload(round_, studio.manager, reason, include_output=include_output),
     )
-    reviews = studio.reviews.get(round_.id, {})
+    reviews = studio.reviews.get(round_.id)
+    if reviews is None:
+        # Completed rounds are read-only replies; their review decisions live on disk.
+        reviews = {
+            seat.seat_id: seat.review
+            for saved in studio.records[round_.group.id].state.rounds
+            if saved.id == round_.id
+            for seat in saved.seats
+        }
     for seat in payload["seats"]:
         if reviews.get(seat["seat_id"]) == "pending":
             seat["status"] = "pending_review"
@@ -559,7 +567,7 @@ async def list_conversations(*, ctx: Context[Runtime]) -> ConversationList:
     """List saved shows and task conversations. Private: never send this to seats.
 
     writable=false means another AgentNave Studio server holds it: read it here, continue it
-    there or after that server exits. unavailable lists unreadable or legacy records.
+    there or once it becomes idle. unavailable lists unreadable or legacy records.
     """
     studio = _studio(ctx)
     try:

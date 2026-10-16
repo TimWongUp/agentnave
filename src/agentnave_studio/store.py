@@ -315,7 +315,7 @@ class Record:
             lock.close()
             raise ValueError(
                 "Conversation is held by another AgentNave Studio server; continue it from that "
-                "host or after that server exits"
+                "host or once it becomes idle"
             ) from None
         return lock
 

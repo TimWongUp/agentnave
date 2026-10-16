@@ -424,32 +424,164 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
 
 
 @pytest.mark.asyncio
-async def test_second_server_reads_but_cannot_write_a_held_show(
+async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
     tmp_path: Path, data_root: Path
 ) -> None:
-    from agentnave.group import GroupSeat
-
     first = Studio(InvocationManager(), data_root)
     second = Studio(InvocationManager(), data_root)
-    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
-    record = first.open_show("Held", tmp_path, seats, review=False, isolated=False)
-    assert second.scan() == {record.state.id: False}
-    with pytest.raises(ValueError, match="held by another"):
-        second.post(record.state.id, "hello")
-    first.post(record.state.id, "hello")
-    views_path = record.directory / "views.json"
-    public = json.loads(views_path.read_text(encoding="utf-8"))["public"]
-    assert [message["text"] for message in public["messages"]] == ["hello"]
-    await first.close()
-    views_path.unlink()
-    second.scan()
-    assert views_path.is_file()  # filled in under the probe lock once nobody holds the record
-    second.post(record.state.id, "after exit")
-    assert [entry.kind for entry in second.records[record.state.id].state.entries] == [
-        "host",
-        "host",
-    ]
-    await second.close()
+    try:
+        seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
+        record = first.open_show("Shared", tmp_path, seats, review=True, isolated=False)
+        conversation_id = record.state.id
+        assert record.lock is None
+        assert second.scan() == {conversation_id: True}
+        first.post(conversation_id, "first host")
+        second.post(conversation_id, "second host")
+        first.post(conversation_id, "third host")
+        assert [entry.text for entry in record.state.entries] == [
+            "first host",
+            "second host",
+            "third host",
+        ]
+        with pytest.raises(ValueError, match="Title must contain"):
+            second.update(conversation_id, "", None)
+        assert second.records[conversation_id].lock is None
+
+        running = first.run(conversation_id, ["a"], "serial", "go", {"a": "SLEEP"})
+        assert conversation_id in _data((await _live(data_root))["conversations"])
+        assert second.scan() == {conversation_id: False}
+        with pytest.raises(ValueError, match="held by another"):
+            second.post(conversation_id, "busy")
+        assert record.state.rounds[-1].status == "running"
+        await first.cancel(running.id)
+        assert record.lock is None
+
+        reviewed = second.run(conversation_id, ["a"], "parallel", "answer", {})
+        assert (await second.wait(reviewed.id, 30))[1] == "review_needed"
+        assert first.scan() == {conversation_id: False}
+        with pytest.raises(ValueError, match="held by another"):
+            first.post(conversation_id, "still busy")
+        second.decide(reviewed.id, {"a": "publish"})
+        await second.wait(reviewed.id, 30)
+        assert second.records[conversation_id].lock is None
+        assert conversation_id not in second._groups  # pyright: ignore[reportPrivateUsage]
+        assert reviewed.id not in second._rounds  # pyright: ignore[reportPrivateUsage]
+        assert reviewed.id not in second.reviews
+
+        resumed = first.run(conversation_id, ["a"], "parallel", "continue", {})
+        assert resumed.number == 3
+        assert (await first.wait(resumed.id, 30))[1] == "review_needed"
+        result = resumed.runs[0].result
+        assert result is not None
+        seen = json.loads(result.output)
+        session = reviewed.group.states["a"].session_id
+        assert session and f"--resume={session}" in seen["argv"]
+        first.decide(resumed.id, {"a": "discard"})
+        await first.wait(resumed.id, 30)
+        assert record.lock is None
+        assert (await first.wait(resumed.id, 0))[0] is resumed  # completed replies stay readable
+        assert [item.number for item in record.state.rounds] == [1, 2, 3]
+        assert record.state.rounds[-1].seats[0].review == "discard"
+        assert all(item.status != "interrupted" for item in record.state.rounds)
+        views_path = record.directory / "views.json"
+        public = json.loads(views_path.read_text(encoding="utf-8"))["public"]
+        assert [m["text"] for m in public["messages"][:3]] == [
+            "first host",
+            "second host",
+            "third host",
+        ]
+        views_path.unlink()
+        second.scan()
+        assert views_path.is_file()  # filled in under the probe lock while idle
+        saved = (record.directory / "state.json").read_bytes()
+        await first.close()
+        assert (record.directory / "state.json").read_bytes() == saved
+    finally:
+        for studio in (first, second):
+            await studio.shutdown()
+            await studio.manager.shutdown()
+            await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_idle_deleted_conversation_is_forgotten_and_not_recreated(
+    tmp_path: Path, data_root: Path
+) -> None:
+    studio = Studio(InvocationManager(), data_root)
+    try:
+        record = studio.open_show(
+            "Deleted",
+            tmp_path,
+            [GroupSeat("a", "claude", {}, tmp_path)],
+            review=False,
+            isolated=False,
+        )
+        conversation_id = record.state.id
+        studio.post(conversation_id, "saved")
+        path = record.directory / "state.json"
+        path.unlink()
+        with pytest.raises(KeyError, match="unknown conversation_id"):
+            studio.post(conversation_id, "must not resurrect")
+        assert conversation_id not in studio.records
+        assert record.lock is None and not path.exists()
+    finally:
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = Studio(InvocationManager(), data_root)
+    second = Studio(InvocationManager(), data_root)
+    save = Record.save
+    terminal_saves = 0
+
+    def checked_save(record: Record) -> None:
+        nonlocal terminal_saves
+        terminal = bool(record.state.tasks and record.state.tasks[-1].status == "succeeded")
+        if terminal and record is first.records.get(record.state.id):
+            terminal_saves += 1
+            assert record.lock is not None
+            with pytest.raises(ValueError, match="held by another"):
+                second.update(record.state.id, "too early", None)
+        save(record)
+
+    try:
+        invocation_id, conversation_id = first.start_task(
+            InvocationRequest("claude", "one", tmp_path), "Job", None
+        )
+        record = first.records[conversation_id]
+        assert second.scan() == {conversation_id: False}
+        monkeypatch.setattr(Record, "save", checked_save)
+        result = await first.manager.wait(invocation_id)
+        await asyncio.gather(*first.collectors)
+        assert result is not None and result.session_id
+        assert terminal_saves == 1 and record.lock is None
+        second.update(conversation_id, "renamed elsewhere", None)
+        resumed, saved_id = second.start_task(
+            InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
+        )
+        assert saved_id == conversation_id
+        await second.manager.wait(resumed)
+        await asyncio.gather(*second.collectors)
+        assert second.records[conversation_id].lock is None
+        monkeypatch.setattr(Record, "save", save)
+        third, saved_id = first.start_task(
+            InvocationRequest("claude", "three", tmp_path, result.session_id),
+            None,
+            conversation_id,
+        )
+        await first.manager.wait(third)
+        await asyncio.gather(*first.collectors)
+        assert saved_id == conversation_id and record.state.title == "renamed elsewhere"
+        assert [task.prompt for task in record.state.tasks] == ["one", "two", "three"]
+        assert all(task.status == "succeeded" for task in record.state.tasks)
+        assert record.lock is None
+    finally:
+        for studio in (first, second):
+            await studio.manager.shutdown()
+            await studio.close()
 
 
 @pytest.mark.asyncio
@@ -471,7 +603,8 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
 
         def failing_replace(source: str, target: Path) -> None:
             nonlocal calls
-            calls += 1
+            if target.name == "state.json" and json.loads(Path(source).read_text())["rounds"]:
+                calls += 1
             if calls > 1:  # the first write records a's launch; later ones fail
                 raise OSError("disk full")
             replace(source, target)
@@ -602,7 +735,8 @@ async def test_failed_review_save_still_discards_after_restart(
 
     def failing_replace(source: str, target: Path) -> None:
         nonlocal calls
-        calls += 1
+        if target.name == "state.json" and json.loads(Path(source).read_text())["rounds"]:
+            calls += 1
         if calls > 2:  # a's launch and result are saved; entering review fails
             raise OSError("disk full")
         replace(source, target)
@@ -662,6 +796,7 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
     replace = os.replace
     monkeypatch.setattr(os, "replace", failing_replace)
     await studio.cancel(round_.id)  # discards in memory; the record still says pending
+    assert record.lock is not None  # an unsaved terminal state must not hand off ownership
     monkeypatch.setattr(os, "replace", replace)
     with pytest.raises(ValueError, match="already decided: discard"):
         studio.decide(round_.id, {"a": "publish"})
@@ -735,6 +870,7 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
 
     monkeypatch.setattr(os, "replace", failing_replace)
     await asyncio.gather(*studio.collectors)
+    assert studio.records[conversation_id].lock is not None
     monkeypatch.setattr(os, "replace", replace)
     result = await studio.manager.wait(invocation_id)
     assert result is not None and result.session_id
@@ -743,6 +879,8 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     )
     assert resumed_conversation == conversation_id
     await studio.manager.wait(resumed)
+    await asyncio.gather(*studio.collectors)
+    assert studio.records[conversation_id].lock is None
     await studio.manager.shutdown()
     await studio.close()
 
