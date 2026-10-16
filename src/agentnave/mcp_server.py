@@ -25,6 +25,8 @@ from agentnave.models import (
     ProviderOption,
 )
 from agentnave.nesting import detect_nesting
+from agentnave.profiles import ProfileList
+from agentnave.profiles import list_profiles as read_profiles
 
 type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok", "pi"]
 
@@ -206,6 +208,8 @@ mcp = MCPServer(
     instructions=(
         "AgentNave launches local CLI subagents. Use the agentnave-manager Skill for CLI usage "
         "and model selection. describe_provider reports permitted status and supported options. "
+        "list_profiles reads user orchestration rules; apply current user requirements first "
+        "and pass selected provider/options explicitly, permissions only when requested this turn. "
         "Call start_agent, then wait_agent with its invocation_id, or wait_any for several; "
         "cancel_agent stops work and list_invocations lists handles. "
         "For several CLIs answering together, open_group then "
@@ -564,6 +568,33 @@ async def describe_provider(
         "permitted": provider not in EXCLUDED_PROVIDERS,
         "supported_options": "model, effort, " + PROVIDER_OPTIONS[provider],
     }
+
+
+@_tool(
+    title="Read user orchestration profiles",
+    annotations=ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def list_profiles() -> ProfileList:
+    """Read profiles.json afresh: user orchestration rules with Adapter validation and host permission.
+
+    Current user requirements take priority. Choose by notes and explicitly pass provider and
+    provider_options to start_agent or a seat; the server never applies a profile by name.
+    Pass permission options (approval skipping or sandbox bypass) only when the user explicitly
+    requests them in the current turn. valid checks supported options, not CLI installation,
+    authentication, model availability or task cwd. permitted applies to start_agent; group
+    seats may use excluded providers. Missing files return an empty list; invalid files error.
+    """
+    try:
+        return read_profiles(EXCLUDED_PROVIDERS)
+    except (OSError, ValueError) as exc:
+        raise ToolError(
+            f"Unable to read profiles.json: {exc}. Check or repair the user profiles file."
+        ) from exc
 
 
 def _groups(ctx: Context[Runtime]) -> Groups:

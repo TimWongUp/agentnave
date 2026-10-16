@@ -121,7 +121,7 @@ Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6
 update their response handling and paired Skill.
 Restart the MCP connection after updating the runtime to refresh its schemas.
 
-AgentNave exposes ten tools: six for single tasks and four for group rounds. The initial tool metadata contains a compact provider directory;
+AgentNave exposes eleven tools: six for single tasks, four for group rounds and one for user profiles. The initial tool metadata contains a compact provider directory;
 provider-specific options are returned only when requested. Model defaults live in the Skill's
 per-CLI reference files, loaded only for the selected CLI.
 
@@ -133,6 +133,19 @@ Reuse the result for later calls with the same provider. This tool neither launc
 checks installation or authentication; it does not consume provider quota or change the tool list.
 
 For example: `describe_provider({"provider": "grok"})` → `start_agent(...)` → `wait_agent(...)`.
+
+### `list_profiles`
+
+Read user orchestration rules from `profiles.json` in `AGENTNAVE_DATA_DIR` (default
+`~/.agentnave`) on each call, without creating files or launching a CLI. Missing files return
+`{"profiles": []}`; malformed files return a Tool error. Each profile includes Adapter option
+validation (`valid`, `error`) and host `permitted` status. This does not check installation,
+authentication or model availability. Manage profiles in the tray's Settings page.
+
+Current user requirements take priority. The Manager chooses by the profile's notes and passes
+`provider` and `provider_options` explicitly to `start_agent` or group seats; the server never
+applies a profile by name. Permission options require the user's explicit request in the current
+turn. Excluded providers remain usable as group seats.
 
 ### `start_agent`
 

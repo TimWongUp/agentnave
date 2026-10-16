@@ -3,6 +3,7 @@
 
 mod data;
 mod manage;
+mod profiles;
 mod update;
 
 use std::fs;
@@ -94,6 +95,7 @@ fn main() {
                 &[
                     &MenuItem::with_id(handle, "open", "打开工作台", true, None::<&str>)?,
                     &MenuItem::with_id(handle, "manage", "管理会话…", true, None::<&str>)?,
+                    &MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?,
                     &check,
                     &MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?,
                 ],
@@ -109,6 +111,7 @@ fn main() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => open(app, "main", "/"),
                     "manage" => open(app, "main", "/manage/"),
+                    "settings" => open(app, "main", "/settings/"),
                     "update" => update::act(app),
                     "quit" => app.exit(0),
                     _ => {}
@@ -439,7 +442,14 @@ mod tests {
     #[test]
     fn public_window_stays_on_public_views() {
         assert!(allowed(PUBLIC, &url("/p/a1/")));
-        for path in ["/", "/c/a1/", "/panel/", "/manage/", "/app/quit"] {
+        for path in [
+            "/",
+            "/c/a1/",
+            "/panel/",
+            "/manage/",
+            "/settings/",
+            "/app/quit",
+        ] {
             assert!(!allowed(PUBLIC, &url(path)), "{path}");
             assert!(allowed("main", &url(path)), "{path}");
         }

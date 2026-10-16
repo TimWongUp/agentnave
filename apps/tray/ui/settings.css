@@ -1,0 +1,43 @@
+/* Reuse management colors and typography; the editor adds a compact two-column workspace. */
+nav, .option-heading, .editor-actions { display: flex; align-items: center; gap: 12px; }
+nav a { color: var(--soft); }
+.guidance { color: var(--muted); font-size: 12px; max-width: 780px; margin-bottom: 26px; }
+.workspace { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
+.profiles, .editor { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.selection { padding: 16px; }
+.selection h2 { margin: 0; }
+.profile { display: block; width: 100%; text-align: left; padding: 18px; border: 0; border-top: 1px solid var(--line); border-radius: 0; white-space: normal; background: transparent; }
+.profile:hover:enabled, .profile.active { background: var(--hover); }
+.profile.active { box-shadow: inset 3px 0 var(--accent); }
+.profile strong { display: block; font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
+.profile small { display: block; color: var(--accent); margin-top: 4px; overflow-wrap: anywhere; }
+.profile p { color: var(--muted); margin-top: 8px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.editor { padding: 24px; }
+.editor h2 { margin-bottom: 20px; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset > label, .pair label { display: flex; align-items: stretch; flex-direction: column; gap: 7px; margin-bottom: 18px; }
+input[type="text"], textarea, .option-row input { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; color: var(--ink); width: 100%; min-width: 0; font: inherit; }
+textarea { resize: vertical; min-height: 100px; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.option-heading { justify-content: space-between; margin-top: 6px; }
+h3 { margin: 0; font-size: 13px; font-weight: 550; }
+.field-hint { color: var(--muted); font-size: 11px; margin: 6px 0 12px; }
+.option-row { display: grid; grid-template-columns: 1fr 95px 1fr auto; align-items: center; gap: 8px; margin-bottom: 10px; }
+.option-row select { min-width: 0; }
+#options { margin-bottom: 22px; }
+.editor-actions { flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 18px; }
+#dirty { margin-left: auto; color: var(--accent); font-size: 11px; }
+.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.confirmation { margin: 20px 0 0; }
+.confirmation h2 { margin-bottom: 8px; }
+.confirm-actions { margin-top: 16px; }
+@media (max-width: 850px) { .workspace { grid-template-columns: 1fr; } }
+@media (max-width: 500px) {
+  .top { flex-wrap: wrap; }
+  .editor { padding: 18px; }
+  .pair { grid-template-columns: 1fr; gap: 0; }
+  .option-row { grid-template-columns: 1fr 90px auto; }
+  .option-row input[data-value] { grid-column: 1 / 3; grid-row: 2; }
+  .option-row button { grid-column: 3; grid-row: 1 / 3; }
+}

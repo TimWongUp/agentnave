@@ -29,6 +29,9 @@ const PANEL_CSS: &[u8] = include_bytes!("../ui/panel.css");
 const MANAGE_HTML: &[u8] = include_bytes!("../ui/manage.html");
 const MANAGE_JS: &[u8] = include_bytes!("../ui/manage.js");
 const MANAGE_CSS: &[u8] = include_bytes!("../ui/manage.css");
+const SETTINGS_HTML: &[u8] = include_bytes!("../ui/settings.html");
+const SETTINGS_JS: &[u8] = include_bytes!("../ui/settings.js");
+const SETTINGS_CSS: &[u8] = include_bytes!("../ui/settings.css");
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -127,8 +130,26 @@ impl Reader {
         }
     }
 
-    /// Writes require an explicit POST and action header; navigation can never delete.
+    /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        if path == "/app/profiles" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::profiles::validate(&payload) {
+                return Response::error(400, &error);
+            }
+            return match crate::profiles::save(&self.root, &payload) {
+                Ok(()) => Response::json(&json!({"saved": true})),
+                Err(error) => Response::error(500, &error),
+            };
+        }
         if path == "/app/conversations/delete" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -219,6 +240,20 @@ impl Reader {
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        if let ["settings", resource] = parts.as_slice() {
+            return match *resource {
+                "" => Response::ok("text/html; charset=utf-8", SETTINGS_HTML.to_vec()),
+                "settings.js" => {
+                    Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec())
+                }
+                "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
+                "state" => match crate::profiles::read(&self.root) {
+                    Ok(document) => Response::json(&document),
+                    Err(error) => Response::error(500, &error),
+                },
+                _ => Response::not_found(),
+            };
+        }
         if let ["manage", resource] = parts.as_slice() {
             return match *resource {
                 "" => Response::ok("text/html; charset=utf-8", MANAGE_HTML.to_vec()),
@@ -466,7 +501,14 @@ mod tests {
         assert_eq!(state(&reader, "/p/a1/state")["view"], "public");
         assert_eq!(reader.respond("/c/a1/").status, 200);
         assert_eq!(reader.respond("/panel/").status, 200);
-        for path in ["/manage/", "/manage/manage.js", "/manage/manage.css"] {
+        for path in [
+            "/manage/",
+            "/manage/manage.js",
+            "/manage/manage.css",
+            "/settings/",
+            "/settings/settings.js",
+            "/settings/settings.css",
+        ] {
             assert_eq!(reader.respond(path).status, 200, "{path}");
         }
         assert_eq!(

@@ -55,9 +55,12 @@ class GrokAdapter:
         "sandbox": "--sandbox",
     }
 
+    def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
+        return option_args(request, self._options)
+
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
-        options = option_args(request, self._options)
+        options = self.option_args(request)
         prompt = request.prompt.encode()
         fd, raw_path = tempfile.mkstemp(prefix="agentnave-prompt-", suffix=".txt")
         path = Path(raw_path)

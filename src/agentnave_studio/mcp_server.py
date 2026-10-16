@@ -67,6 +67,8 @@ mcp = MCPServer(
         "AgentNave Studio launches local CLI subagents and saves their history. Use the "
         "agentnave-manager Skill. start_agent/wait_agent/cancel_agent run tasks, saved as private "
         "task conversations; wait_any waits on several and list_invocations lists handles. "
+        "list_profiles reads user orchestration rules; apply current user requirements first "
+        "and pass selected provider/options explicitly, permissions only when requested this turn. "
         "open_group opens a saved show; run_round, wait_round and cancel_round drive it. "
         "With review=true, wait_round returns review_needed and decide_answers publishes or "
         "discards each answer before other seats see it. "
@@ -197,7 +199,13 @@ async def start_agent(
     }
 
 
-for _tool in (core.wait_agent, core.wait_any, core.cancel_agent, core.list_invocations):
+for _tool in (
+    core.wait_agent,
+    core.wait_any,
+    core.cancel_agent,
+    core.list_invocations,
+    core.list_profiles,
+):
     _title, _annotations = TOOL_OPTIONS[_tool.__name__]
     mcp.add_tool(_tool, title=_title, annotations=_annotations)
 
