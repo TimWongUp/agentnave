@@ -240,8 +240,11 @@ function renderMarkdown(root, text) {
 // ---------------------------------------------------------------- timeline nodes
 function who(m, c) {
   const s = m.speaker;
-  if (s.role === "manager") return { name: s.model || s.label || c.label, sub: "主控" };
-  return { name: s.label || s.model, sub: s.label && s.label !== s.model ? `${s.model} · ${s.provider}` : s.provider };
+  if (s.role === "system") return { name: s.label || "系统", sub: "" };
+  return {
+    name: s.model || "未记录模型",
+    sub: [s.role === "manager" ? "主控" : "组员", s.provider].filter(Boolean).join(" · "),
+  };
 }
 function recipients(m, c) {
   const names = (m.to || []).map((k) => c.members.find((x) => x.key === k)?.model || k);
