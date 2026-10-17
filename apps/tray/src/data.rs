@@ -252,7 +252,6 @@ impl Reader {
                 | "/app/hosts/entry"
                 | "/app/hosts/root"
                 | "/app/hosts/reveal-backups"
-                | "/app/hosts/skill"
                 | "/app/onboarding/dismiss"
                 | "/app/onboarding/reopen"
         );
@@ -280,13 +279,6 @@ impl Reader {
             "/app/onboarding/reopen" => match crate::onboarding::reopen(hosts) {
                 Ok(result) => Response::json(&result),
                 Err(error) => Response::error(500, &error),
-            },
-            "/app/hosts/skill" => match serde_json::from_slice::<Value>(body)
-                .map_err(|_| "请求必须为 JSON".to_owned())
-                .and_then(|payload| hosts.set_skill_mode(&payload))
-            {
-                Ok(result) => Response::json(&result),
-                Err(error) => Response::error(400, &error),
             },
             "/app/hosts/reveal-backups" => match hosts.reveal_backups() {
                 Ok(result) => Response::json(&result),

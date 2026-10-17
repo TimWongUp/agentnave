@@ -963,22 +963,3 @@ fn duplicate_json_target_keys_and_truncated_strings_are_rejected() {
         assert!(Document::parse(raw, Format::Json, "mcpServers").is_err());
     }
 }
-
-#[test]
-fn user_managed_skill_is_never_written() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "pi");
-    let path = h.skill.clone().unwrap();
-    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
-    assert_eq!(
-        hosts.set_skill_mode(&json!({"mode": "user"})).unwrap()["skill_mode"],
-        "user"
-    );
-    assert_eq!(
-        hosts.action("connect", &json!({"id":"pi"})).unwrap()["ok"],
-        true
-    );
-    assert!(h.read().unwrap().entry.is_some());
-    assert!(!path.exists());
-    assert!(hosts.set_skill_mode(&json!({"mode": "other"})).is_err());
-}

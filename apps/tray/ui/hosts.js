@@ -426,34 +426,9 @@ function renderBackups() {
   );
 }
 
-// Who deploys the agentnave-manager Skill. "user": the App never installs, updates or removes it.
-function renderSkillMode() {
-  const mode = S.data.skill_mode === "user" ? "user" : "app";
-  const pick = (value, label) => {
-    const b = h("button.seg" + (mode === value ? ".on" : ""), { type: "button", "aria-pressed": String(mode === value) }, label);
-    b.addEventListener("click", async () => {
-      if (mode === value) return;
-      try {
-        setData(await post("/app/hosts/skill", { mode: value }));
-        say(value === "user" ? "已改为自己管理 Skill：App 不再安装、更新或删除 Skill。" : "已改为由 App 安装 Skill：接入宿主时一并安装，刷新检测时更新。");
-      } catch {
-        say("没能保存 Skill 设置，请稍后重试。", true);
-      }
-    });
-    return b;
-  };
-  $("skill-mode").replaceChildren(
-    h("span", {}, "Skill 安装："),
-    h("span.segs", { role: "group", "aria-label": "Skill 安装方式" }, pick("app", "App 自动安装"), pick("user", "我自己管理")),
-    h("span.sub", {}, mode === "user" ? "· 用你自己的部署工具放置 agentnave-manager，App 只显示状态" : "· 接入时安装，刷新检测时更新；符号链接等外部管理的副本不动"),
-  );
-}
-
 // ---------------------------------------------------------------- host card
 function skillNode(host) {
   const s = host.skill;
-  if (S.data.skill_mode === "user" && s.state === "missing")
-    return h("span", {}, h("span.dim", {}, "未安装"), h("span.sub", {}, "· 由你自己管理"));
   if (s.state === "app") {
     const old = s.version && S.appVersion && s.version !== S.appVersion;
     return h(
@@ -640,9 +615,7 @@ function advPanel(host) {
 function confirmBlock(host) {
   const orphan = host.status === "orphaned";
   const skill =
-    S.data.skill_mode === "user"
-      ? "Skill 由你自己管理，不会改动"
-      : host.skill.state === "app"
+    host.skill.state === "app"
       ? `由 App 安装的 Skill（v${host.skill.version}）会一并删除`
       : host.skill.state === "external"
         ? "该宿主的 Skill 由其他方式管理，不会改动"
@@ -935,7 +908,6 @@ function renderAll() {
   renderCallout();
   renderSummary();
   renderBackups();
-  renderSkillMode();
   renderCards();
   if (S.focus) {
     const { id, act } = S.focus;

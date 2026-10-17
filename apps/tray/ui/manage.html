@@ -36,13 +36,13 @@
   </section>
   <section id="confirmation" class="confirmation" aria-label="确认删除会话" tabindex="-1" hidden>
     <h2 id="confirm-title"></h2>
-    <p>删除后无法恢复记录，未结束的空闲会话也会被删除。席位中的文件会保留。</p>
+    <p>删除后无法恢复记录，空闲会话即使主控没有结束也会被删除。席位中的文件会保留。</p>
     <ul id="confirm-list"></ul>
     <div class="confirm-actions"><button id="cancel" type="button">取消</button><button id="confirm" class="danger" type="button">确认删除</button></div>
   </section>
   <section class="records" aria-label="会话列表">
     <div class="selection"><label><input id="select-all" type="checkbox">全选当前列表中可删除的会话</label><button id="delete" class="danger" type="button" disabled>删除所选…</button></div>
-    <div class="table-wrap"><table><thead><tr><th class="check"><span class="sr-only">选择</span></th><th>会话 / 类型</th><th>状态</th><th>最近活动</th><th>结束状态 / 删除限制</th></tr></thead><tbody id="list"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th class="check"><span class="sr-only">选择</span></th><th>会话 / 类型</th><th>状态</th><th>最近活动</th><th>备注</th></tr></thead><tbody id="list"></tbody></table></div>
     <p id="empty" class="empty" hidden>没有符合条件的会话</p>
     <p class="hint">运行中与待审核的会话不可选择。锁已释放的崩溃残留会标为中断，可直接清理。</p>
   </section>

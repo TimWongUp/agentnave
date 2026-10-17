@@ -84,7 +84,8 @@ function render() {
     if (Number.isFinite(timestamp)) time.dateTime = new Date(timestamp).toISOString();
     date.append(time);
     const reason = node("td");
-    reason.append(node("span", item.archived ? "已结束" : "未结束", "lifecycle"));
+    // Only the manager ends a conversation; open ones are the normal case and need no label.
+    if (item.archived) reason.append(node("span", "已结束", "lifecycle"));
     if (item.reason) reason.append(node("span", item.reason, "reason"));
     row.append(checkCell, name, status, date, reason);
     return row;
