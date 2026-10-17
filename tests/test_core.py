@@ -587,6 +587,8 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
         assert result.status is InvocationStatus.FAILED
         assert result.error is not None
         assert result.error.code == "output_limit_exceeded"
+        assert result.error.details is not None
+        assert "stdout" in result.error.details
         assert result.output == ""
     else:
         assert result.status is InvocationStatus.SUCCEEDED
@@ -616,7 +618,94 @@ async def test_output_limit_found_while_draining_after_exit_still_fails(
     assert result is not None and result.error is not None
     assert result.status is InvocationStatus.FAILED
     assert result.error.code == "output_limit_exceeded"
+    assert result.error.details is not None
+    assert "stdout" in result.error.details and "stderr" in result.error.details
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", ["stdout", "stderr", "stdout_event"])
+async def test_output_limit_diagnostics_preserve_session_and_redact_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stream: str
+) -> None:
+    monkeypatch.setattr("agentnave.core._MAX_STDOUT_BYTES", 1024)
+    monkeypatch.setattr("agentnave.core._MAX_STDERR_BYTES", 512)
+    monkeypatch.setattr("agentnave.core._MAX_EVENT_BYTES", 2048)
+    monkeypatch.setenv("TEST_API_KEY", "environment-credential-value")
+    events = [
+        {"type": "thread.started", "thread_id": "diagnostic-session"},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "已有回复"}},
+    ]
+    wire = b"".join(json.dumps(event).encode() + b"\n" for event in events)
+    if stream == "stderr":
+        payload = (
+            b"token="
+            + b"cut-credential" * 400
+            + b"\n"
+            + b"warning: retry\n" * 80
+            + b"Authorization: Bearer unlabelled-bearer-value\n"
+            + b'{"api_key":"json-credential-value"}\n'
+            + b"connection environment-credential-value failed\n"
+            + b"diagnostic-tail-marker\n"
+        )
+    else:
+        size = 3000 if stream == "stdout_event" else 1100
+        payload = (
+            json.dumps(
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "x" * size}}
+            ).encode()
+            + b"\ndiagnostic-tail-marker\n"
+        )
+
+    class NoisyCodexAdapter(CodexAdapter):
+        def prepare(self, request: InvocationRequest) -> PreparedCommand:
+            code = (
+                f"import sys,time; sys.stdout.buffer.write({wire!r}); sys.stdout.flush(); "
+                f"sys.{'stderr' if stream == 'stderr' else 'stdout'}.buffer.write({payload!r}); "
+                "sys.stdout.flush(); sys.stderr.flush(); time.sleep(30)"
+            )
+            return replace(super().prepare(request), argv=(sys.executable, "-c", code))
+
+    def adapter_for(_provider: str) -> NoisyCodexAdapter:
+        return NoisyCodexAdapter()
+
+    monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
+    if stream == "stderr":
+        from agentnave import core
+
+        original = core._read_limited  # pyright: ignore[reportPrivateUsage]
+
+        async def reader_holds_pipe(*args: Any, **kwargs: Any) -> Any:
+            captured = await original(*args, **kwargs)
+            if kwargs.get("diagnostics") is not None and captured.exceeded:
+                await asyncio.Event().wait()
+            return captured
+
+        monkeypatch.setattr(core, "_read_limited", reader_holds_pipe)
+        monkeypatch.setattr(core, "_PIPE_DRAIN_SECONDS", 0.01)
+    manager = InvocationManager()
+    try:
+        result = await asyncio.wait_for(
+            manager.wait(manager.start(InvocationRequest("codex", "work", tmp_path))), 5
+        )
+        assert result is not None and result.error is not None
+        assert result.error.code == "output_limit_exceeded"
+        assert result.session_id == "diagnostic-session"
+        assert result.output == "已有回复"
+        details = result.error.details
+        assert details is not None and len(details) <= 16_384
+        assert ("stderr" if stream == "stderr" else "stdout") in details
+        assert ("event_limit" if stream == "stdout_event" else "capture_limit") in details
+        assert "diagnostic-tail-marker" in details
+        for secret in (
+            "unlabelled-bearer-value",
+            "json-credential-value",
+            "environment-credential-value",
+            "cut-credential",
+        ):
+            assert secret not in details
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio
