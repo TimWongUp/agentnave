@@ -32,6 +32,11 @@ const MANAGE_CSS: &[u8] = include_bytes!("../ui/manage.css");
 const SETTINGS_HTML: &[u8] = include_bytes!("../ui/settings.html");
 const SETTINGS_JS: &[u8] = include_bytes!("../ui/settings.js");
 const SETTINGS_CSS: &[u8] = include_bytes!("../ui/settings.css");
+const CHAT_HTML: &[u8] = include_bytes!("../ui/chat.html");
+const CHAT_JS: &[u8] = include_bytes!("../ui/chat.js");
+const CHAT_CSS: &[u8] = include_bytes!("../ui/chat.css");
+const COMMON_JS: &[u8] = include_bytes!("../ui/common.js");
+const MOCK_JS: &[u8] = include_bytes!("../ui/mock.js");
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -118,10 +123,16 @@ enum Scope<'a> {
 
 type Cached = (SystemTime, u64, Option<Arc<Value>>);
 
+struct Live {
+    view: Value,
+    updated_at: Option<String>,
+}
+
 pub(crate) struct Snapshot {
     pub item: Item,
     pub view: Arc<Value>,
     pub live: bool,
+    pub live_updated: Option<String>,
 }
 
 pub struct Reader {
@@ -222,15 +233,16 @@ impl Reader {
                 seen.insert(path.clone());
                 (modified, cache[&path].2.clone())
             });
-            let current = live.remove(&id).filter(|v| summary(v).is_some());
+            let current = live.remove(&id).filter(|v| summary(&v.view).is_some());
             let is_live = current.is_some();
+            let live_updated = current.as_ref().and_then(|v| v.updated_at.clone());
             let modified = if is_live {
                 SystemTime::now()
             } else {
                 disk.as_ref().map_or(SystemTime::UNIX_EPOCH, |d| d.0)
             };
             let view = current
-                .map(Arc::new)
+                .map(|live| Arc::new(live.view))
                 .or_else(|| disk.as_ref().and_then(|d| d.1.clone()));
             if let Some(view) = view
                 && let Some(item) = summary(&view).filter(|item| item.id == id)
@@ -240,6 +252,7 @@ impl Reader {
                     item,
                     view,
                     live: is_live,
+                    live_updated,
                 });
             } else if disk.is_some() || directory.join("state.json").exists() {
                 overview.unavailable.push((
@@ -254,13 +267,14 @@ impl Reader {
             }
         }
         // Atomic live publication can precede the first disk snapshot.
-        for (id, view) in live {
-            if let Some(item) = summary(&view).filter(|item| item.id == id && valid_id(&id)) {
+        for (id, live) in live {
+            if let Some(item) = summary(&live.view).filter(|item| item.id == id && valid_id(&id)) {
                 items.push((SystemTime::now(), item.clone()));
                 snapshots.push(Snapshot {
                     item,
-                    view: Arc::new(view),
+                    view: Arc::new(live.view),
                     live: true,
+                    live_updated: live.updated_at,
                 });
             }
         }
@@ -274,9 +288,20 @@ impl Reader {
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
         if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
-            return crate::stage::respond(path, self.scan().1);
+            return crate::stage::respond(path, self.scan().1, self.root.is_dir());
         }
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        if let ["chat", resource] = parts.as_slice() {
+            return match *resource {
+                "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
+                "chat.css" => Response::ok("text/css; charset=utf-8", CHAT_CSS.to_vec()),
+                "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
+                "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
+                "" => Response::ok("text/html; charset=utf-8", CHAT_HTML.to_vec()),
+                id if valid_id(id) => Response::ok("text/html; charset=utf-8", CHAT_HTML.to_vec()),
+                _ => Response::not_found(),
+            };
+        }
         if let ["settings", resource] = parts.as_slice() {
             return match *resource {
                 "" => Response::ok("text/html; charset=utf-8", SETTINGS_HTML.to_vec()),
@@ -301,6 +326,8 @@ impl Reader {
                 "" => Response::ok("text/html; charset=utf-8", PANEL_HTML.to_vec()),
                 "panel.js" => Response::ok("text/javascript; charset=utf-8", PANEL_JS.to_vec()),
                 "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
+                "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
+                "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
                 _ => Response::not_found(),
             };
         }
@@ -371,12 +398,13 @@ impl Reader {
     fn snapshot(&self, id: &str) -> Option<Value> {
         self.live()
             .remove(id)
+            .map(|live| live.view)
             .or_else(|| read_json(&self.root.join("conversations").join(id).join("views.json")))
     }
 
     /// Snapshots of running conversations from servers that wrote within LIVE_FRESH.
-    fn live(&self) -> HashMap<String, Value> {
-        let mut found: Vec<(SystemTime, HashMap<String, Value>)> = Vec::new();
+    fn live(&self) -> HashMap<String, Live> {
+        let mut found: Vec<(SystemTime, HashMap<String, Live>)> = Vec::new();
         for entry in fs::read_dir(self.root.join("live"))
             .into_iter()
             .flatten()
@@ -394,10 +422,27 @@ impl Reader {
             {
                 continue;
             }
-            if let Some(Value::Object(conversations)) = read_json(&path)
-                .and_then(|mut payload| payload.get_mut("conversations").map(Value::take))
-            {
-                found.push((modified, conversations.into_iter().collect()));
+            if let Some(mut payload) = read_json(&path) {
+                let updated_at = payload["updated_at"].as_str().map(str::to_owned);
+                if let Some(Value::Object(conversations)) =
+                    payload.get_mut("conversations").map(Value::take)
+                {
+                    found.push((
+                        modified,
+                        conversations
+                            .into_iter()
+                            .map(|(id, view)| {
+                                (
+                                    id,
+                                    Live {
+                                        view,
+                                        updated_at: updated_at.clone(),
+                                    },
+                                )
+                            })
+                            .collect(),
+                    ));
+                }
             }
         }
         found.sort_by_key(|(modified, _)| *modified);
@@ -543,9 +588,25 @@ mod tests {
             "/settings/",
             "/settings/settings.js",
             "/settings/settings.css",
+            "/chat/",
+            "/chat/missing-group",
+            "/chat/chat.js",
+            "/chat/chat.css",
+            "/chat/common.js",
+            "/chat/mock.js",
+            "/panel/common.js",
+            "/panel/mock.js",
         ] {
             assert_eq!(reader.respond(path).status, 200, "{path}");
         }
+        assert_eq!(
+            reader.respond("/chat/").body,
+            reader.respond("/chat/missing-group").body
+        );
+        assert_eq!(
+            reader.respond("/panel/common.js").body,
+            reader.respond("/chat/common.js").body
+        );
         assert_eq!(
             reader.respond("/p/a1/transcript.jsonl").body,
             b"{\"text\":\"hi\"}\n"
@@ -560,6 +621,8 @@ mod tests {
             "/x/a1/state",
             "/panel/state",
             "/manage/unknown",
+            "/chat/not-a-file.js",
+            "/chat/group/extra",
         ] {
             assert_eq!(reader.respond(path).status, 404, "{path}");
         }
@@ -834,6 +897,7 @@ mod tests {
         let root = dir.path().join("missing");
         let reader = Reader::new(root.clone());
         assert_eq!(state(&reader, "/app/stage")["managers"], json!([]));
+        assert_eq!(state(&reader, "/app/stage")["empty"], "no_data");
         assert_eq!(state(&reader, "/app/chats")["groups"], json!([]));
         for path in ["/app/stage", "/app/chats", "/app/chats/c-missing"] {
             for method in ["POST", "PUT", "DELETE", "HEAD"] {
@@ -849,6 +913,8 @@ mod tests {
             assert_eq!(reader.request("GET", path, None, b"").status, 404, "{path}");
         }
         assert!(!root.exists());
+        fs::create_dir(&root).unwrap();
+        assert_eq!(state(&reader, "/app/stage")["empty"], "quiet");
     }
 
     fn finished_show(id: &str) -> Value {
@@ -902,12 +968,12 @@ mod tests {
         show["director"]["round"]["seats"][0]["status"] = json!("running");
         write(
             &dir.path().join("live/1-now.json"),
-            &json!({"version": 1, "conversations": {"show": show}}),
+            &json!({"version": 1, "updated_at": "2099-01-01T14:00:00Z", "conversations": {"show": show}}),
         );
         let chat = state(&reader, &path);
         let typing = chat["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(typing["kind"], "typing");
-        assert_ne!(typing["time"], "2000-01-01T00:00:00Z");
+        assert_eq!(typing["time"], "2099-01-01T14:00:00Z");
     }
 
     #[test]
@@ -1020,6 +1086,133 @@ mod tests {
                 "task:task:second:prompt",
                 "task:task:second:result"
             ]
+        );
+    }
+
+    #[test]
+    fn revision_one_counts_members_and_assigns_consistent_collision_free_colors() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut work = task_snapshot("work", "running", "2099-01-01T00:00:00Z");
+        work["summary"]["manager_session"] = json!(format!("{:032x}", 0));
+        let mut pi = work["director"]["tasks"][0].clone();
+        pi["id"] = json!("pi");
+        pi["provider"] = json!("pi");
+        let mut review = pi.clone();
+        review["id"] = json!("review");
+        review["provider"] = json!("claude");
+        review["status"] = json!("review");
+        work["director"]["tasks"]
+            .as_array_mut()
+            .unwrap()
+            .extend([pi, review]);
+        save(dir.path(), &work);
+        let mut duplicate = task_snapshot("duplicate", "running", "2098-01-01T00:00:00Z");
+        duplicate["summary"]["manager_session"] = work["summary"]["manager_session"].clone();
+        save(dir.path(), &duplicate);
+        // The IDs ending 0 and 8 collide in FNV-1a modulo 8.
+        let mut other = task_snapshot("other", "succeeded", "2099-01-01T00:00:01Z");
+        other["summary"]["manager_session"] = json!(format!("{:032x}", 8));
+        save(dir.path(), &other);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let stage = state(&reader, "/app/stage");
+        assert_eq!(stage["counts"], json!({"running": 2, "review": 1}));
+        assert_eq!(stage["empty"], Value::Null);
+        let managers = stage["managers"].as_array().unwrap();
+        assert_eq!(managers.len(), 2);
+        assert_ne!(managers[0]["color"], managers[1]["color"]);
+        let groups = state(&reader, "/app/chats");
+        for manager in managers {
+            let id = manager["group"].as_str().unwrap();
+            assert_eq!(
+                groups["groups"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|g| g["group"] == id)
+                    .unwrap()["color"],
+                manager["color"]
+            );
+            assert_eq!(
+                state(&reader, &format!("/app/chats/{id}"))["color"],
+                manager["color"]
+            );
+        }
+        // The limit applies before counts, even if more active groups exist.
+        for i in 1..=7 {
+            let mut extra = task_snapshot(&format!("extra{i}"), "running", "2099-01-01T00:00:02Z");
+            extra["summary"]["manager_session"] = json!(format!("{:032x}", i));
+            save(dir.path(), &extra);
+        }
+        let stage = state(&reader, "/app/stage");
+        assert_eq!(stage["managers"].as_array().unwrap().len(), 6);
+        assert_eq!(stage["counts"], json!({"running": 6, "review": 0}));
+        let colors: std::collections::HashSet<_> = stage["managers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["color"].as_u64().unwrap())
+            .collect();
+        assert_eq!(colors.len(), 6);
+    }
+
+    #[test]
+    fn revision_one_old_failure_clears_after_a_newer_terminal_member() {
+        let dir = tempfile::tempdir().unwrap();
+        let reader = Reader::new(dir.path().to_path_buf());
+        let failed = task_snapshot("failed", "failed", "2099-01-01T00:00:00Z");
+        save(dir.path(), &failed);
+        let mut latest = task_snapshot("latest", "succeeded", "2099-01-01T00:00:01Z");
+        latest["director"]["tasks"][0]["provider"] = json!("pi");
+        save(dir.path(), &latest);
+        assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
+        assert_eq!(
+            state(&reader, "/app/stage")["managers"][0]["status"],
+            "idle"
+        );
+        latest["summary"]["status"] = json!("blocked");
+        latest["director"]["tasks"][0]["status"] = json!("blocked");
+        latest["director"]["tasks"][0]["error"] = json!("needs permission");
+        save(dir.path(), &latest);
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        assert_eq!(chat["status"], "failed");
+        let notice = chat["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(notice["text"], "受阻");
+        assert_eq!(notice["detail"], "needs permission");
+        assert_eq!(notice["speaker"]["provider"], "pi");
+        latest["summary"]["status"] = json!("cancelled");
+        latest["director"]["tasks"][0]["status"] = json!("cancelled");
+        save(dir.path(), &latest);
+        assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
+    }
+
+    #[test]
+    fn revision_one_typing_uses_live_publication_time_and_stops_when_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let task = task_snapshot("task", "running", "2020-01-01T00:00:00Z");
+        save(dir.path(), &task);
+        let live = dir.path().join("live/1-time.json");
+        write(
+            &live,
+            &json!({"version": 1, "updated_at": "2099-01-01T00:00:00.123456Z", "conversations": {"task": task}}),
+        );
+        let reader = Reader::new(dir.path().to_path_buf());
+        let path = format!("/app/chats/{MANAGER}");
+        let chat = state(&reader, &path);
+        assert_eq!(
+            chat["messages"].as_array().unwrap().last().unwrap()["time"],
+            "2099-01-01T00:00:00.123456Z"
+        );
+        fs::File::options()
+            .write(true)
+            .open(&live)
+            .unwrap()
+            .set_modified(SystemTime::now() - LIVE_FRESH - Duration::from_secs(1))
+            .unwrap();
+        let chat = state(&reader, &path);
+        assert_eq!(chat["live"], false);
+        assert_eq!(
+            chat["messages"].as_array().unwrap().last().unwrap()["time"],
+            "2020-01-01T00:00:00Z"
         );
     }
 }

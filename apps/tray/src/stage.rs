@@ -319,10 +319,12 @@ struct Group {
     title: String,
     live: bool,
     status: &'static str,
+    latest_end: Option<(i64, String)>,
+    color: u64,
     conversations: Vec<Value>,
     members: BTreeMap<String, Member>,
     messages: Vec<Value>,
-    typing: BTreeMap<String, Value>,
+    typing: BTreeMap<String, (i64, Value)>,
     sources: Vec<usize>,
     include_messages: bool,
 }
@@ -330,7 +332,9 @@ struct Group {
 impl Group {
     fn new(id: String) -> Self {
         Self {
+            color: color(&id),
             id,
+            latest_end: None,
             host: None,
             updated: String::new(),
             at: i64::MIN,
@@ -348,7 +352,7 @@ impl Group {
 
     fn header(&self) -> Value {
         json!({"group": self.id, "host": self.host, "label": label(self.host.as_deref()),
-            "color": color(&self.id), "live": self.live, "status": self.status, "updated": self.updated})
+            "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
     }
 
     fn members(&self) -> Vec<Value> {
@@ -366,7 +370,7 @@ impl Group {
     fn timeline(&self) -> Vec<Value> {
         let mut messages: Vec<_> = self.messages.iter().collect();
         messages.sort_by_key(|m| timestamp(text(m, "time")).unwrap_or_default());
-        let mut typing: Vec<_> = self.typing.values().collect();
+        let mut typing: Vec<_> = self.typing.values().map(|(_, message)| message).collect();
         typing.sort_by_key(|m| {
             (
                 timestamp(text(m, "time")).unwrap_or_default(),
@@ -410,6 +414,15 @@ impl Group {
         let key = format!("{provider}/{model}");
         let at = timestamp(time).unwrap_or_default();
         let status = member_status(status);
+        if !active(status)
+            && status != "pending"
+            && self
+                .latest_end
+                .as_ref()
+                .is_none_or(|(old_at, _)| at >= *old_at)
+        {
+            self.latest_end = Some((at, status.to_owned()));
+        }
         let who = speaker(
             "member",
             provider,
@@ -426,7 +439,10 @@ impl Group {
             let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
             Some(Self::message(
                 key.clone(),
-                time,
+                &event_time(
+                    snapshot.live_updated.as_deref().unwrap_or(""),
+                    &snapshot.item.updated,
+                ),
                 &snapshot.item.id,
                 "typing",
                 who,
@@ -439,9 +455,9 @@ impl Group {
             && self
                 .typing
                 .get(&key)
-                .is_none_or(|old| at >= timestamp(text(old, "time")).unwrap_or_default())
+                .is_none_or(|(old_at, _)| at >= *old_at)
         {
-            self.typing.insert(key.clone(), typing);
+            self.typing.insert(key.clone(), (at, typing));
         }
         let member = Member {
             at,
@@ -476,6 +492,7 @@ impl Group {
 
     fn project(&mut self, snapshots: &[Snapshot], include_messages: bool) {
         self.include_messages = include_messages;
+        self.latest_end = None;
         for index in 0..self.sources.len() {
             let snapshot = &snapshots[self.sources[index]];
             if snapshot.item.mode == "task" {
@@ -483,6 +500,17 @@ impl Group {
             } else {
                 self.show(snapshot);
             }
+        }
+        if !active(self.status) {
+            self.status = if self
+                .latest_end
+                .as_ref()
+                .is_some_and(|(_, status)| urgency(status) == 1)
+            {
+                "failed"
+            } else {
+                "idle"
+            };
         }
     }
 
@@ -548,8 +576,10 @@ impl Group {
                 );
                 let body = if status == "succeeded" {
                     text(task, "output").to_owned()
+                } else if status == "review" {
+                    "待审核，请在主控中决定".into()
                 } else {
-                    line(status, "", text(task, "error"))
+                    failure(status).into()
                 };
                 let mut msg = Self::message(
                     format!("{id}:result"),
@@ -626,7 +656,11 @@ impl Group {
                     "reply"
                 },
                 who,
-                text(entry, "text"),
+                if absent {
+                    "本轮缺席"
+                } else {
+                    text(entry, "text")
+                },
             );
             if manager {
                 msg["to"] = json!(
@@ -656,7 +690,10 @@ impl Group {
                 });
                 // Host messages change conversation activity, never the time of a committed answer.
                 let time = if status == "running" {
-                    iso(now())
+                    event_time(
+                        snapshot.live_updated.as_deref().unwrap_or(""),
+                        &item.updated,
+                    )
                 } else {
                     event_time(
                         committed.map_or("", |entry| text(entry, "time")),
@@ -685,7 +722,7 @@ impl Group {
                     } else if status == "succeeded" {
                         text(run, "output").to_owned()
                     } else {
-                        line(status, "", text(run, "error"))
+                        failure(status).into()
                     };
                     let who = speaker(
                         "member",
@@ -723,7 +760,7 @@ impl Group {
     }
 }
 
-pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
+pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: bool) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     if requested.is_some_and(|id| !valid_id(id)) {
         return Response::error(404, "not found");
@@ -746,7 +783,7 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
         let id = session
             .map(str::to_owned)
             .unwrap_or_else(|| format!("c-{}", snapshot.item.id));
-        if !valid_id(&id) || requested.is_some_and(|requested| requested != id) {
+        if !valid_id(&id) {
             continue;
         }
         groups
@@ -754,8 +791,34 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
             .or_insert_with(|| Group::new(id))
             .add(snapshot, index);
     }
+    let mut groups: Vec<_> = groups.into_values().collect();
+    for group in &mut groups {
+        group.project(&snapshots, false);
+    }
+    groups.sort_by(|a, b| {
+        (!active(a.status), Reverse(a.at), &a.id).cmp(&(!active(b.status), Reverse(b.at), &b.id))
+    });
+    let cutoff = now() - 2 * 3600 * 1_000_000;
+    let stage_ids: Vec<_> = groups
+        .iter()
+        .filter(|g| active(g.status) || g.at >= cutoff)
+        .take(6)
+        .map(|g| g.id.clone())
+        .collect();
+    let mut ids = stage_ids.clone();
+    ids.sort();
+    let mut used = [false; 8];
+    for id in ids {
+        let group = groups.iter_mut().find(|g| g.id == id).unwrap();
+        let mut assigned = color(&id) as usize;
+        while used[assigned] {
+            assigned = (assigned + 1) % 8;
+        }
+        used[assigned] = true;
+        group.color = assigned as u64;
+    }
     if let Some(id) = requested {
-        let Some(group) = groups.get_mut(id) else {
+        let Some(group) = groups.iter_mut().find(|g| g.id == id) else {
             return Response::error(404, "not found");
         };
         group.project(&snapshots, true);
@@ -766,33 +829,28 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
         value["messages"] = json!(group.timeline());
         return Response::json(&value);
     }
-    let mut groups: Vec<_> = groups.into_values().collect();
-    groups.sort_by(|a, b| {
-        (!active(a.status), Reverse(a.at), &a.id).cmp(&(!active(b.status), Reverse(b.at), &b.id))
-    });
     if path == "/app/stage" {
-        let running = snapshots
-            .iter()
-            .filter(|s| !s.item.archived && conversation_status(s) == "running")
-            .count();
-        let review = snapshots
-            .iter()
-            .filter(|s| !s.item.archived && conversation_status(s) == "review")
-            .count();
-        let now = now();
         let managers: Vec<_> = groups
             .into_iter()
-            .filter(|g| active(g.status) || g.at >= now - 2 * 3600 * 1_000_000)
-            .take(6)
-            .map(|mut g| {
-                g.project(&snapshots, false);
+            .filter(|g| stage_ids.contains(&g.id))
+            .map(|g| {
                 let mut value = g.header();
                 value["members"] = json!(g.members());
                 value
             })
             .collect();
+        let members = || managers.iter().flat_map(|m| array(m, "members"));
+        let running = members().filter(|m| m["status"] == "running").count();
+        let review = members().filter(|m| m["status"] == "review").count();
+        let empty = if !managers.is_empty() {
+            None
+        } else if !data_exists {
+            Some("no_data")
+        } else {
+            Some("quiet")
+        };
         Response::json(
-            &json!({"version": 1, "counts": {"running": running, "review": review}, "managers": managers}),
+            &json!({"version": 1, "counts": {"running": running, "review": review}, "managers": managers, "empty": empty}),
         )
     } else {
         let groups: Vec<_> = groups

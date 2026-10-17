@@ -32,7 +32,7 @@ const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
 const PUBLIC: &str = "public";
-const PANEL_SIZE: (f64, f64) = (380.0, 600.0);
+const PANEL_SIZE: (f64, f64) = (480.0, 640.0);
 const POLL: Duration = Duration::from_secs(2);
 /// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
 const REOPEN_GUARD: Duration = Duration::from_millis(300);
@@ -47,7 +47,7 @@ fn main() {
     let served = reader.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            open(app, "main", "/")
+            open(app, "main", "/chat/")
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
@@ -104,7 +104,8 @@ fn main() {
             let menu = Menu::with_items(
                 handle,
                 &[
-                    &MenuItem::with_id(handle, "open", "打开工作台", true, None::<&str>)?,
+                    &MenuItem::with_id(handle, "open", "打开 AgentNave", true, None::<&str>)?,
+                    &MenuItem::with_id(handle, "workbench", "工作台", true, None::<&str>)?,
                     &MenuItem::with_id(handle, "manage", "管理会话…", true, None::<&str>)?,
                     &MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?,
                     &check,
@@ -120,7 +121,8 @@ fn main() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => open(app, "main", "/"),
+                    "open" => open(app, "main", "/chat/"),
+                    "workbench" => open(app, "main", "/"),
                     "manage" => open(app, "main", "/manage/"),
                     "settings" => open(app, "main", "/settings/"),
                     "update" => update::act(app),
@@ -242,6 +244,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
             return ours(target);
         }
         let (app, path) = (handle.clone(), target.path().to_owned());
+        let destination = destination(target);
         thread::spawn(move || match path.as_str() {
             // The panel stays open: its notice shows the progress or "已复制".
             "/app/update" => update::act(&app),
@@ -254,7 +257,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
                 if path == "/app/quit" {
                     app.exit(0);
                 } else {
-                    open(&app, "main", &path);
+                    open(&app, "main", &destination);
                 }
             }
         });
@@ -343,6 +346,20 @@ fn place(panel: &WebviewWindow, icon: Rect) {
 /// The public window only ever shows public views, whatever a link in a reply points at.
 fn allowed(label: &str, target: &Url) -> bool {
     ours(target) && (label != PUBLIC || target.path().starts_with("/p/"))
+}
+
+/// Preserve member anchors and explicit preview parameters when leaving the panel.
+fn destination(target: &Url) -> String {
+    let mut path = target.path().to_owned();
+    if let Some(query) = target.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    if let Some(fragment) = target.fragment() {
+        path.push('#');
+        path.push_str(fragment);
+    }
+    path
 }
 
 /// Show `path` in the window `label`, creating it on first use.
@@ -461,11 +478,17 @@ mod tests {
             "/panel/",
             "/manage/",
             "/settings/",
+            "/chat/",
+            "/chat/group#codex%2Fm",
             "/app/quit",
         ] {
             assert!(!allowed(PUBLIC, &url(path)), "{path}");
             assert!(allowed("main", &url(path)), "{path}");
         }
+        assert_eq!(
+            destination(&url("/chat/group?mock#codex%2Fm")),
+            "/chat/group?mock#codex%2Fm"
+        );
         assert!(!allowed(
             "main",
             &Url::parse("https://example.com/").unwrap()
