@@ -40,6 +40,14 @@ fn color(group: &str) -> u64 {
 
 /// Studio emits RFC3339 with microseconds. Compare instants, including offsets, not strings.
 fn timestamp(time: &str) -> Option<i64> {
+    if time.get(4..5) != Some("-")
+        || time.get(7..8) != Some("-")
+        || time.get(10..11) != Some("T")
+        || time.get(13..14) != Some(":")
+        || time.get(16..17) != Some(":")
+    {
+        return None;
+    }
     let number = |start, end| time.get(start..end)?.parse::<i64>().ok();
     let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
     let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
@@ -58,11 +66,12 @@ fn timestamp(time: &str) -> Option<i64> {
         30,
         31,
     ];
-    if !(1..=12).contains(&month)
+    if !(1..=9999).contains(&year)
+        || !(1..=12).contains(&month)
         || !(1..=months[(month - 1) as usize]).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 59
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
     {
         return None;
     }
@@ -73,14 +82,22 @@ fn timestamp(time: &str) -> Option<i64> {
         - 1;
     let suffix = time.get(19..)?;
     let zone = suffix.find(['Z', '+', '-'])?;
-    let fraction = suffix[..zone].strip_prefix('.').unwrap_or("");
+    let fraction = match &suffix[..zone] {
+        "" => "",
+        part => part
+            .strip_prefix('.')
+            .filter(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))?,
+    };
     let fractional = format!("{fraction:0<6}").get(..6)?.parse::<i64>().ok()?;
     let offset = match &suffix[zone..] {
         "Z" => 0,
         zone => {
+            if zone.len() != 6 || zone.get(3..4) != Some(":") {
+                return None;
+            }
             let hours = zone.get(1..3)?.parse::<i64>().ok()?;
             let minutes = zone.get(4..6)?.parse::<i64>().ok()?;
-            if hours > 23 || minutes > 59 {
+            if !(0..=23).contains(&hours) || !(0..=59).contains(&minutes) {
                 return None;
             }
             (hours * 60 + minutes) * if zone.starts_with('-') { -1 } else { 1 }
@@ -111,6 +128,48 @@ fn iso(time: i64) -> String {
     )
 }
 
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as i64
+}
+
+fn event_time(time: &str, updated: &str) -> String {
+    [time, updated]
+        .into_iter()
+        .find(|time| timestamp(time).is_some())
+        .unwrap_or("1970-01-01T00:00:00Z")
+        .to_owned()
+}
+
+fn urgency(status: &str) -> usize {
+    match status {
+        "running" => 3,
+        "review" => 2,
+        "failed" | "blocked" | "interrupted" => 1,
+        _ => 0,
+    }
+}
+
+fn conversation_status(snapshot: &Snapshot) -> &'static str {
+    let view = &snapshot.view["director"];
+    let statuses = [
+        snapshot.item.status.as_str(),
+        text(&view["round"], "status"),
+    ]
+    .into_iter()
+    .chain(array(view, "tasks").map(|task| text(task, "status")))
+    .chain(array(&view["round"], "seats").map(|seat| {
+        if seat["review"] == "pending" {
+            "review"
+        } else {
+            text(seat, "status")
+        }
+    }));
+    ["idle", "failed", "review", "running"][statuses.map(urgency).max().unwrap_or(0)]
+}
+
 fn active(status: &str) -> bool {
     matches!(status, "running" | "review")
 }
@@ -134,42 +193,86 @@ fn failure(status: &str) -> &str {
     }
 }
 
-fn plain(line: &str) -> String {
-    let line = line.trim();
-    if line.starts_with("```") || line.starts_with("~~~") {
-        return String::new();
-    }
-    let line = line.trim_start_matches(['#', '>', '-', '+', '*', ' ']);
-    let numbered = line.trim_start_matches(|c: char| c.is_ascii_digit());
-    let line = numbered
-        .strip_prefix(". ")
-        .or_else(|| numbered.strip_prefix(") "))
-        .unwrap_or(line);
-    let mut result = String::new();
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '!' if chars.peek() == Some(&'[') => {}
-            ']' if chars.peek() == Some(&'(') => {
-                chars.next();
-                let mut depth = 1;
-                for next in chars.by_ref() {
-                    if next == '(' {
-                        depth += 1;
-                    }
-                    if next == ')' {
-                        depth -= 1;
-                    }
-                    if depth == 0 {
-                        break;
-                    }
-                }
+fn emphasis_end(text: &str, marker: &str) -> Option<usize> {
+    let mut rest = text;
+    while !rest.is_empty() {
+        if rest.starts_with('`') {
+            let size = rest.bytes().take_while(|b| *b == b'`').count();
+            if let Some(end) = rest[size..].find(&rest[..size]) {
+                rest = &rest[size + end + size..];
+                continue;
             }
-            '`' | '*' | '_' | '~' | '[' | ']' => {}
-            _ => result.push(c),
         }
+        if rest.starts_with(marker) {
+            return Some(text.len() - rest.len());
+        }
+        rest = &rest[rest.chars().next()?.len_utf8()..];
     }
-    result.trim().chars().take(120).collect()
+    None
+}
+
+fn inline_text(mut rest: &str) -> String {
+    let mut result = String::new();
+    while let Some(first) = rest.chars().next() {
+        if first == '`' {
+            let size = rest.bytes().take_while(|b| *b == b'`').count();
+            let marker = &rest[..size];
+            if let Some(end) = rest[size..].find(marker) {
+                result.push_str(&rest[size..size + end]);
+                rest = &rest[size + end + size..];
+                continue;
+            }
+        }
+        let marker = if rest.starts_with("**") { "**" } else { "__" };
+        if rest.starts_with(marker)
+            && let Some(end) = emphasis_end(&rest[2..], marker).filter(|end| *end > 0)
+        {
+            let after = &rest[2 + end + 2..];
+            // Underscores inside names are literal, rather than emphasis delimiters.
+            let in_word = marker == "__"
+                && (result.ends_with(char::is_alphanumeric)
+                    || after.starts_with(char::is_alphanumeric));
+            if !in_word {
+                result.push_str(&inline_text(&rest[2..2 + end]));
+                rest = after;
+                continue;
+            }
+        }
+        result.push(first);
+        rest = &rest[first.len_utf8()..];
+    }
+    result
+}
+
+fn plain(line: &str) -> String {
+    let mut line = line.trim();
+    loop {
+        let heading = line.bytes().take_while(|b| *b == b'#').count();
+        let numbered = line.trim_start_matches(|c: char| c.is_ascii_digit());
+        let next = if (1..=6).contains(&heading) && line[heading..].starts_with(char::is_whitespace)
+        {
+            Some(&line[heading..])
+        } else {
+            line.strip_prefix("> ")
+                .or_else(|| line.strip_prefix("- "))
+                .or_else(|| line.strip_prefix("+ "))
+                .or_else(|| line.strip_prefix("* "))
+                .or_else(|| {
+                    if numbered.len() < line.len() {
+                        numbered
+                            .strip_prefix(". ")
+                            .or_else(|| numbered.strip_prefix(") "))
+                    } else {
+                        None
+                    }
+                })
+        };
+        let Some(next) = next else {
+            break;
+        };
+        line = next.trim_start();
+    }
+    inline_text(line).trim().chars().take(120).collect()
 }
 
 fn line(status: &str, output: &str, error: &str) -> String {
@@ -220,6 +323,8 @@ struct Group {
     members: BTreeMap<String, Member>,
     messages: Vec<Value>,
     typing: BTreeMap<String, Value>,
+    sources: Vec<usize>,
+    include_messages: bool,
 }
 
 impl Group {
@@ -236,6 +341,8 @@ impl Group {
             members: BTreeMap::new(),
             messages: Vec::new(),
             typing: BTreeMap::new(),
+            sources: Vec::new(),
+            include_messages: false,
         }
     }
 
@@ -309,7 +416,7 @@ impl Group {
             model,
             &format!("{} · {model}", label(Some(provider))),
         );
-        let typing = if status == "running" {
+        let typing = if self.include_messages && status == "running" {
             let tail: Vec<_> = output
                 .lines()
                 .rev()
@@ -346,7 +453,7 @@ impl Group {
         }
     }
 
-    fn add(&mut self, snapshot: &Snapshot) {
+    fn add(&mut self, snapshot: &Snapshot, index: usize) {
         let item = &snapshot.item;
         let at = timestamp(&item.updated).unwrap_or_default();
         if at >= self.at {
@@ -356,29 +463,26 @@ impl Group {
             self.title.clone_from(&item.title);
         }
         self.live |= snapshot.live;
-        let urgency = |s| match s {
-            "running" => 3,
-            "review" => 2,
-            "failed" => 1,
-            _ => 0,
-        };
-        let status = match item.status.as_str() {
-            "running" => "running",
-            "review" => "review",
-            "failed" | "blocked" | "cancelled" | "interrupted" => "failed",
-            _ => "idle",
-        };
+        let status = conversation_status(snapshot);
         if urgency(status) > urgency(self.status) {
             self.status = status;
         }
+        self.sources.push(index);
         self.conversations.push(
             json!({"id": item.id, "title": item.title, "mode": item.mode,
             "status": item.status, "director_url": format!("/c/{}/", item.id)}),
         );
-        if item.mode == "task" {
-            self.tasks(snapshot);
-        } else {
-            self.show(snapshot);
+    }
+
+    fn project(&mut self, snapshots: &[Snapshot], include_messages: bool) {
+        self.include_messages = include_messages;
+        for index in 0..self.sources.len() {
+            let snapshot = &snapshots[self.sources[index]];
+            if snapshot.item.mode == "task" {
+                self.tasks(snapshot);
+            } else {
+                self.show(snapshot);
+            }
         }
     }
 
@@ -396,8 +500,9 @@ impl Group {
                 .map(str::to_owned)
                 .unwrap_or_else(|| index.to_string());
             let id = format!("{}:task:{task_id}", item.id);
-            let start = text(task, "time");
-            let time = timestamp(start)
+            let raw_start = text(task, "time");
+            let start = event_time(raw_start, &item.updated);
+            let time = timestamp(raw_start)
                 .map(|start| {
                     iso(start.saturating_add(
                         task["elapsed_ms"]
@@ -406,16 +511,18 @@ impl Group {
                             .saturating_mul(1000),
                     ))
                 })
-                .unwrap_or_else(|| item.updated.clone());
+                .unwrap_or_else(|| start.clone());
             let status = member_status(text(task, "status"));
             let model = match text(task, "model") {
                 "" => "原生设置",
                 m => m,
             };
-            if let Some(prompt) = task["prompt"].as_str() {
+            if self.include_messages
+                && let Some(prompt) = task["prompt"].as_str()
+            {
                 let mut msg = Self::message(
                     format!("{id}:prompt"),
-                    start,
+                    &start,
                     &item.id,
                     "prompt",
                     manager.clone(),
@@ -432,7 +539,7 @@ impl Group {
                 text(task, "error"),
                 &time,
             );
-            if status != "running" && status != "pending" {
+            if self.include_messages && status != "running" && status != "pending" {
                 let who = speaker(
                     "member",
                     text(task, "provider"),
@@ -472,6 +579,24 @@ impl Group {
             let kind = text(entry, "kind");
             let seat = seats.get(text(entry, "speaker")).copied();
             let manager = matches!(kind, "task" | "host");
+            let absent = kind == "absent";
+            let time = event_time(text(entry, "time"), &item.updated);
+            let status = if absent {
+                let body = text(entry, "text");
+                ["blocked", "cancelled", "interrupted"]
+                    .into_iter()
+                    .find(|s| body.contains(failure(s)) || body == *s)
+                    .unwrap_or("failed")
+            } else {
+                "succeeded"
+            };
+            if !manager && let Some(seat) = seat {
+                self.member(snapshot, seat, status, text(entry, "text"), "", &time);
+                latest.insert(text(entry, "speaker"), entry);
+            }
+            if !self.include_messages {
+                continue;
+            }
             let who = if manager {
                 speaker(
                     "manager",
@@ -489,19 +614,9 @@ impl Group {
             } else {
                 speaker("system", "", "", "系统")
             };
-            let absent = kind == "absent";
-            let status = if absent {
-                let body = text(entry, "text");
-                ["blocked", "cancelled", "interrupted"]
-                    .into_iter()
-                    .find(|s| body.contains(failure(s)) || body == *s)
-                    .unwrap_or("failed")
-            } else {
-                "succeeded"
-            };
             let mut msg = Self::message(
                 format!("{}:entry:{index}", item.id),
-                text(entry, "time"),
+                &time,
                 &item.id,
                 if manager {
                     "prompt"
@@ -522,17 +637,6 @@ impl Group {
                 );
             } else {
                 msg["status"] = json!(status);
-                if let Some(seat) = seat {
-                    self.member(
-                        snapshot,
-                        seat,
-                        status,
-                        text(entry, "text"),
-                        "",
-                        text(entry, "time"),
-                    );
-                    latest.insert(text(entry, "speaker"), (entry, status));
-                }
             }
             self.messages.push(msg);
         }
@@ -544,27 +648,37 @@ impl Group {
                 } else {
                     member_status(text(run, "status"))
                 };
+                let round = view["round"]["number"].as_u64().unwrap_or_default();
+                let committed = array(view, "messages").rev().find(|e| {
+                    text(e, "speaker") == *id
+                        && e["round"].as_u64() == Some(round)
+                        && matches!(text(e, "kind"), "answer" | "absent")
+                });
+                // Host messages change conversation activity, never the time of a committed answer.
+                let time = if status == "running" {
+                    iso(now())
+                } else {
+                    event_time(
+                        committed.map_or("", |entry| text(entry, "time")),
+                        &item.updated,
+                    )
+                };
                 self.member(
                     snapshot,
                     seat,
                     status,
                     text(run, "output"),
                     text(run, "error"),
-                    &item.updated,
+                    &time,
                 );
-                let round = view["round"]["number"].as_u64().unwrap_or_default();
-                let committed = array(view, "messages").any(|e| {
-                    text(e, "speaker") == *id
-                        && e["round"].as_u64() == Some(round)
-                        && matches!(text(e, "kind"), "answer" | "absent")
-                });
-                if status == "review"
-                    || (!committed
-                        && matches!(
-                            status,
-                            "failed" | "blocked" | "cancelled" | "interrupted" | "succeeded"
-                        )
-                        && run["review"] != "discard")
+                if self.include_messages
+                    && (status == "review"
+                        || (committed.is_none()
+                            && matches!(
+                                status,
+                                "failed" | "blocked" | "cancelled" | "interrupted" | "succeeded"
+                            )
+                            && run["review"] != "discard"))
                 {
                     let body = if status == "review" {
                         "待审核，请在主控中决定".into()
@@ -581,7 +695,7 @@ impl Group {
                     );
                     let mut msg = Self::message(
                         format!("{}:round:{round}:{id}:result", item.id),
-                        &item.updated,
+                        &time,
                         &item.id,
                         if status == "succeeded" {
                             "reply"
@@ -596,7 +710,14 @@ impl Group {
                     self.messages.push(msg);
                 }
             } else if !latest.contains_key(id) {
-                self.member(snapshot, seat, "pending", "", "", &item.updated);
+                self.member(
+                    snapshot,
+                    seat,
+                    "pending",
+                    "",
+                    "",
+                    &event_time("", &item.updated),
+                );
             }
         }
     }
@@ -614,25 +735,30 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
         )
     });
     let mut groups = BTreeMap::new();
-    for snapshot in snapshots.iter().filter(|s| !s.item.archived) {
+    for (index, snapshot) in snapshots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !s.item.archived)
+    {
         let session = snapshot.item.manager_session.as_deref().filter(|id| {
             id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) && valid_id(id)
         });
         let id = session
             .map(str::to_owned)
             .unwrap_or_else(|| format!("c-{}", snapshot.item.id));
-        if !valid_id(&id) {
+        if !valid_id(&id) || requested.is_some_and(|requested| requested != id) {
             continue;
         }
         groups
             .entry(id.clone())
             .or_insert_with(|| Group::new(id))
-            .add(snapshot);
+            .add(snapshot, index);
     }
     if let Some(id) = requested {
-        let Some(group) = groups.get(id) else {
+        let Some(group) = groups.get_mut(id) else {
             return Response::error(404, "not found");
         };
+        group.project(&snapshots, true);
         let mut value = group.header();
         value.as_object_mut().unwrap().remove("updated");
         value["conversations"] = json!(group.conversations);
@@ -640,26 +766,26 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
         value["messages"] = json!(group.timeline());
         return Response::json(&value);
     }
-    let mut groups: Vec<_> = groups.values().collect();
-    groups.sort_by_key(|g| (!active(g.status), Reverse(g.at), &g.id));
+    let mut groups: Vec<_> = groups.into_values().collect();
+    groups.sort_by(|a, b| {
+        (!active(a.status), Reverse(a.at), &a.id).cmp(&(!active(b.status), Reverse(b.at), &b.id))
+    });
     if path == "/app/stage" {
         let running = snapshots
             .iter()
-            .filter(|s| !s.item.archived && s.item.status == "running")
+            .filter(|s| !s.item.archived && conversation_status(s) == "running")
             .count();
         let review = snapshots
             .iter()
-            .filter(|s| !s.item.archived && s.item.status == "review")
+            .filter(|s| !s.item.archived && conversation_status(s) == "review")
             .count();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as i64;
+        let now = now();
         let managers: Vec<_> = groups
             .into_iter()
             .filter(|g| active(g.status) || g.at >= now - 2 * 3600 * 1_000_000)
             .take(6)
-            .map(|g| {
+            .map(|mut g| {
+                g.project(&snapshots, false);
                 let mut value = g.header();
                 value["members"] = json!(g.members());
                 value
@@ -672,7 +798,8 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>) -> Response {
         let groups: Vec<_> = groups
             .into_iter()
             .take(200)
-            .map(|g| {
+            .map(|mut g| {
+                g.project(&snapshots, true);
                 let mut value = g.header();
                 value["title"] = json!(g.title);
                 value["conversations"] = json!(g.conversations.len());

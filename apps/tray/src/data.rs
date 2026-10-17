@@ -585,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn chats_aggregate_sessions_merge_latest_members_and_cache_snapshots() {
+    fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         save(
@@ -624,16 +624,11 @@ mod tests {
         assert_eq!(legacy["members"][0]["line"], "结果");
         assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
         assert!(legacy["color"].as_u64().unwrap() < 8);
-        let path = root.join("conversations/b/views.json");
-        let cached = reader.summaries.lock().unwrap()[&path].2.clone().unwrap();
+        assert_eq!(state(&reader, &format!("/app/chats/{MANAGER}")), chat);
         assert_eq!(
             state(&reader, "/app/chats/c-legacy")["color"],
             legacy["color"]
         );
-        assert!(Arc::ptr_eq(
-            &cached,
-            reader.summaries.lock().unwrap()[&path].2.as_ref().unwrap()
-        ));
         let mut changed = newer;
         changed["director"]["tasks"][0]["error"] = json!("**需要授权**");
         save(root, &changed);
@@ -641,10 +636,6 @@ mod tests {
             state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
             "受阻：需要授权"
         );
-        assert!(!Arc::ptr_eq(
-            &cached,
-            reader.summaries.lock().unwrap()[&path].2.as_ref().unwrap()
-        ));
     }
 
     #[test]
@@ -858,5 +849,177 @@ mod tests {
             assert_eq!(reader.request("GET", path, None, b"").status, 404, "{path}");
         }
         assert!(!root.exists());
+    }
+
+    fn finished_show(id: &str) -> Value {
+        let mut show = snapshot(id, "finished");
+        show["summary"]["manager_session"] = json!(MANAGER);
+        show["summary"]["updated"] = json!("2099-01-01T12:00:00Z");
+        show["director"] = json!({"mode": "show", "seats": [
+            {"id": "a", "provider": "codex", "model": "m", "label": "甲"},
+            {"id": "z", "provider": "codex", "model": "m", "label": "乙"}],
+            "messages": [
+                {"kind": "answer", "speaker": "z", "round": 1, "text": "较早回答", "time": "2099-01-01T10:00:00Z"},
+                {"kind": "answer", "speaker": "a", "round": 1, "text": "最近回答", "time": "2099-01-01T11:00:00Z"},
+                {"kind": "host", "speaker": "@host", "round": 1, "text": "主持人后来发言", "time": "2099-01-01T12:00:00Z"}],
+            "round": {"number": 1, "status": "finished", "seats": [
+                {"seat_id": "a", "status": "succeeded", "output": "最近回答"},
+                {"seat_id": "z", "status": "succeeded", "output": "较早回答"}]}});
+        show
+    }
+
+    #[test]
+    fn regression_member_activity_uses_seat_time_across_seats_and_conversations() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut show = finished_show("show");
+        save(dir.path(), &show);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let path = format!("/app/chats/{MANAGER}");
+        let chat = state(&reader, &path);
+        assert_eq!(chat["members"][0]["line"], "最近回答");
+        assert_eq!(chat["members"][0]["updated"], "2099-01-01T11:00:00Z");
+        show["director"]["messages"][0]["kind"] = json!("absent");
+        show["director"]["messages"][0]["text"] = json!("（本轮未作答：受阻）");
+        show["director"]["round"]["seats"][1]["status"] = json!("blocked");
+        save(dir.path(), &show);
+        save(
+            dir.path(),
+            &task_snapshot("task", "succeeded", "2099-01-01T11:30:00Z"),
+        );
+        assert_eq!(state(&reader, &path)["members"][0]["conversation"], "task");
+        show["summary"]["updated"] = json!("2099-01-01T13:00:00Z");
+        show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "host", "speaker": "@host", "text": "再说一句", "time": "2099-01-01T13:00:00Z"}));
+        save(dir.path(), &show);
+        assert_eq!(state(&reader, &path)["members"][0]["conversation"], "task");
+        assert_eq!(
+            state(&reader, "/app/stage")["managers"][0]["members"][0]["conversation"],
+            "task"
+        );
+        // A live running seat has current activity even when its conversation's last entry is old.
+        show["summary"]["updated"] = json!("2000-01-01T00:00:00Z");
+        show["summary"]["status"] = json!("running");
+        show["director"]["round"]["number"] = json!(2);
+        show["director"]["round"]["seats"][0]["status"] = json!("running");
+        write(
+            &dir.path().join("live/1-now.json"),
+            &json!({"version": 1, "conversations": {"show": show}}),
+        );
+        let chat = state(&reader, &path);
+        let typing = chat["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(typing["kind"], "typing");
+        assert_ne!(typing["time"], "2000-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn regression_finished_show_status_includes_failed_seats_but_not_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut show = finished_show("show");
+        let reader = Reader::new(dir.path().to_path_buf());
+        for (status, expected) in [
+            ("failed", "failed"),
+            ("blocked", "failed"),
+            ("interrupted", "failed"),
+            ("cancelled", "idle"),
+        ] {
+            show["director"]["round"]["seats"][0]["status"] = json!(status);
+            save(dir.path(), &show);
+            assert_eq!(
+                state(&reader, &format!("/app/chats/{MANAGER}"))["status"],
+                expected,
+                "{status}"
+            );
+            assert_eq!(
+                state(&reader, "/app/chats")["groups"][0]["status"],
+                expected,
+                "{status}"
+            );
+            assert_eq!(
+                state(&reader, "/app/stage")["managers"][0]["status"],
+                expected,
+                "{status}"
+            );
+        }
+        let mut task = task_snapshot("task", "cancelled", "2099-01-01T12:00:01Z");
+        save(dir.path(), &task);
+        assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
+        task["director"]["tasks"][0]["status"] = json!("review");
+        save(dir.path(), &task);
+        assert_eq!(
+            state(&reader, "/app/chats")["groups"][0]["status"],
+            "review"
+        );
+        show["director"]["round"]["seats"][0]["status"] = json!("running");
+        save(dir.path(), &show);
+        assert_eq!(
+            state(&reader, "/app/chats")["groups"][0]["status"],
+            "running"
+        );
+    }
+
+    #[test]
+    fn regression_markdown_summary_preserves_paths_flags_and_literal_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        let reader = Reader::new(dir.path().to_path_buf());
+        let mut task = task_snapshot("task", "succeeded", "2099-01-01T00:00:00Z");
+        task["director"]["tasks"][0]["output"] = json!(
+            "# > - **结果** __OK__ **`a_b.rs **raw**`** --my_flag foo*bar ~tmp [arg] *literal* **未闭合"
+        );
+        save(dir.path(), &task);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
+            "结果 OK a_b.rs **raw** --my_flag foo*bar ~tmp [arg] *literal* **未闭合"
+        );
+        let literal = "--dry_run ~/a_b [x](y) a*b _x_ ~x~ name__part__x";
+        task["director"]["tasks"][0]["output"] = json!(literal);
+        save(dir.path(), &task);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
+            literal
+        );
+    }
+
+    #[test]
+    fn regression_missing_or_invalid_times_fall_back_without_reordering_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut show = finished_show("show");
+        for (index, entry) in show["director"]["messages"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            entry["time"] =
+                [Value::Null, json!("invalid"), json!("2099-01-01T12:00:00Z")][index].clone();
+        }
+        save(dir.path(), &show);
+        let mut task = task_snapshot("task", "succeeded", "2099-01-01T12:00:00Z");
+        task["director"]["tasks"][0]["time"] = Value::Null;
+        let mut second = task["director"]["tasks"][0].clone();
+        second["id"] = json!("second");
+        second["time"] = json!("2099/01/01T12:00:00Z");
+        task["director"]["tasks"]
+            .as_array_mut()
+            .unwrap()
+            .push(second);
+        save(dir.path(), &task);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let messages = chat["messages"].as_array().unwrap();
+        assert!(messages.iter().all(|m| m["time"] == "2099-01-01T12:00:00Z"));
+        assert_eq!(
+            messages
+                .iter()
+                .map(|m| m["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "show:entry:0",
+                "show:entry:1",
+                "show:entry:2",
+                "task:task:t-task:prompt",
+                "task:task:t-task:result",
+                "task:task:second:prompt",
+                "task:task:second:result"
+            ]
+        );
     }
 }
