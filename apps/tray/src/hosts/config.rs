@@ -1,0 +1,540 @@
+//! Host configuration codecs. Edits are scoped to one server, never project files.
+use serde_json::{Value, json};
+use std::ops::Range;
+
+#[derive(Clone, Copy, Debug)]
+pub enum Format {
+    Json,
+    Toml,
+    Yaml,
+}
+
+pub struct Document {
+    pub raw: String,
+    pub entry: Option<Value>,
+    pub rest: Value,
+    format: Format,
+    key: &'static str,
+}
+
+impl Document {
+    pub fn parse(raw: &str, format: Format, key: &'static str) -> Result<Self, String> {
+        let (entry, rest) = match format {
+            Format::Json | Format::Toml => {
+                let mut all = if raw.trim().is_empty() {
+                    json!({})
+                } else if matches!(format, Format::Json) {
+                    let value =
+                        serde_json::from_str(&clean_json(raw)?).map_err(|_| "JSON 配置解析失败")?;
+                    // Duplicate keys would make a scoped edit ambiguous even if a permissive
+                    // JSON parser accepts their last occurrence.
+                    let root = json_fields(raw)?;
+                    if let Some(parent) = root.iter().find(|f| f.0 == key) {
+                        let servers = &raw[parent.1.clone()];
+                        let fields = json_fields(servers)?;
+                        if let Some(server) = fields.iter().find(|f| f.0 == "agentnave") {
+                            let entry = &servers[server.1.clone()];
+                            for field in json_fields(entry)? {
+                                if matches!(field.0.as_str(), "env" | "environment") {
+                                    json_fields(&entry[field.1])?;
+                                }
+                            }
+                        }
+                    }
+                    value
+                } else {
+                    let value: toml::Value =
+                        toml::from_str(raw).map_err(|_| "TOML 配置解析失败")?;
+                    serde_json::to_value(value).map_err(|_| "TOML 配置转换失败")?
+                };
+                if !all.is_object() {
+                    return Err("配置根必须为对象".into());
+                }
+                let entry = match all.get_mut(key) {
+                    Some(servers) => servers
+                        .as_object_mut()
+                        .ok_or("MCP 配置必须为对象")?
+                        .remove("agentnave"),
+                    None => None,
+                };
+                // An absent and an empty server container are semantically equivalent.
+                if all
+                    .get(key)
+                    .is_some_and(|v| v.as_object().is_some_and(|o| o.is_empty()))
+                {
+                    all.as_object_mut().unwrap().remove(key);
+                }
+                (entry, all)
+            }
+            Format::Yaml => {
+                let root = yaml_fields(raw, 0)?;
+                if let Some(parent) = root.iter().find(|f| f.key == key) {
+                    if !parent.value.is_empty() && parent.value != "{}" {
+                        return Err("Hermes mcp_servers 需使用普通 YAML 映射块".into());
+                    }
+                    let block = &raw[parent.body.clone()];
+                    let fields = yaml_fields(block, parent.indent + 2)?;
+                    if let Some(field) = fields.iter().find(|f| f.key == "agentnave") {
+                        if !field.value.is_empty() {
+                            return Err("Hermes agentnave 需使用普通 YAML 映射块".into());
+                        }
+                        let entry = yaml_entry(&block[field.body.clone()], field.indent + 2)?;
+                        let mut rest = raw.to_owned();
+                        let start = parent.body.start + field.full.start;
+                        let end = parent.body.start + field.full.end;
+                        rest.replace_range(start..end, "");
+                        (Some(entry), json!(rest))
+                    } else {
+                        (None, json!(raw))
+                    }
+                } else {
+                    (None, json!(raw))
+                }
+            }
+        };
+        if entry.as_ref().is_some_and(|e| !e.is_object()) {
+            return Err("agentnave 条目必须为对象".into());
+        }
+        Ok(Self {
+            raw: raw.into(),
+            entry,
+            rest,
+            format,
+            key,
+        })
+    }
+
+    pub fn render(&self, entry: Option<&Value>) -> Result<String, String> {
+        match self.format {
+            Format::Json => {
+                let raw = if self.raw.trim().is_empty() {
+                    "{}"
+                } else {
+                    &self.raw
+                };
+                if let Some(parent) = json_fields(raw)?.into_iter().find(|f| f.0 == self.key) {
+                    let changed = json_set(&raw[parent.1.clone()], "agentnave", entry)?;
+                    let mut out = raw.to_owned();
+                    out.replace_range(parent.1, &changed);
+                    Ok(out)
+                } else if let Some(entry) = entry {
+                    json_set(raw, self.key, Some(&json!({"agentnave": entry})))
+                } else {
+                    Ok(raw.into())
+                }
+            }
+            Format::Toml => {
+                let mut doc: toml_edit::DocumentMut =
+                    self.raw.parse().map_err(|_| "TOML 解析失败")?;
+                if let Some(entry) = entry {
+                    if doc.get(self.key).is_none() {
+                        doc[self.key] = toml_edit::Item::Table(toml_edit::Table::new());
+                    }
+                    let encoded = toml::to_string(&json!({"agentnave": entry}))
+                        .map_err(|_| "TOML 编码失败")?;
+                    let encoded: toml_edit::DocumentMut =
+                        encoded.parse().map_err(|_| "TOML 编码失败")?;
+                    if let Some(inline) = doc[self.key].as_inline_table_mut() {
+                        let table = encoded["agentnave"].as_table().ok_or("TOML 条目编码失败")?;
+                        inline.insert(
+                            "agentnave",
+                            toml_edit::Value::InlineTable(table.clone().into_inline_table()),
+                        );
+                    } else {
+                        doc[self.key]["agentnave"] = encoded["agentnave"].clone();
+                    }
+                } else if let Some(servers) =
+                    doc.get_mut(self.key).and_then(|v| v.as_table_like_mut())
+                {
+                    servers.remove("agentnave");
+                }
+                Ok(doc.to_string())
+            }
+            Format::Yaml => self.render_yaml(entry),
+        }
+    }
+
+    fn render_yaml(&self, desired: Option<&Value>) -> Result<String, String> {
+        let mut out = self.raw.clone();
+        let root = yaml_fields(&out, 0)?;
+        if let Some(parent) = root.iter().find(|f| f.key == self.key) {
+            let block = &out[parent.body.clone()];
+            let fields = yaml_fields(block, parent.indent + 2)?;
+            if let Some(field) = fields.iter().find(|f| f.key == "agentnave") {
+                let start = parent.body.start + field.full.start;
+                let end = parent.body.start + field.full.end;
+                let replacement = if let Some(desired) = desired {
+                    // Keep unmodified fields (including unknown YAML structures) byte for byte.
+                    let body = &block[field.body.clone()];
+                    let mut changed = body.to_owned();
+                    let original = self.entry.as_ref().unwrap();
+                    let children = yaml_fields(body, field.indent + 2)?;
+                    for child in children.iter().rev() {
+                        if original.get(&child.key) != desired.get(&child.key) {
+                            let line = desired
+                                .get(&child.key)
+                                .map(|v| yaml_line(&child.key, v, child.indent))
+                                .unwrap_or_default();
+                            changed.replace_range(child.full.clone(), &line);
+                        }
+                    }
+                    for (key, value) in desired.as_object().unwrap() {
+                        if original.get(key).is_none() {
+                            changed.push_str(&yaml_line(key, value, field.indent + 2));
+                        }
+                    }
+                    format!("{}agentnave:\n{changed}", " ".repeat(field.indent))
+                } else {
+                    String::new()
+                };
+                out.replace_range(start..end, &replacement);
+            } else if let Some(entry) = desired {
+                // Expand an empty flow map before adding a block.
+                if parent.value == "{}" {
+                    out.replace_range(
+                        parent.full.clone(),
+                        &format!("mcp_servers:\n{}", yaml_server(entry)),
+                    );
+                } else {
+                    out.insert_str(parent.body.end, &yaml_server(entry));
+                }
+            }
+        } else if let Some(entry) = desired {
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&format!("mcp_servers:\n{}", yaml_server(entry)));
+        }
+        Ok(out)
+    }
+
+    pub fn verify(&self, written: &str, desired: Option<&Value>) -> Result<(), String> {
+        let after = Self::parse(written, self.format, self.key)?;
+        if after.entry.as_ref() != desired {
+            return Err("写后条目校验失败".into());
+        }
+        if matches!(self.format, Format::Yaml) {
+            // Compare exact non-target bytes, allowing only a newly created empty container.
+            let expected = self.render(desired)?;
+            if written != expected {
+                return Err("写后校验发现其他 YAML 内容变化".into());
+            }
+        } else if after.rest != self.rest {
+            return Err("写后校验发现其他配置变化".into());
+        }
+        Ok(())
+    }
+}
+
+fn yaml_line(key: &str, value: &Value, indent: usize) -> String {
+    format!("{}{key}: {}\n", " ".repeat(indent), value)
+}
+fn yaml_server(entry: &Value) -> String {
+    let mut out = "  agentnave:\n".to_owned();
+    for (key, value) in entry.as_object().unwrap() {
+        out.push_str(&yaml_line(key, value, 4));
+    }
+    out
+}
+
+struct YamlField {
+    key: String,
+    value: String,
+    indent: usize,
+    full: Range<usize>,
+    body: Range<usize>,
+}
+
+/// Only ordinary block mappings at the traversed levels. Unknown field bodies stay opaque.
+/// Anchors, aliases, directives and duplicate mapping keys are rejected rather than rewritten.
+fn yaml_fields(raw: &str, indent: usize) -> Result<Vec<YamlField>, String> {
+    let mut fields: Vec<YamlField> = Vec::new();
+    let mut offset = 0;
+    for line in raw.split_inclusive('\n') {
+        let text = line.trim();
+        if text.is_empty() || text.starts_with('#') {
+            offset += line.len();
+            continue;
+        }
+        if line.contains('\t')
+            || text.starts_with(['&', '*', '%'])
+            || text.starts_with("- &")
+            || text.starts_with("- *")
+            || text
+                .split_once(':')
+                .is_some_and(|(_, value)| value.trim_start().starts_with(['&', '*']))
+            || text == "---"
+            || text == "..."
+        {
+            return Err("不支持的 YAML 结构，需手动配置".into());
+        }
+        let leading = line.len() - line.trim_start_matches(' ').len();
+        if leading < indent {
+            return Err("YAML 缩进无效".into());
+        }
+        if leading == indent {
+            let (key, value) = text.split_once(':').ok_or("YAML 映射无效")?;
+            let key = key.trim_matches(['\'', '"']);
+            if key.is_empty()
+                || key.contains(['{', '}', '[', ']', '&', '*'])
+                || fields.iter().any(|f| f.key == key)
+            {
+                return Err("YAML 键无效或重复".into());
+            }
+            if let Some(previous) = fields.last_mut() {
+                previous.full.end = offset;
+                previous.body.end = offset;
+            }
+            fields.push(YamlField {
+                key: key.into(),
+                value: yaml_value_text(value)?.to_owned(),
+                indent,
+                full: offset..raw.len(),
+                body: offset + line.len()..raw.len(),
+            });
+        } else if fields.is_empty() {
+            return Err("YAML 缩进无效".into());
+        }
+        offset += line.len();
+    }
+    Ok(fields)
+}
+
+fn yaml_value_text(text: &str) -> Result<&str, String> {
+    let mut single = false;
+    let mut double = false;
+    let mut escaped = false;
+    let mut end = text.len();
+    for (i, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if double => escaped = true,
+            '\'' if !double => single = !single,
+            '"' if !single => double = !double,
+            '#' if !single
+                && !double
+                && (i == 0 || text.as_bytes()[i - 1].is_ascii_whitespace()) =>
+            {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    if single || double {
+        return Err("YAML 引号未闭合".into());
+    }
+    Ok(text[..end].trim())
+}
+
+fn yaml_scalar(text: &str) -> Result<Value, String> {
+    let text = yaml_value_text(text)?;
+    if let Ok(value) = serde_json::from_str(text) {
+        return Ok(value);
+    }
+    if text.starts_with('\'') && text.ends_with('\'') && text.len() >= 2 {
+        return Ok(json!(text[1..text.len() - 1].replace("''", "'")));
+    }
+    if text.is_empty() || text.starts_with(['"', '[', '{', '&', '*', '|', '>']) {
+        return Err("YAML 值需手动确认".into());
+    }
+    Ok(json!(text))
+}
+
+fn yaml_entry(raw: &str, indent: usize) -> Result<Value, String> {
+    let mut entry = json!({});
+    for field in yaml_fields(raw, indent)? {
+        let value = if field.key == "env" && field.value.is_empty() {
+            let mut env = json!({});
+            for item in yaml_fields(&raw[field.body.clone()], indent + 2)? {
+                env[&item.key] = yaml_scalar(&item.value)?;
+            }
+            env
+        } else if matches!(field.key.as_str(), "command" | "env") {
+            yaml_scalar(&field.value)?
+        } else if let Ok(v) = serde_json::from_str(&field.value) {
+            v
+        } else {
+            // Opaque YAML is not reserialized during takeover/entry changes.
+            json!({"$yaml": &raw[field.full.clone()]})
+        };
+        entry[&field.key] = value;
+    }
+    Ok(entry)
+}
+
+/// Remove JSONC comments/trailing commas while retaining byte offsets for surgical edits.
+fn clean_json(raw: &str) -> Result<String, String> {
+    let mut bytes = raw.as_bytes().to_vec();
+    let mut i = 0;
+    let mut string = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if string => {
+                i += 2;
+                continue;
+            }
+            b'"' => string = !string,
+            b'/' if !string && bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    bytes[i] = b' ';
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if !string && bytes.get(i + 1) == Some(&b'*') => {
+                bytes[i] = b' ';
+                bytes[i + 1] = b' ';
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    if bytes[i] != b'\n' {
+                        bytes[i] = b' ';
+                    }
+                    i += 1;
+                }
+                if i + 1 >= bytes.len() {
+                    return Err("JSONC 注释未闭合".into());
+                }
+                bytes[i] = b' ';
+                bytes[i + 1] = b' ';
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    string = false;
+    i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if string => {
+                i += 2;
+                continue;
+            }
+            b'"' => string = !string,
+            b',' if !string => {
+                let next = bytes[i + 1..].iter().find(|b| !b.is_ascii_whitespace());
+                if matches!(next, Some(b'}' | b']')) {
+                    bytes[i] = b' ';
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    String::from_utf8(bytes).map_err(|_| "JSONC 编码无效".into())
+}
+
+type JsonField = (String, Range<usize>, Range<usize>);
+fn json_fields(raw: &str) -> Result<Vec<JsonField>, String> {
+    let clean = clean_json(raw)?;
+    let b = clean.as_bytes();
+    let mut i = b
+        .iter()
+        .position(|c| !c.is_ascii_whitespace())
+        .ok_or("JSON 对象为空")?;
+    if b[i] != b'{' {
+        return Err("JSON MCP 配置必须为对象".into());
+    }
+    i += 1;
+    let mut out = Vec::new();
+    loop {
+        while b
+            .get(i)
+            .is_some_and(|c| c.is_ascii_whitespace() || *c == b',')
+        {
+            i += 1;
+        }
+        if b.get(i) == Some(&b'}') {
+            break;
+        }
+        let start = i;
+        if b.get(i) != Some(&b'"') {
+            return Err("JSON 键无效".into());
+        }
+        i += 1;
+        while i < b.len() && b[i] != b'"' {
+            if b[i] == b'\\' {
+                i += 1;
+            }
+            i += 1;
+        }
+        i += 1;
+        let key = serde_json::from_str(&clean[start..i]).map_err(|_| "JSON 键无效")?;
+        if out.iter().any(|f: &JsonField| f.0 == key) {
+            return Err("JSON 键重复，需手动处理".into());
+        }
+        while b.get(i).is_some_and(u8::is_ascii_whitespace) {
+            i += 1;
+        }
+        if b.get(i) != Some(&b':') {
+            return Err("JSON 缺少冒号".into());
+        }
+        i += 1;
+        while b.get(i).is_some_and(u8::is_ascii_whitespace) {
+            i += 1;
+        }
+        let value_start = i;
+        let mut stream = serde_json::Deserializer::from_str(&clean[i..]).into_iter::<Value>();
+        stream
+            .next()
+            .ok_or("JSON 值缺失")?
+            .map_err(|_| "JSON 值无效")?;
+        i += stream.byte_offset();
+        out.push((key, value_start..i, start..i));
+    }
+    Ok(out)
+}
+
+fn json_set(raw: &str, key: &str, value: Option<&Value>) -> Result<String, String> {
+    let fields = json_fields(raw)?;
+    let mut out = raw.to_owned();
+    if let Some((_, range, full)) = fields.iter().find(|f| f.0 == key) {
+        if let Some(value) = value {
+            out.replace_range(range.clone(), &serde_json::to_string_pretty(value).unwrap());
+        } else {
+            let clean = clean_json(raw)?;
+            let mut range = full.clone();
+            if let Some(next) = fields.iter().find(|f| f.2.start > full.start) {
+                range.end = next.2.start;
+            } else if let Some(previous) = fields.iter().rev().find(|f| f.2.end < full.start) {
+                range.start = previous.2.end;
+            } else {
+                // Include a JSONC trailing comma if present.
+                while clean
+                    .as_bytes()
+                    .get(range.end)
+                    .is_some_and(|c| c.is_ascii_whitespace() || *c == b',')
+                {
+                    range.end += 1;
+                }
+            }
+            out.replace_range(range, "");
+        }
+    } else if let Some(value) = value {
+        let end = clean_json(raw)?.rfind('}').ok_or("JSON 对象未闭合")?;
+        let comma = if fields.is_empty() {
+            ""
+        } else {
+            // Existing JSONC trailing comma can serve as the separator.
+            let tail = &raw[fields.last().unwrap().2.end..end];
+            if clean_json(tail)?.contains(',') || tail.trim_start().starts_with(',') {
+                ""
+            } else {
+                ","
+            }
+        };
+        out.insert_str(
+            end,
+            &format!(
+                "{comma}\n{key:?}: {}\n",
+                serde_json::to_string_pretty(value).unwrap()
+            ),
+        );
+    }
+    Ok(out)
+}

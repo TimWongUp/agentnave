@@ -140,3 +140,287 @@
 
   window.AN = { h, $, load, href, MEMBER, GROUP, CONV, pick, urgent, avatar, hostAvatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
 })();
+
+(function () {
+  const { h, load, href, setText } = AN;
+  const mock = () =>
+    window.AgentNaveMock && window.AgentNaveMock.enabled()
+      ? window.AgentNaveMock
+      : null;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function post(path, body) {
+    const m = mock();
+    if (m && m.post) return m.post(path, body || {});
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        "X-AgentNave-Action": "1",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body || {}),
+    });
+    if (!response.ok)
+      throw Object.assign(new Error((await response.json().catch(() => ({}))).error || String(response.status)), {
+        status: response.status,
+      });
+    return response.json();
+  }
+
+  // The install runs for about a minute: POST returns at once, progress is /app/status.service.state.
+  async function installService() {
+    const started = await post("/app/service/install", {});
+    if (!started.ok) throw new Error(started.message || "已有安装正在进行");
+    for (let i = 0; i < 300; i++) {
+      await sleep(800);
+      const state = (await load("/app/status")).service;
+      if (state?.state === "failed")
+        throw new Error(state.error || "安装失败，请重试。");
+      if (state?.state === "done") return;
+    }
+    throw new Error("安装超时，请稍后到“设置 → 版本与更新”查看。");
+  }
+
+  // ---- 开始使用 -----------------------------------------------------------------------------
+  const TITLES = {
+    service: "安装本机服务",
+    host: "接入一个宿主",
+    members: "设置组员",
+    try: "在宿主里派一次任务",
+  };
+  const FALLBACK = {
+    service: "宿主要通过它才能启动 AgentNave",
+    host: "在设置里一键接入已检测到的宿主",
+    members: "选择哪些 CLI 与模型可以当组员",
+    try: "在宿主里说：用 agentnave 让几位组员各答一遍",
+  };
+  const SAMPLE = "用 agentnave 让两位组员各自回答一遍：这个仓库是做什么的？";
+  // First pending step -> its one primary action. `to` is a real route; `run` is an in-place action.
+  const ACTION = {
+    service: {
+      label: "安装本机服务",
+      busy: "安装中，约需一分钟…",
+      run: installService,
+    },
+    host: { label: "去接入宿主", to: "/settings/#hosts" },
+    members: { label: "去设置组员", to: "/settings/#members" },
+    try: { label: "复制示例指令", copy: SAMPLE },
+  };
+
+  function onboarding({ variant = "compact", onChange } = {}) {
+    const root = h("section.ob.ob-" + variant, {
+      "aria-labelledby": "ob-title",
+    });
+    root.hidden = true;
+    const ctrl = { el: root, data: null, visible: false };
+    let busy = null,
+      error = null,
+      sawIncomplete = false,
+      celebrating = false,
+      lastKey = "";
+
+    const allDone = (d) => d.steps.every((s) => s.done);
+    const shown = () =>
+      !!ctrl.data &&
+      !ctrl.data.dismissed &&
+      (celebrating || !allDone(ctrl.data));
+
+    function render() {
+      const was = ctrl.visible;
+      ctrl.visible = shown();
+      if (was !== ctrl.visible) onChange && onChange(ctrl.visible);
+      root.hidden = !ctrl.visible;
+      if (!ctrl.visible) {
+        lastKey = "";
+        return;
+      }
+      const key = JSON.stringify([
+        ctrl.data,
+        busy,
+        error,
+        celebrating,
+        variant,
+      ]);
+      if (key === lastKey) return;
+      lastKey = key;
+      const { steps } = ctrl.data;
+      const done = steps.filter((s) => s.done).length;
+      const current = steps.find((s) => !s.done);
+      const dismiss = h(
+        "button.ob-x",
+        {
+          type: "button",
+          "aria-label": "关闭“开始使用”",
+          title: "关闭后不再显示",
+        },
+        "×",
+      );
+      dismiss.addEventListener("click", onDismiss);
+      const head = h(
+        "header.ob-head",
+        {},
+        h(
+          "h2.ob-title",
+          { id: "ob-title" },
+          celebrating ? "都准备好了" : "开始使用",
+        ),
+        h(
+          "span.ob-count",
+          { "aria-label": `已完成 ${done} 步，共 ${steps.length} 步` },
+          `${done}/${steps.length}`,
+        ),
+        dismiss,
+      );
+      const bar = h(
+        "div.ob-bar",
+        { "aria-hidden": "true" },
+        steps.map((s) => h("i" + (s.done ? ".on" : ""))),
+      );
+      const kids = [head, bar];
+      if (celebrating) {
+        kids.push(
+          h("p.ob-lead", {}, "接入和设置都完成了，这张卡片几秒后自动收起。"),
+        );
+      } else {
+        if (variant === "full")
+          kids.push(
+            h(
+              "p.ob-lead",
+              {},
+              "完成这几步，群聊就会开始出现主控与组员的对话。",
+            ),
+          );
+        kids.push(
+          h(
+            "ol.ob-steps",
+            {},
+            steps.map((s) => stepNode(s, s === current)),
+          ),
+        );
+      }
+      root.replaceChildren(...kids);
+    }
+
+    function stepNode(step, isCurrent) {
+      const cls = step.done ? ".done" : isCurrent ? ".current" : "";
+      const name = TITLES[step.id] || step.id;
+      const detail = step.detail || (step.done ? "" : FALLBACK[step.id]);
+      const kids = [
+        h("span.ob-ind", { "aria-hidden": "true" }),
+        h(
+          "div.ob-body",
+          {},
+          h(
+            "b.ob-name",
+            {},
+            name,
+            h(
+              "span.sr-only",
+              {},
+              step.done
+                ? "（已完成）"
+                : isCurrent
+                  ? "（当前步骤）"
+                  : "（未完成）",
+            ),
+          ),
+          detail && h("span.ob-detail", {}, detail),
+        ),
+      ];
+      const li = h("li.ob-step" + cls, {}, ...kids);
+      if (isCurrent) {
+        const body = li.querySelector(".ob-body");
+        const act = ACTION[step.id];
+        if (act) body.append(h("div.ob-act", {}, actionNode(step.id, act)));
+        if (error && error.step === step.id)
+          body.append(h("p.ob-err", { role: "alert" }, error.message));
+      }
+      return li;
+    }
+
+    function actionNode(id, act) {
+      if (act.to)
+        return h(
+          "a.ob-btn",
+          { href: href(act.to) },
+          act.label,
+          h("span", { "aria-hidden": "true" }, " →"),
+        );
+      const pending = busy === id;
+      const btn = h(
+        "button.ob-btn" + (pending ? ".pending" : ""),
+        { type: "button", disabled: pending },
+        pending ? [h("i.ob-spin"), act.busy] : error && error.step === id && act.run ? "重试" : act.label,
+      );
+      btn.addEventListener("click", async () => {
+        if (act.copy) {
+          try {
+            await navigator.clipboard.writeText(act.copy);
+          } catch {
+            setText(btn, "复制失败");
+            setTimeout(() => setText(btn, act.label), 2000);
+            return;
+          }
+          setText(btn, "已复制");
+          setTimeout(() => setText(btn, act.label), 2000);
+          return;
+        }
+        busy = id;
+        error = null;
+        render();
+        try {
+          await act.run();
+        } catch (e) {
+          error = { step: id, message: `${e.message || "操作失败"}` };
+        }
+        busy = null;
+        await refresh();
+      });
+      return btn;
+    }
+
+    async function onDismiss() {
+      try {
+        await post("/app/onboarding/dismiss", {});
+        ctrl.data = { ...ctrl.data, dismissed: true };
+      } catch {
+        error = {
+          step: (ctrl.data.steps.find((s) => !s.done) || {}).id,
+          message: "没能关闭，请稍后再试。",
+        };
+      }
+      render();
+    }
+
+    async function refresh() {
+      if (busy) return;
+      try {
+        ctrl.data = await load("/app/onboarding");
+      } catch {
+        return; // keep what is shown; the next poll retries
+      }
+      if (!allDone(ctrl.data)) sawIncomplete = true;
+      else if (sawIncomplete && !celebrating && !ctrl.data.dismissed) {
+        celebrating = true;
+        setTimeout(() => {
+          celebrating = false;
+          sawIncomplete = false;
+          render();
+        }, 4000);
+      }
+      render();
+    }
+    ctrl.refresh = refresh;
+    ctrl.setVariant = (next) => {
+      if (next === variant) return;
+      variant = next;
+      root.className = "ob ob-" + variant;
+      lastKey = "";
+      render();
+    };
+    ctrl.start = () => AN.poll(refresh, 15000); // not the 1.5 s loop: the server reads host configs
+    return ctrl;
+  }
+
+  Object.assign(AN, { post, installService, onboarding });
+})();

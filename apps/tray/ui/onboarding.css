@@ -1,0 +1,243 @@
+/* "开始使用" card. Shared by the chat page (compact, group-list sidebar; full, empty main pane) and the
+   menu panel (full, empty state). Uses only variables both stylesheets define:
+   --ink --soft --muted --faint --line --card --card-hover --accent --accent-ink --done --bad --solid */
+.ob {
+  position: relative;
+  padding: 12px 12px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--ink);
+  text-align: left;
+}
+.ob[hidden] {
+  display: none;
+}
+.ob-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ob-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.ob-count {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ob-x {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.ob-x:hover {
+  background: var(--card-hover);
+  color: var(--ink);
+}
+.ob-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  margin-top: 8px;
+}
+.ob-bar i {
+  height: 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--faint) 40%, transparent);
+}
+.ob-bar i.on {
+  background: var(--accent);
+}
+.ob-lead {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.ob-steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.ob-step {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 9px;
+  padding: 5px 0;
+}
+.ob-ind {
+  position: relative;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--faint);
+}
+.ob-step.done .ob-ind {
+  background: var(--done);
+  border-color: var(--done);
+}
+.ob-step.done .ob-ind::after {
+  content: "";
+  position: absolute;
+  left: 4.5px;
+  top: 1.5px;
+  width: 3px;
+  height: 6.5px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.ob-step.current .ob-ind {
+  border-color: var(--accent);
+}
+.ob-step.current .ob-ind::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ob-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ob-name {
+  font-size: 12.5px;
+  font-weight: 620;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.ob-step.done .ob-name {
+  color: var(--muted);
+  font-weight: 550;
+}
+.ob-step:not(.done):not(.current) .ob-name {
+  color: var(--soft);
+}
+.ob-detail {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.ob-compact .ob-step.done .ob-detail {
+  display: none;
+}
+.ob-act {
+  margin-top: 7px;
+}
+.ob-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ob-btn:hover:enabled,
+a.ob-btn:hover {
+  filter: brightness(1.07);
+  color: var(--accent-ink);
+}
+.ob-btn:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+.ob-spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--accent-ink) 35%, transparent);
+  border-top-color: var(--accent-ink);
+  animation: ob-spin 0.8s linear infinite;
+}
+@keyframes ob-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ob-err {
+  margin: 7px 0 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 28%, transparent);
+}
+
+/* full: empty main pane of the chat page, empty state of the menu panel */
+.ob-full {
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 16px 18px 12px;
+}
+.ob-full .ob-title {
+  font-size: 14.5px;
+}
+.ob-full .ob-steps {
+  margin-top: 6px;
+}
+.ob-full .ob-step {
+  padding: 9px 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 11px;
+}
+.ob-full .ob-step + .ob-step {
+  border-top: 1px solid var(--line);
+}
+.ob-full .ob-ind {
+  width: 18px;
+  height: 18px;
+  margin-top: 0;
+}
+.ob-full .ob-step.done .ob-ind::after {
+  left: 5.5px;
+  top: 2px;
+}
+.ob-full .ob-step.current .ob-ind::after {
+  inset: 3.5px;
+}
+.ob-full .ob-name {
+  font-size: 13px;
+}
+.ob-full .ob-detail {
+  font-size: 12px;
+  -webkit-line-clamp: 3;
+}
+.ob-full .ob-btn {
+  padding: 6px 14px;
+  font-size: 12.5px;
+}

@@ -3,8 +3,10 @@
 
 mod data;
 mod detect;
+mod hosts;
 mod manage;
 mod members;
+mod onboarding;
 mod stage;
 mod update;
 
@@ -67,6 +69,15 @@ fn main() {
                 let reply = match (method, path.as_str()) {
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
                     ("GET", "/settings/members") => reader.members(refresh),
+                    (_, "/app/service/install") if method != "POST" => {
+                        data::Response::error(405, "此操作只接受 POST")
+                    }
+                    (_, "/app/service/install") if action != Some("1") => {
+                        data::Response::error(403, "缺少操作请求头")
+                    }
+                    (_, "/app/service/install") => {
+                        data::Response::json(&update::install_service_now(&app))
+                    }
                     (_, "/app/update/check" | "/app/update/apply") if method != "POST" => {
                         data::Response::error(405, "此操作只接受 POST")
                     }
@@ -97,6 +108,8 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle();
+            let host_context = hosts::Context::live(handle.path().app_data_dir()?);
+            let takeover = reader.clone();
             build_panel(handle)?;
             let overview = reader.overview();
             // Left click opens the panel; right click shows this short menu.
@@ -144,7 +157,14 @@ fn main() {
             let handle = handle.clone();
             let checker = handle.clone();
             let resumer = handle.clone();
-            thread::spawn(move || update::resume(&resumer));
+            thread::spawn(move || {
+                let shell = takeover.probe_tools(&host_context);
+                thread::spawn(move || {
+                    takeover.configure_hosts(host_context, shell);
+                    takeover.refresh_hosts();
+                });
+                update::resume(&resumer);
+            });
             thread::spawn(move || poll(handle, reader, overview));
             thread::spawn(move || {
                 loop {
@@ -249,7 +269,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
             // The panel stays open: its notice shows the progress or "已复制".
             "/app/update" => update::act(&app),
             "/app/upgrade-service" => update::upgrade_service(&app),
-            "/app/copy-service-command" => update::copy_service_command(),
+            "/app/copy-service-command" => update::copy_service_command(&app),
             _ => {
                 if let Some(panel) = app.get_webview_window(PANEL) {
                     let _ = panel.hide();

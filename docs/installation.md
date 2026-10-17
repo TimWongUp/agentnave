@@ -213,6 +213,35 @@ example for hosts that document this shape, not a universal MCP configuration st
 unrelated server entries. JSON does not expand shell variables. Codex uses its own configuration
 format; register it with the official CLI command below instead of copying this JSON into Codex.
 
+### 由 App 接入（保留下方手动方式）
+
+托盘设置的“宿主接入”分区管理用户级 `agentnave`：默认工作室入口，高级中可切到核心，并可保存该宿主的绝对配置根目录。根目录依次取 App 用户覆盖（`user`）、GUI 环境变量（`env`）、登录 shell 探测（`shell`）、默认值（`default`）。覆盖和首次发现时间保存在 App 自有数据目录的 `hosts.json`；恢复自动仅移除覆盖，不删除宿主配置。
+
+登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存或迁移的组员设置、带 manager_session 的记录计算。
+
+启动及刷新只接管已有条目：补宿主标识，命令确实缺失时修复同类 launcher；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。所有宿主在完成 App 真实接入验收前均为“未实测”。
+
+十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。JSON/JSONC 保留非目标区间，TOML 使用保留格式的编辑，Hermes 定点编辑 YAML 块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，全局保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
+
+MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。外部 Skill（包括符号链接）仅显示 external，跳过写入，不影响宿主接入状态或 MCP 接入、移除；只有实际写入 App 管理的 Skill 时才检查该路径。App 只更新版本标记与内容清单匹配的 Skill 副本；外部内容不覆盖，目录未知返回 manual。接入及刷新会更新 App 管理的旧版副本。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
+
+| 宿主 ID | App 写入格式 | 默认 MCP 配置 | Skill 根目录 | tested |
+| --- | --- | --- | --- | --- |
+| codex | TOML 定点编辑 | `${CODEX_HOME:-~/.codex}/config.toml` | 同配置根目录的 `skills` | false |
+| claude | JSON 定点编辑 | `~/.claude.json`；设置 `CLAUDE_CONFIG_DIR` 时为该目录的 `.claude.json` | `${CLAUDE_CONFIG_DIR:-~/.claude}/skills` | false |
+| codebuddy | JSON 定点编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/.mcp.json` | 同配置根目录的 `skills` | false |
+| workbuddy | JSON 定点编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.workbuddy}/mcp.json` | 同配置根目录的 `skills` | false |
+| grok | TOML 定点编辑 | `${GROK_HOME:-~/.grok}/config.toml` | 同配置根目录的 `skills` | false |
+| antigravity | JSON 定点编辑 | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills` | false |
+| pi | JSON 定点编辑 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置根目录的 `skills` | false |
+| gemini | JSON 定点编辑 | `~/.gemini/settings.json`，`mcpServers` | `~/.gemini/skills` | false |
+| opencode | JSON/JSONC 定点编辑 | `~/.config/opencode/opencode.json(c)`；支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 App 覆盖 | 有效根目录的 `skills` | false |
+| hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置根目录的 `skills` | false |
+
+layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义（包括 OpenCode 的全局、环境覆盖、App 覆盖），逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
+
+Pi 的 `agentDir/skills` 已从安装包代码核实；Hermes 新条目 `enabled: true` 且省略工具过滤表示启用全部工具，接管保留原 `include/exclude`，尤其 `include: []`。Gemini 与 OpenCode 按 [Gemini MCP](https://geminicli.com/docs/tools/mcp-server/)、[Gemini Skill](https://geminicli.com/docs/cli/using-agent-skills/)、[OpenCode MCP](https://opencode.ai/docs/mcp-servers/) 和 [OpenCode Skill](https://opencode.ai/docs/skills/) 官方文档实现，这些信息不是 App 接入实测证据。Hermes 流式 MCP 映射、锚点/别名、文档指令等结构仍拒绝自动写入并提示手动处理。真正的 MCP/Skill 发现须按第 5 节验证。
+
 ### Codex
 
 ```bash
@@ -345,10 +374,14 @@ configuration directories.
 | --- | --- |
 | Codex | `~/.codex/skills` |
 | Claude Code | `~/.claude/skills` |
+| CodeBuddy Code | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/skills` |
 | WorkBuddy | `~/.workbuddy/skills` |
 | Grok CLI | `~/.grok/skills` |
 | Antigravity | `~/.gemini/config/skills` |
 | Hermes | `~/.hermes/skills` |
+| Pi | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` |
+| Gemini CLI | `~/.gemini/skills`（官方文档，未实测） |
+| OpenCode | 有效配置目录的 `skills`，默认 `~/.config/opencode/skills`（未实测） |
 
 First inspect the host's effective Skill discovery locations and any existing deployment-manager
 entry. Check `agentnave-manager` in both user and project scopes, its source/release, and all of

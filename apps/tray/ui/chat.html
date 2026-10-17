@@ -7,6 +7,7 @@
 <title>AgentNave · 群聊</title>
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="/chat/chat.css">
+<link rel="stylesheet" href="/chat/onboarding.css">
 <script src="/chat/common.js" defer></script>
 <script src="/chat/mock.js" defer></script>
 <script src="/chat/chat.js" defer></script>
@@ -25,7 +26,7 @@
 <div id="app" class="app" data-view="list">
   <aside class="side" aria-label="群列表">
     <div class="side-head"><h1>群聊</h1><span id="side-count" class="side-count"></span></div>
-    <div id="list" class="gl"></div>
+    <div class="gl-wrap"><div id="onboard-side" class="ob-slot"></div><div id="list" class="gl"></div></div>
   </aside>
   <main id="pane" class="chat-main">
     <header id="head" class="gh" hidden></header>

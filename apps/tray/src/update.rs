@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::hosts::ToolDirs;
 use serde_json::{Value, json};
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Wry};
@@ -43,6 +44,7 @@ enum Upgrade {
     #[default]
     Idle,
     Running,
+    Installing,
     Done(Instant),
     Failed(String),
 }
@@ -65,7 +67,7 @@ impl State {
 
     fn busy(&self) -> bool {
         matches!(self.phase, Phase::Checking | Phase::Installing(_))
-            || matches!(self.upgrade, Upgrade::Running)
+            || matches!(self.upgrade, Upgrade::Running | Upgrade::Installing)
     }
 }
 
@@ -157,7 +159,7 @@ impl Updates {
     /// Mark the service upgrade as running, unless it already is or the app is installing.
     fn claim_upgrade(&self) -> bool {
         let mut state = self.lock();
-        if state.installing() || matches!(state.upgrade, Upgrade::Running) {
+        if state.installing() || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing) {
             return false;
         }
         state.upgrade = Upgrade::Running;
@@ -223,7 +225,7 @@ pub fn check_now(app: &AppHandle) -> Value {
 /// (see `act`), otherwise upgrade an older service now. While a check, an install or a service
 /// upgrade is running it only reports the status.
 pub fn apply(app: &AppHandle) -> Value {
-    let outdated = service(&tool_dir()).is_object();
+    let outdated = service_for_app(app).is_object();
     match app.state::<Updates>().claim(true, outdated) {
         Claim::Install(update) => install(app, *update),
         Claim::Upgrade => {
@@ -237,7 +239,7 @@ pub fn apply(app: &AppHandle) -> Value {
 
 /// At start: run the service upgrade a one-click update left for after its restart.
 pub fn resume(app: &AppHandle) {
-    if marker_dir(app).is_some_and(|dir| take_marker(&dir)) && service(&tool_dir()).is_object() {
+    if marker_dir(app).is_some_and(|dir| take_marker(&dir)) && service_for_app(app).is_object() {
         upgrade_service(app);
     }
 }
@@ -328,7 +330,7 @@ pub fn status(app: &AppHandle) -> Value {
     json!({
         "version": VERSION,
         "update": update,
-        "service": service_state(service(&tool_dir()), upgrade),
+        "service": service_state(service_for_app(app), upgrade),
         "last_checked": checked.map(rfc3339),
     })
 }
@@ -336,14 +338,12 @@ pub fn status(app: &AppHandle) -> Value {
 /// The outdated note combined with what a one-click upgrade is doing or did.
 fn service_state(mut service: Value, upgrade: Upgrade) -> Value {
     match upgrade {
+        Upgrade::Installing => service = json!({"state": "installing", "error": null}),
         Upgrade::Running => {
             let version = service.get("version").cloned().unwrap_or(Value::Null);
             service = json!({"state": "upgrading", "version": version, "error": null});
         }
-        Upgrade::Failed(error) if service.is_object() => {
-            service["state"] = json!("failed");
-            service["error"] = json!(error);
-        }
+        Upgrade::Failed(error) => service = json!({"state": "failed", "error": error}),
         Upgrade::Done(at) if service.is_null() && at.elapsed() < UPGRADED_NOTE => {
             service = json!({"state": "done", "version": VERSION, "error": null});
         }
@@ -353,7 +353,7 @@ fn service_state(mut service: Value, upgrade: Upgrade) -> Value {
 }
 
 /// UTC `YYYY-MM-DDTHH:MM:SSZ`.
-fn rfc3339(at: SystemTime) -> String {
+pub(crate) fn rfc3339(at: SystemTime) -> String {
     let seconds = at
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
@@ -385,28 +385,56 @@ pub fn upgrade_service(app: &AppHandle) {
 }
 
 fn finish_upgrade(app: &AppHandle) {
-    let outcome = install_service();
+    let outcome = (|| {
+        let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
+        let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
+        install_service(&uv, &dirs)
+    })();
     app.state::<Updates>().lock().upgrade = match outcome {
         Ok(()) => Upgrade::Done(Instant::now()),
         Err(error) => Upgrade::Failed(error),
     };
 }
 
-fn install_service() -> Result<(), String> {
-    let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
-    if tool_dir().is_some_and(|tools| tools.join("agentnave-studio").is_dir()) {
-        run(&uv, &["tool", "uninstall", "agentnave-studio"])?;
+pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
+    if dirs.tools.join("agentnave-studio").is_dir() {
+        run(uv, &["tool", "uninstall", "agentnave-studio"], dirs)?;
     }
     let source = format!("git+{REPOSITORY}@v{VERSION}");
     run(
-        &uv,
+        uv,
         &["tool", "install", "--force", "--python", "3.12", &source],
+        dirs,
     )
 }
 
-fn run(uv: &Path, args: &[&str]) -> Result<(), String> {
+pub fn service_command() -> String {
+    format!("uv tool install --force --python 3.12 \"git+{REPOSITORY}@v{VERSION}\"")
+}
+
+/// Claim before spawning, so POST returns immediately and progress is visible on the next GET.
+pub fn install_service_now(app: &AppHandle) -> Value {
+    let updates = app.state::<Updates>();
+    {
+        let mut state = updates.lock();
+        if state.busy() {
+            return json!({"ok": false, "message": "已有更新或安装正在进行"});
+        }
+        state.upgrade = Upgrade::Installing;
+    }
+    let app = app.clone();
+    thread::spawn(move || finish_upgrade(&app));
+    json!({"ok": true, "message": "正在安装本机服务"})
+}
+
+fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
     let mut command = Command::new(uv);
-    command.args(args);
+    command
+        .args(args)
+        .env("HOME", &dirs.home)
+        .env("UV_TOOL_DIR", &dirs.tools)
+        .env("UV_TOOL_BIN_DIR", &dirs.bin)
+        .stdin(std::process::Stdio::null());
     // Apps started from the Finder get a bare PATH; uv needs git to fetch the release.
     #[cfg(not(windows))]
     if let Some(dir) = uv.parent() {
@@ -459,22 +487,17 @@ fn find_uv() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
-/// The `uv` tool directory, following uv's own defaults.
-fn tool_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("UV_TOOL_DIR") {
-        return Some(PathBuf::from(dir));
-    }
-    #[cfg(windows)]
-    return dirs::data_dir().map(|dir| dir.join("uv").join("data").join("tools"));
-    #[cfg(not(windows))]
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".local").join("share")))
-        .map(|dir| dir.join("uv").join("tools"))
+/// Read exactly the cached roots used by Hosts; GET/status never probes a shell.
+fn service_dirs(app: &AppHandle) -> Option<ToolDirs> {
+    app.state::<crate::Tray>().reader.tool_dirs()
+}
+
+fn service_for_app(app: &AppHandle) -> Value {
+    service(&service_dirs(app).map(|dirs| dirs.tools))
 }
 
 /// A note with the upgrade command when the installed service is older than this app.
-fn service(tools: &Option<PathBuf>) -> Value {
+pub(crate) fn service(tools: &Option<PathBuf>) -> Value {
     let Some(tools) = tools else {
         return Value::Null;
     };
@@ -527,8 +550,8 @@ fn parse(version: &str) -> Vec<u64> {
 }
 
 /// Put the service upgrade command on the clipboard.
-pub fn copy_service_command() {
-    let Some(command) = service(&tool_dir())["command"].as_str().map(str::to_owned) else {
+pub fn copy_service_command(app: &AppHandle) {
+    let Some(command) = service_for_app(app)["command"].as_str().map(str::to_owned) else {
         return;
     };
     #[cfg(target_os = "macos")]
@@ -597,7 +620,14 @@ mod tests {
             service_state(Value::Null, Upgrade::Done(Instant::now()))["state"],
             "done"
         );
-        assert!(service_state(Value::Null, Upgrade::Failed("x".into())).is_null());
+        assert_eq!(
+            service_state(Value::Null, Upgrade::Failed("x".into())),
+            json!({"state":"failed", "error":"x"})
+        );
+        assert_eq!(
+            service_state(Value::Null, Upgrade::Installing)["state"],
+            "installing"
+        );
     }
 
     #[test]

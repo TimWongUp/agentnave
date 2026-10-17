@@ -508,16 +508,13 @@ function updateControls() {
 // Switch tabs
 function setTab(tab) {
   currentTab = tab;
-  $("tab-members").classList.toggle("active", tab === "members");
-  $("tab-members").setAttribute("aria-selected", tab === "members" ? "true" : "false");
-  $("tab-updates").classList.toggle("active", tab === "updates");
-  $("tab-updates").setAttribute("aria-selected", tab === "updates" ? "true" : "false");
-  $("pane-members").hidden = tab !== "members";
-  $("pane-updates").hidden = tab !== "updates";
-
-  if (tab === "updates") {
-    loadStatus();
+  for (const id of ["members", "hosts", "updates"]) {
+    $("tab-" + id).classList.toggle("active", tab === id);
+    $("tab-" + id).setAttribute("aria-selected", String(tab === id));
+    $("tab-" + id).setAttribute("aria-controls", "pane-" + id);
+    $("pane-" + id).hidden = tab !== id;
   }
+  if (tab === "updates") loadStatus();
 }
 
 // Switch mode
@@ -1567,12 +1564,12 @@ function renderUpdates() {
       serviceInfo.state === "outdated" ||
       (serviceInfo.version && isVersionOlder(serviceInfo.version, appStatus.version));
 
-    if (serviceInfo.state === "upgrading") {
+    if (["upgrading", "installing"].includes(serviceInfo.state)) {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag upgrading";
-      serviceBadge.textContent = "正在升级…";
+      serviceBadge.textContent = serviceInfo.state === "installing" ? "正在安装…" : "正在升级…";
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "正在从 GitHub 升级本机服务，约需一分钟…";
+      serviceMsg.textContent = "正在从 GitHub 安装或升级本机服务，约需一分钟…";
     } else if (serviceInfo.state === "failed") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag failed";
@@ -1611,7 +1608,7 @@ function renderUpdates() {
   const isUpdating =
     updateInfo?.state === "checking" ||
     updateInfo?.state === "installing" ||
-    serviceInfo?.state === "upgrading";
+    ["upgrading", "installing"].includes(serviceInfo?.state);
 
   const btnCheck = $("btn-check-update");
   const btnApply = $("btn-apply-update");
@@ -1642,8 +1639,8 @@ function renderUpdates() {
       progressText.textContent = "正在检查更新…";
     } else if (updateInfo?.state === "installing") {
       progressText.textContent = "正在下载 App 更新并准备重启…";
-    } else if (serviceInfo?.state === "upgrading") {
-      progressText.textContent = "正在升级本机服务，约需一分钟…";
+    } else if (["upgrading", "installing"].includes(serviceInfo?.state)) {
+      progressText.textContent = "正在安装或升级本机服务，约需一分钟…";
     }
   } else {
     progressBox.hidden = true;
@@ -1672,6 +1669,7 @@ async function loadStatus() {
   try {
     appStatus = await apiGetStatus();
     renderUpdates();
+    window.dispatchEvent(new CustomEvent("agentnave:status", { detail: appStatus }));
   } catch (err) {
     showNotice(`获取版本状态失败: ${err.message}`, true);
   }
@@ -1705,8 +1703,10 @@ async function triggerApplyUpdate() {
 }
 
 // Bind top-level event listeners
-$("tab-members").addEventListener("click", () => setTab("members"));
-$("tab-updates").addEventListener("click", () => setTab("updates"));
+for (const tab of ["members", "hosts", "updates"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
+window.addEventListener("hashchange", () => setTab(["hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members"));
+setTab(["hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members");
+
 $("mode-task").addEventListener("click", () => setMode("task"));
 $("mode-discussion").addEventListener("click", () => setMode("discussion"));
 $("mode-restrict-toggle").addEventListener("change", (e) => toggleModeRestricted(e.target.checked));

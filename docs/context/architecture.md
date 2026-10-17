@@ -30,11 +30,11 @@ Windows 第一版只依赖环境标记及其 PID 存活检查，标记被过滤�
 
 ## 安装与激活边界
 
-运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，App 维护按模式生效的组员默认值，Skill 按说明选择组员；CLI 参考文件仅提供补充指引。MCP instructions 与 Tool 描述只保留轻量调用合同，`describe_provider` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。
+运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，App 维护按模式生效的组员默认值，Skill 按说明选择组员；CLI 参考文件仅提供补充指引。MCP instructions 与 Tool 描述只保留轻量调用合同，`describe_provider` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 可由 App 安装内嵌副本，或由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。
 
 Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。两个 launcher 都先启动只用标准库的中继，由它把服务作为子进程运行并转发 STDIO；安装指纹变化后，中继在两侧无在途请求、无运行中或未读结果的 Invocation、核心未开过协作组时，重放宿主握手换用新子进程，宿主不断线（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
-MCP Host 拥有 AgentNave 的注册、作用域、启停、移除；能使用 Host 官方管理接口时，不由 AgentNave 直接修改其配置文件。安装运行时不会自动写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，Invocation 句柄是进程内对象。工作室另在数据根保存会话历史；卸载不自动删除历史。
+MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用户级 `agentnave` 注册及自身安装的 Skill（[ADR-0015](../adr/0015-app-host-integration.md)），由 App 定点编辑并校验，不调用宿主 CLI 写配置。安装 Python 运行时本身不会写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，Invocation 句柄是进程内对象。工作室另在数据根保存会话历史；卸载不自动删除历史。
 
 ## 稳定合同
 
@@ -133,3 +133,17 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 托盘设置使用独立 `/settings/` 页面，与 `/manage/` 在主窗口互相可达，入口为托盘右键“设置…”。托盘是数据根下 `members.json`（版本 1，结构见服务端组员合同）的唯一写入方（[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）。`GET /settings/members` 返回文档、错误、是否刚完成迁移、跳过的旧档案与各 CLI 探测结果；文件损坏时返回空文档与原因，页面禁止保存。首次读取时若只有 `profiles.json`，把每条档案迁移为共享模型配置（不创建 `modes`，两种模式保持不受限，但被迁移模型此后调用时开始套用其默认 effort 与参数；权限类参数不迁移，与无模型、重复的档案一起列入 `migration_skipped`；不改变已有宿主 MCP 配置），写入后把旧文件改名为 `profiles.json.migrated`。这是 GET 不写文件的唯一例外，以互斥锁串行化。`POST /app/members` 要求 `X-AgentNave-Action: 1`，只做与服务端一致的结构与引用校验（顶层 `version`、`clis`、`modes` 以及各 CLI 与模式条目的 `models` 必填，未知键或字段、引用未配置的模型、默认模型不在允许列表、默认 effort 不在允许档位；覆盖的模型只需已配置；另拒绝空白模型 ID），不做 Provider 语义校验（由服务的 `list_members` 负责，服务无配置写入工具）；通过同目录唯一临时文件写入、sync 与 rename 原子替换，失败清理临时文件并保留原目标；不会触碰会话文件。整份文件保存，并发编辑最后写入者生效。
 
 探测覆盖六个 Provider：可执行文件查找与 Python Adapter 相同；Codex 读取 `models_cache.json` 的可见模型及各模型的努力档位，Grok、Antigravity、Pi 运行各自的列举命令，CodeBuddy 解析 `--help` 中 `--model` 的支持列表，Claude 只给出别名。命令以空 stdin、系统临时目录为 cwd、补齐 PATH（同上顺序）并行运行，各在独立进程组中运行、15 秒超时后整组终止，不发起模型调用；结果缓存在内存，`?refresh=1` 重新探测。保持自定义协议、IPC 与 CSP 的既有边界，共享浏览器看板不增加设置或写入接口。
+
+## 托盘宿主接入
+
+App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`。检测查可执行文件与已知应用包，保留的配置目录不单独证明仍安装。返回 `absent|available|connected|needs_attention|orphaned`，隐藏 absent；完好且命令可解析的已有条目即为 connected，用 has_host_env 表示是否已接管。命令按条目 env.PATH 解析，无法确定为 command_state=unknown，不自动替换。所有宿主暂为 tested=false；connected 不证明已加载工具、登录或模型可用。
+
+根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 只保存宿主根目录覆盖和 first_seen。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。
+
+启动和 POST /app/hosts/refresh 接管已有条目：只补宿主标识，确知命令缺失且 uv 工具环境中存在同类入口时修复路径，保留原 core/studio 选择、参数、环境、启停与工具过滤。失败抑制签名仅包含宿主、有效配置路径、目标条目规范化内容和操作类型，无关字段变化不触发重试；last_action 保留至下一次真实操作，attention 给出结构化原因。项目级只提示，检查范围为 App 启动目录及其祖先。
+
+十个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，全局保留最近 30 份。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回各用户、覆盖与项目层；移除遍历全部用户层并逐个备份，项目层不写，多层独立替换不构成原子整体。
+
+构建时嵌入完整同版本 agentnave-manager。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
+
+GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|entry|root 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
