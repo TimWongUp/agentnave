@@ -28,6 +28,8 @@ type Fingerprint = tuple[tuple[str, int], ...]
 type Message = dict[str, Any]
 
 INTERVAL = 5.0
+_RETRY_LIMIT = 300.0
+_BUSY_REPORT = 600.0
 _PROBE_SECONDS = 15.0
 _START_SECONDS = 60.0
 _STOP_SECONDS = 15.0
@@ -68,11 +70,14 @@ class _Child:
         command: Sequence[str],
         on_line: Callable[[_Child, bytes], None],
         *,
+        env: dict[str, str] | None = None,
         retiring: bool = False,
     ) -> None:
         # A child that is not yet serving, or no longer, may exit without ending the relay.
         self.retiring = retiring
-        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env
+        )
         self.outbox: queue.Queue[bytes | None] = queue.Queue()
         threading.Thread(target=self._write, daemon=True).start()
         threading.Thread(target=self._read, args=(on_line,), daemon=True).start()
@@ -131,8 +136,10 @@ class Relay:
         stdin: BinaryIO,
         stdout: BinaryIO,
         interval: float,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.command = list(command)
+        self.env = env
         self.pin = pin
         self.site = site
         self.stdin = stdin
@@ -151,25 +158,57 @@ class Relay:
         self.replies: dict[str, queue.Queue[Message]] = {}
         self.sequence = 0
         self.code = 0
-        self.child = _Child(self.command, self._from_child)
+        self.child = _Child(self.command, self._from_child, env=self.env)
 
     def run(self) -> int:
         threading.Thread(target=self._from_host, daemon=True).start()
         installed = fingerprint(self.site)
         candidate: Fingerprint | None = None
+        retry_delay = self.interval
+        retry_at = 0.0
+        since = 0.0
+        reported = False
         while not self.stopped.wait(self.interval):
             seen = fingerprint(self.site)
             if seen is None or seen == installed:
                 candidate = None
                 continue
             if seen != candidate:
-                candidate = seen  # wait one more interval for the install to settle
+                # Wait one more interval for the install to settle.
+                candidate, retry_delay, retry_at, since, reported = (
+                    seen,
+                    self.interval,
+                    0.0,
+                    time.monotonic(),
+                    False,
+                )
+                continue
+            if time.monotonic() < retry_at:
                 continue
             outcome = self._swap()
-            if outcome != "busy":
-                # Swapped, or the new install failed to start: retry only after it changes again.
+            if outcome == "swapped":
                 installed = seen
+            elif outcome == "failed":
+                # A new install may fail to start once (e.g. still being written); back off, retry.
+                retry_delay = min(_RETRY_LIMIT, retry_delay * 2)
+                retry_at = time.monotonic() + retry_delay
+            elif not reported and time.monotonic() - since > _BUSY_REPORT:
+                reported = True
+                print(f"agentnave relay: update waiting, {self._busy_reason()}", file=sys.stderr)
         return self.code
+
+    def _busy_reason(self) -> str:
+        with self.lock:
+            if self.initialize is None or self.initialized is None:
+                return "the host has not finished the MCP handshake"
+            if self.pinned:
+                return "a core group is open on this connection"
+            if self.host_pending or self.child_pending:
+                return (
+                    f"{len(self.host_pending)} host and {len(self.child_pending)} server "
+                    "requests are unanswered"
+                )
+        return "an invocation is running or holds an unread result"
 
     # Host -> child
 
@@ -291,7 +330,7 @@ class Relay:
                 if not self._quiet() or self.stopped.is_set():
                     return "busy"
             try:
-                new = _Child(self.command, self._from_child, retiring=True)
+                new = _Child(self.command, self._from_child, env=self.env, retiring=True)
             except OSError:
                 return "failed"
             params = _object(self.initialize.get("params")) or {}
@@ -334,6 +373,7 @@ def serve(
     stdin: BinaryIO | None = None,
     stdout: BinaryIO | None = None,
     interval: float = INTERVAL,
+    env: dict[str, str] | None = None,
 ) -> int:
     """Relay one host connection until the host closes it; returns the exit code."""
     return Relay(
@@ -343,4 +383,5 @@ def serve(
         stdin=stdin or sys.stdin.buffer,
         stdout=stdout or sys.stdout.buffer,
         interval=interval,
+        env=env,
     ).run()

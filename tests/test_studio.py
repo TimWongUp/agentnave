@@ -25,6 +25,7 @@ from agentnave_studio.store import (
     RoundRecord,
     SeatRecord,
     SeatRunRecord,
+    TaskRecord,
 )
 from agentnave_studio.studio import Studio
 
@@ -346,10 +347,6 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         assert argv[argv.index("--model") + 1] == "chosen"
         assert argv[argv.index("--effort") + 1] == "high"
         assert "--safe-mode" in cast(list[str], seen["argv"])
-        await _call(client, "update_conversation", {"conversation_id": group_id, "archived": True})
-        deleted = await _call(client, "delete_conversation", {"conversation_id": group_id})
-        assert not (data_root / "conversations" / group_id / "seats").exists()
-        assert deleted["retained_paths"] == [str(data_root / "conversations" / group_id)]
         # Host exclusions limit start_agent only; ordinary shows may seat the host CLI too.
         ordinary = await _call(
             client, "open_group", {"title": "Open", "cwd": str(tmp_path), "seats": seats}
@@ -366,7 +363,7 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
 
 
 @pytest.mark.asyncio
-async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_links(
+async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
     tmp_path: Path, data_root: Path
 ) -> None:
     async with Client(mcp) as client:
@@ -446,28 +443,59 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
             list[dict[str, object]], live_views[str(conversation_id)]["director"]["tasks"]
         )
         assert tasks_live[-1]["status"] == "running"
-        assert (
-            await client.call_tool(
-                "update_conversation", {"conversation_id": conversation_id, "archived": True}
-            )
-        ).is_error
         await _call(client, "cancel_agent", {"invocation_id": sleeping["invocation_id"]})
         await asyncio.sleep(0.05)  # let the collector save the cancelled task
-        assert (
-            await client.call_tool("delete_conversation", {"conversation_id": conversation_id})
-        ).is_error
-        await _call(
-            client, "update_conversation", {"conversation_id": conversation_id, "archived": True}
-        )
-        deleted = await _call(client, "delete_conversation", {"conversation_id": conversation_id})
-        assert deleted["forgotten_invocations"] == 3
-        assert (
-            await client.call_tool("wait_agent", {"invocation_id": first["invocation_id"]})
-        ).is_error
-        assert "dashboard_url" not in str(deleted)
-        assert not (directory / "views.json").exists()
-    assert not (directory / "state.json").exists()
     assert not list((data_root / "live").glob("*.json"))  # removed once nothing runs
+
+
+@pytest.mark.asyncio
+async def test_resume_uses_latest_binding_when_old_archived_history_duplicates_session(
+    tmp_path: Path, data_root: Path
+) -> None:
+    for conversation_id, time, archived in [
+        ("000-old", "2026-01-01T00:00:00+00:00", True),
+        ("999-new", "2026-01-02T00:00:00+00:00", False),
+    ]:
+        directory = data_root / "conversations" / conversation_id
+        record = Record.create(
+            directory,
+            Conversation(
+                id=conversation_id,
+                title=conversation_id,
+                kind="task",
+                created=time,
+                manager_session="a" * 32 if archived else "b" * 32,
+                tasks=[
+                    TaskRecord(
+                        id="saved",
+                        provider="claude",
+                        model="test-model",
+                        cwd=str(tmp_path),
+                        session_id="shared-session",
+                        status="succeeded",
+                        time=time,
+                    )
+                ],
+            ),
+        )
+        record.release()
+        path = directory / "state.json"
+        legacy = json.loads(path.read_text())
+        legacy["archived"] = archived
+        path.write_text(json.dumps(legacy))
+    studio = Studio(InvocationManager(), data_root)
+    try:
+        invocation, conversation = studio.start_task(
+            InvocationRequest("claude", "continue", tmp_path, "shared-session"), None, None
+        )
+        assert conversation == "999-new"
+        await studio.manager.wait(invocation)
+        await asyncio.gather(*studio.collectors)
+        assert len(studio.records["000-old"].state.tasks) == 1
+        assert len(studio.records["999-new"].state.tasks) == 2
+        assert studio.records["999-new"].state.manager_session == "b" * 32
+    finally:
+        await studio.close()
 
 
 @pytest.mark.asyncio
@@ -491,7 +519,7 @@ async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
             "third host",
         ]
         with pytest.raises(ValueError, match="Title must contain"):
-            second.update(conversation_id, "", None)
+            second.update(conversation_id, "")
         assert second.records[conversation_id].lock is None
 
         running = first.run(conversation_id, ["a"], "serial", "go", {"a": "SLEEP"})
@@ -591,7 +619,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
             terminal_saves += 1
             assert record.lock is not None
             with pytest.raises(ValueError, match="held by another"):
-                second.update(record.state.id, "too early", None)
+                second.update(record.state.id, "too early")
         save(record)
 
     try:
@@ -605,7 +633,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         await asyncio.gather(*first.collectors)
         assert result is not None and result.session_id
         assert terminal_saves == 1 and record.lock is None
-        second.update(conversation_id, "renamed elsewhere", None)
+        second.update(conversation_id, "renamed elsewhere")
         resumed, saved_id = second.start_task(
             InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
         )
@@ -746,33 +774,6 @@ async def test_cancel_rejects_a_publish_that_arrives_after_it(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlinks need extra privileges on Windows")
-@pytest.mark.asyncio
-async def test_delete_never_follows_symlinks_out_of_seat_folders(
-    tmp_path: Path, data_root: Path
-) -> None:
-    from agentnave.group import GroupSeat
-
-    studio = Studio(InvocationManager(), data_root)
-    seats = [GroupSeat("a", "claude", {}, tmp_path), GroupSeat("g", "antigravity", {}, tmp_path)]
-    record = studio.open_show("Iso", None, seats, review=False, isolated=True)
-    seat_dirs = data_root / "conversations" / record.state.id / "seats"
-    profile = seat_dirs / "g" / ".agents" / "agents" / "agentnave-discussion.md"
-    external = tmp_path / "external" / ".agents"
-    (external / "agents").mkdir(parents=True)
-    (external / "agents" / profile.name).write_bytes(profile.read_bytes())
-    profile.unlink()
-    for seat in ("a", "g"):
-        target = seat_dirs / seat / ".agents"
-        if target.exists():
-            (target / "agents").rmdir()
-            target.rmdir()
-        target.symlink_to(external, target_is_directory=True)
-    studio.update(record.state.id, None, True)
-    studio.delete(record.state.id)
-    assert (external / "agents" / profile.name).is_file()
-    await studio.close()
-
-
 @pytest.mark.asyncio
 async def test_failed_review_save_still_discards_after_restart(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
@@ -1080,11 +1081,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         renamed = await _call(
             client, "update_conversation", {"conversation_id": show["group_id"], "title": "Renamed"}
         )
-        assert renamed == {
-            "conversation_id": show["group_id"],
-            "title": "Renamed",
-            "archived": False,
-        }
+        assert renamed == {"conversation_id": show["group_id"], "title": "Renamed"}
     scans = 0
     original_scan = Studio.scan
 
@@ -1101,7 +1098,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         assert home["shows"][0]["title"] == "Renamed"
         assert "director_url" not in listed and "public_url" not in listed
         names = [tool.name for tool in (await client.list_tools()).tools]
-        assert len(names) == 17 and "open_dashboard" not in names
+        assert len(names) == 16 and "delete_conversation" not in names
         assert {"wait_any", "list_invocations", "list_members"} <= set(names)
 
     def fail(_self: Studio, *, history_loaded: bool = False) -> str:
@@ -1200,7 +1197,7 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
 async def test_studio_reuses_readonly_core_members(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 17 and "list_profiles" not in tools
+        assert len(tools) == 16 and "list_profiles" not in tools
         annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
         assert (await _call(client, "list_members", {}))["configured"] is False

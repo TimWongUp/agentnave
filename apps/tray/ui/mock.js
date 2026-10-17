@@ -328,7 +328,7 @@ All checks passed!
     const latest = [...members].sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))[0];
     return latest && FAILED.includes(latest.status) ? "failed" : "idle";
   }
-  const label = (g) => (g.host ? HOSTS[g.host] : "未知主控");
+  const label = (g) => (g.host ? HOSTS[g.host] : "未记录主控");
   const convStatus = (conv, w) => {
     const es = conv.specs.map((sp) => evalSpec(sp, w)).filter(Boolean);
     if (es.some((e) => e.status === "running")) return "running";
@@ -427,7 +427,7 @@ All checks passed!
       group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status,
       conversations: g.convs
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
-        .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w), director_url: `/c/${c.id}/` })),
+        .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
       members,
       messages: messagesOf(g, w),
     };
@@ -449,7 +449,7 @@ All checks passed!
     if (path === "/app/stage") return stage();
     if (path === "/app/chats") return chats();
     if (path === "/app/status") return status();
-    const m = /^\/app\/chats\/([^/?#]+)$/.exec(path);
+    const m = /^\/app\/chats\/([^/?#]+)(?:\/focus\/[^/?#]+)?$/.exec(path);
     if (m) return chat(decodeURIComponent(m[1]));
     throw Object.assign(new Error("404"), { status: 404 });
   }

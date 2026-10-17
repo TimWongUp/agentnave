@@ -612,7 +612,7 @@ impl Hosts {
             .map(|l| l["path"].clone());
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "grok" | "antigravity" | "hermes"),"skill":host.skill.as_ref().map(|p|skill::state(p,&self.context.home)).unwrap_or_else(||json!({"state":"manual","path":null,"version":null})),
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":host.skill.as_ref().map(|p|skill::state(p,&self.context.home)).unwrap_or_else(||json!({"state":"manual","path":null,"version":null})),
             "attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     pub fn cached_snapshot(&self) -> &Value {
@@ -729,7 +729,10 @@ impl Hosts {
                 Ok(changed || skill_changed)
             })();
             match result {
-                Ok(true) => self.record(host.id, Ok(()), "已接管条目或更新 Skill"),
+                Ok(true) => {
+                    let text = format!("已接管条目或更新 Skill{}", trust_hint(host.id));
+                    self.record(host.id, Ok(()), &text)
+                }
                 Ok(false) => {}
                 Err(error) => {
                     self.failed.insert(host.id.into(), signature);
@@ -863,11 +866,12 @@ impl Hosts {
             {
                 skill::install(path, &self.context.app, id, &self.context.home)?;
             }
-            Ok(if operation == "entry" {
-                "已切换入口".into()
+            let done = if operation == "entry" {
+                "已切换入口"
             } else {
-                "已接入；外部管理的 Skill 保留".into()
-            })
+                "已接入；外部管理的 Skill 保留"
+            };
+            Ok(format!("{done}{}", trust_hint(id)))
         })();
         let ok = result.is_ok();
         let text = result
@@ -931,6 +935,15 @@ impl Hosts {
 }
 fn attention(code: &str, message: &str) -> Value {
     json!({"code":code,"message":message})
+}
+/// Hosts that ask the user to trust an MCP entry again after its config changes.
+fn trust_hint(id: &str) -> &'static str {
+    match id {
+        "workbuddy" => {
+            "；WorkBuddy 会把改动后的条目停用，请到“自定义连接器 › MCP 服务管理”点“信任”"
+        }
+        _ => "",
+    }
 }
 fn message(error: &str) -> &str {
     error_parts(error, "takeover_failed").1

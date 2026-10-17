@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -10,12 +11,17 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from agentnave import relay as launcher
 from agentnave.relay import serve
 
-# A stand-in MCP server: refuses calls before the handshake, reports its pid, and is busy while
-# the file named in argv[1] exists.
+# A stand-in MCP server: refuses calls before the handshake, reports its pid and session, is busy
+# while the file named in argv[1] exists, and fails to start while argv[1] + ".broken" exists.
 FAKE_SERVER = """
 import json, os, sys
+if os.path.exists(sys.argv[1] + ".broken"):
+    sys.exit(1)
 ready = False
 for line in sys.stdin:
     message = json.loads(line)
@@ -31,13 +37,14 @@ for line in sys.stdin:
         busy = [{"status": "succeeded", "result_read": False}] if os.path.exists(sys.argv[1]) else []
         result = {"structuredContent": {"invocations": busy}}
     else:
-        result = {"structuredContent": {"pid": os.getpid()}}
+        session = os.environ.get("AGENTNAVE_MANAGER_SESSION")
+        result = {"structuredContent": {"pid": os.getpid(), "session": session}}
     print(json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}), flush=True)
 """
 
 
 class Host:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, env: dict[str, str] | None = None) -> None:
         script = tmp_path / "server.py"
         script.write_text(FAKE_SERVER)
         self.busy = tmp_path / "busy"
@@ -59,6 +66,7 @@ class Host:
                     stdin=relay_in,
                     stdout=relay_out,
                     interval=0.05,
+                    env=env,
                 )
             )
 
@@ -85,8 +93,11 @@ class Host:
         self.writer.write(json.dumps(message).encode() + b"\n")
         self.writer.flush()
 
+    def whoami(self) -> dict[str, Any]:
+        return self.call("tools/call", {"name": "whoami"})["structuredContent"]
+
     def pid(self) -> int:
-        return self.call("tools/call", {"name": "whoami"})["structuredContent"]["pid"]
+        return self.whoami()["pid"]
 
 
 def _settle(host: Host, seconds: float = 0.5) -> int:
@@ -120,3 +131,74 @@ def test_relay_swaps_only_when_idle_and_unpinned(tmp_path: Path) -> None:
     host.writer.close()
     host.thread.join(10)
     assert host.code == [0]
+
+
+def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> None:
+    host = Host(tmp_path, env={**os.environ, "AGENTNAVE_MANAGER_SESSION": "a" * 32})
+    host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+    host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    first = host.whoami()
+
+    # The new install cannot start at first; once it can, the relay retries without a reinstall.
+    broken = tmp_path / "busy.broken"
+    broken.touch()
+    host.install("1.1")
+    assert _settle(host) == first["pid"]
+    broken.unlink()
+    deadline = time.monotonic() + 10
+    while (second := host.whoami())["pid"] == first["pid"] and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert second["pid"] != first["pid"]
+    assert second["session"] == first["session"] == "a" * 32
+
+    host.writer.close()
+    host.thread.join(10)
+
+
+def test_relay_recovers_after_long_capped_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relay = launcher.Relay(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        pin=set(),
+        site=tmp_path,
+        stdin=io.BytesIO(),
+        stdout=io.BytesIO(),
+        interval=5.0,
+    )
+    elapsed = 0.0
+    attempts: list[float] = []
+    fingerprints = iter([(("old", 1),)])
+
+    def tick(seconds: float) -> bool:
+        nonlocal elapsed
+        elapsed += seconds
+        return relay.stopped.is_set()
+
+    def swap() -> str:
+        attempts.append(elapsed)
+        if len(attempts) > 1100:
+            relay.stopped.set()
+            return "swapped"
+        return "failed"
+
+    def installed(_site: Path) -> launcher.Fingerprint:
+        return next(fingerprints, (("new", 2),))
+
+    monkeypatch.setattr(launcher, "fingerprint", installed)
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: elapsed)
+    monkeypatch.setattr(relay.stopped, "wait", tick)
+    monkeypatch.setattr(relay, "_from_host", lambda: None)
+    monkeypatch.setattr(relay, "_swap", swap)
+    try:
+        assert relay.run() == 0
+        assert len(attempts) == 1101
+        assert [b - a for a, b in zip(attempts, attempts[1:], strict=False)][:3] == [
+            10.0,
+            20.0,
+            40.0,
+        ]
+        assert attempts[-1] - attempts[-2] == 300.0
+    finally:
+        relay.child.close()
+        relay.child.process.wait(timeout=5)

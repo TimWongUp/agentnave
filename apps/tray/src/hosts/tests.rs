@@ -485,7 +485,16 @@ fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis(
         assert_eq!(result["ok"], true, "{id}: {result}");
         assert_eq!(
             result["host"]["tested"],
-            ["codex", "claude", "grok", "antigravity", "hermes"].contains(&id)
+            [
+                "codex",
+                "claude",
+                "codebuddy",
+                "grok",
+                "antigravity",
+                "pi",
+                "hermes"
+            ]
+            .contains(&id)
         );
         assert_eq!(result["host"]["status"], "connected");
         assert_eq!(result["host"]["skill"]["state"], "app");

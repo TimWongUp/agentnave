@@ -33,7 +33,7 @@ from agentnave.members import MemberFileError, apply_member, read_members, valid
 from agentnave.models import InvocationRequest, ProviderOption
 from agentnave.nesting import detect_nesting
 from agentnave_studio.store import Conversation, Unavailable
-from agentnave_studio.studio import Decision, DeletionResult, Studio
+from agentnave_studio.studio import Decision, Studio
 
 
 class Runtime(core.Runtime):
@@ -533,7 +533,6 @@ class HostReceipt(TypedDict):
 class UpdateReceipt(TypedDict):
     conversation_id: str
     title: str
-    archived: bool
 
 
 class ConversationView(TypedDict):
@@ -589,7 +588,6 @@ class ConversationSummary(TypedDict):
     conversation_id: str
     title: str
     kind: Literal["show", "task"]
-    archived: bool
     writable: bool
     created: str
 
@@ -622,7 +620,6 @@ async def list_conversations(*, ctx: Context[Runtime]) -> ConversationList:
                 "conversation_id": record.state.id,
                 "title": record.state.title,
                 "kind": record.state.kind,
-                "archived": record.state.archived,
                 "writable": writable.get(record.state.id, True),
                 "created": record.state.created,
             }
@@ -659,51 +656,26 @@ async def read_conversation(conversation_id: str, *, ctx: Context[Runtime]) -> C
 
 
 @mcp.tool(
-    title="Rename, end or reopen a conversation",
+    title="Rename a conversation",
     annotations=ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )
 async def update_conversation(
     conversation_id: str,
-    title: Annotated[str | None, Field(max_length=200)] = None,
-    archived: bool | None = None,
+    title: Annotated[str, Field(min_length=1, max_length=200)],
     *,
     ctx: Context[Runtime],
 ) -> UpdateReceipt:
-    """Rename, end (archived=true) or reopen a conversation. Ending needs no running work or
-    pending review."""
+    """Rename a conversation."""
     studio = _studio(ctx)
     try:
-        record = studio.update(conversation_id, title, archived)
+        record = studio.update(conversation_id, title)
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    return {
-        "conversation_id": conversation_id,
-        "title": record.state.title,
-        "archived": record.state.archived,
-    }
-
-
-@mcp.tool(
-    title="Delete an ended conversation",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
-    ),
-)
-async def delete_conversation(conversation_id: str, *, ctx: Context[Runtime]) -> DeletionResult:
-    """Permanently delete an ended conversation's saved history after user authorization.
-
-    Native CLI files and nonempty seat folders are retained and reported.
-    """
-    try:
-        return _studio(ctx).delete(conversation_id)
-    except KeyError as exc:
-        raise ToolError("Unknown conversation_id; use list_conversations.") from exc
-    except (OSError, ValueError) as exc:
-        raise _rejected(exc) from exc
+    return {"conversation_id": conversation_id, "title": record.state.title}
 
 
 def main() -> None:

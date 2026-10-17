@@ -23,7 +23,7 @@ const state = {
   chat: null, // last timeline payload
   loaded: null, // group id whose nodes are currently in the timeline
   nodes: new Map(), expanded: new Set(), seenIds: new Set(),
-  unseen: 0, ready: false, hashKey: null, headKey: "",
+  unseen: 0, ready: false, hashKey: null, focused: false, headKey: "",
   chips: new Map(), convChips: new Map(), refreshing: false, again: false,
 };
 
@@ -57,6 +57,7 @@ function go(path, replace) {
 function sync() {
   const fromUrl = groupFromLocation();
   state.hashKey = keyFromHash();
+  state.focused = false;
   if (fromUrl) { state.selected = fromUrl; state.auto = false; }
   else if (narrow.matches) { state.selected = null; state.auto = false; }
   else state.auto = true; // wide window without a group: first group is picked in refresh()
@@ -65,8 +66,7 @@ function sync() {
 window.addEventListener("popstate", () => { sync(); refresh(); });
 window.addEventListener("hashchange", () => {
   sync();
-  if (state.loaded === state.selected && state.hashKey) focusMember(state.hashKey);
-  else refresh();
+  refresh();
 });
 narrow.addEventListener("change", () => { sync(); renderList(); placeOb(); measureAll(); });
 
@@ -174,13 +174,14 @@ function renderHead(c) {
   const convNodes = c.conversations.map((cv) => {
     let chip = state.convChips.get(cv.id);
     if (!chip) {
-      chip = h("a.cchip", {}, h("span.glyph"), h("span.cchip-title"), h("i.dot"));
+      chip = h("button.cchip", { type: "button" }, h("span.glyph"), h("span.cchip-title"), h("i.dot"));
+      chip.addEventListener("click", () => go(`/chat/${state.selected}#conv:${encodeURIComponent(cv.id)}`));
       state.convChips.set(cv.id, chip);
     }
     const [label, tone2] = pick(CONV, cv.status);
     setClass(chip, `cchip tone-${tone2}`);
-    setAttr(chip, "href", href(cv.director_url));
-    setAttr(chip, "title", `${cv.title}（${label}）在工作台打开`);
+    setAttr(chip, "title", `${cv.title}（${label}）`);
+    setAttr(chip, "aria-label", `${cv.title}，${label}，跳到这个会话`);
     setText(chip.firstChild, cv.mode === "task" ? "任" : "节");
     setClass(chip.firstChild, "glyph " + cv.mode);
     setText(chip.children[1], cv.title);
@@ -340,12 +341,12 @@ function sepDay(text) {
   return h("div.sep.day", {}, h("span", {}, text));
 }
 function sepConv(cv) {
-  return h("a.sep.conv", {}, h("span.glyph"), h("span.sep-title"), h("span.sep-link", {}, "在工作台打开"));
+  return h("div.sep.conv", {}, h("span.glyph"), h("span.sep-title"));
 }
 function updateSep(node, kind, data) {
   if (kind === "day") { setText(node.firstChild, data); return; }
   const cv = data;
-  setAttr(node, "href", cv ? href(cv.director_url) : null);
+  setAttr(node, "data-conv", cv ? cv.id : null);
   setText(node.firstChild, cv?.mode === "show" ? "节" : "任");
   setClass(node.firstChild, "glyph " + (cv?.mode || "task"));
   setText(node.children[1], cv ? cv.title : "会话");
@@ -407,7 +408,11 @@ function renderTimeline(c) {
     el.tl.scrollTop = el.tl.scrollHeight;
     state.unseen = 0;
   } else if (fresh.length) state.unseen += fresh.length;
-  if (newGroup && state.hashKey) setTimeout(() => focusMember(state.hashKey), 0);
+  if ((newGroup || !state.focused) && state.hashKey) {
+    const key = state.hashKey;
+    state.focused = true;
+    setTimeout(() => focusMember(key), 0);
+  }
   updateJump();
   if (spoken.length) $("announce").textContent = spoken.join("；");
 }
@@ -425,10 +430,12 @@ el.jump.addEventListener("click", () => {
 window.addEventListener("resize", () => measureAll());
 if (document.fonts?.ready) document.fonts.ready.then(measureAll);
 
-// Scroll to a member's latest message and flash it. Used by the head chips and by #<key> links.
+// Scroll to a member's latest message (or a conversation's latest stretch, for "conv:<id>") and
+// flash it. Used by the head chips and by #<key> links, including links from 管理会话.
 function focusMember(key) {
-  const all = el.inner.querySelectorAll(".msg[data-key], .note[data-key]");
-  const target = [...all].filter((n) => n.dataset.key === key).pop();
+  const conv = key.startsWith("conv:") ? key.slice(5) : null;
+  const all = el.inner.querySelectorAll(conv ? ".sep.conv[data-conv]" : ".msg[data-key], .note[data-key]");
+  const target = [...all].filter((n) => (conv ? n.dataset.conv === conv : n.dataset.key === key)).pop();
   if (!target) return;
   target.scrollIntoView({ block: "center", behavior: "smooth" });
   target.classList.remove("flash");
@@ -449,7 +456,7 @@ function showBlank(kind) {
   const text = {
     nogroups: ["还没有群聊", "在主控 Agent（Claude Code、Codex CLI 等）里派出任务或开始节目，对应的群会自动出现在这里。"],
     pick: ["选一个群开始查看", "左侧是每个主控会话的群，进行中的排在最前面。"],
-    missing: ["找不到这个群", "它可能已被归档或删除。"],
+    missing: ["找不到这个群或会话", "它可能已被删除。"],
     loading: ["正在读取群聊…", ""],
     error: ["无法读取群聊", "正在重试，请稍候。"],
   }[kind];
@@ -483,13 +490,15 @@ async function refresh() {
       return;
     }
     const selected = state.selected;
+    const hashKey = state.hashKey;
+    const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
     if (state.loaded !== selected) showBlank("loading");
     let chat;
     try {
-      chat = await load(`/app/chats/${encodeURIComponent(selected)}`);
-      if (selected !== state.selected) { state.again = true; return; }
+      chat = await load(`/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`);
+      if (selected !== state.selected || hashKey !== state.hashKey) { state.again = true; return; }
     } catch (e) {
-      if (selected !== state.selected) { state.again = true; return; }
+      if (selected !== state.selected || hashKey !== state.hashKey) { state.again = true; return; }
       if (e.status === 404) showBlank("missing");
       else {
         el.banner.hidden = false;

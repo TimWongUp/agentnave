@@ -29,8 +29,7 @@ function visibleItems() {
   const before = $("before").value ? new Date(`${$("before").value}T00:00:00`).getTime() : Infinity;
   return items.filter((item) => {
     const matches = filter === "all"
-      || (filter === "archived" && item.archived)
-      || (filter === "idle" && !item.archived && item.deletable)
+      || (filter === "idle" && item.deletable)
       || (filter === "failed" && ["failed", "blocked", "interrupted"].includes(item.status));
     return matches && (before === Infinity || updated(item) < before);
   });
@@ -72,8 +71,9 @@ function render() {
     });
     checkCell.append(check);
     const name = node("td");
-    const link = node("a", title(item), "title");
-    link.href = `/c/${encodeURIComponent(item.id)}/`;
+    // A readable snapshot lets the chat page locate this conversation's messages.
+    const link = node(item.group ? "a" : "span", title(item), "title");
+    if (item.group) link.href = `/chat/${encodeURIComponent(item.group)}#conv:${encodeURIComponent(item.id)}`;
     name.append(link, node("span", item.mode === "show" ? "节目" : "任务", `kind ${item.mode}`));
     const status = node("td");
     status.append(node("span", labels[item.status] || item.status || "未知", `status ${item.status}`));
@@ -83,7 +83,6 @@ function render() {
     if (Number.isFinite(timestamp)) time.dateTime = new Date(timestamp).toISOString();
     date.append(time);
     const reason = node("td");
-    reason.append(node("span", item.archived ? "已结束" : "未结束", "lifecycle"));
     if (item.reason) reason.append(node("span", item.reason, "reason"));
     row.append(checkCell, name, status, date, reason);
     return row;

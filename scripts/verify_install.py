@@ -35,7 +35,6 @@ STUDIO = [
     "list_conversations",
     "read_conversation",
     "update_conversation",
-    "delete_conversation",
 ]
 
 

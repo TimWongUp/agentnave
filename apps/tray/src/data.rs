@@ -56,7 +56,6 @@ pub struct Item {
     pub id: String,
     pub title: String,
     pub mode: String,
-    pub archived: bool,
     pub host: Option<String>,
     pub manager_session: Option<String>,
     pub status: String,
@@ -76,7 +75,7 @@ impl Overview {
     pub fn count(&self, status: &str) -> usize {
         self.items
             .iter()
-            .filter(|item| !item.archived && item.status == status)
+            .filter(|item| item.status == status)
             .count()
     }
 }
@@ -116,12 +115,6 @@ impl Response {
         response.status = status;
         response
     }
-}
-
-enum Scope<'a> {
-    Home,
-    Director(&'a str),
-    Public(&'a str),
 }
 
 type Cached = (SystemTime, u64, Option<Arc<Value>>);
@@ -446,75 +439,17 @@ impl Reader {
                 _ => Response::not_found(),
             };
         }
-        let (scope, resource) = match parts.as_slice() {
-            [resource] => (Scope::Home, *resource),
-            ["c", id, resource] if valid_id(id) => (Scope::Director(id), *resource),
-            ["p", id, resource] if valid_id(id) => (Scope::Public(id), *resource),
-            _ => return Response::not_found(),
-        };
-        let asset = match resource {
-            "" => Some(("text/html; charset=utf-8", &asset!("index.html")[..])),
-            "app.js" => Some(("text/javascript; charset=utf-8", &asset!("app.js")[..])),
-            "style.css" => Some(("text/css; charset=utf-8", &asset!("style.css")[..])),
-            "avatars.png" => Some(("image/png", &asset!("avatars.png")[..])),
-            _ => None,
-        };
-        if let Some((content_type, body)) = asset {
-            return Response::ok(content_type, body.to_vec());
-        }
-        let view = match scope {
-            Scope::Home => Some(self.home()),
-            Scope::Director(id) => self.snapshot(id).and_then(|s| s.get("director").cloned()),
-            Scope::Public(id) => self.snapshot(id).and_then(|s| s.get("public").cloned()),
-        };
-        let Some(view) = view.filter(Value::is_object) else {
-            return Response::not_found();
-        };
-        match resource {
-            "state" => Response::json(&view),
-            "transcript.jsonl" => {
-                // As in the browser view: only show transcripts, never the workbench or tasks.
-                if view["view"] == "workbench" || view["mode"] == "task" {
-                    return Response::not_found();
-                }
-                let mut body = String::new();
-                for message in view["messages"].as_array().into_iter().flatten() {
-                    body.push_str(&message.to_string());
-                    body.push('\n');
-                }
-                Response::ok("application/x-ndjson; charset=utf-8", body.into_bytes())
-            }
+        match parts.as_slice() {
+            // Host avatars, shared with the browser view.
+            ["avatars.png"] => Response::ok("image/png", asset!("avatars.png").to_vec()),
+            // The old workbench address now leads to the chat page.
+            [""] => Response::ok(
+                "text/html; charset=utf-8",
+                br#"<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/chat/">"#
+                    .to_vec(),
+            ),
             _ => Response::not_found(),
         }
-    }
-
-    fn home(&self) -> Value {
-        let overview = self.overview();
-        json!({
-            "view": "workbench",
-            "id": "workbench",
-            "title": "工作台",
-            "seats": [],
-            "messages": [],
-            "shows": overview.items.iter().map(|item| json!({
-                "title": item.title,
-                "mode": item.mode,
-                "archived": item.archived,
-                "director_url": format!("/c/{}/", item.id),
-                "status": item.status,
-                "updated": item.updated,
-            })).collect::<Vec<_>>(),
-            "refresh_error": if overview.missing { Some("未找到工作室数据目录") } else { None },
-            "unavailable": overview.unavailable.iter().map(|(path, reason)| json!({"path": path, "reason": reason})).collect::<Vec<_>>(),
-            "storage": self.root.display().to_string(),
-        })
-    }
-
-    fn snapshot(&self, id: &str) -> Option<Value> {
-        self.live()
-            .remove(id)
-            .map(|live| live.view)
-            .or_else(|| read_json(&self.root.join("conversations").join(id).join("views.json")))
     }
 
     /// Snapshots of running conversations from servers that wrote within LIVE_FRESH.
@@ -592,10 +527,6 @@ fn summary(snapshot: &Value) -> Option<Item> {
         id: text("id")?,
         title: text("title").unwrap_or_default(),
         mode: text("mode").unwrap_or_default(),
-        archived: summary
-            .get("archived")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
         host: text("host"),
         manager_session: text("manager_session"),
         status: text("status").unwrap_or_default(),
@@ -610,7 +541,7 @@ mod tests {
     fn snapshot(id: &str, status: &str) -> Value {
         json!({
             "version": 1,
-            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "archived": false, "status": status, "updated": "2026-10-15T00:00:00+00:00"},
+            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "status": status, "updated": "2026-10-15T00:00:00+00:00"},
             "director": {"view": "director", "mode": "show", "status": status, "messages": [{"text": "hi"}]},
             "public": {"view": "public", "mode": "show", "messages": [{"text": "hi"}]},
         })
@@ -647,7 +578,7 @@ mod tests {
         let overview = reader.overview();
         assert_eq!(overview.items.len(), 1);
         assert_eq!(overview.unavailable.len(), 2);
-        assert_eq!(state(&reader, "/c/a1/state")["status"], "finished");
+        assert_eq!(reader.overview().items[0].status, "finished");
 
         let live = root.join("live/1-x.json");
         write(
@@ -655,7 +586,7 @@ mod tests {
             &json!({"version": 1, "conversations": {"a1": snapshot("a1", "running")}}),
         );
         assert_eq!(reader.overview().count("running"), 1);
-        assert_eq!(state(&reader, "/c/a1/state")["status"], "running");
+        assert_eq!(reader.overview().items[0].status, "running");
 
         // A crashed server's file stops counting once it is older than LIVE_FRESH.
         let old = SystemTime::now() - LIVE_FRESH - Duration::from_secs(1);
@@ -666,7 +597,7 @@ mod tests {
             .set_modified(old)
             .unwrap();
         assert_eq!(reader.overview().count("running"), 0);
-        assert_eq!(state(&reader, "/c/a1/state")["status"], "finished");
+        assert_eq!(reader.overview().items[0].status, "finished");
     }
 
     #[test]
@@ -683,18 +614,8 @@ mod tests {
         write(&root.join("conversations/t1/views.json"), &task);
         let reader = Reader::new(root.to_path_buf());
 
-        let home = state(&reader, "/state");
-        assert_eq!(home["shows"].as_array().unwrap().len(), 2);
-        assert!(
-            home["shows"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|s| s["director_url"] == "/c/a1/"
-                    && s["updated"] == "2026-10-15T00:00:00+00:00")
-        );
-        assert_eq!(state(&reader, "/p/a1/state")["view"], "public");
-        assert_eq!(reader.respond("/c/a1/").status, 200);
+        assert!(String::from_utf8_lossy(&reader.respond("/").body).contains("url=/chat/"));
+        assert_eq!(reader.respond("/avatars.png").status, 200);
         assert_eq!(reader.respond("/panel/").status, 200);
         for path in [
             "/manage/",
@@ -722,11 +643,11 @@ mod tests {
             reader.respond("/panel/common.js").body,
             reader.respond("/chat/common.js").body
         );
-        assert_eq!(
-            reader.respond("/p/a1/transcript.jsonl").body,
-            b"{\"text\":\"hi\"}\n"
-        );
         for path in [
+            "/state",
+            "/c/a1/",
+            "/p/a1/state",
+            "/p/a1/transcript.jsonl",
             "/p/t1/state",
             "/c/t1/transcript.jsonl",
             "/transcript.jsonl",
@@ -780,9 +701,6 @@ mod tests {
         legacy["director"]["tasks"][0]["time"] = json!("2026-10-14T23:59:59.750123Z");
         legacy["director"]["tasks"][0]["elapsed_ms"] = json!(1500);
         save(root, &legacy);
-        let mut archived = task_snapshot("archived", "running", "2099-01-01T00:00:00Z");
-        archived["summary"]["archived"] = json!(true);
-        save(root, &archived);
         let reader = Reader::new(root.to_path_buf());
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 2);
@@ -794,10 +712,10 @@ mod tests {
         assert_eq!(chat["members"].as_array().unwrap().len(), 1);
         assert_eq!(chat["members"][0]["conversation"], "b");
         assert_eq!(chat["members"][0]["status"], "blocked");
-        assert_eq!(chat["conversations"][0]["director_url"], "/c/z/");
+        assert_eq!(chat["conversations"][0]["id"], "z");
         let legacy = state(&reader, "/app/chats/c-legacy");
         assert_eq!(legacy["host"], Value::Null);
-        assert_eq!(legacy["label"], "未知主控");
+        assert_eq!(legacy["label"], "未记录主控");
         assert_eq!(legacy["members"][0]["key"], "codex/原生设置");
         assert_eq!(legacy["members"][0]["line"], "结果");
         assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
@@ -990,6 +908,9 @@ mod tests {
             3
         );
 
+        old["summary"]["manager_session"] = json!(MANAGER);
+        old["summary"]["archived"] = json!(true);
+        save(dir.path(), &old);
         let mut many = task_snapshot("many", "running", "2099-01-01T00:00:00Z");
         many["director"]["tasks"] = json!((0..160).map(|i| json!({"id": i.to_string(), "provider": "pi", "model": "m",
             "status": if i == 159 { "running" } else { "succeeded" }, "time": format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
@@ -1004,6 +925,42 @@ mod tests {
         let members = chat["members"].as_array().unwrap();
         assert_eq!(members[0]["key"], "pi/m");
         assert_eq!(members[1]["key"], "codex/m");
+
+        // A management deep link must still expose an older conversation in the same group.
+        let focused = state(&reader, &format!("/app/chats/{MANAGER}/focus/old"));
+        let focused_messages = focused["messages"].as_array().unwrap();
+        assert!(focused_messages.iter().any(|m| m["conversation"] == "old"));
+        assert!(focused_messages.len() > 300);
+        assert_eq!(
+            reader
+                .respond(&format!("/app/chats/{MANAGER}/focus/missing"))
+                .status,
+            404
+        );
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["messages"],
+            chat["messages"]
+        );
+    }
+
+    #[test]
+    fn failed_task_keeps_native_output_beside_the_failure_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = task_snapshot("failed", "blocked", "2026-10-15T01:00:00Z");
+        task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
+        task["director"]["tasks"][0]["error"] = json!("permission_denied");
+        save(dir.path(), &task);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let messages = chat["messages"].as_array().unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["kind"] == "reply" && m["text"] == "已完成的部分结果")
+        );
+        assert!(messages.iter().any(|m| m["kind"] == "notice"
+            && m["status"] == "blocked"
+            && m["detail"] == "permission_denied"));
     }
 
     #[test]

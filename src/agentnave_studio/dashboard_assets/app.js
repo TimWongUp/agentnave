@@ -52,7 +52,6 @@ const app = {
   detail: null,
   detailUrl: null, // selected conversation and its page URL
   mode: "all",
-  showEnded: false,
   query: "",
   tabs: {},
   speaker: null,
@@ -359,7 +358,6 @@ function paint(force = false) {
         app.home,
         app.mode,
         app.query,
-        app.showEnded,
         app.detailUrl?.href,
         app.offline,
       ],
@@ -445,16 +443,12 @@ function renderSidebar() {
   const matches = shows.filter(
     (show) => inMode(show) && show.title.toLocaleLowerCase().includes(query),
   );
-  const active = matches.filter((show) => !show.archived);
-  const ended = matches.filter((show) => show.archived);
-  const hot = active.filter((show) =>
+  const hot = matches.filter((show) =>
     urgent(statusOf(show.mode, show.status).kind),
   );
-  const calm = active.filter((show) => !hot.includes(show));
+  const calm = matches.filter((show) => !hot.includes(show));
   const count = (mode) =>
-    shows.filter(
-      (show) => !show.archived && (mode === "all" || show.mode === mode),
-    ).length;
+    shows.filter((show) => mode === "all" || show.mode === mode).length;
 
   const segment = h(
     "div.segment",
@@ -493,8 +487,8 @@ function renderSidebar() {
           h(
             "span.conv-meta",
             {},
-            dot(show.archived ? "idle" : state.kind),
-            show.archived ? "已结束" : state.label,
+            dot(state.kind),
+            state.label,
           ),
         ),
       ],
@@ -510,25 +504,6 @@ function renderSidebar() {
     { "aria-label": "会话" },
     group("需要关注", hot),
     group(hot.length ? "其他会话" : "会话", calm),
-    ended.length
-      ? h(
-          "div.group-title",
-          {},
-          `已结束 · ${ended.length}`,
-          h(
-            "button",
-            {
-              type: "button",
-              onclick: () => {
-                app.showEnded = !app.showEnded;
-                paint();
-              },
-            },
-            app.showEnded ? "收起" : "展开",
-          ),
-        )
-      : null,
-    app.showEnded ? ended.map(item) : null,
     !matches.length
       ? h(
           "p.side-empty",
@@ -600,7 +575,7 @@ function sidebarShell() {
 }
 
 function renderOverview() {
-  const shows = (app.home?.shows || []).filter((show) => !show.archived);
+  const shows = app.home?.shows || [];
   const states = shows.map((show) => ({
     show,
     state: statusOf(show.mode, show.status),
@@ -770,9 +745,7 @@ function renderShow() {
   const runs = Object.fromEntries(
     (round?.seats || []).map((run) => [run.seat_id, run]),
   );
-  const state = detail.archived
-    ? tone(["已结束", "idle"])
-    : statusOf("show", detail.status);
+  const state = statusOf("show", detail.status);
   const speaking = (detail.speaking || []).map(
     (id) => cast.find((seat) => seat.id === id)?.label || id,
   );
@@ -1058,11 +1031,9 @@ function renderTask() {
     tasks = detail.tasks || [];
   const running = tasks.filter((task) => task.status === "running").length;
   const latest = tasks[tasks.length - 1];
-  const state = detail.archived
-    ? tone(["已结束", "idle"])
-    : running
-      ? tone(["进行中", "run"])
-      : statusOf("task", latest?.status || "idle");
+  const state = running
+    ? tone(["进行中", "run"])
+    : statusOf("task", latest?.status || "idle");
   return h(
     "div.page",
     {},
