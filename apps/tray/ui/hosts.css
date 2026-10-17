@@ -19,6 +19,10 @@ button.sum-chip { background: transparent; border: 0; padding: 0; color: var(--a
 button.sum-chip:hover:enabled { text-decoration: underline; }
 .backups-line { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: 8px 0 18px; font-size: 12px; color: var(--muted); }
 .backups-line .sep { color: var(--line); }
+.skill-mode { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: -8px 0 18px; font-size: 12px; color: var(--muted); }
+.skill-mode .segs { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.skill-mode .seg { border: 0; background: none; padding: 3px 10px; border-radius: 5px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.skill-mode .seg.on { background: var(--bg); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 
 .banner .banner-actions { display: flex; gap: 8px; flex: none; align-items: center; }
 .banner.service { background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); align-items: center; }

@@ -16,9 +16,11 @@
 <body>
 <main>
   <header class="top">
-    <a class="brand" href="/"><span class="mark">N</span>AgentNave <span class="back">/ 设置</span></a>
-    <nav aria-label="页面导航">
-      <a href="/manage/">管理会话 ↗</a>
+    <a class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
+    <nav class="nav" aria-label="主导航">
+      <a href="/chat/">群聊</a>
+      <a href="/manage/">管理会话</a>
+      <a href="/settings/" aria-current="page">设置</a>
     </nav>
   </header>
 
@@ -94,7 +96,7 @@
     <div id="svc-banner" class="banner" hidden></div>
 
     <p class="guidance">
-      接入宿主 = 在宿主配置里写入一条名为 agentnave 的 MCP 条目，并安装 agentnave-manager Skill。
+      接入宿主 = 在宿主配置里写入一条名为 agentnave 的 MCP 条目；Skill 按下方“Skill 安装”的选择处理。
       已有的手写条目会被自动接管：只补上 AGENTNAVE_HOST，必要时把命令指向本机服务的入口，其余字段原样保留；每次写入前都会先备份配置文件。
     </p>
 
@@ -105,6 +107,7 @@
       <button id="refresh-hosts" type="button">刷新检测</button>
     </div>
     <div id="backups-line" class="backups-line"></div>
+    <div id="skill-mode" class="skill-mode"></div>
     <button id="onboarding-reopen" type="button">重新显示开始使用</button>
 
     <div id="host-cards" class="host-cards"></div>

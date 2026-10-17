@@ -101,6 +101,7 @@ let busy = false;
 let documentError = null;
 let docVersion = 0; // Monotonic counter for save race detection
 let expandedModel = null; // { provider: string, model: string } | null
+const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let appStatus = null;
 let statusPollTimer = null;
 let lastMigrationData = { migrated: false, migration_skipped: [] };
@@ -1080,6 +1081,16 @@ function renderModelDetail(provider, modelId) {
 }
 
 // Render 6 CLI cards
+// One line that says what a folded card allows, so the list can stay closed.
+function cardSummary(provider, isEnabled, modeRestricted, info) {
+  if (!modeRestricted) return info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
+  if (!isEnabled) return "当前模式未启用";
+  const conf = currentDoc.modes[currentMode]?.[provider] || {};
+  const models = Array.isArray(conf.models) ? conf.models : [];
+  const scope = models.length === 0 ? "不限模型" : `${models.length} 个模型`;
+  return conf.default ? `${scope} · 默认 ${conf.default}` : scope;
+}
+
 function renderCards() {
   const container = $("cli-cards");
   container.replaceChildren();
@@ -1125,19 +1136,34 @@ function renderCards() {
       enableControl = el("label", {}, enableCheckbox, textNode(" 在当前模式启用"));
     }
 
+    const isOpen = openCards.has(provider);
+    const toggle = el(
+      "button",
+      {
+        type: "button",
+        className: "cli-toggle",
+        "aria-expanded": String(isOpen),
+        onClick: () => {
+          if (isOpen) openCards.delete(provider);
+          else openCards.add(provider);
+          renderCards();
+        },
+      },
+      el("span", { className: "cli-chevron", "aria-hidden": "true" }),
+      el("span", { className: "cli-name" }, PROVIDER_NAMES[provider] || provider),
+      el("span", { className: "cli-summary" }, cardSummary(provider, isEnabled, modeRestricted, info))
+    );
     const header = el(
       "div",
       { className: "cli-header" },
-      el(
-        "div",
-        { className: "cli-title-area" },
-        el("span", { className: "cli-name" }, PROVIDER_NAMES[provider] || provider),
-        statusBadge,
-        sourceBadge
-      ),
+      el("div", { className: "cli-title-area" }, toggle, statusBadge, ...(isOpen ? [sourceBadge] : [])),
       el("div", { className: "cli-enable-area" }, enableControl)
     );
     card.appendChild(header);
+    if (!isOpen) {
+      container.appendChild(card);
+      continue;
+    }
 
     // Metadata
     if (info.path || info.error) {

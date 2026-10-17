@@ -118,12 +118,6 @@ impl Response {
     }
 }
 
-enum Scope<'a> {
-    Home,
-    Director(&'a str),
-    Public(&'a str),
-}
-
 type Cached = (SystemTime, u64, Option<Arc<Value>>);
 
 struct Live {
@@ -258,6 +252,7 @@ impl Reader {
                 | "/app/hosts/entry"
                 | "/app/hosts/root"
                 | "/app/hosts/reveal-backups"
+                | "/app/hosts/skill"
                 | "/app/onboarding/dismiss"
                 | "/app/onboarding/reopen"
         );
@@ -285,6 +280,13 @@ impl Reader {
             "/app/onboarding/reopen" => match crate::onboarding::reopen(hosts) {
                 Ok(result) => Response::json(&result),
                 Err(error) => Response::error(500, &error),
+            },
+            "/app/hosts/skill" => match serde_json::from_slice::<Value>(body)
+                .map_err(|_| "请求必须为 JSON".to_owned())
+                .and_then(|payload| hosts.set_skill_mode(&payload))
+            {
+                Ok(result) => Response::json(&result),
+                Err(error) => Response::error(400, &error),
             },
             "/app/hosts/reveal-backups" => match hosts.reveal_backups() {
                 Ok(result) => Response::json(&result),
@@ -446,75 +448,17 @@ impl Reader {
                 _ => Response::not_found(),
             };
         }
-        let (scope, resource) = match parts.as_slice() {
-            [resource] => (Scope::Home, *resource),
-            ["c", id, resource] if valid_id(id) => (Scope::Director(id), *resource),
-            ["p", id, resource] if valid_id(id) => (Scope::Public(id), *resource),
-            _ => return Response::not_found(),
-        };
-        let asset = match resource {
-            "" => Some(("text/html; charset=utf-8", &asset!("index.html")[..])),
-            "app.js" => Some(("text/javascript; charset=utf-8", &asset!("app.js")[..])),
-            "style.css" => Some(("text/css; charset=utf-8", &asset!("style.css")[..])),
-            "avatars.png" => Some(("image/png", &asset!("avatars.png")[..])),
-            _ => None,
-        };
-        if let Some((content_type, body)) = asset {
-            return Response::ok(content_type, body.to_vec());
-        }
-        let view = match scope {
-            Scope::Home => Some(self.home()),
-            Scope::Director(id) => self.snapshot(id).and_then(|s| s.get("director").cloned()),
-            Scope::Public(id) => self.snapshot(id).and_then(|s| s.get("public").cloned()),
-        };
-        let Some(view) = view.filter(Value::is_object) else {
-            return Response::not_found();
-        };
-        match resource {
-            "state" => Response::json(&view),
-            "transcript.jsonl" => {
-                // As in the browser view: only show transcripts, never the workbench or tasks.
-                if view["view"] == "workbench" || view["mode"] == "task" {
-                    return Response::not_found();
-                }
-                let mut body = String::new();
-                for message in view["messages"].as_array().into_iter().flatten() {
-                    body.push_str(&message.to_string());
-                    body.push('\n');
-                }
-                Response::ok("application/x-ndjson; charset=utf-8", body.into_bytes())
-            }
+        match parts.as_slice() {
+            // Host avatars, shared with the browser view.
+            ["avatars.png"] => Response::ok("image/png", asset!("avatars.png").to_vec()),
+            // The old workbench address now leads to the chat page.
+            [""] => Response::ok(
+                "text/html; charset=utf-8",
+                br#"<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/chat/">"#
+                    .to_vec(),
+            ),
             _ => Response::not_found(),
         }
-    }
-
-    fn home(&self) -> Value {
-        let overview = self.overview();
-        json!({
-            "view": "workbench",
-            "id": "workbench",
-            "title": "工作台",
-            "seats": [],
-            "messages": [],
-            "shows": overview.items.iter().map(|item| json!({
-                "title": item.title,
-                "mode": item.mode,
-                "archived": item.archived,
-                "director_url": format!("/c/{}/", item.id),
-                "status": item.status,
-                "updated": item.updated,
-            })).collect::<Vec<_>>(),
-            "refresh_error": if overview.missing { Some("未找到工作室数据目录") } else { None },
-            "unavailable": overview.unavailable.iter().map(|(path, reason)| json!({"path": path, "reason": reason})).collect::<Vec<_>>(),
-            "storage": self.root.display().to_string(),
-        })
-    }
-
-    fn snapshot(&self, id: &str) -> Option<Value> {
-        self.live()
-            .remove(id)
-            .map(|live| live.view)
-            .or_else(|| read_json(&self.root.join("conversations").join(id).join("views.json")))
     }
 
     /// Snapshots of running conversations from servers that wrote within LIVE_FRESH.
@@ -647,7 +591,7 @@ mod tests {
         let overview = reader.overview();
         assert_eq!(overview.items.len(), 1);
         assert_eq!(overview.unavailable.len(), 2);
-        assert_eq!(state(&reader, "/c/a1/state")["status"], "finished");
+        assert_eq!(reader.overview().items[0].status, "finished");
 
         let live = root.join("live/1-x.json");
         write(
@@ -655,7 +599,7 @@ mod tests {
             &json!({"version": 1, "conversations": {"a1": snapshot("a1", "running")}}),
         );
         assert_eq!(reader.overview().count("running"), 1);
-        assert_eq!(state(&reader, "/c/a1/state")["status"], "running");
+        assert_eq!(reader.overview().items[0].status, "running");
 
         // A crashed server's file stops counting once it is older than LIVE_FRESH.
         let old = SystemTime::now() - LIVE_FRESH - Duration::from_secs(1);
@@ -666,7 +610,7 @@ mod tests {
             .set_modified(old)
             .unwrap();
         assert_eq!(reader.overview().count("running"), 0);
-        assert_eq!(state(&reader, "/c/a1/state")["status"], "finished");
+        assert_eq!(reader.overview().items[0].status, "finished");
     }
 
     #[test]
@@ -683,18 +627,8 @@ mod tests {
         write(&root.join("conversations/t1/views.json"), &task);
         let reader = Reader::new(root.to_path_buf());
 
-        let home = state(&reader, "/state");
-        assert_eq!(home["shows"].as_array().unwrap().len(), 2);
-        assert!(
-            home["shows"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|s| s["director_url"] == "/c/a1/"
-                    && s["updated"] == "2026-10-15T00:00:00+00:00")
-        );
-        assert_eq!(state(&reader, "/p/a1/state")["view"], "public");
-        assert_eq!(reader.respond("/c/a1/").status, 200);
+        assert!(String::from_utf8_lossy(&reader.respond("/").body).contains("url=/chat/"));
+        assert_eq!(reader.respond("/avatars.png").status, 200);
         assert_eq!(reader.respond("/panel/").status, 200);
         for path in [
             "/manage/",
@@ -722,11 +656,11 @@ mod tests {
             reader.respond("/panel/common.js").body,
             reader.respond("/chat/common.js").body
         );
-        assert_eq!(
-            reader.respond("/p/a1/transcript.jsonl").body,
-            b"{\"text\":\"hi\"}\n"
-        );
         for path in [
+            "/state",
+            "/c/a1/",
+            "/p/a1/state",
+            "/p/a1/transcript.jsonl",
             "/p/t1/state",
             "/c/t1/transcript.jsonl",
             "/transcript.jsonl",
@@ -794,10 +728,10 @@ mod tests {
         assert_eq!(chat["members"].as_array().unwrap().len(), 1);
         assert_eq!(chat["members"][0]["conversation"], "b");
         assert_eq!(chat["members"][0]["status"], "blocked");
-        assert_eq!(chat["conversations"][0]["director_url"], "/c/z/");
+        assert_eq!(chat["conversations"][0]["id"], "z");
         let legacy = state(&reader, "/app/chats/c-legacy");
         assert_eq!(legacy["host"], Value::Null);
-        assert_eq!(legacy["label"], "未知主控");
+        assert_eq!(legacy["label"], "未记录主控");
         assert_eq!(legacy["members"][0]["key"], "codex/原生设置");
         assert_eq!(legacy["members"][0]["line"], "结果");
         assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");

@@ -223,6 +223,8 @@ pub fn list(root: &Path, overview: Overview) -> Value {
             "archived": state.value["archived"].as_bool().unwrap_or(false),
             "status": status, "updated": updated, "updated_ms": updated_ms,
             "deletable": reason.is_empty(), "reason": reason,
+            // Archived conversations are not shown in the chat page.
+            "group": snapshot.filter(|item| !item.archived).and_then(crate::stage::chat_group),
         }));
         // The probe's File drops here, before reading the next conversation.
     }

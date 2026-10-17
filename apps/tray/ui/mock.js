@@ -328,7 +328,7 @@ All checks passed!
     const latest = [...members].sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))[0];
     return latest && FAILED.includes(latest.status) ? "failed" : "idle";
   }
-  const label = (g) => (g.host ? HOSTS[g.host] : "未知主控");
+  const label = (g) => (g.host ? HOSTS[g.host] : "未记录主控");
   const convStatus = (conv, w) => {
     const es = conv.specs.map((sp) => evalSpec(sp, w)).filter(Boolean);
     if (es.some((e) => e.status === "running")) return "running";
@@ -427,7 +427,7 @@ All checks passed!
       group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status,
       conversations: g.convs
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
-        .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w), director_url: `/c/${c.id}/` })),
+        .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
       members,
       messages: messagesOf(g, w),
     };
@@ -473,7 +473,7 @@ All checks passed!
 
   // Host/onboarding fixtures stay behind the existing explicit mock switch.
   const freshHosts = hostScene === "fresh";
-  let serviceReady = !freshHosts, dismissed = false, installedState = null;
+  let serviceReady = !freshHosts, dismissed = false, installedState = null, skillMode = "app";
   const hostRows = ["codex", "pi", "workbuddy", "hermes"].map((id, index) => {
     const root = `/preview/${id}`;
     const connected = !freshHosts && index === 0;
@@ -493,7 +493,7 @@ All checks passed!
   }
   let membersReady = ["midway", "typical", "done"].includes(hostScene);
   let triedReady = hostScene === "done";
-  const hostView = () => ({ service: { installed: serviceReady, studio: serviceReady, core: serviceReady, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${status().version}"` }, hosts: hostRows, backups: { dir: "/preview/backups", count: 0 } });
+  const hostView = () => ({ skill_mode: skillMode, service: { installed: serviceReady, studio: serviceReady, core: serviceReady, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${status().version}"` }, hosts: hostRows, backups: { dir: "/preview/backups", count: 0 } });
   const onboarding = () => ({ dismissed, steps: [
     { id: "service", done: serviceReady, detail: "安装工作室与核心入口" },
     { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },
@@ -510,6 +510,7 @@ All checks passed!
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }
     if (path === "/app/onboarding/reopen") { dismissed = false; return { dismissed }; }
     if (path === "/app/hosts/reveal-backups") return { ok: true, message: "预览：已打开备份目录" };
+    if (path === "/app/hosts/skill") { skillMode = body.mode; return structuredClone(hostView()); }
     if (path === "/app/service/install") { installedState = { state: "installing" }; setTimeout(() => { serviceReady = true; installedState = { state: "done" }; }, 900); return { ok: true }; }
     const host = hostRows.find((h) => h.id === body.id);
     if (!host) throw new Error("未知宿主");

@@ -31,7 +31,11 @@ p { margin: 0; }
 .top, .intro, .tools, .selection { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .brand { display: flex; gap: 9px; align-items: center; font-size: 14px; font-weight: 650; }
 .mark { display: grid; place-items: center; width: 23px; height: 25px; border-radius: 6px 6px 9px 3px; background: var(--accent); color: var(--bg); font: italic 700 17px Georgia, serif; }
-.back { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+/* Same main navigation as the chat page, so every page can get back. */
+.nav { display: flex; gap: 2px; }
+.nav a { padding: 5px 12px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 550; }
+.nav a:hover { background: var(--hover); color: var(--ink); }
+.nav a[aria-current] { background: var(--surface); color: var(--ink); }
 .intro { margin: 48px 0 26px; align-items: flex-end; }
 .eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .12em; margin-bottom: 10px; }
 h1 { font-size: 30px; line-height: 1.2; font-weight: 620; letter-spacing: -.04em; margin: 0; }

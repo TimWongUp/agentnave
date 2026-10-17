@@ -174,13 +174,14 @@ function renderHead(c) {
   const convNodes = c.conversations.map((cv) => {
     let chip = state.convChips.get(cv.id);
     if (!chip) {
-      chip = h("a.cchip", {}, h("span.glyph"), h("span.cchip-title"), h("i.dot"));
+      chip = h("button.cchip", { type: "button" }, h("span.glyph"), h("span.cchip-title"), h("i.dot"));
+      chip.addEventListener("click", () => focusMember(`conv:${cv.id}`));
       state.convChips.set(cv.id, chip);
     }
     const [label, tone2] = pick(CONV, cv.status);
     setClass(chip, `cchip tone-${tone2}`);
-    setAttr(chip, "href", href(cv.director_url));
-    setAttr(chip, "title", `${cv.title}（${label}）在工作台打开`);
+    setAttr(chip, "title", `${cv.title}（${label}）`);
+    setAttr(chip, "aria-label", `${cv.title}，${label}，跳到这个会话`);
     setText(chip.firstChild, cv.mode === "task" ? "任" : "节");
     setClass(chip.firstChild, "glyph " + cv.mode);
     setText(chip.children[1], cv.title);
@@ -340,12 +341,12 @@ function sepDay(text) {
   return h("div.sep.day", {}, h("span", {}, text));
 }
 function sepConv(cv) {
-  return h("a.sep.conv", {}, h("span.glyph"), h("span.sep-title"), h("span.sep-link", {}, "在工作台打开"));
+  return h("div.sep.conv", {}, h("span.glyph"), h("span.sep-title"));
 }
 function updateSep(node, kind, data) {
   if (kind === "day") { setText(node.firstChild, data); return; }
   const cv = data;
-  setAttr(node, "href", cv ? href(cv.director_url) : null);
+  setAttr(node, "data-conv", cv ? cv.id : null);
   setText(node.firstChild, cv?.mode === "show" ? "节" : "任");
   setClass(node.firstChild, "glyph " + (cv?.mode || "task"));
   setText(node.children[1], cv ? cv.title : "会话");
@@ -425,10 +426,12 @@ el.jump.addEventListener("click", () => {
 window.addEventListener("resize", () => measureAll());
 if (document.fonts?.ready) document.fonts.ready.then(measureAll);
 
-// Scroll to a member's latest message and flash it. Used by the head chips and by #<key> links.
+// Scroll to a member's latest message (or a conversation's latest stretch, for "conv:<id>") and
+// flash it. Used by the head chips and by #<key> links, including links from 管理会话.
 function focusMember(key) {
-  const all = el.inner.querySelectorAll(".msg[data-key], .note[data-key]");
-  const target = [...all].filter((n) => n.dataset.key === key).pop();
+  const conv = key.startsWith("conv:") ? key.slice(5) : null;
+  const all = el.inner.querySelectorAll(conv ? ".sep.conv[data-conv]" : ".msg[data-key], .note[data-key]");
+  const target = [...all].filter((n) => (conv ? n.dataset.conv === conv : n.dataset.key === key)).pop();
   if (!target) return;
   target.scrollIntoView({ block: "center", behavior: "smooth" });
   target.classList.remove("flash");

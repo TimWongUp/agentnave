@@ -43,8 +43,14 @@ type Decision = Literal["publish", "discard"]
 
 _LIVE_SECONDS = 1.5  # also how often the dashboard re-projects running work
 _STALE_LIVE_SECONDS = 3600
-_MANAGER_SESSION = uuid4().hex
-_MANAGER_STARTED_AT = now()
+# The relay passes one session per host connection; a server started directly makes its own.
+_RELAY_SESSION = os.environ.get("AGENTNAVE_MANAGER_SESSION", "")
+_MANAGER_SESSION = (
+    _RELAY_SESSION
+    if len(_RELAY_SESSION) == 32 and all(c in "0123456789abcdef" for c in _RELAY_SESSION)
+    else uuid4().hex
+)
+_MANAGER_STARTED_AT = os.environ.get("AGENTNAVE_MANAGER_STARTED_AT") or now()
 
 
 def _project(record: Record) -> bytes:

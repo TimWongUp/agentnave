@@ -2,7 +2,6 @@
 /* Adheres to warm neutral palette and native typography from manage.css */
 
 /* Navigation & tabs */
-nav a { color: var(--soft); }
 .tabs { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 4px; }
 .tab-btn { background: transparent; border: 0; color: var(--muted); padding: 6px 14px; font-weight: 550; font-size: 13px; border-radius: 6px; position: relative; }
 .tab-btn:hover:enabled { color: var(--ink); background: var(--hover); }
@@ -59,6 +58,13 @@ nav a { color: var(--soft); }
 .cli-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); gap: 12px; flex-wrap: wrap; }
 .cli-title-area { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cli-name { font-size: 14px; font-weight: 620; color: var(--ink); }
+.cli-toggle { display: inline-flex; align-items: baseline; gap: 8px; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; min-width: 0; }
+.cli-toggle:hover .cli-name { color: var(--accent); }
+.cli-toggle { align-items: center; }
+.cli-chevron { width: 7px; height: 7px; margin: 0 3px 0 1px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
+.cli-toggle[aria-expanded="true"] .cli-chevron { transform: rotate(45deg); }
+.cli-summary { color: var(--muted); font-size: 12px; }
+.cli-card > .cli-header:last-child { border-bottom: 0; }
 .cli-enable-area { display: flex; align-items: center; }
 .cli-enable-area label { color: var(--ink); font-size: 12.5px; font-weight: 500; cursor: pointer; user-select: none; }
 .cli-meta-row { padding: 8px 18px; font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--hover); display: flex; gap: 14px; flex-wrap: wrap; }

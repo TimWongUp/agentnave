@@ -10,8 +10,6 @@ mod onboarding;
 mod stage;
 mod update;
 
-use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,7 +19,7 @@ use tauri::http::{Response, header};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::webview::NewWindowResponse;
 use tauri::{
     AppHandle, LogicalPosition, Manager, Rect, RunEvent, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
@@ -33,7 +31,6 @@ use update::Updates;
 const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
-const PUBLIC: &str = "public";
 const PANEL_SIZE: (f64, f64) = (480.0, 640.0);
 const POLL: Duration = Duration::from_secs(2);
 /// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
@@ -105,8 +102,9 @@ fn main() {
             panel_hidden: Mutex::new(None),
         })
         .setup(move |app| {
+            // A regular app: it has a Dock icon and can be kept in the Dock; the menu bar icon stays.
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            app.set_activation_policy(tauri::ActivationPolicy::Regular);
             let handle = app.handle();
             let host_context = hosts::Context::live(handle.path().app_data_dir()?);
             let takeover = reader.clone();
@@ -118,7 +116,6 @@ fn main() {
                 handle,
                 &[
                     &MenuItem::with_id(handle, "open", "打开 AgentNave", true, None::<&str>)?,
-                    &MenuItem::with_id(handle, "workbench", "工作台", true, None::<&str>)?,
                     &MenuItem::with_id(handle, "manage", "管理会话…", true, None::<&str>)?,
                     &MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?,
                     &check,
@@ -135,7 +132,6 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => open(app, "main", "/chat/"),
-                    "workbench" => open(app, "main", "/"),
                     "manage" => open(app, "main", "/manage/"),
                     "settings" => open(app, "main", "/settings/"),
                     "update" => update::act(app),
@@ -176,14 +172,21 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("failed to start the AgentNave tray");
-    app.run(|_, event| {
+    app.run(|app, event| match event {
         // Closing the last window keeps the tray running; only "退出" ends the app.
-        if let RunEvent::ExitRequested {
+        RunEvent::ExitRequested {
             api, code: None, ..
-        } = event
-        {
-            api.prevent_exit();
-        }
+        } => api.prevent_exit(),
+        // Like any regular app, launching it shows the main window. Opening it once the event
+        // loop runs keeps its first requests from stalling behind start-up.
+        RunEvent::Ready => open(app, "main", "/chat/"),
+        // A click on the Dock icon brings the main window back.
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } => open(app, "main", "/chat/"),
+        _ => {}
     });
 }
 
@@ -363,9 +366,8 @@ fn place(panel: &WebviewWindow, icon: Rect) {
     let _ = panel.set_position(position.to_physical::<f64>(scale));
 }
 
-/// The public window only ever shows public views, whatever a link in a reply points at.
-fn allowed(label: &str, target: &Url) -> bool {
-    ours(target) && (label != PUBLIC || target.path().starts_with("/p/"))
+fn allowed(target: &Url) -> bool {
+    ours(target)
 }
 
 /// Preserve member anchors and explicit preview parameters when leaving the panel.
@@ -385,7 +387,7 @@ fn destination(target: &Url) -> String {
 /// Show `path` in the window `label`, creating it on first use.
 fn open(app: &AppHandle, label: &str, path: &str) {
     let target = url(path);
-    if !allowed(label, &target) {
+    if !allowed(&target) {
         return;
     }
     if let Some(window) = app.get_webview_window(label) {
@@ -395,43 +397,16 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         let _ = window.set_focus();
         return;
     }
-    let handle = app.clone();
-    let reader = app.state::<Tray>().reader.clone();
     let built = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
         .title("AgentNave")
         .inner_size(1180.0, 800.0)
         .min_inner_size(420.0, 480.0)
-        .on_navigation({
-            let label = label.to_owned();
-            move |target| allowed(&label, target)
-        })
+        .on_navigation(allowed)
         .on_new_window(move |target, _| {
-            if ours(&target) {
-                // "选手视角 ↗" opens the public view beside the workbench; nothing else may.
-                if target.path().starts_with("/p/") {
-                    let app = handle.clone();
-                    thread::spawn(move || open(&app, PUBLIC, target.path()));
-                }
-            } else if matches!(target.scheme(), "http" | "https") {
+            if !ours(&target) && matches!(target.scheme(), "http" | "https") {
                 browse(&target);
             }
             NewWindowResponse::Deny
-        })
-        .on_download(move |_, event| {
-            match event {
-                DownloadEvent::Requested { url, destination } => *destination = download_path(&url),
-                // WebKit cannot download from a custom scheme, so save the export ourselves.
-                DownloadEvent::Finished {
-                    url,
-                    success: false,
-                    ..
-                } if ours(&url) => {
-                    let reader = reader.clone();
-                    thread::spawn(move || save(&reader, &url));
-                }
-                _ => {}
-            }
-            true
         })
         .build();
     if let Ok(window) = built {
@@ -449,69 +424,25 @@ fn browse(target: &Url) {
     let _ = Command::new("xdg-open").arg(target.as_str()).spawn();
 }
 
-/// Write an export into Downloads and show it in the file manager.
-fn save(reader: &Reader, url: &Url) {
-    let reply = reader.respond(url.path());
-    let path = download_path(url);
-    if reply.status != 200 || fs::write(&path, reply.body).is_err() {
-        return;
-    }
-    #[cfg(target_os = "macos")]
-    let _ = Command::new("open").arg("-R").arg(&path).spawn();
-    #[cfg(windows)]
-    let _ = Command::new("explorer")
-        .arg(format!("/select,{}", path.display()))
-        .spawn();
-}
-
-/// `~/Downloads/agentnave-<id>.jsonl`, numbered instead of overwriting.
-fn download_path(url: &Url) -> PathBuf {
-    let folder = dirs::download_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_default();
-    let id = url
-        .path()
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .nth(1)
-        .unwrap_or("transcript");
-    let mut path = folder.join(format!("agentnave-{id}.jsonl"));
-    for n in 1.. {
-        if !path.exists() {
-            break;
-        }
-        path = folder.join(format!("agentnave-{id}-{n}.jsonl"));
-    }
-    path
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn public_window_stays_on_public_views() {
-        assert!(allowed(PUBLIC, &url("/p/a1/")));
+    fn windows_stay_on_tray_routes() {
         for path in [
-            "/",
-            "/c/a1/",
             "/panel/",
             "/manage/",
             "/settings/",
             "/chat/",
             "/chat/group#codex%2Fm",
-            "/app/quit",
         ] {
-            assert!(!allowed(PUBLIC, &url(path)), "{path}");
-            assert!(allowed("main", &url(path)), "{path}");
+            assert!(allowed(&url(path)), "{path}");
         }
         assert_eq!(
             destination(&url("/chat/group?mock#codex%2Fm")),
             "/chat/group?mock#codex%2Fm"
         );
-        assert!(!allowed(
-            "main",
-            &Url::parse("https://example.com/").unwrap()
-        ));
+        assert!(!allowed(&Url::parse("https://example.com/").unwrap()));
     }
 }

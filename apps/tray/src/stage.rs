@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-use crate::data::{Response, Snapshot, valid_id};
+use crate::data::{Item, Response, Snapshot, valid_id};
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or_default()
@@ -350,8 +350,16 @@ impl Group {
         }
     }
 
+    /// Conversations saved before hosts were recorded have neither host nor manager session.
+    fn manager_label(&self) -> &str {
+        match self.host.as_deref() {
+            None if self.id.starts_with("c-") => "未记录主控",
+            host => label(host),
+        }
+    }
+
     fn header(&self) -> Value {
-        json!({"group": self.id, "host": self.host, "label": label(self.host.as_deref()),
+        json!({"group": self.id, "host": self.host, "label": self.manager_label(),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
     }
 
@@ -485,8 +493,7 @@ impl Group {
         }
         self.sources.push(index);
         self.conversations.push(
-            json!({"id": item.id, "title": item.title, "mode": item.mode,
-            "status": item.status, "director_url": format!("/c/{}/", item.id)}),
+            json!({"id": item.id, "title": item.title, "mode": item.mode, "status": item.status}),
         );
     }
 
@@ -520,7 +527,7 @@ impl Group {
             "manager",
             self.host.as_deref().unwrap_or(""),
             "",
-            label(self.host.as_deref()),
+            self.manager_label(),
         );
         for (index, task) in array(&snapshot.view["director"], "tasks").enumerate() {
             let task_id = task["id"]
@@ -632,7 +639,7 @@ impl Group {
                     "manager",
                     self.host.as_deref().unwrap_or(""),
                     "",
-                    label(self.host.as_deref()),
+                    self.manager_label(),
                 )
             } else if let Some(seat) = seat {
                 speaker(
@@ -760,6 +767,18 @@ impl Group {
     }
 }
 
+/// The chat group a conversation belongs to: its manager session, or itself when none was recorded.
+pub(crate) fn chat_group(item: &Item) -> Option<String> {
+    let session = item
+        .manager_session
+        .as_deref()
+        .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) && valid_id(id));
+    let id = session
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("c-{}", item.id));
+    valid_id(&id).then_some(id)
+}
+
 pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: bool) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     if requested.is_some_and(|id| !valid_id(id)) {
@@ -777,15 +796,9 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
         .enumerate()
         .filter(|(_, s)| !s.item.archived)
     {
-        let session = snapshot.item.manager_session.as_deref().filter(|id| {
-            id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) && valid_id(id)
-        });
-        let id = session
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("c-{}", snapshot.item.id));
-        if !valid_id(&id) {
+        let Some(id) = chat_group(&snapshot.item) else {
             continue;
-        }
+        };
         groups
             .entry(id.clone())
             .or_insert_with(|| Group::new(id))

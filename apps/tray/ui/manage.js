@@ -72,8 +72,9 @@ function render() {
     });
     checkCell.append(check);
     const name = node("td");
-    const link = node("a", title(item), "title");
-    link.href = `/c/${encodeURIComponent(item.id)}/`;
+    // Open conversations jump to their place in the chat page; ended ones are only listed here.
+    const link = node(item.group ? "a" : "span", title(item), "title");
+    if (item.group) link.href = `/chat/${encodeURIComponent(item.group)}#conv:${encodeURIComponent(item.id)}`;
     name.append(link, node("span", item.mode === "show" ? "节目" : "任务", `kind ${item.mode}`));
     const status = node("td");
     status.append(node("span", labels[item.status] || item.status || "未知", `status ${item.status}`));

@@ -11,9 +11,12 @@
 <body>
 <main>
   <header class="top">
-    <a class="brand" href="/"><span class="mark">N</span>AgentNave <span class="back">/ 工作台</span></a>
-    <a href="/settings/">设置 ↗</a>
-    <button id="refresh" type="button">刷新列表</button>
+    <a class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
+    <nav class="nav" aria-label="主导航">
+      <a href="/chat/">群聊</a>
+      <a href="/manage/" aria-current="page">管理会话</a>
+      <a href="/settings/">设置</a>
+    </nav>
   </header>
   <section class="intro">
     <div><p class="eyebrow">本机工作室 · 会话记录</p><h1>管理会话<span id="total">—</span></h1></div>
@@ -26,6 +29,7 @@
       <label>活动早于 <input id="before" type="date" aria-label="最近活动早于日期"></label>
     </div>
     <div class="cleanup">
+      <button id="refresh" type="button">刷新列表</button>
       <label><input id="days" type="number" min="1" max="36500" value="30" aria-label="清理多少天前的会话"> 天前</label>
       <button id="cleanup" type="button">清理旧会话…</button>
     </div>
