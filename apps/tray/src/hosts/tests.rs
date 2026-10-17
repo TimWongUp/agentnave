@@ -483,7 +483,10 @@ fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis(
             .action("connect", &json!({"id":id,"entry":"studio"}))
             .unwrap();
         assert_eq!(result["ok"], true, "{id}: {result}");
-        assert_eq!(result["host"]["tested"], false);
+        assert_eq!(
+            result["host"]["tested"],
+            ["codex", "claude", "grok", "antigravity", "hermes"].contains(&id)
+        );
         assert_eq!(result["host"]["status"], "connected");
         assert_eq!(result["host"]["skill"]["state"], "app");
         assert_eq!(
@@ -768,6 +771,99 @@ fn backups_remain_global_and_bounded_at_thirty() {
     let kept = backup_paths(&hosts.context.app);
     assert_eq!(kept.len(), 30);
     assert_eq!(fs::read_to_string(&kept[0]).unwrap(), "5");
+}
+
+#[test]
+fn json_takeover_preserves_nested_indentation_order_and_untouched_lines() {
+    let raw = "{\n    \"theme\": \"dark\",\n    \"mcpServers\": {\n        \"other\": {\"command\": \"keep\"},\n        \"agentnave\": {\n            \"command\": \"/old\",\n            \"print\": true,\n            \"args\": [],\n            \"env\": {\n                \"Z_LAST\": \"keep\",\n                \"A_FIRST\": \"keep too\"\n            },\n            \"disabled\": false\n        }\n    },\n    \"tail\": [1, 2]\n}\n";
+    let expected = raw.replace(
+        "                \"Z_LAST\"",
+        "                \"AGENTNAVE_HOST\": \"workbuddy\",\n                \"Z_LAST\"",
+    );
+    assert_scoped_takeover(raw, &expected, Format::Json, "mcpServers", "workbuddy");
+    let doc = Document::parse(
+        "{\n    \"mcpServers\": {\n        \"other\": {}\n    }\n}\n",
+        Format::Json,
+        "mcpServers",
+    )
+    .unwrap();
+    let entry = json!({"command":"/new","args":[],"env":{"AGENTNAVE_HOST":"workbuddy"}});
+    let written = doc.render(Some(&entry)).unwrap();
+    doc.verify(&written, Some(&entry)).unwrap();
+    assert!(
+        written.contains("        \"agentnave\": {\n            \"args\": []"),
+        "{written}"
+    );
+    assert!(written.contains("            \"env\": {\n                \"AGENTNAVE_HOST\": \"workbuddy\"\n            }"), "{written}");
+}
+
+#[test]
+fn toml_takeover_preserves_table_positions_key_order_and_comments() {
+    let raw = "# global\nmodel = 'keep'\n\n[marketplaces.openai-bundled]\nsource = 'keep'\n\n[mcp_servers.other]\ncommand = 'keep'\n\n# user registration\n[mcp_servers.agentnave]\ncommand = \"/old\" # launcher\nargs = []\nenabled = true\n\n[mcp_servers.agentnave.env]\nZ_LAST = 'keep'\nA_FIRST = 'keep too'\n\n[plugins.example]\nenabled = true\n";
+    let expected = raw.replace(
+        "A_FIRST = 'keep too'\n",
+        "A_FIRST = 'keep too'\nAGENTNAVE_HOST = \"codex\"\n",
+    );
+    assert_scoped_takeover(raw, &expected, Format::Toml, "mcp_servers", "codex");
+    let doc = Document::parse(
+        "[marketplaces.example]\nsource = 'keep'\n",
+        Format::Toml,
+        "mcp_servers",
+    )
+    .unwrap();
+    let entry = json!({"command":"/new","args":[],"env":{"AGENTNAVE_HOST":"codex"}});
+    let written = doc.render(Some(&entry)).unwrap();
+    doc.verify(&written, Some(&entry)).unwrap();
+    assert!(written.starts_with(&doc.raw));
+    assert!(
+        written.contains("[mcp_servers.agentnave.env]\nAGENTNAVE_HOST = \"codex\"\n"),
+        "{written}"
+    );
+}
+
+#[test]
+fn yaml_takeover_preserves_block_env_indentation_and_comments() {
+    let raw = "model: keep\nmcp_servers: # registrations\n  other:\n    command: keep\n  agentnave: # managed entry\n    command: \"/old\" # launcher\n    args: []\n    env: # preserve block\n      Z_LAST: 'keep'\n      A_FIRST: \"keep too\"\n    enabled: true\ntail: 'keep'\n";
+    let expected = raw.replace(
+        "      A_FIRST: \"keep too\"\n",
+        "      A_FIRST: \"keep too\"\n      AGENTNAVE_HOST: \"hermes\"\n",
+    );
+    assert_scoped_takeover(raw, &expected, Format::Yaml, "mcp_servers", "hermes");
+    assert_scoped_takeover(
+        &raw.replace("  ", "    "),
+        &expected.replace("  ", "    "),
+        Format::Yaml,
+        "mcp_servers",
+        "hermes",
+    );
+    let doc = Document::parse(
+        "mcp_servers:\n  other:\n    command: keep\n",
+        Format::Yaml,
+        "mcp_servers",
+    )
+    .unwrap();
+    let entry = json!({"command":"/new","args":[],"env":{"AGENTNAVE_HOST":"hermes"}});
+    let written = doc.render(Some(&entry)).unwrap();
+    doc.verify(&written, Some(&entry)).unwrap();
+    assert!(
+        written.contains("    env:\n      AGENTNAVE_HOST: \"hermes\"\n"),
+        "{written}"
+    );
+}
+
+fn assert_scoped_takeover(raw: &str, expected: &str, format: Format, key: &'static str, id: &str) {
+    let doc = Document::parse(raw, format, key).unwrap();
+    let mut entry = doc.entry.clone().unwrap();
+    entry["env"]["AGENTNAVE_HOST"] = json!(id);
+    let written = doc.render(Some(&entry)).unwrap();
+    doc.verify(&written, Some(&entry)).unwrap();
+    assert_eq!(written, expected);
+    let after = Document::parse(&written, format, key).unwrap();
+    assert_eq!(after.render(Some(&entry)).unwrap(), written);
+    entry["command"] = json!("/new");
+    let changed = after.render(Some(&entry)).unwrap();
+    after.verify(&changed, Some(&entry)).unwrap();
+    assert_eq!(changed, written.replace("\"/old\"", "\"/new\""));
 }
 
 #[test]
