@@ -273,6 +273,59 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
 
 #[test]
 #[cfg(unix)]
+fn upgrade_directory_snapshot_is_available_while_host_configuration_blocks() {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::{Arc, mpsc};
+    use std::time::{Duration, Instant};
+    let (_temp, hosts) = fixture();
+    let reader = Arc::new(Reader::new(hosts.context.project.clone()));
+    let shell = reader.probe_tools(&hosts.context);
+    let tools = reader.tool_dirs().unwrap().tools;
+    fs::create_dir_all(
+        tools.join("agentnave/lib/python3.12/site-packages/agentnave-0.1.0.dist-info"),
+    )
+    .unwrap();
+    let fifo = hosts.context.app.join("hosts.json");
+    fs::create_dir_all(fifo.parent().unwrap()).unwrap();
+    let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let background = reader.clone();
+    let worker = std::thread::spawn(move || {
+        background.configure_hosts(hosts.context, shell);
+        background.refresh_hosts();
+    });
+    // Opening this writer succeeds only once the background reader has reached the FIFO.
+    // Keep it open without bytes so configuration loading stays blocked, including its lock.
+    let started = Instant::now();
+    let mut writer = loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+        {
+            Ok(file) => break file,
+            Err(_) if started.elapsed() < Duration::from_secs(2) => std::thread::yield_now(),
+            Err(e) => panic!("configuration did not reach FIFO: {e}"),
+        }
+    };
+    let (tx, rx) = mpsc::channel();
+    let lookup = std::thread::spawn(move || {
+        let dirs = reader.tool_dirs().unwrap();
+        tx.send(crate::update::service(&Some(dirs.tools))).unwrap();
+    });
+    let status = rx.recv_timeout(Duration::from_millis(500));
+    writer.write_all(b"{}").unwrap();
+    drop(writer);
+    worker.join().unwrap();
+    lookup.join().unwrap();
+    assert_eq!(
+        status.expect("upgrade must not wait for host configuration")["version"],
+        "0.1.0"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn service_installer_passes_cached_shell_directories_to_uv_and_version_checks() {
     let (_temp, mut hosts) = fixture();
     hosts.shell = None;
@@ -678,7 +731,7 @@ fn get_is_read_only_onboarding_uses_cache_and_post_routes_require_action_header(
     let app = hosts.context.app.clone();
     let root = hosts.context.home.join("data");
     let reader = Reader::new(root.clone());
-    reader.configure_hosts(hosts.context);
+    reader.configure_hosts(hosts.context, hosts.shell.unwrap());
     for path in ["/app/hosts", "/app/onboarding"] {
         assert_eq!(reader.request("GET", path, None, b"").status, 200);
     }

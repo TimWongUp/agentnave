@@ -26,7 +26,7 @@ pub(super) const VARIABLES: &[&str] = &[
     "XDG_BIN_HOME",
     "XDG_DATA_HOME",
 ];
-pub(super) type Shell = Result<BTreeMap<String, String>, String>;
+pub(crate) type Shell = Result<BTreeMap<String, String>, String>;
 
 pub(super) fn probe(context: &Context) -> Shell {
     let shell = context

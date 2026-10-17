@@ -6,20 +6,69 @@ mod skill;
 mod tests;
 mod transaction;
 use config::{Document, Format};
-use roots::{Root, Shell};
+use roots::Root;
+pub(crate) use roots::Shell;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) use transaction::safe_path as check_path;
+#[derive(Clone)]
 pub(crate) struct ToolDirs {
     pub home: PathBuf,
     pub tools: PathBuf,
     pub bin: PathBuf,
+}
+fn effective_env<'a>(
+    context: &'a Context,
+    shell: Option<&'a Shell>,
+    var: &str,
+) -> Option<(&'a str, &'static str)> {
+    context
+        .env
+        .get(var)
+        .filter(|p| Path::new(p).is_absolute())
+        .map(|v| (v.as_str(), "env"))
+        .or_else(|| {
+            shell
+                .and_then(|s| s.as_ref().ok())
+                .and_then(|s| s.get(var))
+                .map(|v| (v.as_str(), "shell"))
+        })
+}
+pub(crate) fn probe_tools(context: &Context) -> (Shell, ToolDirs) {
+    let shell = roots::probe(context);
+    let dirs = ToolDirs::resolve(context, &shell);
+    (shell, dirs)
+}
+impl ToolDirs {
+    fn resolve(context: &Context, shell: &Shell) -> Self {
+        let value = |var| effective_env(context, Some(shell), var);
+        let tools = value("UV_TOOL_DIR")
+            .map(|(p, _)| PathBuf::from(p))
+            .or_else(|| value("XDG_DATA_HOME").map(|(p, _)| PathBuf::from(p).join("uv/tools")))
+            .unwrap_or_else(|| context.home.join(".local/share/uv/tools"));
+        let bin = value("UV_TOOL_BIN_DIR")
+            .or_else(|| value("XDG_BIN_HOME"))
+            .map(|(p, _)| PathBuf::from(p))
+            .or_else(|| {
+                value("XDG_DATA_HOME").map(|(p, _)| {
+                    let data = Path::new(p);
+                    data.parent().unwrap_or(data).join("bin")
+                })
+            })
+            .unwrap_or_else(|| context.home.join(".local/bin"));
+        Self {
+            home: context.home.clone(),
+            tools,
+            bin,
+        }
+    }
 }
 pub struct Context {
     pub home: PathBuf,
@@ -159,6 +208,7 @@ pub struct Hosts {
     settings: Value,
     settings_error: Option<String>,
     shell: Option<Shell>,
+    tools: Arc<Mutex<Option<ToolDirs>>>,
     actions: HashMap<String, Value>,
     failures: HashMap<String, Value>,
     failed: HashMap<String, String>,
@@ -167,14 +217,23 @@ pub struct Hosts {
     cached: Value,
 }
 impl Hosts {
+    #[cfg(test)]
     pub fn new(context: Context) -> Self {
+        Self::from_probe(context, None, Arc::default())
+    }
+    pub(crate) fn from_probe(
+        context: Context,
+        shell: Option<Shell>,
+        tools: Arc<Mutex<Option<ToolDirs>>>,
+    ) -> Self {
         let loaded = roots::load(&context);
         let settings_error = loaded.as_ref().err().cloned();
         let mut hosts = Self {
             context,
             settings: loaded.unwrap_or_else(|_| json!({})),
             settings_error,
-            shell: None,
+            shell,
+            tools,
             actions: HashMap::new(),
             failures: HashMap::new(),
             failed: HashMap::new(),
@@ -186,18 +245,7 @@ impl Hosts {
         hosts
     }
     fn env_value(&self, var: &str) -> Option<(&str, &'static str)> {
-        self.context
-            .env
-            .get(var)
-            .filter(|p| Path::new(p).is_absolute())
-            .map(|v| (v.as_str(), "env"))
-            .or_else(|| {
-                self.shell
-                    .as_ref()
-                    .and_then(|s| s.as_ref().ok())
-                    .and_then(|s| s.get(var))
-                    .map(|v| (v.as_str(), "shell"))
-            })
+        effective_env(&self.context, self.shell.as_ref(), var)
     }
     fn launcher(&self, entry: &str) -> Option<PathBuf> {
         let name = if entry == "core" {
@@ -215,31 +263,9 @@ impl Hosts {
     /// Reuse the last probe, including a failed probe's explicit/default fallback. Before the
     /// first probe there is no confirmed snapshot: installation must not guess another root.
     pub(crate) fn tool_dirs(&self) -> Option<ToolDirs> {
-        self.shell.as_ref()?;
-        let tools = self
-            .env_value("UV_TOOL_DIR")
-            .map(|(p, _)| PathBuf::from(p))
-            .or_else(|| {
-                self.env_value("XDG_DATA_HOME")
-                    .map(|(p, _)| PathBuf::from(p).join("uv/tools"))
-            })
-            .unwrap_or_else(|| self.context.home.join(".local/share/uv/tools"));
-        let bin = self
-            .env_value("UV_TOOL_BIN_DIR")
-            .or_else(|| self.env_value("XDG_BIN_HOME"))
-            .map(|(p, _)| PathBuf::from(p))
-            .or_else(|| {
-                self.env_value("XDG_DATA_HOME").map(|(p, _)| {
-                    let data = Path::new(p);
-                    data.parent().unwrap_or(data).join("bin")
-                })
-            })
-            .unwrap_or_else(|| self.context.home.join(".local/bin"));
-        Some(ToolDirs {
-            home: self.context.home.clone(),
-            tools,
-            bin,
-        })
+        self.shell
+            .as_ref()
+            .map(|shell| ToolDirs::resolve(&self.context, shell))
     }
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
@@ -629,7 +655,12 @@ impl Hosts {
         serde_json::to_string(&(host.id, &host.config, entry, kind)).unwrap()
     }
     pub fn refresh(&mut self) -> Value {
-        self.shell = Some(roots::probe(&self.context));
+        let (shell, dirs) = probe_tools(&self.context);
+        self.shell = Some(shell);
+        *self.tools.lock().unwrap_or_else(|p| p.into_inner()) = Some(dirs);
+        self.refresh_probed()
+    }
+    pub(crate) fn refresh_probed(&mut self) -> Value {
         let mut settings = self.settings.clone();
         for host in self.registry() {
             let state = self.state(&host);

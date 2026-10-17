@@ -108,7 +108,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle();
-            reader.configure_hosts(hosts::Context::live(handle.path().app_data_dir()?));
+            let host_context = hosts::Context::live(handle.path().app_data_dir()?);
             let takeover = reader.clone();
             build_panel(handle)?;
             let overview = reader.overview();
@@ -158,7 +158,11 @@ fn main() {
             let checker = handle.clone();
             let resumer = handle.clone();
             thread::spawn(move || {
-                takeover.refresh_hosts();
+                let shell = takeover.probe_tools(&host_context);
+                thread::spawn(move || {
+                    takeover.configure_hosts(host_context, shell);
+                    takeover.refresh_hosts();
+                });
                 update::resume(&resumer);
             });
             thread::spawn(move || poll(handle, reader, overview));

@@ -138,7 +138,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`。检测查可执行文件与已知应用包，保留的配置目录不单独证明仍安装。返回 `absent|available|connected|needs_attention|orphaned`，隐藏 absent；完好且命令可解析的已有条目即为 connected，用 has_host_env 表示是否已接管。命令按条目 env.PATH 解析，无法确定为 command_state=unknown，不自动替换。所有宿主暂为 tested=false；connected 不证明已加载工具、登录或模型可用。
 
-根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 只保存宿主根目录覆盖和 first_seen。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次探测完成前不安装，重启后的自动升级等待初次检测完成。
+根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 只保存宿主根目录覆盖和 first_seen。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。
 
 启动和 POST /app/hosts/refresh 接管已有条目：只补宿主标识，确知命令缺失且 uv 工具环境中存在同类入口时修复路径，保留原 core/studio 选择、参数、环境、启停与工具过滤。失败抑制签名仅包含宿主、有效配置路径、目标条目规范化内容和操作类型，无关字段变化不触发重试；last_action 保留至下一次真实操作，attention 给出结构化原因。项目级只提示，检查范围为 App 启动目录及其祖先。
 

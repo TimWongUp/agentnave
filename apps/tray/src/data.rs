@@ -141,6 +141,7 @@ pub(crate) struct Snapshot {
 pub struct Reader {
     root: PathBuf,
     hosts: Mutex<Option<crate::hosts::Hosts>>,
+    tools: Arc<Mutex<Option<crate::hosts::ToolDirs>>>,
     /// Parsed views by path, keyed on (mtime, size), so polling parses only changed files.
     summaries: Mutex<HashMap<PathBuf, Cached>>,
 }
@@ -150,6 +151,7 @@ impl Reader {
         Self {
             root,
             hosts: Mutex::new(None),
+            tools: Arc::default(),
             summaries: Mutex::new(HashMap::new()),
         }
     }
@@ -209,9 +211,20 @@ impl Reader {
         self.respond(path)
     }
 
-    pub fn configure_hosts(&self, context: crate::hosts::Context) {
-        *self.hosts.lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(crate::hosts::Hosts::new(context));
+    /// This phase only runs the bounded shell probe, never reads host configuration.
+    pub(crate) fn probe_tools(&self, context: &crate::hosts::Context) -> crate::hosts::Shell {
+        let (shell, dirs) = crate::hosts::probe_tools(context);
+        *self.tools.lock().unwrap_or_else(|p| p.into_inner()) = Some(dirs);
+        shell
+    }
+
+    pub fn configure_hosts(&self, context: crate::hosts::Context, shell: crate::hosts::Shell) {
+        let mut guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some(crate::hosts::Hosts::from_probe(
+            context,
+            Some(shell),
+            self.tools.clone(),
+        ));
     }
 
     pub fn refresh_hosts(&self) {
@@ -221,16 +234,12 @@ impl Reader {
             .unwrap_or_else(|p| p.into_inner())
             .as_mut()
         {
-            hosts.refresh();
+            hosts.refresh_probed();
         }
     }
 
     pub(crate) fn tool_dirs(&self) -> Option<crate::hosts::ToolDirs> {
-        self.hosts
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-            .and_then(crate::hosts::Hosts::tool_dirs)
+        self.tools.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     fn host_request(
