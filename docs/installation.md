@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.19.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.20.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.19.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.20.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -543,6 +543,19 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.19.0 to v0.20.0
+
+No history migration. Update the menu bar app and the runtime together: the app now owns
+`members.json` (per-mode members, default models, efforts, options and notes) and migrates an
+existing `profiles.json` on first open, while the runtime replaces `list_profiles` with
+`list_members` (core 11 tools, studio 17) and applies the App defaults it reports in
+`defaults_applied`. A v0.19.0 app updates itself to v0.20.0 in the app; then use the panel's
+upgrade action, or reinstall the runtime from the tag, and update the Skill. From v0.20.0 the
+app's "全部更新" installs a newer app first and upgrades the runtime after the restart.
+Reconnect MCP on each host to see `list_members` and the updated Skill text. Provider CLIs are
+now located automatically, and Codex/Antigravity tool output no longer counts toward the 1 MiB
+retained-output limit.
 
 ### Upgrading from v0.18.0 to v0.19.0
 
