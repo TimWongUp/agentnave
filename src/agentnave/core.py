@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import time
 import uuid
 from collections import deque
@@ -30,6 +32,14 @@ _MAX_STDOUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 8 * 1024 * 1024
 _MAX_STDERR_BYTES = 64 * 1024
 _MAX_ERROR_DETAILS = 16_384
+_DIAGNOSTIC_TAIL_BYTES = 4096
+_SENSITIVE_DIAGNOSTIC = re.compile(
+    r"authorization|bearer|cookie|password|passwd|secret|credential|private[ _-]?key|"
+    r"api[ _-]?key|access[ _-]?token|refresh[ _-]?token|"
+    r"(?:token|key)\b[\"']?\s*[:=]|"
+    r"[a-z][a-z0-9+.-]*://[^/\s]*@|[A-Za-z0-9+/_=-]{40,}",
+    re.IGNORECASE,
+)
 _OUTPUT_LIMIT_ERROR = InvocationError(
     "output_limit_exceeded", "provider output exceeded the AgentNave capture limit"
 )
@@ -122,6 +132,66 @@ class _InvocationRecord:
 class _CapturedStream:
     data: bytes
     exceeded: bool
+
+
+@dataclass(slots=True)
+class _StreamDiagnostics:
+    """Bounded evidence that survives cancellation of a pipe reader during cleanup."""
+
+    tail: bytes = b""
+    leading_partial: bool = False
+    total_bytes: int = 0
+    exceeded_reason: str | None = None
+
+    def observe(self, chunk: bytes) -> None:
+        self.total_bytes += len(chunk)
+        combined = self.tail + chunk
+        if len(combined) > _DIAGNOSTIC_TAIL_BYTES:
+            self.leading_partial = combined[-_DIAGNOSTIC_TAIL_BYTES - 1] != ord("\n")
+        self.tail = combined[-_DIAGNOSTIC_TAIL_BYTES:]
+
+    def safe_tail(self) -> str:
+        tail = self.tail
+        if self.leading_partial:
+            # Never expose a credential's continuation without its identifying prefix.
+            _, _, tail = tail.partition(b"\n")
+        text = tail.decode(errors="replace")
+        secrets = [
+            value
+            for key, value in os.environ.items()
+            if value and re.search(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH", key, re.I)
+        ]
+        lines: list[str] = []
+        for line in text.splitlines():
+            if _SENSITIVE_DIAGNOSTIC.search(line) or any(value in line for value in secrets):
+                lines.append("[REDACTED]")
+            else:
+                lines.append("".join(char for char in line if char.isprintable()))
+        return "\n".join(lines) or "[no complete diagnostic line retained]"
+
+
+def _output_limit_error(
+    stdout: _CapturedStream,
+    stderr: _CapturedStream,
+    stdout_diagnostics: _StreamDiagnostics,
+    stderr_diagnostics: _StreamDiagnostics,
+) -> InvocationError:
+    details: list[str] = []
+    for name, captured, diagnostic, limit in (
+        ("stdout", stdout, stdout_diagnostics, _MAX_STDOUT_BYTES),
+        ("stderr", stderr, stderr_diagnostics, _MAX_STDERR_BYTES),
+    ):
+        if not captured.exceeded and diagnostic.exceeded_reason is None:
+            continue
+        reason = diagnostic.exceeded_reason or "capture_limit"
+        if reason == "event_limit":
+            limit = _MAX_EVENT_BYTES
+        details.append(
+            f"stream={name} reason={reason} limit_bytes={limit} "
+            f"observed_raw_bytes={diagnostic.total_bytes}\n"
+            f"tail (credential lines redacted):\n{diagnostic.safe_tail()}"
+        )
+    return replace(_OUTPUT_LIMIT_ERROR, details="\n\n".join(details)[:_MAX_ERROR_DETAILS])
 
 
 class InvocationManager:
@@ -351,6 +421,8 @@ class InvocationManager:
                 raise RuntimeError("provider subprocess pipes were not created")
 
             output_exceeded = asyncio.Event()
+            stdout_diagnostics = _StreamDiagnostics()
+            stderr_diagnostics = _StreamDiagnostics()
             stdout_task = asyncio.create_task(
                 _read_limited(
                     process.stdout,
@@ -360,6 +432,7 @@ class InvocationManager:
                     prepared.capture_line,
                     prepared.skip_oversized_line,
                     event_limit=_MAX_EVENT_BYTES,
+                    diagnostics=stdout_diagnostics,
                 )
             )
             stderr_task = asyncio.create_task(
@@ -367,6 +440,7 @@ class InvocationManager:
                     process.stderr,
                     _MAX_STDERR_BYTES,
                     output_exceeded,
+                    diagnostics=stderr_diagnostics,
                 )
             )
             stdin_task = asyncio.create_task(_write_stdin(process.stdin, prepared.stdin))
@@ -415,9 +489,16 @@ class InvocationManager:
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)
             stdout, stderr = await _finish_streams(stdout_task, stderr_task)
             # The provider may exit before the readers notice the limit while draining.
-            if terminal is None and (stdout.exceeded or stderr.exceeded):
+            if terminal is None and (
+                stdout.exceeded
+                or stderr.exceeded
+                or stdout_diagnostics.exceeded_reason is not None
+                or stderr_diagnostics.exceeded_reason is not None
+            ):
                 terminal = InvocationStatus.FAILED
                 error = _OUTPUT_LIMIT_ERROR
+            if error is _OUTPUT_LIMIT_ERROR:
+                error = _output_limit_error(stdout, stderr, stdout_diagnostics, stderr_diagnostics)
             parse_returncode = provider_returncode
             if parse_returncode is None:
                 parse_returncode = process.returncode if process.returncode is not None else 1
@@ -488,7 +569,9 @@ async def _read_limited(
     skip_oversized_line: Callable[[bytes], bool] | None = None,
     *,
     event_limit: int | None = None,
+    diagnostics: _StreamDiagnostics | None = None,
 ) -> _CapturedStream:
+    diagnostics = diagnostics if diagnostics is not None else _StreamDiagnostics()
     if capture_line is not None:
         return await _read_filtered(
             stream,
@@ -498,11 +581,13 @@ async def _read_limited(
             capture_line,
             skip_oversized_line,
             limit if event_limit is None else event_limit,
+            diagnostics,
         )
     data = bytearray()
     pending = bytearray()
     exceeded = False
     while chunk := await stream.read(64 * 1024):
+        diagnostics.observe(chunk)
         if observe_event is not None:
             pending.extend(chunk[: max(0, limit - len(data))])
             while b"\n" in pending:
@@ -515,6 +600,7 @@ async def _read_limited(
             data.extend(chunk[:remaining])
         if len(chunk) > remaining:
             exceeded = True
+            diagnostics.exceeded_reason = "capture_limit"
             exceeded_event.set()
     if observe_event is not None and pending.strip():
         observe_event(bytes(pending))
@@ -529,6 +615,7 @@ async def _read_filtered(
     capture_line: Callable[[bytes], bytes],
     skip_oversized_line: Callable[[bytes], bool] | None,
     event_limit: int,
+    diagnostics: _StreamDiagnostics,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
@@ -547,8 +634,10 @@ async def _read_filtered(
         data.extend(retained[:remaining])
         if len(retained) > remaining:
             exceeded = True
+            diagnostics.exceeded_reason = "capture_limit"
 
     while chunk := await stream.read(64 * 1024):
+        diagnostics.observe(chunk)
         if exceeded:
             continue
         pending.extend(chunk)
@@ -559,6 +648,8 @@ async def _read_filtered(
                 discarding = False
             elif len(line) > event_limit:
                 exceeded = not skippable(line)
+                if exceeded:
+                    diagnostics.exceeded_reason = "event_limit"
             else:
                 capture(bytes(line))
             if exceeded:
@@ -571,6 +662,7 @@ async def _read_filtered(
                 pending.clear()
             else:
                 exceeded = True
+                diagnostics.exceeded_reason = "event_limit"
         if exceeded:
             pending.clear()
             exceeded_event.set()
