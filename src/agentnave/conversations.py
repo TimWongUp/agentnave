@@ -387,6 +387,10 @@ class Conversations(Groups):
             or any(task.status == "running" for task in record.state.tasks)
         )
 
+    def restart_safe(self) -> bool:
+        """A held record may still own a review or a result that could not be saved."""
+        return not self._unsaved and all(record.lock is None for record in self.records.values())
+
     def update(self, conversation_id: str, title: str) -> Record:
         with self._writing(conversation_id) as record:
             if not title.strip() or len(title) > 200:

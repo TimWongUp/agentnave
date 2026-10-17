@@ -307,6 +307,8 @@ class Relay:
         listed = _object(result.get("structuredContent"))
         if listed is not None and "invocations" not in listed:
             listed = _object(listed.get("result"))
+        if listed is None or listed.get("restart_safe") is not True:
+            return False
         invocations: Any = listed.get("invocations") if listed else None
         if not isinstance(invocations, list):
             return False

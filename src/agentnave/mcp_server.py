@@ -160,6 +160,7 @@ class InvocationListItem(TypedDict):
 
 class InvocationListPayload(TypedDict):
     invocations: list[InvocationListItem]
+    restart_safe: bool
 
 
 class GroupSeatSpec(BaseModel):
@@ -607,6 +608,7 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
     any structured event. Active entries include phase; finished ones keep a fixed elapsed_ms,
     tell with result_read whether a wait or cancel has returned the final result, and include
     a non-empty native session_id. Use wait_agent or wait_any to read results.
+    restart_safe is false while this server holds conversation work, review, or unsaved history.
     """
     items: list[InvocationListItem] = []
     for listing in _manager(ctx).list_invocations():
@@ -625,7 +627,7 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
         if listing.session_id:
             item["session_id"] = listing.session_id
         items.append(item)
-    return {"invocations": items}
+    return {"invocations": items, "restart_safe": _conversations(ctx).restart_safe()}
 
 
 @mcp.tool(
