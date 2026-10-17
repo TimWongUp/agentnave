@@ -852,6 +852,27 @@ fn yaml_takeover_preserves_block_env_indentation_and_comments() {
 }
 
 fn assert_scoped_takeover(raw: &str, expected: &str, format: Format, key: &'static str, id: &str) {
+    for eol in ["\n", "\r\n"] {
+        let raw = raw.replace('\n', eol);
+        let expected = expected.replace('\n', eol);
+        assert_scoped_takeover_bytes(&raw, &expected, format, key, id);
+    }
+}
+
+#[test]
+fn yaml_empty_env_without_final_newline_gets_a_separate_host_line() {
+    let raw = "mcp_servers:\n  agentnave:\n    command: \"/old\"\n    env:";
+    let expected = format!("{raw}\n      AGENTNAVE_HOST: \"hermes\"\n");
+    assert_scoped_takeover(raw, &expected, Format::Yaml, "mcp_servers", "hermes");
+}
+
+fn assert_scoped_takeover_bytes(
+    raw: &str,
+    expected: &str,
+    format: Format,
+    key: &'static str,
+    id: &str,
+) {
     let doc = Document::parse(raw, format, key).unwrap();
     let mut entry = doc.entry.clone().unwrap();
     entry["env"]["AGENTNAVE_HOST"] = json!(id);

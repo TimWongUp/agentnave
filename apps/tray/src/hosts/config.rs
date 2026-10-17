@@ -123,6 +123,7 @@ impl Document {
                         entry,
                         indent,
                         json_indent(raw),
+                        newline(raw),
                     )?;
                     let mut out = raw.to_owned();
                     out.replace_range(parent.1, &changed);
@@ -134,6 +135,7 @@ impl Document {
                         Some(&json!({"agentnave": entry})),
                         "",
                         json_indent(raw),
+                        newline(raw),
                     )
                 } else {
                     Ok(raw.into())
@@ -160,13 +162,18 @@ impl Document {
                 {
                     servers.remove("agentnave");
                 }
-                Ok(doc.to_string())
+                // toml_edit emits LF separators. Restore the file's CRLF style after editing.
+                Ok(doc
+                    .to_string()
+                    .replace("\r\n", "\n")
+                    .replace('\n', newline(&self.raw)))
             }
             Format::Yaml => self.render_yaml(entry),
         }
     }
 
     fn render_yaml(&self, desired: Option<&Value>) -> Result<String, String> {
+        let eol = newline(&self.raw);
         let mut out = self.raw.clone();
         let root = yaml_fields(&out, 0)?;
         if let Some(parent) = root.iter().find(|f| f.key == self.key) {
@@ -184,8 +191,9 @@ impl Document {
                         self.entry.as_ref().unwrap(),
                         desired,
                         yaml_step(&self.raw),
+                        eol,
                     )?;
-                    format!("{}{changed}", &block[field.full.start..field.body.start])
+                    yaml_block(&block[field.full.start..field.body.start], &changed, eol)
                 } else {
                     String::new()
                 };
@@ -196,30 +204,43 @@ impl Document {
                     out.replace_range(
                         parent.full.clone(),
                         &format!(
-                            "mcp_servers:\n{}",
+                            "mcp_servers:{eol}{}",
                             yaml_server(
                                 entry,
                                 yaml_indent(block, parent.indent + 2),
-                                yaml_step(&self.raw)
+                                yaml_step(&self.raw),
+                                eol,
                             )
                         ),
                     );
                 } else {
+                    let separator = if out[..parent.body.end].ends_with('\n') {
+                        ""
+                    } else {
+                        eol
+                    };
                     out.insert_str(
                         parent.body.end,
-                        &yaml_server(
-                            entry,
-                            yaml_indent(block, parent.indent + 2),
-                            yaml_step(&self.raw),
+                        &format!(
+                            "{separator}{}",
+                            yaml_server(
+                                entry,
+                                yaml_indent(block, parent.indent + 2),
+                                yaml_step(&self.raw),
+                                eol,
+                            )
                         ),
                     );
                 }
             }
         } else if let Some(entry) = desired {
             if !out.is_empty() && !out.ends_with('\n') {
-                out.push('\n');
+                out.push_str(eol);
             }
-            out.push_str(&format!("mcp_servers:\n{}", yaml_server(entry, 2, 2)));
+            out.push_str(&format!(
+                "mcp_servers:{eol}{}",
+                yaml_server(entry, 2, 2, eol)
+            ));
         }
         Ok(out)
     }
@@ -292,6 +313,17 @@ fn toml_patch(
     Ok(())
 }
 
+fn newline(raw: &str) -> &'static str {
+    if raw.contains("\r\n") { "\r\n" } else { "\n" }
+}
+fn yaml_block(header: &str, body: &str, eol: &str) -> String {
+    let separator = if !header.ends_with('\n') && !body.is_empty() {
+        eol
+    } else {
+        ""
+    };
+    format!("{header}{separator}{body}")
+}
 fn yaml_indent(raw: &str, fallback: usize) -> usize {
     raw.lines()
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
@@ -312,6 +344,7 @@ fn yaml_patch(
     original: &Value,
     desired: &Value,
     step: usize,
+    eol: &str,
 ) -> Result<String, String> {
     let mut changed = raw.to_owned();
     let fields = yaml_fields(raw, indent)?;
@@ -323,10 +356,10 @@ fn yaml_patch(
             if field.value.is_empty() && value.is_object() {
                 let body = &raw[field.body.clone()];
                 let next = yaml_indent(body, indent + step);
-                format!(
-                    "{}{}",
+                yaml_block(
                     &raw[field.full.start..field.body.start],
-                    yaml_patch(body, next, &original[&field.key], value, step)?
+                    &yaml_patch(body, next, &original[&field.key], value, step, eol)?,
+                    eol,
                 )
             } else {
                 // Preserve the key, spacing, trailing comment and any following blank lines.
@@ -353,28 +386,28 @@ fn yaml_patch(
     for (key, value) in desired.as_object().ok_or("YAML 映射无效")? {
         if original.get(key).is_none() {
             if !changed.is_empty() && !changed.ends_with('\n') {
-                changed.push('\n');
+                changed.push_str(eol);
             }
-            changed.push_str(&yaml_line(key, value, indent, step));
+            changed.push_str(&yaml_line(key, value, indent, step, eol));
         }
     }
     Ok(changed)
 }
 
-fn yaml_line(key: &str, value: &Value, indent: usize, step: usize) -> String {
+fn yaml_line(key: &str, value: &Value, indent: usize, step: usize, eol: &str) -> String {
     if let Some(object) = value.as_object().filter(|o| !o.is_empty()) {
-        let mut out = format!("{}{key}:\n", " ".repeat(indent));
+        let mut out = format!("{}{key}:{eol}", " ".repeat(indent));
         for (key, value) in object {
-            out.push_str(&yaml_line(key, value, indent + step, step));
+            out.push_str(&yaml_line(key, value, indent + step, step, eol));
         }
         return out;
     }
-    format!("{}{key}: {}\n", " ".repeat(indent), value)
+    format!("{}{key}: {}{eol}", " ".repeat(indent), value)
 }
-fn yaml_server(entry: &Value, indent: usize, step: usize) -> String {
-    let mut out = format!("{}agentnave:\n", " ".repeat(indent));
+fn yaml_server(entry: &Value, indent: usize, step: usize, eol: &str) -> String {
+    let mut out = format!("{}agentnave:{eol}", " ".repeat(indent));
     for (key, value) in entry.as_object().unwrap() {
-        out.push_str(&yaml_line(key, value, indent + step, step));
+        out.push_str(&yaml_line(key, value, indent + step, step, eol));
     }
     out
 }
@@ -653,7 +686,7 @@ fn json_indent(raw: &str) -> &str {
         .min_by_key(|s| s.len())
         .unwrap_or("  ")
 }
-fn json_encode(value: &Value, indent: &str, step: &str) -> String {
+fn json_encode(value: &Value, indent: &str, step: &str, eol: &str) -> String {
     serde_json::to_string_pretty(value)
         .unwrap()
         .lines()
@@ -668,9 +701,15 @@ fn json_encode(value: &Value, indent: &str, step: &str) -> String {
             )
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(eol)
 }
-fn json_patch(raw: &str, desired: &Value, indent: &str, step: &str) -> Result<String, String> {
+fn json_patch(
+    raw: &str,
+    desired: &Value,
+    indent: &str,
+    step: &str,
+    eol: &str,
+) -> Result<String, String> {
     let original: Value = serde_json::from_str(&clean_json(raw)?).map_err(|_| "JSON 解析失败")?;
     if original == *desired {
         return Ok(raw.into());
@@ -680,17 +719,17 @@ fn json_patch(raw: &str, desired: &Value, indent: &str, step: &str) -> Result<St
         for (key, _, _) in json_fields(raw)?.iter().rev() {
             if old.get(key) != new.get(key) {
                 // Edit by key again because removing siblings can change byte offsets.
-                changed = json_set(&changed, key, new.get(key), indent, step)?;
+                changed = json_set(&changed, key, new.get(key), indent, step, eol)?;
             }
         }
         for (key, value) in new {
             if !old.contains_key(key) {
-                changed = json_set(&changed, key, Some(value), indent, step)?;
+                changed = json_set(&changed, key, Some(value), indent, step, eol)?;
             }
         }
         Ok(changed)
     } else {
-        Ok(json_encode(desired, indent, step))
+        Ok(json_encode(desired, indent, step, eol))
     }
 }
 fn json_set(
@@ -699,13 +738,14 @@ fn json_set(
     value: Option<&Value>,
     indent: &str,
     step: &str,
+    eol: &str,
 ) -> Result<String, String> {
     let fields = json_fields(raw)?;
     let mut out = raw.to_owned();
     if let Some((_, range, full)) = fields.iter().find(|f| f.0 == key) {
         if let Some(value) = value {
             let field_indent = line_indent(raw, full.start).unwrap_or(indent);
-            let changed = json_patch(&raw[range.clone()], value, field_indent, step)?;
+            let changed = json_patch(&raw[range.clone()], value, field_indent, step, eol)?;
             out.replace_range(range.clone(), &changed);
         } else {
             let clean = clean_json(raw)?;
@@ -734,23 +774,23 @@ fn json_set(
             .and_then(|f| line_indent(raw, f.2.start))
             .map(str::to_owned)
             .unwrap_or_else(|| format!("{indent}{step}"));
-        let encoded = json_encode(value, &field_indent, step);
+        let encoded = json_encode(value, &field_indent, step, eol);
         if let Some(first) = fields.first().filter(|f| raw[..f.2.start].contains('\n')) {
             // Prepend a new member: existing members keep their order and even the old last
             // line's comma stays untouched. JSON requires a separator; put it on our new line.
             let start = first.2.start - line_indent(raw, first.2.start).unwrap_or("").len();
-            out.insert_str(start, &format!("{field_indent}{key:?}: {encoded},\n"));
+            out.insert_str(start, &format!("{field_indent}{key:?}: {encoded},{eol}"));
         } else if fields.is_empty() {
             let closing = line_indent(raw, end).map(|i| end - i.len()).unwrap_or(end);
             let before = if raw[..closing].ends_with('\n') {
                 ""
             } else {
-                "\n"
+                eol
             };
             let after = if closing == end { indent } else { "" };
             out.insert_str(
                 closing,
-                &format!("{before}{field_indent}{key:?}: {encoded}\n{after}"),
+                &format!("{before}{field_indent}{key:?}: {encoded}{eol}{after}"),
             );
         } else {
             let tail = clean_json(&raw[fields.last().unwrap().2.end..end])?;
