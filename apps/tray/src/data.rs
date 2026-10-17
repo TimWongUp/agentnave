@@ -828,7 +828,7 @@ mod tests {
             {"id": "b", "label": "乙", "provider": "codex", "model": "m"},
             {"id": "c", "label": "丙", "provider": "grok", "model": "m"}],
             "messages": [
-                {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
+                {"kind": "task", "speaker": "@host", "manager_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
                 {"kind": "answer", "speaker": "a", "round": 1, "text": "# 已提交", "time": "2026-10-15T00:00:01Z"},
                 {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
                 {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
@@ -841,6 +841,9 @@ mod tests {
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
         let messages = chat["messages"].as_array().unwrap();
         assert_eq!(messages.iter().filter(|m| m["kind"] == "prompt").count(), 2);
+        let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
+        assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
+        assert_eq!(prompts[1]["speaker"]["model"], "");
         assert!(
             messages
                 .iter()
@@ -965,6 +968,7 @@ mod tests {
         let mut task = task_snapshot("failed", "blocked", "2026-10-15T01:00:00Z");
         task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
         task["director"]["tasks"][0]["error"] = json!("permission_denied");
+        task["director"]["tasks"][0]["manager_model"] = json!("gemini-3.5-pro");
         save(dir.path(), &task);
         let reader = Reader::new(dir.path().to_path_buf());
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -973,6 +977,10 @@ mod tests {
             messages
                 .iter()
                 .any(|m| m["kind"] == "reply" && m["text"] == "已完成的部分结果")
+        );
+        assert_eq!(
+            messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"]["model"],
+            "gemini-3.5-pro"
         );
         assert!(messages.iter().any(|m| m["kind"] == "notice"
             && m["status"] == "blocked"

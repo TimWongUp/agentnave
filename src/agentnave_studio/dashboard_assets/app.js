@@ -35,7 +35,7 @@ const REVIEW = {
   publish: ["已发布", "done"],
   discard: ["已丢弃", "idle"],
 };
-const HOST = { id: "@host", label: "主持人", model: "导演", provider: "host" };
+const HOST = { id: "@host", label: "主持人", model: "", provider: "host" };
 const EXAMPLES = [
   [
     "节目",
@@ -111,9 +111,9 @@ function duration(ms) {
     : `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 function avatar(seat, size = "") {
-  return Avatars.create(seat.provider === "host" ? "host" : "model",
-    seat.provider === "host" ? seat.host : seat.provider, seat.provider === "host" ? "" : seat.model,
-    size.replaceAll(".", " "));
+  if (seat.provider === "host" && !seat.model) return null;
+  return Avatars.create("model", seat.provider === "host" ? seat.host : seat.provider,
+    seat.model, size.replaceAll(".", " "));
 }
 function copyButton(text, label = "复制") {
   const button = h("button.icon-btn", { type: "button" }, label);
@@ -977,12 +977,13 @@ function renderTranscript(detail, cast) {
       round = message.round;
       items.push(h("div.divider", {}, `第 ${round} 轮`));
     }
-    const seat = cast.find((item) => item.id === message.speaker) || {
+    const identity = cast.find((item) => item.id === message.speaker) || {
       id: message.speaker,
       label: message.speaker,
       model: "",
       provider: "",
     };
+    const seat = identity.provider === "host" ? { ...identity, model: message.manager_model || "" } : identity;
     items.push(
       h(
         "article.msg" +

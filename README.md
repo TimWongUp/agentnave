@@ -20,8 +20,12 @@ AgentNave has no human-facing CLI. The `agentnave-mcp` command is only the STDIO
 a compatible MCP host.
 
 In the tray app, **Settings → Avatars** lets you upload a custom image or restore the official
-model icon. Overrides can target a model family, a manager host, or a specific CLI/model pair.
+model icon. Overrides can target a model family or a specific CLI/model pair.
 They stay in `avatars.json` in the local data directory and are shared by chat, tray, and browser views.
+Manager and member message avatars both follow their model; CLI headings have no avatar.
+When known from trusted host context, pass your current model as `manager_model` to Studio
+`start_agent`, `run_round`, and `post_host_message`. Each message records its own declaration;
+omit it when unknown. The server does not infer the manager model from the CLI.
 
 ## What AgentNave owns
 

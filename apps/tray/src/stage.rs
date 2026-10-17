@@ -530,12 +530,6 @@ impl Group {
 
     fn tasks(&mut self, snapshot: &Snapshot) {
         let item = &snapshot.item;
-        let manager = speaker(
-            "manager",
-            self.host.as_deref().unwrap_or(""),
-            "",
-            self.manager_label(),
-        );
         for (index, task) in array(&snapshot.view["director"], "tasks").enumerate() {
             let task_id = task["id"]
                 .as_str()
@@ -567,7 +561,12 @@ impl Group {
                     &start,
                     &item.id,
                     "prompt",
-                    manager.clone(),
+                    speaker(
+                        "manager",
+                        self.host.as_deref().unwrap_or(""),
+                        text(task, "manager_model"),
+                        self.manager_label(),
+                    ),
                     prompt,
                 );
                 msg["to"] = json!([format!("{}/{model}", text(task, "provider"))]);
@@ -659,7 +658,7 @@ impl Group {
                 speaker(
                     "manager",
                     self.host.as_deref().unwrap_or(""),
-                    "",
+                    text(entry, "manager_model"),
                     self.manager_label(),
                 )
             } else if let Some(seat) = seat {

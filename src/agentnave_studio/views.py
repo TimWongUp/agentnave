@@ -48,6 +48,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                     else entry.text
                 ),
                 "time": entry.time,
+                "manager_model": entry.manager_model,
             }
             for entry in state.entries
         ],

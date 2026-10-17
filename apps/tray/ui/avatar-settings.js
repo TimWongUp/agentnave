@@ -29,10 +29,7 @@
   root.append(status, h("h2", {}, "模型家族"));
   const grid = h("div.avatar-grid");
   for (const [id, [label]] of Object.entries(Avatars.families)) grid.append(editor("family", id, "", label));
-  root.append(grid, h("h2", {}, "主控宿主"));
-  const hosts = h("div.avatar-grid");
-  for (const [id, label] of Object.entries({codex:"Codex",claude:"Claude Code",antigravity:"Antigravity",grok:"Grok CLI",codebuddy:"CodeBuddy",pi:"Pi"})) hosts.append(editor("host", id, "", label));
-  root.append(hosts, h("h2", {}, "指定模型"), h("p.guidance", {}, "同一模型可在不同 CLI 下使用不同头像，优先于模型家族设置。"));
+  root.append(grid, h("h2", {}, "指定模型"), h("p.guidance", {}, "同一模型可在不同 CLI 下使用不同头像，优先于模型家族设置。"));
   const models = h("div.avatar-grid");
   function add(provider, model) {
     const key = Avatars.key("model", provider, model);

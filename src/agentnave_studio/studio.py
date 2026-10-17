@@ -74,6 +74,7 @@ class Studio(Groups):
     def __init__(self, manager: InvocationManager, root: Path, *, host: Host | None = None) -> None:
         super().__init__(manager)
         self.host = host if host is not None else detect_host()
+        self._manager_model: str | None = None
         self.manager_session = _MANAGER_SESSION
         self.manager_started_at = _MANAGER_STARTED_AT
         self.root = root.resolve()  # created only by the first saved conversation
@@ -147,11 +148,16 @@ class Studio(Groups):
         return record
 
     @contextmanager
-    def _writing(self, conversation_id: str) -> Generator[Record]:
+    def _writing(
+        self, conversation_id: str, *, manager_model: str | None = None
+    ) -> Generator[Record]:
         record = self.writable(conversation_id)
+        previous = self._manager_model
+        self._manager_model = manager_model
         try:
             yield record
         finally:
+            self._manager_model = previous
             self._release_idle(record)
 
     def _persist(self, record: Record) -> None:
@@ -296,16 +302,18 @@ class Studio(Groups):
         order: RoundOrder,
         prompt: str,
         instructions: dict[str, str],
+        *,
+        manager_model: str | None = None,
     ) -> Round:
-        with self._writing(group_id):
+        with self._writing(group_id, manager_model=manager_model):
             self._group(group_id)
             state = self.records[group_id].state
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
             return super().run(group_id, seat_ids, order, prompt, instructions)
 
-    def post(self, conversation_id: str, text: str) -> None:
-        with self._writing(conversation_id):
+    def post(self, conversation_id: str, text: str, *, manager_model: str | None = None) -> None:
+        with self._writing(conversation_id, manager_model=manager_model):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
             if group.active is not None or state.pending_review():
@@ -403,7 +411,12 @@ class Studio(Groups):
     # Tasks
 
     def start_task(
-        self, request: InvocationRequest, title: str | None, conversation_id: str | None
+        self,
+        request: InvocationRequest,
+        title: str | None,
+        conversation_id: str | None,
+        *,
+        manager_model: str | None = None,
     ) -> tuple[str, str]:
         self.manager.check_start(request)
         record = self.writable(conversation_id) if conversation_id else None
@@ -463,6 +476,7 @@ class Studio(Groups):
                     model=str(request.provider_options.get("model", "原生设置")),
                     cwd=str(request.cwd),
                     prompt=request.prompt,
+                    manager_model=manager_model,
                     session_id=request.session_id,
                     time=now(),
                 )
@@ -524,7 +538,12 @@ class Studio(Groups):
         state = record.state
         state.entries.extend(
             EntryRecord(
-                round=item.round, kind=item.kind, seat=item.seat_id, text=item.text, time=now()
+                round=item.round,
+                kind=item.kind,
+                seat=item.seat_id,
+                text=item.text,
+                time=now(),
+                manager_model=self._manager_model if item.kind in ("host", "task") else None,
             )
             for item in group.entries[len(state.entries) :]
         )

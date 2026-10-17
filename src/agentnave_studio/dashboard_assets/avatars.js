@@ -16,17 +16,17 @@
     "avatar-qwen.png": [80, 80, 4, 3, 72, 74],
     "avatar-deepseek.ico": [225, 225, 0, 31, 224, 165],
   };
-  const hosts = { claude: "claude", codex: "gpt", grok: "grok", antigravity: "gemini" };
   let overrides = {}, loaded = false, revision = 0;
   const key = (kind, provider, model = "") => JSON.stringify([kind, provider || "", model || ""]);
   function family(provider, model) {
-    // Resolve the model first: a Pi/OpenCode model must not inherit its CLI's brand.
+    // Model identity never inherits the CLI brand, including for managers.
     const name = String(model || "").toLowerCase().split("/").pop();
     return Object.keys(families).find((id) => name.includes(id)) ||
-      (/^(o[134](?:-|$)|chatgpt|codex)/.test(name) ? "gpt" : null) || hosts[provider];
+      (/^(o[134](?:-|$)|chatgpt|codex)/.test(name) ? "gpt" : null) ||
+      (/^(opus|sonnet|haiku)(?:-|$)/.test(name) ? "claude" : null);
   }
   function source(kind, provider, model) {
-    const id = kind === "family" ? provider : family(provider, kind === "host" ? "" : model);
+    const id = kind === "family" ? provider : family(provider, model);
     return overrides[key(kind, provider, model)] || overrides[key("family", id)] ||
       (families[id] ? new URL(families[id][1], base).href : null);
   }
@@ -53,9 +53,9 @@
         img.style.left = `${50 - (x + visibleWidth / 2) / extent * 100}%`;
         img.style.top = `${50 - (y + visibleHeight / 2) / extent * 100}%`;
       }
-      img.onerror = () => { img.remove(); node.textContent = String(provider || "?").slice(0, 1).toUpperCase(); };
+      img.onerror = () => { img.remove(); node.textContent = String(model || "?").slice(0, 1).toUpperCase(); };
       node.append(img);
-    } else node.textContent = String(provider || "?").slice(0, 1).toUpperCase();
+    } else node.textContent = String(model || "?").slice(0, 1).toUpperCase();
   }
   function refresh() {
     document.querySelectorAll("[data-avatar]").forEach(paint);

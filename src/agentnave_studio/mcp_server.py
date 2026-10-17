@@ -35,6 +35,19 @@ from agentnave.nesting import detect_nesting
 from agentnave_studio.store import Conversation, Unavailable
 from agentnave_studio.studio import Decision, Studio
 
+type ManagerModel = Annotated[
+    str | None,
+    Field(
+        min_length=1,
+        max_length=200,
+        description=(
+            "Your current manager model ID, when known from trusted host context. "
+            "Metadata for this message only; never the subagent model or a CLI-derived guess. "
+            "Omit when unknown. Does not change provider settings."
+        ),
+    ),
+]
+
 
 class Runtime(core.Runtime):
     def __init__(self) -> None:
@@ -165,6 +178,7 @@ async def start_agent(
     title: Annotated[
         str | None, Field(max_length=200, description="Title for a new task conversation.")
     ] = None,
+    manager_model: ManagerModel = None,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
@@ -183,7 +197,9 @@ async def start_agent(
         )
         request = InvocationRequest(provider, prompt, Path(cwd), session_id, options)
         validate_provider_options(request)
-        invocation_id, saved_id = _studio(ctx).start_task(request, title, conversation_id)
+        invocation_id, saved_id = _studio(ctx).start_task(
+            request, title, conversation_id, manager_model=manager_model
+        )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except ValueError as exc:
@@ -406,6 +422,7 @@ async def run_round(
     order: Literal["parallel", "serial"],
     prompt: Annotated[str, Field(min_length=1)],
     instructions: dict[str, str] | None = None,
+    manager_model: ManagerModel = None,
     *,
     ctx: Context[Runtime],
 ) -> StudioRoundPayload:
@@ -416,7 +433,9 @@ async def run_round(
     """
     studio = _studio(ctx)
     try:
-        round_ = studio.run(group_id, seats, order, prompt, instructions or {})
+        round_ = studio.run(
+            group_id, seats, order, prompt, instructions or {}, manager_model=manager_model
+        )
     except KeyError as exc:
         raise ToolError("Unknown group_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:
@@ -551,6 +570,7 @@ class ConversationView(TypedDict):
 async def post_host_message(
     conversation_id: str,
     text: Annotated[str, Field(min_length=1, max_length=12000)],
+    manager_model: ManagerModel = None,
     *,
     ctx: Context[Runtime],
 ) -> HostReceipt:
@@ -560,7 +580,7 @@ async def post_host_message(
     """
     studio = _studio(ctx)
     try:
-        studio.post(conversation_id, text)
+        studio.post(conversation_id, text, manager_model=manager_model)
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:

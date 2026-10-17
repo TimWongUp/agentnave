@@ -48,9 +48,6 @@
   function avatar(provider, model, cls) {
     return Avatars.create("model", provider, model, cls);
   }
-  function hostAvatar(host, label, cls) {
-    return Avatars.create("host", host, "", cls);
-  }
   const colorClass = (n) => "c" + (Math.abs(Number(n) || 0) % 8);
 
   // ---- time ---------------------------------------------------------------------------
@@ -127,7 +124,7 @@
     if (mock() && link?.getAttribute("href").startsWith("/app/")) event.preventDefault();
   });
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, CONV, pick, urgent, avatar, hostAvatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
+  window.AN = { h, $, load, href, MEMBER, GROUP, CONV, pick, urgent, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
 })();
 
 (function () {

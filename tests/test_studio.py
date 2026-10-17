@@ -373,6 +373,7 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             {
                 "provider": "claude",
                 "prompt": "one",
+                "manager_model": "gpt-6",
                 "cwd": str(tmp_path),
                 "title": "Job",
                 "provider_options": {"model": "test-model", "effort": "high"},
@@ -399,6 +400,7 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             {
                 "provider": "claude",
                 "prompt": "two",
+                "manager_model": "claude-opus-5",
                 "cwd": str(tmp_path),
                 "session_id": finished["session_id"],
             },
@@ -416,6 +418,8 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             )["tasks"],
         )
         assert [task["status"] for task in tasks] == ["succeeded", "succeeded"]
+        assert [task["manager_model"] for task in tasks] == ["gpt-6", "claude-opus-5"]
+        assert tasks[0]["model"] == "test-model"
         sleeping = await _call(
             client,
             "start_agent",
@@ -1419,3 +1423,66 @@ def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) 
             assert json.load(response) == {}
     finally:
         dashboard.close()
+
+
+@pytest.mark.asyncio
+async def test_manager_model_is_message_metadata_without_cli_inference(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        for name in ("start_agent", "run_round", "post_host_message"):
+            assert "manager_model" in tools[name].input_schema["properties"]
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Model identity",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        group_id = str(show["group_id"])
+        for model in ("gpt-6", "claude-opus-5", None):
+            await _call(
+                client,
+                "post_host_message",
+                {
+                    "conversation_id": group_id,
+                    "text": "Remark",
+                    "manager_model": model,
+                },
+            )
+        round_ = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": group_id,
+                "seats": ["a"],
+                "order": "parallel",
+                "prompt": "Go",
+                "manager_model": "gemini-3.5-pro",
+            },
+        )
+        await _call(client, "wait_round", {"round_id": round_["round_id"]})
+        state = _conversation(
+            await _call(client, "read_conversation", {"conversation_id": group_id})
+        )
+        entries = cast(list[dict[str, object]], state["entries"])
+        assert [entry["manager_model"] for entry in entries] == [
+            "gpt-6",
+            "claude-opus-5",
+            None,
+            "gemini-3.5-pro",
+            None,
+        ]
+        disk = json.loads((data_root / "conversations" / group_id / "state.json").read_text())
+        assert disk["entries"] == entries
+        public = json.loads((data_root / "conversations" / group_id / "views.json").read_text())[
+            "public"
+        ]
+        assert [entry["manager_model"] for entry in public["messages"]] == [
+            entry["manager_model"] for entry in entries
+        ]
+        legacy = EntryRecord(round=1, kind="host", time="now")
+        assert legacy.manager_model is None
