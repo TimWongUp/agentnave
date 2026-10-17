@@ -3,11 +3,76 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
+
+_AVATAR_FAMILIES = (
+    "claude",
+    "gpt",
+    "gemini",
+    "grok",
+    "deepseek",
+    "glm",
+    "qwen",
+    "kimi",
+    "minimax",
+)
+
+
+def _avatar_key(*parts: str) -> str:
+    return json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+
+
+def _avatar_family(model: object) -> str | None:
+    name = str(model or "").lower().rsplit("/", 1)[-1]
+    if found := next((family for family in _AVATAR_FAMILIES if family in name), None):
+        return found
+    if re.match(r"^(o[134](?:-|$)|chatgpt|codex)", name):
+        return "gpt"
+    if re.match(r"^(opus|sonnet|haiku)(?:-|$)", name):
+        return "claude"
+    return None
+
+
+def _public_avatar_settings(config: dict[str, object], snapshot: bytes) -> dict[str, object]:
+    """Return only overrides needed by a public view; other capabilities keep the full map."""
+    try:
+        detail: object = json.loads(snapshot)
+    except ValueError:
+        return {}
+    if not isinstance(detail, dict):
+        return {}
+    data = cast(dict[str, object], detail)
+    if data.get("view") != "public":
+        return config
+    required: set[str] = set()
+
+    def need(provider: object, model: object) -> None:
+        if not isinstance(provider, str) or not provider or not isinstance(model, str):
+            return
+        required.add(_avatar_key("model", provider, model))
+        if family := _avatar_family(model):
+            required.add(_avatar_key("family", family, ""))
+
+    host = data.get("host")
+    messages = data.get("messages")
+    if isinstance(messages, list):
+        for message in cast(list[object], messages):
+            if isinstance(message, dict):
+                item = cast(dict[str, object], message)
+                if item.get("speaker") == "@host":
+                    need(host, item.get("manager_model"))
+    seats = data.get("seats")
+    if isinstance(seats, list):
+        for seat in cast(list[object], seats):
+            if isinstance(seat, dict):
+                item = cast(dict[str, object], seat)
+                need(item.get("provider"), item.get("model"))
+    return {key: value for key, value in config.items() if key in required}
 
 
 class Dashboard:
@@ -57,11 +122,14 @@ class Dashboard:
                 cache_control = "no-store"
                 if resource == "avatar-settings":
                     try:
-                        value: object = (
+                        configured: object = (
                             json.loads((root / "avatars.json").read_text()) if root else {}
                         )
-                        if not isinstance(value, dict):
-                            value = dict[str, str]()
+                        value = (
+                            _public_avatar_settings(cast(dict[str, object], configured), snapshot)
+                            if isinstance(configured, dict)
+                            else {}
+                        )
                     except (OSError, ValueError):
                         value = {}
                     content_type, body = (

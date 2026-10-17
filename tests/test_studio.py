@@ -1025,6 +1025,37 @@ def test_host_projection_does_not_collide_with_director_seat() -> None:
     assert [m["speaker"] for m in projected["messages"]] == ["@host", "director"]
 
 
+def test_task_director_exposes_manager_identity() -> None:
+    state = Conversation(
+        id="task",
+        title="task",
+        kind="task",
+        host="codex",
+        tasks=[
+            TaskRecord(
+                id="run",
+                provider="claude",
+                model="claude-opus-5",
+                cwd="/tmp",
+                prompt="work",
+                manager_model="gpt-6",
+                time="now",
+            )
+        ],
+    )
+    projected = json.loads(
+        views.director(
+            state,
+            public_url="",
+            home_url="/",
+            storage="/tmp",
+            tails={},
+        )
+    )
+    assert projected["host"] == "codex"
+    assert projected["tasks"][0]["manager_model"] == "gpt-6"
+
+
 def test_idle_http_connection_does_not_block_state_requests() -> None:
     import socket
 
@@ -1397,22 +1428,51 @@ def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) 
     from urllib.request import Request
 
     dashboard = Dashboard(tmp_path)
-    dashboard.update("avatars", b'{"view":"public"}')
-    url = dashboard.url("avatars")
+    dashboard.update(
+        "public",
+        json.dumps(
+            {
+                "view": "public",
+                "host": "codex",
+                "seats": [{"id": "a", "provider": "claude", "model": "claude-opus-5"}],
+                "messages": [{"speaker": "@host", "manager_model": "gpt-6"}],
+            }
+        ).encode(),
+    )
+    dashboard.update("director", b'{"view":"director"}')
+    url = dashboard.url("public")
+    director_url = dashboard.url("director")
     try:
         with urlopen(url + "avatar-settings") as response:
             assert json.load(response) == {}
             assert response.headers["Cache-Control"] == "no-store"
-        value = {'["model","pi","gpt-6"]': "data:image/png;base64,iVBORw0KGgo="}
+        value = {
+            '["family","claude",""]': "data:image/png;base64,iVBORw0KGgo=",
+            '["family","gpt",""]': "data:image/png;base64,iVBORw0KGgo=",
+            '["family","grok",""]': "data:image/png;base64,iVBORw0KGgo=",
+            '["model","claude","claude-opus-5"]': "data:image/png;base64,iVBORw0KGgo=",
+            '["model","codex","gpt-6"]': "data:image/png;base64,iVBORw0KGgo=",
+            '["model","pi","gpt-6"]': "data:image/png;base64,iVBORw0KGgo=",
+        }
         (tmp_path / "avatars.json").write_text(json.dumps(value))
         with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == {
+                key: value[key]
+                for key in (
+                    '["family","claude",""]',
+                    '["family","gpt",""]',
+                    '["model","claude","claude-opus-5"]',
+                    '["model","codex","gpt-6"]',
+                )
+            }
+        with urlopen(director_url + "avatar-settings") as response:
             assert json.load(response) == value
         with urlopen(url + "avatar-claude.png") as response:
             assert response.headers["Content-Type"] == "image/png"
             assert response.read().startswith(b"\x89PNG")
         for request, status in [
             (Request(url + "avatar-settings", headers={"Origin": "https://example.com"}), 403),
-            (url.replace("/avatars/", "/missing/") + "avatar-settings", 404),
+            (url.replace("/public/", "/missing/") + "avatar-settings", 404),
             (Request(url + "app/avatars", data=b"{}", method="POST"), 501),
         ]:
             with pytest.raises(HTTPError) as error:

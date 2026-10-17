@@ -130,6 +130,7 @@ def _director(
             "id": state.id,
             "title": state.title,
             "mode": "task",
+            "host": state.host,
             "seats": [],
             "messages": [],
             "tasks": tasks,

@@ -1054,6 +1054,12 @@ function renderTask() {
               provider: task.provider,
               model: task.model,
             };
+            const manager = {
+              label: detail.host || "主控",
+              provider: "host",
+              host: detail.host || "",
+              model: task.manager_model || "",
+            };
             return h(
               "article.task-run.tone-" + taskState.kind,
               {},
@@ -1083,7 +1089,17 @@ function renderTask() {
                 ? h(
                     "div.body.prompt",
                     {},
-                    h("p.meta", {}, "主控派发"),
+                    h(
+                      "p.meta.prompt-who",
+                      {},
+                      avatar(manager, ".sm"),
+                      h(
+                        "span.who",
+                        {},
+                        h("strong", {}, modelName(manager)),
+                        h("small", {}, identityNote(manager)),
+                      ),
+                    ),
                     foldable(`prompt:${detail.id}:${task.id}`, task.prompt),
                   )
                 : null,

@@ -22,6 +22,7 @@ a compatible MCP host.
 In the tray app, **Settings → Avatars** lets you upload a custom image or restore the official
 model icon. Overrides can target a model family or a specific CLI/model pair.
 They stay in `avatars.json` in the local data directory and are shared by chat, tray, and browser views.
+Uploads are limited to 5 MiB and 16 megapixels, then decoded at a bounded size and cropped locally.
 Manager and member message avatars both follow their model; CLI headings have no avatar.
 When known from trusted host context, pass your current model as `manager_model` to Studio
 `start_agent`, `run_round`, and `post_host_message`. Each message records its own declaration;
