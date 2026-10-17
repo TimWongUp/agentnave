@@ -479,8 +479,8 @@ All checks passed!
     const connected = !freshHosts && index === 0;
     const orphan = !freshHosts && id === "hermes";
     return { id, label: HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id, installed: !orphan, detect_source: orphan ? "config" : "path",
-      status: orphan ? "orphaned" : connected ? "connected" : "available", entry: connected || orphan ? "studio" : null,
-      command: connected || orphan ? "/preview/bin/agentnave-studio-mcp" : null, command_state: connected ? "present" : null,
+      status: orphan ? "orphaned" : connected ? "connected" : "available", entry: connected || orphan ? "agentnave" : null,
+      command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
       first_seen: "2026-10-17T00:00:00Z", attention: null, last_action: null,
@@ -488,14 +488,14 @@ All checks passed!
   });
   if (hostScene === "typical") {
     const warning = hostRows.find((host) => host.id === "workbuddy");
-    Object.assign(warning, { status: "needs_attention", entry: "core", command: "/missing/agentnave-mcp", command_state: "missing", attention: { code: "command_missing", message: "条目的命令不存在或不可执行" } });
+    Object.assign(warning, { status: "needs_attention", entry: "agentnave", command: "/missing/agentnave-mcp", command_state: "missing", attention: { code: "command_missing", message: "条目的命令不存在或不可执行" } });
     warning.layers[0].has_entry = true;
   }
   let membersReady = ["midway", "typical", "done"].includes(hostScene);
   let triedReady = hostScene === "done";
-  const hostView = () => ({ service: { installed: serviceReady, studio: serviceReady, core: serviceReady, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${status().version}"` }, hosts: hostRows, backups: { dir: "/preview/backups", count: 0 } });
+  const hostView = () => ({ service: { installed: serviceReady, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${status().version}"` }, hosts: hostRows, backups: { dir: "/preview/backups", count: 0 } });
   const onboarding = () => ({ dismissed, steps: [
-    { id: "service", done: serviceReady, detail: "安装工作室与核心入口" },
+    { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
     { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },
     { id: "members", done: membersReady, detail: "选择可以派出的 CLI 与模型" },
     { id: "try", done: triedReady, detail: "在宿主里派一次任务" }] });
@@ -515,7 +515,7 @@ All checks passed!
     if (!host) throw new Error("未知宿主");
     if (path.endsWith("/root")) host.root = { path: body.path || `/preview/${host.id}`, source: body.path ? "user" : "default" };
     else if (path.endsWith("/remove")) { host.status = "available"; host.entry = host.command = host.command_state = null; host.layers.forEach((l) => l.has_entry = false); }
-    else { host.status = "connected"; host.entry = body.entry || "studio"; host.command = `/preview/bin/${host.entry === "core" ? "agentnave-mcp" : "agentnave-studio-mcp"}`; host.has_host_env = true; host.command_state = "present"; host.layers.forEach((l) => l.has_entry = true); if (host.skill.state === "missing") host.skill = { ...host.skill, state: "app", version: status().version }; }
+    else { host.status = "connected"; host.entry = "agentnave"; host.command = "/preview/bin/agentnave-mcp"; host.has_host_env = true; host.command_state = "present"; host.layers.forEach((l) => l.has_entry = true); if (host.skill.state === "missing") host.skill = { ...host.skill, state: "app", version: status().version }; }
     host.attention = null;
     host.last_action = { ok: true, message: "预览操作完成", at: new Date().toISOString() };
     return { host: structuredClone(host), ok: true, message: host.last_action.message };

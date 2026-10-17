@@ -61,7 +61,6 @@ class Host:
             self.code.append(
                 serve(
                     [sys.executable, str(script), str(self.busy)],
-                    pin={"open_group"},
                     site=self.site,
                     stdin=relay_in,
                     stdout=relay_out,
@@ -105,7 +104,7 @@ def _settle(host: Host, seconds: float = 0.5) -> int:
     return host.pid()
 
 
-def test_relay_swaps_only_when_idle_and_unpinned(tmp_path: Path) -> None:
+def test_relay_swaps_only_when_idle_and_not_blocked_by_open_group(tmp_path: Path) -> None:
     host = Host(tmp_path)
     host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
     host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -123,10 +122,13 @@ def test_relay_swaps_only_when_idle_and_unpinned(tmp_path: Path) -> None:
         time.sleep(0.1)
     assert second != first
 
-    # Opening a core group pins the server for the rest of the connection.
+    # Opening a group no longer pins: its state is saved and reloads in the new child.
     host.call("tools/call", {"name": "open_group"})
     host.install("1.2")
-    assert _settle(host) == second
+    deadline = time.monotonic() + 10
+    while (third := host.pid()) == second and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert third != second
 
     host.writer.close()
     host.thread.join(10)
@@ -160,7 +162,6 @@ def test_relay_recovers_after_long_capped_backoff(
 ) -> None:
     relay = launcher.Relay(
         [sys.executable, "-c", "import sys; sys.stdin.read()"],
-        pin=set(),
         site=tmp_path,
         stdin=io.BytesIO(),
         stdout=io.BytesIO(),

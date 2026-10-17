@@ -33,7 +33,8 @@ jobs:
 
           skill = "skills/agentnave-manager"
           required = ["pyproject.toml", "src/agentnave/__init__.py", f"{skill}/SKILL.md",
-                      "src/agentnave_studio/mcp_server.py"]
+                      "src/agentnave/mcp_server.py", "src/agentnave/conversations.py",
+                      f"{skill}/references/studio.md"]
           required += [f"{skill}/references/{name}.md" for name in
                        ("claude", "codebuddy", "codex", "grok", "antigravity", "pi")]
           archive = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "--", *required])
@@ -121,6 +122,7 @@ jobs:
           UV_TOOL_BIN_DIR: ${{ runner.temp }}/agentnave-bin
         run: |
           uv tool install --python 3.12 dist/agentnave-*.whl
+          # The retired launcher must be absent; verify_install treats its path as an absence check.
           "$UV_TOOL_DIR/agentnave/bin/python" scripts/verify_install.py \
             "$UV_TOOL_BIN_DIR/agentnave-mcp" "$UV_TOOL_BIN_DIR/agentnave-studio-mcp"
       - name: Verify installed distributions on Windows

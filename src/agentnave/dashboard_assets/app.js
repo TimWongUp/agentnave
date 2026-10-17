@@ -1207,7 +1207,7 @@ async function boot() {
         "div.boot",
         {},
         h("span.mark", {}, "N"),
-        h("p", {}, "无法连接到工作室，请稍后刷新。"),
+        h("p", {}, "无法连接到 AgentNave，请稍后刷新。"),
       ),
     );
     setTimeout(boot, 3000);

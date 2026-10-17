@@ -3,10 +3,9 @@
 Contributions are welcome through GitHub Issues and pull requests. Keep changes focused on
 AgentNave's role as a local STDIO MCP adapter for CLI-based subagents; planning, orchestration,
 review decisions, retries, permissions, and worktree management belong to the calling Agent Manager.
-The core (`src/agentnave`, launcher `agentnave-mcp`) keeps no history, starts no web server and never
-imports the studio; saved shows, review and the dashboard belong to `src/agentnave_studio` and must
-keep public pages limited to committed entries; see
-[the studio guide](docs/studio.md).
+The single `src/agentnave` package and `agentnave-mcp` launcher include execution, saved history,
+review and the read-only dashboard. Public views stay limited to committed entries; see the
+[conversation guide](docs/studio.md).
 
 ## Report an issue
 
@@ -62,7 +61,7 @@ for section in settings chat panel manage; do
   done
   ln -s "$PWD/apps/tray/ui/$section.html" "$preview_root/$section/index.html"
 done
-ln -s "$PWD/src/agentnave_studio/dashboard_assets/avatars.png" "$preview_root/avatars.png"
+ln -s "$PWD/src/agentnave/dashboard_assets/avatars.png" "$preview_root/avatars.png"
 HOME="$preview_home" python3 -m http.server 8765 --bind 127.0.0.1 --directory "$preview_root"
 ```
 

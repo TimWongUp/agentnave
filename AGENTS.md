@@ -8,7 +8,7 @@
 
 ## Implementation boundaries
 
-- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，由同一个包 `agentnave` 安装两个入口：核心 `agentnave-mcp` 只提供 CLI 子代理适配与进程内的并联／串联协作轮次，不建数据目录、不持久化、不监听端口、不向调用方 cwd 写文件，且不导入工作室；工作室 `agentnave-studio-mcp` 在核心之上提供保存历史、可选审核、主持人发言和按需启动的只读看板。两个入口都先启动只用标准库的中继，由它运行真正的服务，并在安装变化且空闲时换用新进程（ADR-0010）。服务入口确认处于被派出的 CLI 内或检测不可用时，只提供无运行时副作用的零工具 MCP 服务，保持单向编排（ADR-0011）。规划、角色设定、轮次编排、审核判断、综合、重试与 worktree 仍由调用方 Manager 决定，不提供面向人的 CLI。
+- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，发行包 `agentnave` 只提供 `agentnave-mcp` 一个入口。统一核心负责 CLI 子代理、保存的并联／串联协作轮次、任务历史、可选审核、主持人发言与按需只读看板；App 负责接入、组员配置、展示与历史清理。不再提供无历史核心模式（ADR-0016）。入口先启动只用标准库的中继，由它运行真正服务，安装变化且空闲时换用新进程；保存的协作组不固定旧进程。嵌套或检测不可用时只提供无运行时副作用的零工具 MCP 服务（ADR-0011）。规划、角色、模型、轮次编排、审核判断、综合、重试与 worktree 仍由调用方 Manager 决定，不提供面向人的 CLI。
 - Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；除协议必需参数与调用方显式参数外，只允许套用用户在 AgentNave App 中设定、且在回执中注明的组员默认值。`restricted_tools=true` 是显式受限配置；普通 Invocation 不继承此配置。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设定的默认 options 或用户本轮明确要求；主控不得自行追加。App 权限默认值也会在续接时套用，并在回执中注明。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程树内的活跃进程做 best-effort 清理，不引入跨重启恢复。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。
@@ -19,7 +19,7 @@
 ## Setup and verification
 
 - 开发环境：`uv sync --all-groups`。
-- MCP：核心 `uv run agentnave-mcp`，工作室 `uv run agentnave-studio-mcp`。
+- MCP：`uv run agentnave-mcp`。
 - Python 门：`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run pytest`。
 - 托盘门（改动 `apps/tray` 或看板前端时，在 `apps/tray` 下）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。
 - 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。

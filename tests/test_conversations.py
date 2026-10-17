@@ -11,14 +11,14 @@ from urllib.request import urlopen
 import pytest
 from mcp import Client
 
+from agentnave import mcp_server, views
+from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
+from agentnave.dashboard import Dashboard
 from agentnave.group import GroupSeat
+from agentnave.mcp_server import mcp
 from agentnave.models import InvocationRequest
-from agentnave_studio import mcp_server as studio_server
-from agentnave_studio import views
-from agentnave_studio.dashboard import Dashboard
-from agentnave_studio.mcp_server import mcp
-from agentnave_studio.store import (
+from agentnave.store import (
     Conversation,
     EntryRecord,
     Record,
@@ -27,7 +27,6 @@ from agentnave_studio.store import (
     SeatRunRecord,
     TaskRecord,
 )
-from agentnave_studio.studio import Studio
 
 
 @pytest.fixture(autouse=True)
@@ -36,9 +35,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
     monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
-    monkeypatch.setattr(studio_server.core, "HOST", Host())
-    monkeypatch.setattr(studio_server.core, "EXCLUDED_PROVIDERS", frozenset[str]())
-    monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset[str]())
+    monkeypatch.setattr(mcp_server, "HOST", Host())
+    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
     # A fake claude that reports what it saw; a SLEEP private instruction keeps it running.
@@ -276,7 +274,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
 async def test_isolated_show_runs_restricted_seats_in_own_directories(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     data_root.mkdir()
     (data_root / "members.json").write_text(
         json.dumps(
@@ -483,7 +481,7 @@ async def test_resume_uses_latest_binding_when_old_archived_history_duplicates_s
         legacy = json.loads(path.read_text())
         legacy["archived"] = archived
         path.write_text(json.dumps(legacy))
-    studio = Studio(InvocationManager(), data_root)
+    studio = Conversations(InvocationManager(), data_root)
     try:
         invocation, conversation = studio.start_task(
             InvocationRequest("claude", "continue", tmp_path, "shared-session"), None, None
@@ -502,8 +500,8 @@ async def test_resume_uses_latest_binding_when_old_archived_history_duplicates_s
 async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
     tmp_path: Path, data_root: Path
 ) -> None:
-    first = Studio(InvocationManager(), data_root)
-    second = Studio(InvocationManager(), data_root)
+    first = Conversations(InvocationManager(), data_root)
+    second = Conversations(InvocationManager(), data_root)
     try:
         seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
         record = first.open_show("Shared", tmp_path, seats, review=True, isolated=False)
@@ -582,7 +580,7 @@ async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
 async def test_idle_deleted_conversation_is_forgotten_and_not_recreated(
     tmp_path: Path, data_root: Path
 ) -> None:
-    studio = Studio(InvocationManager(), data_root)
+    studio = Conversations(InvocationManager(), data_root)
     try:
         record = studio.open_show(
             "Deleted",
@@ -607,8 +605,8 @@ async def test_idle_deleted_conversation_is_forgotten_and_not_recreated(
 async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    first = Studio(InvocationManager(), data_root)
-    second = Studio(InvocationManager(), data_root)
+    first = Conversations(InvocationManager(), data_root)
+    second = Conversations(InvocationManager(), data_root)
     save = Record.save
     terminal_saves = 0
 
@@ -758,7 +756,7 @@ async def test_cancel_rejects_a_publish_that_arrives_after_it(
 ) -> None:
     from agentnave.group import GroupSeat
 
-    studio = Studio(InvocationManager(), data_root)
+    studio = Conversations(InvocationManager(), data_root)
     seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
     record = studio.open_show("Late", tmp_path, seats, review=True, isolated=False)
     round_ = studio.run(record.state.id, ["a"], "parallel", "go", {})
@@ -832,7 +830,7 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
 ) -> None:
     from agentnave.group import GroupSeat
 
-    studio = Studio(InvocationManager(), data_root)
+    studio = Conversations(InvocationManager(), data_root)
     seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
     record = studio.open_show("Rollback", tmp_path, seats, review=True, isolated=False)
     round_ = studio.run(record.state.id, ["a"], "parallel", "go", {})
@@ -850,7 +848,7 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
         studio.decide(round_.id, {"a": "publish"})
     await studio.manager.shutdown()
     await studio.close()  # exiting writes the final state the failed save missed
-    restarted = Studio(InvocationManager(), data_root)
+    restarted = Conversations(InvocationManager(), data_root)
     with pytest.raises(ValueError, match="already decided: discard"):
         restarted.decide(round_.id, {"a": "publish"})
     await restarted.close()
@@ -860,7 +858,7 @@ async def test_finished_round_keeps_its_memory_reviews_after_a_failed_save(
 async def test_group_and_task_resumes_share_one_session_guard(
     tmp_path: Path, data_root: Path
 ) -> None:
-    studio = Studio(InvocationManager(), data_root)
+    studio = Conversations(InvocationManager(), data_root)
     try:
         record = studio.open_show(
             "Mixed",
@@ -907,7 +905,7 @@ async def test_group_and_task_resumes_share_one_session_guard(
 async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    studio = Studio(InvocationManager(), data_root)
+    studio = Conversations(InvocationManager(), data_root)
     invocation_id, conversation_id = studio.start_task(
         InvocationRequest("claude", "one", tmp_path), "Job", None
     )
@@ -937,10 +935,10 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
 async def test_dashboard_failure_does_not_repeat_or_lose_started_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(_self: Studio, *, history_loaded: bool = False) -> str:
+    def fail(_self: Conversations, *, history_loaded: bool = False) -> str:
         raise OSError("viewer unavailable")
 
-    monkeypatch.setattr(Studio, "open_dashboard", fail)
+    monkeypatch.setattr(Conversations, "open_dashboard", fail)
     async with Client(mcp) as client:
         started = await _call(
             client, "start_agent", {"provider": "claude", "prompt": "once", "cwd": str(tmp_path)}
@@ -959,7 +957,7 @@ async def test_dashboard_refresh_sleeps_when_idle_and_recovers_read_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = InvocationManager()
-    studio = Studio(manager, tmp_path / "history")
+    studio = Conversations(manager, tmp_path / "history")
     studio.open_dashboard()
     assert studio.dashboard is not None and studio.refresher is not None
     studio.refresher.cancel()
@@ -1050,7 +1048,7 @@ def test_writer_can_acquire_after_brief_probe_lock(
     def release_probe(_delay: float) -> None:
         reader._unlock(probe)  # pyright: ignore[reportPrivateUsage]
 
-    monkeypatch.setattr("agentnave_studio.store.time.sleep", release_probe)
+    monkeypatch.setattr("agentnave.store.time.sleep", release_probe)
     try:
         writer.acquire()
         assert writer.lock is not None
@@ -1083,14 +1081,14 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         )
         assert renamed == {"conversation_id": show["group_id"], "title": "Renamed"}
     scans = 0
-    original_scan = Studio.scan
+    original_scan = Conversations.scan
 
-    def count_scan(studio: Studio) -> dict[str, bool]:
+    def count_scan(studio: Conversations) -> dict[str, bool]:
         nonlocal scans
         scans += 1
         return original_scan(studio)
 
-    monkeypatch.setattr(Studio, "scan", count_scan)
+    monkeypatch.setattr(Conversations, "scan", count_scan)
     async with Client(mcp) as client:
         listed = await _call(client, "list_conversations", {})
         assert scans == 1
@@ -1101,10 +1099,10 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         assert len(names) == 16 and "delete_conversation" not in names
         assert {"wait_any", "list_invocations", "list_members"} <= set(names)
 
-    def fail(_self: Studio, *, history_loaded: bool = False) -> str:
+    def fail(_self: Conversations, *, history_loaded: bool = False) -> str:
         raise OSError("viewer failed")
 
-    monkeypatch.setattr(Studio, "open_dashboard", fail)
+    monkeypatch.setattr(Conversations, "open_dashboard", fail)
     async with Client(mcp) as client:
         listed = await _call(client, "list_conversations", {})
         assert listed["dashboard_error"] == "viewer failed"
@@ -1122,7 +1120,7 @@ async def test_history_io_failure_keeps_urls_until_recovery(
     )
     creator.release()
     manager = InvocationManager()
-    studio = Studio(manager, root)
+    studio = Conversations(manager, root)
     try:
         studio.open_dashboard()
         urls = studio.urls("known")
@@ -1194,7 +1192,7 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
 
 
 @pytest.mark.asyncio
-async def test_studio_reuses_readonly_core_members(data_root: Path) -> None:
+async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
         assert len(tools) == 16 and "list_profiles" not in tools
@@ -1210,7 +1208,7 @@ async def test_studio_reuses_readonly_core_members(data_root: Path) -> None:
         }
         (data_root / "members.json").write_text(json.dumps(document), encoding="utf-8")
         result = await _call(client, "list_members", {})
-        assert result == (await studio_server.core.list_members()).model_dump()
+        assert result["configured"] is True
         assert list(data_root.iterdir()) == [data_root / "members.json"]
 
 
@@ -1220,8 +1218,8 @@ async def test_studio_enforces_discussion_defaults_before_saving(
 ) -> None:
     from agentnave.host import Host
 
-    monkeypatch.setattr(studio_server.core, "HOST", Host("claude", "parent"))
-    monkeypatch.setattr(studio_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    monkeypatch.setattr(mcp_server, "HOST", Host("claude", "parent"))
+    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     data_root.mkdir()
     path = data_root / "members.json"
     document: dict[str, object] = {
@@ -1257,7 +1255,7 @@ async def test_studio_enforces_discussion_defaults_before_saving(
             "start_agent", {"provider": "claude", "prompt": "x", "cwd": str(tmp_path)}
         )
         assert result.is_error and "excluded by this host" in str(result.content)
-        assert studio_server.PROVIDER_SELECTION in str(result.content)
+        assert mcp_server.PROVIDER_SELECTION in str(result.content)
         # Existing records retain their creator's manager identity when another server reads them.
         old = Conversation.model_validate(
             {
@@ -1293,12 +1291,12 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
 ) -> None:
     from agentnave.host import Host
 
-    monkeypatch.setattr(studio_server.core, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_server, "HOST", Host("codex", "env"))
 
-    def unavailable(_studio: Studio) -> str:
+    def unavailable(_studio: Conversations) -> str:
         raise OSError("viewer unavailable")
 
-    monkeypatch.setattr(Studio, "open_dashboard", unavailable)
+    monkeypatch.setattr(Conversations, "open_dashboard", unavailable)
     data_root.mkdir()
     (data_root / "members.json").write_text(
         json.dumps(

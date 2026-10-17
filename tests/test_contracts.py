@@ -1,4 +1,4 @@
-import ast
+import tomllib
 from pathlib import Path
 from typing import cast
 
@@ -7,18 +7,11 @@ import pytest
 from agentnave.models import InvocationRequest
 
 
-def test_core_never_imports_studio() -> None:
-    core = Path(__file__).parents[1] / "src" / "agentnave"
-    for path in core.rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            names = (
-                [alias.name for alias in node.names]
-                if isinstance(node, ast.Import)
-                else [node.module or ""]
-                if isinstance(node, ast.ImportFrom)
-                else []
-            )
-            assert not any(name.split(".")[0] == "agentnave_studio" for name in names), path
+def test_single_package_and_console_entrypoint() -> None:
+    root = Path(__file__).parents[1]
+    assert not (root / "src" / "agentnave_studio").is_dir()
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["scripts"] == {"agentnave-mcp": "agentnave.relay:main"}
 
 
 def test_request_normalizes_provider_and_cwd(tmp_path: Path) -> None:

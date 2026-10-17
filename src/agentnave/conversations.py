@@ -1,4 +1,4 @@
-"""Saved shows and task history on top of core groups: persistence, review and the dashboard."""
+"""Saved conversations, reviewable shows, and the read-only dashboard."""
 
 from __future__ import annotations
 
@@ -15,15 +15,15 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+from agentnave import views
 from agentnave.adapters import get_adapter
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
+from agentnave.dashboard import Dashboard
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
 from agentnave.host import Host, detect_host
 from agentnave.models import InvocationRequest
-from agentnave_studio import views
-from agentnave_studio.dashboard import Dashboard
-from agentnave_studio.store import (
+from agentnave.store import (
     Conversation,
     EntryRecord,
     Record,
@@ -64,8 +64,8 @@ def _json(data: object) -> bytes:
 Record.project = _project
 
 
-class Studio(Groups):
-    """Groups whose state is saved per conversation, plus private task history.
+class Conversations(Groups):
+    """Saved groups and private task history, with review and optional dashboard projection.
 
     Writes take the conversation's OS lock; idle conversations release it once saved.
     Running processes never survive a restart.
@@ -737,14 +737,14 @@ class Studio(Groups):
                     self.live_path.parent.mkdir(mode=0o700, exist_ok=True)
                     write_file(self.live_path, _json(payload | {"conversations": conversations}))
                 except OSError as exc:
-                    print(f"agentnave-studio: could not write live views: {exc}", file=sys.stderr)
+                    print(f"agentnave: could not write live views: {exc}", file=sys.stderr)
                 await asyncio.sleep(_LIVE_SECONDS)
         finally:
             self.live_writer = None  # first, so a failed removal cannot stop the next writer
             try:
                 self.live_path.unlink(missing_ok=True)
             except OSError as exc:
-                print(f"agentnave-studio: could not remove live views: {exc}", file=sys.stderr)
+                print(f"agentnave: could not remove live views: {exc}", file=sys.stderr)
 
     def _prune_live(self) -> None:
         # A server that crashed leaves its file; the tray ignores it, and it goes after an hour.
@@ -769,9 +769,7 @@ class Studio(Groups):
                     try:
                         self._save(group)
                     except OSError as exc:
-                        print(
-                            f"agentnave-studio: could not save {group.id}: {exc}", file=sys.stderr
-                        )
+                        print(f"agentnave: could not save {group.id}: {exc}", file=sys.stderr)
             if self.dashboard is not None:
                 self.dashboard.close()
             for record in self.records.values():

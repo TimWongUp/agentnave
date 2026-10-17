@@ -289,7 +289,7 @@ class Record:
         except OSError as exc:
             # Derived data: the saved state stands, and the next save writes the views again.
             print(
-                f"agentnave-studio: could not write views for {self.state.id}: {exc}",
+                f"agentnave: could not write views for {self.state.id}: {exc}",
                 file=sys.stderr,
             )
 
@@ -317,7 +317,7 @@ class Record:
         except OSError:
             lock.close()
             raise ValueError(
-                "Conversation is held by another AgentNave Studio server; continue it from that "
+                "Conversation is held by another AgentNave server; continue it from that "
                 "host or once it becomes idle"
             ) from None
         return lock
