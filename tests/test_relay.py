@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from agentnave import relay as launcher
-from agentnave.relay import serve
 
 # A stand-in MCP server: refuses calls before the handshake, reports its pid and session, is busy
 # while the file named in argv[1] exists, and fails to start while argv[1] + ".broken" exists.
@@ -35,7 +34,7 @@ for line in sys.stdin:
         result = {"isError": True, "content": [{"type": "text", "text": "not initialized"}]}
     elif message["params"]["name"] == "list_invocations":
         busy = [{"status": "succeeded", "result_read": False}] if os.path.exists(sys.argv[1]) else []
-        result = {"structuredContent": {"invocations": busy}}
+        result = {"structuredContent": {"invocations": busy, "restart_safe": True}}
     else:
         session = os.environ.get("AGENTNAVE_MANAGER_SESSION")
         result = {"structuredContent": {"pid": os.getpid(), "session": session}}
@@ -44,9 +43,11 @@ for line in sys.stdin:
 
 
 class Host:
-    def __init__(self, tmp_path: Path, env: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, tmp_path: Path, env: dict[str, str] | None = None, *, script_text: str = FAKE_SERVER
+    ) -> None:
         script = tmp_path / "server.py"
-        script.write_text(FAKE_SERVER)
+        script.write_text(script_text)
         self.busy = tmp_path / "busy"
         self.site = tmp_path / "site"
         self.install("1.0")
@@ -57,18 +58,17 @@ class Host:
         self.code: list[int] = []
         relay_in, relay_out = os.fdopen(to_relay, "rb"), os.fdopen(from_relay, "wb")
 
+        self.relay = launcher.Relay(
+            [sys.executable, str(script), str(self.busy)],
+            site=self.site,
+            stdin=relay_in,
+            stdout=relay_out,
+            interval=0.05,
+            env=env,
+        )
+
         def run() -> None:
-            self.code.append(
-                serve(
-                    [sys.executable, str(script), str(self.busy)],
-                    pin={"open_group"},
-                    site=self.site,
-                    stdin=relay_in,
-                    stdout=relay_out,
-                    interval=0.05,
-                    env=env,
-                )
-            )
+            self.code.append(self.relay.run())
 
         self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
@@ -105,7 +105,7 @@ def _settle(host: Host, seconds: float = 0.5) -> int:
     return host.pid()
 
 
-def test_relay_swaps_only_when_idle_and_unpinned(tmp_path: Path) -> None:
+def test_relay_swaps_only_when_idle_and_not_blocked_by_open_group(tmp_path: Path) -> None:
     host = Host(tmp_path)
     host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
     host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -123,10 +123,13 @@ def test_relay_swaps_only_when_idle_and_unpinned(tmp_path: Path) -> None:
         time.sleep(0.1)
     assert second != first
 
-    # Opening a core group pins the server for the rest of the connection.
+    # Opening a group no longer pins: its state is saved and reloads in the new child.
     host.call("tools/call", {"name": "open_group"})
     host.install("1.2")
-    assert _settle(host) == second
+    deadline = time.monotonic() + 10
+    while (third := host.pid()) == second and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert third != second
 
     host.writer.close()
     host.thread.join(10)
@@ -155,12 +158,124 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
     host.thread.join(10)
 
 
+def test_real_server_keeps_pending_review_and_unsaved_results_during_upgrade(
+    tmp_path: Path,
+) -> None:
+    # Use the real MCP lifecycle with a fake executable, including a failed terminal save.
+    provider = tmp_path / ("claude.py" if os.name == "nt" else "claude")
+    provider.write_text(
+        "#!/usr/bin/env python3\nimport json,sys\n"
+        "sys.stdin.read()\n"
+        "print(json.dumps({'type':'result','result':'kept answer',"
+        "'session_id':'kept-session','is_error':False}))\n"
+    )
+    provider.chmod(0o755)
+    if os.name == "nt":
+        (tmp_path / "claude.cmd").write_text(f'@"{sys.executable}" "%~dp0claude.py" %*\n')
+    bootstrap = """
+from pathlib import Path
+import sys
+from agentnave import mcp_server
+from agentnave.nesting import NestingResult
+from agentnave.store import Record
+mcp_server.detect_nesting = lambda: NestingResult('not_nested', 'relay regression')
+original_save = Record.save
+def save(record):
+    if Path(sys.argv[1] + '.write_failed').exists() and any(
+        task.status != 'running' for task in record.state.tasks
+    ):
+        raise OSError('injected history write failure')
+    original_save(record)
+Record.save = save
+mcp_server.main()
+"""
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "AGENTNAVE_HOST": "gemini",
+            "AGENTNAVE_EXCLUDED_PROVIDERS": "",
+            "AGENTNAVE_DATA_DIR": str(data),
+        },
+        script_text=bootstrap,
+    )
+
+    def call(tool: str, **arguments: Any) -> dict[str, Any]:
+        result = host.call("tools/call", {"name": tool, "arguments": arguments})
+        assert not result.get("isError"), result
+        return result["structuredContent"]
+
+    def changed_pid(old: int) -> int:
+        deadline = time.monotonic() + 10
+        while host.relay.child.process.pid == old and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert host.relay.child.process.pid != old
+        return host.relay.child.process.pid
+
+    try:
+        host.call(
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "relay regression", "version": "1"},
+            },
+        )
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        first = host.relay.child.process.pid
+        group = call(
+            "open_group",
+            title="Review",
+            cwd=str(tmp_path),
+            review=True,
+            seats=[{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+        )
+        round_ = call(
+            "run_round", group_id=group["group_id"], seats=["a"], order="parallel", prompt="answer"
+        )
+        assert call("wait_round", round_id=round_["round_id"])["reason"] == "review_needed"
+        listed = call("list_invocations")
+        assert all(item["result_read"] for item in listed["invocations"])
+        assert listed["restart_safe"] is False
+        host.install("1.1")
+        time.sleep(0.5)
+        assert host.relay.child.process.pid == first
+        call("decide_answers", round_id=round_["round_id"], decisions={"a": "publish"})
+        call("wait_round", round_id=round_["round_id"])
+        second = changed_pid(first)
+        saved = json.loads((data / "conversations" / group["group_id"] / "state.json").read_bytes())
+        assert saved["rounds"][0]["seats"][0]["review"] == "publish"
+        assert saved["rounds"][0]["seats"][0]["output"] == "kept answer"
+
+        failure = tmp_path / "busy.write_failed"
+        failure.touch()
+        started = call("start_agent", provider="claude", prompt="answer", cwd=str(tmp_path))
+        assert call("wait_agent", invocation_id=started["invocation_id"])["status"] == "succeeded"
+        assert call("list_invocations")["restart_safe"] is False
+        host.install("1.2")
+        time.sleep(0.5)
+        assert host.relay.child.process.pid == second
+        failure.unlink()
+        call("update_conversation", conversation_id=started["conversation_id"], title="Saved")
+        changed_pid(second)
+        saved = json.loads(
+            (data / "conversations" / started["conversation_id"] / "state.json").read_bytes()
+        )
+        assert saved["tasks"][0]["output"] == "kept answer"
+        assert saved["tasks"][0]["session_id"] == "kept-session"
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert host.code == [0]
+
+
 def test_relay_recovers_after_long_capped_backoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     relay = launcher.Relay(
         [sys.executable, "-c", "import sys; sys.stdin.read()"],
-        pin=set(),
         site=tmp_path,
         stdin=io.BytesIO(),
         stdout=io.BytesIO(),

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentnave"
-version = "0.22.0"
-description = "Local MCP server for CLI-based subagents, with an optional studio for saved multi-CLI shows"
+version = "0.23.0"
+description = "Local MCP server for CLI-based subagents with saved, reviewable multi-CLI shows"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -20,8 +20,7 @@ Repository = "https://github.com/TimWongUp/agentnave"
 Issues = "https://github.com/TimWongUp/agentnave/issues"
 
 [project.scripts]
-agentnave-mcp = "agentnave.relay:core"
-agentnave-studio-mcp = "agentnave_studio.relay:main"
+agentnave-mcp = "agentnave.relay:main"
 
 [dependency-groups]
 dev = [
@@ -32,7 +31,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentnave", "src/agentnave_studio"]
+packages = ["src/agentnave"]
 
 [tool.ruff]
 target-version = "py312"

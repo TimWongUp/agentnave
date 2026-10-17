@@ -3,8 +3,8 @@
 #notice:empty::before { content: "\200b"; }
 #notice.error { color: var(--bad); }
 
-/* avatars: same sprite as the workbench. Production URL is /avatars.png (served by the tray). */
-.avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; background: url("/avatars.png") 0 0 / 300% 200%; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
+/* avatars: official model icons and local overrides. */
+.avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
 .av-host { background-position: 0 0; } .av-claude { background-position: 50% 0; } .av-gpt { background-position: 100% 0; }
 .av-gemini { background-position: 0 100%; } .av-grok { background-position: 50% 100%; } .av-deepseek { background-position: 100% 100%; }
 .av-plain { background-image: none; background-color: hsl(var(--hue, 200) 38% 42%); }
@@ -34,12 +34,11 @@ button.sum-chip:hover:enabled { text-decoration: underline; }
 
 /* ---- host cards ---- */
 .host-cards { display: flex; flex-direction: column; gap: 14px; max-width: 980px; margin-bottom: 40px; }
-.hc { --st: var(--muted); display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 0 14px; padding: 16px 18px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; transition: border-color .15s ease; }
+.hc { --st: var(--muted); display: grid; grid-template-columns: minmax(0, 1fr); padding: 16px 18px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; transition: border-color .15s ease; }
 .hc.tone-info { --st: var(--task); } .hc.tone-ok { --st: var(--run); } .hc.tone-warn { --st: var(--accent); } .hc.tone-idle { --st: var(--muted); }
 .hc:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
 .hc.tone-warn { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: inset 3px 0 0 var(--accent); }
 .hc.is-orphan { border-style: dashed; background: color-mix(in srgb, var(--surface) 80%, var(--bg)); }
-.hc.is-orphan .avatar { filter: grayscale(1); opacity: .6; }
 .hc.is-busy { border-color: color-mix(in srgb, var(--run) 50%, var(--line)); }
 .hc-main { min-width: 0; display: flex; flex-direction: column; gap: 11px; }
 .hc-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 36px; }

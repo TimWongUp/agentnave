@@ -1,15 +1,15 @@
-# AgentNave Studio：可观看的多 CLI 节目
+# AgentNave：会话、审核与只读看板
 
-节目、历史与看板属于工作室入口 `agentnave-studio-mcp`，与核心入口 `agentnave-mcp` 由同一个 `agentnave` 包安装。工作室包含全部核心工具，另加保存历史、可选审核、主持人发言、隔离席位和本机只读看板。只需要子代理时注册核心入口即可；取舍见 [ADR-0006](adr/0006-core-rounds-and-studio-split.md) 与 [ADR-0009](adr/0009-single-package-two-entry-points.md)。
+任务、协作、历史与审核统一由 `agentnave-mcp` 提供，不再区分核心与工作室入口。既有数据根、会话 ID 和历史格式保持不变；见 [ADR-0016](adr/0016-single-core-and-mcp-entrypoint.md)。
 
 ## 工具
 
 | 工具 | 说明 |
 | --- | --- |
-| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | 与核心相同；`start_agent` 另接受 `title`、`conversation_id`，任务自动保存为私有任务会话，模型按套用 App 默认值后的参数记录；`describe_provider` 另返回按当前 discussion CLI 名单计算的 `show_permitted` |
-| `list_members` | 与核心共用只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态 |
+| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | `start_agent` 另接受 `title`、`conversation_id`，任务自动保存为私有任务会话，模型按套用 App 默认值后的参数记录；`describe_provider` 另返回按当前 discussion CLI 名单计算的 `show_permitted` |
+| `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态 |
 | `open_group` | 创建保存的节目：`title`、2–6 个席位、`cwd`，可选 `review`、`isolated`；返回的 `group_id` 就是会话 ID |
-| `run_round`、`wait_round`、`cancel_round` | 与核心相同的并联／串联轮次；审核节目中 `wait_round` 返回 `review_needed`，席位状态出现 `pending_review`、`discarded` |
+| `run_round`、`wait_round`、`cancel_round` | 并联／串联轮次；审核节目中 `wait_round` 返回 `review_needed`，席位状态出现 `pending_review`、`discarded` |
 | `decide_answers` | `round_id` + `{seat_id: publish/discard}`，整批校验并保存后生效 |
 | `post_host_message` | 轮次之间以主持人身份发布公开发言 |
 | `list_conversations`、`read_conversation`、`update_conversation` | 列表、详情、改名 |
@@ -24,17 +24,17 @@
 4. 被丢弃的回答不会进入任何其他席位的输入；该席自己的原生会话仍记得它。失败、受阻、取消自动记为缺席，不需审核。
 5. 有待审回答时不能开新轮次或发主持人消息。`cancel_round` 与服务退出时，已决定发布的回答照常公开，未决定的丢弃。
 
-不审核（`review=false`）时，节目与核心协作轮次的行为完全一致，只是多了保存与看板。
+不审核（`review=false`）时，成功回答按并联／串联规则自动提交，历史照常保存。
 
-`start_agent` 使用 task 配置，`open_group` 每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建节目回执的各席另含 model、effort（未配置时为 null）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、节目与工作室 Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
+`start_agent` 使用 task 配置，`open_group` 每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建节目回执的各席另含 model、effort（未配置时为 null）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、节目与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
 
 `wait_round(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，节目席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
 
 ## 隔离席位
 
-普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求工作室准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
+普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求AgentNave准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
-`isolated=true` 时，工作室在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。节目（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
+`isolated=true` 时，AgentNave在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。节目（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
 
 各 CLI 的原生限制（下列版本已核对本机帮助与受限调用；精确参数以 Adapter 为准，版本或配置变化后复核受影响项）：
 
@@ -78,7 +78,7 @@
 
 会话没有“结束”状态，主控也不删除会话；清理由用户在托盘 App 的“管理会话”中进行。旧版本写入的 `archived` 字段读取时忽略。v0.15.0 之前的旧历史（数据根下的 `catalog/` 与含 `room.json` 的目录）不迁移，只在列表中标为不可用，可手动清除。
 
-托盘应用所需的数据由工作室写出：每个会话目录中的 `views.json` 视图快照，以及有工作运行时数据根下 `live/` 中的运行文件（结束即删除）；见 [ADR-0008](adr/0008-tray-app-reads-studio-snapshots.md)。
+托盘应用所需的数据由AgentNave写出：每个会话目录中的 `views.json` 视图快照，以及有工作运行时数据根下 `live/` 中的运行文件（结束即删除）；见 [ADR-0008](adr/0008-tray-app-reads-studio-snapshots.md)。
 
 ## 托盘应用（预览）
 
@@ -86,13 +86,13 @@
 
 `apps/tray` 是可查看并清理会话记录的桌面应用（带菜单栏图标）（Tauri 2，目前先支持 macOS），不必启动 MCP 服务即可查看数据根中全部宿主的会话。菜单栏标题在有工作时显示运行中与待审核会话数。左键点击图标弹出 480×640 的舞台面板：左侧主控、中间 AgentNave、右侧按主控分组的组员。每位组员固定占一行，运行时原地更新输出，结束后显示结果；同组达到 6 位时可折叠，连线位于卡片下方。面板顶栏按组员计数，主控和组员采用粘性顺序，输出刷新不会改变其位置；没有入选主控时区分尚无数据与最近两小时无活动。
 
-点击主控打开其群聊，点击组员还会定位其最近消息。主窗口默认页为 `/chat/`，`/chat/<group>` 显示该主控会话派出的全部任务和节目：运行与待审群置顶，组员只保留一个原地更新的 typing 气泡，长回复可展开，向上阅读时不强制滚到底。窄窗口在群列表与消息间切换。会话 chip 跳到该会话在群聊中的位置；管理会话页的会话链接同样跳到群聊。群聊、管理会话和设置共用顶部导航。右键菜单有“打开 AgentNave”、“管理会话…”、“设置…”、“检查更新”和“退出 AgentNave”；再次启动打开群聊默认页。App 在 macOS 上有程序坞图标，可固定在程序坞，点程序坞图标重新打开群聊；关闭窗口不退出，菜单栏图标保留。托盘不再内嵌浏览器看板（工作台），浏览器看板仍由工作室按需提供。应用不调用工具，不监听端口；数据根写入仍限于下述会话清理和组员配置。App 更新、服务升级、重试及复制升级命令保留在面板通知区和页脚，沿用原生导航动作。
+点击主控打开其群聊，点击组员还会定位其最近消息。主窗口默认页为 `/chat/`，`/chat/<group>` 显示该主控会话派出的全部任务和节目：运行与待审群置顶，组员只保留一个原地更新的 typing 气泡，长回复可展开，向上阅读时不强制滚到底。窄窗口在群列表与消息间切换。会话 chip 跳到该会话在群聊中的位置；管理会话页的会话链接同样跳到群聊。群聊、管理会话和设置共用顶部导航。右键菜单有“打开 AgentNave”、“管理会话…”、“设置…”、“检查更新”和“退出 AgentNave”；再次启动打开群聊默认页。App 在 macOS 上有程序坞图标，可固定在程序坞，点程序坞图标重新打开群聊；关闭窗口不退出，菜单栏图标保留。托盘不再内嵌浏览器看板（工作台），浏览器看板仍由AgentNave按需提供。应用不调用工具，不监听端口；数据根写入仍限于下述会话清理和组员配置。App 更新、服务升级、重试及复制升级命令保留在面板通知区和页脚，沿用原生导航动作。
 
 托盘提供只读 `GET /app/stage`、`GET /app/chats`、`GET /app/chats/<group>` 与 `GET /app/chats/<group>/focus/<会话ID>` 数据路由，面板与群聊每 1.5 秒轮询，页面隐藏时暂停：按创建者的 `manager_session` 聚合会话，旧记录各自归入 `c-<会话ID>`，组员按 Provider／模型合并并取最近活动。舞台最多返回 6 个有运行／待审或近两小时活动的主控，`counts` 统计所列主控中的运行／待审组员，`empty` 区分 `no_data`、`quiet` 与有主控时的 null；群列表最多 200 个，普通群时间线最多 300 条；定位会话时额外保留该群内目标会话的完整消息，不受其他会话的近期消息挤占。失败、受阻等终态的非空正文与状态提示同时保留。运行中组员各有一个稳定 ID 的 typing 条目并置于末尾，时间取 live 文件的 `updated_at`；失败状态只由最近一次结束的组员决定，旧失败不持续标红，取消不算失败。舞台主控按组 ID 字典序对哈希色冲突顺延，各条路由共用这份分配，不在舞台中的群使用哈希色。新鲜 live 覆盖同会话磁盘快照，未变化的 `views.json` 按修改时间与大小复用内存解析缓存。这些路由只接受 GET，不写数据根，不调用工具或 CLI，沿用自定义协议、无 IPC、无监听端口与既有 CSP 边界；群不存在、目标会话不存在或不属于该群时返回 404。
 
 “管理会话…”在主窗口打开托盘专属页面，也可从面板底部进入。列表包含标题、类型、状态和最近活动时间；可按“空闲 / 失败 / 全部”及活动早于日期筛选。空闲指当前未占用且无待审回答的会话，失败筛选包含受阻与中断。单选或多选后点击“删除所选”，先在页面中核对并确认；“清理 N 天前的会话”针对**全部会话**中早于该天数且可删的记录，不受当前列表筛选限制，同样先确认。运行中、待审及被宿主占用的记录不可勾选，并显示原因；列表定期刷新，读取失败会保留画面并暂停删除，删除后刷新并逐条显示结果。缺少视图快照时回退到状态文件，最近活动时间回退到状态文件的修改时间。
 
-会话没有结束状态；托盘清理仍受会话锁与待审状态保护。Rust 在会话 `.lock` 上取得与 Python 工作室相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。只删除 `state.json` 和 `views.json`，保留会话目录、`.lock`、全部席位及其文件；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或具体文件错误；两个文件的删除不保证同时成功，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
+会话没有结束状态；托盘清理仍受会话锁与待审状态保护。Rust 在会话 `.lock` 上取得与 Python AgentNave相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。只删除 `state.json` 和 `views.json`，保留会话目录、`.lock`、全部席位及其文件；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或具体文件错误；两个文件的删除不保证同时成功，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
 
 “设置…”在主窗口打开托盘专属设置页，与管理会话页在页头互相链接。设置页维护数据根下的组员配置 `members.json`：每个 CLI 下配置哪些模型及其允许的 effort、默认 effort、其他参数与说明，再分别为“任务”与“讨论”两种模式勾选可派出的组员、默认模型和按模式的覆盖；覆盖的字段整体替换共享值，options 也整体替换。服务只读且每次现读，不创建缺失文件。页面会列出本机每个 CLI 是否安装、所在路径和它列出的模型：Codex 读取其模型缓存，Grok、Antigravity、Pi 运行各自的列举命令，CodeBuddy 读取帮助中的支持列表，Claude 只提供别名；探测只运行列举或帮助命令、不调用模型，每个命令最多 15 秒，结果在应用运行期间缓存，可手动刷新。探测失败时仍可手填模型 ID。
 
@@ -103,7 +103,7 @@
 
 从包含托盘的版本起，每个 GitHub Release 附带 macOS 通用安装包 `AgentNave_<版本>_universal.dmg`：打开后把 AgentNave 拖进“应用程序”。应用未经 Apple 签名公证，首次打开须在访达中右键“打开”放行。
 
-应用启动时和此后每天检查一次新版本，也可在右键菜单“检查更新”。发现新版时面板顶部和右键菜单给出“更新并重启”，点击后才下载、校验签名并替换；不会静默更新。若 uv 安装的 `agentnave` 比托盘旧，面板会提示并提供“一键升级”：托盘调用 uv 从本仓库对应 tag 安装（必要时先卸载旧的 `agentnave-studio`），失败时可重试或复制命令。“全部更新”（以及“更新并重启”）一次点击同时处理两者：有新版托盘时先安装并重启，重启后若 uv 安装的本机服务仍较旧会自动执行同一升级；只有服务较旧时直接升级。v0.18.0 起各宿主的服务经入口中继运行，升级后会在空闲时自动换用新版本，无需重连；从更早版本升级到 v0.18.0 时仍需重连一次。
+应用启动时和此后每天检查一次新版本，也可在右键菜单“检查更新”。发现新版时面板顶部和右键菜单给出“更新并重启”，点击后才下载、校验签名并替换；不会静默更新。若 uv 安装的 `agentnave` 比托盘旧，面板会提示并提供“一键升级”：托盘调用 uv 从本仓库对应 tag 安装（必要时先卸载旧的 `agentnave-studio`），失败时可重试或复制命令。“全部更新”（以及“更新并重启”）一次点击同时处理两者：有新版托盘时先安装并重启，重启后若 uv 安装的本机服务仍较旧会自动执行同一升级；只有服务较旧时直接升级。v0.18.0 起各宿主的服务经入口中继运行，升级后会在空闲时自动换用新版本，通常无需重连；从双入口迁入统一核心时仍须重连，以替换旧中继目标并刷新工具清单。
 
 也可从源码构建（需 Rust 与 Node）：
 

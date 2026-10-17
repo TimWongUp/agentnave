@@ -4,7 +4,7 @@
 // Settings -> 宿主接入. Pure DOM construction (h() = createElement/textContent), no innerHTML, no inline style.
 // Data comes from GET /app/hosts; every write is a POST with X-AgentNave-Action (AN.post). The page never
 // writes on its own: auto-takeover is the server's job at startup and on 刷新检测.
-const { h, $, load, post, installService, hostAvatar, relTime } = AN;
+const { h, $, load, post, installService, relTime } = AN;
 
 
 const KEEP_BACKUPS = 30;
@@ -14,28 +14,14 @@ const STATUS = {
   needs_attention: ["需要处理", "warn"],
   orphaned: ["已卸载但仍有条目", "idle"],
 };
-const ENTRY = { studio: "工作室入口", core: "核心入口", other: "自定义命令" };
-const ENTRY_INFO = {
-  studio: [
-    "工作室入口",
-    "agentnave-studio-mcp",
-    "保存历史、可选审核、主持人发言，按需打开只读看板。默认。",
-  ],
-  core: [
-    "核心入口",
-    "agentnave-mcp",
-    "只做并联／串联协作：不保存历史、不建数据目录、不写文件。",
-  ],
-};
-
+const ENTRY = { agentnave: "AgentNave", legacy: "旧版命令（待迁移）", other: "自定义命令" };
 
 const S = {
   data: null,
   appVersion: "",
-  busy: new Map(), // host id -> "connect" | "skill" | "remove" | "entry"
+  busy: new Map(), // host id -> "connect" | "skill" | "remove"
   confirm: null, // host id whose removal is being confirmed
   adv: new Set(), // host ids whose 高级 panel is open
-  draft: new Map(), // host id -> entry picked in 高级 (applied by 接入 / 切换入口)
   roots: new Map(),
   localErr: new Map(), // host id -> message when a request itself failed
   newIds: new Set(),
@@ -89,9 +75,6 @@ function pathRow(full, copy = true) {
     copy && copyButton(full),
   );
 }
-const entryOf = (host) =>
-  S.draft.get(host.id) ||
-  (host.entry === "studio" || host.entry === "core" ? host.entry : "studio");
 const sourceText = (s) =>
   s === "path"
     ? "在 PATH 中找到可执行文件"
@@ -185,27 +168,16 @@ async function run(id, kind, request) {
 }
 const connect = (host, kind = "connect") =>
   run(host.id, kind, () =>
-    post("/app/hosts/connect", { id: host.id, entry: entryOf(host) }),
+    post("/app/hosts/connect", { id: host.id }),
   ).then((r) => {
     if (r?.ok) {
       markSeen([host.id]);
-      S.draft.delete(host.id);
       renderAll();
     }
     return r;
   });
 const removeEntry = (host) =>
   run(host.id, "remove", () => post("/app/hosts/remove", { id: host.id }));
-const switchEntry = (host) =>
-  run(host.id, "entry", () =>
-    post("/app/hosts/entry", { id: host.id, entry: S.draft.get(host.id) }),
-  ).then((r) => {
-    if (r?.ok) {
-      S.draft.delete(host.id);
-      renderAll();
-    }
-  });
-
 async function refreshAll() {
   S.refreshing = true;
   renderAll();
@@ -263,9 +235,6 @@ async function connectAll(ids) {
 function renderBanner() {
   const el = $("svc-banner");
   const svc = S.data.service;
-  const missing = [!svc.studio && "工作室", !svc.core && "核心"].filter(
-    Boolean,
-  );
   el.hidden = false;
   el.className = "banner service";
   el.setAttribute("role", "status");
@@ -297,13 +266,9 @@ function renderBanner() {
         button("重试", "", "install", installSvc),
       ),
     );
-  } else if (!svc.installed || missing.length) {
-    const title = !svc.installed
-      ? "本机服务尚未安装"
-      : `本机服务缺少${missing.join("、")}入口`;
-    const desc = !svc.installed
-      ? "宿主通过本机服务（agentnave-studio-mcp 与 agentnave-mcp）启动 AgentNave。先安装服务，再接入宿主。"
-      : "选择缺少的入口前，请重新安装本机服务。";
+  } else if (!svc.installed) {
+    const title = "请安装或更新本机服务";
+    const desc = "宿主统一通过 agentnave-mcp 启动 AgentNave，保存任务与协作历史。旧版服务需要先升级。";
     el.replaceChildren(
       h("div.banner-content", {}, h("strong", {}, title), h("p", {}, desc)),
       h(
@@ -338,7 +303,7 @@ function renderCallout() {
     fresh.length === 1
       ? untested
         ? "它还没有经过真实接入验证，仍可接入。"
-        : "默认接入工作室入口，已有手写条目会被保留。"
+        : "统一接入 AgentNave，已有条目的其他字段保留。"
       : `${names}${untested ? `；其中 ${untested} 个未实测，需在各自卡片上单独接入` : ""}`;
   const targets = fresh.length === 1 ? fresh : tested;
   const go = targets.length
@@ -394,7 +359,7 @@ function renderSummary() {
     svc.installed
       ? chip(
           "var(--run)",
-          `本机服务：工作室${svc.studio ? " ✓" : " ✕"} 核心${svc.core ? " ✓" : " ✕"}`,
+          "本机服务：已安装 ✓",
         )
       : chip("var(--accent)", "本机服务：未安装"),
   );
@@ -454,7 +419,7 @@ function skillNode(host) {
     );
   const fix =
     host.status === "connected" &&
-    (host.entry === "studio" || host.entry === "core");
+    (host.entry === "agentnave" || host.entry === "legacy");
   const busy = S.busy.get(host.id) === "skill";
   return h(
     "span",
@@ -478,7 +443,7 @@ function entryNode(host) {
     return h(
       "span",
       {},
-      h("span.chip", {}, ENTRY[entryOf(host)]),
+      h("span.chip", {}, "AgentNave"),
       h("span.sub", {}, "接入后使用"),
     );
   const kids = [h("span.chip", {}, ENTRY[host.entry] || "—")];
@@ -491,73 +456,7 @@ function entryNode(host) {
 
 function advPanel(host) {
   const id = host.id;
-  const pick =
-    S.draft.get(id) ??
-    (host.entry === "studio" || host.entry === "core"
-      ? host.entry
-      : host.status === "available"
-        ? "studio"
-        : null);
   const busy = S.busy.has(id);
-  const options = Object.entries(ENTRY_INFO).map(
-    ([value, [name, cmd, desc]]) => {
-      const input = h("input", {
-        type: "radio",
-        name: `entry-${id}`,
-        value,
-        "data-act": `entry-${value}`,
-        checked: pick === value,
-        disabled: busy || null,
-      });
-      input.addEventListener("change", () => {
-        S.draft.set(id, value);
-        S.focus = { id, act: `entry-${value}` };
-        renderAll();
-      });
-      return h(
-        "label.opt",
-        {},
-        input,
-        h(
-          "span",
-          {},
-          h("b", {}, name),
-          h("code", {}, cmd),
-          h("small", {}, desc),
-        ),
-      );
-    },
-  );
-  const connected = host.status === "connected";
-  const changed = connected && pick && pick !== host.entry;
-  const action = connected
-    ? [
-        S.busy.get(id) === "entry"
-          ? spinBtn("切换中…")
-          : button(
-              "切换入口",
-              "",
-              "switch",
-              () => switchEntry(host),
-              !changed || busy,
-            ),
-        h(
-          "span.fine",
-          {},
-          host.entry === "other"
-            ? "切换后命令改为 App 管理的入口，其余字段原样保留。"
-            : "只改命令，其余字段原样保留，写入前会备份。",
-        ),
-      ]
-    : [
-        h(
-          "span.fine",
-          {},
-          host.status === "available"
-            ? "所选入口在点“接入”时生效。"
-            : "所选入口在点“重试接入”时生效。",
-        ),
-      ];
   const rootInput = h("input.root-input", { id: `root-${id}`, type: "text", value: S.roots.get(id) ?? host.root.path, disabled: busy || null, "aria-label": `${host.label} 的配置根目录`, placeholder: "绝对路径" });
   rootInput.addEventListener("input", () => S.roots.set(id, rootInput.value));
   const saveRoot = (path) => run(id, "root", () => post("/app/hosts/root", { id, path })).then((r) => { if (r?.ok) { S.roots.delete(id); renderAll(); } });
@@ -591,17 +490,6 @@ function advPanel(host) {
   return h(
     "div.hc-adv",
     { id: `adv-${id}` },
-    h(
-      "div",
-      {},
-      h("h4", {}, "入口"),
-      h(
-        "div.opt-group",
-        { role: "radiogroup", "aria-label": `${host.label} 的入口` },
-        options,
-      ),
-    ),
-    h("div.adv-actions", {}, ...action),
     rootEditor,
     h("div.fine", {}, (host.layers || []).filter((l) => l.has_entry).map((l) => `${l.scope === "project" ? "项目（只读）" : "用户层"}：${l.path}`).join("；")),
     h(
@@ -882,7 +770,7 @@ function buildCard(host) {
     );
   if (S.adv.has(id) && host.status !== "orphaned") main.push(advPanel(host));
   main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
-  card.append(hostAvatar(host.id, host.label), h("div.hc-main", {}, ...main));
+  card.append(h("div.hc-main", {}, ...main));
   return card;
 }
 

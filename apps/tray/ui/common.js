@@ -45,22 +45,8 @@
   const pick = (table, status) => table[status] || [status || "—", "idle"];
   const urgent = (status) => status === "running" || status === "review";
 
-  // ---- avatars (sprite shared with the workbench) -------------------------------------
-  const hueOf = (text) => [...String(text || "?")].reduce((hue, ch) => (hue * 31 + ch.charCodeAt(0)) % 360, 0);
   function avatar(provider, model, cls) {
-    const key = `${model || ""} ${provider || ""}`.toLowerCase();
-    const known =
-      ["claude", "gpt", "gemini", "grok", "deepseek"].find((name) => key.includes(name)) ||
-      { codex: "gpt", antigravity: "gemini" }[provider];
-    if (known) return h("span.avatar.av-" + known + (cls ? "." + cls : ""), { "aria-hidden": "true" });
-    return h("span.avatar.av-plain" + (cls ? "." + cls : ""), { "aria-hidden": "true", style: `--hue:${hueOf(provider)}` }, String(provider || "?").slice(0, 1).toUpperCase());
-  }
-  // A manager is its host CLI: known hosts reuse the portrait of the same-named model family.
-  function hostAvatar(host, label, cls) {
-    const known = { claude: "claude", codex: "gpt", grok: "grok", antigravity: "gemini" }[host];
-    if (known) return h("span.avatar.av-" + known + (cls ? "." + cls : ""), { "aria-hidden": "true" });
-    if (!host) return h("span.avatar.av-host" + (cls ? "." + cls : ""), { "aria-hidden": "true" });
-    return h("span.avatar.av-plain" + (cls ? "." + cls : ""), { "aria-hidden": "true", style: `--hue:${hueOf(host)}` }, String(label || host).slice(0, 1).toUpperCase());
+    return Avatars.create("model", provider, model, cls);
   }
   const colorClass = (n) => "c" + (Math.abs(Number(n) || 0) % 8);
 
@@ -138,7 +124,7 @@
     if (mock() && link?.getAttribute("href").startsWith("/app/")) event.preventDefault();
   });
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, CONV, pick, urgent, avatar, hostAvatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
+  window.AN = { h, $, load, href, MEMBER, GROUP, CONV, pick, urgent, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
 })();
 
 (function () {

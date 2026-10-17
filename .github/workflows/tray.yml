@@ -6,12 +6,12 @@ on:
       - main
     paths:
       - "apps/tray/**"
-      - "src/agentnave_studio/dashboard_assets/**"
+      - "src/agentnave/dashboard_assets/**"
       - ".github/workflows/tray.yml"
   pull_request:
     paths:
       - "apps/tray/**"
-      - "src/agentnave_studio/dashboard_assets/**"
+      - "src/agentnave/dashboard_assets/**"
       - ".github/workflows/tray.yml"
 
 permissions:

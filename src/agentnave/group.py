@@ -54,6 +54,7 @@ class Entry:
     kind: Literal["task", "host", "answer", "absent"]
     seat_id: str | None = None
     text: str | None = None
+    manager_model: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         data: dict[str, object] = {"round": self.round, "kind": self.kind}
@@ -166,6 +167,8 @@ class Groups:
         order: RoundOrder,
         prompt: str,
         instructions: dict[str, str],
+        *,
+        manager_model: str | None = None,
     ) -> Round:
         group = self._group(group_id)
         if group.active is not None:
@@ -188,7 +191,7 @@ class Groups:
             order,
             [SeatRun(seat_id, instructions.get(seat_id)) for seat_id in seat_ids],
         )
-        group.entries.append(Entry(round_.number, "task", text=prompt))
+        group.entries.append(Entry(round_.number, "task", text=prompt, manager_model=manager_model))
         group.active = round_
         self._rounds[round_.id] = round_
         # Launch synchronously so returned invocation ids are cancellable at once.

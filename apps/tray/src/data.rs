@@ -17,7 +17,7 @@ macro_rules! asset {
     ($name:literal) => {
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../src/agentnave_studio/dashboard_assets/",
+            "/../../src/agentnave/dashboard_assets/",
             $name
         ))
     };
@@ -41,7 +41,7 @@ const HOSTS_CSS: &[u8] = include_bytes!("../ui/hosts.css");
 const ONBOARDING_CSS: &[u8] = include_bytes!("../ui/onboarding.css");
 const MOCK_JS: &[u8] = include_bytes!("../ui/mock.js");
 
-pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'";
 
 /// Same rule as the Studio MCP server: `AGENTNAVE_DATA_DIR`, else `~/.agentnave`.
 pub fn data_root() -> PathBuf {
@@ -159,6 +159,9 @@ impl Reader {
         {
             return self.host_request(method, path, action, body);
         }
+        if path == "/app/avatars" {
+            return crate::avatars::request(&self.root, method, action, body);
+        }
         if path == "/app/members" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -248,7 +251,6 @@ impl Reader {
             "/app/hosts/refresh"
                 | "/app/hosts/connect"
                 | "/app/hosts/remove"
-                | "/app/hosts/entry"
                 | "/app/hosts/root"
                 | "/app/hosts/reveal-backups"
                 | "/app/onboarding/dismiss"
@@ -390,6 +392,15 @@ impl Reader {
         if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
             return crate::stage::respond(path, self.scan().1, self.root.is_dir());
         }
+        if path == "/avatar-settings" {
+            return match crate::avatars::read(&self.root) {
+                Ok(value) => Response::json(&value),
+                Err(error) => Response::error(500, &error),
+            };
+        }
+        if let Some((mime, bytes)) = crate::avatars::asset(path.trim_start_matches('/')) {
+            return Response::ok(mime, bytes.to_vec());
+        }
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if let ["chat", resource] = parts.as_slice() {
             return match *resource {
@@ -408,6 +419,10 @@ impl Reader {
         if let ["settings", resource] = parts.as_slice() {
             return match *resource {
                 "" => Response::ok("text/html; charset=utf-8", SETTINGS_HTML.to_vec()),
+                "avatar-settings.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/avatar-settings.js").to_vec(),
+                ),
                 "settings.js" => {
                     Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec())
                 }
@@ -812,7 +827,7 @@ mod tests {
             {"id": "b", "label": "乙", "provider": "codex", "model": "m"},
             {"id": "c", "label": "丙", "provider": "grok", "model": "m"}],
             "messages": [
-                {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
+                {"kind": "task", "speaker": "@host", "manager_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
                 {"kind": "answer", "speaker": "a", "round": 1, "text": "# 已提交", "time": "2026-10-15T00:00:01Z"},
                 {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
                 {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
@@ -825,6 +840,9 @@ mod tests {
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
         let messages = chat["messages"].as_array().unwrap();
         assert_eq!(messages.iter().filter(|m| m["kind"] == "prompt").count(), 2);
+        let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
+        assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
+        assert_eq!(prompts[1]["speaker"]["model"], "");
         assert!(
             messages
                 .iter()
@@ -949,6 +967,7 @@ mod tests {
         let mut task = task_snapshot("failed", "blocked", "2026-10-15T01:00:00Z");
         task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
         task["director"]["tasks"][0]["error"] = json!("permission_denied");
+        task["director"]["tasks"][0]["manager_model"] = json!("gemini-3.5-pro");
         save(dir.path(), &task);
         let reader = Reader::new(dir.path().to_path_buf());
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -957,6 +976,10 @@ mod tests {
             messages
                 .iter()
                 .any(|m| m["kind"] == "reply" && m["text"] == "已完成的部分结果")
+        );
+        assert_eq!(
+            messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"]["model"],
+            "gemini-3.5-pro"
         );
         assert!(messages.iter().any(|m| m["kind"] == "notice"
             && m["status"] == "blocked"

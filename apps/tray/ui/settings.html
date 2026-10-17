@@ -8,8 +8,10 @@
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="./settings.css">
 <link rel="stylesheet" href="./hosts.css">
+<script src="/avatars.js" defer></script>
 <script src="/chat/common.js" defer></script>
 <script src="/chat/mock.js" defer></script>
+<script src="./avatar-settings.js" defer></script>
 <script src="./settings.js" defer></script>
 <script src="./hosts.js" defer></script>
 </head>
@@ -31,6 +33,7 @@
     </div>
     <div class="tabs" role="tablist" aria-label="设置分区">
       <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型</button>
+      <button id="tab-avatars" class="tab-btn" role="tab" aria-selected="false" type="button">头像</button>
       <button id="tab-hosts" class="tab-btn" role="tab" aria-selected="false" type="button">宿主接入<span id="hosts-badge" class="badge-dot" hidden></span></button>
       <button id="tab-updates" class="tab-btn" role="tab" aria-selected="false" type="button">版本与更新<span id="update-badge" class="badge-dot" hidden></span></button>
     </div>
@@ -90,6 +93,11 @@
         </div>
       </div>
     </aside>
+  </section>
+
+  <section id="pane-avatars" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-avatars">
+    <p class="guidance">默认使用模型家族的官方图标。上传 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片会居中裁剪；仅保存在本机，任务与讨论共用。</p>
+    <div id="avatar-settings" aria-live="polite"></div>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-hosts">

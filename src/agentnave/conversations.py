@@ -1,4 +1,4 @@
-"""Saved shows and task history on top of core groups: persistence, review and the dashboard."""
+"""Saved conversations, reviewable shows, and the read-only dashboard."""
 
 from __future__ import annotations
 
@@ -15,15 +15,15 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+from agentnave import views
 from agentnave.adapters import get_adapter
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
+from agentnave.dashboard import Dashboard
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
 from agentnave.host import Host, detect_host
 from agentnave.models import InvocationRequest
-from agentnave_studio import views
-from agentnave_studio.dashboard import Dashboard
-from agentnave_studio.store import (
+from agentnave.store import (
     Conversation,
     EntryRecord,
     Record,
@@ -64,8 +64,8 @@ def _json(data: object) -> bytes:
 Record.project = _project
 
 
-class Studio(Groups):
-    """Groups whose state is saved per conversation, plus private task history.
+class Conversations(Groups):
+    """Saved groups and private task history, with review and optional dashboard projection.
 
     Writes take the conversation's OS lock; idle conversations release it once saved.
     Running processes never survive a restart.
@@ -279,7 +279,16 @@ class Studio(Groups):
                     )
                     for seat in state.seats
                 },
-                [Entry(item.round, item.kind, item.seat, item.text) for item in state.entries],
+                [
+                    Entry(
+                        item.round,
+                        item.kind,
+                        item.seat,
+                        item.text,
+                        item.manager_model,
+                    )
+                    for item in state.entries
+                ],
                 {
                     seat_id: SeatState(saved.session_id, saved.cursor)
                     for seat_id, saved in state.sessions.items()
@@ -296,21 +305,32 @@ class Studio(Groups):
         order: RoundOrder,
         prompt: str,
         instructions: dict[str, str],
+        *,
+        manager_model: str | None = None,
     ) -> Round:
         with self._writing(group_id):
             self._group(group_id)
             state = self.records[group_id].state
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
-            return super().run(group_id, seat_ids, order, prompt, instructions)
+            return super().run(
+                group_id,
+                seat_ids,
+                order,
+                prompt,
+                instructions,
+                manager_model=manager_model,
+            )
 
-    def post(self, conversation_id: str, text: str) -> None:
+    def post(self, conversation_id: str, text: str, *, manager_model: str | None = None) -> None:
         with self._writing(conversation_id):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
             if group.active is not None or state.pending_review():
                 raise ValueError("post only between rounds, with no answers pending review")
-            group.entries.append(Entry(group.rounds, "host", text=text))
+            group.entries.append(
+                Entry(group.rounds, "host", text=text, manager_model=manager_model)
+            )
             try:
                 self._save(group)
             except OSError:
@@ -372,7 +392,14 @@ class Studio(Groups):
                 group = self._groups.get(record.state.id)
                 if group is not None:
                     group.entries.extend(
-                        Entry(item.round, item.kind, item.seat, item.text) for item in added
+                        Entry(
+                            item.round,
+                            item.kind,
+                            item.seat,
+                            item.text,
+                            item.manager_model,
+                        )
+                        for item in added
                     )
             self._publish(record)
             result = _find(record.state, round_id)
@@ -386,6 +413,10 @@ class Studio(Groups):
             or record.state.pending_review()
             or any(task.status == "running" for task in record.state.tasks)
         )
+
+    def restart_safe(self) -> bool:
+        """A held record may still own a review or a result that could not be saved."""
+        return not self._unsaved and all(record.lock is None for record in self.records.values())
 
     def update(self, conversation_id: str, title: str) -> Record:
         with self._writing(conversation_id) as record:
@@ -403,7 +434,12 @@ class Studio(Groups):
     # Tasks
 
     def start_task(
-        self, request: InvocationRequest, title: str | None, conversation_id: str | None
+        self,
+        request: InvocationRequest,
+        title: str | None,
+        conversation_id: str | None,
+        *,
+        manager_model: str | None = None,
     ) -> tuple[str, str]:
         self.manager.check_start(request)
         record = self.writable(conversation_id) if conversation_id else None
@@ -463,6 +499,7 @@ class Studio(Groups):
                     model=str(request.provider_options.get("model", "原生设置")),
                     cwd=str(request.cwd),
                     prompt=request.prompt,
+                    manager_model=manager_model,
                     session_id=request.session_id,
                     time=now(),
                 )
@@ -524,7 +561,12 @@ class Studio(Groups):
         state = record.state
         state.entries.extend(
             EntryRecord(
-                round=item.round, kind=item.kind, seat=item.seat_id, text=item.text, time=now()
+                round=item.round,
+                kind=item.kind,
+                seat=item.seat_id,
+                text=item.text,
+                time=now(),
+                manager_model=item.manager_model,
             )
             for item in group.entries[len(state.entries) :]
         )
@@ -598,7 +640,7 @@ class Studio(Groups):
 
     def open_dashboard(self, *, history_loaded: bool = False) -> str:
         if self.dashboard is None:
-            self.dashboard = Dashboard()
+            self.dashboard = Dashboard(self.root)
             try:
                 if history_loaded:
                     for record in list(self.records.values()):
@@ -737,14 +779,14 @@ class Studio(Groups):
                     self.live_path.parent.mkdir(mode=0o700, exist_ok=True)
                     write_file(self.live_path, _json(payload | {"conversations": conversations}))
                 except OSError as exc:
-                    print(f"agentnave-studio: could not write live views: {exc}", file=sys.stderr)
+                    print(f"agentnave: could not write live views: {exc}", file=sys.stderr)
                 await asyncio.sleep(_LIVE_SECONDS)
         finally:
             self.live_writer = None  # first, so a failed removal cannot stop the next writer
             try:
                 self.live_path.unlink(missing_ok=True)
             except OSError as exc:
-                print(f"agentnave-studio: could not remove live views: {exc}", file=sys.stderr)
+                print(f"agentnave: could not remove live views: {exc}", file=sys.stderr)
 
     def _prune_live(self) -> None:
         # A server that crashed leaves its file; the tray ignores it, and it goes after an hour.
@@ -764,14 +806,25 @@ class Studio(Groups):
                     await asyncio.gather(task, return_exceptions=True)
             # Write each group's final state once more: an earlier failed save may have left
             # a stale running round or undecided review on disk.
-            for group in {item.group.id: item.group for item in self._rounds.values()}.values():
+            groups = {item.group.id: item.group for item in self._rounds.values()}
+            for group in groups.values():
                 if group.id in self.records:
                     try:
                         self._save(group)
                     except OSError as exc:
-                        print(
-                            f"agentnave-studio: could not save {group.id}: {exc}", file=sys.stderr
-                        )
+                        print(f"agentnave: could not save {group.id}: {exc}", file=sys.stderr)
+            # Task conversations have no live Group to reconstruct. Their terminal result is kept
+            # in memory after a failed save, so retry those records before releasing their locks.
+            for conversation_id in list(self._unsaved):
+                if conversation_id in groups:
+                    continue
+                record = self.records.get(conversation_id)
+                if record is None:
+                    continue
+                try:
+                    self._persist(record)
+                except OSError as exc:
+                    print(f"agentnave: could not save {conversation_id}: {exc}", file=sys.stderr)
             if self.dashboard is not None:
                 self.dashboard.close()
             for record in self.records.values():

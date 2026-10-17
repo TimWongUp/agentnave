@@ -21,12 +21,12 @@ fn fixture() -> (TempDir, Hosts) {
         search: vec![bin],
         applications: vec![base.join("Applications")],
     };
-    for name in ["agentnave-mcp", "agentnave-studio-mcp"] {
-        executable_file(
-            &home.join(".local/share/uv/tools/agentnave/bin").join(name),
-            "#!/bin/sh\nexit 99\n",
-        );
-    }
+    executable_file(
+        &home.join(".local/share/uv/tools/agentnave/bin/agentnave-mcp"),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(&home.join(".local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave-0.22.0.dist-info/entry_points.txt"),
+        "[console_scripts]\nagentnave-mcp = agentnave.relay:main\n");
     let mut hosts = Hosts::new(context);
     hosts.shell = Some(Ok(BTreeMap::new()));
     (temp, hosts)
@@ -138,7 +138,7 @@ fn revision_healthy_unclaimed_entry_is_connected() {
     );
     save(
         &h.config,
-        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher("studio")}}}).to_string(),
+        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher()}}}).to_string(),
     );
     let state = hosts.state(&h);
     assert_eq!(state["status"], "connected");
@@ -154,7 +154,11 @@ fn revision_unrelated_change_does_not_retry_failed_takeover() {
         &hosts.context.search[0].join(h.binary),
         "#!/bin/sh\nexit 99\n",
     );
-    save(&h.config,&json!({"unknown":1,"mcpServers":{"agentnave":{"command":hosts.launcher("core"),"env":{}}}}).to_string());
+    save(
+        &h.config,
+        &json!({"unknown":1,"mcpServers":{"agentnave":{"command":hosts.launcher(),"env":{}}}})
+            .to_string(),
+    );
     // Fail at the backup boundary, then remove that obstacle. An unwanted retry would now
     // succeed and visibly add AGENTNAVE_HOST, even when last_action timestamps are identical.
     let backups = hosts.context.app.join("backups");
@@ -190,7 +194,7 @@ fn external_skill_links_do_not_block_healthy_hosts_or_mcp_actions() {
         );
         save(
             &h.config,
-            &json!({"mcpServers":{"agentnave":{"command":hosts.launcher("core")}}}).to_string(),
+            &json!({"mcpServers":{"agentnave":{"command":hosts.launcher()}}}).to_string(),
         );
         let skill = h.skill.as_ref().unwrap();
         let link = if linked_parent {
@@ -248,7 +252,7 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
         assert_eq!(result["ok"], true);
         assert_eq!(
             result["host"]["command"],
-            json!(tools.join("agentnave/bin/agentnave-studio-mcp"))
+            json!(tools.join("agentnave/bin/agentnave-mcp"))
         );
         let env_root = hosts.context.home.join("env-data");
         let env_tools = if var == "UV_TOOL_DIR" {
@@ -266,7 +270,7 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
         let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
         assert_eq!(
             result["host"]["command"],
-            json!(env_tools.join("agentnave/bin/agentnave-studio-mcp"))
+            json!(env_tools.join("agentnave/bin/agentnave-mcp"))
         );
     }
 }
@@ -358,7 +362,8 @@ if [ "$2" = install ]; then
   site="$tools/agentnave/lib/python3.12/site-packages"
   rmdir "$site/agentnave-0.1.0.dist-info" || exit 8
   mkdir -p "$site/agentnave-@VERSION@.dist-info" "$tools/agentnave/bin" "$bin" || exit 9
-  for entry in agentnave-mcp agentnave-studio-mcp; do
+  printf '[console_scripts]\nagentnave-mcp = agentnave.relay:main\n' > "$site/agentnave-@VERSION@.dist-info/entry_points.txt"
+  for entry in agentnave-mcp; do
     printf '#!/bin/sh\nexit 99\n' > "$tools/agentnave/bin/$entry"
     chmod 700 "$tools/agentnave/bin/$entry" || exit 10
   done
@@ -405,7 +410,7 @@ fn settings_path_errors_preserve_code_without_prefixing_the_message() {
 }
 
 #[test]
-fn revision_multilayer_removal_does_not_fall_back_to_another_registration() {
+fn multilayer_migration_and_removal_leave_project_configuration_untouched() {
     let (_temp, mut hosts) = fixture();
     let global = hosts.context.home.join(".config/opencode/opencode.json");
     let custom = hosts.context.home.join("custom.json");
@@ -428,11 +433,33 @@ fn revision_multilayer_removal_does_not_fall_back_to_another_registration() {
         &hosts.context.search[0].join("opencode"),
         "#!/bin/sh\nexit 99\n",
     );
+    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
+    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
     for path in [&global, &custom, &env_file, &user_file] {
-        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[hosts.launcher("studio")],"environment":{}}}}).to_string());
+        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[legacy,"--keep"],"environment":{},"enabled":false}}}).to_string());
     }
     let project = hosts.context.project.join("opencode.json");
     save(&project, r#"{"mcp":{"agentnave":{"command":["project"]}}}"#);
+    let project_bytes = fs::read(&project).unwrap();
+    let global_bytes = fs::read(&global).unwrap();
+    let other_bytes: Vec<_> = [&custom, &env_file, &user_file]
+        .map(|path| fs::read(path).unwrap())
+        .into();
+    save(&global, "{broken");
+    hosts.refresh();
+    for (path, bytes) in [&custom, &env_file, &user_file].iter().zip(&other_bytes) {
+        assert_eq!(fs::read(path).unwrap(), *bytes);
+    }
+    fs::write(&global, global_bytes).unwrap();
+    hosts.refresh();
+    for path in [&global, &custom, &env_file, &user_file] {
+        let document = host(&hosts, "opencode").read_at(path).unwrap();
+        let entry = document.entry.unwrap();
+        assert_eq!(entry["command"], json!([hosts.launcher(), "--keep"]));
+        assert_eq!(entry["enabled"], false);
+        assert_eq!(document.rest["keep"], true);
+    }
+    assert_eq!(fs::read(&project).unwrap(), project_bytes);
     let result = hosts.action("remove", &json!({"id":"opencode"})).unwrap();
     assert_eq!(result["ok"], true, "{result}");
     assert!(
@@ -463,12 +490,12 @@ fn revision_multilayer_removal_does_not_fall_back_to_another_registration() {
             .filter(|l| l["scope"] != "project")
             .all(|l| l["has_entry"] == false)
     );
-    assert!(fs::read_to_string(project).unwrap().contains("project"));
-    assert_eq!(backup_paths(&hosts.context.app).len(), 4);
+    assert_eq!(fs::read(project).unwrap(), project_bytes);
+    assert_eq!(backup_paths(&hosts.context.app).len(), 8);
 }
 
 #[test]
-fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis() {
+fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
     for id in IDS {
         let (_temp, mut hosts) = fixture();
         let h = host(&hosts, id);
@@ -479,9 +506,7 @@ fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis(
         );
         save(&h.config, &seed(&h));
         let original = h.read().unwrap();
-        let result = hosts
-            .action("connect", &json!({"id":id,"entry":"studio"}))
-            .unwrap();
+        let result = hosts.action("connect", &json!({"id":id})).unwrap();
         assert_eq!(result["ok"], true, "{id}: {result}");
         assert_eq!(
             result["host"]["tested"],
@@ -498,12 +523,6 @@ fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis(
         );
         assert_eq!(result["host"]["status"], "connected");
         assert_eq!(result["host"]["skill"]["state"], "app");
-        assert_eq!(
-            hosts
-                .action("entry", &json!({"id":id,"entry":"core"}))
-                .unwrap()["ok"],
-            true
-        );
         let before = fs::read(&h.config).unwrap();
         hosts.refresh();
         assert_eq!(fs::read(&h.config).unwrap(), before);
@@ -521,6 +540,91 @@ fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis(
         }
         assert!(!marker.exists());
     }
+}
+
+#[test]
+fn legacy_commands_migrate_across_formats_without_changing_host_policy() {
+    for id in IDS {
+        let (_temp, mut hosts) = fixture();
+        let h = host(&hosts, id);
+        executable_file(
+            &hosts.context.search[0].join(h.binary),
+            "#!/bin/sh\nexit 99\n",
+        );
+        save(&h.config, &seed(&h));
+        assert_eq!(
+            hosts.action("connect", &json!({"id":id})).unwrap()["ok"],
+            true
+        );
+        for name in ["agentnave-mcp", "agentnave-studio-mcp"] {
+            let before = h.read().unwrap();
+            let mut legacy = before.entry.clone().unwrap();
+            let old = hosts.context.home.join("old-bin").join(name);
+            // A healthy retired Studio executable must migrate too; a missing core path is repaired.
+            if name == "agentnave-studio-mcp" {
+                executable_file(&old, "#!/bin/sh\nexit 99\n");
+            }
+            h.set_command(&mut legacy, &old);
+            if id == "opencode" {
+                legacy["command"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!("--keep"));
+            } else {
+                legacy["args"] = json!(["--keep"]);
+            }
+            legacy[h.env_key()]["CUSTOM"] = json!("preserve");
+            legacy["disabled"] = json!(true);
+            legacy["allowedTools"] = json!(["wait_agent"]);
+            save(&h.config, &before.render(Some(&legacy)).unwrap());
+            let mut expected = legacy;
+            h.set_command(&mut expected, &hosts.launcher().unwrap());
+            hosts.refresh();
+            let after = h.read().unwrap();
+            assert_eq!(after.entry, Some(expected), "{id}: {name}");
+            assert_eq!(after.rest, before.rest, "{id}: {name}");
+            let bytes = fs::read(&h.config).unwrap();
+            let backups = backup_paths(&hosts.context.app).len();
+            hosts.refresh();
+            assert_eq!(fs::read(&h.config).unwrap(), bytes);
+            assert_eq!(backup_paths(&hosts.context.app).len(), backups);
+        }
+    }
+}
+
+#[test]
+fn legacy_command_waits_until_the_unified_runtime_is_installed() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "workbuddy");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
+    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
+    save(&h.config, &json!({"mcpServers":{"agentnave":{"command":legacy,"env":{"AGENTNAVE_HOST":"workbuddy"},"disabled":true}}}).to_string());
+    let metadata =
+        hosts.tool_dirs().unwrap().tools.join(
+            "agentnave/lib/python3.12/site-packages/agentnave-0.22.0.dist-info/entry_points.txt",
+        );
+    save(
+        &metadata,
+        "[console_scripts]\nagentnave-mcp = agentnave.relay:core\nagentnave-studio-mcp = agentnave_studio.relay:main\n",
+    );
+    let bytes = fs::read(&h.config).unwrap();
+    hosts.refresh();
+    assert_eq!(hosts.service()["installed"], false);
+    assert_eq!(fs::read(&h.config).unwrap(), bytes);
+    save(
+        &metadata,
+        "[console_scripts]\nagentnave-mcp = agentnave.relay:main\n",
+    );
+    hosts.refresh();
+    assert_eq!(hosts.service()["installed"], true);
+    assert_eq!(
+        h.read().unwrap().entry.unwrap()["command"],
+        json!(hosts.launcher().unwrap())
+    );
 }
 
 #[test]
@@ -668,7 +772,7 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
     );
     save(
         &h.config,
-        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher("core")}}}).to_string(),
+        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher()}}}).to_string(),
     );
     let before = fs::read(&h.config).unwrap();
     hosts.refresh();

@@ -5,7 +5,7 @@
 // key), so a 1.5 s poll never rebuilds the list, never flickers and never moves the scroll
 // position of a reader who scrolled up.
 const {
-  h, $, load, href, GROUP, CONV, MEMBER, pick, urgent, avatar, hostAvatar, colorClass,
+  h, $, load, href, GROUP, CONV, MEMBER, pick, urgent, avatar, colorClass,
   relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain,
 } = AN;
 
@@ -81,7 +81,7 @@ function createItem(g) {
     label: h("b.gi-label"), meta: h("span.gi-meta"), time: h("time"),
     title: h("span.gi-title"), prev: h("span.gi-prev"), pill: h("span.pill"),
   };
-  rec.el = h("a.gi", {}, h("span.gi-ava", {}, hostAvatar(g.host, g.label), presence),
+  rec.el = h("a.gi", {}, h("span.gi-ava", {}, presence),
     h("span.gi-body", {}, h("span.gi-top", {}, rec.label, rec.meta, rec.time), rec.title, h("span.gi-bottom", {}, rec.prev, rec.pill)));
   rec.el.addEventListener("click", (e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
@@ -142,7 +142,7 @@ function renderHead(c) {
     const back = h("a.back", { href: href("/chat/"), "aria-label": "返回群列表" }, "‹ 群聊");
     back.addEventListener("click", (e) => { e.preventDefault(); state.selected = null; go("/chat/"); });
     state.head = {
-      back, ava: h("span.gh-ava", {}, hostAvatar(c.host, c.label), h("i.presence")), label: h("b.gh-label"), pill: h("span.pill"), sub: h("span.gh-sub"),
+      back, ava: h("span.gh-ava", {}, h("i.presence")), label: h("b.gh-label"), pill: h("span.pill"), sub: h("span.gh-sub"),
       members: h("div.gh-members", { "aria-label": "组员" }), convs: h("div.gh-convs", { "aria-label": "本群的会话" }),
     };
     el.head.replaceChildren(h("div.gh-row", {}, state.head.back, state.head.ava, h("div.gh-id", {}, h("span.gh-line", {}, state.head.label, state.head.pill), state.head.sub), state.head.members), state.head.convs);
@@ -240,8 +240,11 @@ function renderMarkdown(root, text) {
 // ---------------------------------------------------------------- timeline nodes
 function who(m, c) {
   const s = m.speaker;
-  if (s.role === "manager") return { name: s.label || c.label, sub: "主控" };
-  return { name: s.label || s.model, sub: s.label && s.label !== s.model ? `${s.model} · ${s.provider}` : s.provider };
+  if (s.role === "system") return { name: s.label || "系统", sub: "" };
+  return {
+    name: s.model || "未记录模型",
+    sub: [s.role === "manager" ? "主控" : "组员", s.provider].filter(Boolean).join(" · "),
+  };
 }
 function recipients(m, c) {
   const names = (m.to || []).map((k) => c.members.find((x) => x.key === k)?.model || k);
@@ -249,7 +252,7 @@ function recipients(m, c) {
 }
 function speakerAvatar(m, c) {
   const s = m.speaker;
-  return s.role === "manager" ? hostAvatar(c.host, c.label) : avatar(s.provider, s.model);
+  return s.role === "manager" && !s.model ? null : avatar(s.provider, s.model);
 }
 
 function createMessage(m, c) {
@@ -304,7 +307,7 @@ function updateMessage(rec, m, c, id) {
   const mine = s.role === "manager";
   setClass(rec.el, `msg ${mine ? "mgr" : "mem"}${m.kind === "typing" ? " typing-msg" : ""}`);
   const key = (mine ? c.host : s.provider) + "|" + s.model + "|" + (mine ? c.group : "");
-  if (rec.avKey !== key) { rec.avKey = key; rec.avaSlot.replaceChildren(speakerAvatar(m, c)); }
+  if (rec.avKey !== key) { rec.avKey = key; rec.avaSlot.replaceChildren(...[speakerAvatar(m, c)].filter(Boolean)); }
   setText(rec.name, w.name);
   setText(rec.sub, m.kind === "typing" ? `${w.sub} · 正在输入` : w.sub);
   setText(rec.to, mine ? recipients(m, c) : "");

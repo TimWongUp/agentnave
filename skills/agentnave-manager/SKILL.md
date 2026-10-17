@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及 AgentNave Studio 节目；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的协作节目；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用 CLI
@@ -13,7 +13,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-核心十一个工具：`list_members`、`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
+统一核心共十六个工具。任务与协作工具：`list_members`、`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
 
 | 用户需要 | 调用方式 |
 | --- | --- |
@@ -23,9 +23,9 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
 | 先各自答再讨论 | 先 `parallel`，再一轮或多轮 `serial` |
 
-每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，持续续接自己的原生会话；席位只共享已提交条目（任务、最终回答、失败或取消的缺席记录），私密指令只给对应席位。同组同时一轮；`run_round` 立即返回 `round_id`，用 `wait_round` 等待。可单独 `cancel_agent` 取消某席，记缺席后串联轮继续。不自动重试、不设每席截止时间。并联写代码的席位各用独立 worktree；只读席位可共用目录。核心组不持久化，随服务退出结束。
+每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，持续续接自己的原生会话；席位只共享已提交条目（任务、最终回答、失败或取消的缺席记录），私密指令只给对应席位。同组同时一轮；`run_round` 立即返回 `round_id`，用 `wait_round` 等待。可单独 `cancel_agent` 取消某席，记缺席后串联轮继续。不自动重试、不设每席截止时间。并联写代码的席位各用独立 worktree；只读席位可共用目录。协作组保存为会话，可跨服务重启继续；运行中的进程和 invocation_id 不恢复。
 
-需要历史、审核、主持人或网页观看时按 [工作室节目](references/studio.md) 操作；连接中须有 `list_conversations`、`decide_answers` 等 Studio 工具，不能把 Skill 更新当作运行时升级。
+普通任务和协作组均保存历史，包含任务原文、最终回答与原生会话绑定。历史与审核工具为 `list_conversations`、`read_conversation`、`update_conversation`、`decide_answers`、`post_host_message`。需要查看历史、审核、主持人或网页观看时读[会话与审核](references/studio.md)；缺少工具时报告旧连接并要求更新服务和重连，不把 Skill 更新当作运行时升级。
 
 ## 编排场景
 
@@ -50,7 +50,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - 只讨论和核验，不改文件、发送或部署；其他操作需用户另行授权。
 - 查证结果附出处，推测明确标注；声称执行成功时核对实际调用或产物，不以模型自报代替证据。
 
-仅在用户明确要求从工具层面限制访问时，显式设置 `provider_options.restricted_tools=true`；用户同时明确要求工作室准备独立席位目录时，才按 [工作室节目](references/studio.md) 使用 `isolated=true`。可用选项先由 `describe_provider` 核对。prompt 是协作约定，执行权限仍由 CLI 原生机制控制；受限配置不清除旧会话历史，也不统一禁止加载上下文文件。
+仅在用户明确要求从工具层面限制访问时，显式设置 `provider_options.restricted_tools=true`；用户同时明确要求服务准备独立席位目录时，才按 [会话与审核](references/studio.md) 使用 `isolated=true`。可用选项先由 `describe_provider` 核对。prompt 是协作约定，执行权限仍由 CLI 原生机制控制；受限配置不清除旧会话历史，也不统一禁止加载上下文文件。
 
 ## CLI 与模型
 

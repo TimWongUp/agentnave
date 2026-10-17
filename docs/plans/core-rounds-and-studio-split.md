@@ -1,5 +1,7 @@
 # 实施方案：核心协作轮次与工作室拆包
 
+> 历史方案。分层、双入口及无历史约定已由 [ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md) 取代，下文保留当时的方案记录。
+
 记录日期：2026-10-11。决策依据见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。第一版草稿已由 Codex、Grok、Gemini（Antigravity）、CodeBuddy 独立审查，结论均为“修改后实施”；本版已并入审查共识，待用户确认后动代码。
 
 ## 已确认的决定
