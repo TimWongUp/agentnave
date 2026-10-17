@@ -41,7 +41,7 @@ const HOSTS_CSS: &[u8] = include_bytes!("../ui/hosts.css");
 const ONBOARDING_CSS: &[u8] = include_bytes!("../ui/onboarding.css");
 const MOCK_JS: &[u8] = include_bytes!("../ui/mock.js");
 
-pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'";
 
 /// Same rule as the Studio MCP server: `AGENTNAVE_DATA_DIR`, else `~/.agentnave`.
 pub fn data_root() -> PathBuf {
@@ -158,6 +158,9 @@ impl Reader {
             || path == "/app/onboarding/reopen"
         {
             return self.host_request(method, path, action, body);
+        }
+        if path == "/app/avatars" {
+            return crate::avatars::request(&self.root, method, action, body);
         }
         if path == "/app/members" {
             if method != "POST" {
@@ -390,6 +393,15 @@ impl Reader {
         if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
             return crate::stage::respond(path, self.scan().1, self.root.is_dir());
         }
+        if path == "/avatar-settings" {
+            return match crate::avatars::read(&self.root) {
+                Ok(value) => Response::json(&value),
+                Err(error) => Response::error(500, &error),
+            };
+        }
+        if let Some((mime, bytes)) = crate::avatars::asset(path.trim_start_matches('/')) {
+            return Response::ok(mime, bytes.to_vec());
+        }
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if let ["chat", resource] = parts.as_slice() {
             return match *resource {
@@ -408,6 +420,10 @@ impl Reader {
         if let ["settings", resource] = parts.as_slice() {
             return match *resource {
                 "" => Response::ok("text/html; charset=utf-8", SETTINGS_HTML.to_vec()),
+                "avatar-settings.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/avatar-settings.js").to_vec(),
+                ),
                 "settings.js" => {
                     Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec())
                 }

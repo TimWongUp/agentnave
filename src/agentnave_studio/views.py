@@ -22,6 +22,7 @@ def _encode(data: dict[str, object]) -> bytes:
 def _show(state: Conversation, view: str) -> dict[str, object]:
     return {
         "view": view,
+        "host": state.host,
         "id": state.id,
         "title": state.title,
         "mode": state.kind,

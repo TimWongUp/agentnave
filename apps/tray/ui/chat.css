@@ -187,8 +187,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .blank p { max-width: 340px; line-height: 1.6; }
 .blank-link { margin-top: 14px; color: var(--accent); font-weight: 600; }
 
-/* avatars (sprite shared with the workbench) */
-.avatar { flex: none; width: 30px; height: 30px; border-radius: 9px; background: url("/avatars.png") 0 0 / 300% 200%; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; }
+/* avatars (official model icons and local overrides) */
+.avatar { flex: none; width: 30px; height: 30px; border-radius: 9px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; }
 .gi .avatar { width: 32px; height: 32px; border-radius: 10px; }
 .av-host { background-position: 0 0; }
 .av-claude { background-position: 50% 0; }

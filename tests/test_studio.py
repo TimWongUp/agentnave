@@ -1386,3 +1386,36 @@ async def test_show_permission_reads_current_discussion_members(data_root: Path)
         path.write_text("{", encoding="utf-8")
         rejected = await client.call_tool("describe_provider", {"provider": "claude"})
         assert rejected.is_error and "AgentNave App" in str(rejected.content)
+
+
+def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) -> None:
+    from urllib.error import HTTPError
+    from urllib.request import Request
+
+    dashboard = Dashboard(tmp_path)
+    dashboard.update("avatars", b'{"view":"public"}')
+    url = dashboard.url("avatars")
+    try:
+        with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == {}
+            assert response.headers["Cache-Control"] == "no-store"
+        value = {'["model","pi","gpt-6"]': "data:image/png;base64,iVBORw0KGgo="}
+        (tmp_path / "avatars.json").write_text(json.dumps(value))
+        with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == value
+        with urlopen(url + "avatar-claude.png") as response:
+            assert response.headers["Content-Type"] == "image/png"
+            assert response.read().startswith(b"\x89PNG")
+        for request, status in [
+            (Request(url + "avatar-settings", headers={"Origin": "https://example.com"}), 403),
+            (url.replace("/avatars/", "/missing/") + "avatar-settings", 404),
+            (Request(url + "app/avatars", data=b"{}", method="POST"), 501),
+        ]:
+            with pytest.raises(HTTPError) as error:
+                urlopen(request)
+            assert error.value.code == status
+        (tmp_path / "avatars.json").write_text("broken")
+        with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == {}
+    finally:
+        dashboard.close()

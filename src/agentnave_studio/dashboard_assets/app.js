@@ -111,23 +111,9 @@ function duration(ms) {
     : `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 function avatar(seat, size = "") {
-  const key = `${seat.model || ""} ${seat.provider || ""}`.toLowerCase();
-  const known =
-    seat.provider === "host"
-      ? "host"
-      : ["claude", "gpt", "gemini", "grok", "deepseek"].find((name) =>
-          key.includes(name),
-        ) || { codex: "gpt", antigravity: "gemini" }[seat.provider];
-  if (known)
-    return h(`span.avatar.av-${known}${size}`, { "aria-hidden": "true" });
-  const label = seat.label || seat.provider || "?";
-  let hue = 0;
-  for (const char of label) hue = (hue * 31 + char.charCodeAt(0)) % 360;
-  return h(
-    `span.avatar.av-plain${size}`,
-    { "aria-hidden": "true", style: `--hue:${hue}` },
-    label.slice(0, 1).toUpperCase(),
-  );
+  return Avatars.create(seat.provider === "host" ? "host" : "model",
+    seat.provider === "host" ? seat.host : seat.provider, seat.provider === "host" ? "" : seat.model,
+    size.replaceAll(".", " "));
 }
 function copyButton(text, label = "复制") {
   const button = h("button.icon-btn", { type: "button" }, label);
@@ -741,7 +727,7 @@ function currentTab(detail) {
 function renderShow() {
   const detail = app.detail,
     round = detail.round;
-  const cast = [HOST, ...detail.seats];
+  const cast = [{ ...HOST, host: detail.host }, ...detail.seats];
   const runs = Object.fromEntries(
     (round?.seats || []).map((run) => [run.seat_id, run]),
   );
@@ -1129,7 +1115,7 @@ function renderTask() {
 function renderPublic() {
   const detail = app.detail;
   if (!detail) return renderLoading();
-  const cast = [HOST, ...detail.seats];
+  const cast = [{ ...HOST, host: detail.host }, ...detail.seats];
   return [
     h(
       "div.public-bar",

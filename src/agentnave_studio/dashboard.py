@@ -11,7 +11,7 @@ from typing import cast
 
 
 class Dashboard:
-    def __init__(self) -> None:
+    def __init__(self, root: Path | None = None) -> None:
         self.snapshots: dict[str, bytes] = {}
         self.last_access = 0.0
         assets = Path(__file__).with_name("dashboard_assets")
@@ -21,6 +21,16 @@ class Dashboard:
             "style.css": ("text/css; charset=utf-8", (assets / "style.css").read_bytes()),
             "avatars.png": ("image/png", (assets / "avatars.png").read_bytes()),
         }
+        self.assets["avatars.js"] = (
+            "text/javascript; charset=utf-8",
+            (assets / "avatars.js").read_bytes(),
+        )
+        for path in assets.glob("avatar-*"):
+            mime = {".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon"}.get(
+                path.suffix
+            )
+            if mime:
+                self.assets[path.name] = (mime, path.read_bytes())
         dashboard = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -45,7 +55,20 @@ class Dashboard:
                     return
                 resource = parts[2]
                 cache_control = "no-store"
-                if resource == "state":
+                if resource == "avatar-settings":
+                    try:
+                        value: object = (
+                            json.loads((root / "avatars.json").read_text()) if root else {}
+                        )
+                        if not isinstance(value, dict):
+                            value = dict[str, str]()
+                    except (OSError, ValueError):
+                        value = {}
+                    content_type, body = (
+                        "application/json; charset=utf-8",
+                        json.dumps(value).encode(),
+                    )
+                elif resource == "state":
                     dashboard.last_access = time.monotonic()
                     content_type, body = (
                         "application/json; charset=utf-8",
@@ -76,7 +99,7 @@ class Dashboard:
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.send_header(
                     "Content-Security-Policy",
-                    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+                    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
                 )
                 self.end_headers()
                 self.wfile.write(body)

@@ -1,6 +1,7 @@
 //! AgentNave tray: view and clean up this machine's saved Studio conversations.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod avatars;
 mod data;
 mod detect;
 mod hosts;
