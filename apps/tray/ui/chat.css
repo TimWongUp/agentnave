@@ -37,7 +37,7 @@
 body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 .chat-page a:hover { color: inherit; }
 .chat-page time { font: inherit; color: inherit; }
-.chat-page button { background: transparent; border: 0; padding: 0; border-radius: 0; }
+:where(.chat-page) button { background: transparent; border: 0; padding: 0; border-radius: 0; }
 .chat-page button:hover:enabled { border-color: transparent; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 

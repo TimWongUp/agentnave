@@ -459,8 +459,8 @@ async function refresh() {
     }
     el.banner.hidden = true;
     state.groupsData = chats.groups;
-    if (state.auto && !narrow.matches && chats.groups.length && !chats.groups.some((g) => g.group === state.selected))
-      state.selected = chats.groups[0].group;
+    if (state.auto && !narrow.matches && !chats.groups.some((g) => g.group === state.selected))
+      state.selected = chats.groups[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
     renderList();
     if (!state.selected) {
