@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.21.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.22.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.21.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.22.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -576,6 +576,27 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.21.0 to v0.22.0
+
+This release changes the Studio MCP contract: `update_conversation` requires a title and only
+renames a conversation; its `archived` parameter and the `delete_conversation` tool are removed.
+Studio exposes 16 tools (core remains 11). Conversations no longer have an ended state; existing
+`archived` fields are ignored. Clean up idle conversations without pending review in the App's
+“管理会话” page. Saved history is retained, with no bulk migration.
+
+Update the App, runtime and complete Skill together, then reconnect MCP on every host to refresh
+the tool schemas and replace already-running relays. New relays retry failed upgrades with capped
+backoff and retain the manager session across child-process swaps. When old versions saved the
+same native session in multiple task conversations, automatic continuation selects the most recent
+binding and keeps that conversation's creator attribution.
+
+The App now has a macOS Dock icon and opens group chat on launch; closing the window keeps it
+running. Management links can load older conversations beyond the recent 300-message window,
+and failed or blocked tasks retain their saved output beside the failure notice. Settings cards
+start collapsed. The App installs and updates its managed Skill copies; externally managed
+directories and symlinks are preserved. After connecting or taking over WorkBuddy, trust the MCP
+entry in “自定义连接器 › MCP 服务管理” if WorkBuddy has disabled it.
 
 ### Upgrading from v0.20.0 to v0.21.0
 
