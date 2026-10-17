@@ -932,6 +932,39 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
 
 
 @pytest.mark.asyncio
+async def test_close_retries_a_task_after_its_terminal_save_fails(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    studio = Conversations(InvocationManager(), data_root)
+    invocation_id, conversation_id = studio.start_task(
+        InvocationRequest("claude", "one", tmp_path), "Job", None
+    )
+    replace = os.replace
+    failed = False
+
+    def fail_once(source: str, target: Path) -> None:
+        nonlocal failed
+        if not failed and target.name == "state.json":
+            failed = True
+            raise OSError("disk full")
+        replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_once)
+    await asyncio.gather(*studio.collectors)
+    result = await studio.manager.wait(invocation_id)
+    assert result is not None and result.session_id
+    assert studio.records[conversation_id].lock is not None
+
+    await studio.manager.shutdown()
+    await studio.close()
+    saved = json.loads((data_root / "conversations" / conversation_id / "state.json").read_text())
+    assert saved["tasks"][0]["status"] == "interrupted"
+    assert saved["tasks"][0]["output"] == result.output
+    assert saved["tasks"][0]["session_id"] == result.session_id
+    assert studio.records[conversation_id].lock is None
+
+
+@pytest.mark.asyncio
 async def test_dashboard_failure_does_not_repeat_or_lose_started_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

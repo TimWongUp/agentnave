@@ -768,12 +768,25 @@ class Conversations(Groups):
                     await asyncio.gather(task, return_exceptions=True)
             # Write each group's final state once more: an earlier failed save may have left
             # a stale running round or undecided review on disk.
-            for group in {item.group.id: item.group for item in self._rounds.values()}.values():
+            groups = {item.group.id: item.group for item in self._rounds.values()}
+            for group in groups.values():
                 if group.id in self.records:
                     try:
                         self._save(group)
                     except OSError as exc:
                         print(f"agentnave: could not save {group.id}: {exc}", file=sys.stderr)
+            # Task conversations have no live Group to reconstruct. Their terminal result is kept
+            # in memory after a failed save, so retry those records before releasing their locks.
+            for conversation_id in list(self._unsaved):
+                if conversation_id in groups:
+                    continue
+                record = self.records.get(conversation_id)
+                if record is None:
+                    continue
+                try:
+                    self._persist(record)
+                except OSError as exc:
+                    print(f"agentnave: could not save {conversation_id}: {exc}", file=sys.stderr)
             if self.dashboard is not None:
                 self.dashboard.close()
             for record in self.records.values():
