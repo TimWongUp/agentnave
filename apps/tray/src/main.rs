@@ -5,6 +5,7 @@ mod data;
 mod detect;
 mod manage;
 mod members;
+mod stage;
 mod update;
 
 use std::fs;

@@ -1,9 +1,9 @@
 //! Studio snapshots (ADR-0008) and the tray-only management routes (ADR-0012).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
@@ -49,6 +49,8 @@ pub struct Item {
     pub title: String,
     pub mode: String,
     pub archived: bool,
+    pub host: Option<String>,
+    pub manager_session: Option<String>,
     pub status: String,
     /// Last activity as Studio recorded it (RFC 3339); empty in older snapshots.
     pub updated: String,
@@ -114,11 +116,17 @@ enum Scope<'a> {
     Public(&'a str),
 }
 
-type Cached = (SystemTime, u64, Option<Item>);
+type Cached = (SystemTime, u64, Option<Arc<Value>>);
+
+pub(crate) struct Snapshot {
+    pub item: Item,
+    pub view: Arc<Value>,
+    pub live: bool,
+}
 
 pub struct Reader {
     root: PathBuf,
-    /// Summaries by views.json path, keyed on (mtime, size), so polling parses only changed files.
+    /// Parsed views by path, keyed on (mtime, size), so polling parses only changed files.
     summaries: Mutex<HashMap<PathBuf, Cached>>,
 }
 
@@ -183,67 +191,91 @@ impl Reader {
     }
 
     pub fn overview(&self) -> Overview {
-        let Ok(entries) = fs::read_dir(self.root.join("conversations")) else {
-            return Overview {
-                missing: true,
-                ..Overview::default()
-            };
+        self.scan().0
+    }
+
+    /// Share parsed disk snapshots across all polling routes; live files are always reread.
+    fn scan(&self) -> (Overview, Vec<Snapshot>) {
+        let entries = fs::read_dir(self.root.join("conversations"));
+        let mut overview = Overview {
+            missing: entries.is_err(),
+            ..Overview::default()
         };
-        let live = self.live();
-        let mut cache = self
-            .summaries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let mut seen = Vec::new();
+        let mut live = self.live();
+        let mut cache = self.summaries.lock().unwrap_or_else(|p| p.into_inner());
+        let mut seen = HashSet::new();
+        let mut snapshots = Vec::new();
         let mut items = Vec::new();
-        let mut unavailable = Vec::new();
-        for entry in entries.flatten() {
+        for entry in entries.into_iter().flatten().flatten() {
             let id = entry.file_name().to_string_lossy().into_owned();
             let directory = entry.path();
             if !valid_id(&id) || !directory.is_dir() {
                 continue;
             }
-            if let Some(item) = live.get(&id).and_then(summary) {
-                items.push((SystemTime::now(), item));
-                continue;
-            }
             let path = directory.join("views.json");
-            let Ok(meta) = fs::metadata(&path) else {
-                if directory.join("state.json").exists() {
-                    unavailable.push((
-                        directory.display().to_string(),
-                        "尚无视图快照：任一工作室服务启动后会补写".to_owned(),
-                    ));
+            let disk = fs::metadata(&path).ok().map(|meta| {
+                let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                let fresh = matches!(cache.get(&path), Some((m, len, _)) if *m == modified && *len == meta.len());
+                if !fresh {
+                    cache.insert(path.clone(), (modified, meta.len(), read_json(&path).map(Arc::new)));
                 }
-                continue;
+                seen.insert(path.clone());
+                (modified, cache[&path].2.clone())
+            });
+            let current = live.remove(&id).filter(|v| summary(v).is_some());
+            let is_live = current.is_some();
+            let modified = if is_live {
+                SystemTime::now()
+            } else {
+                disk.as_ref().map_or(SystemTime::UNIX_EPOCH, |d| d.0)
             };
-            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            let fresh = matches!(cache.get(&path), Some((m, len, _)) if *m == modified && *len == meta.len());
-            if !fresh {
-                let item = read_json(&path).as_ref().and_then(summary);
-                cache.insert(path.clone(), (modified, meta.len(), item));
-            }
-            seen.push(path.clone());
-            match &cache[&path].2 {
-                Some(item) => items.push((modified, item.clone())),
-                None => unavailable.push((
+            let view = current
+                .map(Arc::new)
+                .or_else(|| disk.as_ref().and_then(|d| d.1.clone()));
+            if let Some(view) = view
+                && let Some(item) = summary(&view).filter(|item| item.id == id)
+            {
+                items.push((modified, item.clone()));
+                snapshots.push(Snapshot {
+                    item,
+                    view,
+                    live: is_live,
+                });
+            } else if disk.is_some() || directory.join("state.json").exists() {
+                overview.unavailable.push((
                     path.display().to_string(),
-                    "视图快照无法读取或版本不受支持".to_owned(),
-                )),
+                    if disk.is_some() {
+                        "视图快照无法读取或版本不受支持"
+                    } else {
+                        "尚无视图快照：任一工作室服务启动后会补写"
+                    }
+                    .to_owned(),
+                ));
+            }
+        }
+        // Atomic live publication can precede the first disk snapshot.
+        for (id, view) in live {
+            if let Some(item) = summary(&view).filter(|item| item.id == id && valid_id(&id)) {
+                items.push((SystemTime::now(), item.clone()));
+                snapshots.push(Snapshot {
+                    item,
+                    view: Arc::new(view),
+                    live: true,
+                });
             }
         }
         cache.retain(|path, _| seen.contains(path));
         items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
-        unavailable.sort();
-        Overview {
-            items: items.into_iter().map(|(_, item)| item).collect(),
-            unavailable,
-            missing: false,
-        }
+        overview.items = items.into_iter().map(|(_, item)| item).collect();
+        overview.unavailable.sort();
+        (overview, snapshots)
     }
 
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
+        if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
+            return crate::stage::respond(path, self.scan().1);
+        }
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if let ["settings", resource] = parts.as_slice() {
             return match *resource {
@@ -404,6 +436,8 @@ fn summary(snapshot: &Value) -> Option<Item> {
             .get("archived")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        host: text("host"),
+        manager_session: text("manager_session"),
         status: text("status").unwrap_or_default(),
         updated: text("updated").unwrap_or_default(),
     })
@@ -529,5 +563,300 @@ mod tests {
         ] {
             assert_eq!(reader.respond(path).status, 404, "{path}");
         }
+    }
+
+    const MANAGER: &str = "0123456789abcdef0123456789abcdef";
+
+    fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
+        json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
+            "mode": "task", "status": status, "updated": updated, "host": "claude", "manager_session": MANAGER},
+            "director": {"mode": "task", "tasks": [{"id": format!("t-{id}"), "provider": "codex", "model": "m",
+                "time": updated, "status": status, "prompt": "请检查", "output": "# 结果\n\n**最后一行**", "elapsed_ms": 0}]}})
+    }
+
+    fn save(root: &Path, value: &Value) {
+        write(
+            &root
+                .join("conversations")
+                .join(value["summary"]["id"].as_str().unwrap())
+                .join("views.json"),
+            value,
+        );
+    }
+
+    #[test]
+    fn chats_aggregate_sessions_merge_latest_members_and_cache_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        save(
+            root,
+            &task_snapshot("z", "succeeded", "2026-10-15T02:00:01.000001Z"),
+        );
+        // A different offset still denotes a newer activity than z, even within the same millisecond.
+        let newer = task_snapshot("b", "blocked", "2026-10-15T10:00:01.000002+08:00");
+        save(root, &newer);
+        let mut legacy = task_snapshot("legacy", "succeeded", "2026-10-15T00:00:00Z");
+        legacy["summary"]["manager_session"] = Value::Null;
+        legacy["summary"]["host"] = Value::Null;
+        legacy["director"]["tasks"][0]["model"] = Value::Null;
+        legacy["director"]["tasks"][0]["time"] = json!("2026-10-14T23:59:59.750123Z");
+        legacy["director"]["tasks"][0]["elapsed_ms"] = json!(1500);
+        save(root, &legacy);
+        let mut archived = task_snapshot("archived", "running", "2099-01-01T00:00:00Z");
+        archived["summary"]["archived"] = json!(true);
+        save(root, &archived);
+        let reader = Reader::new(root.to_path_buf());
+        let groups = state(&reader, "/app/chats");
+        assert_eq!(groups["groups"].as_array().unwrap().len(), 2);
+        assert_eq!(groups["groups"][0]["group"], MANAGER);
+        assert_eq!(groups["groups"][0]["conversations"], 2);
+        assert_eq!(groups["groups"][0]["title"], "任务 b");
+        assert_eq!(groups["groups"][0]["label"], "Claude Code");
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        assert_eq!(chat["members"].as_array().unwrap().len(), 1);
+        assert_eq!(chat["members"][0]["conversation"], "b");
+        assert_eq!(chat["members"][0]["status"], "blocked");
+        assert_eq!(chat["conversations"][0]["director_url"], "/c/z/");
+        let legacy = state(&reader, "/app/chats/c-legacy");
+        assert_eq!(legacy["host"], Value::Null);
+        assert_eq!(legacy["label"], "未知主控");
+        assert_eq!(legacy["members"][0]["key"], "codex/原生设置");
+        assert_eq!(legacy["members"][0]["line"], "结果");
+        assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
+        assert!(legacy["color"].as_u64().unwrap() < 8);
+        let path = root.join("conversations/b/views.json");
+        let cached = reader.summaries.lock().unwrap()[&path].2.clone().unwrap();
+        assert_eq!(
+            state(&reader, "/app/chats/c-legacy")["color"],
+            legacy["color"]
+        );
+        assert!(Arc::ptr_eq(
+            &cached,
+            reader.summaries.lock().unwrap()[&path].2.as_ref().unwrap()
+        ));
+        let mut changed = newer;
+        changed["director"]["tasks"][0]["error"] = json!("**需要授权**");
+        save(root, &changed);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
+            "受阻：需要授权"
+        );
+        assert!(!Arc::ptr_eq(
+            &cached,
+            reader.summaries.lock().unwrap()[&path].2.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn chat_live_overrides_disk_and_typing_is_unique_and_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        save(
+            root,
+            &task_snapshot("a", "succeeded", "2026-10-15T01:00:00Z"),
+        );
+        let mut a = task_snapshot("a", "running", "2026-10-15T02:00:00Z");
+        a["director"]["tasks"][0]["output"] = json!("one\ntwo\nthree\nfour\n**five**\n");
+        let b = task_snapshot("b", "running", "2026-10-15T01:30:00Z");
+        // A newer finished call of the same member must not hide another active call's typing.
+        save(
+            root,
+            &task_snapshot("c", "succeeded", "2026-10-15T03:00:00Z"),
+        );
+        let live = root.join("live/1-fresh.json");
+        write(
+            &live,
+            &json!({"version": 1, "conversations": {"a": a, "b": b}}),
+        );
+        let reader = Reader::new(root.to_path_buf());
+        let path = format!("/app/chats/{MANAGER}");
+        let chat = state(&reader, &path);
+        assert_eq!(chat["live"], true);
+        assert_eq!(chat["status"], "running");
+        assert_eq!(chat["conversations"].as_array().unwrap().len(), 3);
+        assert_eq!(chat["members"][0]["conversation"], "c");
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 1);
+        assert_eq!(messages.last().unwrap()["id"], "codex/m");
+        assert_eq!(
+            messages.last().unwrap()["text"],
+            "two\nthree\nfour\n**five**"
+        );
+        a["director"]["tasks"][0]["output"] = json!("new tail");
+        write(
+            &live,
+            &json!({"version": 1, "conversations": {"a": a, "b": b}}),
+        );
+        let next = state(&reader, &path);
+        assert_eq!(
+            next["messages"].as_array().unwrap().last().unwrap()["id"],
+            "codex/m"
+        );
+        assert_eq!(
+            next["messages"].as_array().unwrap().last().unwrap()["text"],
+            "new tail"
+        );
+        fs::File::options()
+            .write(true)
+            .open(&live)
+            .unwrap()
+            .set_modified(SystemTime::now() - LIVE_FRESH - Duration::from_secs(1))
+            .unwrap();
+        let stale = state(&reader, &path);
+        assert_eq!(stale["live"], false);
+        assert!(
+            !stale["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["kind"] == "typing")
+        );
+    }
+
+    #[test]
+    fn show_chats_project_prompts_answers_review_absence_and_typing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut show = snapshot("show", "running");
+        show["summary"]["updated"] = json!("2026-10-15T00:00:03Z");
+        show["summary"]["manager_session"] = json!(MANAGER);
+        show["summary"]["host"] = json!("codex");
+        show["director"] = json!({"mode": "show", "seats": [
+            {"id": "a", "label": "甲", "provider": "claude", "model": "m"},
+            {"id": "b", "label": "乙", "provider": "codex", "model": "m"},
+            {"id": "c", "label": "丙", "provider": "grok", "model": "m"}],
+            "messages": [
+                {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
+                {"kind": "answer", "speaker": "a", "round": 1, "text": "# 已提交", "time": "2026-10-15T00:00:01Z"},
+                {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
+                {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
+            "round": {"number": 2, "seats": [
+                {"seat_id": "a", "status": "succeeded", "review": "pending", "output": "待审核私密回答"},
+                {"seat_id": "b", "status": "running", "output": "**正在写**"},
+                {"seat_id": "c", "status": "not_started"}]}});
+        save(dir.path(), &show);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.iter().filter(|m| m["kind"] == "prompt").count(), 2);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["kind"] == "reply" && m["text"] == "# 已提交")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["kind"] == "notice" && m["status"] == "blocked")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["kind"] == "notice" && m["text"] == "待审核，请在主控中决定")
+        );
+        assert!(!messages.iter().any(|m| m["text"] == "待审核私密回答"));
+        assert_eq!(messages.last().unwrap()["kind"], "typing");
+        let members = chat["members"].as_array().unwrap();
+        assert_eq!(
+            members.iter().find(|m| m["key"] == "claude/m").unwrap()["line"],
+            "待审核：请在主控中决定"
+        );
+        assert_eq!(
+            members.iter().find(|m| m["key"] == "codex/m").unwrap()["line"],
+            "正在写"
+        );
+        assert_eq!(
+            members.iter().find(|m| m["key"] == "grok/m").unwrap()["status"],
+            "pending"
+        );
+    }
+
+    #[test]
+    fn stage_and_chats_sort_filter_and_enforce_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..205 {
+            let mut value = task_snapshot(
+                &format!("c{i:03}"),
+                "succeeded",
+                &format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
+            );
+            value["summary"]["manager_session"] = json!(format!("{i:032x}"));
+            save(dir.path(), &value);
+        }
+        // Active groups remain first even when old; idle groups outside two hours disappear.
+        let running = task_snapshot("running", "running", "2020-01-01T00:00:00Z");
+        save(dir.path(), &running);
+        let mut review = task_snapshot("review", "review", "2020-01-02T00:00:00Z");
+        review["summary"]["manager_session"] = Value::Null;
+        save(dir.path(), &review);
+        let mut old = task_snapshot("old", "succeeded", "2000-01-01T00:00:00Z");
+        old["summary"]["manager_session"] = Value::Null;
+        save(dir.path(), &old);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let stage = state(&reader, "/app/stage");
+        let managers = stage["managers"].as_array().unwrap();
+        assert_eq!(managers.len(), 6);
+        assert_eq!(managers[0]["group"], "c-review");
+        assert_eq!(managers[1]["group"], MANAGER);
+        assert_eq!(managers[2]["group"], format!("{:032x}", 204));
+        assert_eq!(stage["counts"], json!({"running": 1, "review": 1}));
+        let groups = state(&reader, "/app/chats");
+        assert_eq!(groups["groups"].as_array().unwrap().len(), 200);
+        assert_eq!(groups["groups"][0]["group"], "c-review");
+        // Remove recent groups: no fallback should bring the old idle group into the stage.
+        for i in 0..205 {
+            fs::remove_file(dir.path().join(format!("conversations/c{i:03}/views.json"))).unwrap();
+        }
+        assert_eq!(
+            state(&reader, "/app/stage")["managers"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            state(&reader, "/app/chats")["groups"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+
+        let mut many = task_snapshot("many", "running", "2099-01-01T00:00:00Z");
+        many["director"]["tasks"] = json!((0..160).map(|i| json!({"id": i.to_string(), "provider": "pi", "model": "m",
+            "status": if i == 159 { "running" } else { "succeeded" }, "time": format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
+            "prompt": "go", "output": "done"})).collect::<Vec<_>>());
+        save(dir.path(), &many);
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 300);
+        assert_eq!(messages.last().unwrap()["kind"], "typing");
+        assert!(!messages.iter().any(|m| m["id"] == "many:task:0:prompt"));
+        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 2);
+        let members = chat["members"].as_array().unwrap();
+        assert_eq!(members[0]["key"], "pi/m");
+        assert_eq!(members[1]["key"], "codex/m");
+    }
+
+    #[test]
+    fn chat_routes_reject_writes_and_unknown_groups_without_creating_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("missing");
+        let reader = Reader::new(root.clone());
+        assert_eq!(state(&reader, "/app/stage")["managers"], json!([]));
+        assert_eq!(state(&reader, "/app/chats")["groups"], json!([]));
+        for path in ["/app/stage", "/app/chats", "/app/chats/c-missing"] {
+            for method in ["POST", "PUT", "DELETE", "HEAD"] {
+                assert_eq!(reader.request(method, path, Some("1"), b"{}").status, 405);
+            }
+        }
+        for path in [
+            "/app/chats/c-missing",
+            "/app/chats/../x",
+            "/app/chats/",
+            "/app/chats/a/b",
+        ] {
+            assert_eq!(reader.request("GET", path, None, b"").status, 404, "{path}");
+        }
+        assert!(!root.exists());
     }
 }
