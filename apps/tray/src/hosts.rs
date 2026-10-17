@@ -50,20 +50,6 @@ impl Context {
         }
     }
 
-    fn path(&self, var: &str, default: &str) -> PathBuf {
-        self.env
-            .get(var)
-            .filter(|v| !v.is_empty())
-            .map(|v| {
-                if let Some(rest) = v.strip_prefix("~/") {
-                    self.home.join(rest)
-                } else {
-                    PathBuf::from(v)
-                }
-            })
-            .unwrap_or_else(|| self.home.join(default))
-    }
-
     fn find(&self, name: &str) -> Option<PathBuf> {
         let names = if cfg!(windows) {
             vec![
@@ -95,28 +81,6 @@ impl Context {
                     .flat_map(|dir| names.iter().map(move |name| dir.join(name))),
             )
             .find(|p| executable(p))
-    }
-
-    fn launcher(&self, entry: &str) -> Option<PathBuf> {
-        let name = if entry == "core" {
-            "agentnave-mcp"
-        } else {
-            "agentnave-studio-mcp"
-        };
-        let tools = self.path("UV_TOOL_DIR", ".local/share/uv/tools");
-        let tools = if !self.env.contains_key("UV_TOOL_DIR") {
-            self.env
-                .get("XDG_DATA_HOME")
-                .map(|p| PathBuf::from(p).join("uv/tools"))
-                .unwrap_or(tools)
-        } else {
-            tools
-        };
-        #[cfg(windows)]
-        let candidate = tools.join("agentnave/Scripts").join(format!("{name}.exe"));
-        #[cfg(not(windows))]
-        let candidate = tools.join("agentnave/bin").join(name);
-        executable(&candidate).then_some(candidate)
     }
 }
 
@@ -229,6 +193,26 @@ impl Hosts {
                     .and_then(|s| s.get(var))
                     .map(|v| (v.as_str(), "shell"))
             })
+    }
+    fn launcher(&self, entry: &str) -> Option<PathBuf> {
+        let name = if entry == "core" {
+            "agentnave-mcp"
+        } else {
+            "agentnave-studio-mcp"
+        };
+        let tools = self
+            .env_value("UV_TOOL_DIR")
+            .map(|(p, _)| PathBuf::from(p))
+            .or_else(|| {
+                self.env_value("XDG_DATA_HOME")
+                    .map(|(p, _)| PathBuf::from(p).join("uv/tools"))
+            })
+            .unwrap_or_else(|| self.context.home.join(".local/share/uv/tools"));
+        #[cfg(windows)]
+        let candidate = tools.join("agentnave/Scripts").join(format!("{name}.exe"));
+        #[cfg(not(windows))]
+        let candidate = tools.join("agentnave/bin").join(name);
+        executable(&candidate).then_some(candidate)
     }
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
@@ -532,12 +516,11 @@ impl Hosts {
         let unsafe_path = host
             .user_layers
             .iter()
-            .chain(host.skill.iter())
             .find_map(|p| safe_path(p, &self.context.home).err());
         let attention = if let Some(error) = unsafe_path {
-            Some(attention("symlink_path", message(&error)))
+            Some(error_attention(&error, "write_failed"))
         } else if let Some(error) = &self.settings_error {
-            Some(attention("root_unconfirmed", error))
+            Some(error_attention(error, "root_unconfirmed"))
         } else if !host.root.confirmed
             || (self.shell.as_ref().is_some_and(Result::is_err)
                 && !self.manual_roots.contains(host.id))
@@ -547,7 +530,7 @@ impl Hosts {
                 "登录 shell 尚未确认根目录；可手动接入或在高级中指定根目录",
             ))
         } else if let Err(error) = &document {
-            Some(attention("parse_failed", error))
+            Some(error_attention(error, "parse_failed"))
         } else if let Some(failed) = self.failures.get(host.id) {
             Some(failed.clone())
         } else if command_state == Some("missing") {
@@ -611,8 +594,8 @@ impl Hosts {
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {
-        let studio = self.context.launcher("studio");
-        let core = self.context.launcher("core");
+        let studio = self.launcher("studio");
+        let core = self.launcher("core");
         json!({"installed":studio.is_some()&&core.is_some(),"studio":studio.is_some(),"core":core.is_some(),"command":crate::update::service_command()})
     }
     fn signature(&self, host: &Host, entry: &Option<Value>, kind: &str) -> String {
@@ -644,9 +627,6 @@ impl Hosts {
                 continue;
             }
             let result: Result<bool, String> = (|| {
-                for path in host.user_layers.iter().chain(host.skill.iter()) {
-                    safe_path(path, &self.context.home)?;
-                }
                 let changed = transaction::edit(
                     transaction::Target {
                         path: &host.config,
@@ -670,7 +650,7 @@ impl Hosts {
                         if self.command_state(&host, desired) == "missing"
                             && let Some(command) = host.command(desired)
                             && matches!(entry_kind(command), "studio" | "core")
-                            && let Some(path) = self.context.launcher(entry_kind(command))
+                            && let Some(path) = self.launcher(entry_kind(command))
                         {
                             host.set_command(desired, &path);
                         }
@@ -760,12 +740,10 @@ impl Hosts {
             return Err("entry 必须为 studio 或 core".into());
         }
         let result: Result<String, String> = (|| {
-            for path in host.user_layers.iter().chain(host.skill.iter()) {
-                safe_path(path, &self.context.home)?;
-            }
             if operation == "remove" {
                 // Preflight all layers; each subsequent replacement is independently checked.
                 for path in &host.user_layers {
+                    safe_path(path, &self.context.home)?;
                     host.read_at(path)
                         .map_err(|e| format!("parse_failed:{e}"))?;
                 }
@@ -792,7 +770,6 @@ impl Hosts {
             }
             let before = host.read().map_err(|e| format!("parse_failed:{e}"))?;
             let path = self
-                .context
                 .launcher(entry)
                 .ok_or("write_failed:请先安装本机服务")?;
             let mut desired = before.entry.clone();
@@ -854,25 +831,8 @@ impl Hosts {
         if ok {
             self.failures.remove(id);
         } else {
-            let code = text
-                .split_once(':')
-                .map(|(code, _)| code)
-                .filter(|code| {
-                    [
-                        "parse_failed",
-                        "command_missing",
-                        "symlink_path",
-                        "root_unconfirmed",
-                        "conflict",
-                        "write_failed",
-                        "rolled_back",
-                        "takeover_failed",
-                    ]
-                    .contains(code)
-                })
-                .unwrap_or("takeover_failed");
             self.failures
-                .insert(id.into(), attention(code, message(&text)));
+                .insert(id.into(), error_attention(&text, "takeover_failed"));
         }
         self.actions.insert(
             id.into(),
@@ -915,6 +875,13 @@ fn attention(code: &str, message: &str) -> Value {
     json!({"code":code,"message":message})
 }
 fn message(error: &str) -> &str {
+    error_parts(error, "takeover_failed").1
+}
+fn error_attention(error: &str, fallback: &str) -> Value {
+    let (code, text) = error_parts(error, fallback);
+    attention(code, text)
+}
+fn error_parts<'a>(error: &'a str, fallback: &'a str) -> (&'a str, &'a str) {
     error
         .split_once(':')
         .filter(|(c, _)| {
@@ -930,8 +897,7 @@ fn message(error: &str) -> &str {
             ]
             .contains(c)
         })
-        .map(|(_, m)| m)
-        .unwrap_or(error)
+        .unwrap_or((fallback, error))
 }
 /// Apply only the requested delta to a freshly read entry, preserving concurrent unknown fields.
 fn patch(latest: &mut Value, before: Option<&Value>, desired: &Value) {

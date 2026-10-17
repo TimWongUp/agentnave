@@ -100,14 +100,14 @@ fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), Str
     Ok(())
 }
 pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
-    super::transaction::safe_path(path, home)?;
-    super::transaction::safe_path(&app.join("backups"), home)?;
     let current = state(path, home);
     if current["state"] == "external"
         || (current["state"] == "app" && current["version"] == VERSION)
     {
         return Ok(());
     }
+    super::transaction::safe_path(path, home)?;
+    super::transaction::safe_path(&app.join("backups"), home)?;
     let parent = path.parent().ok_or("Skill 路径无效")?;
     fs::create_dir_all(parent).map_err(|_| "无法创建 Skill 目录")?;
     let stage = tempfile::tempdir_in(parent).map_err(|_| "无法暂存 Skill")?;
@@ -151,11 +151,11 @@ pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<
     Ok(())
 }
 pub(super) fn remove(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
-    super::transaction::safe_path(path, home)?;
-    super::transaction::safe_path(&app.join("backups"), home)?;
     if state(path, home)["state"] != "app" {
         return Ok(());
     }
+    super::transaction::safe_path(path, home)?;
+    super::transaction::safe_path(&app.join("backups"), home)?;
     backup_tree(path, app, id, home)?;
     super::transaction::safe_path(path, home)?;
     if state(path, home)["state"] != "app" {

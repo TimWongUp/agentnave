@@ -30,8 +30,9 @@ const state = {
 const ob = AN.onboarding({ variant: "compact", onChange: () => placeOb() });
 function placeOb() {
   const none = state.groupsData.length === 0;
-  ob.setVariant(none ? "full" : "compact");
-  const slot = none ? (el.blank.hidden ? null : el.blank) : $("onboard-side");
+  const full = none && !(narrow.matches && el.app.dataset.view === "list");
+  ob.setVariant(full ? "full" : "compact");
+  const slot = full ? (el.blank.hidden ? null : el.blank) : $("onboard-side");
   const description = el.blank.querySelector(":scope > p");
   if (description && none) description.hidden = ob.visible;
   if (!ob.visible || !slot) { ob.el.remove(); return; }
@@ -67,7 +68,7 @@ window.addEventListener("hashchange", () => {
   if (state.loaded === state.selected && state.hashKey) focusMember(state.hashKey);
   else refresh();
 });
-narrow.addEventListener("change", () => { sync(); renderList(); measureAll(); });
+narrow.addEventListener("change", () => { sync(); renderList(); placeOb(); measureAll(); });
 
 // ---------------------------------------------------------------- group list
 function sectionEl(id, text) {

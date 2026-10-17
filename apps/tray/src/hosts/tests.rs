@@ -138,8 +138,7 @@ fn revision_healthy_unclaimed_entry_is_connected() {
     );
     save(
         &h.config,
-        &json!({"mcpServers":{"agentnave":{"command":hosts.context.launcher("studio")}}})
-            .to_string(),
+        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher("studio")}}}).to_string(),
     );
     let state = hosts.state(&h);
     assert_eq!(state["status"], "connected");
@@ -155,21 +154,140 @@ fn revision_unrelated_change_does_not_retry_failed_takeover() {
         &hosts.context.search[0].join(h.binary),
         "#!/bin/sh\nexit 99\n",
     );
-    save(&h.config,&json!({"unknown":1,"mcpServers":{"agentnave":{"command":hosts.context.launcher("core"),"env":{}}}}).to_string());
-    let outside = hosts.context.home.join("external-skills");
-    fs::create_dir_all(&outside).unwrap();
-    std::os::unix::fs::symlink(&outside, h.skill.as_ref().unwrap().parent().unwrap()).unwrap();
+    save(&h.config,&json!({"unknown":1,"mcpServers":{"agentnave":{"command":hosts.launcher("core"),"env":{}}}}).to_string());
+    // Fail at the backup boundary, then remove that obstacle. An unwanted retry would now
+    // succeed and visibly add AGENTNAVE_HOST, even when last_action timestamps are identical.
+    let backups = hosts.context.app.join("backups");
+    save(&backups, "not a directory");
     hosts.refresh();
     let first = hosts.state(&h)["last_action"].clone();
     assert_eq!(first["ok"], false);
+    fs::remove_file(&backups).unwrap();
     let mut raw: Value = serde_json::from_slice(&fs::read(&h.config).unwrap()).unwrap();
     raw["unknown"] = json!(2);
     save(&h.config, &raw.to_string());
     hosts.refresh();
+    assert_eq!(fs::read_to_string(&h.config).unwrap(), raw.to_string());
+    assert_eq!(hosts.state(&h)["has_host_env"], false);
+    assert!(!backups.exists());
     assert_eq!(hosts.state(&h)["last_action"], first);
-    assert_eq!(raw["unknown"], 2);
-    assert_eq!(hosts.state(&h)["attention"]["code"], "symlink_path");
-    assert!(!hosts.context.app.join("backups").exists());
+    assert_eq!(
+        hosts.action("connect", &json!({"id":h.id})).unwrap()["ok"],
+        true
+    );
+    assert_eq!(hosts.state(&h)["has_host_env"], true);
+}
+
+#[test]
+#[cfg(unix)]
+fn external_skill_links_do_not_block_healthy_hosts_or_mcp_actions() {
+    for linked_parent in [false, true] {
+        let (_temp, mut hosts) = fixture();
+        let h = host(&hosts, "workbuddy");
+        executable_file(
+            &hosts.context.search[0].join(h.binary),
+            "#!/bin/sh\nexit 99\n",
+        );
+        save(
+            &h.config,
+            &json!({"mcpServers":{"agentnave":{"command":hosts.launcher("core")}}}).to_string(),
+        );
+        let skill = h.skill.as_ref().unwrap();
+        let link = if linked_parent {
+            skill.parent().unwrap()
+        } else {
+            skill.as_path()
+        };
+        let outside = hosts.context.home.join("external-skills");
+        save(&outside.join("SKILL.md"), "externally managed");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, link).unwrap();
+        assert_eq!(hosts.state(&h)["skill"]["state"], "external");
+        assert_eq!(hosts.state(&h)["status"], "connected");
+        assert!(hosts.state(&h)["attention"].is_null());
+        hosts.refresh();
+        assert_eq!(hosts.state(&h)["has_host_env"], true);
+        assert_eq!(hosts.state(&h)["status"], "connected");
+        assert_eq!(
+            hosts.action("remove", &json!({"id":h.id})).unwrap()["ok"],
+            true
+        );
+        assert!(h.read().unwrap().entry.is_none());
+        assert_eq!(
+            hosts.action("connect", &json!({"id":h.id})).unwrap()["ok"],
+            true
+        );
+        assert!(h.read().unwrap().entry.is_some());
+        assert!(link.is_symlink());
+        assert_eq!(
+            fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+            "externally managed"
+        );
+    }
+}
+
+#[test]
+fn service_detection_and_connect_share_shell_tool_directory_resolution() {
+    for var in ["UV_TOOL_DIR", "XDG_DATA_HOME"] {
+        let (_temp, mut hosts) = fixture();
+        let root = hosts.context.home.join("shell-data");
+        let tools = if var == "UV_TOOL_DIR" {
+            root.clone()
+        } else {
+            root.join("uv/tools")
+        };
+        fs::create_dir_all(tools.parent().unwrap()).unwrap();
+        fs::rename(hosts.context.home.join(".local/share/uv/tools"), &tools).unwrap();
+        hosts.shell = Some(Ok(BTreeMap::from([(
+            var.into(),
+            root.display().to_string(),
+        )])));
+        executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+        assert_eq!(hosts.service()["installed"], true);
+        let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(
+            result["host"]["command"],
+            json!(tools.join("agentnave/bin/agentnave-studio-mcp"))
+        );
+        let env_root = hosts.context.home.join("env-data");
+        let env_tools = if var == "UV_TOOL_DIR" {
+            env_root.clone()
+        } else {
+            env_root.join("uv/tools")
+        };
+        fs::create_dir_all(env_tools.parent().unwrap()).unwrap();
+        fs::rename(&tools, &env_tools).unwrap();
+        hosts
+            .context
+            .env
+            .insert(var.into(), env_root.display().to_string());
+        assert_eq!(hosts.service()["installed"], true);
+        let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
+        assert_eq!(
+            result["host"]["command"],
+            json!(env_tools.join("agentnave/bin/agentnave-studio-mcp"))
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn settings_path_errors_preserve_code_without_prefixing_the_message() {
+    let (_temp, hosts) = fixture();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    let target = hosts.context.home.join("external-settings.json");
+    save(&target, "{}");
+    fs::create_dir_all(&hosts.context.app).unwrap();
+    std::os::unix::fs::symlink(&target, hosts.context.app.join("hosts.json")).unwrap();
+    let hosts = Hosts::new(hosts.context);
+    let state = hosts.state(&host(&hosts, "pi"));
+    assert_eq!(state["attention"]["code"], "symlink_path");
+    assert_eq!(
+        state["attention"]["message"],
+        "配置路径经过符号链接，请手动处理"
+    );
+    assert_eq!(fs::read_to_string(target).unwrap(), "{}");
 }
 
 #[test]
@@ -197,7 +315,7 @@ fn revision_multilayer_removal_does_not_fall_back_to_another_registration() {
         "#!/bin/sh\nexit 99\n",
     );
     for path in [&global, &custom, &env_file, &user_file] {
-        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[hosts.context.launcher("studio")],"environment":{}}}}).to_string());
+        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[hosts.launcher("studio")],"environment":{}}}}).to_string());
     }
     let project = hosts.context.project.join("opencode.json");
     save(&project, r#"{"mcp":{"agentnave":{"command":["project"]}}}"#);
@@ -424,7 +542,7 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
     );
     save(
         &h.config,
-        &json!({"mcpServers":{"agentnave":{"command":hosts.context.launcher("core")}}}).to_string(),
+        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher("core")}}}).to_string(),
     );
     let before = fs::read(&h.config).unwrap();
     hosts.refresh();
@@ -483,10 +601,11 @@ fn skill_ownership_links_and_refresh_version_update_preserve_external_content() 
         let link = other.skill.unwrap();
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(path, &link).unwrap();
-        assert!(
-            skill::install(&link, &hosts.context.app, "claude", &hosts.context.home)
-                .unwrap_err()
-                .starts_with("symlink_path:")
+        skill::install(&link, &hosts.context.app, "claude", &hosts.context.home).unwrap();
+        skill::remove(&link, &hosts.context.app, "claude", &hosts.context.home).unwrap();
+        assert_eq!(
+            skill::state(&link, &hosts.context.home)["state"],
+            "external"
         );
         assert!(link.is_symlink());
     }

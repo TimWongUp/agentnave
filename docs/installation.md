@@ -217,13 +217,13 @@ format; register it with the official CLI command below instead of copying this 
 
 托盘设置的“宿主接入”分区管理用户级 `agentnave`：默认工作室入口，高级中可切到核心，并可保存该宿主的绝对配置根目录。根目录依次取 App 用户覆盖（`user`）、GUI 环境变量（`env`）、登录 shell 探测（`shell`）、默认值（`default`）。覆盖和首次发现时间保存在 App 自有数据目录的 `hosts.json`；恢复自动仅移除覆盖，不删除宿主配置。
 
-登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存或迁移的组员设置、带 manager_session 的记录计算。
+登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位与接入共用有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取缓存的 shell 结果。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存或迁移的组员设置、带 manager_session 的记录计算。
 
 启动及刷新只接管已有条目：补宿主标识，命令确实缺失时修复同类 launcher；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。所有宿主在完成 App 真实接入验收前均为“未实测”。
 
 十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。JSON/JSONC 保留非目标区间，TOML 使用保留格式的编辑，Hermes 定点编辑 YAML 块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，全局保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
 
-配置和 Skill 的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。App 只更新版本标记与内容清单匹配的 Skill 副本；外部内容不覆盖，目录未知返回 manual。接入及刷新会更新 App 管理的旧版副本。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
+MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。外部 Skill（包括符号链接）仅显示 external，跳过写入，不影响宿主接入状态或 MCP 接入、移除；只有实际写入 App 管理的 Skill 时才检查该路径。App 只更新版本标记与内容清单匹配的 Skill 副本；外部内容不覆盖，目录未知返回 manual。接入及刷新会更新 App 管理的旧版副本。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
 
 | 宿主 ID | App 写入格式 | 默认 MCP 配置 | Skill 根目录 | tested |
 | --- | --- | --- | --- | --- |
@@ -708,23 +708,3 @@ or symlink, preserving user-authored additions. Uninstalling the runtime does no
 history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
 Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
 configuration, sessions, and user projects remain owned by the user and providers.
-
-### 静态 mock 自查（不启动托盘 App）
-
-从仓库根目录运行以下命令，在临时目录建立静态路由布局；不要直接以 apps/tray/ui 为 HTTP 根目录，否则 /chat/common.js 等绝对路径会 404。此服务只提供静态资源，mock 动作使用浏览器内存，不访问本机真实宿主配置；刷新页面会重置动作结果。
-
-```bash
-preview_root=$(mktemp -d)
-preview_home=$(mktemp -d)
-for section in settings chat panel manage; do
-  mkdir -p "$preview_root/$section"
-  for asset in "$PWD"/apps/tray/ui/*; do
-    ln -s "$asset" "$preview_root/$section/$(basename "$asset")"
-  done
-  ln -s "$PWD/apps/tray/ui/$section.html" "$preview_root/$section/index.html"
-done
-ln -s "$PWD/src/agentnave_studio/dashboard_assets/avatars.png" "$preview_root/avatars.png"
-HOME="$preview_home" python3 -m http.server 8765 --bind 127.0.0.1 --directory "$preview_root"
-```
-
-打开 `http://127.0.0.1:8765/settings/?mock#hosts` 查看宿主卡与根目录覆盖；`/chat/?mock&hosts=fresh`、`/panel/?mock&hosts=fresh` 查看空态引导。`hosts=typical|midway|done` 分别提供异常/孤留、设置中间态、全部完成的数据；`scene=empty|quiet|live` 可单独控制群聊与舞台数据。mock 群链接使用 `?group=...`，不要求静态服务器实现路由回退。只有真实 App 的验收可以改变 tested 标记。
