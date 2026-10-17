@@ -35,7 +35,7 @@ const REVIEW = {
   publish: ["已发布", "done"],
   discard: ["已丢弃", "idle"],
 };
-const HOST = { id: "@host", label: "主持人", model: "导演", provider: "host" };
+const HOST = { id: "@host", label: "主持人", model: "", provider: "host" };
 const EXAMPLES = [
   [
     "节目",
@@ -110,24 +110,21 @@ function duration(ms) {
     ? `${m} 分 ${s % 60} 秒`
     : `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
+function modelName(seat) {
+  return seat.model || "未记录模型";
+}
+function identityNote(seat) {
+  const host = seat.provider === "host";
+  return [host ? "主控" : "组员", host ? seat.host : seat.provider].filter(Boolean).join(" · ");
+}
+function castOf(detail) {
+  const lastManager = [...(detail.messages || [])].reverse().find((message) => message.speaker === "@host");
+  return [{ ...HOST, host: detail.host, model: lastManager?.manager_model || "" }, ...detail.seats];
+}
 function avatar(seat, size = "") {
-  const key = `${seat.model || ""} ${seat.provider || ""}`.toLowerCase();
-  const known =
-    seat.provider === "host"
-      ? "host"
-      : ["claude", "gpt", "gemini", "grok", "deepseek"].find((name) =>
-          key.includes(name),
-        ) || { codex: "gpt", antigravity: "gemini" }[seat.provider];
-  if (known)
-    return h(`span.avatar.av-${known}${size}`, { "aria-hidden": "true" });
-  const label = seat.label || seat.provider || "?";
-  let hue = 0;
-  for (const char of label) hue = (hue * 31 + char.charCodeAt(0)) % 360;
-  return h(
-    `span.avatar.av-plain${size}`,
-    { "aria-hidden": "true", style: `--hue:${hue}` },
-    label.slice(0, 1).toUpperCase(),
-  );
+  if (seat.provider === "host" && !seat.model) return null;
+  return Avatars.create("model", seat.provider === "host" ? seat.host : seat.provider,
+    seat.model, size.replaceAll(".", " "));
 }
 function copyButton(text, label = "复制") {
   const button = h("button.icon-btn", { type: "button" }, label);
@@ -741,7 +738,7 @@ function currentTab(detail) {
 function renderShow() {
   const detail = app.detail,
     round = detail.round;
-  const cast = [HOST, ...detail.seats];
+  const cast = castOf(detail);
   const runs = Object.fromEntries(
     (round?.seats || []).map((run) => [run.seat_id, run]),
   );
@@ -817,8 +814,8 @@ function renderShow() {
           h(
             "span.seat-text",
             {},
-            h("strong", {}, seat.label),
-            h("small", {}, seat.model),
+            h("strong", { title: seat.label }, modelName(seat)),
+            h("small", {}, identityNote(seat)),
           ),
         );
       }),
@@ -894,8 +891,8 @@ function renderDesk(detail, cast) {
             h(
               "span.who",
               {},
-              h("strong", {}, seat.label),
-              h("small", {}, seat.model),
+              h("strong", { title: seat.label }, modelName(seat)),
+              h("small", {}, identityNote(seat)),
             ),
             pill(runState),
           ),
@@ -959,7 +956,7 @@ function renderTranscript(detail, cast) {
                   paint();
                 },
               },
-              seat.label,
+              `${modelName(seat)} · ${identityNote(seat)}`,
             ),
           ),
         )
@@ -991,12 +988,13 @@ function renderTranscript(detail, cast) {
       round = message.round;
       items.push(h("div.divider", {}, `第 ${round} 轮`));
     }
-    const seat = cast.find((item) => item.id === message.speaker) || {
+    const identity = cast.find((item) => item.id === message.speaker) || {
       id: message.speaker,
       label: message.speaker,
       model: "",
       provider: "",
     };
+    const seat = identity.provider === "host" ? { ...identity, model: message.manager_model || "" } : identity;
     items.push(
       h(
         "article.msg" +
@@ -1010,7 +1008,8 @@ function renderTranscript(detail, cast) {
           h(
             "div.msg-head",
             {},
-            h("strong", {}, seat.label),
+            h("strong", { title: seat.label }, modelName(seat)),
+            h("span.meta", {}, identityNote(seat)),
             message.kind === "task"
               ? h("span.badge.show", {}, "本轮任务")
               : null,
@@ -1055,6 +1054,12 @@ function renderTask() {
               provider: task.provider,
               model: task.model,
             };
+            const manager = {
+              label: detail.host || "主控",
+              provider: "host",
+              host: detail.host || "",
+              model: task.manager_model || "",
+            };
             return h(
               "article.task-run.tone-" + taskState.kind,
               {},
@@ -1065,11 +1070,11 @@ function renderTask() {
                 h(
                   "span.who",
                   {},
-                  h("strong", {}, task.provider),
+                  h("strong", {}, modelName(seat)),
                   h(
                     "small",
                     {},
-                    `${when(task.time)} · ${task.status === "running" ? "已运行 " : "用时 "}${duration(task.elapsed_ms)}`,
+                    `${identityNote(seat)} · ${when(task.time)} · ${task.status === "running" ? "已运行 " : "用时 "}${duration(task.elapsed_ms)}`,
                   ),
                 ),
                 pill(taskState),
@@ -1084,7 +1089,17 @@ function renderTask() {
                 ? h(
                     "div.body.prompt",
                     {},
-                    h("p.meta", {}, "主控派发"),
+                    h(
+                      "p.meta.prompt-who",
+                      {},
+                      avatar(manager, ".sm"),
+                      h(
+                        "span.who",
+                        {},
+                        h("strong", {}, modelName(manager)),
+                        h("small", {}, identityNote(manager)),
+                      ),
+                    ),
                     foldable(`prompt:${detail.id}:${task.id}`, task.prompt),
                   )
                 : null,
@@ -1129,7 +1144,7 @@ function renderTask() {
 function renderPublic() {
   const detail = app.detail;
   if (!detail) return renderLoading();
-  const cast = [HOST, ...detail.seats];
+  const cast = castOf(detail);
   return [
     h(
       "div.public-bar",
@@ -1184,8 +1199,8 @@ function renderPublic() {
             h(
               "span.seat-text",
               {},
-              h("strong", {}, seat.label),
-              h("small", {}, seat.model),
+              h("strong", { title: seat.label }, modelName(seat)),
+              h("small", {}, identityNote(seat)),
             ),
           ),
         ),

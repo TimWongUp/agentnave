@@ -279,7 +279,16 @@ class Conversations(Groups):
                     )
                     for seat in state.seats
                 },
-                [Entry(item.round, item.kind, item.seat, item.text) for item in state.entries],
+                [
+                    Entry(
+                        item.round,
+                        item.kind,
+                        item.seat,
+                        item.text,
+                        item.manager_model,
+                    )
+                    for item in state.entries
+                ],
                 {
                     seat_id: SeatState(saved.session_id, saved.cursor)
                     for seat_id, saved in state.sessions.items()
@@ -296,21 +305,32 @@ class Conversations(Groups):
         order: RoundOrder,
         prompt: str,
         instructions: dict[str, str],
+        *,
+        manager_model: str | None = None,
     ) -> Round:
         with self._writing(group_id):
             self._group(group_id)
             state = self.records[group_id].state
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
-            return super().run(group_id, seat_ids, order, prompt, instructions)
+            return super().run(
+                group_id,
+                seat_ids,
+                order,
+                prompt,
+                instructions,
+                manager_model=manager_model,
+            )
 
-    def post(self, conversation_id: str, text: str) -> None:
+    def post(self, conversation_id: str, text: str, *, manager_model: str | None = None) -> None:
         with self._writing(conversation_id):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
             if group.active is not None or state.pending_review():
                 raise ValueError("post only between rounds, with no answers pending review")
-            group.entries.append(Entry(group.rounds, "host", text=text))
+            group.entries.append(
+                Entry(group.rounds, "host", text=text, manager_model=manager_model)
+            )
             try:
                 self._save(group)
             except OSError:
@@ -372,7 +392,14 @@ class Conversations(Groups):
                 group = self._groups.get(record.state.id)
                 if group is not None:
                     group.entries.extend(
-                        Entry(item.round, item.kind, item.seat, item.text) for item in added
+                        Entry(
+                            item.round,
+                            item.kind,
+                            item.seat,
+                            item.text,
+                            item.manager_model,
+                        )
+                        for item in added
                     )
             self._publish(record)
             result = _find(record.state, round_id)
@@ -407,7 +434,12 @@ class Conversations(Groups):
     # Tasks
 
     def start_task(
-        self, request: InvocationRequest, title: str | None, conversation_id: str | None
+        self,
+        request: InvocationRequest,
+        title: str | None,
+        conversation_id: str | None,
+        *,
+        manager_model: str | None = None,
     ) -> tuple[str, str]:
         self.manager.check_start(request)
         record = self.writable(conversation_id) if conversation_id else None
@@ -467,6 +499,7 @@ class Conversations(Groups):
                     model=str(request.provider_options.get("model", "原生设置")),
                     cwd=str(request.cwd),
                     prompt=request.prompt,
+                    manager_model=manager_model,
                     session_id=request.session_id,
                     time=now(),
                 )
@@ -528,7 +561,12 @@ class Conversations(Groups):
         state = record.state
         state.entries.extend(
             EntryRecord(
-                round=item.round, kind=item.kind, seat=item.seat_id, text=item.text, time=now()
+                round=item.round,
+                kind=item.kind,
+                seat=item.seat_id,
+                text=item.text,
+                time=now(),
+                manager_model=item.manager_model,
             )
             for item in group.entries[len(state.entries) :]
         )
@@ -602,7 +640,7 @@ class Conversations(Groups):
 
     def open_dashboard(self, *, history_loaded: bool = False) -> str:
         if self.dashboard is None:
-            self.dashboard = Dashboard()
+            self.dashboard = Dashboard(self.root)
             try:
                 if history_loaded:
                     for record in list(self.records.values()):

@@ -51,6 +51,7 @@ class EntryRecord(BaseModel):
     seat: str | None = None
     text: str | None = None
     time: str
+    manager_model: str | None = None
 
 
 class SessionRecord(BaseModel):
@@ -102,6 +103,7 @@ class TaskRecord(BaseModel):
     error: str | None = None
     elapsed_ms: int = 0
     time: str
+    manager_model: str | None = None
 
 
 class Conversation(BaseModel):

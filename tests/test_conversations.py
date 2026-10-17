@@ -371,6 +371,7 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             {
                 "provider": "claude",
                 "prompt": "one",
+                "manager_model": "gpt-6",
                 "cwd": str(tmp_path),
                 "title": "Job",
                 "provider_options": {"model": "test-model", "effort": "high"},
@@ -397,6 +398,7 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             {
                 "provider": "claude",
                 "prompt": "two",
+                "manager_model": "claude-opus-5",
                 "cwd": str(tmp_path),
                 "session_id": finished["session_id"],
             },
@@ -414,6 +416,8 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             )["tasks"],
         )
         assert [task["status"] for task in tasks] == ["succeeded", "succeeded"]
+        assert [task["manager_model"] for task in tasks] == ["gpt-6", "claude-opus-5"]
+        assert tasks[0]["model"] == "test-model"
         sleeping = await _call(
             client,
             "start_agent",
@@ -702,6 +706,54 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
     assert [seat["status"] for seat in saved["rounds"][0]["seats"]] == ["succeeded", "not_started"]
     assert [entry["kind"] for entry in saved["entries"]] == ["task", "answer", "host"]
     assert saved["sessions"]["a"]["session_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_round_save_retry_keeps_manager_model(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Fragile identity",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        replace = os.replace
+        failed = False
+
+        def fail_first_round_save(source: str, target: Path) -> None:
+            nonlocal failed
+            if not failed and target.name == "state.json":
+                pending = json.loads(Path(source).read_text())
+                if pending["rounds"]:
+                    failed = True
+                    raise OSError("disk full")
+            replace(source, target)
+
+        monkeypatch.setattr(os, "replace", fail_first_round_save)
+        started = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": show["group_id"],
+                "seats": ["a"],
+                "order": "parallel",
+                "prompt": "go",
+                "manager_model": "gpt-6",
+            },
+        )
+        done = await _wait(client, started["round_id"])
+        assert "state_write_failed" in str(done["error"])
+
+    saved = json.loads(
+        (data_root / "conversations" / str(show["group_id"]) / "state.json").read_text()
+    )
+    assert [entry["kind"] for entry in saved["entries"]] == ["task", "absent"]
+    assert saved["entries"][0]["manager_model"] == "gpt-6"
 
 
 @pytest.mark.parametrize("review", [False, True])
@@ -1050,6 +1102,37 @@ def test_host_projection_does_not_collide_with_director_seat() -> None:
     )
     projected = json.loads(views.public(state))
     assert [m["speaker"] for m in projected["messages"]] == ["@host", "director"]
+
+
+def test_task_director_exposes_manager_identity() -> None:
+    state = Conversation(
+        id="task",
+        title="task",
+        kind="task",
+        host="codex",
+        tasks=[
+            TaskRecord(
+                id="run",
+                provider="claude",
+                model="claude-opus-5",
+                cwd="/tmp",
+                prompt="work",
+                manager_model="gpt-6",
+                time="now",
+            )
+        ],
+    )
+    projected = json.loads(
+        views.director(
+            state,
+            public_url="",
+            home_url="/",
+            storage="/tmp",
+            tails={},
+        )
+    )
+    assert projected["host"] == "codex"
+    assert projected["tasks"][0]["manager_model"] == "gpt-6"
 
 
 def test_idle_http_connection_does_not_block_state_requests() -> None:
@@ -1417,3 +1500,149 @@ async def test_show_permission_reads_current_discussion_members(data_root: Path)
         path.write_text("{", encoding="utf-8")
         rejected = await client.call_tool("describe_provider", {"provider": "claude"})
         assert rejected.is_error and "AgentNave App" in str(rejected.content)
+
+
+def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) -> None:
+    from urllib.error import HTTPError
+    from urllib.request import Request
+
+    dashboard = Dashboard(tmp_path)
+    dashboard.update(
+        "public",
+        json.dumps(
+            {
+                "view": "public",
+                "host": "codex",
+                "seats": [{"id": "a", "provider": "claude", "model": "claude-opus-5"}],
+                "messages": [{"speaker": "@host", "manager_model": "gpt-6"}],
+            }
+        ).encode(),
+    )
+    dashboard.update("director", b'{"view":"director"}')
+    url = dashboard.url("public")
+    director_url = dashboard.url("director")
+    try:
+        with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == {}
+            assert response.headers["Cache-Control"] == "no-store"
+        value = {
+            '["family","claude",""]': "data:image/png;base64,iVBORw0KGgo=",
+            '["family","gpt",""]': "data:image/png;base64,iVBORw0KGgo=",
+            '["family","grok",""]': "data:image/png;base64,iVBORw0KGgo=",
+            '["model","claude","claude-opus-5"]': "data:image/png;base64,iVBORw0KGgo=",
+            '["model","codex","gpt-6"]': "data:image/png;base64,iVBORw0KGgo=",
+            '["model","pi","gpt-6"]': "data:image/png;base64,iVBORw0KGgo=",
+        }
+        (tmp_path / "avatars.json").write_text(json.dumps(value))
+        with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == {
+                key: value[key]
+                for key in (
+                    '["model","claude","claude-opus-5"]',
+                    '["model","codex","gpt-6"]',
+                )
+            }
+        with urlopen(director_url + "avatar-settings") as response:
+            assert json.load(response) == value
+        with urlopen(url + "avatar-claude.png") as response:
+            assert response.headers["Content-Type"] == "image/png"
+            assert response.read().startswith(b"\x89PNG")
+        for request, status in [
+            (Request(url + "avatar-settings", headers={"Origin": "https://example.com"}), 403),
+            (url.replace("/public/", "/missing/") + "avatar-settings", 404),
+            (Request(url + "app/avatars", data=b"{}", method="POST"), 501),
+        ]:
+            with pytest.raises(HTTPError) as error:
+                urlopen(request)
+            assert error.value.code == status
+        (tmp_path / "avatars.json").write_text("broken")
+        with urlopen(url + "avatar-settings") as response:
+            assert json.load(response) == {}
+    finally:
+        dashboard.close()
+
+
+def test_public_dashboard_uses_family_avatar_when_host_is_unknown(tmp_path: Path) -> None:
+    from urllib.request import urlopen
+
+    dashboard = Dashboard(tmp_path)
+    dashboard.update(
+        "public",
+        json.dumps(
+            {
+                "view": "public",
+                "host": None,
+                "messages": [{"speaker": "@host", "manager_model": "gpt-6"}],
+            }
+        ).encode(),
+    )
+    value = {'["family","gpt",""]': "data:image/png;base64,iVBORw0KGgo="}
+    (tmp_path / "avatars.json").write_text(json.dumps(value))
+    try:
+        with urlopen(dashboard.url("public") + "avatar-settings") as response:
+            assert json.load(response) == value
+    finally:
+        dashboard.close()
+
+
+@pytest.mark.asyncio
+async def test_manager_model_is_message_metadata_without_cli_inference(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        for name in ("start_agent", "run_round", "post_host_message"):
+            assert "manager_model" in tools[name].input_schema["properties"]
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Model identity",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        group_id = str(show["group_id"])
+        for model in ("gpt-6", "claude-opus-5", None):
+            await _call(
+                client,
+                "post_host_message",
+                {
+                    "conversation_id": group_id,
+                    "text": "Remark",
+                    "manager_model": model,
+                },
+            )
+        round_ = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": group_id,
+                "seats": ["a"],
+                "order": "parallel",
+                "prompt": "Go",
+                "manager_model": "gemini-3.5-pro",
+            },
+        )
+        await _call(client, "wait_round", {"round_id": round_["round_id"]})
+        state = _conversation(
+            await _call(client, "read_conversation", {"conversation_id": group_id})
+        )
+        entries = cast(list[dict[str, object]], state["entries"])
+        assert [entry["manager_model"] for entry in entries] == [
+            "gpt-6",
+            "claude-opus-5",
+            None,
+            "gemini-3.5-pro",
+            None,
+        ]
+        disk = json.loads((data_root / "conversations" / group_id / "state.json").read_text())
+        assert disk["entries"] == entries
+        public = json.loads((data_root / "conversations" / group_id / "views.json").read_text())[
+            "public"
+        ]
+        assert [entry["manager_model"] for entry in public["messages"]] == [
+            entry["manager_model"] for entry in entries
+        ]
+        legacy = EntryRecord(round=1, kind="host", time="now")
+        assert legacy.manager_model is None

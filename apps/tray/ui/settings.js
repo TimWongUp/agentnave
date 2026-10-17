@@ -509,7 +509,7 @@ function updateControls() {
 // Switch tabs
 function setTab(tab) {
   currentTab = tab;
-  for (const id of ["members", "hosts", "updates"]) {
+  for (const id of ["members", "avatars", "hosts", "updates"]) {
     $("tab-" + id).classList.toggle("active", tab === id);
     $("tab-" + id).setAttribute("aria-selected", String(tab === id));
     $("tab-" + id).setAttribute("aria-controls", "pane-" + id);
@@ -1729,9 +1729,9 @@ async function triggerApplyUpdate() {
 }
 
 // Bind top-level event listeners
-for (const tab of ["members", "hosts", "updates"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
-window.addEventListener("hashchange", () => setTab(["hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members"));
-setTab(["hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members");
+for (const tab of ["members", "avatars", "hosts", "updates"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
+window.addEventListener("hashchange", () => setTab(["avatars", "hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members"));
+setTab(["avatars", "hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members");
 
 $("mode-task").addEventListener("click", () => setMode("task"));
 $("mode-discussion").addEventListener("click", () => setMode("discussion"));

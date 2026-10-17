@@ -22,6 +22,7 @@ def _encode(data: dict[str, object]) -> bytes:
 def _show(state: Conversation, view: str) -> dict[str, object]:
     return {
         "view": view,
+        "host": state.host,
         "id": state.id,
         "title": state.title,
         "mode": state.kind,
@@ -47,6 +48,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                     else entry.text
                 ),
                 "time": entry.time,
+                "manager_model": entry.manager_model,
             }
             for entry in state.entries
         ],
@@ -128,6 +130,7 @@ def _director(
             "id": state.id,
             "title": state.title,
             "mode": "task",
+            "host": state.host,
             "seats": [],
             "messages": [],
             "tasks": tasks,

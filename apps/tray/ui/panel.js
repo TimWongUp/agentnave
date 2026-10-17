@@ -5,7 +5,7 @@
 // overlay recomputed from layout after each render, resize and fold. Links are real routes
 // (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
-  h, $, load, href, MEMBER, GROUP, pick, urgent, avatar, hostAvatar, colorClass,
+  h, $, load, href, MEMBER, GROUP, pick, urgent, avatar, colorClass,
   relTime, fullTime, setText, setAttr, setClass, reconcile, stickyOrder, poll,
 } = AN;
 
@@ -77,7 +77,7 @@ function createBlock(m) {
   const mgrState = h("span.mgr-state", {}, h("i.dot"), h("span"));
   const presence = h("i.presence");
   const mgrName = h("span.mgr-name");
-  const mgr = h("a.mgr", {}, h("span.mgr-top", {}, h("span.mgr-ava", {}, hostAvatar(m.host, m.label), presence), mgrName), mgrState);
+  const mgr = h("a.mgr", {}, h("span.mgr-top", {}, h("span.mgr-ava", {}, presence), mgrName), mgrState);
   const headCount = h("span.count"), headRun = h("span.tag.tag-run"), headReview = h("span.tag.tag-review"), headTime = h("time");
   const head = h("a.grp-head", {}, headCount, headRun, headReview, headTime);
   const list = h("div.rows");

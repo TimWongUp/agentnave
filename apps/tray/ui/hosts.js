@@ -4,7 +4,7 @@
 // Settings -> 宿主接入. Pure DOM construction (h() = createElement/textContent), no innerHTML, no inline style.
 // Data comes from GET /app/hosts; every write is a POST with X-AgentNave-Action (AN.post). The page never
 // writes on its own: auto-takeover is the server's job at startup and on 刷新检测.
-const { h, $, load, post, installService, hostAvatar, relTime } = AN;
+const { h, $, load, post, installService, relTime } = AN;
 
 
 const KEEP_BACKUPS = 30;
@@ -770,7 +770,7 @@ function buildCard(host) {
     );
   if (S.adv.has(id) && host.status !== "orphaned") main.push(advPanel(host));
   main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
-  card.append(hostAvatar(host.id, host.label), h("div.hc-main", {}, ...main));
+  card.append(h("div.hc-main", {}, ...main));
   return card;
 }
 

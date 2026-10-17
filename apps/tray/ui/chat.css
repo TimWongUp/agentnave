@@ -64,7 +64,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.hot::before, .gi.on::before { opacity: 1; }
 .gi:hover { background: var(--hover); }
 .gi.on { background: color-mix(in srgb, var(--mc) 12%, var(--card)); }
-.gi-ava, .gh-ava { position: relative; flex: none; align-self: flex-start; }
+.gi-ava, .gh-ava { position: relative; flex: none; align-self: center; width: 9px; height: 9px; }
+.gi-ava .presence, .gh-ava .presence { inset: 0; }
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 11.5px; color: var(--muted); }
 .gi-label { font-size: 12.5px; font-weight: 650; color: color-mix(in srgb, var(--mc) 70%, var(--ink)); white-space: nowrap; }
@@ -187,8 +188,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .blank p { max-width: 340px; line-height: 1.6; }
 .blank-link { margin-top: 14px; color: var(--accent); font-weight: 600; }
 
-/* avatars (sprite shared with the workbench) */
-.avatar { flex: none; width: 30px; height: 30px; border-radius: 9px; background: url("/avatars.png") 0 0 / 300% 200%; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; }
+/* avatars (official model icons and local overrides) */
+.avatar { flex: none; width: 30px; height: 30px; border-radius: 9px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; }
 .gi .avatar { width: 32px; height: 32px; border-radius: 10px; }
 .av-host { background-position: 0 0; }
 .av-claude { background-position: 50% 0; }
@@ -229,3 +230,5 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gl-wrap > .ob-slot:not(:empty) { padding: 2px 2px 8px; }
 .gl-wrap > .gl { padding: 0; overflow: visible; }
 .blank .ob { width: min(440px, 100%); margin-top: 18px; text-align: left; }
+
+.m-ava:empty, .note-ava:empty { display: none; }

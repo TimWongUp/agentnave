@@ -145,3 +145,7 @@ App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 构建时嵌入完整同版本 agentnave-manager。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
 GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
+
+### 主控模型与头像
+
+`start_agent`、`run_round`、`post_host_message` 的可选 `manager_model` 是调用方声明的本次主控模型，仅用于记录与展示，不控制组员或 Provider 参数，也不证明后端实际模型。每次任务 prompt 与节目主控消息独立持久化该值；省略或 null 表示本条未知，不继承上一条，不从 CLI、组员默认配置或模型列表推断。旧消息缺字段仍为未知，中途换模型不回填历史。主控和组员消息均按各自模型显示头像；宿主 CLI 的列表、标题与接入页只展示文字身份及状态，不使用头像。公开看板只按当前 snapshot 返回实际使用的本地头像覆盖，完整配置仅限 director/home 等私有 capability。
