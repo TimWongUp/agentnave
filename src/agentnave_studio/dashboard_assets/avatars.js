@@ -9,6 +9,13 @@
     qwen: ["Qwen", "avatar-qwen.png"], kimi: ["Kimi", "avatar-kimi.png"],
     minimax: ["MiniMax", "avatar-minimax.ico"],
   };
+  // Transparent symbol assets: source dimensions and visible bounds. Keep the original
+  // official files intact while giving each symbol the same centered 82% footprint.
+  const symbolBounds = {
+    "avatar-gemini.png": [512, 512, 21, 21, 470, 470],
+    "avatar-qwen.png": [80, 80, 4, 3, 72, 74],
+    "avatar-deepseek.ico": [225, 225, 0, 31, 224, 165],
+  };
   const hosts = { claude: "claude", codex: "gpt", grok: "grok", antigravity: "gemini" };
   let overrides = {}, loaded = false, revision = 0;
   const key = (kind, provider, model = "") => JSON.stringify([kind, provider || "", model || ""]);
@@ -27,13 +34,25 @@
     const [kind, provider, model] = JSON.parse(node.dataset.avatar);
     const src = source(kind, provider, model);
     node.replaceChildren();
-    // Override the old sprite backgrounds without coupling this module to each page's CSS.
-    node.style.background = src ? "#fff" : "hsl(210 18% 38%)";
+    // A clipped square owns the shape; transparent logos must not acquire a white tile.
+    node.style.position = "relative";
+    node.style.overflow = "hidden";
+    node.style.background = src ? "transparent" : "hsl(210 18% 38%)";
+    node.style.boxShadow = "none";
     if (src) {
       const img = document.createElement("img");
       img.alt = "";
       img.src = src;
-      img.style.cssText = "width:100%;height:100%;object-fit:contain;border-radius:inherit;display:block";
+      img.style.cssText = "position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;object-position:50% 50%;display:block";
+      const bounds = Object.entries(symbolBounds).find(([file]) => src === new URL(file, base).href)?.[1];
+      if (bounds) {
+        const [width, height, x, y, visibleWidth, visibleHeight] = bounds;
+        const extent = Math.max(visibleWidth, visibleHeight) / 0.82;
+        img.style.width = `${width / extent * 100}%`;
+        img.style.height = `${height / extent * 100}%`;
+        img.style.left = `${50 - (x + visibleWidth / 2) / extent * 100}%`;
+        img.style.top = `${50 - (y + visibleHeight / 2) / extent * 100}%`;
+      }
       img.onerror = () => { img.remove(); node.textContent = String(provider || "?").slice(0, 1).toUpperCase(); };
       node.append(img);
     } else node.textContent = String(provider || "?").slice(0, 1).toUpperCase();
