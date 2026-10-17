@@ -12,11 +12,11 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 from uuid import uuid4
 
 from agentnave.adapters import get_adapter
-from agentnave.adapters.antigravity import remove_restricted_profile, write_restricted_profile
+from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
 from agentnave.host import Host, detect_host
@@ -62,13 +62,6 @@ def _json(data: object) -> bytes:
 
 
 Record.project = _project
-
-
-class DeletionResult(TypedDict):
-    conversation_id: str
-    deleted_paths: list[str]
-    retained_paths: list[str]
-    forgotten_invocations: int
 
 
 class Studio(Groups):
@@ -307,8 +300,6 @@ class Studio(Groups):
         with self._writing(group_id):
             self._group(group_id)
             state = self.records[group_id].state
-            if state.archived:
-                raise ValueError("this conversation has ended; reopen it with update_conversation")
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
             return super().run(group_id, seat_ids, order, prompt, instructions)
@@ -317,10 +308,8 @@ class Studio(Groups):
         with self._writing(conversation_id):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
-            if state.archived or group.active is not None or state.pending_review():
-                raise ValueError(
-                    "post only in an open show with no running round or pending review"
-                )
+            if group.active is not None or state.pending_review():
+                raise ValueError("post only between rounds, with no answers pending review")
             group.entries.append(Entry(group.rounds, "host", text=text))
             try:
                 self._save(group)
@@ -398,16 +387,11 @@ class Studio(Groups):
             or any(task.status == "running" for task in record.state.tasks)
         )
 
-    def update(self, conversation_id: str, title: str | None, archived: bool | None) -> Record:
+    def update(self, conversation_id: str, title: str) -> Record:
         with self._writing(conversation_id) as record:
-            if archived and self.busy(record):
-                raise ValueError("Resolve running work and pending reviews before ending it")
-            if title is not None:
-                if not title.strip() or len(title) > 200:
-                    raise ValueError("Title must contain 1–200 characters")
-                record.state.title = title
-            if archived is not None:
-                record.state.archived = archived
+            if not title.strip() or len(title) > 200:
+                raise ValueError("Title must contain 1–200 characters")
+            record.state.title = title
             group = self._groups.get(conversation_id)
             if group is not None:
                 self._save(group)  # include any group changes an earlier failed save missed
@@ -415,33 +399,6 @@ class Studio(Groups):
                 self._persist(record)
                 self._publish(record)
             return record
-
-    def delete(self, conversation_id: str) -> DeletionResult:
-        with self._writing(conversation_id) as record:
-            if not record.state.archived:
-                raise ValueError("End the conversation with update_conversation before deleting it")
-            if self.busy(record):
-                raise ValueError("Resolve running work and pending reviews before deleting it")
-            state_path = record.directory / "state.json"
-            state_path.unlink()
-            (record.directory / "views.json").unlink(missing_ok=True)
-            forgotten = self.manager.forget_finished(self.invocations.pop(conversation_id, set()))
-            self._forget(conversation_id)
-            if record.state.isolated:
-                _prune_seats(
-                    record.directory / "seats",
-                    {seat.id for seat in record.state.seats if seat.provider == "antigravity"},
-                )
-            # Keep the directory and its lock file: a removed lock inode could let two servers
-            # lock different files at the same path.
-            record.release()
-            self._publish_home()
-            return {
-                "conversation_id": conversation_id,
-                "deleted_paths": [str(state_path)],
-                "retained_paths": [str(record.directory)],
-                "forgotten_invocations": forgotten,
-            }
 
     # Tasks
 
@@ -465,9 +422,7 @@ class Studio(Groups):
                         (
                             item
                             for item in self.records.values()
-                            if item.state.kind == "task"
-                            and not item.state.archived
-                            and any(map(resumes, item.state.tasks))
+                            if item.state.kind == "task" and any(map(resumes, item.state.tasks))
                         ),
                         None,
                     )
@@ -493,8 +448,8 @@ class Studio(Groups):
                         ),
                         self._directory(conversation_id),
                     )
-                if record.state.kind != "task" or record.state.archived:
-                    raise ValueError("Tasks need an open task conversation")
+                if record.state.kind != "task":
+                    raise ValueError("Tasks need a task conversation")
                 task = TaskRecord(
                     id=uuid4().hex,
                     provider=request.provider,
@@ -818,22 +773,3 @@ class Studio(Groups):
 
 def _find(state: Conversation, round_id: str) -> RoundRecord | None:
     return next((round_ for round_ in state.rounds if round_.id == round_id), None)
-
-
-def _prune_seats(seats: Path, antigravity: set[str]) -> None:
-    """Remove the profiles this studio wrote and empty seat folders; keep any CLI files."""
-    if not seats.is_dir() or seats.is_symlink():
-        return
-    for seat in seats.iterdir():
-        if seat.is_symlink() or not seat.is_dir():
-            continue
-        if seat.name in antigravity:
-            with suppress(OSError, ValueError):
-                remove_restricted_profile(seat)
-        # os.walk does not descend into symlinked folders, and rmdir never follows one.
-        for directory, _, _ in sorted(os.walk(seat), key=lambda item: -len(item[0])):
-            if not Path(directory).is_symlink():
-                with suppress(OSError):
-                    Path(directory).rmdir()
-    with suppress(OSError):
-        seats.rmdir()

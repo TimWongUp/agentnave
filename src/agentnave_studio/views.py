@@ -112,7 +112,6 @@ def _director(
     refresh_error: str | None,
 ) -> dict[str, object]:
     common: dict[str, object] = {
-        "archived": state.archived,
         "workbench_url": home_url,
         "storage": storage,
         "refresh_error": refresh_error,
@@ -196,7 +195,6 @@ def snapshot(
             "id": state.id,
             "title": state.title,
             "mode": state.kind,
-            "archived": state.archived,
             "host": state.host,
             "host_source": state.host_source,
             "manager_session": state.manager_session,
@@ -234,7 +232,6 @@ def home(
                 {
                     "title": state.title,
                     "mode": state.kind,
-                    "archived": state.archived,
                     "director_url": url,
                     "status": _status(state),
                 }

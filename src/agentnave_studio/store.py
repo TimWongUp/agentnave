@@ -113,7 +113,6 @@ class Conversation(BaseModel):
     host: HostName | None = None
     host_source: HostSource = "unknown"
     manager_session: str | None = None
-    archived: bool = False
     cwd: str | None = None
     review: bool = False
     isolated: bool = False

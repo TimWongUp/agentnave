@@ -29,8 +29,7 @@ function visibleItems() {
   const before = $("before").value ? new Date(`${$("before").value}T00:00:00`).getTime() : Infinity;
   return items.filter((item) => {
     const matches = filter === "all"
-      || (filter === "archived" && item.archived)
-      || (filter === "idle" && !item.archived && item.deletable)
+      || (filter === "idle" && item.deletable)
       || (filter === "failed" && ["failed", "blocked", "interrupted"].includes(item.status));
     return matches && (before === Infinity || updated(item) < before);
   });
@@ -84,8 +83,6 @@ function render() {
     if (Number.isFinite(timestamp)) time.dateTime = new Date(timestamp).toISOString();
     date.append(time);
     const reason = node("td");
-    // Only the manager ends a conversation; open ones are the normal case and need no label.
-    if (item.archived) reason.append(node("span", "已结束", "lifecycle"));
     if (item.reason) reason.append(node("span", item.reason, "reason"));
     row.append(checkCell, name, status, date, reason);
     return row;

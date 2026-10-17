@@ -56,7 +56,6 @@ pub struct Item {
     pub id: String,
     pub title: String,
     pub mode: String,
-    pub archived: bool,
     pub host: Option<String>,
     pub manager_session: Option<String>,
     pub status: String,
@@ -76,7 +75,7 @@ impl Overview {
     pub fn count(&self, status: &str) -> usize {
         self.items
             .iter()
-            .filter(|item| !item.archived && item.status == status)
+            .filter(|item| item.status == status)
             .count()
     }
 }
@@ -528,10 +527,6 @@ fn summary(snapshot: &Value) -> Option<Item> {
         id: text("id")?,
         title: text("title").unwrap_or_default(),
         mode: text("mode").unwrap_or_default(),
-        archived: summary
-            .get("archived")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
         host: text("host"),
         manager_session: text("manager_session"),
         status: text("status").unwrap_or_default(),
@@ -546,7 +541,7 @@ mod tests {
     fn snapshot(id: &str, status: &str) -> Value {
         json!({
             "version": 1,
-            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "archived": false, "status": status, "updated": "2026-10-15T00:00:00+00:00"},
+            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "status": status, "updated": "2026-10-15T00:00:00+00:00"},
             "director": {"view": "director", "mode": "show", "status": status, "messages": [{"text": "hi"}]},
             "public": {"view": "public", "mode": "show", "messages": [{"text": "hi"}]},
         })
@@ -706,9 +701,6 @@ mod tests {
         legacy["director"]["tasks"][0]["time"] = json!("2026-10-14T23:59:59.750123Z");
         legacy["director"]["tasks"][0]["elapsed_ms"] = json!(1500);
         save(root, &legacy);
-        let mut archived = task_snapshot("archived", "running", "2099-01-01T00:00:00Z");
-        archived["summary"]["archived"] = json!(true);
-        save(root, &archived);
         let reader = Reader::new(root.to_path_buf());
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 2);

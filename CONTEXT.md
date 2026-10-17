@@ -52,7 +52,7 @@ AgentNave Studio（入口 `agentnave-studio-mcp`，与核心同在发行包 `age
 
 ## Conversation
 
-Studio 保存的一份记录，分为节目 `show` 和任务 `task`。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一原生会话并入其未结束的任务会话。结束（archived）不删除历史；主控工具删除需先结束，托盘可直接删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
+Studio 保存的一份记录，分为节目 `show` 和任务 `task`。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一原生会话并入其任务会话。会话没有结束状态，主控不删除会话；托盘可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
 _Avoid_: 房间、工作台
 
 ## Review

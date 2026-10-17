@@ -256,7 +256,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the eleven core tools (seventeen with the studio) and the `codex` exclusion.
+Start a new session and confirm the eleven core tools (sixteen with the studio) and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -346,7 +346,7 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all AgentNave tools (eleven, or seventeen with the studio); a
+tools, then asks whether to enable them. Complete that choice for all AgentNave tools (eleven, or sixteen with the studio); a
 successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
 per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
@@ -470,7 +470,7 @@ A development Skill used with v0.5.0 does not change that older runtime's behavi
 
 主控先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `describe_provider` 核对参数与宿主身份。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；核心仍为 11 个工具，工作室仍为 17 个工具。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；核心仍为 11 个工具，工作室为 16 个工具。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 

@@ -25,7 +25,7 @@
   <div id="notice" role="status" aria-live="polite">正在读取会话…</div>
   <section class="tools" aria-label="筛选与清理">
     <div class="filters">
-      <label>查看 <select id="filter"><option value="all">全部会话</option><option value="archived">已结束</option><option value="idle">空闲</option><option value="failed">失败 / 受阻 / 中断</option></select></label>
+      <label>查看 <select id="filter"><option value="all">全部会话</option><option value="idle">空闲</option><option value="failed">失败 / 受阻 / 中断</option></select></label>
       <label>活动早于 <input id="before" type="date" aria-label="最近活动早于日期"></label>
     </div>
     <div class="cleanup">
@@ -36,7 +36,7 @@
   </section>
   <section id="confirmation" class="confirmation" aria-label="确认删除会话" tabindex="-1" hidden>
     <h2 id="confirm-title"></h2>
-    <p>删除后无法恢复记录，空闲会话即使主控没有结束也会被删除。席位中的文件会保留。</p>
+    <p>删除后无法恢复记录，空闲会话也会被删除。席位中的文件会保留。</p>
     <ul id="confirm-list"></ul>
     <div class="confirm-actions"><button id="cancel" type="button">取消</button><button id="confirm" class="danger" type="button">确认删除</button></div>
   </section>

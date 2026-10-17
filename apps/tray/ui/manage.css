@@ -66,7 +66,6 @@ tr:hover td { background: var(--hover); }
 .status.failed, .status.blocked, .status.interrupted { color: var(--bad); }
 .status.running::before, .status.review::before, .status.failed::before, .status.blocked::before, .status.interrupted::before { background: currentColor; }
 time { white-space: nowrap; font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--soft); }
-.lifecycle { color: var(--soft); white-space: nowrap; }
 .reason { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; max-width: 250px; overflow-wrap: anywhere; }
 .hint { color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); padding: 12px 18px; }
 .empty { padding: 50px 20px; text-align: center; color: var(--muted); }

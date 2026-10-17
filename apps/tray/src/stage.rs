@@ -791,11 +791,7 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
         )
     });
     let mut groups = BTreeMap::new();
-    for (index, snapshot) in snapshots
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| !s.item.archived)
-    {
+    for (index, snapshot) in snapshots.iter().enumerate() {
         let Some(id) = chat_group(&snapshot.item) else {
             continue;
         };

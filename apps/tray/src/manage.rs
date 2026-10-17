@@ -33,7 +33,6 @@ fn read_state(directory: &Path, id: &str) -> Result<State, String> {
         || value["id"] != id
         || !matches!(value["kind"].as_str(), Some("show" | "task"))
         || !value["title"].is_string()
-        || value.get("archived").is_some_and(|v| !v.is_boolean())
     {
         return Err("会话状态无法识别或版本不受支持".to_owned());
     }
@@ -220,11 +219,9 @@ pub fn list(root: &Path, overview: Overview) -> Value {
             .map(|d| d.as_millis());
         items.push(json!({
             "id": id, "title": state.value["title"], "mode": state.value["kind"],
-            "archived": state.value["archived"].as_bool().unwrap_or(false),
             "status": status, "updated": updated, "updated_ms": updated_ms,
             "deletable": reason.is_empty(), "reason": reason,
-            // Archived conversations are not shown in the chat page.
-            "group": snapshot.filter(|item| !item.archived).and_then(crate::stage::chat_group),
+            "group": snapshot.and_then(crate::stage::chat_group),
         }));
         // The probe's File drops here, before reading the next conversation.
     }
@@ -239,7 +236,7 @@ mod tests {
     fn fixture(root: &Path, id: &str) -> PathBuf {
         let path = root.join("conversations").join(id);
         fs::create_dir_all(path.join("seats/a")).unwrap();
-        fs::write(path.join("state.json"), json!({"version":2,"id":id,"title":"测试", "kind":"task", "archived":false,"tasks":[{"status":"running"}]}).to_string()).unwrap();
+        fs::write(path.join("state.json"), json!({"version":2,"id":id,"title":"测试", "kind":"task", "tasks":[{"status":"running"}]}).to_string()).unwrap();
         fs::write(path.join("views.json"), "{}").unwrap();
         fs::write(path.join("seats/a/output.txt"), "keep").unwrap();
         fs::write(path.join("other.json"), "keep").unwrap();
