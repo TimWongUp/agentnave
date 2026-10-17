@@ -935,7 +935,7 @@ $("onboarding-reopen").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- boot
-(async function boot() {
+(async function boot(attempt = 0) {
   if (!$("pane-hosts").hidden) say("正在读取宿主状态…");
   S.seen = loadSeen();
   S.firstRun = S.seen.size === 0;
@@ -950,6 +950,8 @@ $("onboarding-reopen").addEventListener("click", async () => {
     setData(hosts);
     if (!$("pane-hosts").hidden) say("宿主状态已读取。");
   } catch {
+    // The tray answers 503 until its first host detection finishes; retry briefly before giving up.
+    if (attempt < 10) { setTimeout(() => boot(attempt + 1), 1000); return; }
     say("无法读取宿主状态，请稍后点“刷新检测”重试。", true);
     $("hosts-summary").replaceChildren(h("span.dim", {}, "读取失败"));
   }
