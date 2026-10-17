@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>AgentNave · 群聊</title>
+<link rel="stylesheet" href="/manage/manage.css">
+<link rel="stylesheet" href="/chat/chat.css">
+<script src="/chat/common.js" defer></script>
+<script src="/chat/mock.js" defer></script>
+<script src="/chat/chat.js" defer></script>
+</head>
+<body class="chat-page">
+<header class="bar">
+  <a class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
+  <nav class="nav" aria-label="主导航">
+    <a href="/chat/" aria-current="page">群聊</a>
+    <a href="/">工作台</a>
+    <a href="/manage/">管理会话</a>
+    <a href="/settings/">设置</a>
+  </nav>
+</header>
+<div id="banner" class="banner" role="status" hidden>读取中断，正在重试…</div>
+<div id="app" class="app" data-view="list">
+  <aside class="side" aria-label="群列表">
+    <div class="side-head"><h1>群聊</h1><span id="side-count" class="side-count"></span></div>
+    <div id="list" class="gl"></div>
+  </aside>
+  <main id="pane" class="chat-main">
+    <header id="head" class="gh" hidden></header>
+    <div id="timeline" class="tl" role="log" aria-label="群消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
+    <div id="blank" class="blank" hidden></div>
+    <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
+    <div id="ro" class="ro" hidden>只读视图 · 待审核的回答请在主控中决定；在这里向主控发言、取消组员将在后续版本提供</div>
+  </main>
+</div>
+<div id="announce" class="sr-only" role="status" aria-live="polite"></div>
+</body>
+</html>

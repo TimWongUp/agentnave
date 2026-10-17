@@ -4,21 +4,37 @@
 <meta charset="utf-8">
 <meta name="color-scheme" content="dark light">
 <title>AgentNave</title>
-<link rel="stylesheet" href="./panel.css">
-<script src="./panel.js" defer></script>
+<link rel="stylesheet" href="/panel/panel.css">
+<script src="/panel/common.js" defer></script>
+<script src="/panel/mock.js" defer></script>
+<script src="/panel/panel.js" defer></script>
 </head>
 <body>
 <header class="top">
   <span class="brand"><span class="mark">N</span>AgentNave</span>
-  <span id="state" class="state"></span>
+  <span id="state" class="state-row" aria-live="off"></span>
 </header>
-<p id="summary" class="summary">正在读取…</p>
-<main id="list"></main>
+<div id="notices" class="notices"></div>
+<main id="scroll">
+  <div id="stage" class="stage" hidden>
+    <div class="heads" aria-hidden="true">
+      <span class="head-l">主控</span>
+      <span class="hub" id="hub"><span class="mark">N</span></span>
+      <span class="head-r">组员</span>
+    </div>
+    <svg id="wires" class="wires" aria-hidden="true" focusable="false">
+      <g id="layer-rail"></g><g id="layer-wires"></g><g id="layer-nodes"></g>
+    </svg>
+    <div id="groups" class="groups"></div>
+  </div>
+  <div id="calm" class="calm" hidden></div>
+</main>
+<div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 <footer class="foot">
-  <a class="open" href="/">打开工作台</a>
-  <a href="/manage/">管理会话</a>
-  <a href="/app/update">检查更新</a>
-  <a class="quit" href="/app/quit">退出</a>
+  <a class="open" href="/chat/">打开 AgentNave</a>
+  <a class="plain" href="/manage/">管理会话</a>
+  <a class="plain" id="update" href="/app/update">检查更新</a>
+  <a class="plain quit" href="/app/quit">退出</a>
 </footer>
 </body>
 </html>
