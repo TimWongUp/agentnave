@@ -247,13 +247,12 @@ impl Hosts {
     fn env_value(&self, var: &str) -> Option<(&str, &'static str)> {
         effective_env(&self.context, self.shell.as_ref(), var)
     }
-    fn launcher(&self, entry: &str) -> Option<PathBuf> {
-        let name = if entry == "core" {
-            "agentnave-mcp"
-        } else {
-            "agentnave-studio-mcp"
-        };
+    fn launcher(&self) -> Option<PathBuf> {
+        let name = "agentnave-mcp";
         let tools = self.tool_dirs()?.tools;
+        if !crate::update::unified_service(&tools) {
+            return None;
+        }
         #[cfg(windows)]
         let candidate = tools.join("agentnave/Scripts").join(format!("{name}.exe"));
         #[cfg(not(windows))]
@@ -647,12 +646,7 @@ impl Hosts {
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {
-        let studio = self.launcher("studio");
-        let core = self.launcher("core");
-        json!({"installed":studio.is_some()&&core.is_some(),"studio":studio.is_some(),"core":core.is_some(),"command":crate::update::service_command()})
-    }
-    fn signature(&self, host: &Host, entry: &Option<Value>, kind: &str) -> String {
-        serde_json::to_string(&(host.id, &host.config, entry, kind)).unwrap()
+        json!({"installed":self.launcher().is_some(),"command":crate::update::service_command()})
     }
     pub fn refresh(&mut self) -> Value {
         let (shell, dirs) = probe_tools(&self.context);
@@ -677,44 +671,61 @@ impl Hosts {
             {
                 continue;
             }
-            let Ok(before) = host.read() else {
-                continue;
+            // Preflight every user layer before changing any of them. Project layers stay read-only.
+            let layers = host
+                .user_layers
+                .iter()
+                .map(|path| host.read_at(path).map(|document| (path, document.entry)))
+                .collect::<Result<Vec<_>, _>>();
+            let layers = match layers {
+                Ok(layers) => layers,
+                Err(error) => {
+                    let (code, text) = error_parts(&error, "parse_failed");
+                    self.record(host.id, Err(format!("{code}:{text}")), "");
+                    continue;
+                }
             };
-            let signature = self.signature(&host, &before.entry, "takeover");
+            let signature = serde_json::to_string(&(host.id, &layers, "takeover")).unwrap();
             if self.failed.get(host.id) == Some(&signature) {
                 continue;
             }
             let result: Result<bool, String> = (|| {
-                let changed = transaction::edit(
-                    transaction::Target {
-                        path: &host.config,
-                        home: &self.context.home,
-                        app: &self.context.app,
-                        id: host.id,
-                        format: host.format,
-                        key: host.key,
-                    },
-                    |latest| {
-                        let Some(desired) = latest.as_mut() else {
-                            return Ok(());
-                        };
-                        if desired.get(host.env_key()).is_none() {
-                            desired[host.env_key()] = json!({});
-                        }
-                        desired[host.env_key()]
-                            .as_object_mut()
-                            .ok_or("takeover_failed:env 必须为对象")?
-                            .insert("AGENTNAVE_HOST".into(), json!(host.id));
-                        if self.command_state(&host, desired) == "missing"
-                            && let Some(command) = host.command(desired)
-                            && matches!(entry_kind(command), "studio" | "core")
-                            && let Some(path) = self.launcher(entry_kind(command))
-                        {
-                            host.set_command(desired, &path);
-                        }
-                        Ok(())
-                    },
-                )?;
+                let mut changed = false;
+                for (path, _) in &layers {
+                    let mut layer = host.clone();
+                    layer.config = (*path).clone();
+                    changed |= transaction::edit(
+                        transaction::Target {
+                            path,
+                            home: &self.context.home,
+                            app: &self.context.app,
+                            id: host.id,
+                            format: host.format,
+                            key: host.key,
+                        },
+                        |latest| {
+                            let Some(desired) = latest.as_mut() else {
+                                return Ok(());
+                            };
+                            if desired.get(host.env_key()).is_none() {
+                                desired[host.env_key()] = json!({});
+                            }
+                            desired[host.env_key()]
+                                .as_object_mut()
+                                .ok_or("takeover_failed:env 必须为对象")?
+                                .insert("AGENTNAVE_HOST".into(), json!(host.id));
+                            if let Some(command) = layer.command(desired)
+                                && (entry_kind(command) == "legacy"
+                                    || (entry_kind(command) == "agentnave"
+                                        && self.command_state(&layer, desired) == "missing"))
+                                && let Some(path) = self.launcher()
+                            {
+                                layer.set_command(desired, &path);
+                            }
+                            Ok(())
+                        },
+                    )?;
+                }
                 let skill_changed = if let Some(path) = &host.skill {
                     let state = skill::state(path, &self.context.home);
                     if state["state"] == "app" && state["version"] != VERSION {
@@ -733,7 +744,10 @@ impl Hosts {
                     let text = format!("已接管条目或更新 Skill{}", trust_hint(host.id));
                     self.record(host.id, Ok(()), &text)
                 }
-                Ok(false) => {}
+                Ok(false) => {
+                    self.failed.remove(host.id);
+                    self.failures.remove(host.id);
+                }
                 Err(error) => {
                     self.failed.insert(host.id.into(), signature);
                     self.record(host.id, Err(error), "");
@@ -792,13 +806,8 @@ impl Hosts {
             return Ok(json!({"host":self.state(&host),"ok":true,"message":"已更新配置根目录"}));
         }
         let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
-        let entry = payload
-            .get("entry")
-            .map(|v| v.as_str().ok_or("entry 必须为 studio 或 core"))
-            .transpose()?
-            .unwrap_or("studio");
-        if operation != "remove" && !matches!(entry, "studio" | "core") {
-            return Err("entry 必须为 studio 或 core".into());
+        if !matches!(operation, "connect" | "remove") {
+            return Err("未知宿主操作".into());
         }
         let result: Result<String, String> = (|| {
             if operation == "remove" {
@@ -831,8 +840,8 @@ impl Hosts {
             }
             let before = host.read().map_err(|e| format!("parse_failed:{e}"))?;
             let path = self
-                .launcher(entry)
-                .ok_or("write_failed:请先安装本机服务")?;
+                .launcher()
+                .ok_or("write_failed:请先安装或更新本机服务")?;
             let mut desired = before.entry.clone();
             match operation {
                 "connect" => {
@@ -855,9 +864,6 @@ impl Hosts {
                         });
                     }
                 }
-                "entry" => {
-                    host.set_command(desired.as_mut().ok_or("write_failed:宿主尚未接入")?, &path)
-                }
                 _ => return Err("未知宿主操作".into()),
             }
             self.write(&host, &before, desired.as_ref())?;
@@ -866,11 +872,7 @@ impl Hosts {
             {
                 skill::install(path, &self.context.app, id, &self.context.home)?;
             }
-            let done = if operation == "entry" {
-                "已切换入口"
-            } else {
-                "已接入；外部管理的 Skill 保留"
-            };
+            let done = "已接入；外部管理的 Skill 保留";
             Ok(format!("{done}{}", trust_hint(id)))
         })();
         let ok = result.is_ok();
@@ -1023,8 +1025,8 @@ fn entry_kind(command: &str) -> &'static str {
         .unwrap_or("")
         .trim_end_matches(".exe");
     match name {
-        "agentnave-studio-mcp" => "studio",
-        "agentnave-mcp" => "core",
+        "agentnave-studio-mcp" => "legacy",
+        "agentnave-mcp" => "agentnave",
         _ => "other",
     }
 }

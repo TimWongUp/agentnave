@@ -17,7 +17,7 @@ macro_rules! asset {
     ($name:literal) => {
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../src/agentnave_studio/dashboard_assets/",
+            "/../../src/agentnave/dashboard_assets/",
             $name
         ))
     };
@@ -251,7 +251,6 @@ impl Reader {
             "/app/hosts/refresh"
                 | "/app/hosts/connect"
                 | "/app/hosts/remove"
-                | "/app/hosts/entry"
                 | "/app/hosts/root"
                 | "/app/hosts/reveal-backups"
                 | "/app/onboarding/dismiss"

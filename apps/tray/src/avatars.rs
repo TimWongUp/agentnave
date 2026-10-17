@@ -109,10 +109,7 @@ pub fn request(root: &Path, method: &str, action: Option<&str>, body: &[u8]) -> 
 pub fn asset(name: &str) -> Option<(&'static str, &'static [u8])> {
     macro_rules! asset {
         ($name:literal) => {
-            include_bytes!(concat!(
-                "../../../src/agentnave_studio/dashboard_assets/",
-                $name
-            ))
+            include_bytes!(concat!("../../../src/agentnave/dashboard_assets/", $name))
         };
     }
     Some(match name {

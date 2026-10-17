@@ -14,6 +14,25 @@ from mcp_types import TextContent
 from agentnave import __version__, mcp_server
 from agentnave.mcp_server import mcp
 
+EXPECTED_TOOLS = [
+    "start_agent",
+    "wait_agent",
+    "wait_any",
+    "cancel_agent",
+    "list_invocations",
+    "describe_provider",
+    "list_members",
+    "open_group",
+    "run_round",
+    "wait_round",
+    "cancel_round",
+    "decide_answers",
+    "post_host_message",
+    "list_conversations",
+    "read_conversation",
+    "update_conversation",
+]
+
 
 @pytest.fixture(autouse=True)
 def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,19 +133,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     async with Client(mcp) as client:
         result = await client.list_tools()
 
-    assert [tool.name for tool in result.tools] == [
-        "start_agent",
-        "wait_agent",
-        "wait_any",
-        "cancel_agent",
-        "list_invocations",
-        "describe_provider",
-        "list_members",
-        "open_group",
-        "run_round",
-        "wait_round",
-        "cancel_round",
-    ]
+    assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
     assert all(tool.output_schema is not None for tool in result.tools)
     assert result.tools[0].annotations is not None
     assert result.tools[0].annotations.open_world_hint is True
@@ -165,6 +172,7 @@ async def test_provider_details_are_disclosed_only_on_request(
         assert set(payload) == {
             "provider",
             "permitted",
+            "show_permitted",
             "supported_options",
             "host",
             "host_source",
@@ -229,7 +237,11 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
     async with Client(mcp) as client:
         opened = await client.call_tool(
             "open_group",
-            {"cwd": str(tmp_path), "seats": [{"id": s, "provider": "claude"} for s in "ab"]},
+            {
+                "title": "Parallel",
+                "cwd": str(tmp_path),
+                "seats": [{"id": s, "provider": "claude"} for s in "ab"],
+            },
         )
         group_id = _payload(opened.structured_content)["group_id"]
         started = await client.call_tool(
@@ -475,7 +487,7 @@ async def test_mcp_reports_preparation_io_failure(
         )
 
     assert result.is_error is True
-    assert "Unable to prepare invocation" in str(result.content)
+    assert "Unable to prepare or save the task" in str(result.content)
     assert "Invalid invocation request" not in str(result.content)
 
 
@@ -554,22 +566,10 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
         assert client.server_info.name == "AgentNave"
         assert client.server_info.version == __version__
         result = await client.list_tools()
-    # The core keeps no data directory and writes nothing to its working directory.
+    # Discovery alone does not initialize history or write to the working directory.
     assert sorted(tmp_path.iterdir()) == [home] and not any(home.iterdir())
 
-    assert [tool.name for tool in result.tools] == [
-        "start_agent",
-        "wait_agent",
-        "wait_any",
-        "cancel_agent",
-        "list_invocations",
-        "describe_provider",
-        "list_members",
-        "open_group",
-        "run_round",
-        "wait_round",
-        "cancel_round",
-    ]
+    assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
 
 
 @pytest.mark.asyncio
@@ -591,6 +591,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         env={
             "PATH": os.environ["PATH"],
             "AGENTNAVE_EXCLUDED_PROVIDERS": excluded,
+            "AGENTNAVE_DATA_DIR": str(tmp_path / "data"),
         },
     )
     async with Client(parameters) as client:
@@ -610,6 +611,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         grouped = await client.call_tool(
             "open_group",
             {
+                "title": "Excluded",
                 "cwd": str(tmp_path),
                 "seats": [{"id": p, "provider": p} for p in ("codex", "grok")],
             },
@@ -648,14 +650,13 @@ def test_stdio_rejects_unknown_exclusion_configuration() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("module", ["agentnave.mcp_server", "agentnave_studio.mcp_server"])
 async def test_entrypoint_disables_all_tools_without_side_effects(
-    module: str, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     for status in ("nested", "unavailable"):
         parameters = StdioServerParameters(
             command=sys.executable,
-            args=_server_args(module, status),
+            args=_server_args("agentnave.mcp_server", status),
             env={
                 "HOME": str(tmp_path),
                 "USERPROFILE": str(tmp_path),
@@ -764,6 +765,7 @@ async def test_members_report_corrupt_files_without_overwriting_them(
                 (
                     "open_group",
                     {
+                        "title": "Broken",
                         "cwd": str(tmp_path),
                         "seats": [
                             {"id": "a", "provider": "claude"},
@@ -906,6 +908,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         grouped = await client.call_tool(
             "open_group",
             {
+                "title": "Defaults",
                 "cwd": str(tmp_path),
                 "seats": [
                     {"id": "a", "provider": "claude"},
@@ -923,6 +926,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         rejected = await client.call_tool(
             "open_group",
             {
+                "title": "Restricted",
                 "cwd": str(tmp_path),
                 "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
             },

@@ -1,5 +1,7 @@
 # ADR-0006：核心收敛为子代理与协作轮次，节目、历史与看板拆为工作室包
 
+> 核心／工作室分层及无历史约定已被 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代；下文保留当时的取舍。
+
 - 状态：已接受（v0.15.0）；“拆为两个发行包”一节已被 [ADR-0009](0009-single-package-two-entry-points.md) 取代
 - 日期：2026-10-11
 - 取代 [ADR-0005](0005-director-controlled-discussion-rooms.md) 的讨论室、统一工作台与 Dashboard 归属；[ADR-0002](0002-lightweight-cli-subagent-adapter.md) 的“Invocation 只在进程内存在”在核心包内恢复为完整约束。

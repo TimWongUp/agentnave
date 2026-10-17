@@ -16,13 +16,13 @@ AgentNave 只拥有：
 - 在 MCP server 生命周期内保存 Invocation 句柄；
 - 在 Manager 显式创建的协作组内，按名单并联或串联运行轮次，只在进程内存中保存各席最终回答与原生会话游标。
 
-核心包 `agentnave` 不建数据目录、不持久化业务数据、不监听端口、不向调用方 cwd 写文件。保存历史、审核、主持人发言与看板属于同一发行包中的工作室入口 `agentnave-studio-mcp`（见下文“工作室”），核心不依赖、不导入它。
+发行包只保留 `agentnave`，唯一入口 `agentnave-mcp` 提供完整 16 个工具。普通任务与协作组均保存历史，包含可选审核、主持人发言、隔离席位和按需只读看板；App 负责安装接入、配置、展示与清理。不再提供无历史模式，数据根和既有会话格式沿用，见 [ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)。
 
-AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用展示工作室数据，并可在原生锁保护下清理会话记录，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md) 与 [ADR-0012](../adr/0012-tray-conversation-cleanup.md)。
+AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用展示会话数据，并可在原生锁保护下清理会话记录，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md) 与 [ADR-0012](../adr/0012-tray-conversation-cleanup.md)。
 
 ## 单向编排
 
-AgentNave 派出的 Provider CLI 及其原生子代理不能再通过 AgentNave 编排其他 CLI。两个服务入口在启动运行时前检测：确认嵌套或检测不可用时，只启动带原因说明的零工具 MCP 服务，不挂载业务 lifespan、不建数据目录、不监听端口、不写文件。宿主直接启动且确认非嵌套的服务保持完整能力；中继只转发，不参与判定。取舍见 [ADR-0011](../adr/0011-disable-nested-orchestration.md)。
+AgentNave 派出的 Provider CLI 及其原生子代理不能再通过 AgentNave 编排其他 CLI。服务入口在启动运行时前检测：确认嵌套或检测不可用时，只启动带原因说明的零工具 MCP 服务，不挂载业务 lifespan、不建数据目录、不监听端口、不写文件。宿主直接启动且确认非嵌套的服务保持完整能力；中继只转发，不参与判定。取舍见 [ADR-0011](../adr/0011-disable-nested-orchestration.md)。
 
 POSIX 与 Windows supervisor 在自己的环境中设置 `AGENTNAVE_SUPERVISOR=<自身 PID>`，由 Provider 继承，不改变父服务环境。服务验证标记进程仍存活，POSIX 还验证其确为 AgentNave supervisor；过期标记忽略。macOS／Linux 同时沿同用户祖先链检查 supervisor，以覆盖 CLI 过滤自定义环境变量的情况；只识别 Python 脚本位置参数，不在整条命令行或 prompt 中搜索路径。同用户祖先无法读取或链未能在层数上限内确认时禁用工具，其他用户祖先不要求读取参数。
 
@@ -32,23 +32,23 @@ Windows 第一版只依赖环境标记及其 PID 存活检查，标记被过滤�
 
 运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，App 维护按模式生效的组员默认值，Skill 按说明选择组员；CLI 参考文件仅提供补充指引。MCP instructions 与 Tool 描述只保留轻量调用合同，`describe_provider` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 可由 App 安装内嵌副本，或由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。
 
-Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。两个 launcher 都先启动只用标准库的中继，由它把服务作为子进程运行并转发 STDIO；安装指纹变化后，中继在两侧无在途请求、无运行中或未读结果的 Invocation、核心未开过协作组时，重放宿主握手换用新子进程，宿主不断线（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
+Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。launcher 先启动只用标准库的中继，由它把服务作为子进程运行并转发 STDIO；安装指纹变化后，中继在两侧无在途请求、无运行中或未读结果的 Invocation，且会话没有持锁或未落盘回写时，重放宿主握手换用新子进程，宿主不断线（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
-MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用户级 `agentnave` 注册及自身安装的 Skill（[ADR-0015](../adr/0015-app-host-integration.md)），由 App 定点编辑并校验，不调用宿主 CLI 写配置。安装 Python 运行时本身不会写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，Invocation 句柄是进程内对象。工作室另在数据根保存会话历史；卸载不自动删除历史。
+MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用户级 `agentnave` 注册及自身安装的 Skill（[ADR-0015](../adr/0015-app-host-integration.md)），由 App 定点编辑并校验，不调用宿主 CLI 写配置。安装 Python 运行时本身不会写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，Invocation 句柄是进程内对象。核心在数据根保存会话历史；卸载不自动删除历史。
 
 ## 稳定合同
 
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id` 和 `provider_options`。Provider Options 可由调用方显式给出，或来自用户在 AgentNave App 中配置的组员默认值；均须通过对应 Adapter allowlist。显式参数优先，超出配置范围时拒绝，不替换为其他模型或 effort；未配置的参数继承 Provider 原生设置。默认值在服务入口套用，不下沉到 Adapter。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设置的默认 options 或用户本轮明确要求，主控不得自行追加；App 中的权限默认值会被套用并在回执注明。
 
-同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。工作室在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
+同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
 
 MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态与支持的选项，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。`describe_provider` 返回 `provider`、`permitted`、`supported_options`、`host` 与 `host_source`，不承载模型推荐。模型选择由 Manager 按用户要求与 `list_members` 返回的模式组员及说明决定。
 
 用户组员配置由 App 维护，位于数据根（`AGENTNAVE_DATA_DIR`，空值或未设置时为 `~/.agentnave`）的 `members.json`，版本为 1，顶层 `version`、`clis`、`modes` 三项必填。`clis.<provider>.models.<model>` 保存共享的 `efforts`、`effort`、`options`、`notes`；`options` 不得含 `model` 或 `effort`。`modes.task` 与 `modes.discussion` 分别配置允许的 CLI、模型列表、默认模型与按模型的 overrides。模式键缺失表示不限制；存在的空对象表示禁止全部 CLI；CLI 的空模型列表表示不限模型。模型列表、默认模型与 override 必须引用共享模型；默认模型必须在非空允许列表中。override 按出现字段整体替换共享配置，包含 `options` 整体替换；生效的默认 effort 必须在非空 `efforts` 中。未知字段、Provider、模式与结构错误均拒绝。
 
-核心与工作室在每次 `start_agent` 或 `open_group` 时现读配置，不缓存、不写入、不创建目录。先检查模式允许的 CLI，再对 task 检查宿主排除集合，然后按默认模型、默认 effort、其他 options 的顺序补齐未传字段，最后保留 Adapter 原有校验；显式传入的 model／effort 超出范围时拒绝；模式模型列表非空、未设 default 且调用方未传 model 时，也拒绝并列出允许模型，禁止退回原生模型绕过白名单。`session_id` 非空的续接同样现读配置并套用默认值。组席位在创建时冻结套用后的参数，后续轮次沿用，不自动更换模型。文件缺失时保留原生行为；读取或格式错误用专用异常保留 App 修复原文，直接返回 Tool error，不引导修改调用参数；被排除错误保留完整允许／排除清单。只有 Adapter 选项校验异常才追加支持参数提示，不根据错误文本猜测。只读 `list_members` 替代 `list_profiles`，分别列出两个模式的生效配置、默认标志、`permitted` 与 Adapter `option_args` 的 `valid`／`error`；不准备命令、不探测安装、认证或模型可用性。无配置时两个模式不受限且名单为空；受限模式中 CLI 的空模型列表除枚举已知组员外，另列 `model="*"`、default=false、effort=null、efforts=[]、options={}、notes=“不限模型”的通配条目。服务不再读取 `profiles.json`，旧档案迁移由 App 负责。见 [ADR-0013](../adr/0013-members-defaults-and-host-identity.md)。
+服务在每次 `start_agent` 或 `open_group` 时现读配置，不缓存、不写入、不创建目录。先检查模式允许的 CLI，再对 task 检查宿主排除集合，然后按默认模型、默认 effort、其他 options 的顺序补齐未传字段，最后保留 Adapter 原有校验；显式传入的 model／effort 超出范围时拒绝；模式模型列表非空、未设 default 且调用方未传 model 时，也拒绝并列出允许模型，禁止退回原生模型绕过白名单。`session_id` 非空的续接同样现读配置并套用默认值。组席位在创建时冻结套用后的参数，后续轮次沿用，不自动更换模型。文件缺失时保留原生行为；读取或格式错误用专用异常保留 App 修复原文，直接返回 Tool error，不引导修改调用参数；被排除错误保留完整允许／排除清单。只有 Adapter 选项校验异常才追加支持参数提示，不根据错误文本猜测。只读 `list_members` 替代 `list_profiles`，分别列出两个模式的生效配置、默认标志、`permitted` 与 Adapter `option_args` 的 `valid`／`error`；不准备命令、不探测安装、认证或模型可用性。无配置时两个模式不受限且名单为空；受限模式中 CLI 的空模型列表除枚举已知组员外，另列 `model="*"`、default=false、effort=null、efforts=[]、options={}、notes=“不限模型”的通配条目。服务不再读取 `profiles.json`，旧档案迁移由 App 负责。见 [ADR-0013](../adr/0013-members-defaults-and-host-identity.md)。
 
-宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，未知值使启动失败；否则 macOS／Linux 复用嵌套检测的平台读取能力，沿祖先进程最多检查 32 层，匹配可执行文件名、应用包路径或原生 Claude 的 `claude/versions/<版本号>` 路径；已知解释器／包装层（node、bun、deno、python／python3／python3.x、uv、uvx、npx、env、sh、bash、zsh、fish、dash）还按第一个非选项参数识别脚本，去掉 .js／.mjs／.cjs／.py 后缀后匹配。AgentNave 自身的 Python 中继脚本跳过；某层 argv 不可读时继续读父进程，父进程不可读或遇到未匹配宿主的非包装进程则停止，避免误认更外层 GUI。Windows 只读取环境变量。无法识别则 `host=null`、`host_source=unknown`；来源另可为 `env` 或 `parent`。WorkBuddy 映射 codebuddy，gemini／opencode／hermes 无对应 Provider，其余同名。排除集合为宿主 Provider 与 `AGENTNAVE_EXCLUDED_PROVIDERS` 的并集；旧环境变量的校验与行为保留。MCP instructions 按此并集公开允许项与排除项，只约束单任务 task，不作用于 discussion 的核心协作组或工作室节目；组员配置的 discussion 限制仍生效。允许项不代表已安装或认证。
+宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，未知值使启动失败；否则 macOS／Linux 复用嵌套检测的平台读取能力，沿祖先进程最多检查 32 层，匹配可执行文件名、应用包路径或原生 Claude 的 `claude/versions/<版本号>` 路径；已知解释器／包装层（node、bun、deno、python／python3／python3.x、uv、uvx、npx、env、sh、bash、zsh、fish、dash）还按第一个非选项参数识别脚本，去掉 .js／.mjs／.cjs／.py 后缀后匹配。AgentNave 自身的 Python 中继脚本跳过；某层 argv 不可读时继续读父进程，父进程不可读或遇到未匹配宿主的非包装进程则停止，避免误认更外层 GUI。Windows 只读取环境变量。无法识别则 `host=null`、`host_source=unknown`；来源另可为 `env` 或 `parent`。WorkBuddy 映射 codebuddy，gemini／opencode／hermes 无对应 Provider，其余同名。排除集合为宿主 Provider 与 `AGENTNAVE_EXCLUDED_PROVIDERS` 的并集；旧环境变量的校验与行为保留。MCP instructions 按此并集公开允许项与排除项，只约束单任务 task，不作用于 discussion 的协作组；组员配置的 discussion 限制仍生效。允许项不代表已安装或认证。
 
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
@@ -68,25 +68,25 @@ AgentNave 不提供总运行时限；`start_agent` 不接受截止时间参数�
 
 `wait_any(invocation_ids)` 沿用同一五分钟窗口等待多个 Invocation；名单须非空、不重复且全部有效，否则在等待前整批返回 Tool error。任一项已终态或有未读阻塞即返回 `reason=ready`，`updates` 为此刻全部就绪项，形状与 `wait_agent` 相同，未就绪项继续运行且不出现在回复中；每个就绪项只消费进入回复的那条阻塞，其余未读阻塞留给后续等待。终态可重复读取，已终态 ID 每次都就绪，由 Manager 从下次名单移除。窗口到期返回 `reason=wait_elapsed` 与每项运行快照，不消费阻塞。聚合由 InvocationManager 在唤醒后不挂起地扫描完成；同一 Invocation 的多个等待者（包括轮次对其席位的等待）仍共享一份阻塞队列、先取先得，不广播。取舍见 [ADR-0007](../adr/0007-wait-any-ready-subset.md)。
 
-`list_invocations` 只读列出当前进程内的活跃 Invocation 与保留期内的终态 Invocation，按启动顺序返回 `invocation_id`、`provider`、`cwd`、`status`、`elapsed_ms`（终态固定）和 `events_seen`（是否收到过任一结构化事件）；活跃项另含 `phase`，终态另含 `result_read`（等待或取消是否已返回过最终结果）与非空原生 `session_id`。不返回 prompt、正文、工具参数或启动时间，不消费阻塞，也不延长保留期。
+`list_invocations` 只读列出当前进程内的活跃 Invocation 与保留期内的终态 Invocation，按启动顺序返回 `invocation_id`、`provider`、`cwd`、`status`、`elapsed_ms`（终态固定）和 `events_seen`（是否收到过任一结构化事件）；活跃项另含 `phase`，终态另含 `result_read`（等待或取消是否已返回过最终结果）与非空原生 `session_id`。不返回 prompt、正文、工具参数或启动时间，不消费阻塞，也不延长保留期。顶层 `restart_safe` 表示会话是否允许服务重启：本进程仍持有会话锁或存在未落盘回写时为 false；中继还须确认没有运行中或未读结果的 Invocation。探测缺少该字段时不自动换进程。
 
-运行中回复同时提供最新原生活动与最多 1000 字符的公开回复尾部及其年龄。正文独立保留，不因后续工具事件消失；相同正文可能在不同等待中重复，无游标、分页或独立读取工具。只增加有界进程内尾部，不持久化运行中的输出尾部。活动不返回原始事件名、工具调用 ID、工具参数/结果或推理正文；公开正文可能含任务数据，不提供自动脱敏保证。终态 `output` 保全最终回答，不应用中间正文长度限制；每次调用的保留 stdout 上限为 1 MiB（含必要协议数据），stderr 为 64 KiB，按字节计；采用事件过滤的 Provider 另沿用每条 8 MiB 的解析缓冲上限，工具／图片事件过滤后不累积保存，不占回复预算。超限返回 `output_limit_exceeded` 并终止进程树，不静默截断为成功。回复软预算由 Manager 在派发任务时安排，不能由容量推断模型上下文是否足够；长产物由有文件工具的 CLI 显式落盘并返回摘要与路径，服务不自动转存或传输附件。宿主超时限制由 Manager 尊重，无等待请求时不主动推送。
+运行中回复同时提供最新原生活动与最多 1000 字符的公开回复尾部及其年龄。正文独立保留，不因后续工具事件消失；相同正文可能在不同等待中重复，无游标、分页或独立读取工具。只增加有界进程内尾部，不长期保存运行中的输出尾部。活动不返回原始事件名、工具调用 ID、工具参数/结果或推理正文；公开正文可能含任务数据，不提供自动脱敏保证。终态 `output` 保全最终回答，不应用中间正文长度限制；每次调用的保留 stdout 上限为 1 MiB（含必要协议数据），stderr 为 64 KiB，按字节计；采用事件过滤的 Provider 另沿用每条 8 MiB 的解析缓冲上限，工具／图片事件过滤后不累积保存，不占回复预算。超限返回 `output_limit_exceeded` 并终止进程树，不静默截断为成功。回复软预算由 Manager 在派发任务时安排，不能由容量推断模型上下文是否足够；长产物由有文件工具的 CLI 显式落盘并返回摘要与路径，服务不自动转存或传输附件。宿主超时限制由 Manager 尊重，无等待请求时不主动推送。
 
 Invocation 状态只存在于当前进程内。macOS／Linux 的每次 Invocation 由一个专用 supervisor 持续占有 POSIX 进程组，Provider 正常终止后也先清理该组再回收 supervisor，避免旧 PGID 被复用。Windows 的专用 supervisor 创建 kill-on-close Job Object，将 Provider 挂起创建、加入 Job 后再恢复；Provider 结束时关闭 Job 以清理后代，取消或 supervisor 丢失时也由句柄关闭终止整棵 Job 进程树。MCP server 退出时会尽力终止仍活跃的 supervisor；重启后旧 Invocation 句柄不可恢复。Provider 自己持久化的 Session 不受此限制。
 
 AgentNave 不是沙箱或同用户恶意进程隔离边界。POSIX 上已获得命令执行权限的 Provider 或工具可以主动创建新 OS session、杀死 supervisor，或以其他方式脱离普通进程组；发生可检测的 supervisor 丢失时返回 `supervision_lost`，但不能安全地对可能已被复用的旧 PGID 继续发信号。Windows Job Object 提供进程树所有权，但不隔离同一用户账户下的其他资源；Job 分配不被当前宿主环境允许时以 `launch_error` 失败，不降级为无树级所有权的启动。是否允许 Provider 命令由其原生权限机制和 Manager 决定；需要抵抗恶意同用户进程时，应在 AgentNave 外使用降权、容器或平台级资源域。
 
-终态 Invocation 的内存记录在调用结束七天后自动清理，包括尚未读取的结果；重复读取不延长保留期，活跃调用不清理。Manager 应在过期前保留最终回答与原生 session_id，过期句柄的等待与取消返回 Tool error。清理不删除 Provider 原生会话、协作组已接收的回答或工作室落盘历史。
+终态 Invocation 的内存记录在调用结束七天后自动清理，包括尚未读取的结果；重复读取不延长保留期，活跃调用不清理。Manager 应在过期前保留最终回答与原生 session_id，过期句柄的等待与取消返回 Tool error。清理不删除 Provider 原生会话、协作组已接收的回答或会话历史。
 
 ## Provider Adapter
 
-Adapter 只能添加非交互输出、prompt 传输和 cwd 等协议必需参数。Provider stderr 仅在失败结果中以有界详情返回；核心不把 prompt 写入日志或持久存储，工作室只在任务历史中保存主控发出的任务原文（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）。AgentNave 自身的中间文件使用系统临时目录：目前仅 Grok prompt 使用标准库临时文件，调用结束清理；其余 prompt 走 stdin，运行中尾部留在内存。Manager 创建的任务交接/中间文件同样使用任务临时目录并管理读取生命周期，不强制回答正文格式。项目正式产物与 Provider 自己的会话、缓存不属于此临时文件所有权。绝对 `cwd` 传给 Provider 进程，项目规则加载仍由 Provider 原生实现负责，不能把临时文件目录替代为 cwd。
+Adapter 只能添加非交互输出、prompt 传输和 cwd 等协议必需参数。Provider stderr 仅在失败结果中以有界详情返回；任务原文只保存于会话历史，不写入服务日志（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）。AgentNave 自身的中间文件使用系统临时目录：目前仅 Grok prompt 使用标准库临时文件，调用结束清理；其余 prompt 走 stdin，运行中尾部留在内存。Manager 创建的任务交接/中间文件同样使用任务临时目录并管理读取生命周期，不强制回答正文格式。项目正式产物与 Provider 自己的会话、缓存不属于此临时文件所有权。绝对 `cwd` 传给 Provider 进程，项目规则加载仍由 Provider 原生实现负责，不能把临时文件目录替代为 cwd。
 
 AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Object。Windows Provider 必须挂起创建、成功加入配置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job 后才恢复；任何创建、配置或分配失败都以 `launch_error` 终止，不回退到普通子进程或 `CREATE_NEW_PROCESS_GROUP`。Windows 取消直接终止 supervisor 并关闭 Job，没有伪造 POSIX 的温和树级信号阶段。
 
 ## 协作组
 
-取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 在内存中登记 2–6 个席位，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options；宿主排除项不约束席位。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
+取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 登记 2–6 个席位并保存会话，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options；宿主排除项不约束席位。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
 
 `run_round` 非阻塞地运行一轮：本轮共同任务先作为 `task` 条目提交；`parallel` 同步启动全部席位，在全部终态后按名单一次提交；`serial` 逐席启动、逐席提交，后席能看到前席。同组同一时间只有一个轮次。终态 succeeded 提交最终输出为 `answer`，failed、blocked、cancelled 提交 `absent`；运行中的阻塞提醒不提交。不重试、不设每席超时、不摘要或截断。
 
@@ -94,19 +94,17 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 `wait_round` 与 `wait_agent` 相同的五分钟窗口，轮次结束或运行席位出现新阻塞时提前返回，结束后可重读。`cancel_agent` 取消单席后串联轮继续；`cancel_round` 先禁止新启动，再取消在途席位，已成功回答照常提交，未启动的串联席位不写条目。server 退出时先结束所有轮次，再关闭 InvocationManager。
 
-`wait_round` 的 `include_output` 默认为 true；显式 false 只省略最终正文、运行尾部及其年龄，状态、活动、错误与原生 session_id 仍可读取。省略不消耗答案、不改变条目提交或审核，之后用 true 可重读全文。核心与工作室共用此合同，待审回答同样可重读。已结束轮次的 elapsed_ms 固定；finished 只表示编排结束，不代表各席都成功。意外执行异常形成带 internal_error 的 Invocation 失败结果；轮次驱动异常先停止新的启动、收束活跃席位、跳过未启动席位再释放组，返回 failed 与 round error，不公开未经审核的成功回答。状态写盘失败的轮次也返回 failed；取消仍遵守其独立语义。
+`wait_round` 的 `include_output` 默认为 true；显式 false 只省略最终正文、运行尾部及其年龄，状态、活动、错误与原生 session_id 仍可读取。省略不消耗答案、不改变条目提交或审核，之后用 true 可重读全文。待审回答同样可重读。已结束轮次的 elapsed_ms 固定；finished 只表示编排结束，不代表各席都成功。意外执行异常形成带 internal_error 的 Invocation 失败结果；轮次驱动异常先停止新的启动、收束活跃席位、跳过未启动席位再释放组，返回 failed 与 round error，不公开未经审核的成功回答。状态写盘失败的轮次也返回 failed；取消仍遵守其独立语义。
 
-多轮并联共享前轮已提交答案是有意设计，不提供连续盲答；串联顺序产生信息差也是有意设计，轮换顺序与追加全员修正轮由 Manager 决定。信息共享规则不提供文件隔离，写代码的并联席位由 Manager 分配独立工作树。讨论后的原生会话仍记得已收到的内容，切换 parallel 不能恢复盲答，新的独立回答需要新组与新原生会话。工作室审核只决定是否公开条目，不回滚工具副作用或清除作者会话记忆。
+多轮并联共享前轮已提交答案是有意设计，不提供连续盲答；串联顺序产生信息差也是有意设计，轮换顺序与追加全员修正轮由 Manager 决定。信息共享规则不提供文件隔离，写代码的并联席位由 Manager 分配独立工作树。讨论后的原生会话仍记得已收到的内容，切换 parallel 不能恢复盲答，新的独立回答需要新组与新原生会话。回答审核只决定是否公开条目，不回滚工具副作用或清除作者会话记忆。
 
-显式 restricted_tools=true 是受限配置，普通调用不启用；它保持原生工具限制并允许传入该席位自己的 session_id，只接受 model、effort（Pi 另可选模型后端 provider）。Claude 使用 safe-mode、空 tools、strict MCP 与禁用 skills；Grok 使用空 tools、deny-all、禁用子 Agent 和网页工具，不承诺移除工具定义或阻止 MCP 连接；CodeBuddy 复用 Claude 协议但覆盖自身限制参数；Codex 限制本地读取工具并忽略用户配置；Pi 禁用工具、扩展与 MCP。Antigravity 只能从 cwd 加载角色定义，Adapter 因此不写调用方目录：受限模式要求 cwd 已含一致的定义，由调用方（如工作室的隔离席位）事先写入。受限配置不等于操作系统沙箱。
+显式 restricted_tools=true 是受限配置，普通调用不启用；它保持原生工具限制并允许传入该席位自己的 session_id，只接受 model、effort（Pi 另可选模型后端 provider）。Claude 使用 safe-mode、空 tools、strict MCP 与禁用 skills；Grok 使用空 tools、deny-all、禁用子 Agent 和网页工具，不承诺移除工具定义或阻止 MCP 连接；CodeBuddy 复用 Claude 协议但覆盖自身限制参数；Codex 限制本地读取工具并忽略用户配置；Pi 禁用工具、扩展与 MCP。Antigravity 只能从 cwd 加载角色定义，Adapter 因此不写调用方目录：受限模式要求 cwd 已含一致的定义，由调用方（如隔离席位）事先写入。受限配置不等于操作系统沙箱。
 
-## 工作室
+## 会话历史与审核
 
-工作室（模块 `agentnave_studio`，入口 `agentnave-studio-mcp`）与核心同在发行包 `agentnave` 中，宿主二选一注册入口；它包含全部核心工具，另加保存历史、可选审核、主持人发言与本机只读看板，供人观看多 CLI 节目。取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md) 与 [ADR-0009](../adr/0009-single-package-two-entry-points.md)，用法见 [工作室节目说明](../studio.md)。
+`Conversations` 在统一核心中管理任务与协作历史；`Groups` 是轮次执行的内部组件，不是另一个 MCP 服务。`_on_change` 在席位启动前、终态后、提交与轮次结束时原子落盘；`_approve` 是提交前审核屏障；`_ready` 使待审时返回 `review_needed`。取消与退出唤醒屏障并丢弃未决回答。用法见[会话、审核与看板](../studio.md)。
 
-工作室通过核心 `Groups` 的三个内部覆盖点接入，不改变核心行为：`_on_change` 在席位启动前、终态后、每次提交与轮次结束时原子落盘；`_approve` 是提交前的审核屏障；`_ready` 让等待在有待审回答时提前返回 `review_needed`。取消与退出在第一次等待前置位并唤醒屏障，未决回答丢弃。
-
-数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖），工作室首次保存会话时才创建；托盘首次保存组员配置也可创建数据根。每个会话一个目录、一个原子替换的 `state.json` 与 `.lock` 文件锁：每次写入前取锁并在锁内重读、校验磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且会话空闲后释放，同时清除组、轮次与审核的写入缓存。已完成轮次的进程内回复仅供重读，不再参与写入。其他服务在持锁期间只读并以 writable=false 列出，空闲后可取得同一把锁继续写入，不另建会话拆散历史；若锁内发现 state.json 已删除，则遗忘该会话并拒绝写入，不从缓存重建。写盘失败时内存回滚到上次保存的状态；轮次中写盘失败则不再启动席位并在轮次上报告 `state_write_failed`。
+数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖），首次保存会话时才创建；托盘首次保存组员配置也可创建数据根。每个会话一个目录、一个原子替换的 `state.json` 与 `.lock` 文件锁：每次写入前取锁并在锁内重读、校验磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且会话空闲后释放，同时清除组、轮次与审核的写入缓存。已完成轮次的进程内回复仅供重读，不再参与写入。其他服务在持锁期间只读并以 writable=false 列出，空闲后可取得同一把锁继续写入，不另建会话拆散历史；若锁内发现 state.json 已删除，则遗忘该会话并拒绝写入，不从缓存重建。写盘失败时内存回滚到上次保存的状态；轮次中写盘失败则不再启动席位并在轮次上报告 `state_write_failed`。
 
 节目即保存的 Group，会话 ID 就是 `group_id`；重启后首次写入时按保存的条目、席位会话与游标恢复。保存席位、条目（含时间）、各席会话与游标、每轮名单／顺序／私密指令／各席状态与最终输出、审核状态；不保存工具事件或推理；运行尾部只在运行期间写入数据根的运行文件（见下文“托盘数据”），结束即删除。重启时运行中的席位标为 interrupted 并清空其会话与游标，轮次标为 interrupted，未启动的串联席位标为 not_started，不续跑；待审回答保留，此后 `decide_answers` 直接写入条目，未决期间拒绝新轮次。
 
@@ -114,7 +112,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 隔离节目在会话目录下为每席创建独立目录，为 Antigravity 写入受限角色定义，给每席加 `restricted_tools`，忽略调用方 cwd。节目（隔离与否）都可包含 `AGENTNAVE_EXCLUDED_PROVIDERS` 中的 Provider；`describe_provider.show_permitted` 现读 `members.json`，按 discussion 是否允许该 Provider 计算；文件缺失或 discussion 未受限时为 true，损坏时返回 App 修复错误。隔离节目只套用 model／effort 默认值（Pi 另可套用 provider），不套用其他默认 options，也不在回执列出被跳过的键；调用方显式非法选项仍拒绝。
 
-新任务与节目会话记录创建者的 `host`、`host_source` 与进程启动时生成的 UUID hex `manager_session`；旧记录缺失时分别按 null、unknown、null 读取，后续接手不改写创建归属。`views.json` 摘要与 live 快照保留这些归属；live 顶层另带当前服务的身份、主控会话标识与开始时间，方便区分创建者与当前运行者。核心不持久化这些数据。
+新任务与节目会话记录创建者的 `host`、`host_source` 与进程启动时生成的 UUID hex `manager_session`；旧记录缺失时分别按 null、unknown、null 读取，后续接手不改写创建归属。`views.json` 摘要与 live 快照保留这些归属；live 顶层另带当前服务的身份、主控会话标识与开始时间，方便区分创建者与当前运行者。
 
 任务会话保存普通 `start_agent` 的 Provider、cwd、套用默认值后的模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一原生会话并入其任务会话；旧版存在多个相同 Provider／原生 session 的任务会话时，未显式指定会话的续接选择最近一次绑定该 session 的记录，保留其创建者归属。并发续接同一会话被拒。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait_agent` 仍能读取结果。会话没有结束状态，MCP 不提供删除；删除只在托盘 App 中进行。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
 
@@ -126,7 +124,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 托盘会话管理（[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）使用独立的 `/manage/` 页面，在主窗口打开，不加入浏览器看板共享前端。列表复用 Reader 的摘要与运行快照，并读取 `state.json` 的必要字段；没有快照时仍列出可读状态，无法识别的状态只提示、不删除，快照版本不变。页面提供空闲、失败及活动时间筛选，单选／多选删除和按天数清理，均须先在页面内确认。
 
-删除由 Rust 原生完成，不依赖 Python 安装：对 `conversations/<id>/.lock` 使用 `File::try_lock`，与工作室共用同一把 OS 锁；POSIX 对应 `flock`，Windows 对应 `LockFileEx`，预期与 Python 的 `msvcrt.locking` 第 0 字节区间互斥，仍需 Windows 实机验证。取锁失败时最多重试约 1 秒以避开扫描探针，然后逐项返回 `in_use`。取得锁后重读 `state.json`：任一轮席位 `review=pending` 拒绝为 `pending_review`；空闲记录可直接删除，磁盘仍标 running 的记录视为崩溃残留允许删除。只删除 `views.json` 与 `state.json`，保留目录、`.lock` 的 inode、全部席位文件及其他文件，不修改 live 文件或进程内调用句柄；其他宿主后续写入按缺失状态拒绝，不重建历史。
+删除由 Rust 原生完成，不依赖 Python 安装：对 `conversations/<id>/.lock` 使用 `File::try_lock`，与服务共用同一把 OS 锁；POSIX 对应 `flock`，Windows 对应 `LockFileEx`，预期与 Python 的 `msvcrt.locking` 第 0 字节区间互斥，仍需 Windows 实机验证。取锁失败时最多重试约 1 秒以避开扫描探针，然后逐项返回 `in_use`。取得锁后重读 `state.json`：任一轮席位 `review=pending` 拒绝为 `pending_review`；空闲记录可直接删除，磁盘仍标 running 的记录视为崩溃残留允许删除。只删除 `views.json` 与 `state.json`，保留目录、`.lock` 的 inode、全部席位文件及其他文件，不修改 live 文件或进程内调用句柄；其他宿主后续写入按缺失状态拒绝，不重建历史。
 
 托盘会话清理路由为自定义协议的 `POST /app/conversations/delete`，要求 `X-AgentNave-Action: 1` 与 JSON `{"ids": [...]}`，对整批先校验 ID，返回逐项 `deleted / in_use / pending_review / missing / error`。GET 导航不能触发删除；其余数据路由只接受 GET。不开放 Tauri IPC 命令、不放宽 CSP、不新增 HTTP 服务。删除两个文件并非原子事务：先删除派生视图，出错则保留权威状态供重试；缺失视图也允许清理。
 
@@ -140,14 +138,14 @@ App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 
 根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 只保存宿主根目录覆盖和 first_seen。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。
 
-启动和 POST /app/hosts/refresh 接管已有条目：只补宿主标识，确知命令缺失且 uv 工具环境中存在同类入口时修复路径，保留原 core/studio 选择、参数、环境、启停与工具过滤。失败抑制签名仅包含宿主、有效配置路径、目标条目规范化内容和操作类型，无关字段变化不触发重试；last_action 保留至下一次真实操作，attention 给出结构化原因。项目级只提示，检查范围为 App 启动目录及其祖先。
+启动、POST /app/hosts/refresh 和服务安装成功后接管已有用户级条目。先解析全部用户层，复用备份、并发重读、原子替换及写后校验；确认安装元数据只声明 `agentnave-mcp = agentnave.relay:main` 且 launcher 可执行后，才将已识别的旧 `agentnave-studio-mcp`（含 `.exe`）迁到统一命令，并修复已缺失的 `agentnave-mcp` 路径。服务尚未就绪时不改命令，自定义命令不自动替换；保留参数、环境、启停、工具过滤、未知字段与注释，补齐宿主标识。失败抑制签名包含宿主、各用户层路径及目标条目；无关字段变化不重试。项目层只提示、不改写。旧连接须重连，旧工作室中继仍指向已移除模块，旧核心的内存组不能迁移。
 
 十个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，全局保留最近 30 份。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回各用户、覆盖与项目层；移除遍历全部用户层并逐个备份，项目层不写，多层独立替换不构成原子整体。
 
 构建时嵌入完整同版本 agentnave-manager。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
-GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|entry|root 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
+GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
 
 ### 主控模型与头像
 
-工作室 `start_agent`、`run_round`、`post_host_message` 的可选 `manager_model` 是调用方声明的本次主控模型，仅用于记录与展示，不控制组员或 Provider 参数，也不证明后端实际模型。每次任务 prompt 与节目主控消息独立持久化该值；省略或 null 表示本条未知，不继承上一条，不从 CLI、组员默认配置或模型列表推断。旧消息缺字段仍为未知，中途换模型不回填历史。主控和组员消息均按各自模型显示头像；宿主 CLI 的列表、标题与接入页只展示文字身份及状态，不使用头像。
+`start_agent`、`run_round`、`post_host_message` 的可选 `manager_model` 是调用方声明的本次主控模型，仅用于记录与展示，不控制组员或 Provider 参数，也不证明后端实际模型。每次任务 prompt 与节目主控消息独立持久化该值；省略或 null 表示本条未知，不继承上一条，不从 CLI、组员默认配置或模型列表推断。旧消息缺字段仍为未知，中途换模型不回填历史。主控和组员消息均按各自模型显示头像；宿主 CLI 的列表、标题与接入页只展示文字身份及状态，不使用头像。公开看板只按当前 snapshot 返回实际使用的本地头像覆盖，完整配置仅限 director/home 等私有 capability。

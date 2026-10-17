@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 
-from agentnave_studio.store import Conversation, RoundRecord, Unavailable
+from agentnave.store import Conversation, RoundRecord, Unavailable
 
 _ABSENT = {
     "failed": "失败",

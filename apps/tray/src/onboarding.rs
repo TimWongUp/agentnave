@@ -25,7 +25,7 @@ pub fn state(hosts: &Hosts, root: &Path) -> Value {
                 .is_some_and(|v| v["manager_session"].as_str().is_some_and(|s| !s.is_empty()))
         });
     json!({"steps":[
-        {"id":"service","done":service,"detail":if service{"工作室与核心入口均已安装"}else{"宿主要通过本机服务才能启动 AgentNave"}},
+        {"id":"service","done":service,"detail":if service{"AgentNave 本机服务已安装"}else{"请安装或更新 AgentNave 本机服务"}},
         {"id":"host","done":connected>0,"detail":if connected>0{format!("已接入 {connected} 个宿主")}else{"在设置中接入一个宿主".into()}},
         {"id":"members","done":members,"detail":if members{"已保存或迁移组员设置"}else{"选择可以作为组员的 CLI 与模型"}},
         {"id":"try","done":tried,"detail":if tried{"已有主控会话记录"}else{"在宿主里让 AgentNave 派一次任务"}}

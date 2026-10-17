@@ -376,8 +376,7 @@ pub(crate) fn rfc3339(at: SystemTime) -> String {
     )
 }
 
-/// Install this release's service with uv, replacing the legacy studio tool if present. Hosts
-/// switch on their own: since v0.18.0 each launcher relays to a server it restarts when idle.
+/// Install this release's service with uv, replacing the legacy studio tool if present.
 pub fn upgrade_service(app: &AppHandle) {
     if app.state::<Updates>().claim_upgrade() {
         finish_upgrade(app);
@@ -388,7 +387,9 @@ fn finish_upgrade(app: &AppHandle) {
     let outcome = (|| {
         let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
         let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
-        install_service(&uv, &dirs)
+        install_service(&uv, &dirs)?;
+        app.state::<crate::Tray>().reader.refresh_hosts();
+        Ok(())
     })();
     app.state::<Updates>().lock().upgrade = match outcome {
         Ok(()) => Upgrade::Done(Instant::now()),
@@ -520,6 +521,28 @@ pub(crate) fn service(tools: &Option<PathBuf>) -> Value {
 
 /// The version in `agentnave-<version>.dist-info` inside a uv tool environment.
 fn installed_version(env: &Path) -> Option<String> {
+    installed_metadata(env)?
+        .file_name()?
+        .to_str()?
+        .strip_prefix("agentnave-")?
+        .strip_suffix(".dist-info")
+        .map(str::to_owned)
+}
+
+/// Recognize the unified runtime by its installed console-script contract, not an old core binary.
+pub(crate) fn unified_service(tools: &Path) -> bool {
+    installed_metadata(&tools.join("agentnave"))
+        .and_then(|path| std::fs::read_to_string(path.join("entry_points.txt")).ok())
+        .is_some_and(|text| {
+            text.lines()
+                .any(|line| line.trim() == "agentnave-mcp = agentnave.relay:main")
+                && !text
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("agentnave-studio-mcp"))
+        })
+}
+
+fn installed_metadata(env: &Path) -> Option<PathBuf> {
     let mut queue = vec![(env.to_path_buf(), 0)];
     while let Some((dir, depth)) = queue.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -527,11 +550,8 @@ fn installed_version(env: &Path) -> Option<String> {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(version) = name
-                .strip_prefix("agentnave-")
-                .and_then(|rest| rest.strip_suffix(".dist-info"))
-            {
-                return Some(version.to_owned());
+            if name.starts_with("agentnave-") && name.ends_with(".dist-info") {
+                return Some(entry.path());
             }
             // lib/python3.x/site-packages on POSIX, Lib/site-packages on Windows.
             if depth < 3 && entry.path().is_dir() && !name.starts_with('.') && name != "bin" {

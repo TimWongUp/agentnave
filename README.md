@@ -24,7 +24,7 @@ model icon. Overrides can target a model family or a specific CLI/model pair.
 They stay in `avatars.json` in the local data directory and are shared by chat, tray, and browser views.
 Uploads are limited to 5 MiB and 16 megapixels, then decoded at a bounded size and cropped locally.
 Manager and member message avatars both follow their model; CLI headings have no avatar.
-When known from trusted host context, pass your current model as `manager_model` to Studio
+When known from trusted host context, pass your current model as `manager_model` to
 `start_agent`, `run_round`, and `post_host_message`. Each message records its own declaration;
 omit it when unknown. The server does not infer the manager model from the CLI.
 
@@ -36,7 +36,7 @@ omit it when unknown. The server does not infer the manager model from the CLI.
 | In-memory invocation lifecycle | Provider and model selection |
 | POSIX process groups / Windows Job Objects | Parallelism, review, and synthesis |
 | Normalized terminal results | Retries, permissions, and worktrees |
-| In-memory parallel and serial group rounds | Who answers, in what order, and acceptance |
+| Saved parallel and serial group rounds | Who answers, in what order, and acceptance |
 
 ## Requirements
 
@@ -75,18 +75,19 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.22.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.23.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
 
-The `agentnave` package saves nothing: it creates no data directory, listens on no port and writes
-nothing to the caller's working directory. Provider authentication, configuration and native
-sessions remain owned by their respective CLIs.
+AgentNave uses one package and one MCP launcher, `agentnave-mcp`. Tasks and groups save history
+under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`). Provider authentication, configuration and native
+sessions remain provider-owned. A local read-only dashboard starts only after a saved operation
+or history listing. There is no separate core/studio mode.
 
 ## Group rounds
 
-`open_group` registers 2–6 seats in memory. A seat is an ordinary subagent: native tools and
+`open_group(title, seats, cwd)` registers 2–6 seats and saves a conversation. A seat is an ordinary subagent: native tools and
 permissions, the group or its own `cwd`, and explicit provider options. `run_round` asks an ordered
 list of seats to answer one shared task once:
 
@@ -99,7 +100,7 @@ its own native session, and an optional private instruction goes to one seat onl
 answers, several independent rounds, turn-taking discussion or "answer first, then discuss" are
 combinations of lists and orders, not modes. `wait_round` and `cancel_round` mirror `wait_agent`
 and `cancel_agent`; `cancel_agent` on one seat records it absent and lets a serial round continue.
-Groups last only for the server process. Seats sharing one repository can interfere; give writing
+Saved groups can continue after restart; running processes and invocation handles cannot. Seats sharing one repository can interfere; give writing
 seats their own worktree through the seat `cwd`.
 
 Later rounds receive earlier committed answers, even when every round is parallel. Switching
@@ -109,29 +110,26 @@ more information; a final parallel round lets everyone respond to all earlier ob
 
 `wait_round(include_output=false)` omits answer bodies and running reply tails while keeping
 statuses, activity, errors and session IDs. The default remains `true`; answers can be read again
-with `true`, including Studio answers awaiting review. Finished round elapsed time is fixed.
+with `true`, including answers awaiting review. Finished round elapsed time is fixed.
 Round `finished` means orchestration ended, not that every seat succeeded. Unexpected driver or
 state-write failures return round status `failed` and an error; active seats are settled before
 another round starts.
 
-## AgentNave Studio
+## History, review and viewing
 
-For multi-CLI shows that a person watches, register the `agentnave-studio-mcp` launcher instead;
-the same `agentnave` package installs it. It includes every core tool and adds saved history
-under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`), optional review of answers before other seats see
-them, host messages, isolated seats with restricted tools, and a local read-only dashboard that
-starts automatically after a saved task or show is created or continued. See the [studio guide](docs/studio.md).
+The same service saves tasks and groups, supports optional answer review, host messages and
+explicitly isolated seats, and supplies the App and a local read-only dashboard. See the
+[conversation guide](docs/studio.md). The old `agentnave-studio-mcp` command is retired; existing
+hosts must update their command and reconnect. Former core users now also save task prompts,
+final replies and session bindings. Existing saved history stays in place.
 
 ## The MCP surface
 
-This section describes `v0.15.0`, which retains native Windows process-tree supervision and
-the fixed five-minute wait contract introduced in `v0.9.0`.
-Start, wait and cancel use flat lifecycle responses; callers upgrading from v0.6.0 must also
-update their response handling and paired Skill.
-Restart the MCP connection after updating the runtime to refresh its schemas.
-
-AgentNave exposes eleven tools: six for single tasks, four for group rounds and one for configured members. The initial tool metadata contains a compact provider directory;
-provider-specific options are returned only when requested. App member defaults are applied by mode; CLI references provide supplementary guidance.
+AgentNave exposes sixteen tools: task lifecycle and discovery, saved group rounds, history,
+answer review and host messages. Provider-specific options are returned only when requested.
+App member defaults are applied by mode; CLI references provide supplementary guidance.
+After updating from the split runtime, reconnect MCP to refresh schemas. `open_group` requires
+a title and saves its state; the old no-history contract no longer applies.
 
 ### `describe_provider`
 
@@ -152,7 +150,8 @@ For example: `describe_provider({"provider": "grok"})` → `start_agent(...)` �
 
 Starts one provider invocation and immediately returns an in-memory `invocation_id`. It requires
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
-`provider_options` are optional.
+`provider_options` are optional. `title` names a new task conversation; `conversation_id` adds
+to an existing one. Tasks and final replies are saved automatically.
 
 启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。`open_group` 每席使用 discussion 配置，并返回 model、effort（未配置时为 null）与 `defaults_applied`。
 
@@ -263,7 +262,7 @@ restart cannot recover old handles, but a retained provider `session_id` can be 
 Finished invocation records are automatically removed from memory seven days after completion,
 including unread results. Reads do not extend retention, and active invocations are never expired.
 Keep the final answer and native `session_id` before expiry; waiting or cancelling an expired handle
-returns a Tool error. Cleanup does not delete provider-native sessions, group answers, or Studio's
+returns a Tool error. Cleanup does not delete provider-native sessions, group answers, or AgentNave's
 saved history.
 
 Running responses help inspect health and direction using a bounded public reply and native
