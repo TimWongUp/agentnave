@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.20.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.21.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The current published paired release is `v0.20.0`, which supports
+value for the Skill in step 4. The current published paired release is `v0.21.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -576,6 +576,19 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.20.0 to v0.21.0
+
+No history migration and no tool changes (core 11 tools, studio 17). Update the menu bar app
+in the app, then let "全部更新" upgrade the runtime, or reinstall the runtime and Skill from the
+tag. The app's settings page gains "宿主接入": ticking a detected host writes its `agentnave` MCP
+entry (with `AGENTNAVE_HOST`) and installs the Skill. Existing hand-written entries are taken over
+automatically when the app starts or refreshes detection: only `AGENTNAVE_HOST` is added (and a
+missing command is repointed to the uv tool entry); everything else, including text formatting,
+is kept, and each write is backed up first (latest 30 kept). Skill copies managed elsewhere, such
+as symlinks, are shown but never changed. The chat page and panel show a "开始使用" card driven
+by real state. When an invocation exceeds the output limit, the error now names the stream and
+includes a redacted tail.
 
 ### Upgrading from v0.19.0 to v0.20.0
 
