@@ -110,7 +110,6 @@ fn main() {
             let handle = app.handle();
             reader.configure_hosts(hosts::Context::live(handle.path().app_data_dir()?));
             let takeover = reader.clone();
-            thread::spawn(move || takeover.refresh_hosts());
             build_panel(handle)?;
             let overview = reader.overview();
             // Left click opens the panel; right click shows this short menu.
@@ -158,7 +157,10 @@ fn main() {
             let handle = handle.clone();
             let checker = handle.clone();
             let resumer = handle.clone();
-            thread::spawn(move || update::resume(&resumer));
+            thread::spawn(move || {
+                takeover.refresh_hosts();
+                update::resume(&resumer);
+            });
             thread::spawn(move || poll(handle, reader, overview));
             thread::spawn(move || {
                 loop {
@@ -263,7 +265,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
             // The panel stays open: its notice shows the progress or "已复制".
             "/app/update" => update::act(&app),
             "/app/upgrade-service" => update::upgrade_service(&app),
-            "/app/copy-service-command" => update::copy_service_command(),
+            "/app/copy-service-command" => update::copy_service_command(&app),
             _ => {
                 if let Some(panel) = app.get_webview_window(PANEL) {
                     let _ = panel.hide();

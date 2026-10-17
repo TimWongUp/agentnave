@@ -22,6 +22,8 @@ pub(super) const VARIABLES: &[&str] = &[
     "OPENCODE_CONFIG_DIR",
     "OPENCODE_CONFIG",
     "UV_TOOL_DIR",
+    "UV_TOOL_BIN_DIR",
+    "XDG_BIN_HOME",
     "XDG_DATA_HOME",
 ];
 pub(super) type Shell = Result<BTreeMap<String, String>, String>;

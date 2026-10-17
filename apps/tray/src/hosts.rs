@@ -16,6 +16,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) use transaction::safe_path as check_path;
+pub(crate) struct ToolDirs {
+    pub home: PathBuf,
+    pub tools: PathBuf,
+    pub bin: PathBuf,
+}
 pub struct Context {
     pub home: PathBuf,
     pub app: PathBuf,
@@ -200,6 +205,17 @@ impl Hosts {
         } else {
             "agentnave-studio-mcp"
         };
+        let tools = self.tool_dirs()?.tools;
+        #[cfg(windows)]
+        let candidate = tools.join("agentnave/Scripts").join(format!("{name}.exe"));
+        #[cfg(not(windows))]
+        let candidate = tools.join("agentnave/bin").join(name);
+        executable(&candidate).then_some(candidate)
+    }
+    /// Reuse the last probe, including a failed probe's explicit/default fallback. Before the
+    /// first probe there is no confirmed snapshot: installation must not guess another root.
+    pub(crate) fn tool_dirs(&self) -> Option<ToolDirs> {
+        self.shell.as_ref()?;
         let tools = self
             .env_value("UV_TOOL_DIR")
             .map(|(p, _)| PathBuf::from(p))
@@ -208,11 +224,22 @@ impl Hosts {
                     .map(|(p, _)| PathBuf::from(p).join("uv/tools"))
             })
             .unwrap_or_else(|| self.context.home.join(".local/share/uv/tools"));
-        #[cfg(windows)]
-        let candidate = tools.join("agentnave/Scripts").join(format!("{name}.exe"));
-        #[cfg(not(windows))]
-        let candidate = tools.join("agentnave/bin").join(name);
-        executable(&candidate).then_some(candidate)
+        let bin = self
+            .env_value("UV_TOOL_BIN_DIR")
+            .or_else(|| self.env_value("XDG_BIN_HOME"))
+            .map(|(p, _)| PathBuf::from(p))
+            .or_else(|| {
+                self.env_value("XDG_DATA_HOME").map(|(p, _)| {
+                    let data = Path::new(p);
+                    data.parent().unwrap_or(data).join("bin")
+                })
+            })
+            .unwrap_or_else(|| self.context.home.join(".local/bin"));
+        Some(ToolDirs {
+            home: self.context.home.clone(),
+            tools,
+            bin,
+        })
     }
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;

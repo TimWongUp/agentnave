@@ -273,6 +273,67 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
 
 #[test]
 #[cfg(unix)]
+fn service_installer_passes_cached_shell_directories_to_uv_and_version_checks() {
+    let (_temp, mut hosts) = fixture();
+    hosts.shell = None;
+    assert!(hosts.tool_dirs().is_none());
+    let tools = hosts.context.home.join("shell-tools");
+    let bin = hosts.context.home.join("shell-bin");
+    hosts.shell = Some(Ok(BTreeMap::from([
+        ("UV_TOOL_DIR".into(), tools.display().to_string()),
+        ("UV_TOOL_BIN_DIR".into(), bin.display().to_string()),
+    ])));
+    let dirs = hosts.tool_dirs().unwrap();
+    let site = tools.join("agentnave/lib/python3.12/site-packages");
+    fs::create_dir_all(site.join("agentnave-0.1.0.dist-info")).unwrap();
+    fs::create_dir_all(tools.join("agentnave-studio")).unwrap();
+    assert_eq!(
+        crate::update::service(&Some(dirs.tools.clone()))["version"],
+        "0.1.0"
+    );
+    let uv = hosts.context.home.join("fake-uv");
+    save(&uv.with_extension("tools"), tools.to_str().unwrap());
+    save(&uv.with_extension("bin"), bin.to_str().unwrap());
+    executable_file(
+        &uv,
+        &r#"#!/bin/sh
+tools=$(cat "$0.tools")
+bin=$(cat "$0.bin")
+[ "$UV_TOOL_DIR" = "$tools" ] && [ "$UV_TOOL_BIN_DIR" = "$bin" ] || exit 7
+printf '%s\n' "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" "$HOME" "$1 $2" >> "$0.calls"
+if [ "$2" = install ]; then
+  site="$tools/agentnave/lib/python3.12/site-packages"
+  rmdir "$site/agentnave-0.1.0.dist-info" || exit 8
+  mkdir -p "$site/agentnave-@VERSION@.dist-info" "$tools/agentnave/bin" "$bin" || exit 9
+  for entry in agentnave-mcp agentnave-studio-mcp; do
+    printf '#!/bin/sh\nexit 99\n' > "$tools/agentnave/bin/$entry"
+    chmod 700 "$tools/agentnave/bin/$entry" || exit 10
+  done
+fi
+"#
+        .replace("@VERSION@", VERSION),
+    );
+    crate::update::install_service(&uv, &dirs).unwrap();
+    let expected = ["tool uninstall", "tool install"]
+        .map(|operation| {
+            format!(
+                "{}\n{}\n{}\n{operation}\n",
+                tools.display(),
+                bin.display(),
+                hosts.context.home.display()
+            )
+        })
+        .concat();
+    assert_eq!(
+        fs::read_to_string(uv.with_extension("calls")).unwrap(),
+        expected
+    );
+    assert_eq!(hosts.service()["installed"], true);
+    assert!(crate::update::service(&Some(hosts.tool_dirs().unwrap().tools)).is_null());
+}
+
+#[test]
+#[cfg(unix)]
 fn settings_path_errors_preserve_code_without_prefixing_the_message() {
     let (_temp, hosts) = fixture();
     executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");

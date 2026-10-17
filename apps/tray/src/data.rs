@@ -225,6 +225,14 @@ impl Reader {
         }
     }
 
+    pub(crate) fn tool_dirs(&self) -> Option<crate::hosts::ToolDirs> {
+        self.hosts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .and_then(crate::hosts::Hosts::tool_dirs)
+    }
+
     fn host_request(
         &self,
         method: &str,
