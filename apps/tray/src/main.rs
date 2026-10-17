@@ -69,6 +69,15 @@ fn main() {
                 let reply = match (method, path.as_str()) {
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
                     ("GET", "/settings/members") => reader.members(refresh),
+                    (_, "/app/service/install") if method != "POST" => {
+                        data::Response::error(405, "此操作只接受 POST")
+                    }
+                    (_, "/app/service/install") if action != Some("1") => {
+                        data::Response::error(403, "缺少操作请求头")
+                    }
+                    (_, "/app/service/install") => {
+                        data::Response::json(&update::install_service_now(&app))
+                    }
                     (_, "/app/update/check" | "/app/update/apply") if method != "POST" => {
                         data::Response::error(405, "此操作只接受 POST")
                     }

@@ -43,6 +43,7 @@ enum Upgrade {
     #[default]
     Idle,
     Running,
+    Installing,
     Done(Instant),
     Failed(String),
 }
@@ -65,7 +66,7 @@ impl State {
 
     fn busy(&self) -> bool {
         matches!(self.phase, Phase::Checking | Phase::Installing(_))
-            || matches!(self.upgrade, Upgrade::Running)
+            || matches!(self.upgrade, Upgrade::Running | Upgrade::Installing)
     }
 }
 
@@ -157,7 +158,7 @@ impl Updates {
     /// Mark the service upgrade as running, unless it already is or the app is installing.
     fn claim_upgrade(&self) -> bool {
         let mut state = self.lock();
-        if state.installing() || matches!(state.upgrade, Upgrade::Running) {
+        if state.installing() || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing) {
             return false;
         }
         state.upgrade = Upgrade::Running;
@@ -336,14 +337,12 @@ pub fn status(app: &AppHandle) -> Value {
 /// The outdated note combined with what a one-click upgrade is doing or did.
 fn service_state(mut service: Value, upgrade: Upgrade) -> Value {
     match upgrade {
+        Upgrade::Installing => service = json!({"state": "installing", "error": null}),
         Upgrade::Running => {
             let version = service.get("version").cloned().unwrap_or(Value::Null);
             service = json!({"state": "upgrading", "version": version, "error": null});
         }
-        Upgrade::Failed(error) if service.is_object() => {
-            service["state"] = json!("failed");
-            service["error"] = json!(error);
-        }
+        Upgrade::Failed(error) => service = json!({"state": "failed", "error": error}),
         Upgrade::Done(at) if service.is_null() && at.elapsed() < UPGRADED_NOTE => {
             service = json!({"state": "done", "version": VERSION, "error": null});
         }
@@ -402,6 +401,25 @@ fn install_service() -> Result<(), String> {
         &uv,
         &["tool", "install", "--force", "--python", "3.12", &source],
     )
+}
+
+pub fn service_command() -> String {
+    format!("uv tool install --force --python 3.12 \"git+{REPOSITORY}@v{VERSION}\"")
+}
+
+/// Claim before spawning, so POST returns immediately and progress is visible on the next GET.
+pub fn install_service_now(app: &AppHandle) -> Value {
+    let updates = app.state::<Updates>();
+    {
+        let mut state = updates.lock();
+        if state.busy() {
+            return json!({"ok": false, "message": "已有更新或安装正在进行"});
+        }
+        state.upgrade = Upgrade::Installing;
+    }
+    let app = app.clone();
+    thread::spawn(move || finish_upgrade(&app));
+    json!({"ok": true, "message": "正在安装本机服务"})
 }
 
 fn run(uv: &Path, args: &[&str]) -> Result<(), String> {
@@ -597,7 +615,14 @@ mod tests {
             service_state(Value::Null, Upgrade::Done(Instant::now()))["state"],
             "done"
         );
-        assert!(service_state(Value::Null, Upgrade::Failed("x".into())).is_null());
+        assert_eq!(
+            service_state(Value::Null, Upgrade::Failed("x".into())),
+            json!({"state":"failed", "error":"x"})
+        );
+        assert_eq!(
+            service_state(Value::Null, Upgrade::Installing)["state"],
+            "installing"
+        );
     }
 
     #[test]

@@ -15,6 +15,15 @@ const SVG = "http://www.w3.org/2000/svg";
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 
+const ob = AN.onboarding({ variant: "full", onChange: () => syncOb() });
+function syncOb() {
+  const slot = $("ob-slot");
+  const on = ob.visible && stage.hidden && state.calm === "no_data";
+  slot.hidden = !on;
+  $("calm").hidden = stage.hidden ? on : true; // the card replaces the ghost + generic hint
+  if (on && ob.el.parentNode !== slot) slot.prepend(ob.el);
+}
+
 const stage = $("stage");
 const groupsEl = $("groups");
 const state = {
@@ -169,7 +178,7 @@ function showBody(kind, retry) {
   stage.hidden = !showStage;
   const calm = $("calm");
   calm.hidden = showStage;
-  if (showStage || state.calm === kind) return;
+  if (showStage || state.calm === kind) { syncOb(); return; }
   state.calm = kind;
   const ghost = h("div.ghost", { "aria-hidden": "true" }, h("span.ghost-node"), h("i.ghost-wire"), h("span.hub", {}, h("span.mark", {}, "N")), h("i.ghost-wire"), h("span.ghost-node"));
   const copy = {
@@ -182,6 +191,7 @@ function showBody(kind, retry) {
   const action = copy[3] && (copy[3][1] ? h("a.calm-link", { href: href(copy[3][1]) }, copy[3][0]) : h("button.calm-link", { type: "button" }, copy[3][0]));
   if (action && !copy[3][1]) action.addEventListener("click", retry);
   calm.replaceChildren(...[copy[0], h("strong", {}, copy[1]), copy[2] && h("p", {}, copy[2]), action].filter(Boolean));
+  syncOb();
 }
 
 // ---------------------------------------------------------------- update / service notices
@@ -348,3 +358,5 @@ async function refresh() {
 showBody("loading");
 const run = poll(refresh);
 for (const link of document.querySelectorAll("a[href]")) setAttr(link, "href", href(link.getAttribute("href")));
+
+ob.start();

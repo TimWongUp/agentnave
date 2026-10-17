@@ -36,6 +36,9 @@ const CHAT_HTML: &[u8] = include_bytes!("../ui/chat.html");
 const CHAT_JS: &[u8] = include_bytes!("../ui/chat.js");
 const CHAT_CSS: &[u8] = include_bytes!("../ui/chat.css");
 const COMMON_JS: &[u8] = include_bytes!("../ui/common.js");
+const HOSTS_JS: &[u8] = include_bytes!("../ui/hosts.js");
+const HOSTS_CSS: &[u8] = include_bytes!("../ui/hosts.css");
+const ONBOARDING_CSS: &[u8] = include_bytes!("../ui/onboarding.css");
 const MOCK_JS: &[u8] = include_bytes!("../ui/mock.js");
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'";
@@ -157,6 +160,7 @@ impl Reader {
             || path.starts_with("/app/hosts/")
             || path == "/app/onboarding"
             || path == "/app/onboarding/dismiss"
+            || path == "/app/onboarding/reopen"
         {
             return self.host_request(method, path, action, body);
         }
@@ -235,7 +239,10 @@ impl Reader {
                 | "/app/hosts/connect"
                 | "/app/hosts/remove"
                 | "/app/hosts/entry"
+                | "/app/hosts/root"
+                | "/app/hosts/reveal-backups"
                 | "/app/onboarding/dismiss"
+                | "/app/onboarding/reopen"
         );
         if !read && !write {
             return Response::error(404, "未知路由");
@@ -255,6 +262,14 @@ impl Reader {
             "/app/hosts/refresh" => Response::json(&hosts.refresh()),
             "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
             "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {
+                Ok(result) => Response::json(&result),
+                Err(error) => Response::error(500, &error),
+            },
+            "/app/onboarding/reopen" => match crate::onboarding::reopen(hosts) {
+                Ok(result) => Response::json(&result),
+                Err(error) => Response::error(500, &error),
+            },
+            "/app/hosts/reveal-backups" => match hosts.reveal_backups() {
                 Ok(result) => Response::json(&result),
                 Err(error) => Response::error(500, &error),
             },
@@ -370,6 +385,9 @@ impl Reader {
             return match *resource {
                 "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
                 "chat.css" => Response::ok("text/css; charset=utf-8", CHAT_CSS.to_vec()),
+                "onboarding.css" => {
+                    Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec())
+                }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
                 "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
                 "" => Response::ok("text/html; charset=utf-8", CHAT_HTML.to_vec()),
@@ -384,6 +402,8 @@ impl Reader {
                     Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec())
                 }
                 "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
+                "hosts.js" => Response::ok("text/javascript; charset=utf-8", HOSTS_JS.to_vec()),
+                "hosts.css" => Response::ok("text/css; charset=utf-8", HOSTS_CSS.to_vec()),
                 _ => Response::not_found(),
             };
         }
@@ -401,6 +421,9 @@ impl Reader {
                 "" => Response::ok("text/html; charset=utf-8", PANEL_HTML.to_vec()),
                 "panel.js" => Response::ok("text/javascript; charset=utf-8", PANEL_JS.to_vec()),
                 "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
+                "onboarding.css" => {
+                    Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec())
+                }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
                 "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
                 _ => Response::not_found(),

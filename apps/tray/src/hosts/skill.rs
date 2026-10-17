@@ -44,15 +44,15 @@ fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, String> {
     files(path, path, &mut found)?;
     Ok(found)
 }
-fn symlink_path(path: &Path) -> bool {
-    path.ancestors().any(Path::is_symlink)
-}
-
-pub(super) fn state(path: &Path) -> Value {
-    let version = fs::read_to_string(path.join(MARKER)).ok();
-    let state = if symlink_path(path) {
-        "external"
-    } else if !path.exists() {
+pub(super) fn state(path: &Path, home: &Path) -> Value {
+    if super::transaction::safe_path(path, home).is_err() {
+        return json!({"state":"external", "path":path, "version":null});
+    }
+    let marker = path.join(MARKER);
+    let version = super::transaction::safe_path(&marker, home)
+        .ok()
+        .and_then(|_| fs::read_to_string(marker).ok());
+    let state = if !path.exists() {
         "missing"
     } else if path.is_dir() && version.is_some() && owned(path, version.as_deref().unwrap()) {
         "app"
@@ -90,17 +90,19 @@ fn owned(path: &Path, version: &str) -> bool {
                 .map(|(name, bytes)| (name.to_string(), hash(bytes)))
                 .collect()
 }
-fn backup_tree(path: &Path, app: &Path, id: &str) -> Result<(), String> {
+fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
     for name in fingerprint(path)?
         .keys()
         .chain([MARKER.to_owned(), MANIFEST.to_owned()].iter())
     {
-        backup(app, id, &path.join(name))?;
+        backup(app, id, &path.join(name), home)?;
     }
     Ok(())
 }
-pub(super) fn install(path: &Path, app: &Path, id: &str) -> Result<(), String> {
-    let current = state(path);
+pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
+    super::transaction::safe_path(path, home)?;
+    super::transaction::safe_path(&app.join("backups"), home)?;
+    let current = state(path, home);
     if current["state"] == "external"
         || (current["state"] == "app" && current["version"] == VERSION)
     {
@@ -123,30 +125,42 @@ pub(super) fn install(path: &Path, app: &Path, id: &str) -> Result<(), String> {
         &next.join(MANIFEST),
         &serde_json::to_vec(&json!({"version": VERSION, "files": manifest})).unwrap(),
     )?;
-    if state(&next)["state"] != "app" {
+    if state(&next, home)["state"] != "app" {
         return Err("Skill 写后校验失败".into());
     }
     let previous = stage.path().join("previous");
     if path.exists() {
-        if state(path)["state"] != "app" {
+        if state(path, home)["state"] != "app" {
             return Err("Skill 已被外部修改".into());
         }
-        backup_tree(path, app, id)?;
+        super::transaction::safe_path(path, home)?;
+        backup_tree(path, app, id, home)?;
+        super::transaction::safe_path(path, home)?;
+        if state(path, home)["state"] != "app" {
+            return Err("conflict:Skill 在备份期间被其他方式修改，已保留".into());
+        }
         fs::rename(path, &previous).map_err(|_| "无法暂存旧 Skill")?;
     }
     if fs::rename(&next, path).is_err() {
-        if previous.exists() {
+        if previous.exists() && !path.exists() {
+            super::transaction::safe_path(path, home)?;
             fs::rename(&previous, path).map_err(|_| "Skill 更新失败且回滚失败")?;
         }
         return Err("Skill 更新失败，原目录已保留".into());
     }
     Ok(())
 }
-pub(super) fn remove(path: &Path, app: &Path, id: &str) -> Result<(), String> {
-    if state(path)["state"] != "app" {
+pub(super) fn remove(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
+    super::transaction::safe_path(path, home)?;
+    super::transaction::safe_path(&app.join("backups"), home)?;
+    if state(path, home)["state"] != "app" {
         return Ok(());
     }
-    backup_tree(path, app, id)?;
+    backup_tree(path, app, id, home)?;
+    super::transaction::safe_path(path, home)?;
+    if state(path, home)["state"] != "app" {
+        return Err("conflict:Skill 在备份期间被其他方式修改，未移除".into());
+    }
     // A rename makes the managed directory disappear as one operation.
     let stage = tempfile::tempdir_in(path.parent().unwrap()).map_err(|_| "无法暂存 Skill")?;
     let moved: PathBuf = stage.path().join("removed");

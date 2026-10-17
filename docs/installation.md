@@ -215,28 +215,32 @@ format; register it with the official CLI command below instead of copying this 
 
 ### 由 App 接入（保留下方手动方式）
 
-托盘 App 的宿主接入后端可检测本机宿主并注册用户级 `agentnave`，默认工作室入口，亦可切到核心。接入同时安装 App 内嵌的同版本 Skill；已有部署管理器的目录或符号链接一律保留。服务未安装时先使用 App 现有“安装/升级本机服务”动作，App 从 uv 工具环境的 `agentnave/bin`（Windows 为 `Scripts`）取真实 launcher，不依赖 shell 别名。
+托盘设置的“宿主接入”分区管理用户级 `agentnave`：默认工作室入口，高级中可切到核心，并可保存该宿主的绝对配置根目录。根目录依次取 App 用户覆盖（`user`）、GUI 环境变量（`env`）、登录 shell 探测（`shell`）、默认值（`default`）。覆盖和首次发现时间保存在 App 自有数据目录的 `hosts.json`；恢复自动仅移除覆盖，不删除宿主配置。
 
-启动及刷新只接管**已有**条目：补 `AGENTNAVE_HOST`，必要时修复失效的同类 launcher，保留所有原 env、参数、启停与工具选择。新增宿主需显式接入，孤留条目需显式移除，不自动增加组员。项目级同名配置只提示，不修改。每次配置写入前备份到 App 数据目录的 `backups/`，全局保留最近 30 份；写后校验失败回滚。App 管理本地配置，真正的 MCP/Skill 发现仍需按第 5 节验证。
+登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存或迁移的组员设置、带 manager_session 的记录计算。
 
-下表是后端的用户级路径（`~` 为有效 HOME）。CLI 更新不能表达的旧字段在同一备份事务中恢复；宿主已卸载、CLI 不存在时，显式移除孤留条目采用受校验的文件编辑。
+启动及刷新只接管已有条目：补宿主标识，命令确实缺失时修复同类 launcher；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。所有宿主在完成 App 真实接入验收前均为“未实测”。
 
-| 宿主 ID | 写入方式 | MCP 配置 | Skill 根目录 | tested |
+十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。JSON/JSONC 保留非目标区间，TOML 使用保留格式的编辑，Hermes 定点编辑 YAML 块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，全局保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
+
+配置和 Skill 的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。App 只更新版本标记与内容清单匹配的 Skill 副本；外部内容不覆盖，目录未知返回 manual。接入及刷新会更新 App 管理的旧版副本。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
+
+| 宿主 ID | App 写入格式 | 默认 MCP 配置 | Skill 根目录 | tested |
 | --- | --- | --- | --- | --- |
-| codex | `codex mcp add/remove` | `$CODEX_HOME/config.toml`，默认 `~/.codex/config.toml` | `$CODEX_HOME/skills` | true |
-| claude | `claude mcp add/remove --scope user` | `~/.claude.json`；设置 `CLAUDE_CONFIG_DIR` 时为该目录的 `.claude.json` | `${CLAUDE_CONFIG_DIR:-~/.claude}/skills` | true |
-| codebuddy | `codebuddy mcp add/remove --scope user` | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/.mcp.json` | 同配置目录的 `skills` | true |
-| workbuddy | JSON 编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.workbuddy}/mcp.json` | 同配置目录的 `skills` | true |
-| grok | `grok mcp add/remove --scope user` | `${GROK_HOME:-~/.grok}/config.toml` | 同配置目录的 `skills` | true |
-| antigravity | JSON 编辑 | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills` | true |
-| pi | `pi mcp add/remove`，不启动会话 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置目录的 `skills` | false |
-| gemini | `gemini mcp add/remove --scope user` | `~/.gemini/settings.json`，`mcpServers` | `~/.gemini/skills` | false |
-| opencode | JSON/JSONC 编辑 | `~/.config/opencode/opencode.json(c)`，`mcp`；支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG` | 有效 OpenCode 配置目录的 `skills` | false |
-| hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置目录的 `skills` | true（现状读取） |
+| codex | TOML 定点编辑 | `${CODEX_HOME:-~/.codex}/config.toml` | 同配置根目录的 `skills` | false |
+| claude | JSON 定点编辑 | `~/.claude.json`；设置 `CLAUDE_CONFIG_DIR` 时为该目录的 `.claude.json` | `${CLAUDE_CONFIG_DIR:-~/.claude}/skills` | false |
+| codebuddy | JSON 定点编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/.mcp.json` | 同配置根目录的 `skills` | false |
+| workbuddy | JSON 定点编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.workbuddy}/mcp.json` | 同配置根目录的 `skills` | false |
+| grok | TOML 定点编辑 | `${GROK_HOME:-~/.grok}/config.toml` | 同配置根目录的 `skills` | false |
+| antigravity | JSON 定点编辑 | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills` | false |
+| pi | JSON 定点编辑 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置根目录的 `skills` | false |
+| gemini | JSON 定点编辑 | `~/.gemini/settings.json`，`mcpServers` | `~/.gemini/skills` | false |
+| opencode | JSON/JSONC 定点编辑 | `~/.config/opencode/opencode.json(c)`；支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 App 覆盖 | 有效根目录的 `skills` | false |
+| hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置根目录的 `skills` | false |
 
-`tested` 沿用契约中的现状核实范围，不表示本轮执行过真实接入或模型调用。Pi 的 MCP 命令与 `agentDir/skills` 已从安装包帮助、`dist/config.js`、`dist/core/skills.js` 核实，仍标“未实测”。Hermes 新条目显式 `enabled: true`，省略 `tools.include/exclude` 表示启用全部工具；接管保留旧过滤，尤其 `include: []`（阻止全部工具），不调用会连接服务器并询问工具选择的 `hermes mcp add`。
+layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义（包括 OpenCode 的全局、环境覆盖、App 覆盖），逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
 
-Gemini 与 OpenCode 按 [Gemini MCP](https://geminicli.com/docs/tools/mcp-server/)、[Gemini Skill](https://geminicli.com/docs/cli/using-agent-skills/)、[OpenCode MCP](https://opencode.ai/docs/mcp-servers/) 和 [OpenCode Skill](https://opencode.ai/docs/skills/) 官方文档实现，本机未安装、未实测。OpenCode 本地条目使用 `type: local`、数组 `command`、`environment` 和 `enabled`。Hermes 的非普通 YAML MCP 映射、锚点/别名、文档指令等结构拒绝自动写入，保留文件并提示手动处理；无需联网安装 YAML 依赖。
+Pi 的 `agentDir/skills` 已从安装包代码核实；Hermes 新条目 `enabled: true` 且省略工具过滤表示启用全部工具，接管保留原 `include/exclude`，尤其 `include: []`。Gemini 与 OpenCode 按 [Gemini MCP](https://geminicli.com/docs/tools/mcp-server/)、[Gemini Skill](https://geminicli.com/docs/cli/using-agent-skills/)、[OpenCode MCP](https://opencode.ai/docs/mcp-servers/) 和 [OpenCode Skill](https://opencode.ai/docs/skills/) 官方文档实现，这些信息不是 App 接入实测证据。Hermes 流式 MCP 映射、锚点/别名、文档指令等结构仍拒绝自动写入并提示手动处理。真正的 MCP/Skill 发现须按第 5 节验证。
 
 ### Codex
 
@@ -704,3 +708,23 @@ or symlink, preserving user-authored additions. Uninstalling the runtime does no
 history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
 Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
 configuration, sessions, and user projects remain owned by the user and providers.
+
+### 静态 mock 自查（不启动托盘 App）
+
+从仓库根目录运行以下命令，在临时目录建立静态路由布局；不要直接以 apps/tray/ui 为 HTTP 根目录，否则 /chat/common.js 等绝对路径会 404。此服务只提供静态资源，mock 动作使用浏览器内存，不访问本机真实宿主配置；刷新页面会重置动作结果。
+
+```bash
+preview_root=$(mktemp -d)
+preview_home=$(mktemp -d)
+for section in settings chat panel manage; do
+  mkdir -p "$preview_root/$section"
+  for asset in "$PWD"/apps/tray/ui/*; do
+    ln -s "$asset" "$preview_root/$section/$(basename "$asset")"
+  done
+  ln -s "$PWD/apps/tray/ui/$section.html" "$preview_root/$section/index.html"
+done
+ln -s "$PWD/src/agentnave_studio/dashboard_assets/avatars.png" "$preview_root/avatars.png"
+HOME="$preview_home" python3 -m http.server 8765 --bind 127.0.0.1 --directory "$preview_root"
+```
+
+打开 `http://127.0.0.1:8765/settings/?mock#hosts` 查看宿主卡与根目录覆盖；`/chat/?mock&hosts=fresh`、`/panel/?mock&hosts=fresh` 查看空态引导。`hosts=typical|midway|done` 分别提供异常/孤留、设置中间态、全部完成的数据；`scene=empty|quiet|live` 可单独控制群聊与舞台数据。mock 群链接使用 `?group=...`，不要求静态服务器实现路由回退。只有真实 App 的验收可以改变 tested 标记。

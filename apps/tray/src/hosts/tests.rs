@@ -16,6 +16,7 @@ fn fixture() -> (TempDir, Hosts) {
         env: BTreeMap::from([
             ("HOME".into(), home.display().to_string()),
             ("PATH".into(), bin.display().to_string()),
+            ("SHELL".into(), "/bin/sh".into()),
         ]),
         search: vec![bin],
         applications: vec![base.join("Applications")],
@@ -26,7 +27,9 @@ fn fixture() -> (TempDir, Hosts) {
             "#!/bin/sh\nexit 99\n",
         );
     }
-    (temp, Hosts::new(context))
+    let mut hosts = Hosts::new(context);
+    hosts.shell = Some(Ok(BTreeMap::new()));
+    (temp, hosts)
 }
 fn executable_file(path: &Path, text: &str) {
     save(path, text);
@@ -37,12 +40,7 @@ fn executable_file(path: &Path, text: &str) {
     }
 }
 fn host(hosts: &Hosts, id: &str) -> Host {
-    hosts
-        .context
-        .registry()
-        .into_iter()
-        .find(|h| h.id == id)
-        .unwrap()
+    hosts.registry().into_iter().find(|h| h.id == id).unwrap()
 }
 fn save(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -55,298 +53,450 @@ fn seed(host: &Host) -> String {
         Format::Yaml => "# keep comment\nunknown:\n  - untouched\nmcp_servers:\n  other:\n    command: keep\ntail: 'exact' # keep\n".into(),
     }
 }
-fn fake(hosts: &mut Hosts, host: &Host, written: &str, removed: &str) {
-    let base = hosts.context.home.parent().unwrap().to_path_buf();
-    let wanted = base.join("wanted");
-    let deleted = base.join("removed");
-    save(&wanted, written);
-    save(&deleted, removed);
-    for (key, path) in [
-        ("FAKE_CONFIG", host.config.clone()),
-        ("FAKE_WRITTEN", wanted),
-        ("FAKE_REMOVED", deleted),
-        ("FAKE_LOG", base.join("cli.log")),
-    ] {
-        hosts
-            .context
-            .env
-            .insert(key.into(), path.display().to_string());
-    }
-    executable_file(
-        &hosts.context.search[0].join(host.binary),
-        r#"#!/usr/bin/python3
-import sys,os,pathlib,json
-p=pathlib.Path(os.environ['FAKE_CONFIG'])
-p.parent.mkdir(parents=True,exist_ok=True)
-with open(os.environ['FAKE_LOG'],'a') as log:
- log.write(json.dumps({'args':sys.argv[1:],'home':os.environ['HOME'],'buddy':os.environ.get('CODEBUDDY_CONFIG_DIR'),'stdin':sys.stdin.read()})+'\n')
-p.write_bytes(pathlib.Path(os.environ['FAKE_REMOVED' if sys.argv[2]=='remove' else 'FAKE_WRITTEN']).read_bytes())
-"#,
+#[test]
+fn revision_concurrent_unrelated_change_is_preserved_and_edit_rebased() {
+    let (_temp, hosts) = fixture();
+    let h = host(&hosts, "workbuddy");
+    save(
+        &h.config,
+        r#"{"unknown":"before","mcpServers":{"agentnave":{"command":"/old","env":{}}}}"#,
     );
+    let before = h.read().unwrap();
+    let mut desired = before.entry.clone().unwrap();
+    desired["env"]["AGENTNAVE_HOST"] = json!("workbuddy");
+    save(
+        &h.config,
+        r#"{"unknown":"concurrent","mcpServers":{"agentnave":{"command":"/old","env":{"NEW":"keep"}}}}"#,
+    );
+    assert!(hosts.write(&h, &before, Some(&desired)).is_ok());
+    let after = h.read().unwrap();
+    assert_eq!(after.rest["unknown"], "concurrent");
+    assert_eq!(after.entry.unwrap()["env"]["NEW"], "keep");
 }
 
 #[test]
-fn registry_covers_overrides_without_reading_real_home() {
-    let (_temp, mut hosts) = fixture();
-    assert_eq!(hosts.context.registry().len(), 10);
-    for (var, id, suffix) in [
-        ("CODEX_HOME", "codex", "config.toml"),
-        ("CODEBUDDY_CONFIG_DIR", "codebuddy", ".mcp.json"),
-        ("GROK_HOME", "grok", "config.toml"),
-        ("HERMES_HOME", "hermes", "config.yaml"),
-        ("PI_CODING_AGENT_DIR", "pi", "mcp.json"),
-    ] {
-        let root = hosts.context.home.join(var);
-        hosts
-            .context
-            .env
-            .insert(var.into(), root.display().to_string());
-        assert_eq!(host(&hosts, id).config, root.join(suffix));
-    }
-    for id in ["pi", "gemini", "opencode"] {
-        assert!(!host(&hosts, id).tested);
-    }
-}
-
-#[test]
-fn every_host_connects_takes_over_switches_and_removes_without_losing_other_content() {
-    for id in [
-        "codex",
-        "claude",
-        "codebuddy",
-        "workbuddy",
-        "grok",
-        "antigravity",
-        "pi",
-        "gemini",
-        "opencode",
-        "hermes",
-    ] {
-        let (_temp, mut hosts) = fixture();
-        let h = host(&hosts, id);
-        let original = seed(&h);
-        save(&h.config, &original);
-        let before = h.read().unwrap();
-        let path = hosts.context.launcher("studio").unwrap();
-        let mut entry = if id == "opencode" {
-            json!({"type":"local", "command":[path], "environment":{"AGENTNAVE_HOST":id},"enabled":true})
-        } else if id == "hermes" {
-            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
-        } else {
-            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id}})
-        };
-        if h.cli() {
-            fake(
-                &mut hosts,
-                &h,
-                &before.render(Some(&entry)).unwrap(),
-                &original,
-            );
-        } else {
-            executable_file(
-                &hosts.context.search[0].join(h.binary),
-                "#!/bin/sh\nexit 0\n",
-            );
-        }
-        let result = hosts.action("connect", &json!({"id": id})).unwrap();
-        assert_eq!(result["ok"], true, "{id}: {result}");
-        assert_eq!(result["status"], "connected", "{id}");
-        assert_eq!(result["skill"]["state"], "app", "{id}");
-        before
-            .verify(&fs::read_to_string(&h.config).unwrap(), Some(&entry))
-            .unwrap();
-        entry[h.env_key()] = json!({"KEEP":"secret-test", "PATH":"original", "AGENTNAVE_EXCLUDED_PROVIDERS":"codex"});
-        if id == "opencode" {
-            entry["command"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!("--preserved"));
-        } else {
-            entry["args"] = json!(["--preserved", "literal"]);
-        }
-        entry["disabled"] = json!(false);
-        entry["print"] = json!(true);
-        entry["future"] = json!({"unknown": [1,2,3]});
-        save(&h.config, &before.render(Some(&entry)).unwrap());
-        let mut takeover = entry.clone();
-        takeover[h.env_key()]["AGENTNAVE_HOST"] = json!(id);
-        if h.cli() {
-            let mut native = takeover.clone();
-            native.as_object_mut().unwrap().remove("future");
-            fake(
-                &mut hosts,
-                &h,
-                &before.render(Some(&native)).unwrap(),
-                &original,
-            );
-        }
-        hosts.refresh();
-        assert_eq!(
-            h.read().unwrap().entry,
-            Some(takeover.clone()),
-            "takeover {id}: {}",
-            hosts.state(&h)
-        );
-        let backups = backup_paths(&hosts.context.app).len();
-        hosts.refresh();
-        assert_eq!(
-            backups,
-            backup_paths(&hosts.context.app).len(),
-            "idempotent {id}"
-        );
-        h.set_command(&mut takeover, &hosts.context.launcher("core").unwrap());
-        if h.cli() {
-            fake(
-                &mut hosts,
-                &h,
-                &before.render(Some(&takeover)).unwrap(),
-                &original,
-            );
-        }
-        let result = hosts
-            .action("entry", &json!({"id":id,"entry":"core"}))
-            .unwrap();
-        assert_eq!(result["ok"], true, "entry {id}: {result}");
-        assert_eq!(h.read().unwrap().entry, Some(takeover), "switch {id}");
-        if h.cli() {
-            fake(&mut hosts, &h, "", &original);
-        }
-        let result = hosts.action("remove", &json!({"id":id})).unwrap();
-        assert_eq!(result["ok"], true, "remove {id}: {result}");
-        assert_eq!(h.read().unwrap().entry, None);
-        assert_eq!(result["skill"]["state"], "missing");
-        if !matches!(h.format, Format::Yaml) {
-            assert_eq!(h.read().unwrap().rest, before.rest, "rest {id}");
-        }
-        if h.cli() {
-            let log =
-                fs::read_to_string(hosts.context.home.parent().unwrap().join("cli.log")).unwrap();
-            for line in log.lines() {
-                let call: Value = serde_json::from_str(line).unwrap();
-                assert_eq!(call["stdin"], "");
-                assert_eq!(call["home"], hosts.context.home.to_str().unwrap());
-                if id == "codebuddy" {
-                    assert_eq!(call["buddy"], h.config.parent().unwrap().to_str().unwrap());
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn hermes_preserves_opaque_yaml_and_repairs_missing_launcher() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "hermes");
-    let raw = "# before\nmcp_servers:\n  agentnave:\n    command: /missing/agentnave-mcp\n    env:\n      KEEP: 'yes'\n    tools:\n      include: [] # intentionally disabled\n    future:\n      nested: untouched\n  other:\n    command: keep\n# tail\nmodel:\n  value: unchanged\n";
-    save(&h.config, raw);
+#[cfg(unix)]
+fn revision_parent_symlink_is_rejected_without_touching_target() {
+    let (_temp, hosts) = fixture();
+    let h = host(&hosts, "workbuddy");
     executable_file(
-        &hosts.context.search[0].join("hermes"),
+        &hosts.context.search[0].join(h.binary),
         "#!/bin/sh\nexit 99\n",
     );
-    hosts.refresh();
-    let written = fs::read_to_string(&h.config).unwrap();
-    assert!(written.contains("    tools:\n      include: [] # intentionally disabled\n    future:\n      nested: untouched\n"));
-    assert!(written.ends_with("  other:\n    command: keep\n# tail\nmodel:\n  value: unchanged\n"));
-    assert_eq!(hosts.state(&h)["entry"], "core");
-    assert_eq!(hosts.state(&h)["status"], "connected");
-    assert_eq!(h.read().unwrap().entry.unwrap()["env"]["KEEP"], "yes");
+    let before = h.read().unwrap();
+    let outside = hosts.context.home.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, h.config.parent().unwrap()).unwrap();
+    assert!(
+        hosts
+            .write(&h, &before, Some(&json!({"command":"/x"})))
+            .is_err()
+    );
+    assert!(!outside.join("mcp.json").exists());
+    assert_eq!(hosts.state(&h)["attention"]["code"], "symlink_path");
+    let home_link = hosts.context.home.parent().unwrap().join("home-link");
+    std::os::unix::fs::symlink(&hosts.context.home, &home_link).unwrap();
+    assert!(check_path(&home_link.join("ordinary/config.json"), &home_link).is_ok());
 }
 
 #[test]
-fn collateral_changes_and_cli_failures_roll_back_and_failed_refresh_does_not_repeat() {
+fn revision_bare_command_uses_entry_path_without_replacement() {
     let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "claude");
-    let raw = r#"{"unknown":"keep","mcpServers":{"agentnave":{"command":"/missing/agentnave-studio-mcp","env":{"KEEP":"test"}}}}"#;
-    save(&h.config, raw);
-    let wanted = r#"{"unknown":"CORRUPTED","mcpServers":{}}"#;
-    fake(&mut hosts, &h, wanted, wanted);
-    hosts.refresh();
-    assert_eq!(fs::read_to_string(&h.config).unwrap(), raw);
-    assert_eq!(hosts.state(&h)["status"], "needs_attention");
-    let count = backup_paths(&hosts.context.app).len();
-    hosts.refresh();
-    assert_eq!(backup_paths(&hosts.context.app).len(), count);
-    assert_eq!(
-        fs::read_to_string(backup_paths(&hosts.context.app).last().unwrap()).unwrap(),
-        raw
-    );
+    let h = host(&hosts, "workbuddy");
     executable_file(
-        &hosts.context.search[0].join("claude"),
-        "#!/bin/sh\nexit 1\n",
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    let private = hosts.context.home.join("private-bin");
+    executable_file(&private.join("agentnave-mcp"), "#!/bin/sh\nexit 99\n");
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{"command":"agentnave-mcp","env":{"PATH":private}}}})
+            .to_string(),
+    );
+    hosts.refresh();
+    assert_eq!(h.read().unwrap().entry.unwrap()["command"], "agentnave-mcp");
+    let mut entry = h.read().unwrap().entry.unwrap();
+    entry["env"]["PATH"] = json!("${UNRESOLVED_PATH}");
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":entry}}).to_string(),
+    );
+    hosts.refresh();
+    assert_eq!(hosts.state(&h)["command_state"], "unknown");
+    assert_eq!(hosts.state(&h)["status"], "connected");
+    assert_eq!(h.read().unwrap().entry.unwrap()["command"], "agentnave-mcp");
+}
+
+#[test]
+fn revision_healthy_unclaimed_entry_is_connected() {
+    let (_temp, hosts) = fixture();
+    let h = host(&hosts, "workbuddy");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{"command":hosts.context.launcher("studio")}}})
+            .to_string(),
+    );
+    let state = hosts.state(&h);
+    assert_eq!(state["status"], "connected");
+    assert_eq!(state["has_host_env"], false);
+}
+
+#[test]
+#[cfg(unix)]
+fn revision_unrelated_change_does_not_retry_failed_takeover() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "workbuddy");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(&h.config,&json!({"unknown":1,"mcpServers":{"agentnave":{"command":hosts.context.launcher("core"),"env":{}}}}).to_string());
+    let outside = hosts.context.home.join("external-skills");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, h.skill.as_ref().unwrap().parent().unwrap()).unwrap();
+    hosts.refresh();
+    let first = hosts.state(&h)["last_action"].clone();
+    assert_eq!(first["ok"], false);
+    let mut raw: Value = serde_json::from_slice(&fs::read(&h.config).unwrap()).unwrap();
+    raw["unknown"] = json!(2);
+    save(&h.config, &raw.to_string());
+    hosts.refresh();
+    assert_eq!(hosts.state(&h)["last_action"], first);
+    assert_eq!(raw["unknown"], 2);
+    assert_eq!(hosts.state(&h)["attention"]["code"], "symlink_path");
+    assert!(!hosts.context.app.join("backups").exists());
+}
+
+#[test]
+fn revision_multilayer_removal_does_not_fall_back_to_another_registration() {
+    let (_temp, mut hosts) = fixture();
+    let global = hosts.context.home.join(".config/opencode/opencode.json");
+    let custom = hosts.context.home.join("custom.json");
+    let env_root = hosts.context.home.join("env-opencode");
+    let user_root = hosts.context.home.join("user-opencode");
+    let env_file = env_root.join("opencode.jsonc");
+    let user_file = user_root.join("opencode.json");
+    hosts
+        .context
+        .env
+        .insert("OPENCODE_CONFIG".into(), custom.display().to_string());
+    hosts
+        .context
+        .env
+        .insert("OPENCODE_CONFIG_DIR".into(), env_root.display().to_string());
+    hosts
+        .action("root", &json!({"id":"opencode", "path":user_root}))
+        .unwrap();
+    executable_file(
+        &hosts.context.search[0].join("opencode"),
+        "#!/bin/sh\nexit 99\n",
+    );
+    for path in [&global, &custom, &env_file, &user_file] {
+        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[hosts.context.launcher("studio")],"environment":{}}}}).to_string());
+    }
+    let project = hosts.context.project.join("opencode.json");
+    save(&project, r#"{"mcp":{"agentnave":{"command":["project"]}}}"#);
+    let result = hosts.action("remove", &json!({"id":"opencode"})).unwrap();
+    assert_eq!(result["ok"], true, "{result}");
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap()
+            .contains(global.to_str().unwrap())
+    );
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap()
+            .contains(custom.to_str().unwrap())
+    );
+    let state = hosts.refresh();
+    let h = state["hosts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "opencode")
+        .unwrap();
+    assert_eq!(h["status"], "available");
+    assert!(
+        h["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|l| l["scope"] != "project")
+            .all(|l| l["has_entry"] == false)
+    );
+    assert!(fs::read_to_string(project).unwrap().contains("project"));
+    assert_eq!(backup_paths(&hosts.context.app).len(), 4);
+}
+
+#[test]
+fn all_host_formats_connect_switch_refresh_and_remove_without_running_host_clis() {
+    for id in IDS {
+        let (_temp, mut hosts) = fixture();
+        let h = host(&hosts, id);
+        let marker = hosts.context.home.join("CLI_WAS_RUN");
+        executable_file(
+            &hosts.context.search[0].join(h.binary),
+            &format!("#!/bin/sh\ntouch '{}'\nexit 99\n", marker.display()),
+        );
+        save(&h.config, &seed(&h));
+        let original = h.read().unwrap();
+        let result = hosts
+            .action("connect", &json!({"id":id,"entry":"studio"}))
+            .unwrap();
+        assert_eq!(result["ok"], true, "{id}: {result}");
+        assert_eq!(result["host"]["tested"], false);
+        assert_eq!(result["host"]["status"], "connected");
+        assert_eq!(result["host"]["skill"]["state"], "app");
+        assert_eq!(
+            hosts
+                .action("entry", &json!({"id":id,"entry":"core"}))
+                .unwrap()["ok"],
+            true
+        );
+        let before = fs::read(&h.config).unwrap();
+        hosts.refresh();
+        assert_eq!(fs::read(&h.config).unwrap(), before);
+        assert_eq!(
+            hosts.action("remove", &json!({"id":id})).unwrap()["ok"],
+            true
+        );
+        assert!(h.read().unwrap().entry.is_none());
+        if !matches!(h.format, Format::Yaml) {
+            assert_eq!(h.read().unwrap().rest, original.rest);
+        } else {
+            let raw = fs::read_to_string(&h.config).unwrap();
+            assert!(raw.contains("    command: keep"));
+            assert!(raw.ends_with("tail: 'exact' # keep\n"));
+        }
+        assert!(!marker.exists());
+    }
+}
+
+#[test]
+fn optimistic_conflicts_rebase_then_stop_and_conditional_rollback_preserves_new_writes() {
+    use transaction::{Phase, Target, edit_observed, rollback_if_ours};
+    let (_temp, hosts) = fixture();
+    let h = host(&hosts, "workbuddy");
+    save(&h.config, r#"{"counter":0}"#);
+    let mut times = 0;
+    let target = || Target {
+        path: &h.config,
+        home: &hosts.context.home,
+        app: &hosts.context.app,
+        id: h.id,
+        format: h.format,
+        key: h.key,
+    };
+    let result = edit_observed(
+        target(),
+        |entry| {
+            *entry = Some(json!({"command":"/x"}));
+            Ok(())
+        },
+        |phase, path| {
+            if matches!(phase, Phase::Prepared) {
+                times += 1;
+                save(path, &json!({"counter":times}).to_string());
+            }
+        },
+    );
+    assert!(result.unwrap_err().starts_with("conflict:"));
+    assert_eq!(times, 3);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&h.config).unwrap()).unwrap()["counter"],
+        3
+    );
+    let result = edit_observed(
+        target(),
+        |entry| {
+            *entry = Some(json!({"command":"/x"}));
+            Ok(())
+        },
+        |phase, path| {
+            if matches!(phase, Phase::Written) {
+                save(path, r#"{"external":"new"}"#);
+            }
+        },
+    );
+    assert!(result.unwrap_err().starts_with("conflict:"));
+    assert!(rollback_if_ours(&h.config, &hosts.context.home, b"ours", Some(b"old")).is_err());
+    assert_eq!(
+        fs::read_to_string(&h.config).unwrap(),
+        r#"{"external":"new"}"#
+    );
+    save(&h.config, "ours");
+    rollback_if_ours(&h.config, &hosts.context.home, b"ours", Some(b"old")).unwrap();
+    assert_eq!(fs::read_to_string(&h.config).unwrap(), "old");
+}
+
+#[test]
+fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    assert_eq!(h.root.source, "default");
+    assert!(!hosts.context.app.exists());
+    let shellroot = hosts.context.home.join("from-shell");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "PI_CODING_AGENT_DIR".into(),
+        shellroot.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "pi").root.source, "shell");
+    let envroot = hosts.context.home.join("from-env");
+    hosts
+        .context
+        .env
+        .insert("PI_CODING_AGENT_DIR".into(), envroot.display().to_string());
+    assert_eq!(host(&hosts, "pi").root.path, envroot);
+    let userroot = hosts.context.home.join("from-user");
+    let result = hosts
+        .action("root", &json!({"id":"pi","path":userroot}))
+        .unwrap();
+    assert_eq!(result["host"]["root"]["source"], "user");
+    hosts.refresh();
+    let path = hosts.context.app.join("hosts.json");
+    let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert!(saved["pi"]["first_seen"].as_str().unwrap().ends_with('Z'));
+    let restart = Hosts::new(Context {
+        home: hosts.context.home.clone(),
+        app: hosts.context.app.clone(),
+        project: hosts.context.project.clone(),
+        env: hosts.context.env.clone(),
+        search: hosts.context.search.clone(),
+        applications: hosts.context.applications.clone(),
+    });
+    assert_eq!(host(&restart, "pi").root.source, "user");
+    hosts
+        .action("root", &json!({"id":"pi","path":null}))
+        .unwrap();
+    assert_eq!(host(&hosts, "pi").root.source, "env");
+    assert!(
+        hosts
+            .action("root", &json!({"id":"pi","path":"relative"}))
+            .is_err()
+    );
+}
+
+#[test]
+fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writes() {
+    let (_temp, mut hosts) = fixture();
+    let script = hosts.context.home.join("fake-shell");
+    let root = hosts.context.home.join("shell-root");
+    let marker = hosts.context.home.join("executed");
+    let mut output = String::from("#!/bin/sh\n");
+    for name in roots::VARIABLES {
+        let value = if *name == "CODEX_HOME" {
+            root.to_str().unwrap()
+        } else if *name == "GROK_HOME" {
+            "relative-path"
+        } else {
+            ""
+        };
+        output.push_str(&format!("printf '{name}\\0{value}\\0'\n"));
+    }
+    output.push_str(&format!(
+        "printf 'BAD\\0$(touch {})\\0'\n",
+        marker.display()
+    ));
+    executable_file(&script, &output);
+    hosts
+        .context
+        .env
+        .insert("SHELL".into(), script.display().to_string());
+    let values = roots::probe(&hosts.context).unwrap();
+    assert_eq!(values.len(), 1);
+    assert_eq!(values["CODEX_HOME"], root.to_str().unwrap());
+    assert!(!marker.exists());
+    executable_file(&script, "#!/bin/sh\nexit 0\n");
+    assert!(roots::probe(&hosts.context).is_err());
+    executable_file(&script, "#!/bin/sh\nexit 1\n");
+    let h = host(&hosts, "workbuddy");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{"command":hosts.context.launcher("core")}}}).to_string(),
+    );
+    let before = fs::read(&h.config).unwrap();
+    hosts.refresh();
+    assert_eq!(fs::read(&h.config).unwrap(), before);
+    assert_eq!(
+        hosts.state(&host(&hosts, "workbuddy"))["attention"]["code"],
+        "root_unconfirmed"
+    );
+    hosts.context.env.insert(
+        "CODEBUDDY_CONFIG_DIR".into(),
+        h.root.path.display().to_string(),
+    );
+    hosts.refresh();
+    assert_eq!(fs::read(&h.config).unwrap(), before);
+    assert_eq!(
+        hosts.state(&host(&hosts, "workbuddy"))["attention"]["code"],
+        "root_unconfirmed"
     );
     assert_eq!(
-        hosts.action("remove", &json!({"id":"claude"})).unwrap()["ok"],
-        false
+        hosts.action("connect", &json!({"id":"workbuddy"})).unwrap()["ok"],
+        true
     );
-    assert_eq!(fs::read_to_string(&h.config).unwrap(), raw);
+    assert!(!marker.exists());
 }
 
 #[test]
-fn backups_are_global_and_keep_only_the_newest_thirty() {
-    let (_temp, hosts) = fixture();
-    let path = hosts.context.home.join("config.json");
-    for n in 0..35 {
-        save(&path, &n.to_string());
-        backup(
-            &hosts.context.app,
-            if n % 2 == 0 { "claude" } else { "grok" },
-            &path,
-        )
-        .unwrap();
-    }
-    let kept = backup_paths(&hosts.context.app);
-    assert_eq!(kept.len(), 30);
-    assert_eq!(fs::read_to_string(&kept[0]).unwrap(), "5");
-    assert_eq!(fs::read_to_string(&kept[29]).unwrap(), "34");
-}
-
-#[test]
-fn skill_three_states_external_edits_old_versions_and_links_are_preserved() {
-    let (_temp, hosts) = fixture();
-    let path = host(&hosts, "pi").skill;
-    assert_eq!(skill::state(&path)["state"], "missing");
-    skill::install(&path, &hosts.context.app, "pi").unwrap();
-    assert_eq!(skill::state(&path)["state"], "app");
-    assert!(path.join("references/pi.md").is_file());
-    save(&path.join(".agentnave-app"), "old-version");
+fn skill_ownership_links_and_refresh_version_update_preserve_external_content() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let path = h.skill.as_ref().unwrap();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    hosts.action("connect", &json!({"id":"pi"})).unwrap();
     let manifest = path.join(".agentnave-app-manifest.json");
-    let mut value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
-    value["version"] = json!("old-version");
-    save(&manifest, &value.to_string());
-    skill::install(&path, &hosts.context.app, "pi").unwrap();
-    assert_eq!(skill::state(&path)["version"], VERSION);
-    save(&path.join("SKILL.md"), "externally modified");
-    assert_eq!(skill::state(&path)["state"], "external");
-    skill::install(&path, &hosts.context.app, "pi").unwrap();
-    skill::remove(&path, &hosts.context.app, "pi").unwrap();
+    for keep_entry in [true, false] {
+        if !keep_entry {
+            fs::remove_file(&h.config).unwrap();
+        }
+        save(&path.join(".agentnave-app"), "old");
+        let mut value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        value["version"] = json!("old");
+        save(&manifest, &value.to_string());
+        hosts.refresh();
+        assert_eq!(skill::state(path, &hosts.context.home)["version"], VERSION);
+        assert_eq!(h.config.exists(), keep_entry);
+    }
+    save(&path.join("SKILL.md"), "external");
+    assert_eq!(skill::state(path, &hosts.context.home)["state"], "external");
+    hosts.action("remove", &json!({"id":"pi"})).unwrap();
     assert_eq!(
         fs::read_to_string(path.join("SKILL.md")).unwrap(),
-        "externally modified"
+        "external"
     );
     #[cfg(unix)]
     {
-        let link = host(&hosts, "claude").skill;
+        let other = host(&hosts, "claude");
+        let link = other.skill.unwrap();
         fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&path, &link).unwrap();
-        assert_eq!(skill::state(&link)["state"], "external");
-        skill::install(&link, &hosts.context.app, "claude").unwrap();
-        skill::remove(&link, &hosts.context.app, "claude").unwrap();
+        std::os::unix::fs::symlink(path, &link).unwrap();
+        assert!(
+            skill::install(&link, &hosts.context.app, "claude", &hosts.context.home)
+                .unwrap_err()
+                .starts_with("symlink_path:")
+        );
         assert!(link.is_symlink());
     }
 }
 
 #[test]
-fn get_routes_are_read_only_and_orphaned_entries_are_not_taken_over() {
+fn get_is_read_only_onboarding_uses_cache_and_post_routes_require_action_header() {
     let (_temp, hosts) = fixture();
-    let h = host(&hosts, "pi");
-    save(
-        &h.config,
-        r#"{"mcpServers":{"agentnave":{"command":"/missing/agentnave-mcp"}}}"#,
-    );
-    let original = fs::read(&h.config).unwrap();
-    assert_eq!(hosts.state(&h)["status"], "orphaned");
     let app = hosts.context.app.clone();
-    let root = hosts.context.home.join(".agentnave");
+    let root = hosts.context.home.join("data");
     let reader = Reader::new(root.clone());
     reader.configure_hosts(hosts.context);
     for path in ["/app/hosts", "/app/onboarding"] {
@@ -354,92 +504,37 @@ fn get_routes_are_read_only_and_orphaned_entries_are_not_taken_over() {
     }
     assert!(!app.exists());
     assert!(!root.exists());
-    assert_eq!(fs::read(&h.config).unwrap(), original);
     for path in [
         "/app/hosts/refresh",
-        "/app/hosts/connect",
-        "/app/hosts/remove",
-        "/app/hosts/entry",
+        "/app/hosts/root",
+        "/app/hosts/reveal-backups",
         "/app/onboarding/dismiss",
+        "/app/onboarding/reopen",
     ] {
         assert_eq!(reader.request("GET", path, None, b"").status, 405);
         assert_eq!(reader.request("POST", path, None, b"{}").status, 403);
     }
-    assert_eq!(
-        reader
-            .request("POST", "/app/hosts/refresh", Some("1"), b"")
-            .status,
-        200
-    );
-    assert!(!app.exists());
-    assert_eq!(fs::read(&h.config).unwrap(), original);
-    assert_eq!(
-        reader
-            .request("POST", "/app/onboarding/dismiss", Some("1"), b"")
-            .status,
-        200
-    );
-    assert!(app.join("onboarding.dismissed").is_file());
+    reader.request("POST", "/app/onboarding/dismiss", Some("1"), b"{}");
+    assert!(app.join("onboarding.dismissed").exists());
+    reader.request("POST", "/app/onboarding/reopen", Some("1"), b"{}");
+    assert!(!app.join("onboarding.dismissed").exists());
+    save(&root.join("members.json"), "{}");
+    let value: Value =
+        serde_json::from_slice(&reader.request("GET", "/app/onboarding", None, b"").body).unwrap();
+    assert_eq!(value["steps"][2]["done"], true);
 }
 
 #[test]
-fn onboarding_uses_real_saved_state_and_shadowing_only_reports() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "pi");
-    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
-    let entry = json!({"command":hosts.context.launcher("studio"),"env":{"AGENTNAVE_HOST":"pi"}});
-    save(
-        &h.config,
-        &Document::parse("", Format::Json, "mcpServers")
-            .unwrap()
-            .render(Some(&entry))
-            .unwrap(),
-    );
-    let project = hosts.context.project.join(".pi/mcp.json");
-    let raw = r#"{"mcpServers":{"agentnave":{"command":"project"}}}"#;
-    save(&project, raw);
-    assert_eq!(hosts.state(&h)["shadowed_by"], project.to_str().unwrap());
-    hosts.refresh();
-    assert_eq!(fs::read_to_string(project).unwrap(), raw);
-    let root = hosts.context.home.join("data");
-    let initial = crate::onboarding::state(&hosts, &root);
-    assert_eq!(initial["steps"][0]["done"], true);
-    assert_eq!(initial["steps"][1]["done"], true);
-    assert_eq!(initial["steps"][2]["done"], false);
-    assert_eq!(initial["steps"][3]["done"], false);
-    save(
-        &root.join("members.json"),
-        r#"{"version":1,"clis":{"pi":{"models":{"x":{}}}},"modes":{}}"#,
-    );
-    save(
-        &root.join("conversations/a/state.json"),
-        r#"{"manager_session":"manager"}"#,
-    );
-    let after = crate::onboarding::state(&hosts, &root);
-    assert_eq!(after["steps"][2]["done"], true);
-    assert_eq!(after["steps"][3]["done"], true);
-}
-
-#[test]
-fn orphan_removal_without_cli_preserves_external_skill_and_other_servers() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "codex");
-    let raw = "[mcp_servers.other]\ncommand = 'keep'\n[mcp_servers.agentnave]\ncommand = '/missing/agentnave-mcp'\n";
-    save(&h.config, raw);
-    save(&h.skill.join("SKILL.md"), "external");
-    assert_eq!(hosts.state(&h)["status"], "orphaned");
-    let result = hosts.action("remove", &json!({"id":"codex"})).unwrap();
-    assert_eq!(result["ok"], true, "{result}");
-    assert!(h.read().unwrap().entry.is_none());
-    assert!(
-        fs::read_to_string(&h.config)
-            .unwrap()
-            .contains("command = 'keep'")
-    );
-    assert_eq!(
-        fs::read_to_string(h.skill.join("SKILL.md")).unwrap(),
-        "external"
-    );
+fn backups_remain_global_and_bounded_at_thirty() {
+    let (_temp, hosts) = fixture();
+    let path = hosts.context.home.join("config");
+    for n in 0..35 {
+        save(&path, &n.to_string());
+        backup(&hosts.context.app, "pi", &path, &hosts.context.home).unwrap();
+    }
+    let kept = backup_paths(&hosts.context.app);
+    assert_eq!(kept.len(), 30);
+    assert_eq!(fs::read_to_string(&kept[0]).unwrap(), "5");
 }
 
 #[test]
@@ -480,33 +575,6 @@ fn jsonc_and_quoted_yaml_values_survive_and_ambiguous_yaml_is_rejected() {
 }
 
 #[test]
-fn missing_service_and_broken_config_do_not_write_and_failed_new_config_is_removed() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "pi");
-    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 0\n");
-    let studio = hosts.context.launcher("studio").unwrap();
-    fs::remove_file(&studio).unwrap();
-    assert_eq!(
-        hosts.action("connect", &json!({"id":"pi"})).unwrap()["ok"],
-        false
-    );
-    assert!(!h.config.exists());
-    assert!(!hosts.context.app.exists());
-    executable_file(&studio, "#!/bin/sh\nexit 99\n");
-    fake(&mut hosts, &h, "{broken", "");
-    assert_eq!(
-        hosts.action("connect", &json!({"id":"pi"})).unwrap()["ok"],
-        false
-    );
-    assert!(!h.config.exists());
-    save(&h.config, "{broken");
-    let before = fs::read(&h.config).unwrap();
-    hosts.refresh();
-    assert_eq!(hosts.state(&h)["status"], "needs_attention");
-    assert_eq!(fs::read(&h.config).unwrap(), before);
-}
-
-#[test]
 fn inline_toml_and_commented_yaml_maps_are_updated_without_losing_siblings() {
     let raw = "# keep\nmcp_servers = { other = { command = 'keep' }, agentnave = { command = '/old', env = { KEEP = 'yes' } } }\n";
     let doc = Document::parse(raw, Format::Toml, "mcp_servers").unwrap();
@@ -535,50 +603,4 @@ fn duplicate_json_target_keys_and_truncated_strings_are_rejected() {
     ] {
         assert!(Document::parse(raw, Format::Json, "mcpServers").is_err());
     }
-}
-
-#[test]
-fn opencode_layered_overrides_select_the_effective_entry_and_keep_skill_root() {
-    let (_temp, mut hosts) = fixture();
-    let global = host(&hosts, "opencode").config;
-    save(
-        &global,
-        r#"{"mcp":{"agentnave":{"type":"local","command":["/global"]}}}"#,
-    );
-    let extra = hosts.context.home.join("extra.json");
-    let custom = hosts.context.home.join("custom");
-    hosts
-        .context
-        .env
-        .insert("OPENCODE_CONFIG".into(), extra.display().to_string());
-    hosts
-        .context
-        .env
-        .insert("OPENCODE_CONFIG_DIR".into(), custom.display().to_string());
-    save(
-        &extra,
-        r#"{"mcp":{"agentnave":{"type":"local","command":["/extra"]}}}"#,
-    );
-    save(
-        &custom.join("opencode.jsonc"),
-        "{/* comment */ \"future\":true}",
-    );
-    assert_eq!(host(&hosts, "opencode").config, extra);
-    assert_eq!(
-        host(&hosts, "opencode").skill,
-        custom.join("skills/agentnave-manager")
-    );
-    save(
-        &custom.join("opencode.jsonc"),
-        r#"{"mcp":{"agentnave":{"type":"local","command":["/custom"]}}}"#,
-    );
-    assert_eq!(
-        host(&hosts, "opencode").config,
-        custom.join("opencode.jsonc")
-    );
-    save(&custom.join("opencode.jsonc"), "{broken");
-    assert_eq!(
-        hosts.state(&host(&hosts, "opencode"))["status"],
-        "needs_attention"
-    );
 }

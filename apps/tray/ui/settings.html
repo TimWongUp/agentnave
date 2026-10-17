@@ -7,7 +7,11 @@
 <title>设置 · AgentNave</title>
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="./settings.css">
+<link rel="stylesheet" href="./hosts.css">
+<script src="/chat/common.js" defer></script>
+<script src="/chat/mock.js" defer></script>
 <script src="./settings.js" defer></script>
+<script src="./hosts.js" defer></script>
 </head>
 <body>
 <main>
@@ -25,6 +29,7 @@
     </div>
     <div class="tabs" role="tablist" aria-label="设置分区">
       <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型</button>
+      <button id="tab-hosts" class="tab-btn" role="tab" aria-selected="false" type="button">宿主接入<span id="hosts-badge" class="badge-dot" hidden></span></button>
       <button id="tab-updates" class="tab-btn" role="tab" aria-selected="false" type="button">版本与更新<span id="update-badge" class="badge-dot" hidden></span></button>
     </div>
   </section>
@@ -84,6 +89,27 @@
       </div>
     </aside>
   </section>
+
+  <section id="pane-hosts" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-hosts">
+    <div id="svc-banner" class="banner" hidden></div>
+
+    <p class="guidance">
+      接入宿主 = 在宿主配置里写入一条名为 agentnave 的 MCP 条目，并安装 agentnave-manager Skill。
+      已有的手写条目会被自动接管：只补上 AGENTNAVE_HOST，必要时把命令指向本机服务的入口，其余字段原样保留；每次写入前都会先备份配置文件。
+    </p>
+
+    <div id="new-callout" class="callout" hidden></div>
+
+    <div class="hosts-toolbar">
+      <div id="hosts-summary" class="hosts-summary" aria-live="polite"></div>
+      <button id="refresh-hosts" type="button">刷新检测</button>
+    </div>
+    <div id="backups-line" class="backups-line"></div>
+    <button id="onboarding-reopen" type="button">重新显示开始使用</button>
+
+    <div id="host-cards" class="host-cards"></div>
+  </section>
+
 
   <!-- 分区 2：版本与更新 -->
   <section id="pane-updates" class="tab-pane" role="tabpanel" aria-labelledby="tab-updates" hidden>

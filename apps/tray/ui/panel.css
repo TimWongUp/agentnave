@@ -204,3 +204,8 @@ button { font: inherit; color: inherit; cursor: default; }
   *, *::before, *::after { animation: none !important; }
   .line.live::after { visibility: visible; }
 }
+
+.ob-slot { padding: 14px 2px 8px; }
+.ob-slot .ob-full { max-width: none; }
+.ob-note { color: var(--muted); font-size: 11px; margin: 12px 8px; }
+.ob-slot button, .ob-slot a { cursor: default; }

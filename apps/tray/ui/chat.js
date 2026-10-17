@@ -27,9 +27,21 @@ const state = {
   chips: new Map(), convChips: new Map(), refreshing: false, again: false,
 };
 
+const ob = AN.onboarding({ variant: "compact", onChange: () => placeOb() });
+function placeOb() {
+  const none = state.groupsData.length === 0;
+  ob.setVariant(none ? "full" : "compact");
+  const slot = none ? (el.blank.hidden ? null : el.blank) : $("onboard-side");
+  const description = el.blank.querySelector(":scope > p");
+  if (description && none) description.hidden = ob.visible;
+  if (!ob.visible || !slot) { ob.el.remove(); return; }
+  if (ob.el.parentNode !== slot) slot.append(ob.el);
+}
+
+
 // ---------------------------------------------------------------- routing
 function groupFromLocation() {
-  if (mockOn && location.protocol === "file:") return new URLSearchParams(location.search).get("group");
+  if (mockOn && new URLSearchParams(location.search).has("group")) return new URLSearchParams(location.search).get("group");
   const m = /^\/chat\/([^/]+)/.exec(location.pathname);
   try { return m ? decodeURIComponent(m[1]) : null; } catch { return null; }
 }
@@ -440,8 +452,9 @@ function showBlank(kind) {
     loading: ["正在读取群聊…", ""],
     error: ["无法读取群聊", "正在重试，请稍候。"],
   }[kind];
-  el.blank.replaceChildren(...[h("strong", {}, text[0]), h("p", {}, text[1]), kind === "missing" && h("a.blank-link", { href: href("/chat/") }, "回到群列表")].filter(Boolean));
+  el.blank.replaceChildren(...[h("strong", {}, text[0]), h("p", { hidden: kind === "nogroups" && ob.visible }, text[1]), kind === "missing" && h("a.blank-link", { href: href("/chat/") }, "回到群列表")].filter(Boolean));
   el.jump.hidden = true;
+  placeOb();
 }
 
 // ---------------------------------------------------------------- refresh
@@ -459,6 +472,7 @@ async function refresh() {
     }
     el.banner.hidden = true;
     state.groupsData = chats.groups;
+    placeOb();
     if (state.auto && !narrow.matches && !chats.groups.some((g) => g.group === state.selected))
       state.selected = chats.groups[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
@@ -497,3 +511,5 @@ async function refresh() {
 for (const link of document.querySelectorAll("a[href]")) setAttr(link, "href", href(link.getAttribute("href")));
 sync();
 poll(refresh);
+
+ob.start();
