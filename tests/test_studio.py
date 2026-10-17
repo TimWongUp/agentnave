@@ -1459,8 +1459,6 @@ def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) 
             assert json.load(response) == {
                 key: value[key]
                 for key in (
-                    '["family","claude",""]',
-                    '["family","gpt",""]',
                     '["model","claude","claude-opus-5"]',
                     '["model","codex","gpt-6"]',
                 )
@@ -1481,6 +1479,29 @@ def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) 
         (tmp_path / "avatars.json").write_text("broken")
         with urlopen(url + "avatar-settings") as response:
             assert json.load(response) == {}
+    finally:
+        dashboard.close()
+
+
+def test_public_dashboard_uses_family_avatar_when_host_is_unknown(tmp_path: Path) -> None:
+    from urllib.request import urlopen
+
+    dashboard = Dashboard(tmp_path)
+    dashboard.update(
+        "public",
+        json.dumps(
+            {
+                "view": "public",
+                "host": None,
+                "messages": [{"speaker": "@host", "manager_model": "gpt-6"}],
+            }
+        ).encode(),
+    )
+    value = {'["family","gpt",""]': "data:image/png;base64,iVBORw0KGgo="}
+    (tmp_path / "avatars.json").write_text(json.dumps(value))
+    try:
+        with urlopen(dashboard.url("public") + "avatar-settings") as response:
+            assert json.load(response) == value
     finally:
         dashboard.close()
 

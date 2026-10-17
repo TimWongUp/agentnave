@@ -70,7 +70,7 @@ printf '{}\n' > "$preview_root/avatar-settings"
 HOME="$preview_home" python3 -m http.server 8765 --bind 127.0.0.1 --directory "$preview_root"
 ```
 
-打开 `http://127.0.0.1:8765/settings/?mock#hosts` 查看宿主卡与根目录覆盖；`/chat/?mock&hosts=fresh`、`/panel/?mock&hosts=fresh` 查看空态引导。`hosts=typical|midway|done` 分别提供异常/孤留、设置中间态、全部完成的数据；`scene=empty|quiet|live` 可单独控制群聊与舞台数据。mock 群链接使用 `?group=...`，不要求静态服务器实现路由回退。静态 mock 只预览默认头像和本地覆盖列表，不支持上传或恢复写入。只有真实 App 的验收可以改变 tested 标记。
+打开 `http://127.0.0.1:8765/settings/?mock#hosts` 查看宿主卡与根目录覆盖；`/chat/?mock&hosts=fresh`、`/panel/?mock&hosts=fresh` 查看空态引导。`hosts=typical|midway|done` 分别提供异常/孤留、设置中间态、全部完成的数据；`scene=empty|quiet|live` 可单独控制群聊与舞台数据。mock 群链接使用 `?group=...`，不要求静态服务器实现路由回退。静态 mock 只预览默认头像；如需查看本地覆盖，可手动编辑 `$preview_root/avatar-settings`，但不支持上传或恢复写入。只有真实 App 的验收可以改变 tested 标记。
 
 ## Version releases
 

@@ -52,9 +52,13 @@ def _public_avatar_settings(config: dict[str, object], snapshot: bytes) -> dict[
     required: set[str] = set()
 
     def need(provider: object, model: object) -> None:
-        if not isinstance(provider, str) or not provider or not isinstance(model, str):
+        if not isinstance(model, str) or not model:
             return
-        required.add(_avatar_key("model", provider, model))
+        if isinstance(provider, str) and provider:
+            exact = _avatar_key("model", provider, model)
+            if exact in config:
+                required.add(exact)
+                return
         if family := _avatar_family(model):
             required.add(_avatar_key("family", family, ""))
 
