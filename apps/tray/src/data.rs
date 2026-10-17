@@ -137,6 +137,7 @@ pub(crate) struct Snapshot {
 
 pub struct Reader {
     root: PathBuf,
+    hosts: Mutex<Option<crate::hosts::Hosts>>,
     /// Parsed views by path, keyed on (mtime, size), so polling parses only changed files.
     summaries: Mutex<HashMap<PathBuf, Cached>>,
 }
@@ -145,12 +146,20 @@ impl Reader {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
+            hosts: Mutex::new(None),
             summaries: Mutex::new(HashMap::new()),
         }
     }
 
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        if path == "/app/hosts"
+            || path.starts_with("/app/hosts/")
+            || path == "/app/onboarding"
+            || path == "/app/onboarding/dismiss"
+        {
+            return self.host_request(method, path, action, body);
+        }
         if path == "/app/members" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -194,6 +203,72 @@ impl Reader {
             return Response::error(405, "此路由只接受 GET");
         }
         self.respond(path)
+    }
+
+    pub fn configure_hosts(&self, context: crate::hosts::Context) {
+        *self.hosts.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(crate::hosts::Hosts::new(context));
+    }
+
+    pub fn refresh_hosts(&self) {
+        if let Some(hosts) = self
+            .hosts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
+        {
+            hosts.refresh();
+        }
+    }
+
+    fn host_request(
+        &self,
+        method: &str,
+        path: &str,
+        action: Option<&str>,
+        body: &[u8],
+    ) -> Response {
+        let read = matches!(path, "/app/hosts" | "/app/onboarding");
+        let write = matches!(
+            path,
+            "/app/hosts/refresh"
+                | "/app/hosts/connect"
+                | "/app/hosts/remove"
+                | "/app/hosts/entry"
+                | "/app/onboarding/dismiss"
+        );
+        if !read && !write {
+            return Response::error(404, "未知路由");
+        }
+        if (read && method != "GET") || (write && method != "POST") {
+            return Response::error(405, "此路由不接受该方法");
+        }
+        if write && action != Some("1") {
+            return Response::error(403, "缺少操作请求头");
+        }
+        let mut guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(hosts) = guard.as_mut() else {
+            return Response::error(503, "宿主接入尚未初始化");
+        };
+        match path {
+            "/app/hosts" => Response::json(&hosts.snapshot()),
+            "/app/hosts/refresh" => Response::json(&hosts.refresh()),
+            "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
+            "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {
+                Ok(result) => Response::json(&result),
+                Err(error) => Response::error(500, &error),
+            },
+            _ => {
+                let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                    return Response::error(400, "请求必须为 JSON");
+                };
+                let operation = path.rsplit('/').next().unwrap();
+                match hosts.action(operation, &payload) {
+                    Ok(result) => Response::json(&result),
+                    Err(error) => Response::error(400, &error),
+                }
+            }
+        }
     }
 
     /// `GET /settings/members`, re-probing the CLIs when `refresh` is set.

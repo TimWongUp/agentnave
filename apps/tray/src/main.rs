@@ -3,8 +3,10 @@
 
 mod data;
 mod detect;
+mod hosts;
 mod manage;
 mod members;
+mod onboarding;
 mod stage;
 mod update;
 
@@ -97,6 +99,9 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle();
+            reader.configure_hosts(hosts::Context::live(handle.path().app_data_dir()?));
+            let takeover = reader.clone();
+            thread::spawn(move || takeover.refresh_hosts());
             build_panel(handle)?;
             let overview = reader.overview();
             // Left click opens the panel; right click shows this short menu.

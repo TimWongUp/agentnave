@@ -213,6 +213,31 @@ example for hosts that document this shape, not a universal MCP configuration st
 unrelated server entries. JSON does not expand shell variables. Codex uses its own configuration
 format; register it with the official CLI command below instead of copying this JSON into Codex.
 
+### 由 App 接入（保留下方手动方式）
+
+托盘 App 的宿主接入后端可检测本机宿主并注册用户级 `agentnave`，默认工作室入口，亦可切到核心。接入同时安装 App 内嵌的同版本 Skill；已有部署管理器的目录或符号链接一律保留。服务未安装时先使用 App 现有“安装/升级本机服务”动作，App 从 uv 工具环境的 `agentnave/bin`（Windows 为 `Scripts`）取真实 launcher，不依赖 shell 别名。
+
+启动及刷新只接管**已有**条目：补 `AGENTNAVE_HOST`，必要时修复失效的同类 launcher，保留所有原 env、参数、启停与工具选择。新增宿主需显式接入，孤留条目需显式移除，不自动增加组员。项目级同名配置只提示，不修改。每次配置写入前备份到 App 数据目录的 `backups/`，全局保留最近 30 份；写后校验失败回滚。App 管理本地配置，真正的 MCP/Skill 发现仍需按第 5 节验证。
+
+下表是后端的用户级路径（`~` 为有效 HOME）。CLI 更新不能表达的旧字段在同一备份事务中恢复；宿主已卸载、CLI 不存在时，显式移除孤留条目采用受校验的文件编辑。
+
+| 宿主 ID | 写入方式 | MCP 配置 | Skill 根目录 | tested |
+| --- | --- | --- | --- | --- |
+| codex | `codex mcp add/remove` | `$CODEX_HOME/config.toml`，默认 `~/.codex/config.toml` | `$CODEX_HOME/skills` | true |
+| claude | `claude mcp add/remove --scope user` | `~/.claude.json`；设置 `CLAUDE_CONFIG_DIR` 时为该目录的 `.claude.json` | `${CLAUDE_CONFIG_DIR:-~/.claude}/skills` | true |
+| codebuddy | `codebuddy mcp add/remove --scope user` | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/.mcp.json` | 同配置目录的 `skills` | true |
+| workbuddy | JSON 编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.workbuddy}/mcp.json` | 同配置目录的 `skills` | true |
+| grok | `grok mcp add/remove --scope user` | `${GROK_HOME:-~/.grok}/config.toml` | 同配置目录的 `skills` | true |
+| antigravity | JSON 编辑 | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills` | true |
+| pi | `pi mcp add/remove`，不启动会话 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置目录的 `skills` | false |
+| gemini | `gemini mcp add/remove --scope user` | `~/.gemini/settings.json`，`mcpServers` | `~/.gemini/skills` | false |
+| opencode | JSON/JSONC 编辑 | `~/.config/opencode/opencode.json(c)`，`mcp`；支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG` | 有效 OpenCode 配置目录的 `skills` | false |
+| hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置目录的 `skills` | true（现状读取） |
+
+`tested` 沿用契约中的现状核实范围，不表示本轮执行过真实接入或模型调用。Pi 的 MCP 命令与 `agentDir/skills` 已从安装包帮助、`dist/config.js`、`dist/core/skills.js` 核实，仍标“未实测”。Hermes 新条目显式 `enabled: true`，省略 `tools.include/exclude` 表示启用全部工具；接管保留旧过滤，尤其 `include: []`（阻止全部工具），不调用会连接服务器并询问工具选择的 `hermes mcp add`。
+
+Gemini 与 OpenCode 按 [Gemini MCP](https://geminicli.com/docs/tools/mcp-server/)、[Gemini Skill](https://geminicli.com/docs/cli/using-agent-skills/)、[OpenCode MCP](https://opencode.ai/docs/mcp-servers/) 和 [OpenCode Skill](https://opencode.ai/docs/skills/) 官方文档实现，本机未安装、未实测。OpenCode 本地条目使用 `type: local`、数组 `command`、`environment` 和 `enabled`。Hermes 的非普通 YAML MCP 映射、锚点/别名、文档指令等结构拒绝自动写入，保留文件并提示手动处理；无需联网安装 YAML 依赖。
+
 ### Codex
 
 ```bash
@@ -345,10 +370,14 @@ configuration directories.
 | --- | --- |
 | Codex | `~/.codex/skills` |
 | Claude Code | `~/.claude/skills` |
+| CodeBuddy Code | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/skills` |
 | WorkBuddy | `~/.workbuddy/skills` |
 | Grok CLI | `~/.grok/skills` |
 | Antigravity | `~/.gemini/config/skills` |
 | Hermes | `~/.hermes/skills` |
+| Pi | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` |
+| Gemini CLI | `~/.gemini/skills`（官方文档，未实测） |
+| OpenCode | 有效配置目录的 `skills`，默认 `~/.config/opencode/skills`（未实测） |
 
 First inspect the host's effective Skill discovery locations and any existing deployment-manager
 entry. Check `agentnave-manager` in both user and project scopes, its source/release, and all of

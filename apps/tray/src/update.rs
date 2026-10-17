@@ -353,7 +353,7 @@ fn service_state(mut service: Value, upgrade: Upgrade) -> Value {
 }
 
 /// UTC `YYYY-MM-DDTHH:MM:SSZ`.
-fn rfc3339(at: SystemTime) -> String {
+pub(crate) fn rfc3339(at: SystemTime) -> String {
     let seconds = at
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
