@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -10,6 +11,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from agentnave import relay as launcher
 from agentnave.relay import serve
 
 # A stand-in MCP server: refuses calls before the handshake, reports its pid and session, is busy
@@ -149,3 +153,52 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
 
     host.writer.close()
     host.thread.join(10)
+
+
+def test_relay_recovers_after_long_capped_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relay = launcher.Relay(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        pin=set(),
+        site=tmp_path,
+        stdin=io.BytesIO(),
+        stdout=io.BytesIO(),
+        interval=5.0,
+    )
+    elapsed = 0.0
+    attempts: list[float] = []
+    fingerprints = iter([(("old", 1),)])
+
+    def tick(seconds: float) -> bool:
+        nonlocal elapsed
+        elapsed += seconds
+        return relay.stopped.is_set()
+
+    def swap() -> str:
+        attempts.append(elapsed)
+        if len(attempts) > 1100:
+            relay.stopped.set()
+            return "swapped"
+        return "failed"
+
+    def installed(_site: Path) -> launcher.Fingerprint:
+        return next(fingerprints, (("new", 2),))
+
+    monkeypatch.setattr(launcher, "fingerprint", installed)
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: elapsed)
+    monkeypatch.setattr(relay.stopped, "wait", tick)
+    monkeypatch.setattr(relay, "_from_host", lambda: None)
+    monkeypatch.setattr(relay, "_swap", swap)
+    try:
+        assert relay.run() == 0
+        assert len(attempts) == 1101
+        assert [b - a for a, b in zip(attempts, attempts[1:], strict=False)][:3] == [
+            10.0,
+            20.0,
+            40.0,
+        ]
+        assert attempts[-1] - attempts[-2] == 300.0
+    finally:
+        relay.child.close()
+        relay.child.process.wait(timeout=5)

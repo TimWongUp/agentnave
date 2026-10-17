@@ -375,7 +375,7 @@ impl Group {
         members.into_iter().map(|m| m.value.clone()).collect()
     }
 
-    fn timeline(&self) -> Vec<Value> {
+    fn timeline(&self, focus: Option<&str>) -> Vec<Value> {
         let mut messages: Vec<_> = self.messages.iter().collect();
         messages.sort_by_key(|m| timestamp(text(m, "time")).unwrap_or_default());
         let mut typing: Vec<_> = self.typing.values().map(|(_, message)| message).collect();
@@ -387,7 +387,14 @@ impl Group {
         });
         messages.extend(typing);
         let skip = messages.len().saturating_sub(300);
-        messages.into_iter().skip(skip).cloned().collect()
+        messages
+            .into_iter()
+            .enumerate()
+            .filter(|(index, message)| {
+                *index >= skip || focus.is_some_and(|id| text(message, "conversation") == id)
+            })
+            .map(|(_, message)| message.clone())
+            .collect()
     }
 
     fn message(
@@ -581,6 +588,20 @@ impl Group {
                     model,
                     &format!("{} · {model}", label(Some(text(task, "provider")))),
                 );
+                // Failed calls can still contain a useful native answer; keep it beside the
+                // failure notice now that chat is the App's only history reader.
+                if !matches!(status, "succeeded" | "review") && !text(task, "output").is_empty() {
+                    let mut output = Self::message(
+                        format!("{id}:output"),
+                        &time,
+                        &item.id,
+                        "reply",
+                        who.clone(),
+                        text(task, "output"),
+                    );
+                    output["status"] = json!(status);
+                    self.messages.push(output);
+                }
                 let body = if status == "succeeded" {
                     text(task, "output").to_owned()
                 } else if status == "review" {
@@ -781,7 +802,14 @@ pub(crate) fn chat_group(item: &Item) -> Option<String> {
 
 pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: bool) -> Response {
     let requested = path.strip_prefix("/app/chats/");
-    if requested.is_some_and(|id| !valid_id(id)) {
+    let (requested, focus) = match requested {
+        Some(path) => match path.split_once("/focus/") {
+            Some((group, conversation)) => (Some(group), Some(conversation)),
+            None => (Some(path), None),
+        },
+        None => (None, None),
+    };
+    if requested.is_some_and(|id| !valid_id(id)) || focus.is_some_and(|id| !valid_id(id)) {
         return Response::error(404, "not found");
     }
     snapshots.sort_by_key(|s| {
@@ -830,12 +858,15 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
         let Some(group) = groups.iter_mut().find(|g| g.id == id) else {
             return Response::error(404, "not found");
         };
+        if focus.is_some_and(|id| !group.conversations.iter().any(|c| c["id"] == id)) {
+            return Response::error(404, "not found");
+        }
         group.project(&snapshots, true);
         let mut value = group.header();
         value.as_object_mut().unwrap().remove("updated");
         value["conversations"] = json!(group.conversations);
         value["members"] = json!(group.members());
-        value["messages"] = json!(group.timeline());
+        value["messages"] = json!(group.timeline(focus));
         return Response::json(&value);
     }
     if path == "/app/stage" {
@@ -871,7 +902,7 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
                 value["title"] = json!(g.title);
                 value["conversations"] = json!(g.conversations.len());
                 value["preview"] = json!(
-                    g.timeline()
+                    g.timeline(None)
                         .last()
                         .map(|m| line("succeeded", text(m, "text"), ""))
                         .unwrap_or_default()

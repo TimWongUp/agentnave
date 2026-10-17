@@ -25,6 +25,7 @@ from agentnave_studio.store import (
     RoundRecord,
     SeatRecord,
     SeatRunRecord,
+    TaskRecord,
 )
 from agentnave_studio.studio import Studio
 
@@ -362,7 +363,7 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
 
 
 @pytest.mark.asyncio
-async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_links(
+async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
     tmp_path: Path, data_root: Path
 ) -> None:
     async with Client(mcp) as client:
@@ -445,6 +446,56 @@ async def test_tasks_are_saved_grouped_and_deleted_with_automatic_dashboard_link
         await _call(client, "cancel_agent", {"invocation_id": sleeping["invocation_id"]})
         await asyncio.sleep(0.05)  # let the collector save the cancelled task
     assert not list((data_root / "live").glob("*.json"))  # removed once nothing runs
+
+
+@pytest.mark.asyncio
+async def test_resume_uses_latest_binding_when_old_archived_history_duplicates_session(
+    tmp_path: Path, data_root: Path
+) -> None:
+    for conversation_id, time, archived in [
+        ("000-old", "2026-01-01T00:00:00+00:00", True),
+        ("999-new", "2026-01-02T00:00:00+00:00", False),
+    ]:
+        directory = data_root / "conversations" / conversation_id
+        record = Record.create(
+            directory,
+            Conversation(
+                id=conversation_id,
+                title=conversation_id,
+                kind="task",
+                created=time,
+                manager_session="a" * 32 if archived else "b" * 32,
+                tasks=[
+                    TaskRecord(
+                        id="saved",
+                        provider="claude",
+                        model="test-model",
+                        cwd=str(tmp_path),
+                        session_id="shared-session",
+                        status="succeeded",
+                        time=time,
+                    )
+                ],
+            ),
+        )
+        record.release()
+        path = directory / "state.json"
+        legacy = json.loads(path.read_text())
+        legacy["archived"] = archived
+        path.write_text(json.dumps(legacy))
+    studio = Studio(InvocationManager(), data_root)
+    try:
+        invocation, conversation = studio.start_task(
+            InvocationRequest("claude", "continue", tmp_path, "shared-session"), None, None
+        )
+        assert conversation == "999-new"
+        await studio.manager.wait(invocation)
+        await asyncio.gather(*studio.collectors)
+        assert len(studio.records["000-old"].state.tasks) == 1
+        assert len(studio.records["999-new"].state.tasks) == 2
+        assert studio.records["999-new"].state.manager_session == "b" * 32
+    finally:
+        await studio.close()
 
 
 @pytest.mark.asyncio

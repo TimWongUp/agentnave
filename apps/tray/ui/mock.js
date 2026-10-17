@@ -449,7 +449,7 @@ All checks passed!
     if (path === "/app/stage") return stage();
     if (path === "/app/chats") return chats();
     if (path === "/app/status") return status();
-    const m = /^\/app\/chats\/([^/?#]+)$/.exec(path);
+    const m = /^\/app\/chats\/([^/?#]+)(?:\/focus\/[^/?#]+)?$/.exec(path);
     if (m) return chat(decodeURIComponent(m[1]));
     throw Object.assign(new Error("404"), { status: 404 });
   }

@@ -164,7 +164,7 @@ class Relay:
         threading.Thread(target=self._from_host, daemon=True).start()
         installed = fingerprint(self.site)
         candidate: Fingerprint | None = None
-        failures = 0
+        retry_delay = self.interval
         retry_at = 0.0
         since = 0.0
         reported = False
@@ -175,9 +175,9 @@ class Relay:
                 continue
             if seen != candidate:
                 # Wait one more interval for the install to settle.
-                candidate, failures, retry_at, since, reported = (
+                candidate, retry_delay, retry_at, since, reported = (
                     seen,
-                    0,
+                    self.interval,
                     0.0,
                     time.monotonic(),
                     False,
@@ -190,8 +190,8 @@ class Relay:
                 installed = seen
             elif outcome == "failed":
                 # A new install may fail to start once (e.g. still being written); back off, retry.
-                failures += 1
-                retry_at = time.monotonic() + min(_RETRY_LIMIT, self.interval * 2**failures)
+                retry_delay = min(_RETRY_LIMIT, retry_delay * 2)
+                retry_at = time.monotonic() + retry_delay
             elif not reported and time.monotonic() - since > _BUSY_REPORT:
                 reported = True
                 print(f"agentnave relay: update waiting, {self._busy_reason()}", file=sys.stderr)

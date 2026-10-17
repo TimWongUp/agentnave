@@ -908,6 +908,9 @@ mod tests {
             3
         );
 
+        old["summary"]["manager_session"] = json!(MANAGER);
+        old["summary"]["archived"] = json!(true);
+        save(dir.path(), &old);
         let mut many = task_snapshot("many", "running", "2099-01-01T00:00:00Z");
         many["director"]["tasks"] = json!((0..160).map(|i| json!({"id": i.to_string(), "provider": "pi", "model": "m",
             "status": if i == 159 { "running" } else { "succeeded" }, "time": format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
@@ -922,6 +925,42 @@ mod tests {
         let members = chat["members"].as_array().unwrap();
         assert_eq!(members[0]["key"], "pi/m");
         assert_eq!(members[1]["key"], "codex/m");
+
+        // A management deep link must still expose an older conversation in the same group.
+        let focused = state(&reader, &format!("/app/chats/{MANAGER}/focus/old"));
+        let focused_messages = focused["messages"].as_array().unwrap();
+        assert!(focused_messages.iter().any(|m| m["conversation"] == "old"));
+        assert!(focused_messages.len() > 300);
+        assert_eq!(
+            reader
+                .respond(&format!("/app/chats/{MANAGER}/focus/missing"))
+                .status,
+            404
+        );
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["messages"],
+            chat["messages"]
+        );
+    }
+
+    #[test]
+    fn failed_task_keeps_native_output_beside_the_failure_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = task_snapshot("failed", "blocked", "2026-10-15T01:00:00Z");
+        task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
+        task["director"]["tasks"][0]["error"] = json!("permission_denied");
+        save(dir.path(), &task);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let messages = chat["messages"].as_array().unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["kind"] == "reply" && m["text"] == "已完成的部分结果")
+        );
+        assert!(messages.iter().any(|m| m["kind"] == "notice"
+            && m["status"] == "blocked"
+            && m["detail"] == "permission_denied"));
     }
 
     #[test]

@@ -418,13 +418,20 @@ class Studio(Groups):
                 if record is None:
                     # Another server may have created or extended this session's conversation.
                     self.scan()
-                    record = next(
+                    record = max(
                         (
                             item
                             for item in self.records.values()
                             if item.state.kind == "task" and any(map(resumes, item.state.tasks))
                         ),
-                        None,
+                        # Old versions could split a session after archiving its first record.
+                        # Continue the most recent binding, independent of directory order.
+                        key=lambda item: (
+                            max(task.time for task in item.state.tasks if resumes(task)),
+                            item.state.created,
+                            item.state.id,
+                        ),
+                        default=None,
                     )
                     if record is not None:
                         # Lock before checking: never split one native session across conversations.

@@ -23,7 +23,7 @@ const state = {
   chat: null, // last timeline payload
   loaded: null, // group id whose nodes are currently in the timeline
   nodes: new Map(), expanded: new Set(), seenIds: new Set(),
-  unseen: 0, ready: false, hashKey: null, headKey: "",
+  unseen: 0, ready: false, hashKey: null, focused: false, headKey: "",
   chips: new Map(), convChips: new Map(), refreshing: false, again: false,
 };
 
@@ -57,6 +57,7 @@ function go(path, replace) {
 function sync() {
   const fromUrl = groupFromLocation();
   state.hashKey = keyFromHash();
+  state.focused = false;
   if (fromUrl) { state.selected = fromUrl; state.auto = false; }
   else if (narrow.matches) { state.selected = null; state.auto = false; }
   else state.auto = true; // wide window without a group: first group is picked in refresh()
@@ -65,8 +66,7 @@ function sync() {
 window.addEventListener("popstate", () => { sync(); refresh(); });
 window.addEventListener("hashchange", () => {
   sync();
-  if (state.loaded === state.selected && state.hashKey) focusMember(state.hashKey);
-  else refresh();
+  refresh();
 });
 narrow.addEventListener("change", () => { sync(); renderList(); placeOb(); measureAll(); });
 
@@ -175,7 +175,7 @@ function renderHead(c) {
     let chip = state.convChips.get(cv.id);
     if (!chip) {
       chip = h("button.cchip", { type: "button" }, h("span.glyph"), h("span.cchip-title"), h("i.dot"));
-      chip.addEventListener("click", () => focusMember(`conv:${cv.id}`));
+      chip.addEventListener("click", () => go(`/chat/${state.selected}#conv:${encodeURIComponent(cv.id)}`));
       state.convChips.set(cv.id, chip);
     }
     const [label, tone2] = pick(CONV, cv.status);
@@ -408,7 +408,11 @@ function renderTimeline(c) {
     el.tl.scrollTop = el.tl.scrollHeight;
     state.unseen = 0;
   } else if (fresh.length) state.unseen += fresh.length;
-  if (newGroup && state.hashKey) setTimeout(() => focusMember(state.hashKey), 0);
+  if ((newGroup || !state.focused) && state.hashKey) {
+    const key = state.hashKey;
+    state.focused = true;
+    setTimeout(() => focusMember(key), 0);
+  }
   updateJump();
   if (spoken.length) $("announce").textContent = spoken.join("；");
 }
@@ -452,7 +456,7 @@ function showBlank(kind) {
   const text = {
     nogroups: ["还没有群聊", "在主控 Agent（Claude Code、Codex CLI 等）里派出任务或开始节目，对应的群会自动出现在这里。"],
     pick: ["选一个群开始查看", "左侧是每个主控会话的群，进行中的排在最前面。"],
-    missing: ["找不到这个群", "它可能已被归档或删除。"],
+    missing: ["找不到这个群或会话", "它可能已被删除。"],
     loading: ["正在读取群聊…", ""],
     error: ["无法读取群聊", "正在重试，请稍候。"],
   }[kind];
@@ -486,13 +490,15 @@ async function refresh() {
       return;
     }
     const selected = state.selected;
+    const hashKey = state.hashKey;
+    const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
     if (state.loaded !== selected) showBlank("loading");
     let chat;
     try {
-      chat = await load(`/app/chats/${encodeURIComponent(selected)}`);
-      if (selected !== state.selected) { state.again = true; return; }
+      chat = await load(`/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`);
+      if (selected !== state.selected || hashKey !== state.hashKey) { state.again = true; return; }
     } catch (e) {
-      if (selected !== state.selected) { state.again = true; return; }
+      if (selected !== state.selected || hashKey !== state.hashKey) { state.again = true; return; }
       if (e.status === 404) showBlank("missing");
       else {
         el.banner.hidden = false;
