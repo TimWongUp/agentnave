@@ -708,6 +708,54 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
     assert saved["sessions"]["a"]["session_id"] is not None
 
 
+@pytest.mark.asyncio
+async def test_round_save_retry_keeps_manager_model(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Fragile identity",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        replace = os.replace
+        failed = False
+
+        def fail_first_round_save(source: str, target: Path) -> None:
+            nonlocal failed
+            if not failed and target.name == "state.json":
+                pending = json.loads(Path(source).read_text())
+                if pending["rounds"]:
+                    failed = True
+                    raise OSError("disk full")
+            replace(source, target)
+
+        monkeypatch.setattr(os, "replace", fail_first_round_save)
+        started = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": show["group_id"],
+                "seats": ["a"],
+                "order": "parallel",
+                "prompt": "go",
+                "manager_model": "gpt-6",
+            },
+        )
+        done = await _wait(client, started["round_id"])
+        assert "state_write_failed" in str(done["error"])
+
+    saved = json.loads(
+        (data_root / "conversations" / str(show["group_id"]) / "state.json").read_text()
+    )
+    assert [entry["kind"] for entry in saved["entries"]] == ["task", "absent"]
+    assert saved["entries"][0]["manager_model"] == "gpt-6"
+
+
 @pytest.mark.parametrize("review", [False, True])
 def test_failed_review_round_does_not_resurrect_unapproved_answers(review: bool) -> None:
     state = Conversation(id="c", title="t", kind="show", review=review)
