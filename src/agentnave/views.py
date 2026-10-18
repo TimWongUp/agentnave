@@ -147,7 +147,7 @@ def _director(
         }
         for round_ in state.rounds
         for seat in round_.seats
-        if seat.review == "discard" and seat.output
+        if seat.review == "discard" and seat.output is not None
     ]
     data.update(
         {

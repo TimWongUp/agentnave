@@ -1209,6 +1209,31 @@ async def test_dashboard_refresh_sleeps_when_idle_and_recovers_read_errors(
         await manager.shutdown()
 
 
+def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None:
+    state = Conversation(
+        id="empty-private",
+        title="Empty",
+        kind="show",
+        review=True,
+        rounds=[
+            RoundRecord(
+                id="round",
+                number=1,
+                order="parallel",
+                status="finished",
+                seats=[
+                    SeatRunRecord(seat_id="a", status="succeeded", review="discard", output=""),
+                    SeatRunRecord(seat_id="b", status="succeeded", review="discard", output=None),
+                ],
+            )
+        ],
+    )
+    projected = views.snapshot(state, "")
+    private = _data(projected["director"])["private_messages"]
+    assert private == [{"round": 1, "seat_id": "a", "text": "", "time": state.created}]
+    assert "private_messages" not in _data(projected["public"])
+
+
 def test_host_projection_does_not_collide_with_director_seat() -> None:
     state = Conversation(
         id="show",
