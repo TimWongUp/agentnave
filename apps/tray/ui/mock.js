@@ -476,14 +476,16 @@ All checks passed!
   let serviceReady = !freshHosts, dismissed = false, installedState = null;
   const hostRows = ["codex", "pi", "workbuddy", "hermes"].map((id, index) => {
     const root = `/preview/${id}`;
+    const label = HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id;
+    const reload = id === "workbuddy" ? "重启 WorkBuddy 后生效" : `重启 ${label}，或新建会话后生效`;
     const connected = !freshHosts && index === 0;
     const orphan = !freshHosts && id === "hermes";
-    return { id, label: HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id, installed: !orphan, detect_source: orphan ? "config" : "path",
+    return { id, label, installed: !orphan, detect_source: orphan ? "config" : "path",
       status: orphan ? "orphaned" : connected ? "connected" : "available", entry: connected || orphan ? "agentnave" : null,
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
-      first_seen: "2026-10-17T00:00:00Z", attention: null, last_action: null,
+      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入或更新 Skill 后，${reload}`, attention: null, last_action: null,
       skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null } };
   });
   if (hostScene === "typical") {

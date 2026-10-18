@@ -612,7 +612,7 @@ impl Hosts {
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":host.skill.as_ref().map(|p|skill::state(p,&self.context.home)).unwrap_or_else(||json!({"state":"manual","path":null,"version":null})),
-            "attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
+            "reload_hint":activation_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     pub fn cached_snapshot(&self) -> &Value {
         &self.cached
@@ -667,7 +667,8 @@ impl Hosts {
             if !self.detect(&host).0
                 || !host.root.confirmed
                 || self.settings_error.is_some()
-                || self.shell.as_ref().is_some_and(Result::is_err)
+                || (self.shell.as_ref().is_some_and(Result::is_err)
+                    && !self.manual_roots.contains(host.id))
             {
                 continue;
             }
@@ -689,7 +690,12 @@ impl Hosts {
             if self.failed.get(host.id) == Some(&signature) {
                 continue;
             }
-            let result: Result<bool, String> = (|| {
+            let managed_before = layers.iter().any(|(_, entry)| {
+                entry
+                    .as_ref()
+                    .is_some_and(|entry| managed_entry(&host, entry))
+            });
+            let result: Result<(bool, bool), String> = (|| {
                 let mut changed = false;
                 for (path, _) in &layers {
                     let mut layer = host.clone();
@@ -726,28 +732,32 @@ impl Hosts {
                         },
                     )?;
                 }
-                let skill_changed = if let Some(path) = &host.skill {
-                    let state = skill::state(path, &self.context.home);
-                    if state["state"] == "app" && state["version"] != VERSION {
-                        skill::install(path, &self.context.app, host.id, &self.context.home)?;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                Ok(changed || skill_changed)
+                // Require a new-format entry both before and after the transaction. The preflight
+                // check keeps legacy migration from installing a Skill in the same refresh; the
+                // post-transaction check prevents a concurrently removed entry from being revived.
+                Ok((changed, managed_before && self.has_managed_entry(&host)?))
             })();
             match result {
-                Ok(true) => {
-                    let text = format!("已接管条目或更新 Skill{}", trust_hint(host.id));
-                    self.record(host.id, Ok(()), &text)
-                }
-                Ok(false) => {
-                    self.failed.remove(host.id);
-                    self.failures.remove(host.id);
-                }
+                Ok((changed, managed_entry)) => match self.ensure_skill(&host, managed_entry) {
+                    Ok(skill_changed) if changed || skill_changed => {
+                        let text = format!(
+                            "已接管条目或更新 Skill{}；{}",
+                            trust_hint(host.id),
+                            activation_hint(host.id)
+                        );
+                        self.record(host.id, Ok(()), &text)
+                    }
+                    Ok(_) => {
+                        self.failed.remove(host.id);
+                        self.failures.remove(host.id);
+                    }
+                    Err(error) => {
+                        // Retry Skill failures on every refresh; unlike a config conflict, a transient
+                        // filesystem problem must not disable automatic repair for this host.
+                        self.failed.remove(host.id);
+                        self.record(host.id, Err(error), "");
+                    }
+                },
                 Err(error) => {
                     self.failed.insert(host.id.into(), signature);
                     self.record(host.id, Err(error), "");
@@ -867,13 +877,24 @@ impl Hosts {
                 _ => return Err("未知宿主操作".into()),
             }
             self.write(&host, &before, desired.as_ref())?;
-            if operation == "connect"
-                && let Some(path) = &host.skill
+            // The MCP entry is already connected even if the following Skill write fails.
+            self.manual_roots.insert(id.into());
+            let skill_changed = operation == "connect" && self.ensure_skill(&host, true)?;
+            let state = host
+                .skill
+                .as_ref()
+                .map(|path| skill::state(path, &self.context.home));
+            let done = if skill_changed {
+                "已接入并自动安装或更新 Skill"
+            } else if state
+                .as_ref()
+                .is_some_and(|state| state["state"] == "external")
             {
-                skill::install(path, &self.context.app, id, &self.context.home)?;
-            }
-            let done = "已接入；外部管理的 Skill 保留";
-            Ok(format!("{done}{}", trust_hint(id)))
+                "已接入；外部管理的 Skill 保留"
+            } else {
+                "已接入；Skill 已是最新"
+            };
+            Ok(format!("{done}{}；{}", trust_hint(id), activation_hint(id)))
         })();
         let ok = result.is_ok();
         let text = result
@@ -934,6 +955,33 @@ impl Hosts {
             },
         )
     }
+    fn ensure_skill(&self, host: &Host, install_missing: bool) -> Result<bool, String> {
+        let Some(path) = &host.skill else {
+            return Ok(false);
+        };
+        let state = skill::state(path, &self.context.home);
+        let missing = state["state"] == "missing";
+        let outdated = state["state"] == "app" && state["version"] != VERSION;
+        if (missing && install_missing) || outdated {
+            skill::install(path, &self.context.app, host.id, &self.context.home)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn has_managed_entry(&self, host: &Host) -> Result<bool, String> {
+        for path in &host.user_layers {
+            if host
+                .read_at(path)?
+                .entry
+                .as_ref()
+                .is_some_and(|entry| managed_entry(host, entry))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 fn attention(code: &str, message: &str) -> Value {
     json!({"code":code,"message":message})
@@ -946,6 +994,28 @@ fn trust_hint(id: &str) -> &'static str {
         }
         _ => "",
     }
+}
+fn activation_hint(id: &str) -> String {
+    format!("接入或更新 Skill 后，{}", reload_hint(id))
+}
+fn reload_hint(id: &str) -> &'static str {
+    match id {
+        "codex" => "重启 Codex 应用，或新建会话后生效",
+        "claude" => "重启 Claude Code，或新建会话后生效",
+        "codebuddy" => "重启 CodeBuddy Code，或新建会话后生效",
+        "workbuddy" => "重启 WorkBuddy 后生效",
+        "grok" => "重启 Grok CLI，或新建会话后生效",
+        "antigravity" => "重启 Antigravity，或新建会话后生效",
+        "pi" => "重启 Pi，或新建会话后生效",
+        "gemini" => "重启 Gemini CLI，或新建会话后生效",
+        "opencode" => "重启 OpenCode，或新建会话后生效",
+        "hermes" => "重启 Hermes 网关，或新建会话后生效",
+        _ => "重启宿主应用，或新建会话后生效",
+    }
+}
+fn managed_entry(host: &Host, entry: &Value) -> bool {
+    host.command(entry)
+        .is_some_and(|command| entry_kind(command) == "agentnave")
 }
 fn message(error: &str) -> &str {
     error_parts(error, "takeover_failed").1

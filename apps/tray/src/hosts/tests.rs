@@ -491,7 +491,16 @@ fn multilayer_migration_and_removal_leave_project_configuration_untouched() {
             .all(|l| l["has_entry"] == false)
     );
     assert_eq!(fs::read(project).unwrap(), project_bytes);
-    assert_eq!(backup_paths(&hosts.context.app).len(), 8);
+    let config_backups = backup_paths(&hosts.context.app)
+        .iter()
+        .filter(|path| {
+            let name = path.file_name().unwrap().to_string_lossy();
+            ["opencode.json", "opencode.jsonc", "custom.json"]
+                .iter()
+                .any(|file| name.contains(&format!("-{file}-")))
+        })
+        .count();
+    assert_eq!(config_backups, 8);
 }
 
 #[test]
@@ -523,6 +532,13 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
         );
         assert_eq!(result["host"]["status"], "connected");
         assert_eq!(result["host"]["skill"]["state"], "app");
+        assert!(
+            result["host"]["reload_hint"]
+                .as_str()
+                .unwrap()
+                .contains("重启")
+        );
+        assert!(result["host"]["attention"].is_null());
         let before = fs::read(&h.config).unwrap();
         hosts.refresh();
         assert_eq!(fs::read(&h.config).unwrap(), before);
@@ -733,6 +749,31 @@ fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() 
 }
 
 #[test]
+fn legacy_entry_migrates_without_installing_a_skill() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let path = h.skill.as_ref().unwrap();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
+    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{
+            "command":legacy,
+            "env":{"AGENTNAVE_HOST":"pi"}
+        }}})
+        .to_string(),
+    );
+
+    hosts.refresh();
+    assert_eq!(
+        h.read().unwrap().entry.unwrap()["command"],
+        json!(hosts.launcher())
+    );
+    assert_eq!(skill::state(path, &hosts.context.home)["state"], "missing");
+}
+
+#[test]
 fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writes() {
     let (_temp, mut hosts) = fixture();
     let script = hosts.context.home.join("fake-shell");
@@ -796,6 +837,56 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
         true
     );
     assert!(!marker.exists());
+}
+
+#[test]
+fn refresh_installs_missing_skill_only_for_managed_host_entry() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let path = h.skill.as_ref().unwrap();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+
+    hosts.refresh();
+    assert_eq!(skill::state(path, &hosts.context.home)["state"], "missing");
+
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{
+            "command":hosts.launcher(),
+            "env":{"AGENTNAVE_HOST":"pi"}
+        }}})
+        .to_string(),
+    );
+    hosts.refresh();
+    assert_eq!(skill::state(path, &hosts.context.home)["state"], "app");
+    assert_eq!(skill::state(path, &hosts.context.home)["version"], VERSION);
+    assert_eq!(hosts.state(&h)["status"], "connected");
+}
+
+#[test]
+#[cfg(unix)]
+fn connect_skill_failure_keeps_manual_root_for_refresh_retry() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let path = h.skill.as_ref().unwrap();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    hosts.shell = Some(Err("shell probe failed".into()));
+    save(path.parent().unwrap(), "not a directory");
+
+    let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
+    assert_eq!(result["ok"], false);
+    assert!(h.read().unwrap().entry.is_some());
+    assert!(hosts.manual_roots.contains("pi"));
+
+    fs::remove_file(path.parent().unwrap()).unwrap();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    hosts.refresh_probed();
+    let state = hosts.state(&h);
+    assert_eq!(
+        skill::state(path, &hosts.context.home)["state"],
+        "app",
+        "{state}"
+    );
 }
 
 #[test]
