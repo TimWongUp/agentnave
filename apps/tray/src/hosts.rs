@@ -690,6 +690,11 @@ impl Hosts {
             if self.failed.get(host.id) == Some(&signature) {
                 continue;
             }
+            let managed_before = layers.iter().any(|(_, entry)| {
+                entry
+                    .as_ref()
+                    .is_some_and(|entry| managed_entry(&host, entry))
+            });
             let result: Result<(bool, bool), String> = (|| {
                 let mut changed = false;
                 for (path, _) in &layers {
@@ -727,9 +732,10 @@ impl Hosts {
                         },
                     )?;
                 }
-                // Re-read after the transaction so a concurrent removal observed by its final
-                // rebase cannot leave us acting on the stale preflight entry.
-                Ok((changed, self.has_managed_entry(&host)?))
+                // Require a new-format entry both before and after the transaction. The preflight
+                // check keeps legacy migration from installing a Skill in the same refresh; the
+                // post-transaction check prevents a concurrently removed entry from being revived.
+                Ok((changed, managed_before && self.has_managed_entry(&host)?))
             })();
             match result {
                 Ok((changed, managed_entry)) => match self.ensure_skill(&host, managed_entry) {

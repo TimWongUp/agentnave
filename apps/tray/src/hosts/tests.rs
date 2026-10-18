@@ -749,6 +749,31 @@ fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() 
 }
 
 #[test]
+fn legacy_entry_migrates_without_installing_a_skill() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let path = h.skill.as_ref().unwrap();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
+    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{
+            "command":legacy,
+            "env":{"AGENTNAVE_HOST":"pi"}
+        }}})
+        .to_string(),
+    );
+
+    hosts.refresh();
+    assert_eq!(
+        h.read().unwrap().entry.unwrap()["command"],
+        json!(hosts.launcher())
+    );
+    assert_eq!(skill::state(path, &hosts.context.home)["state"], "missing");
+}
+
+#[test]
 fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writes() {
     let (_temp, mut hosts) = fixture();
     let script = hosts.context.home.join("fake-shell");
