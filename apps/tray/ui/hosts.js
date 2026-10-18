@@ -19,7 +19,7 @@ const ENTRY = { agentnave: "AgentNave", legacy: "旧版命令（待迁移）", o
 const S = {
   data: null,
   appVersion: "",
-  busy: new Map(), // host id -> "connect" | "skill" | "remove"
+  busy: new Map(), // host id -> "connect" | "remove"
   confirm: null, // host id whose removal is being confirmed
   adv: new Set(), // host ids whose 高级 panel is open
   roots: new Map(),
@@ -166,8 +166,8 @@ async function run(id, kind, request) {
   await reload();
   return result;
 }
-const connect = (host, kind = "connect") =>
-  run(host.id, kind, () =>
+const connect = (host) =>
+  run(host.id, "connect", () =>
     post("/app/hosts/connect", { id: host.id }),
   ).then((r) => {
     if (r?.ok) {
@@ -414,27 +414,17 @@ function skillNode(host) {
     return h(
       "span",
       {},
-      h("span.warn-text", {}, "需手动安装"),
+      h("span.warn-text", {}, "无法自动安装"),
       h("span.sub", {}, "· 该宿主的 Skill 目录尚未确定"),
     );
-  const fix =
+  const auto =
     host.status === "connected" &&
     (host.entry === "agentnave" || host.entry === "legacy");
-  const busy = S.busy.get(host.id) === "skill";
   return h(
     "span",
     {},
     h("span.dim", {}, "未安装"),
-    fix &&
-      (busy
-        ? h("span.sub", {}, "补装中…")
-        : button(
-            "补装 Skill",
-            ".link-btn",
-            "skill",
-            () => connect(host, "skill"),
-            S.busy.has(host.id),
-          )),
+    auto && h("span.sub", {}, "· 刷新检测时自动安装"),
   );
 }
 
@@ -483,7 +473,7 @@ function advPanel(host) {
       "Skill 目录",
       host.skill.path
         ? pathRow(host.skill.path)
-        : h("span.dim", {}, "未确定，需手动安装"),
+        : h("span.dim", {}, "未确定，无法自动安装"),
     ],
     ["检测来源", h("span", {}, host.detect_source === "app" ? `应用：${host.app_path || "已安装"}` : sourceText(host.detect_source))],
   ];
@@ -720,6 +710,16 @@ function buildCard(host) {
       {},
       h("div", {}, h("dt", {}, "入口"), h("dd", {}, entryNode(host))),
       h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
+      h(
+        "div",
+        {},
+        h("dt", {}, "生效"),
+        h(
+          "dd",
+          {},
+          host.reload_hint || "接入或更新 Skill 后，重启宿主应用，或新建会话后生效",
+        ),
+      ),
       h(
         "div.wide",
         {},
