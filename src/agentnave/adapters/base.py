@@ -120,6 +120,32 @@ def object_dict(value: object) -> dict[str, object]:
     return {str(key): item for key, item in mapping.items()}
 
 
+def model_from_event(provider: str, event: dict[str, object]) -> str | None:
+    """Read native model identity only from known top-level protocol fields."""
+    value: object = None
+    kind = event.get("type")
+    if provider in ("claude", "codebuddy") and event.get("parent_tool_use_id") is None:
+        if kind == "assistant":
+            value = object_dict(event.get("message")).get("model")
+        elif kind == "stream_event":
+            nested = object_dict(event.get("event"))
+            if nested.get("type") == "message_start":
+                value = object_dict(nested.get("message")).get("model")
+    elif provider == "pi" and kind == "message_end":
+        message = object_dict(event.get("message"))
+        if message.get("role") == "assistant":
+            value = message.get("responseModel") or message.get("model")
+    if (
+        isinstance(value, str)
+        and value.strip()
+        and value.strip() not in {"<synthetic>", "unknown"}
+        and len(value) <= 200
+        and all(c.isprintable() for c in value)
+    ):
+        return value.strip()
+    return None
+
+
 def normalized_usage(payload: dict[str, object]) -> dict[str, int | float]:
     """Keep only usage summary values supported by the stable MCP result contract."""
     nested = object_dict(payload.get("usage"))

@@ -13,7 +13,9 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 主控会话归属
 
-每次 `start_agent`、`open_group` 都传 `manager_session_id`，同一主控聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并保留到后续派发与续接，不按任务重新生成。新聊天使用新的值；续接原聊天沿用原值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。
+每次 `start_agent`、`open_group`、`run_round`、`post_host_message` 都传 `manager_session_id`，同一主控聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并保留到后续派发与续接，不按任务重新生成。新聊天使用新的值；续接原聊天沿用原值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。
+
+服务可从精确匹配的 Codex／Claude 原生会话记录读取本次主控模型；生成的归属 UUID 只能用于归组，不能保证识别模型。`manager_model` 仅在可信宿主上下文明确给出当前模型时补充，未知就省略；不从 CLI 默认配置或组员模型猜测。原生记录、调用方声明均不证明转发商实际使用的后端。
 
 服务按此身份把本聊天的全部任务与协作组展示为一条 App 群聊。实时 schema 不含该参数时报告旧连接需要更新服务并重连，不把参数被忽略视为归属已生效。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史已有其他主控归属时，用子 CLI 的 `session_id` 续接，新建当前主控的任务记录，不传另一主控的 `conversation_id`。
 

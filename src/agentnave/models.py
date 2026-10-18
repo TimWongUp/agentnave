@@ -132,6 +132,7 @@ class InvocationResult:
     provider_usage: dict[str, int | float]
     duration_ms: int
     error: InvocationError | None = None
+    reported_model: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {

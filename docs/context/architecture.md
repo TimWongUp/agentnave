@@ -148,4 +148,6 @@ GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell�
 
 ### 主控模型与头像
 
-`start_agent`、`run_round`、`post_host_message` 的可选 `manager_model` 是调用方声明的本次主控模型，仅用于记录与展示，不控制组员或 Provider 参数，也不证明后端实际模型。每次任务 prompt 与节目主控消息独立持久化该值；省略或 null 表示本条未知，不继承上一条，不从 CLI、组员默认配置或模型列表推断。旧消息缺字段仍为未知，中途换模型不回填历史。主控和组员消息均按各自模型显示头像；宿主 CLI 的列表、标题与接入页只展示文字身份及状态，不使用头像。公开看板只按当前 snapshot 返回实际使用的本地头像覆盖，完整配置仅限 director/home 等私有 capability。
+`start_agent`、`run_round`、`post_host_message` 的可选 `manager_model` 保存调用方声明的本次主控模型；`manager_reported_model` 独立保存从精确原生 session 读取的模型，展示时优先使用后者。Codex 取对应 rollout 的 `turn_context.payload.model`，Claude 取对应 transcript 的主会话 `assistant.message.model`。只在调用时读取匹配 UUID 的会话文件，按时间选择最近记录，不读取全局模型默认值；无原生 ID、文件不可读或不支持的宿主保持未知。原始主控 session ID 仅保留在当前服务内存，磁盘仍只存归属哈希；重启后由调用方沿用 `manager_session_id` 才能继续原生识别。每条消息独立保存，不把后来模型回填到旧消息。原生记录和调用方声明均不证明转发商实际后端，也不控制 Provider 参数。
+
+组员的调用指定 `model` 与原生消息回报 `reported_model` 分别保存，展示优先回报；Claude／CodeBuddy 仅采纳主会话消息模型，Pi 优先采纳完整 assistant 消息的 `responseModel`，Codex 可按返回的原生 session ID 读取本次调用启动后新增的对应 rollout 轮次。不从初始化默认值、累计 usage 或子代理消息推测主模型。未知时显示 CLI 名称并注明模型信息不可用，旧“原生设置”占位不作为模型名。主控和组员消息按各自模型显示头像；主控消息按本轮已启动席位显示收件头像，不显示 @ 或对象文字，悬停显示模型／CLI 与席位，点击按会话与席位定位消息。完整 JSON 与 fenced JSON 使用相同代码样式，所有代码块在气泡内换行。宿主 CLI 的列表、标题与接入页只展示文字身份及状态。公开看板只按当前 snapshot 返回实际使用的本地头像覆盖，完整配置仅限 director/home 等私有 capability。

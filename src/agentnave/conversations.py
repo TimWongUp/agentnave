@@ -22,7 +22,7 @@ from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
-from agentnave.host import Host, detect_host
+from agentnave.host import Host, detect_host, session_model
 from agentnave.models import InvocationRequest
 from agentnave.store import (
     Conversation,
@@ -89,6 +89,7 @@ class Conversations(Groups):
         self.home_token = uuid4().hex
         self.refresher: asyncio.Task[None] | None = None
         self.refresh_error: str | None = None
+        self._native_manager_sessions: dict[str, str] = {}
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
         # Completed replies remain readable, but never participate in group writes again.
         self._completed_rounds: dict[str, Round] = {}
@@ -202,7 +203,12 @@ class Conversations(Groups):
             raise ValueError("manager_session_id must contain 1–200 non-blank characters")
         # Namespace true chat identities separately from old per-connection UUIDs.
         identity = json.dumps([self.host.name, raw], ensure_ascii=False).encode()
-        return "s-" + hashlib.sha256(identity).hexdigest()[:32]
+        key = "s-" + hashlib.sha256(identity).hexdigest()[:32]
+        self._native_manager_sessions[key] = raw
+        return key
+
+    def _manager_model(self, session: str | None) -> str | None:
+        return session_model(self.host, self._native_manager_sessions.get(session or ""))
 
     def _create(
         self, state: Conversation, directory: Path, manager_session: str | None = None
@@ -302,6 +308,8 @@ class Conversations(Groups):
                         item.seat,
                         item.text,
                         item.manager_model,
+                        item.reported_model,
+                        item.manager_reported_model,
                     )
                     for item in state.entries
                 ],
@@ -323,10 +331,16 @@ class Conversations(Groups):
         instructions: dict[str, str],
         *,
         manager_model: str | None = None,
+        manager_session_id: str | None = None,
+        manager_reported_model: str | None = None,
     ) -> Round:
         with self._writing(group_id):
             self._group(group_id)
             state = self.records[group_id].state
+            if manager_session_id is not None:
+                session = self._manager_session(manager_session_id)
+                if session != state.manager_session:
+                    raise ValueError("Group belongs to a different manager session")
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
             return super().run(
@@ -336,16 +350,35 @@ class Conversations(Groups):
                 prompt,
                 instructions,
                 manager_model=manager_model,
+                manager_reported_model=self._manager_model(state.manager_session)
+                or manager_reported_model,
             )
 
-    def post(self, conversation_id: str, text: str, *, manager_model: str | None = None) -> None:
+    def post(
+        self,
+        conversation_id: str,
+        text: str,
+        *,
+        manager_model: str | None = None,
+        manager_session_id: str | None = None,
+    ) -> None:
         with self._writing(conversation_id):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
+            if manager_session_id is not None:
+                session = self._manager_session(manager_session_id)
+                if session != state.manager_session:
+                    raise ValueError("Group belongs to a different manager session")
             if group.active is not None or state.pending_review():
                 raise ValueError("post only between rounds, with no answers pending review")
             group.entries.append(
-                Entry(group.rounds, "host", text=text, manager_model=manager_model)
+                Entry(
+                    group.rounds,
+                    "host",
+                    text=text,
+                    manager_model=manager_model,
+                    manager_reported_model=self._manager_model(state.manager_session),
+                )
             )
             try:
                 self._save(group)
@@ -414,6 +447,8 @@ class Conversations(Groups):
                             item.seat,
                             item.text,
                             item.manager_model,
+                            item.reported_model,
+                            item.manager_reported_model,
                         )
                         for item in added
                     )
@@ -544,10 +579,11 @@ class Conversations(Groups):
             task = TaskRecord(
                 id=uuid4().hex,
                 provider=request.provider,
-                model=str(request.provider_options.get("model", "原生设置")),
+                model=str(request.provider_options.get("model", "")),
                 cwd=str(request.cwd),
                 prompt=request.prompt,
                 manager_model=manager_model,
+                manager_reported_model=self._manager_model(manager_session),
                 session_id=request.session_id,
                 time=now(),
             )
@@ -591,6 +627,7 @@ class Conversations(Groups):
             task.output = result.output
             task.session_id = result.session_id or task.session_id
             task.elapsed_ms = result.duration_ms
+            task.reported_model = result.reported_model or task.reported_model
             task.error = error
 
         finish(result.status.value, result.error.code if result.error else None)
@@ -627,6 +664,8 @@ class Conversations(Groups):
                 text=item.text,
                 time=now(),
                 manager_model=item.manager_model,
+                manager_reported_model=item.manager_reported_model,
+                reported_model=item.reported_model,
             )
             for item in group.entries[len(state.entries) :]
         )
@@ -664,6 +703,8 @@ class Conversations(Groups):
             saved.error = round_.error
             for run, seat in zip(round_.runs, saved.seats, strict=True):
                 seat.status = run.status
+                if run.result is not None:
+                    seat.reported_model = run.result.reported_model or seat.reported_model
                 seat.output = run.result.output if run.result is not None else None
                 error = run.result.error if run.result is not None else run.launch_error
                 seat.error = f"{error.code}: {error.message}" if error is not None else None
@@ -736,11 +777,20 @@ class Conversations(Groups):
             for run in group.active.runs:
                 if run.status == "running" and run.invocation_id is not None:
                     tails[run.seat_id] = self.manager.recent_output(run.invocation_id)[0]
+                    saved = _find(record.state, group.active.id)
+                    if saved is not None:
+                        seat = next(s for s in saved.seats if s.seat_id == run.seat_id)
+                        seat.reported_model = (
+                            self.manager.reported_model(run.invocation_id) or seat.reported_model
+                        )
         for task in record.state.tasks:
             if task.id in self.running_tasks:
                 invocation_id = self.running_tasks[task.id]
                 tails[task.id] = self.manager.recent_output(invocation_id)[0]
                 elapsed[task.id] = self.manager.snapshot(invocation_id).elapsed_ms
+                task.reported_model = (
+                    self.manager.reported_model(invocation_id) or task.reported_model
+                )
         return tails, elapsed
 
     def _publish(self, record: Record, *, home: bool = True) -> None:

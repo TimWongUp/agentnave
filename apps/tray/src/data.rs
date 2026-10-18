@@ -771,7 +771,7 @@ mod tests {
         let legacy = state(&reader, "/app/chats/c-legacy");
         assert_eq!(legacy["host"], Value::Null);
         assert_eq!(legacy["label"], "未记录主控");
-        assert_eq!(legacy["members"][0]["key"], "codex/原生设置");
+        assert_eq!(legacy["members"][0]["key"], "codex/");
         assert_eq!(legacy["members"][0]["line"], "结果");
         assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
         assert!(legacy["color"].as_u64().unwrap() < 8);
@@ -865,10 +865,14 @@ mod tests {
         show["director"] = json!({"mode": "show", "seats": [
             {"id": "a", "label": "甲", "provider": "claude", "model": "m"},
             {"id": "b", "label": "乙", "provider": "codex", "model": "m"},
-            {"id": "c", "label": "丙", "provider": "grok", "model": "m"}],
+            {"id": "c", "label": "丙", "provider": "grok", "model": "m"},
+            {"id": "d", "label": "丁", "provider": "claude", "model": "m"}],
             "messages": [
-                {"kind": "task", "speaker": "@host", "manager_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
+                {"kind": "task", "speaker": "@host", "manager_model": "requested", "manager_reported_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z", "recipients": [
+                    {"seat": "a", "provider": "claude", "model": "m"},
+                    {"seat": "d", "provider": "claude", "model": "m"}]},
                 {"kind": "answer", "speaker": "a", "round": 1, "text": "# 已提交", "time": "2026-10-15T00:00:01Z"},
+                {"kind": "answer", "speaker": "d", "round": 1, "text": "丁的回答", "time": "2026-10-15T00:00:01Z"},
                 {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
                 {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
             "round": {"number": 2, "seats": [
@@ -882,6 +886,19 @@ mod tests {
         assert_eq!(messages.iter().filter(|m| m["kind"] == "prompt").count(), 2);
         let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
         assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
+        assert_eq!(prompts[0]["speaker"]["model_source"], "native");
+        assert_eq!(prompts[0]["to"], json!(["claude/m", "claude/m"]));
+        assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
+        assert_ne!(
+            prompts[0]["recipients"][0]["focus"],
+            prompts[0]["recipients"][1]["focus"]
+        );
+        for (body, index) in [("# 已提交", 0), ("丁的回答", 1)] {
+            assert_eq!(
+                messages.iter().find(|m| m["text"] == body).unwrap()["focus"],
+                prompts[0]["recipients"][index]["focus"]
+            );
+        }
         assert_eq!(prompts[1]["speaker"]["model"], "");
         assert!(
             messages
@@ -899,6 +916,13 @@ mod tests {
                 .any(|m| m["kind"] == "notice" && m["text"] == "待审核，请在主控中决定")
         );
         assert!(!messages.iter().any(|m| m["text"] == "待审核私密回答"));
+        let review_notice = messages
+            .iter()
+            .find(|m| m["text"] == "待审核，请在主控中决定")
+            .unwrap();
+        assert_eq!(review_notice["status"], "review");
+        assert_eq!(review_notice["focus"], prompts[0]["recipients"][0]["focus"]);
+        assert_eq!(messages.last().unwrap()["focus"], "seat:show:b");
         assert_eq!(messages.last().unwrap()["kind"], "typing");
         let members = chat["members"].as_array().unwrap();
         assert_eq!(

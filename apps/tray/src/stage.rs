@@ -306,6 +306,74 @@ fn speaker(role: &str, provider: &str, model: &str, name: &str) -> Value {
     json!({"role": role, "provider": provider, "model": model, "label": name})
 }
 
+fn model(identity: &Value) -> &str {
+    let reported = text(identity, "reported_model");
+    if !reported.is_empty() {
+        return reported;
+    }
+    match text(identity, "model") {
+        "原生设置" | "继承原生设置" => "",
+        value => value,
+    }
+}
+
+fn member_speaker(identity: &Value) -> Value {
+    let provider = text(identity, "provider");
+    let model = model(identity);
+    let mut who = speaker("member", provider, model, label(Some(provider)));
+    who["model_source"] = json!(if !text(identity, "reported_model").is_empty() {
+        "native"
+    } else if !model.is_empty() {
+        "requested"
+    } else {
+        "unknown"
+    });
+    who
+}
+
+fn manager_speaker(identity: &Value, provider: &str, name: &str) -> Value {
+    let reported = text(identity, "manager_reported_model");
+    let mut who = speaker(
+        "manager",
+        provider,
+        if reported.is_empty() {
+            text(identity, "manager_model")
+        } else {
+            reported
+        },
+        name,
+    );
+    who["model_source"] = json!(if reported.is_empty() {
+        "declared"
+    } else {
+        "native"
+    });
+    who
+}
+
+fn recipient(identity: &Value) -> Value {
+    let provider = text(identity, "provider");
+    let model = model(identity);
+    json!({"key": format!("{provider}/{model}"), "provider": provider, "model": model,
+        "label": label(Some(provider)), "seat": text(identity, "seat")})
+}
+
+fn route_to(message: &mut Value, mut recipients: Vec<Value>) {
+    let conversation = text(message, "conversation").to_owned();
+    for target in &mut recipients {
+        if !text(target, "seat").is_empty() {
+            target["focus"] = json!(format!("seat:{conversation}:{}", text(target, "seat")));
+        }
+    }
+    message["to"] = json!(
+        recipients
+            .iter()
+            .map(|r| text(r, "key"))
+            .collect::<Vec<_>>()
+    );
+    message["recipients"] = json!(recipients);
+}
+
 struct Member {
     value: Value,
     at: i64,
@@ -422,10 +490,7 @@ impl Group {
         if provider.is_empty() {
             return;
         }
-        let model = match text(identity, "model") {
-            "" => "原生设置",
-            model => model,
-        };
+        let model = model(identity);
         let key = format!("{provider}/{model}");
         let at = timestamp(time).unwrap_or_default();
         let status = member_status(status);
@@ -438,12 +503,7 @@ impl Group {
         {
             self.latest_end = Some((at, status.to_owned()));
         }
-        let who = speaker(
-            "member",
-            provider,
-            model,
-            &format!("{} · {model}", label(Some(provider))),
-        );
+        let who = member_speaker(identity);
         let typing = if self.include_messages && status == "running" {
             let tail: Vec<_> = output
                 .lines()
@@ -452,7 +512,7 @@ impl Group {
                 .take(4)
                 .collect();
             let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-            Some(Self::message(
+            let mut message = Self::message(
                 key.clone(),
                 &event_time(
                     snapshot.live_updated.as_deref().unwrap_or(""),
@@ -462,7 +522,15 @@ impl Group {
                 "typing",
                 who,
                 &tail,
-            ))
+            );
+            if !text(identity, "seat").is_empty() {
+                message["focus"] = json!(format!(
+                    "seat:{}:{}",
+                    snapshot.item.id,
+                    text(identity, "seat")
+                ));
+            }
+            Some(message)
         } else {
             None
         };
@@ -476,7 +544,7 @@ impl Group {
         }
         let member = Member {
             at,
-            value: json!({"key": key, "provider": provider, "model": model,
+            value: json!({"key": key, "provider": provider, "model": model, "label": label(Some(provider)),
             "status": status, "line": line(status, output, error), "updated": time, "conversation": snapshot.item.id}),
         };
         if self.members.get(&key).is_none_or(|old| at >= old.at) {
@@ -549,10 +617,6 @@ impl Group {
                 })
                 .unwrap_or_else(|| start.clone());
             let status = member_status(text(task, "status"));
-            let model = match text(task, "model") {
-                "" => "原生设置",
-                m => m,
-            };
             if self.include_messages
                 && let Some(prompt) = task["prompt"].as_str()
             {
@@ -561,15 +625,14 @@ impl Group {
                     &start,
                     &item.id,
                     "prompt",
-                    speaker(
-                        "manager",
+                    manager_speaker(
+                        task,
                         self.host.as_deref().unwrap_or(""),
-                        text(task, "manager_model"),
                         self.manager_label(),
                     ),
                     prompt,
                 );
-                msg["to"] = json!([format!("{}/{model}", text(task, "provider"))]);
+                route_to(&mut msg, vec![recipient(task)]);
                 self.messages.push(msg);
             }
             self.member(
@@ -581,12 +644,7 @@ impl Group {
                 &time,
             );
             if self.include_messages && status != "running" && status != "pending" {
-                let who = speaker(
-                    "member",
-                    text(task, "provider"),
-                    model,
-                    &format!("{} · {model}", label(Some(text(task, "provider")))),
-                );
+                let who = member_speaker(task);
                 // Failed calls can still contain a useful native answer; keep it beside the
                 // failure notice now that chat is the App's only history reader.
                 if !matches!(status, "succeeded" | "review") && !text(task, "output").is_empty() {
@@ -635,6 +693,13 @@ impl Group {
         for (index, entry) in array(view, "messages").enumerate() {
             let kind = text(entry, "kind");
             let seat = seats.get(text(entry, "speaker")).copied();
+            let mut identity = seat.cloned().unwrap_or(Value::Null);
+            if seat.is_some() {
+                identity["seat"] = json!(text(entry, "speaker"));
+            }
+            if !text(entry, "reported_model").is_empty() {
+                identity["reported_model"] = entry["reported_model"].clone();
+            }
             let manager = matches!(kind, "task" | "host");
             let absent = kind == "absent";
             let time = event_time(text(entry, "time"), &item.updated);
@@ -647,27 +712,21 @@ impl Group {
             } else {
                 "succeeded"
             };
-            if !manager && let Some(seat) = seat {
-                self.member(snapshot, seat, status, text(entry, "text"), "", &time);
+            if !manager && seat.is_some() {
+                self.member(snapshot, &identity, status, text(entry, "text"), "", &time);
                 latest.insert(text(entry, "speaker"), entry);
             }
             if !self.include_messages {
                 continue;
             }
             let who = if manager {
-                speaker(
-                    "manager",
+                manager_speaker(
+                    entry,
                     self.host.as_deref().unwrap_or(""),
-                    text(entry, "manager_model"),
                     self.manager_label(),
                 )
-            } else if let Some(seat) = seat {
-                speaker(
-                    "member",
-                    text(seat, "provider"),
-                    text(seat, "model"),
-                    text(seat, "label"),
-                )
+            } else if seat.is_some() {
+                member_speaker(&identity)
             } else {
                 speaker("system", "", "", "系统")
             };
@@ -690,20 +749,28 @@ impl Group {
                 },
             );
             if manager {
-                msg["to"] = json!(
-                    seats
-                        .values()
-                        .map(|s| format!("{}/{}", text(s, "provider"), text(s, "model")))
-                        .collect::<Vec<_>>()
-                );
+                let recipients = if entry["recipients"].is_array() {
+                    array(entry, "recipients").map(recipient).collect()
+                } else {
+                    seats.values().map(|s| recipient(s)).collect()
+                };
+                route_to(&mut msg, recipients);
             } else {
                 msg["status"] = json!(status);
+                if seat.is_some() {
+                    msg["focus"] = json!(format!("seat:{}:{}", item.id, text(entry, "speaker")));
+                }
             }
             self.messages.push(msg);
         }
         for (id, seat) in &seats {
             let run = array(&view["round"], "seats").find(|r| text(r, "seat_id") == *id);
             if let Some(run) = run {
+                let mut identity = (*seat).clone();
+                identity["seat"] = json!(id);
+                if !text(run, "reported_model").is_empty() {
+                    identity["reported_model"] = run["reported_model"].clone();
+                }
                 let status = if run["review"] == "pending" {
                     "review"
                 } else {
@@ -729,7 +796,7 @@ impl Group {
                 };
                 self.member(
                     snapshot,
-                    seat,
+                    &identity,
                     status,
                     text(run, "output"),
                     text(run, "error"),
@@ -751,12 +818,7 @@ impl Group {
                     } else {
                         failure(status).into()
                     };
-                    let who = speaker(
-                        "member",
-                        text(seat, "provider"),
-                        text(seat, "model"),
-                        text(seat, "label"),
-                    );
+                    let who = member_speaker(&identity);
                     let mut msg = Self::message(
                         format!("{}:round:{round}:{id}:result", item.id),
                         &time,
@@ -771,6 +833,7 @@ impl Group {
                     );
                     msg["status"] = json!(status);
                     msg["detail"] = json!(text(run, "error"));
+                    msg["focus"] = json!(format!("seat:{}:{id}", item.id));
                     self.messages.push(msg);
                 }
             } else if !latest.contains_key(id) {

@@ -52,6 +52,8 @@ class EntryRecord(BaseModel):
     text: str | None = None
     time: str
     manager_model: str | None = None
+    manager_reported_model: str | None = None
+    reported_model: str | None = None
 
 
 class SessionRecord(BaseModel):
@@ -61,6 +63,7 @@ class SessionRecord(BaseModel):
 
 class SeatRunRecord(BaseModel):
     seat_id: str
+    reported_model: str | None = None
     instruction: str | None = None
     status: Literal[
         "pending",
@@ -95,6 +98,7 @@ class TaskRecord(BaseModel):
     id: str
     provider: str
     model: str
+    reported_model: str | None = None
     cwd: str
     prompt: str | None = None  # absent in tasks saved before v0.18.0
     session_id: str | None = None
@@ -104,6 +108,7 @@ class TaskRecord(BaseModel):
     elapsed_ms: int = 0
     time: str
     manager_model: str | None = None
+    manager_reported_model: str | None = None
 
 
 class Conversation(BaseModel):
@@ -167,6 +172,7 @@ class Conversation(BaseModel):
                         kind="absent",
                         seat=seat.seat_id,
                         text=seat.status,
+                        reported_model=seat.reported_model,
                         time=now(),
                     )
                 )
@@ -177,6 +183,7 @@ class Conversation(BaseModel):
                         kind="answer",
                         seat=seat.seat_id,
                         text=seat.output,
+                        reported_model=seat.reported_model,
                         time=now(),
                     )
                 )

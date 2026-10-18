@@ -55,6 +55,8 @@ class Entry:
     seat_id: str | None = None
     text: str | None = None
     manager_model: str | None = None
+    reported_model: str | None = None
+    manager_reported_model: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         data: dict[str, object] = {"round": self.round, "kind": self.kind}
@@ -169,6 +171,7 @@ class Groups:
         instructions: dict[str, str],
         *,
         manager_model: str | None = None,
+        manager_reported_model: str | None = None,
     ) -> Round:
         group = self._group(group_id)
         if group.active is not None:
@@ -191,7 +194,15 @@ class Groups:
             order,
             [SeatRun(seat_id, instructions.get(seat_id)) for seat_id in seat_ids],
         )
-        group.entries.append(Entry(round_.number, "task", text=prompt, manager_model=manager_model))
+        group.entries.append(
+            Entry(
+                round_.number,
+                "task",
+                text=prompt,
+                manager_model=manager_model,
+                manager_reported_model=manager_reported_model,
+            )
+        )
         group.active = round_
         self._rounds[round_.id] = round_
         # Launch synchronously so returned invocation ids are cancellable at once.
@@ -418,9 +429,21 @@ class Groups:
         if run.status == "succeeded" and run.result is not None:
             if run.seat_id not in approved:
                 return  # discarded in review: no entry, other seats never see it
-            entry = Entry(round_.number, "answer", run.seat_id, run.result.output)
+            entry = Entry(
+                round_.number,
+                "answer",
+                run.seat_id,
+                run.result.output,
+                reported_model=run.result.reported_model,
+            )
         else:
-            entry = Entry(round_.number, "absent", run.seat_id, run.status)
+            entry = Entry(
+                round_.number,
+                "absent",
+                run.seat_id,
+                run.status,
+                reported_model=run.result.reported_model if run.result is not None else None,
+            )
         round_.group.entries.append(entry)
         self._changed(round_)
         round_.notify()

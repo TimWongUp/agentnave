@@ -40,7 +40,7 @@
     antigravity: "Antigravity",
     pi: "Pi",
   };
-  const NATIVE = "原生设置";
+  const NATIVE = "";
   const keyOf = (provider, model) => `${provider}/${model || NATIVE}`;
   const FAILED = ["failed", "blocked", "interrupted"];
   const STATE_WORD = {
@@ -92,6 +92,7 @@ All checks passed!
   // start/end are scenario seconds (negative = before the demo began); end:null runs forever.
   const spec = (provider, model, o) => ({
     provider,
+    label: HOSTS[provider] || provider,
     model: model || NATIVE,
     key: keyOf(provider, model),
     pace: 3,

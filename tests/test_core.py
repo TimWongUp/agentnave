@@ -32,6 +32,38 @@ from agentnave.processes import (
 )
 
 
+@pytest.mark.asyncio
+async def test_failed_codex_resume_does_not_reuse_old_turn_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    session = "01a14d5a-d23d-7263-b50d-ca6b5ac429dd"
+    folder = tmp_path / "sessions" / "2026" / "01" / "01"
+    folder.mkdir(parents=True)
+    (folder / f"rollout-2026-01-01T00-00-00-{session}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "turn_context",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": {"model": "old-model"},
+            }
+        )
+        + "\n"
+    )
+    manager = InvocationManager()
+    try:
+        invocation = manager.start(
+            InvocationRequest("codex", "resume", tmp_path, session),
+            prepared=PreparedCommand((str(tmp_path / "missing-provider"),), tmp_path),
+        )
+        result = await manager.wait(invocation)
+        assert result is not None and result.status is InvocationStatus.FAILED
+        assert result.session_id == session
+        assert result.reported_model is None
+    finally:
+        await manager.shutdown()
+
+
 class FakeAdapter(ClaudeAdapter):
     name = "claude"
 

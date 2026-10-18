@@ -53,6 +53,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "    time.sleep(30)\n"
         "session = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--resume=')),\n"
         "               'session-' + uuid.uuid4().hex[:8])\n"
+        "if 'REPORT_MODEL' in prompt:\n"
+        "    print(json.dumps({'type':'assistant','message':{'model':'claude-reported-model'}}))\n"
         "seen = {'cwd': os.getcwd(), 'argv': sys.argv[1:], 'prompt': prompt}\n"
         "print(json.dumps({'type': 'result', 'result': json.dumps(seen), 'session_id': session,\n"
         "                  'num_turns': 1, 'is_error': False}))\n",
@@ -708,6 +710,10 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
     assert [seat["status"] for seat in saved["rounds"][0]["seats"]] == ["succeeded", "not_started"]
     assert [entry["kind"] for entry in saved["entries"]] == ["task", "answer", "host"]
     assert saved["sessions"]["a"]["session_id"] is not None
+    view = json.loads(
+        (data_root / "conversations" / str(show["group_id"]) / "views.json").read_text()
+    )["director"]
+    assert [target["seat"] for target in view["messages"][0]["recipients"]] == ["a"]
 
 
 @pytest.mark.asyncio
@@ -1307,6 +1313,74 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
             await _call(client, "read_conversation", {"conversation_id": "restored"})
         )
         assert [entry["seat"] for entry in cast(list[dict[str, object]], view["entries"])] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_native_model_is_saved_and_round_recipients_match_selected_seats(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current_model = "manager-first"
+
+    def native_model(_host: object, _session: str | None) -> str:
+        return current_model
+
+    monkeypatch.setattr("agentnave.conversations.session_model", native_model)
+    async with Client(mcp) as client:
+        task = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "cwd": str(tmp_path),
+                "prompt": "REPORT_MODEL",
+                "manager_session_id": "manager-chat",
+            },
+        )
+        ended = await _call(client, "wait_agent", {"invocation_id": task["invocation_id"]})
+        assert ended["model"] == "claude-reported-model"
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Recipients",
+                "manager_session_id": "manager-chat",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b", "c")],
+            },
+        )
+        current_model = "manager-second"
+        round_ = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": show["group_id"],
+                "seats": ["b", "a"],
+                "order": "parallel",
+                "prompt": "REPORT_MODEL",
+                "manager_session_id": "manager-chat",
+            },
+        )
+        await _wait(client, round_["round_id"])
+    saved_task = json.loads(
+        (data_root / "conversations" / str(task["conversation_id"]) / "state.json").read_text()
+    )
+    assert saved_task["tasks"][0]["reported_model"] == "claude-reported-model"
+    assert saved_task["tasks"][0]["manager_reported_model"] == "manager-first"
+    view = json.loads(
+        (data_root / "conversations" / str(show["conversation_id"]) / "views.json").read_text()
+    )["director"]
+    prompt = next(entry for entry in view["messages"] if entry["kind"] == "task")
+    assert prompt["manager_reported_model"] == "manager-second"
+    assert [recipient["seat"] for recipient in prompt["recipients"]] == ["b", "a"]
+    assert {recipient["model"] for recipient in prompt["recipients"]} == {"claude-reported-model"}
+    assert {entry["reported_model"] for entry in view["messages"] if entry["kind"] == "answer"} == {
+        "claude-reported-model"
+    }
+    saved = Record.read(data_root / "conversations" / str(show["conversation_id"]))
+    saved.state.rounds[0].seats[0].status = "failed"
+    saved.state.rounds[0].seats[0].error = "launch_error: missing binary"
+    projected = json.loads(views.public(saved.state))
+    assert [target["seat"] for target in projected["messages"][0]["recipients"]] == ["a"]
 
 
 @pytest.mark.asyncio
