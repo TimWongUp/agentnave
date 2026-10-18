@@ -819,12 +819,17 @@ mod tests {
         assert_eq!(chat["conversations"].as_array().unwrap().len(), 3);
         assert_eq!(chat["members"][0]["conversation"], "c");
         let messages = chat["messages"].as_array().unwrap();
-        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 1);
-        assert_eq!(messages.last().unwrap()["id"], "codex/m");
-        assert_eq!(
-            messages.last().unwrap()["text"],
-            "two\nthree\nfour\n**five**"
-        );
+        // Each running thread keeps its own bubble, keyed by desk and conversation.
+        let typing_a = |messages: &[Value]| {
+            messages
+                .iter()
+                .find(|m| m["id"] == "typing:codex|m|:a:")
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 2);
+        assert!(messages.iter().any(|m| m["id"] == "typing:codex|m|:b:"));
+        assert_eq!(typing_a(messages)["text"], "two\nthree\nfour\n**five**");
         a["director"]["tasks"][0]["output"] = json!("new tail");
         write(
             &live,
@@ -832,11 +837,7 @@ mod tests {
         );
         let next = state(&reader, &path);
         assert_eq!(
-            next["messages"].as_array().unwrap().last().unwrap()["id"],
-            "codex/m"
-        );
-        assert_eq!(
-            next["messages"].as_array().unwrap().last().unwrap()["text"],
+            typing_a(next["messages"].as_array().unwrap())["text"],
             "new tail"
         );
         fs::File::options()

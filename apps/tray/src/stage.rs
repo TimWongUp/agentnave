@@ -776,17 +776,21 @@ impl Group {
                 message_id.as_deref(),
                 None,
             );
-            Some(message)
+            // One bubble per running thread: desks sharing a provider/model, or one desk's private
+            // and meeting work running together, must not overwrite each other.
+            let typing_key = format!("typing:{desk}:{}:{seat}", snapshot.item.id);
+            message["id"] = json!(typing_key);
+            Some((typing_key, message))
         } else {
             None
         };
-        if let Some(typing) = typing
+        if let Some((typing_key, typing)) = typing
             && self
                 .typing
-                .get(&key)
+                .get(&typing_key)
                 .is_none_or(|(old_at, _)| at >= *old_at)
         {
-            self.typing.insert(key.clone(), (at, typing));
+            self.typing.insert(typing_key, (at, typing));
         }
         let member = Member {
             at,
@@ -1349,6 +1353,8 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
             .map(|g| {
                 let mut value = g.header();
                 value["members"] = json!(g.members());
+                value["desks"] = json!(g.desks(g.host.as_deref()));
+                value["rooms"] = json!(g.rooms());
                 value
             })
             .collect();

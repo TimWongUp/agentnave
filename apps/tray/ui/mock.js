@@ -85,27 +85,35 @@ All checks passed!
 3. relay 重启后 \`live/\` 快照未清理，看板会短暂显示已退出的会话。`;
   const OUT_GEMINI = `发布前评审通过。三点建议：安装文档补上升级后需重启宿主一次的说明；Release 说明把托盘与服务端改动分开写；更新包签名密钥说明放进内部文档而不是公开 README。`;
   const OUT_BUDDY = `文档已更新：docs/context/architecture.md 新增“空闲换进程”一节，说明判定条件、等待上限与已知限制。`;
-  const OUT_NAME = `我倾向叫“舞台”：它直观表达“主控在左、组员在右、中间是 AgentNave”，也与群聊页的“群”形成一对。\n\n风险是“舞台”暗示表演，和“节目”概念重叠；建议菜单面板叫“舞台”，App 里的会话叫“群”，节目保持原名。`;
+  const OUT_NAME = `我倾向叫“舞台”：它直观表达“主控在左、组员在右、中间是 AgentNave”，也与办公室页的“工作区”形成一对。\n\n风险是“舞台”暗示表演，和“节目”概念重叠；建议菜单面板叫“舞台”，App 里的会话叫“工作区”，会议保持原名。`;
 
   // ---- scenario specs ---------------------------------------------------------------------
   // One spec = one member's work inside one conversation (a task, or a seat of a show).
   // start/end are scenario seconds (negative = before the demo began); end:null runs forever.
-  const spec = (provider, model, o) => ({
-    provider,
-    label: HOSTS[provider] || provider,
-    model: model || NATIVE,
-    key: keyOf(provider, model),
-    pace: 3,
-    base: [],
-    filler: (k) => `继续处理第 ${k + 1} 步…`,
-    final: "succeeded",
-    ...o,
-  });
+  const deskKey = (provider, model, role) => `${provider}|${model || NATIVE}|${role || ""}`;
+  const deskLabel = (provider, model, role) => [model || "未记录模型", HOSTS[provider] || provider, role].filter(Boolean).join(" · ");
+  const spec = (provider, model, o) => {
+    const s = {
+      provider,
+      label: HOSTS[provider] || provider,
+      model: model || NATIVE,
+      key: keyOf(provider, model),
+      role: null,
+      pace: 3,
+      base: [],
+      filler: (k) => `继续处理第 ${k + 1} 步…`,
+      final: "succeeded",
+      ...o,
+    };
+    s.desk = deskKey(provider, s.model, s.role);
+    s.deskLabel = deskLabel(provider, s.model, s.role);
+    return s;
+  };
   const keysOf = (specs) => specs.map((s) => s.key);
 
-  function groupA(s) {
+  function groupA() {
     const codex = spec("codex", "gpt-6.1-sol", {
-      start: -8, end: 40, pace: 3.4,
+      role: "实现者", start: -8, end: 40, pace: 3.4,
       prompt: "在 src/agentnave/relay.py 里找出“空闲时换新进程”的判断，保证仍有 Provider 子进程树在运行时不会被换掉，并补一个回归测试。",
       base: [
         "读取 src/agentnave/relay.py，定位空闲换进程的判断",
@@ -133,7 +141,7 @@ All checks passed!
       out: OUT_GROK,
     });
     const buddy = spec("codebuddy", "glm-5.1", {
-      start: 22, end: 95, pace: 3.2,
+      role: "文档", start: 22, end: 95, pace: 3.2,
       prompt: "把“空闲换进程”的判定条件、等待上限和已知限制补进 docs/context/architecture.md。",
       base: [
         "读取 docs/context/architecture.md 现有章节",
@@ -143,44 +151,67 @@ All checks passed!
       filler: (k) => `润色第 ${k - 2} 段表述，保持与 ADR-0010 一致`,
       out: OUT_BUDDY,
     });
-    const gem = spec("antigravity", "gemini-3.5-pro", {
-      start: -3700, end: -3480, label: "评审员", final: "succeeded", out: OUT_GEMINI,
-    });
-    const pi = spec("pi", null, {
-      start: -3700, end: -3300, label: "挑刺者", final: "failed",
-      err: "Provider 进程 600 秒无输出，已超时",
-    });
-    const c2 = {
+    // Two rooms: a finished release review, and a running design discussion with a pending review.
+    const gem = spec("antigravity", "gemini-3.5-pro", { role: "评审员", start: -3700, end: -3480, out: OUT_GEMINI });
+    const pi = spec("pi", null, { role: "挑刺者", start: -3700, end: -3300, final: "failed", err: "Provider 进程 600 秒无输出，已超时" });
+    const room1 = {
       id: "20261017-0830-f1a2b3", title: "v0.20 发布前评审", mode: "show",
       topics: [{ at: -3700, text: "v0.20 准备发布：请各自从自己的角度给出发布前最后的风险与建议，三句话以内。", to: keysOf([gem, pi]) }],
       specs: [gem, pi],
     };
-    const c1 = { id: "20261017-0912-a1b2c3", title: "relay 空闲换进程：保留活跃子进程树", mode: "task", specs: [codex, grok] };
+    const reviewer = spec("codex", "gpt-6.1-sol", {
+      role: "审查员", start: -30, end: 60, pace: 3.6,
+      base: ["对照实现者的补丁，逐条检查换进程的边界", "关注 Windows Job Object 路径是否受影响"],
+      filler: (k) => `核对第 ${k - 1} 条边界条件…`,
+      out: "我认为补丁本身正确，但“最后一个子进程退出”的判定需要加一个上限，避免孤儿进程让空闲计时永远不开始。",
+    });
+    const grokSeat = spec("grok", "grok-5-fast", {
+      start: -20, end: 48, pace: 4,
+      base: ["回顾上一轮审查的三条路径", "整理对补丁的反对意见"],
+      filler: (k) => `补充第 ${k - 1} 条意见…`,
+      out: "同意加上限；另外建议换进程前显式等待 supervisor 回收进程组。",
+    });
+    const gemSeat = spec("antigravity", "gemini-3.5-pro", {
+      role: "评审员", start: -10, end: 12, pace: 3, final: "review",
+      base: ["从发布节奏看这个补丁的风险", "评估是否需要写进 Release 说明"],
+      out: "建议作为 patch 版本发布，Release 说明里单列“换进程更稳”一条即可。",
+    });
+    const pm = spec("claude", "opus-5", {
+      role: "产品经理", start: -600, end: -300, out: "用户可见的变化只有一点：长任务期间不会再被意外打断。文案里不需要出现“换进程”。",
+    });
+    const room2 = {
+      id: "20261018-0905-c5d6e7", title: "relay 修复方案讨论", mode: "show",
+      topics: [{ at: -620, text: "实现者给出了 relay 补丁。请各自从自己的角色出发评价这个方案，指出风险。", to: keysOf([pm]) }, { at: -30, text: "请审查员与评审员继续看补丁，其余人补充。", to: keysOf([reviewer, grokSeat, gemSeat]) }],
+      forwards: [{ at: -400, text: "（转发的评审结论）三点建议：安装文档补上升级后需重启宿主一次的说明；Release 说明把托盘与服务端改动分开写；更新包签名密钥说明放进内部文档而不是公开 README。", source: gem.deskLabel, from: room1, spec: gem }],
+      specs: [reviewer, grokSeat, gemSeat, pm],
+    };
+    const c1 = { id: "20261017-0912-a1b2c3", title: "relay 空闲换进程：保留活跃子进程树", mode: "task", specs: [codex] };
+    const c4 = { id: "20261017-0915-b2c3d4", title: "审查 relay 换进程流程", mode: "task", specs: [grok] };
     const c3 = { id: "20261017-0958-c3d4e5", title: "补 relay 文档", mode: "task", specs: [buddy] };
     return {
       group: "3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", host: "claude", color: 0, live: true,
-      convs: [c2, c1, c3],
+      convs: [room1, c1, c4, room2, c3],
     };
   }
 
   function groupB(s, decided) {
     const grok = spec("grok", "grok-5", {
-      start: -900, end: -420, label: "挑刺者", out: OUT_NAME,
+      role: "挑刺者", start: -900, end: -420, out: OUT_NAME,
     });
     const claude = spec("claude", "opus-5", {
-      start: -900, end: -30, label: "产品经理", final: decided ? "succeeded" : "review",
+      role: "产品经理", start: -900, end: -30, final: decided ? "succeeded" : "review",
       out: "我的结论：叫“舞台”。理由三条：与产品形态一致、与“群”配对、用户无需学习新词。",
     });
     const gem = spec("antigravity", "gemini-3.5-pro", {
-      start: -20, end: 15, pace: 3, label: "设计师", final: decided ? "succeeded" : "review",
+      role: "设计师", start: -20, end: 15, pace: 3, final: decided ? "succeeded" : "review",
       base: ["先看三个候选名在菜单栏里的字宽", "“舞台”两个字最稳，比“指挥台”短", "整理理由：一是辨识度，二是与图标搭配"],
       filler: (k) => `补充第 ${k - 2} 条理由…`,
       out: "我选“舞台”。它两字、好认，放在菜单栏里不拥挤。",
     });
-    const pi = spec("pi", null, { start: -5200, end: -5000, private: true, final: "succeeded", out: "安装文档已逐条核对，没有发现与 v0.20 不一致的命令。", prompt: "逐条核对安装文档里的命令是否与 v0.20 一致，只报告差异。" });
+    const pi = spec("pi", null, { start: -5200, end: -5000, final: "succeeded", out: "安装文档已逐条核对，没有发现与 v0.20 不一致的命令。", prompt: "逐条核对安装文档里的命令是否与 v0.20 一致，只报告差异。" });
     const show = {
       id: "20261017-1021-aabbcc", title: "舞台面板命名与边界", mode: "show",
-      topics: [{ at: -900, text: "我们要给新的菜单面板起名，并划清它和群聊页的边界。请各自给出你认为最合适的名字，并说明理由与风险。", to: keysOf([grok, claude, gem]) }],
+      topics: [{ at: -900, text: "我们要给新的菜单面板起名，并划清它和办公室页的边界。请各自给出你认为最合适的名字，并说明理由与风险。", to: keysOf([grok, claude, gem]) }],
       specs: [grok, claude, gem],
     };
     const task = { id: "20261017-0702-ddeeff", title: "核对安装文档", mode: "task", specs: [pi] };
@@ -358,6 +389,7 @@ All checks passed!
       .slice(0, 6)
       .map(({ g, members, status, updated }) => ({
         group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status, updated, members,
+        desks: desksOf(g, w), rooms: roomsOf(g, w),
       }));
     return {
       version: 1,
@@ -370,34 +402,120 @@ All checks passed!
     };
   }
 
+  // ---- office projection: desks, rooms and message fields (contract: GET /app/chats/<group>) ----
+  const seatOf = (conv, sp) => sp.seat || `seat-${conv.specs.indexOf(sp) + 1}`;
+  const midOf = (conv, sp) => `m-${conv.id.slice(-6)}-${conv.specs.indexOf(sp)}`;
+  const isActive = (status) => status === "running" || status === "review";
+  const office = (msg, { visibility, thread, desk = null, message_id = null, forward = null }) =>
+    Object.assign(msg, { visibility, thread, desk, message_id, forward });
+  const recipientOf = (conv, sp) => ({ key: sp.key, provider: sp.provider, model: sp.model, label: sp.label, seat: seatOf(conv, sp) });
+
   function messagesOf(g, w) {
     const manager = { role: "manager", provider: g.host, model: null, label: label(g) };
     const speakerOf = (e) => ({ role: "member", provider: e.provider, model: e.model, label: e.label || e.model });
     const out = [];
     const typing = [];
     for (const conv of g.convs) {
+      const show = conv.mode === "show";
+      const room = { kind: "room", id: conv.id };
       for (const [i, t] of (conv.topics || []).entries())
-        if (w.s >= t.at)
-          out.push({ id: `t:${conv.id}:${i}`, time: stamp(w, t.at), conversation: conv.id, kind: "prompt", speaker: manager, to: t.to, text: t.text, status: "succeeded", detail: null });
+        if (w.s >= t.at) {
+          const targets = conv.specs.filter((sp) => t.to.includes(sp.key));
+          out.push(office(
+            { id: `t:${conv.id}:${i}`, time: stamp(w, t.at), conversation: conv.id, kind: "prompt", speaker: manager, to: t.to, recipients: targets.map((sp) => recipientOf(conv, sp)), text: t.text, status: "succeeded", detail: null },
+            { visibility: "public", thread: room, desk: targets.length === 1 ? targets[0].desk : null },
+          ));
+        }
+      for (const f of conv.forwards || [])
+        if (w.s >= f.at)
+          out.push(office(
+            { id: `f:${conv.id}:${f.at}`, time: stamp(w, f.at), conversation: conv.id, kind: "forward", speaker: { role: "manager", provider: g.host, model: null, label: "主控转发" }, to: [], text: f.text, status: "succeeded", detail: null },
+            { visibility: "public", thread: room, message_id: `m-fw-${Math.abs(f.at)}`, forward: { message_id: midOf(f.from, f.spec), source: f.source } },
+          ));
       for (const sp of conv.specs) {
         const e = evalSpec(sp, w);
         if (!e) continue;
-        if (conv.mode === "task" && sp.prompt)
-          out.push({ id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], text: sp.prompt, status: "succeeded", detail: null });
+        const desk = sp.desk;
+        const thread = show ? room : { kind: "desk", key: desk };
+        const mid = midOf(conv, sp);
+        if (!show && sp.prompt)
+          out.push(office(
+            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
+            { visibility: "private", thread, desk, message_id: mid },
+          ));
         const base = { time: stamp(w, e.at), conversation: conv.id, speaker: speakerOf(e), to: [] };
         if (e.status === "running")
-          typing.push({ ...base, id: e.key, time: nowIso(), kind: "typing", text: e.lines.join("\n"), status: "running", detail: null, _s: sp.start });
+          typing.push(office(
+            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", text: e.lines.join("\n"), status: "running", detail: null, _s: sp.start },
+            { visibility: "private", thread, desk, message_id: show ? null : mid },
+          ));
         else if (e.status === "succeeded")
-          out.push({ ...base, id: `r:${conv.id}:${e.key}`, kind: "reply", text: e.out, status: "succeeded", detail: null, private: !!sp.private });
+          out.push(office(
+            { ...base, id: `r:${conv.id}:${e.key}:${desk}`, kind: "reply", text: e.out, status: "succeeded", detail: null },
+            { visibility: show ? "public" : "private", thread, desk, message_id: mid },
+          ));
         else if (e.status === "review")
-          out.push({ ...base, id: `n:review:${conv.id}:${e.key}`, kind: "notice", text: "待审核，请在主控中决定", status: "review", detail: null });
+          out.push(office(
+            { ...base, id: `n:review:${conv.id}:${e.key}`, kind: "notice", text: "待审核，请在主控中决定", status: "review", detail: null },
+            { visibility: "private", thread, desk },
+          ));
         else
-          out.push({ ...base, id: `n:${conv.id}:${e.key}`, kind: "notice", text: conv.mode === "show" ? "本轮缺席" : STATE_WORD[e.status] || e.status, status: e.status, detail: e.err || null });
+          out.push(office(
+            { ...base, id: `n:${conv.id}:${e.key}:${desk}`, kind: "notice", text: show ? "本轮缺席" : STATE_WORD[e.status] || e.status, status: e.status, detail: e.err || null },
+            { visibility: show ? "public" : "private", thread, desk, message_id: show ? null : mid },
+          ));
       }
     }
     out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
     typing.sort((a, b) => a._s - b._s).forEach((m) => delete m._s);
     return [...out, ...typing].slice(-300);
+  }
+
+  function desksOf(g, w) {
+    const hostCli = g.host === "workbuddy" ? "codebuddy" : g.host;
+    const map = new Map();
+    for (const conv of g.convs)
+      for (const sp of conv.specs) {
+        const e = evalSpec(sp, w);
+        if (!e) continue;
+        const d = map.get(sp.desk) || { sp, first: sp.start, last: e.at, active: false, latest: null, threads: 0, running: 0, meeting: null };
+        map.set(sp.desk, d);
+        d.first = Math.min(d.first, sp.start);
+        d.last = Math.max(d.last, e.at);
+        if (isActive(e.status)) d.active = true;
+        else if (!d.latest || e.at >= d.latest.at) d.latest = { at: e.at, status: e.status };
+        if (conv.mode === "task") {
+          d.threads++;
+          if (e.status === "running") d.running++;
+        } else if (isActive(e.status) && (!d.meeting || e.at >= d.meeting.at)) d.meeting = { at: e.at, room: conv.id, seat: seatOf(conv, sp), status: e.status };
+      }
+    return [...map.values()]
+      .sort((a, b) => a.first - b.first || (a.sp.desk < b.sp.desk ? -1 : 1))
+      .map((d) => ({
+        key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, label: d.sp.deskLabel,
+        first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
+        status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
+        private_allowed: d.sp.provider !== hostCli,
+        private: { threads: d.threads, running: d.running },
+        meeting: d.meeting ? { room: d.meeting.room, seat: d.meeting.seat, status: d.meeting.status } : { room: null, seat: null, status: null },
+      }));
+  }
+
+  function roomsOf(g, w) {
+    return g.convs
+      .filter((conv) => conv.mode === "show" && conv.specs.some((sp) => w.s >= sp.start))
+      .map((conv) => {
+        const es = conv.specs.map((sp) => evalSpec(sp, w)).filter(Boolean);
+        const last = [...es].sort((a, b) => b.at - a.at)[0];
+        const status = es.some((e) => e.status === "running") ? "running" : es.some((e) => e.status === "review") ? "review" : last && FAILED.includes(last.status) ? "failed" : "idle";
+        const board = (conv.topics || []).filter((t) => w.s >= t.at).length + (conv.forwards || []).filter((f) => w.s >= f.at).length + es.filter((e) => e.status === "succeeded").length;
+        return {
+          id: conv.id, title: conv.title, status,
+          seats: conv.specs.map((sp) => ({ seat: seatOf(conv, sp), desk: sp.desk })),
+          pending_review: es.filter((e) => e.status === "review").length,
+          board,
+        };
+      });
   }
 
   function chats() {
@@ -413,6 +531,7 @@ All checks passed!
         return {
           group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status, updated,
           title: conv.title, conversations: g.convs.length, preview,
+          desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
         };
       })
       .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
@@ -430,6 +549,8 @@ All checks passed!
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
         .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
       members,
+      desks: desksOf(g, w),
+      rooms: roomsOf(g, w),
       messages: messagesOf(g, w),
     };
   }

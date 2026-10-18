@@ -19,7 +19,7 @@
 <header class="bar">
     <a draggable="false" class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
     <nav class="nav" aria-label="主导航">
-      <a draggable="false" href="/chat/">群聊</a>
+      <a draggable="false" href="/chat/">办公室</a>
       <a draggable="false" href="/manage/">管理会话</a>
       <a draggable="false" href="/settings/" aria-current="page">设置</a>
     </nav>
@@ -65,13 +65,13 @@
     <div class="members-toolbar">
       <div class="mode-control">
         <div class="segment-control" role="radiogroup" aria-label="使用场景">
-          <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">单独任务</button>
-          <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">多人讨论</button>
+          <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">私聊</button>
+          <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">会议</button>
         </div>
       </div>
       <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务">重新检测工具</button>
     </div>
-    <p id="mode-description" class="guidance">单独任务：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。</p>
+    <p id="mode-description" class="guidance">私聊：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。</p>
     <div class="mode-restrict-wrap setting-row">
       <div class="setting-copy">
         <label id="mode-restrict-title" for="mode-restrict-toggle">自选可用工具和模型</label>
@@ -100,7 +100,7 @@
   </section>
 
   <section id="pane-avatars" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-avatars">
-    <p class="guidance">这里调整群聊中的头像，上传或恢复后立即保存。默认使用模型家族图标；也可为某个工具下的指定模型单独设置。支持 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片居中裁剪，仅保存在本机，单独任务与多人讨论共用。</p>
+    <p class="guidance">这里调整办公室中的头像，上传或恢复后立即保存。默认使用模型家族图标；也可为某个工具下的指定模型单独设置。支持 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片居中裁剪，仅保存在本机，私聊与会议共用。</p>
     <div id="avatar-settings" aria-live="polite"></div>
   </section>
 
