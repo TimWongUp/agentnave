@@ -270,6 +270,7 @@ function createMessage(m, c) {
   rec.name = h("b.m-name");
   rec.sub = h("span.m-sub");
   rec.to = h("span.m-to");
+  rec.private = h("span.m-private", { title: "这条消息不会向群内其他成员公开。", hidden: true }, "🔒 私密");
   rec.time = h("time");
   rec.md = h("div.md");
   rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
@@ -282,7 +283,7 @@ function createMessage(m, c) {
     else state.expanded.add(id);
     applyFold(rec);
   });
-  rec.el = h("article.msg", {}, rec.avaSlot, h("div.m-col", {}, h("div.m-head", {}, rec.name, rec.sub, rec.to, rec.time), rec.bub, m.kind === "typing" ? null : rec.more));
+  rec.el = h("article.msg", {}, rec.avaSlot, h("div.m-col", {}, h("div.m-head", {}, rec.name, rec.sub, rec.to, rec.private, rec.time), rec.bub, m.kind === "typing" ? null : rec.more));
   return rec;
 }
 function updateMessage(rec, m, c, id) {
@@ -311,6 +312,7 @@ function updateMessage(rec, m, c, id) {
   setText(rec.name, w.name);
   setText(rec.sub, m.kind === "typing" ? `${w.sub} · 正在输入` : w.sub);
   setText(rec.to, mine ? recipients(m, c) : "");
+  rec.private.hidden = !m.private;
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
   if (rec.text !== m.text) {

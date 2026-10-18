@@ -157,6 +157,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         )
         assert receipt["decisions"] == {"a": "publish"}
         assert receipt["pending_review"] == ["b"]
+        assert receipt["status"] == "review"
         assert receipt["committed"] == []
         assert "output" not in str(receipt) and "SECRET-B" not in str(receipt)
         assert (await _wait(client, first["round_id"]))["reason"] == "review_needed"
@@ -164,11 +165,19 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             "decide_answers", {"round_id": first["round_id"], "decisions": {"a": "discard"}}
         )
         assert conflict.is_error
-        await _call(
+        receipt = await _call(
             client,
             "decide_answers",
             {"round_id": first["round_id"], "decisions": {"a": "publish", "b": "discard"}},
         )
+        assert receipt["status"] == "finished"
+        assert receipt["committed"] == ["a"]
+        repeated = await _call(
+            client,
+            "decide_answers",
+            {"round_id": first["round_id"], "decisions": {"b": "discard"}},
+        )
+        assert repeated["status"] == "finished"
         done = await _wait(client, first["round_id"])
         assert done["status"] == "finished"
         assert [seat["status"] for seat in _seats(done)] == ["succeeded", "discarded"]
@@ -201,6 +210,11 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         home = await asyncio.to_thread(_fetch, str(dashboard["dashboard_url"]) + "state")
         assert "SECRET-B" not in public and "round" not in json.loads(public)
         assert json.loads(director)["round"]["seats"][0]["seat_id"] == "c"
+        private = json.loads(director)["private_messages"]
+        assert len(private) == 1
+        assert private[0]["round"] == 1 and private[0]["seat_id"] == "b"
+        assert private[0]["text"] == _seats(waited)[1]["output"]
+        assert "private_messages" not in json.loads(public)
         assert "Quiz" in home and "SECRET-B" not in home
 
         third = await _call(
@@ -268,6 +282,113 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             ("answer", "a"),
             ("absent", "b"),  # still running at the crash
         ]
+
+
+@pytest.mark.asyncio
+async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Serial",
+                "cwd": str(tmp_path),
+                "review": True,
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        started = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": show["group_id"],
+                "seats": ["a", "b"],
+                "order": "serial",
+                "prompt": "go",
+            },
+        )
+        assert (await _wait(client, started["round_id"]))["reason"] == "review_needed"
+        first = await asyncio.wait_for(
+            _call(
+                client,
+                "decide_answers",
+                {
+                    "round_id": started["round_id"],
+                    "decisions": {"a": "publish"},
+                },
+            ),
+            5,
+        )
+        assert first["status"] == "running"
+        assert (await _wait(client, started["round_id"]))["reason"] == "review_needed"
+        last = await _call(
+            client,
+            "decide_answers",
+            {
+                "round_id": started["round_id"],
+                "decisions": {"b": "discard"},
+            },
+        )
+        assert last["status"] == "finished" and last["committed"] == ["a"]
+        # The receipt is sufficient to start another round immediately.
+        await _call(
+            client,
+            "post_host_message",
+            {
+                "conversation_id": show["group_id"],
+                "text": "next",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_review_receipt_reports_failed_final_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Commit failure",
+                "cwd": str(tmp_path),
+                "review": True,
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        started = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": show["group_id"],
+                "seats": ["a"],
+                "order": "parallel",
+                "prompt": "go",
+            },
+        )
+        assert (await _wait(client, started["round_id"]))["reason"] == "review_needed"
+        replace = os.replace
+
+        def fail_commit(source: str, target: Path) -> None:
+            if target.name == "state.json":
+                rounds = json.loads(Path(source).read_text())["rounds"]
+                if rounds and any(seat["committed"] for seat in rounds[-1]["seats"]):
+                    raise OSError("final commit unavailable")
+            replace(source, target)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "replace", fail_commit)
+            receipt = await _call(
+                client,
+                "decide_answers",
+                {
+                    "round_id": started["round_id"],
+                    "decisions": {"a": "publish"},
+                },
+            )
+        assert receipt["status"] == "failed"
+        assert "state_write_failed" in str(receipt["error"])
 
 
 @pytest.mark.asyncio
@@ -1088,6 +1209,31 @@ async def test_dashboard_refresh_sleeps_when_idle_and_recovers_read_errors(
         await manager.shutdown()
 
 
+def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None:
+    state = Conversation(
+        id="empty-private",
+        title="Empty",
+        kind="show",
+        review=True,
+        rounds=[
+            RoundRecord(
+                id="round",
+                number=1,
+                order="parallel",
+                status="finished",
+                seats=[
+                    SeatRunRecord(seat_id="a", status="succeeded", review="discard", output=""),
+                    SeatRunRecord(seat_id="b", status="succeeded", review="discard", output=None),
+                ],
+            )
+        ],
+    )
+    projected = views.snapshot(state, "")
+    private = _data(projected["director"])["private_messages"]
+    assert private == [{"round": 1, "seat_id": "a", "text": "", "time": state.created}]
+    assert "private_messages" not in _data(projected["public"])
+
+
 def test_host_projection_does_not_collide_with_director_seat() -> None:
     state = Conversation(
         id="show",
@@ -1301,6 +1447,7 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
             },
         )
         assert receipt["pending_review"] == [] and receipt["committed"] == ["b"]
+        assert receipt["status"] == "interrupted"
         view = _conversation(
             await _call(client, "read_conversation", {"conversation_id": "restored"})
         )
