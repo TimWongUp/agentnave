@@ -701,6 +701,34 @@ impl Group {
             }
             self.messages.push(msg);
         }
+        for entry in array(view, "private_messages") {
+            let id = text(entry, "seat_id");
+            let Some(seat) = seats.get(id).copied() else {
+                continue;
+            };
+            let time = event_time(text(entry, "time"), &item.updated);
+            self.member(snapshot, seat, "succeeded", text(entry, "text"), "", &time);
+            latest.insert(id, entry);
+            if self.include_messages {
+                let round = entry["round"].as_u64().unwrap_or_default();
+                let mut msg = Self::message(
+                    format!("{}:round:{round}:{id}:private", item.id),
+                    &time,
+                    &item.id,
+                    "reply",
+                    speaker(
+                        "member",
+                        text(seat, "provider"),
+                        text(seat, "model"),
+                        text(seat, "label"),
+                    ),
+                    text(entry, "text"),
+                );
+                msg["private"] = json!(true);
+                msg["status"] = json!("succeeded");
+                self.messages.push(msg);
+            }
+        }
         for (id, seat) in &seats {
             let run = array(&view["round"], "seats").find(|r| text(r, "seat_id") == *id);
             if let Some(run) = run {

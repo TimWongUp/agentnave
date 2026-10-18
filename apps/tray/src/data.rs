@@ -876,6 +876,37 @@ mod tests {
     }
 
     #[test]
+    fn show_chats_keep_private_history_after_new_rounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut show = snapshot("private-show", "finished");
+        show["summary"]["manager_session"] = json!(MANAGER);
+        show["director"] = json!({"mode": "show", "seats": [
+            {"id": "a", "provider": "claude", "model": "m"}],
+            "messages": [],
+            "private_messages": [
+                {"round": 1, "seat_id": "a", "text": "旧轮私信", "time": "2026-10-15T00:00:00Z"},
+                {"round": 2, "seat_id": "a", "text": "本轮私信", "time": "2026-10-15T00:00:01Z"}],
+            "round": {"number": 2, "seats": [
+                {"seat_id": "a", "status": "succeeded", "review": "discard", "output": "本轮私信"}]}});
+        save(dir.path(), &show);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let path = format!("/app/chats/{MANAGER}");
+        let first = state(&reader, &path);
+        let messages = first["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert!(
+            messages
+                .iter()
+                .all(|m| m["private"] == true && m["kind"] == "reply")
+        );
+        assert_eq!(messages[0]["text"], "旧轮私信");
+        assert_eq!(messages[1]["text"], "本轮私信");
+        show["director"]["round"] = json!({"number": 3, "seats": []});
+        save(dir.path(), &show);
+        assert_eq!(state(&reader, &path)["messages"], first["messages"]);
+    }
+
+    #[test]
     fn stage_and_chats_sort_filter_and_enforce_limits() {
         let dir = tempfile::tempdir().unwrap();
         for i in 0..205 {
