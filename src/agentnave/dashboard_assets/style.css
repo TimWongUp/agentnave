@@ -422,6 +422,15 @@ body[data-layout="loading"] #sidebar {
   color: var(--task);
   background: color-mix(in srgb, var(--task) 14%, transparent);
 }
+.badge.forward {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.forward-source {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
 .chip {
   display: inline-flex;
   align-items: center;

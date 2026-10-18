@@ -37,13 +37,22 @@
     interrupted: ["已中断", "bad"], pending: ["等待中", "idle"],
   };
   const GROUP = { running: ["运行中", "run"], review: ["待审核", "review"], failed: ["有失败", "bad"], idle: ["空闲", "idle"] };
-  const CONV = {
-    idle: ["未开始", "idle"], running: ["进行中", "run"], review: ["待审核", "review"],
-    succeeded: ["已回复", "done"], finished: ["已结束", "done"], failed: ["失败", "bad"],
-    blocked: ["受阻", "bad"], cancelled: ["已取消", "idle"], interrupted: ["已中断", "bad"],
-  };
   const pick = (table, status) => table[status] || [status || "—", "idle"];
   const urgent = (status) => status === "running" || status === "review";
+  // What a desk is doing, in one word and tone. A desk in a meeting and a desk chatting privately are
+  // different threads; both can run at once. `room` is the meeting room the desk sits in, or null.
+  function deskState(d, room) {
+    const privRun = d.private.running > 0;
+    const inReview = d.meeting.status === "review";
+    if (d.status === "running") {
+      if (room) return { word: `会议中${inReview ? " · 待审核" : ""} · ${room.title}`, tone: inReview && !privRun ? "review" : "run", working: !inReview || privRun };
+      if (privRun) return { word: "私聊处理中", tone: "run", working: true };
+      return { word: "待审核", tone: "review", working: false };
+    }
+    if (d.status === "pending") return { word: "等待中", tone: "idle", working: false };
+    if (d.status === "failed") return { word: "上次失败", tone: "bad", working: false };
+    return { word: "空闲", tone: "idle", working: false };
+  }
 
   function avatar(provider, model, cls) {
     return Avatars.create("model", provider, model, cls);
@@ -124,7 +133,7 @@
     if (mock() && link?.getAttribute("href").startsWith("/app/")) event.preventDefault();
   });
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, CONV, pick, urgent, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
 })();
 
 (function () {
@@ -273,7 +282,7 @@
             h(
               "p.ob-lead",
               {},
-              "完成这几步，群聊就会开始出现主控与组员的对话。",
+              "完成这几步，办公室里就会出现主控、工位和会议室。",
             ),
           );
         kids.push(

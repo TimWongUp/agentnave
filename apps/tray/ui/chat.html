@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>AgentNave · 群聊</title>
+<title>AgentNave · 办公室</title>
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="/chat/chat.css">
 <link rel="stylesheet" href="/chat/onboarding.css">
@@ -17,23 +17,45 @@
 <header class="bar">
   <a draggable="false" class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
   <nav class="nav" aria-label="主导航">
-    <a draggable="false" href="/chat/" aria-current="page">群聊</a>
+    <a draggable="false" href="/chat/" aria-current="page">办公室</a>
     <a draggable="false" href="/manage/">管理会话</a>
     <a draggable="false" href="/settings/">设置</a>
   </nav>
 </header>
 <div id="banner" class="banner" role="status" hidden>读取中断，正在重试…</div>
 <div id="app" class="app" data-view="list">
-  <aside class="side" aria-label="群列表">
-    <div class="side-head"><h1>群聊</h1><span id="side-count" class="side-count"></span></div>
+  <aside class="side" aria-label="工作区列表">
+    <div class="side-head"><h1>工作区</h1><span id="side-count" class="side-count"></span></div>
     <div class="gl-wrap"><div id="onboard-side" class="ob-slot"></div><div id="list" class="gl"></div></div>
   </aside>
   <main id="pane" class="chat-main">
     <header id="head" class="gh" hidden></header>
-    <div id="timeline" class="tl" role="log" aria-label="群消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
+    <div id="office" class="office" hidden>
+      <div id="floor" class="floor">
+        <div id="mgr-desk"></div>
+        <div class="zones">
+          <section class="zone" aria-labelledby="desks-title">
+            <h2 class="zone-title" id="desks-title">工位<span id="desks-count" class="zone-count"></span></h2>
+            <div id="desks" class="desks"></div>
+          </section>
+          <section class="zone" aria-labelledby="rooms-title">
+            <h2 class="zone-title" id="rooms-title">会议室<span id="rooms-count" class="zone-count"></span></h2>
+            <div id="rooms" class="rooms"></div>
+          </section>
+        </div>
+        <div id="fx" class="fx" aria-hidden="true"></div>
+      </div>
+    </div>
     <div id="blank" class="blank" hidden></div>
-    <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
-    <div id="ro" class="ro" hidden>只读视图 · 待审核的回答请在主控中决定；在这里向主控发言、取消组员将在后续版本提供</div>
+    <aside id="drawer" class="drawer" aria-label="消息" hidden>
+      <header class="dr-head">
+        <div class="dr-id"><b id="dr-title" class="dr-title"></b><span id="dr-sub" class="dr-sub"></span></div>
+        <button id="dr-close" class="dr-close" type="button" aria-label="关闭消息面板">×</button>
+      </header>
+      <div id="timeline" class="tl" role="log" aria-label="消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
+      <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
+    </aside>
+    <div id="ro" class="ro" hidden>只读视图 · 待审核的回答请在主控中决定</div>
   </main>
 </div>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>

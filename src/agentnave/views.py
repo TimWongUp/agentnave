@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta
 
-from agentnave.store import Conversation, RoundRecord, Unavailable
+from agentnave.store import Conversation, EntryRecord, RoundRecord, Unavailable
 
 _ABSENT = {
     "failed": "失败",
@@ -17,6 +18,21 @@ _ABSENT = {
 
 def _encode(data: dict[str, object]) -> bytes:
     return json.dumps(data, ensure_ascii=False).encode()
+
+
+def _speaker(entry: EntryRecord) -> str | None:
+    if entry.kind == "forward":
+        return "@forward"  # forwarded content is the manager's action, never a host remark
+    if entry.kind in ("task", "host"):
+        return "@host"
+    return entry.seat
+
+
+def _thread(provider: str, session_id: str | None) -> str | None:
+    """Opaque private-thread key; views never expose native session IDs."""
+    if session_id is None:
+        return None
+    return hashlib.sha256(f"{provider}\0{session_id}".encode()).hexdigest()[:16]
 
 
 def _show(state: Conversation, view: str) -> dict[str, object]:
@@ -63,12 +79,14 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                 "label": seat.id,
                 "model": str(seat.provider_options.get("model", "")),
                 "provider": seat.provider,
+                "role": seat.role,
             }
             for seat in state.seats
         ],
         "messages": [
             {
-                "speaker": "@host" if entry.kind in ("task", "host") else entry.seat,
+                "message_id": f"{state.id}:e:{index}",
+                "speaker": _speaker(entry),
                 "kind": entry.kind,
                 "round": entry.round,
                 "text": (
@@ -81,12 +99,17 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                 "manager_reported_model": entry.manager_reported_model,
                 "reported_model": entry.reported_model,
                 **(
+                    {"forward_id": entry.forward_id, "forward_source": entry.forward_source}
+                    if entry.kind == "forward"
+                    else {}
+                ),
+                **(
                     {"recipients": recipients(entry.round, entry.kind)}
                     if entry.kind in ("task", "host")
                     else {}
                 ),
             }
-            for entry in state.entries
+            for index, entry in enumerate(state.entries)
         ],
     }
 
@@ -154,10 +177,15 @@ def _director(
         "workbench_url": home_url,
         "storage": storage,
         "refresh_error": refresh_error,
+        "created": state.created,
     }
     if state.kind == "task":
         tasks = [
             task.model_dump(exclude={"session_id"})
+            | {
+                "message_id": f"{state.id}:t:{task.id}",
+                "thread": _thread(task.provider, task.session_id),
+            }
             | ({"output": tails[task.id]} if task.id in tails else {})
             | ({"elapsed_ms": elapsed[task.id]} if elapsed and task.id in elapsed else {})
             for task in state.tasks
@@ -182,6 +210,7 @@ def _director(
             "text": seat.output,
             "reported_model": seat.reported_model,
             "time": round_times.get(round_.number, state.created),
+            "message_id": None,  # discarded answers are private and cannot be forwarded
         }
         for round_ in state.rounds
         for seat in round_.seats

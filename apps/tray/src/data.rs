@@ -819,12 +819,17 @@ mod tests {
         assert_eq!(chat["conversations"].as_array().unwrap().len(), 3);
         assert_eq!(chat["members"][0]["conversation"], "c");
         let messages = chat["messages"].as_array().unwrap();
-        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 1);
-        assert_eq!(messages.last().unwrap()["id"], "codex/m");
-        assert_eq!(
-            messages.last().unwrap()["text"],
-            "two\nthree\nfour\n**five**"
-        );
+        // Each running thread keeps its own bubble, keyed by desk and conversation.
+        let typing_a = |messages: &[Value]| {
+            messages
+                .iter()
+                .find(|m| m["id"] == "typing:codex|m|:a:")
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 2);
+        assert!(messages.iter().any(|m| m["id"] == "typing:codex|m|:b:"));
+        assert_eq!(typing_a(messages)["text"], "two\nthree\nfour\n**five**");
         a["director"]["tasks"][0]["output"] = json!("new tail");
         write(
             &live,
@@ -832,11 +837,7 @@ mod tests {
         );
         let next = state(&reader, &path);
         assert_eq!(
-            next["messages"].as_array().unwrap().last().unwrap()["id"],
-            "codex/m"
-        );
-        assert_eq!(
-            next["messages"].as_array().unwrap().last().unwrap()["text"],
+            typing_a(next["messages"].as_array().unwrap())["text"],
             "new tail"
         );
         fs::File::options()
@@ -1409,5 +1410,238 @@ mod tests {
             chat["messages"].as_array().unwrap().last().unwrap()["time"],
             "2020-01-01T00:00:00Z"
         );
+    }
+
+    fn office_show(id: &str, updated: &str, created: &str) -> Value {
+        json!({
+            "version": 1,
+            "summary": {"id": id, "title": format!("房间 {id}"), "mode": "show", "status": "running",
+                "updated": updated, "host": "claude", "manager_session": MANAGER},
+            "director": {"mode": "show", "created": created, "seats": [
+                {"id": "a", "provider": "claude", "model": "m", "role": "reviewer"},
+                {"id": "b", "provider": "codex", "model": "m", "role": Value::Null}],
+            "messages": [
+                {"kind": "task", "speaker": "@host", "round": 1, "text": "task", "time": created,
+                    "recipients": [{"seat": "a", "provider": "claude", "model": "m"}]},
+                {"kind": "answer", "speaker": "a", "round": 1, "text": "answer", "time": updated}],
+            "round": {"number": 1, "seats": [{"seat_id": "a", "status": "running"}]}}})
+    }
+
+    #[test]
+    fn desks_stay_persistent_ordered_and_split_by_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut reviewer = task_snapshot("r1", "succeeded", "2026-10-15T01:00:00Z");
+        reviewer["director"]["tasks"][0]["role"] = json!("reviewer");
+        reviewer["director"]["tasks"][0]["thread"] = json!("native-1");
+        save(root, &reviewer);
+        let mut author = task_snapshot("a1", "running", "2026-10-15T02:00:00Z");
+        author["director"]["tasks"][0]["role"] = json!("author");
+        save(root, &author);
+        let mut other_model = task_snapshot("r2", "succeeded", "2026-10-15T03:00:00Z");
+        other_model["director"]["tasks"][0]["role"] = json!("reviewer");
+        other_model["director"]["tasks"][0]["model"] = json!("m2");
+        other_model["director"]["tasks"][0]["thread"] = json!("native-2");
+        save(root, &other_model);
+        let mut newer = task_snapshot("r3", "succeeded", "2026-10-15T04:00:00Z");
+        newer["director"]["tasks"][0]["role"] = json!("reviewer");
+        newer["director"]["tasks"][0]["thread"] = json!("native-1");
+        save(root, &newer);
+        let mut claude = task_snapshot("c1", "succeeded", "2026-10-15T05:00:00Z");
+        claude["director"]["tasks"][0]["provider"] = json!("claude");
+        save(root, &claude);
+        let reader = Reader::new(root.to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let desks = chat["desks"].as_array().unwrap();
+        assert_eq!(desks.len(), 4);
+        let keys: Vec<_> = desks
+            .iter()
+            .map(|desk| desk["key"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "codex|m|reviewer",
+                "codex|m|author",
+                "codex|m2|reviewer",
+                "claude|m|"
+            ]
+        );
+        assert_eq!(desks[0]["label"], "m · Codex · reviewer");
+        assert_eq!(desks[0]["role"], "reviewer");
+        assert_eq!(desks[0]["model"], "m");
+        assert_eq!(desks[0]["first_seen"], "2026-10-15T01:00:00.000000Z");
+        assert_eq!(desks[0]["last_active"], "2026-10-15T04:00:00.000000Z");
+        // The same native session stays one persistent desk thread.
+        assert_eq!(desks[0]["private"]["threads"], 1);
+        assert_eq!(desks[0]["private"]["running"], 0);
+        assert_eq!(desks[0]["status"], "idle");
+        assert_eq!(desks[0]["private_allowed"], true);
+        assert_eq!(desks[1]["status"], "running");
+        assert_eq!(desks[1]["private"]["threads"], 1); // no session id counts separately
+        assert_eq!(desks[3]["private_allowed"], false); // same as the workspace host's CLI
+        assert_eq!(desks[3]["role"], Value::Null);
+        assert_eq!(desks[3]["label"], "m · Claude Code");
+    }
+
+    #[test]
+    fn desks_report_meeting_and_rooms_in_creation_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let older = office_show("older", "2026-10-15T09:00:00Z", "2026-10-15T00:00:00Z");
+        save(root, &older);
+        let mut newer = office_show("newer", "2026-10-15T10:00:00Z", "2026-10-15T01:00:00Z");
+        newer["summary"]["status"] = json!("review");
+        newer["director"]["round"]["seats"][0]["review"] = json!("pending");
+        newer["director"]["round"]["seats"][0]["status"] = json!("succeeded");
+        save(root, &newer);
+        let reader = Reader::new(root.to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let rooms = chat["rooms"].as_array().unwrap();
+        assert_eq!(rooms.len(), 2);
+        assert_eq!(rooms[0]["id"], "older");
+        assert_eq!(rooms[0]["title"], "房间 older");
+        assert_eq!(rooms[0]["status"], "running");
+        assert_eq!(rooms[0]["pending_review"], 0);
+        assert_eq!(rooms[0]["board"], 2);
+        assert_eq!(
+            rooms[0]["seats"],
+            json!([
+                {"seat": "a", "desk": "claude|m|reviewer"},
+                {"seat": "b", "desk": "codex|m|"}
+            ])
+        );
+        assert_eq!(rooms[1]["id"], "newer");
+        assert_eq!(rooms[1]["status"], "review");
+        assert_eq!(rooms[1]["pending_review"], 1);
+        let desks = chat["desks"].as_array().unwrap();
+        let reviewer = desks
+            .iter()
+            .find(|desk| desk["key"] == "claude|m|reviewer")
+            .unwrap();
+        assert_eq!(
+            reviewer["meeting"],
+            json!({"room": "newer", "seat": "a", "status": "review"})
+        );
+        let pending = desks.iter().find(|desk| desk["key"] == "codex|m|").unwrap();
+        assert_eq!(pending["status"], "pending");
+        assert_eq!(
+            pending["meeting"],
+            json!({"room": Value::Null, "seat": Value::Null, "status": Value::Null})
+        );
+    }
+
+    #[test]
+    fn messages_carry_message_id_visibility_thread_desk_and_forward() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut task = task_snapshot("task", "succeeded", "2026-10-15T00:00:00Z");
+        task["director"]["tasks"][0]["role"] = json!("reviewer");
+        task["director"]["tasks"][0]["thread"] = json!("native-1");
+        task["director"]["tasks"][0]["message_id"] = json!("task:t:t-task");
+        save(root, &task);
+        let mut show = office_show("show", "2026-10-15T02:00:00Z", "2026-10-15T00:00:00Z");
+        show["summary"]["status"] = json!("finished");
+        show["director"]["messages"] = json!([
+            {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T01:00:00Z",
+                "recipients": [{"seat": "a", "provider": "claude", "model": "m"}], "message_id": "show:e:0"},
+            {"kind": "forward", "speaker": "@forward", "round": 1, "text": "转发内容", "time": "2026-10-15T01:01:00Z",
+                "message_id": "show:e:1", "forward_id": "task:t:t-task", "forward_source": "房间 · 工位 · 时间"},
+            {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：失败）", "time": "2026-10-15T01:02:00Z",
+                "message_id": "show:e:2"}]);
+        show["director"]["private_messages"] = json!([
+            {"round": 1, "seat_id": "a", "text": "丢弃回答", "time": "2026-10-15T01:03:00Z"}
+        ]);
+        show["director"]["round"] = json!({"number": 1, "seats": [
+            {"seat_id": "a", "status": "running", "output": "正在写"}]});
+        save(root, &show);
+        let reader = Reader::new(root.to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let messages = chat["messages"].as_array().unwrap();
+        let by_id = |id: &str| messages.iter().find(|m| m["id"] == id).unwrap();
+        let prompt = by_id("task:task:t-task:prompt");
+        assert_eq!(prompt["visibility"], "private");
+        assert_eq!(prompt["message_id"], "task:t:t-task");
+        assert_eq!(
+            prompt["thread"],
+            json!({"kind": "desk", "key": "codex|m|reviewer"})
+        );
+        assert_eq!(prompt["desk"], "codex|m|reviewer");
+        assert_eq!(prompt["forward"], Value::Null);
+        let entry = by_id("show:entry:0");
+        assert_eq!(entry["visibility"], "public");
+        assert_eq!(entry["message_id"], "show:e:0");
+        assert_eq!(entry["thread"], json!({"kind": "room", "id": "show"}));
+        assert_eq!(entry["desk"], "claude|m|reviewer");
+        let forward = by_id("show:entry:1");
+        assert_eq!(forward["kind"], "forward");
+        assert_eq!(forward["visibility"], "public");
+        assert_eq!(forward["message_id"], "show:e:1");
+        assert_eq!(forward["desk"], Value::Null);
+        assert_eq!(
+            forward["forward"],
+            json!({"message_id": "task:t:t-task", "source": "房间 · 工位 · 时间"})
+        );
+        assert_eq!(forward["speaker"]["label"], "主控转发");
+        let absent = by_id("show:entry:2");
+        assert_eq!(absent["visibility"], "public");
+        assert_eq!(absent["message_id"], "show:e:2");
+        assert_eq!(absent["desk"], "codex|m|");
+        let private = by_id("show:round:1:a:private");
+        assert_eq!(private["visibility"], "private");
+        assert_eq!(private["message_id"], Value::Null);
+        let typing = messages.iter().find(|m| m["kind"] == "typing").unwrap();
+        assert_eq!(typing["desk"], "claude|m|reviewer");
+        assert_eq!(typing["thread"], json!({"kind": "room", "id": "show"}));
+        assert_eq!(typing["message_id"], Value::Null);
+    }
+
+    #[test]
+    fn old_snapshots_still_project_desks_rooms_and_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        save(
+            root,
+            &task_snapshot("old", "succeeded", "2026-10-15T00:00:00Z"),
+        );
+        let mut show = snapshot("old-show", "finished");
+        show["summary"]["manager_session"] = json!(MANAGER);
+        show["summary"]["updated"] = json!("2026-10-15T01:00:00Z");
+        show["director"] = json!({"mode": "show",
+            "seats": [{"id": "a", "provider": "claude", "model": "m"}],
+            "messages": [{"kind": "strange", "speaker": "a", "round": 1, "text": "未知种类",
+                "time": "2026-10-15T01:00:00Z"}],
+            "round": {"number": 1, "seats": []}});
+        save(root, &show);
+        let reader = Reader::new(root.to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let desks = chat["desks"].as_array().unwrap();
+        assert!(desks.iter().any(|desk| desk["key"] == "codex|m|"));
+        assert!(
+            desks
+                .iter()
+                .any(|desk| desk["key"] == "claude|m|" && desk["role"].is_null())
+        );
+        let rooms = chat["rooms"].as_array().unwrap();
+        assert_eq!(rooms.len(), 1);
+        assert_eq!(rooms[0]["id"], "old-show");
+        let unknown = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "未知种类")
+            .unwrap();
+        assert_eq!(unknown["message_id"], Value::Null);
+        assert_eq!(unknown["thread"], json!({"kind": "room", "id": "old-show"}));
+        assert_eq!(unknown["visibility"], "public");
+        assert_eq!(unknown["desk"], "claude|m|");
+        let prompt = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["kind"] == "prompt")
+            .unwrap();
+        assert_eq!(prompt["message_id"], Value::Null);
+        assert_eq!(prompt["thread"], json!({"kind": "desk", "key": "codex|m|"}));
     }
 }

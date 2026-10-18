@@ -43,17 +43,21 @@ class SeatRecord(BaseModel):
     provider: str
     provider_options: dict[str, ProviderOption] = Field(default_factory=lambda: {})
     cwd: str
+    role: str | None = None  # absent in records saved before desks existed
 
 
 class EntryRecord(BaseModel):
     round: int
-    kind: Literal["task", "host", "answer", "absent"]
+    kind: Literal["task", "host", "answer", "absent", "forward"]
     seat: str | None = None
     text: str | None = None
     time: str
     manager_model: str | None = None
     manager_reported_model: str | None = None
     reported_model: str | None = None
+    # Set only on forward entries: the referenced workspace message and its origin.
+    forward_id: str | None = None
+    forward_source: str | None = None
 
 
 class SessionRecord(BaseModel):
@@ -109,6 +113,9 @@ class TaskRecord(BaseModel):
     time: str
     manager_model: str | None = None
     manager_reported_model: str | None = None
+    role: str | None = None  # absent in records saved before desks existed
+    # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
+    forward: list[str] = Field(default_factory=lambda: [])
 
 
 class Conversation(BaseModel):

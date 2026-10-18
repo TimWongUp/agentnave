@@ -416,7 +416,7 @@ function configurationErrors() {
     for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, "共享");
   }
   for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
-    const scope = mode === "task" ? "任务模式" : "讨论模式";
+    const scope = mode === "task" ? "私聊模式" : "会议模式";
     for (const [provider, selection] of Object.entries(providers)) {
       const models = currentDoc.clis?.[provider]?.models || {};
       for (const model of selection.models) {
@@ -527,8 +527,8 @@ function renderModeToolbar() {
       : "已关闭：不额外限制可用工具和模型。开启后可逐项选择，并为此场景设置默认模型。";
   }
   $("mode-description").textContent = currentMode === "task"
-    ? "单独任务：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
-    : "多人讨论：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
+    ? "私聊：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
+    : "会议：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
 }
 
 function toggleModeRestricted(restricted) {
@@ -862,13 +862,13 @@ function renderModelDetail(provider, modelId) {
         { className: "field-hint" },
         overridden
           ? "下方修改只用于当前场景。勾选“继承共享设置”的项目仍跟随共享值；关闭本开关会清除此模型的场景专用设置。"
-          : "当前编辑的是共享设置，单独任务和多人讨论都会使用。开启后可只为当前场景设置不同的值。"
+          : "当前编辑的是共享设置，私聊和会议都会使用。开启后可只为当前场景设置不同的值。"
       )
     );
     detailBox.appendChild(overrideToggle);
   }
   if (!isModeRestricted()) detailBox.appendChild(el("p", { className: "field-hint" },
-    "当前编辑的是共享设置，单独任务和多人讨论都会使用。需要分别设置时，请先开启“自选可用工具和模型”。"));
+    "当前编辑的是共享设置，私聊和会议都会使用。需要分别设置时，请先开启“自选可用工具和模型”。"));
 
   // Target object to edit
   const targetConfig = overridden ? overrideConfig : sharedConfig;
@@ -1138,7 +1138,7 @@ function renderCards() {
         role: "switch",
         className: "switch-input",
         dataset: { focusKey: `${provider}/enabled` },
-        "aria-label": `在${currentMode === "task" ? "单独任务" : "多人讨论"}中使用 ${PROVIDER_NAMES[provider]}`,
+        "aria-label": `在${currentMode === "task" ? "私聊" : "会议"}中使用 ${PROVIDER_NAMES[provider]}`,
         checked: isEnabled,
         onChange: (e) => toggleProviderInMode(provider, e.target.checked),
       });

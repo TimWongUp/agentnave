@@ -845,7 +845,7 @@ window.addEventListener("agentnave:status", ({ detail }) => {
   else reload();
 });
 $("onboarding-reopen").addEventListener("click", async () => {
-  try { await post("/app/onboarding/reopen"); say("已重新显示开始使用，返回群聊或面板即可查看。"); }
+  try { await post("/app/onboarding/reopen"); say("已重新显示开始使用，返回办公室或面板即可查看。"); }
   catch { say("重新显示失败，请稍后重试。", true); }
 });
 

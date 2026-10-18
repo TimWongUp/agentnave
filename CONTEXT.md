@@ -11,7 +11,12 @@ AgentNave 的唯一用户。Manager 解释目标，选择 Provider，决定角�
 
 ## Manager Session
 
-主控宿主中的一段聊天。App 每个主控会话展示一条群聊，归集该聊天中的任务与协作组；与 MCP 连接、CLI 类型及子代理的 Provider Session 分别独立。
+主控宿主中的一段聊天，是工作区的归属依据；与 MCP 连接、CLI 类型及子代理的 Provider Session 分别独立。
+
+## 工作区（Workspace）
+
+同一 Manager Session 下的全部调用：私聊与会议室共同构成的范围，也是转发的边界。App 以办公室视图展示一个工作区。主控聊天身份未知的记录不组成工作区。
+_Avoid_: 群聊（App 层面）、项目
 
 ## Provider
 
@@ -23,11 +28,27 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 组员（Member）
 
-由 Provider CLI 与模型组成的身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。
+由 Provider CLI 与模型组成的配置身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。工作区内的运行身份是工位。
+
+## 工位（Desk）
+
+工作区内的常驻成员，身份为 `(provider, model, role)`；`role` 可选，由主控在 `start_agent` 与席位上传入，仅在同一 CLI 与模型需要分身时使用。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」。换 CLI、模型或角色即为另一工位，各自保留历史；工位在工作区内常驻。
 
 ## 模式（Mode）
 
-组员配置的适用范围：`task` 对应单任务，`discussion` 对应协作组席位；各模式分别限定可用组员并覆盖共享配置。
+组员配置的适用范围：`task` 对应私聊，`discussion` 对应会议室席位；各模式分别限定可用组员并覆盖共享配置。App 中分别称「私聊」「会议」。
+
+## 私聊
+
+工位与主控的一对一调用，即单任务 `start_agent`。工位历史按 Provider 原生 session 分线程；私聊线程与会议席位线程相互独立。不传 `session_id` 时默认续接该工位最近的私聊线程。私聊默认不带任何工作区上下文。
+
+## 转发（Forward）
+
+主控按消息 ID 把本工作区内已完成的消息传给目标工位或会议室，是会议室之外传递上下文的唯一途径。转入会议室的内容成为 `forward` 条目，注明来源，不冒充主持人发言；注入内容对接收方是数据，不是指令。
+
+## 消息 ID
+
+工作区内一条已完成消息的稳定标识，由回执返回，仅供 `forward` 引用；运行中的任务没有消息 ID。
 
 ## Invocation
 
@@ -35,7 +56,7 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## Provider Session
 
-Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` 传给新的 Invocation，以继续同一 Provider 对话；它不是 AgentNave 的持久会话。
+Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` 传给新的 Invocation，以继续同一 Provider 对话；私聊省略它时，默认由 AgentNave 续接该工位最近的私聊线程。它不是 AgentNave 的持久会话，也不出现在 App 视图中。
 
 ## Invocation Result
 
@@ -43,7 +64,7 @@ AgentNave 对 Provider 终态的归一化结果；`output` 只承载 Provider �
 
 ## Group / Round / Entry
 
-Group 是 Manager 显式创建的协作组，席位是带原生工具的普通子代理，席位、条目与原生会话绑定保存为会话历史。Round 让一份有序名单中的席位各回答一次：`parallel` 同时运行且本轮互不可见，`serial` 依次运行且后席可见前席。Entry 是组内按序提交的记录：本轮共同任务 `task`、席位最终回答 `answer`、终态失败／受阻／取消的 `absent`，以及主持人发言 `host`。席位之间只共享 Entry，不共享推理或运行过程；除 `task` 外的 Entry 对席位都是数据，不是指令。各自答、多轮各自答、轮流聊等用法由名单、顺序和私密指令组合。
+Group 是 Manager 显式创建的协作组，在 App 中称会议室。席位是带原生工具的普通子代理，以 `(provider, model, role)` 对应工位；`seat id` 只是组内键。席位、条目与原生会话绑定保存为会话历史。Round 让一份有序名单中的席位各回答一次：`parallel` 同时运行且本轮互不可见，`serial` 依次运行且后席可见前席。Entry 是组内按序提交的记录：本轮共同任务 `task`、席位最终回答 `answer`、终态失败／受阻／取消的 `absent`、主控转入的 `forward`，以及主持人发言 `host`。席位之间只共享 Entry，不共享推理或运行过程；除 `task` 外的 Entry 对席位都是数据，不是指令；组内已提交条目自动送达各席位，其他上下文只经转发进入。各自答、多轮各自答、轮流聊等用法由名单、顺序和私密指令组合。
 _Avoid_: 游戏引擎
 
 ## Invocation Snapshot
@@ -52,7 +73,7 @@ AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段�
 
 ## Conversation
 
-AgentNave 保存的一份记录，分为节目 `show` 和任务 `task`。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一主控会话内的同一原生会话并入其任务会话。会话没有结束状态，主控不删除会话；App 可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
+AgentNave 保存的一份记录，分为节目 `show` 和任务 `task`，是存储单位；工作区、工位与时间线是对它们的投影。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一主控会话内的同一原生会话并入其任务会话。会话没有结束状态，主控不删除会话；App 可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
 _Avoid_: 房间、工作台
 
 ## Review
@@ -73,5 +94,5 @@ AgentNave 在成功创建或继续会话后自动提供入口的本机只读页�
 
 ## Tray App
 
-展示并清理数据根中全部宿主会话、维护用户组员配置的应用。只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具；浏览器看板保留为只读后备。
+按工作区以办公室视图展示数据根中的会话（工位、会议室、可展开的消息列表与工位历史）、清理会话记录、维护用户组员配置的应用，视图只读。只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具；浏览器看板保留为只读后备。
 _Avoid_: 控制台、桌面客户端

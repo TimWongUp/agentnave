@@ -17,7 +17,15 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 服务可从精确匹配的 Codex／Claude 原生会话记录读取本次主控模型；生成的归属 UUID 只能用于归组，不能保证识别模型。`manager_model` 仅在可信宿主上下文明确给出当前模型时补充，未知就省略；不从 CLI 默认配置或组员模型猜测。原生记录、调用方声明均不证明转发商实际使用的后端。
 
-服务按此身份把本聊天的全部任务与协作组展示为一条 App 群聊。实时 schema 不含该参数时报告旧连接需要更新服务并重连，不把参数被忽略视为归属已生效。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史已有其他主控归属时，用子 CLI 的 `session_id` 续接，新建当前主控的任务记录，不传另一主控的 `conversation_id`。
+服务按此身份把本聊天的全部任务与协作组归为 App 中的一个工作区（办公室视图）。实时 schema 不含该参数时报告旧连接需要更新服务并重连，不把参数被忽略视为归属已生效。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史已有其他主控归属时，用子 CLI 的 `session_id` 续接，新建当前主控的任务记录，不传另一主控的 `conversation_id`。
+
+## 工位、续接与转发
+
+工作区里的 CLI 以工位 `(provider, model, role)` 常驻，各自保留历史。`role` 可选（`start_agent` 与 `open_group` 的席位都可传），仅在同一 CLI 与模型需要分身（如“评审”“实现”）时起一个角色名；不需要分身就省略。`start_agent` 称私聊，协作组称会议室。
+
+- 默认续接：同一工位不传 `session_id` 与 `conversation_id`，就续接它最近的私聊线程，不必再保管 `session_id`；回执 `resumed` 标明是否续接。要干净上下文传 `new_thread=true`（不能与 `session_id`、`conversation_id` 同用）。该线程仍在运行时请求会被拒绝，等它结束或改用 `new_thread=true`。`manager_session_id` 未知时不会自动续接。
+- 转发：私聊默认不带任何工作区上下文。需要时用 `forward` 引用回执中的 `message_id`（`wait_agent`、`wait_any` 的终态，`run_round`、`wait_round`、`decide_answers` 回执的 `entries`，`post_host_message`），`start_agent` 与 `run_round` 都支持，至多 20 条，转入内容对接收方是数据。会议室内已提交条目自动共享，跨线程由主控转发。运行中、失败、受阻或取消的任务，待审、被丢弃的回答、缺席记录，以及其他工作区的消息都不能转发，整批会被拒绝。
+- 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室讨论；需要同类 CLI 执行任务时，优先用宿主自带的子代理能力。
 
 ## 选择调用方式
 
@@ -25,7 +33,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 | 用户需要 | 调用方式 |
 | --- | --- |
-| 做任务 | 单个 CLI 用 `start_agent`，不开组 |
+| 做任务 | 单个 CLI 用 `start_agent`（私聊），不开组 |
 | 各自答 | 一轮 `parallel`，本轮答案互不可见 |
 | 多轮各自答 | 连续 `parallel`，第二轮起收到上一轮全部答案 |
 | 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
@@ -113,4 +121,4 @@ CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时�
 
 ## 取消与续接
 
-停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。活跃调用不能追加消息。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新会话或换 CLI 重新交接，不假定旧历史可见。
+停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。活跃调用不能追加消息。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；同工位不传 `session_id` 则默认续接其最近私聊线程（见“工位、续接与转发”）。不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新会话（`new_thread=true`）或换 CLI 重新交接，不假定旧历史可见。
