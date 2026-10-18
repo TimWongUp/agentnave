@@ -349,6 +349,15 @@ def test_provider_environment_orders_executable_inherited_then_common_dirs(
     assert os.environ["PATH"] == os.pathsep.join(("/usr/bin", "/bin", "/usr/bin"))
 
 
+def test_provider_environment_keeps_manager_chat_identity_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "private-manager-chat")
+    provider_keys = set(provider_environment(("claude",)))
+    assert "AGENTNAVE_HOST_SESSION_ID" not in provider_keys
+    assert os.environ["AGENTNAVE_HOST_SESSION_ID"] == "private-manager-chat"
+
+
 def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="skip_git_repo_check must be a boolean"):
         CodexAdapter().prepare(

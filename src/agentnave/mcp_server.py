@@ -53,6 +53,21 @@ type ManagerModel = Annotated[
     ),
 ]
 
+type ManagerSessionId = Annotated[
+    str | None,
+    Field(
+        min_length=1,
+        max_length=200,
+        description=(
+            "Current manager chat/session ID, shared by all tasks and groups in that chat. "
+            "Use the host's real session ID when available; otherwise generate one UUID once "
+            "for this manager chat and keep reusing it. A different chat needs a different ID. "
+            "Never use the CLI name, MCP connection ID, or subagent session_id. "
+            "Omission uses AGENTNAVE_HOST_SESSION_ID if configured, else keeps records separate."
+        ),
+    ),
+]
+
 
 def _read_excluded_providers() -> frozenset[str]:
     excluded = frozenset(
@@ -451,6 +466,7 @@ async def start_agent(
         str | None, Field(max_length=200, description="Title for a new task conversation.")
     ] = None,
     manager_model: ManagerModel = None,
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
@@ -477,7 +493,11 @@ async def start_agent(
         )
         validate_provider_options(request)
         invocation_id, saved_id = _conversations(ctx).start_task(
-            request, title, conversation_id, manager_model=manager_model
+            request,
+            title,
+            conversation_id,
+            manager_model=manager_model,
+            manager_session_id=manager_session_id,
         )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
@@ -803,6 +823,7 @@ async def open_group(
             )
         ),
     ] = False,
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> ShowPayload:
@@ -840,6 +861,7 @@ async def open_group(
             prepared_seats,
             review=review,
             isolated=isolated,
+            manager_session_id=manager_session_id,
         )
     except MemberFileError as exc:
         raise ToolError(str(exc)) from exc

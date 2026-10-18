@@ -679,7 +679,7 @@ mod tests {
         }
     }
 
-    const MANAGER: &str = "0123456789abcdef0123456789abcdef";
+    const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
 
     fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
         json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
@@ -695,6 +695,46 @@ mod tests {
                 .join(value["summary"]["id"].as_str().unwrap())
                 .join("views.json"),
             value,
+        );
+    }
+
+    #[test]
+    fn chats_separate_host_sessions_and_do_not_merge_legacy_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        for (id, session) in [
+            ("a", MANAGER),
+            ("b", MANAGER),
+            ("c", "s-ffffffffffffffffffffffffffffffff"),
+            ("old-a", "0123456789abcdef0123456789abcdef"),
+            ("old-b", "0123456789abcdef0123456789abcdef"),
+        ] {
+            let mut item = task_snapshot(id, "succeeded", "2026-10-15T00:00:00Z");
+            item["summary"]["manager_session"] = json!(session);
+            save(dir.path(), &item);
+        }
+        let reader = Reader::new(dir.path().to_path_buf());
+        let groups = state(&reader, "/app/chats");
+        assert_eq!(groups["groups"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["conversations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            state(&reader, "/app/chats/c-old-a")["conversations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            state(&reader, "/app/chats/c-old-b")["conversations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
     }
 
@@ -884,7 +924,7 @@ mod tests {
                 "succeeded",
                 &format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
             );
-            value["summary"]["manager_session"] = json!(format!("{i:032x}"));
+            value["summary"]["manager_session"] = json!(format!("s-{i:032x}"));
             save(dir.path(), &value);
         }
         // Active groups remain first even when old; idle groups outside two hours disappear.
@@ -902,7 +942,7 @@ mod tests {
         assert_eq!(managers.len(), 6);
         assert_eq!(managers[0]["group"], "c-review");
         assert_eq!(managers[1]["group"], MANAGER);
-        assert_eq!(managers[2]["group"], format!("{:032x}", 204));
+        assert_eq!(managers[2]["group"], format!("s-{:032x}", 204));
         assert_eq!(stage["counts"], json!({"running": 1, "review": 1}));
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 200);
@@ -1188,7 +1228,7 @@ mod tests {
     fn revision_one_counts_members_and_assigns_consistent_collision_free_colors() {
         let dir = tempfile::tempdir().unwrap();
         let mut work = task_snapshot("work", "running", "2099-01-01T00:00:00Z");
-        work["summary"]["manager_session"] = json!(format!("{:032x}", 0));
+        work["summary"]["manager_session"] = json!(format!("s-{:032x}", 0));
         let mut pi = work["director"]["tasks"][0].clone();
         pi["id"] = json!("pi");
         pi["provider"] = json!("pi");
@@ -1206,7 +1246,7 @@ mod tests {
         save(dir.path(), &duplicate);
         // The IDs ending 0 and 8 collide in FNV-1a modulo 8.
         let mut other = task_snapshot("other", "succeeded", "2099-01-01T00:00:01Z");
-        other["summary"]["manager_session"] = json!(format!("{:032x}", 8));
+        other["summary"]["manager_session"] = json!(format!("s-{:032x}", 8));
         save(dir.path(), &other);
         let reader = Reader::new(dir.path().to_path_buf());
         let stage = state(&reader, "/app/stage");
@@ -1235,7 +1275,7 @@ mod tests {
         // The limit applies before counts, even if more active groups exist.
         for i in 1..=7 {
             let mut extra = task_snapshot(&format!("extra{i}"), "running", "2099-01-01T00:00:02Z");
-            extra["summary"]["manager_session"] = json!(format!("{:032x}", i));
+            extra["summary"]["manager_session"] = json!(format!("s-{:032x}", i));
             save(dir.path(), &extra);
         }
         let stage = state(&reader, "/app/stage");

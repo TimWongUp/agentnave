@@ -9,6 +9,10 @@ _Avoid_: CLI 产品、多智能体运行时、工作流引擎
 
 AgentNave 的唯一用户。Manager 解释目标，选择 Provider，决定角色、模型、并行、重试、审核、综合与工作树策略。
 
+## Manager Session
+
+主控宿主中的一段聊天。App 每个主控会话展示一条群聊，归集该聊天中的任务与协作组；与 MCP 连接、CLI 类型及子代理的 Provider Session 分别独立。
+
 ## Provider
 
 AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 与 Pi Coding Agent。
@@ -48,7 +52,7 @@ AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段�
 
 ## Conversation
 
-AgentNave 保存的一份记录，分为节目 `show` 和任务 `task`。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一原生会话并入其任务会话。会话没有结束状态，主控不删除会话；App 可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
+AgentNave 保存的一份记录，分为节目 `show` 和任务 `task`。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一主控会话内的同一原生会话并入其任务会话。会话没有结束状态，主控不删除会话；App 可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
 _Avoid_: 房间、工作台
 
 ## Review

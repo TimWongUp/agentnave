@@ -787,12 +787,12 @@ impl Group {
     }
 }
 
-/// The chat group a conversation belongs to: its manager session, or itself when none was recorded.
+/// Only true host-chat identities aggregate; old connection UUIDs cannot identify a chat.
 pub(crate) fn chat_group(item: &Item) -> Option<String> {
-    let session = item
-        .manager_session
-        .as_deref()
-        .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) && valid_id(id));
+    let session = item.manager_session.as_deref().filter(|id| {
+        id.strip_prefix("s-")
+            .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
+    });
     let id = session
         .map(str::to_owned)
         .unwrap_or_else(|| format!("c-{}", item.id));

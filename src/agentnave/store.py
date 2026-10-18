@@ -302,27 +302,11 @@ class Record:
 
     def _lock(self) -> IO[bytes]:
         # An OS lock keeps two MCP hosts from writing one conversation at the same time.
-        lock = (self.directory / ".lock").open("a+b")
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                if lock.tell() == 0:
-                    lock.write(b"0")
-                    lock.flush()
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            lock.close()
-            raise ValueError(
-                "Conversation is held by another AgentNave server; continue it from that "
-                "host or once it becomes idle"
-            ) from None
-        return lock
+        return lock_file(
+            self.directory / ".lock",
+            "Conversation is held by another AgentNave server; continue it from that "
+            "host or once it becomes idle",
+        )
 
     @staticmethod
     def _unlock(lock: IO[bytes]) -> None:
@@ -332,6 +316,28 @@ class Record:
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
         lock.close()
+
+
+def lock_file(path: Path, busy_message: str) -> IO[bytes]:
+    """Acquire a nonblocking OS lock; close the returned handle to release it."""
+    lock = path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        raise ValueError(busy_message) from None
+    return lock
 
 
 class Unavailable(BaseModel):
