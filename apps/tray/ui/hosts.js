@@ -419,7 +419,7 @@ function skillNode(host) {
     );
   const auto =
     host.status === "connected" &&
-    (host.entry === "agentnave" || host.entry === "legacy");
+    host.entry === "agentnave";
   return h(
     "span",
     {},

@@ -1009,7 +1009,7 @@ fn reload_hint(id: &str) -> &'static str {
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)
-        .is_some_and(|command| matches!(entry_kind(command), "agentnave" | "legacy"))
+        .is_some_and(|command| entry_kind(command) == "agentnave")
 }
 fn message(error: &str) -> &str {
     error_parts(error, "takeover_failed").1
