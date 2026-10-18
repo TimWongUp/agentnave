@@ -15,7 +15,7 @@
 <script src="./settings.js" defer></script>
 <script src="./hosts.js" defer></script>
 </head>
-<body>
+<body class="settings-page">
 <main>
   <header class="top">
     <a class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
@@ -31,13 +31,13 @@
       <p class="eyebrow">本机偏好 · 托盘管理</p>
       <h1>设置</h1>
     </div>
+  </section>
     <div class="tabs" role="tablist" aria-label="设置分区">
       <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型</button>
       <button id="tab-avatars" class="tab-btn" role="tab" aria-selected="false" type="button">头像</button>
       <button id="tab-hosts" class="tab-btn" role="tab" aria-selected="false" type="button">宿主接入<span id="hosts-badge" class="badge-dot" hidden></span></button>
       <button id="tab-updates" class="tab-btn" role="tab" aria-selected="false" type="button">版本与更新<span id="update-badge" class="badge-dot" hidden></span></button>
     </div>
-  </section>
 
   <div id="notice" role="status" aria-live="polite">正在读取设置…</div>
 
@@ -58,24 +58,29 @@
       <button id="dismiss-migration" type="button">我知道了</button>
     </div>
 
+    <div class="settings-guide">
+      <h2>选择 AI 助手和默认设置</h2>
+      <p>执行者是本机已安装的 AI 命令行工具（CLI），每个工具可以使用不同模型。先选择使用场景，再展开工具查看模型。</p>
+      <p>这里的修改需要点击底部“保存设置”，才会用于之后发起或继续的任务。</p>
+    </div>
     <div class="members-toolbar">
       <div class="mode-control">
-        <div class="segment-control" role="radiogroup" aria-label="编排模式">
-          <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">任务</button>
-          <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">讨论</button>
-        </div>
-        <div class="mode-restrict-wrap">
-          <label class="restrict-toggle-label">
-            <input type="checkbox" id="mode-restrict-toggle">
-            <span id="mode-restrict-title">限制此模式</span>
-          </label>
-          <span id="mode-restrict-hint" class="mode-hint">未限制：所有 CLI 都可用</span>
+        <div class="segment-control" role="radiogroup" aria-label="使用场景">
+          <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">单独任务</button>
+          <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">多人讨论</button>
         </div>
       </div>
-      <button id="refresh-detection" type="button">刷新检测</button>
+      <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务">重新检测工具</button>
     </div>
-
-    <p class="guidance">参数是否有效以主控读取时（list_members）的校验为准；主控没指定模型和努力程度时，会使用这里的默认值。</p>
+    <p id="mode-description" class="guidance">单独任务：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。</p>
+    <div class="mode-restrict-wrap setting-row">
+      <div class="setting-copy">
+        <label id="mode-restrict-title" for="mode-restrict-toggle">自选可用工具和模型</label>
+        <p id="mode-restrict-hint" class="mode-hint">关闭时不额外限制；开启后只允许使用下方选中的工具和模型。</p>
+      </div>
+      <input type="checkbox" role="switch" class="switch-input" id="mode-restrict-toggle" aria-describedby="mode-restrict-hint">
+    </div>
+    <p class="guidance">主控是派发任务的 AI。它明确指定的模型和思考档位优先；未指定时才使用这里的默认值。参数能否使用，会在主控读取配置时检查。</p>
 
     <!-- 6 个 Provider 卡片容器 -->
     <div id="cli-cards" class="cli-cards"></div>
@@ -84,7 +89,7 @@
     <aside class="sticky-save-bar">
       <div class="save-bar-inner">
         <div class="save-bar-info">
-          <span id="dirty-text" class="dirty-label"></span>
+          <span id="dirty-text" class="dirty-label">设置已载入</span>
           <span id="permission-summary" class="permission-summary-tag" hidden></span>
           <span id="save-feedback" class="save-feedback"></span>
         </div>
@@ -96,17 +101,18 @@
   </section>
 
   <section id="pane-avatars" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-avatars">
-    <p class="guidance">默认使用模型家族的官方图标。上传 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片会居中裁剪；仅保存在本机，任务与讨论共用。</p>
+    <p class="guidance">这里调整群聊中的头像，上传或恢复后立即保存。默认使用模型家族图标；也可为某个工具下的指定模型单独设置。支持 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片居中裁剪，仅保存在本机，单独任务与多人讨论共用。</p>
     <div id="avatar-settings" aria-live="polite"></div>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-hosts">
     <div id="svc-banner" class="banner" hidden></div>
 
-    <p class="guidance">
-      接入宿主 = 在宿主配置里写入一条名为 agentnave 的 MCP 条目，并自动安装 agentnave-manager Skill；接入或更新 Skill 后，需要重启宿主应用或新建会话才会生效。
-      已有的手写条目会被自动接管：只补上 AGENTNAVE_HOST，必要时把命令指向本机服务的入口，其余字段原样保留；每次写入前都会先备份配置文件。
-    </p>
+    <div class="settings-guide">
+      <h2>让你使用的 AI 应用接入 AgentNave</h2>
+      <p>“宿主”是派发任务的应用，例如 Codex 或 Claude Code。点击接入后，会为它添加 AgentNave 连接和使用说明；重启该应用或新建会话后生效。</p>
+      <p>接入操作会立即保存，并在写入前备份原配置。已有手写连接会补齐宿主标识，必要时更新本机服务入口，其余字段保留。</p>
+    </div>
 
     <div id="new-callout" class="callout" hidden></div>
 
@@ -126,6 +132,7 @@
     <div class="updates-panel">
       <div class="updates-card">
         <h2>应用与服务状态</h2>
+        <p class="guidance">托盘应用负责显示会话和管理设置；本机服务负责接收主控的请求、启动 AI 助手。检查更新只查询版本；“全部更新”会安装找到的更新，应用更新后会自动重启。</p>
         <div class="status-grid">
           <div class="status-item">
             <span class="status-label">AgentNave 托盘应用</span>

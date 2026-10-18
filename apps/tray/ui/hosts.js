@@ -452,6 +452,7 @@ function advPanel(host) {
   const saveRoot = (path) => run(id, "root", () => post("/app/hosts/root", { id, path })).then((r) => { if (r?.ok) { S.roots.delete(id); renderAll(); } });
   const rootEditor = h("div.root-editor", {},
     h("label", { for: `root-${id}` }, "配置根目录"), rootInput,
+    h("p.fine", {}, "通常保持自动即可。只有把这个应用的用户配置放在其他位置时才需要修改；填写绝对路径，保存后立即生效。“恢复自动”会重新使用检测到的目录。"),
     h("span.fine", {}, `来源：${({ user: "App 中的覆盖", env: "App 环境变量", shell: "登录 shell", default: "默认目录" })[host.root.source] || host.root.source}`),
     h("div.adv-actions", {}, button("保存根目录", "", "root-save", () => saveRoot(rootInput.value.trim()), busy), button("恢复自动", "", "root-auto", () => saveRoot(null), busy)));
   const kv = [
@@ -768,8 +769,9 @@ function buildCard(host) {
         `${last.message} · ${relTime(last.at)}`,
       ),
     );
-  if (S.adv.has(id) && host.status !== "orphaned") main.push(advPanel(host));
   main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
+  // Keep the disclosure button above its content so it stays under the pointer.
+  if (S.adv.has(id) && host.status !== "orphaned") main.push(advPanel(host));
   card.append(h("div.hc-main", {}, ...main));
   return card;
 }

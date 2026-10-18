@@ -14,12 +14,13 @@
   }
 }
 * { box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
 main { max-width: 1260px; padding: 26px 40px 48px; margin: auto; }
 button, input, select { font: inherit; color: inherit; }
 button, select, input[type="date"], input[type="number"] { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 7px 11px; }
-button { cursor: pointer; white-space: nowrap; }
+button { cursor: pointer; white-space: nowrap; user-select: none; -webkit-user-select: none; }
 button:hover:enabled { border-color: var(--muted); }
 button:disabled { opacity: .42; cursor: default; }
 button.danger { color: var(--bad); }
@@ -40,12 +41,16 @@ p { margin: 0; }
 .eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .12em; margin-bottom: 10px; }
 h1 { font-size: 30px; line-height: 1.2; font-weight: 620; letter-spacing: -.04em; margin: 0; }
 #total { font: 400 23px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--muted); margin-left: 16px; letter-spacing: -.04em; }
+.guidance { color: var(--muted); font-size: 12px; line-height: 1.65; margin-bottom: 14px; max-width: 860px; }
 .scope { color: var(--muted); text-align: right; font-size: 12px; }
 #notice { min-height: 26px; color: var(--muted); margin-bottom: 14px; }
 #notice.error { color: var(--bad); }
 .tools { border-top: 1px solid var(--line); padding: 18px 0; flex-wrap: wrap; gap: 14px; }
 .filters, .cleanup { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 label { color: var(--soft); display: inline-flex; gap: 8px; align-items: center; }
+label:has(input[type="checkbox"]), label:has(input[type="radio"]) { user-select: none; -webkit-user-select: none; cursor: pointer; }
+.cleanup #cleanup { min-width: 112px; }
+.selection #delete { min-width: 150px; }
 .cleanup input { width: 76px; text-align: right; }
 .records { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .selection { padding: 14px 18px; border-bottom: 1px solid var(--line); }
@@ -83,7 +88,8 @@ h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
 @media (max-width: 700px) {
   main { padding: 18px 16px 30px; }
   .intro { margin-top: 32px; align-items: flex-start; flex-direction: column; gap: 14px; }
-  .scope { text-align: left; }
+  .guidance { color: var(--muted); font-size: 12px; line-height: 1.65; margin-bottom: 14px; max-width: 860px; }
+.scope { text-align: left; }
   .selection { padding: 12px; gap: 10px; }
   .selection label { font-size: 11px; }
   td, th { padding-left: 10px; padding-right: 10px; }

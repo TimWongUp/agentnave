@@ -107,6 +107,8 @@ let statusPollTimer = null;
 let lastMigrationData = { migrated: false, migration_skipped: [] };
 // Keep unfinished option edits across drawer/mode changes without writing invalid values.
 const optionDrafts = new WeakMap();
+let operatedControl = null;
+let pendingDisable = null;
 
 // Determine mock mode
 const isMock =
@@ -415,10 +417,10 @@ function parseOptionRows(rows) {
 
 function effortError(config) {
   if (Object.hasOwn(config, "effort") && !config.effort) {
-    return "默认努力档位不可为空，请选择具体档位或清除默认设置（覆盖时选择继承）";
+    return "默认思考档位不可为空，请选择具体档位或清除默认设置（覆盖时选择继承）";
   }
   if (Object.hasOwn(config, "effort") && config.efforts?.length && !config.efforts.includes(config.effort)) {
-    return `默认努力档位“${config.effort}”不在允许档位中，请重新选择默认档位或调整允许档位（覆盖时也可改为继承）`;
+    return `默认思考档位“${config.effort}”不在允许档位中，请重新选择默认档位或调整允许档位（覆盖时也可改为继承）`;
   }
   return null;
 }
@@ -458,7 +460,7 @@ function configurationErrors() {
 }
 
 function updateControls() {
-  $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
+  $("dirty-text").textContent = dirty ? "有未保存的修改" : "没有未保存的修改";
 
   const emptyRestricted = hasEmptyRestrictedMode();
   const errors = configurationErrors();
@@ -522,6 +524,7 @@ function setTab(tab) {
 function setMode(mode) {
   if (currentMode === mode) return;
   currentMode = mode;
+  pendingDisable = null;
   $("mode-task").classList.toggle("active", mode === "task");
   $("mode-task").setAttribute("aria-checked", mode === "task" ? "true" : "false");
   $("mode-discussion").classList.toggle("active", mode === "discussion");
@@ -542,12 +545,16 @@ function renderModeToolbar() {
   if (toggle) toggle.checked = restricted;
   if (hint) {
     hint.textContent = restricted
-      ? "已限制：仅允许下方启用的 CLI 与模型"
-      : "未限制：所有 CLI 都可用";
+      ? "已开启：只允许使用下方启用的工具与模型。关闭后将清除本场景的名单、默认模型和专用设置，共享设置保留。"
+      : "已关闭：不额外限制可用工具和模型。开启后可逐项选择，并为此场景设置默认模型。";
   }
+  $("mode-description").textContent = currentMode === "task"
+    ? "单独任务：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
+    : "多人讨论：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
 }
 
 function toggleModeRestricted(restricted) {
+  pendingDisable = null;
   if (!currentDoc.modes) currentDoc.modes = {};
   if (restricted) {
     currentDoc.modes[currentMode] = {};
@@ -570,7 +577,7 @@ function isProviderEnabledInMode(provider) {
   return Boolean(currentDoc.modes?.[currentMode]?.[provider]);
 }
 
-function toggleProviderInMode(provider, enabled) {
+function toggleProviderInMode(provider, enabled, confirmed = false) {
   if (!isModeRestricted()) return;
   if (enabled) {
     if (!currentDoc.modes[currentMode][provider]) {
@@ -580,8 +587,16 @@ function toggleProviderInMode(provider, enabled) {
       };
     }
   } else {
+    const previous = currentDoc.modes[currentMode][provider];
+    const hasSettings = previous && (previous.models?.length || previous.default || Object.keys(previous.overrides || {}).length);
+    if (hasSettings && !confirmed) {
+      pendingDisable = provider;
+      renderCards();
+      return;
+    }
     delete currentDoc.modes[currentMode][provider];
   }
+  pendingDisable = null;
   incDocVersion();
   renderCards();
 }
@@ -634,7 +649,7 @@ function toggleModelAllowed(provider, modelId, allowed) {
     // If only 1 model left, do not allow unchecking
     const uniqueModels = Array.from(new Set(provConf.models));
     if (uniqueModels.length <= 1 && uniqueModels.includes(modelId)) {
-      showNotice("至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”", true);
+      showNotice("至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”", true);
       renderCards();
       return;
     }
@@ -690,7 +705,7 @@ function toggleUnlimitedModels(provider, unlimited) {
 
 function setModelDefault(provider, modelId) {
   if (!isModeRestricted()) {
-    showNotice("开启“限制此模式”后才能设置默认模型");
+    showNotice("默认模型按场景保存，请先开启上方“自选可用工具和模型”");
     return;
   }
   const provConf = currentDoc.modes[currentMode]?.[provider];
@@ -811,7 +826,7 @@ function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModel
     return row;
   };
   for (const row of rows) list.appendChild(renderRow(row));
-  const heading = el("div", { className: "options-heading" }, el("h4", {}, "其他参数 (options)"));
+  const heading = el("div", { className: "options-heading" }, el("h4", {}, "高级参数（可选）"));
   if (overridden) {
     heading.appendChild(el("label", { className: "field-inherit-label" }, el("input", {
       type: "checkbox", checked: inherited, onChange: (e) => {
@@ -830,7 +845,7 @@ function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModel
     sync();
   } }, "＋ 添加参数"));
   return el("div", { className: "detail-field" }, heading,
-    el("p", { className: "field-hint" }, "参数键不可重复，也不能使用 model 或 effort；字符串保留原有空格。"), list);
+    el("p", { className: "field-hint" }, "高级设置，不确定时留空。参数名和取值须符合该工具的要求；字符串是文字，数字用于数值，布尔表示 true（是）或 false（否）。参数名不能重复，模型和思考档位请在对应选项中设置。"), list);
 }
 
 // Render model detail form with tri-state inheritance
@@ -855,6 +870,8 @@ function renderModelDetail(provider, modelId) {
   if (isModeRestricted()) {
     const overrideCheckbox = el("input", {
       type: "checkbox",
+      role: "switch",
+      className: "switch-input",
       checked: overridden,
       onChange: (e) => toggleModelOverride(provider, modelId, e.target.checked),
     });
@@ -866,12 +883,14 @@ function renderModelDetail(provider, modelId) {
         "p",
         { className: "field-hint" },
         overridden
-          ? "模式覆盖已开启：下方各字段可独立选择“继承共享设置”或设定本模式值。"
-          : "开启后可在此模式下覆盖该模型的档位、默认档位、参数或说明；关闭时完全使用共享设置。"
+          ? "下方修改只用于当前场景。勾选“继承共享设置”的项目仍跟随共享值；关闭本开关会清除此模型的场景专用设置。"
+          : "当前编辑的是共享设置，单独任务和多人讨论都会使用。开启后可只为当前场景设置不同的值。"
       )
     );
     detailBox.appendChild(overrideToggle);
   }
+  if (!isModeRestricted()) detailBox.appendChild(el("p", { className: "field-hint" },
+    "当前编辑的是共享设置，单独任务和多人讨论都会使用。需要分别设置时，请先开启“自选可用工具和模型”。"));
 
   // Target object to edit
   const targetConfig = overridden ? overrideConfig : sharedConfig;
@@ -925,7 +944,7 @@ function renderModelDetail(provider, modelId) {
       checklist.appendChild(el("label", { className: "effort-item" }, effBox, textNode(eff)));
     }
 
-    const headingKids = [el("h4", {}, "允许的努力档位 (efforts)")];
+    const headingKids = [el("h4", {}, "允许使用的思考档位")];
     if (overridden) {
       const inheritEffortsCheckbox = el("input", {
         type: "checkbox",
@@ -950,7 +969,7 @@ function renderModelDetail(provider, modelId) {
       { className: "detail-field" },
       el("div", { className: "field-heading-with-inherit" }, ...headingKids),
       checklist,
-      el("p", { className: "field-hint" }, "未勾选档位 = 不限；勾选后仅允许所选档位。")
+      el("p", { className: "field-hint" }, "全部不勾选表示不限制；勾选后只允许主控使用这些档位。low 为较低、medium 为中等、high 为较高，xhigh / max / ultra 是更高档位；通常思考更多也更慢，实际支持情况由工具决定。")
     );
     detailBox.appendChild(effortsField);
   }
@@ -970,6 +989,7 @@ function renderModelDetail(provider, modelId) {
       : (candidateEfforts.length > 0 ? candidateEfforts : ["minimal", "low", "medium", "high", "xhigh"]);
 
   const effortSelect = el("select", {
+    "aria-label": "默认思考档位",
     disabled: effortInherited,
     onChange: (e) => {
       const val = e.target.value;
@@ -1001,7 +1021,7 @@ function renderModelDetail(provider, modelId) {
   }
   effortSelect.value = unavailableEffort ? "__unavailable_effort__" : (activeEffortVal ?? "");
 
-  const effortHeadingKids = [el("h4", {}, "默认努力档位 (effort)")];
+  const effortHeadingKids = [el("h4", {}, "默认思考档位")];
   if (overridden) {
     const inheritEffortCheckbox = el("input", {
       type: "checkbox",
@@ -1028,7 +1048,7 @@ function renderModelDetail(provider, modelId) {
     { className: "detail-field" },
     el("div", { className: "field-heading-with-inherit" }, ...effortHeadingKids),
     el("div", { className: effortInherited ? "field-inherited-area" : "" }, effortSelect),
-    el("p", { className: "field-hint" }, "主控未指定 effort 时套用此默认值。")
+    el("p", { className: "field-hint" }, "主控没有指定思考档位时使用此值；“不设置”表示交给工具自行决定。默认值须在上方允许的档位内。")
   );
   detailBox.appendChild(defaultEffortField);
 
@@ -1049,7 +1069,7 @@ function renderModelDetail(provider, modelId) {
   });
   notesText.value = activeNotes;
 
-  const notesHeadingKids = [el("h4", {}, "说明与适用场景 (notes)")];
+  const notesHeadingKids = [el("h4", {}, "适合做什么")];
   if (overridden) {
     const inheritNotesCheckbox = el("input", {
       type: "checkbox",
@@ -1073,7 +1093,8 @@ function renderModelDetail(provider, modelId) {
     "div",
     { className: "detail-field" },
     el("div", { className: "field-heading-with-inherit" }, ...notesHeadingKids),
-    el("div", { className: notesInherited ? "field-inherited-area" : "" }, notesText)
+    el("div", { className: notesInherited ? "field-inherited-area" : "" }, notesText),
+    el("p", { className: "field-hint" }, "写给主控的选择参考，例如“适合快速问答”或“适合多文件修改”。可以留空，它不会直接作为模型的任务指令。")
   );
   detailBox.appendChild(notesField);
 
@@ -1093,7 +1114,13 @@ function cardSummary(provider, isEnabled, modeRestricted, info) {
 
 function renderCards() {
   const container = $("cli-cards");
-  container.replaceChildren();
+  // Build off-screen: emptying the live list first clamps the document scroll position.
+  // Restore the operated control after replacement without native focus auto-scrolling.
+  // WebKit does not focus every checkbox/button on a pointer click.
+  const active = operatedControl?.isConnected ? operatedControl : document.activeElement;
+  const focusKey = active?.dataset.focusKey;
+  const anchorTop = focusKey ? active.getBoundingClientRect().top : null;
+  const cards = document.createDocumentFragment();
 
   const modeRestricted = isModeRestricted();
 
@@ -1130,10 +1157,14 @@ function renderCards() {
     } else {
       const enableCheckbox = el("input", {
         type: "checkbox",
+        role: "switch",
+        className: "switch-input",
+        dataset: { focusKey: `${provider}/enabled` },
+        "aria-label": `在${currentMode === "task" ? "单独任务" : "多人讨论"}中使用 ${PROVIDER_NAMES[provider]}`,
         checked: isEnabled,
         onChange: (e) => toggleProviderInMode(provider, e.target.checked),
       });
-      enableControl = el("label", {}, enableCheckbox, textNode(" 在当前模式启用"));
+      enableControl = el("label", {}, enableCheckbox, textNode(" 在此场景启用"));
     }
 
     const isOpen = openCards.has(provider);
@@ -1142,6 +1173,7 @@ function renderCards() {
       {
         type: "button",
         className: "cli-toggle",
+        dataset: { focusKey: `${provider}/expand` },
         "aria-expanded": String(isOpen),
         onClick: () => {
           if (isOpen) openCards.delete(provider);
@@ -1160,8 +1192,15 @@ function renderCards() {
       el("div", { className: "cli-enable-area" }, enableControl)
     );
     card.appendChild(header);
+    if (pendingDisable === provider) {
+      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": `确认停用 ${PROVIDER_NAMES[provider]}` },
+        el("p", {}, `停用会清除 ${PROVIDER_NAMES[provider]} 在此场景的模型名单、默认模型和专用设置，共享设置保留。重新启用不会恢复；点击“保存设置”后才会生效。`),
+        el("div", { className: "btn-group" },
+          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, "保留启用"),
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => toggleProviderInMode(provider, false, true) }, "确认停用"))));
+    }
     if (!isOpen) {
-      container.appendChild(card);
+      cards.appendChild(card);
       continue;
     }
 
@@ -1194,20 +1233,23 @@ function renderCards() {
       if (modeRestricted) {
         const unlimitedBox = el("input", {
           type: "checkbox",
+          role: "switch",
+          className: "switch-input",
+          dataset: { focusKey: `${provider}/unlimited` },
           checked: isUnlimited,
           onChange: (e) => toggleUnlimitedModels(provider, e.target.checked),
         });
         const unlimitedWrap = el(
           "div",
           { className: "cli-unlimited-wrap" },
-          el("label", { className: "cli-unlimited-label" }, unlimitedBox, textNode(" 不限模型（允许调用该 CLI 支持的任意模型）"))
+          el("label", { className: "cli-unlimited-label" }, unlimitedBox, textNode(" 允许使用这个工具支持的任意模型"))
         );
         body.appendChild(unlimitedWrap);
       }
 
       // Collect all models
       if (!modeRestricted) {
-        body.appendChild(el("p", { className: "field-hint" }, "开启“限制此模式”后才能设置默认模型"));
+        body.appendChild(el("p", { className: "field-hint" }, "默认模型按场景保存，请先开启上方“自选可用工具和模型”"));
       }
       const detectedModels = info.models || [];
       const allModelIds = getAllModelIds(provider);
@@ -1240,6 +1282,7 @@ function renderCards() {
 
         const modelItem = el("div", {
           className: `model-item${hasOverride ? " has-override" : ""}`,
+          dataset: { model: modelId },
         });
 
         // Model Checkbox
@@ -1247,6 +1290,7 @@ function renderCards() {
         if (modeRestricted) {
           checkInput = el("input", {
             type: "checkbox",
+            dataset: { focusKey: `${provider}/${modelId}/allowed` },
             checked: isAllowed,
             disabled: isUnlimited || isLastChecked,
             onChange: (e) => toggleModelAllowed(provider, modelId, e.target.checked),
@@ -1256,6 +1300,7 @@ function renderCards() {
         // Default Radio
         const radioInput = el("input", {
           type: "radio",
+          dataset: { focusKey: `${provider}/${modelId}/default` },
           name: `default-${provider}-${currentMode}`,
           checked: isDefault,
           disabled: !modeRestricted,
@@ -1265,7 +1310,7 @@ function renderCards() {
         const defaultLabel = el(
           "label",
           { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: modeRestricted
-            ? "设为当前模式默认模型（再次点击可清除）" : "开启“限制此模式”后才能设置默认模型" },
+            ? "主控未指定模型时使用；再次点击可取消默认" : "默认模型按场景保存，请先开启上方“自选可用工具和模型”" },
           radioInput,
           textNode("默认")
         );
@@ -1283,6 +1328,8 @@ function renderCards() {
         const detailBtn = el("button", {
           type: "button",
           className: `btn-detail${isExpanded ? " active" : ""}`,
+          dataset: { focusKey: `${provider}/${modelId}/detail` },
+          "aria-expanded": String(Boolean(isExpanded)),
           onClick: () => {
             expandedModel = isExpanded ? null : { provider, model: modelId };
             renderCards();
@@ -1293,9 +1340,9 @@ function renderCards() {
         if (modeRestricted) {
           const checkLabelAttrs = { className: "model-check-label" };
           if (isLastChecked) {
-            checkLabelAttrs.title = "至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”";
+            checkLabelAttrs.title = "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”";
           } else if (isUnlimited) {
-            checkLabelAttrs.title = "当前为不限模型模式";
+            checkLabelAttrs.title = "已允许任意模型。要逐个选择，请先关闭上方“允许使用这个工具支持的任意模型”";
           }
           controlsKids.push(
             el("label", checkLabelAttrs, checkInput, el("span", { className: "model-id" }, modelId))
@@ -1311,9 +1358,9 @@ function renderCards() {
               "span",
               {
                 className: "model-single-hint",
-                title: "至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”",
+                title: "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”",
               },
-              "至少保留一个模型；要放开请打开“不限模型”，要停用请关闭“在当前模式启用”"
+              "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”"
             )
           );
         }
@@ -1339,21 +1386,24 @@ function renderCards() {
       const addInput = el("input", {
         type: "text",
         className: "add-model-input",
+        dataset: { focusKey: `${provider}/add-input` },
+        "aria-label": `${PROVIDER_NAMES[provider]} 的模型 ID`,
         placeholder: "手动添加模型 ID，如 claude-3-7-sonnet…",
       });
+      const submitModel = () => {
+        if (!addInput.value.trim()) return;
+        addCustomModel(provider, addInput.value);
+      };
       const addBtn = el("button", {
         type: "button",
         className: "add-model-btn",
-        onClick: () => {
-          if (!addInput.value.trim()) return;
-          addCustomModel(provider, addInput.value);
-          addInput.value = "";
-        },
+        dataset: { focusKey: `${provider}/add-button` },
+        onClick: submitModel,
       }, "添加模型");
       addInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          addBtn.click();
+          submitModel();
         }
       });
 
@@ -1362,10 +1412,34 @@ function renderCards() {
     }
 
     card.appendChild(body);
-    container.appendChild(card);
+    cards.appendChild(card);
   }
 
+  container.replaceChildren(cards);
+  // Field headings give controls stable identities even when inheritance controls appear.
+  for (const item of container.querySelectorAll(".model-item")) {
+    const prefix = `${item.closest(".cli-card").dataset.provider}/${item.dataset.model}`;
+    for (const field of item.querySelectorAll(".detail-field, .detail-override-toggle")) {
+      const name = field.querySelector("h4")?.textContent || "override";
+      field.querySelectorAll("input, select, textarea, button").forEach((control, index) => {
+        control.dataset.focusKey = `${prefix}/${name}/${index}`;
+      });
+    }
+  }
   updateControls();
+  if (focusKey) {
+    const replacement = [...container.querySelectorAll("[data-focus-key]")]
+      .find((control) => control.dataset.focusKey === focusKey)
+      || (focusKey.endsWith("-disable") ? [...container.querySelectorAll("[data-focus-key]")]
+        .find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/enabled`) : null);
+    if (replacement && !replacement.disabled) {
+      replacement.focus({ preventScroll: true });
+      // A confirmation button returns focus to the switch, not its screen position.
+      if (replacement.dataset.focusKey === focusKey) {
+        window.scrollBy(0, replacement.getBoundingClientRect().top - anchorTop);
+      }
+    }
+  }
 }
 
 // Save members.json with race version checking
@@ -1583,7 +1657,7 @@ function renderUpdates() {
     $("service-version").textContent = "—";
     serviceBadge.hidden = true;
     serviceMsg.hidden = false;
-    serviceMsg.textContent = "本机服务与托盘一致或未通过 uv 安装";
+    serviceMsg.textContent = "暂未提供可显示的服务版本；可到“宿主接入”查看本机服务是否已安装。";
   } else {
     $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
     const isServiceOutdated =
@@ -1729,13 +1803,22 @@ async function triggerApplyUpdate() {
 }
 
 // Bind top-level event listeners
+for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, (e) => {
+  operatedControl = e.target.closest("[data-focus-key]");
+  queueMicrotask(() => { operatedControl = null; });
+}, true);
 for (const tab of ["members", "avatars", "hosts", "updates"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
 window.addEventListener("hashchange", () => setTab(["avatars", "hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members"));
 setTab(["avatars", "hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members");
 
-$("mode-task").addEventListener("click", () => setMode("task"));
-$("mode-discussion").addEventListener("click", () => setMode("discussion"));
-$("mode-restrict-toggle").addEventListener("change", (e) => toggleModeRestricted(e.target.checked));
+for (const mode of ["task", "discussion"]) $("mode-" + mode).addEventListener("click", (e) => {
+  e.currentTarget.focus({ preventScroll: true });
+  setMode(mode);
+});
+$("mode-restrict-toggle").addEventListener("change", (e) => {
+  e.target.focus({ preventScroll: true });
+  toggleModeRestricted(e.target.checked);
+});
 $("refresh-detection").addEventListener("click", refreshDetection);
 $("save-btn").addEventListener("click", saveMembers);
 
