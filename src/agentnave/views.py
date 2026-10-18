@@ -174,6 +174,19 @@ def _director(
         } | common
     latest = state.rounds[-1] if state.rounds else None
     data = _show(state, "director") | common
+    round_times = {entry.round: entry.time for entry in state.entries if entry.kind == "task"}
+    data["private_messages"] = [
+        {
+            "round": round_.number,
+            "seat_id": seat.seat_id,
+            "text": seat.output,
+            "reported_model": seat.reported_model,
+            "time": round_times.get(round_.number, state.created),
+        }
+        for round_ in state.rounds
+        for seat in round_.seats
+        if seat.review == "discard" and seat.output is not None
+    ]
     data.update(
         {
             "public_url": public_url,

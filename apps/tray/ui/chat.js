@@ -284,6 +284,7 @@ function createMessage(m, c) {
   rec.name = h("b.m-name");
   rec.sub = h("span.m-sub");
   rec.to = h("div.m-to", { "aria-label": "消息收件人" });
+  rec.private = h("span.m-private", { title: "这条消息不会向群内其他成员公开。", hidden: true }, "🔒 私密");
   rec.time = h("time");
   rec.md = h("div.md");
   rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
@@ -296,7 +297,7 @@ function createMessage(m, c) {
     else state.expanded.add(id);
     applyFold(rec);
   });
-  rec.el = h("article.msg", {}, rec.avaSlot, h("div.m-col", {}, h("div.m-head", {}, rec.name, rec.sub, rec.time), rec.to, rec.bub, m.kind === "typing" ? null : rec.more));
+  rec.el = h("article.msg", {}, rec.avaSlot, h("div.m-col", {}, h("div.m-head", {}, rec.name, rec.sub, rec.private, rec.time), rec.to, rec.bub, m.kind === "typing" ? null : rec.more));
   return rec;
 }
 function updateMessage(rec, m, c, id) {
@@ -338,6 +339,7 @@ function updateMessage(rec, m, c, id) {
     }));
   }
   setAttr(rec.name, "title", s.model ? (s.model_source === "native" ? "CLI 回报的模型" : mine ? "主控记录的模型" : "调用时指定的模型") : "此条记录没有可靠的模型信息");
+  rec.private.hidden = !m.private;
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
   if (rec.text !== m.text) {

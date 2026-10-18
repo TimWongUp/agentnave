@@ -763,6 +763,42 @@ impl Group {
             }
             self.messages.push(msg);
         }
+        for entry in array(view, "private_messages") {
+            let id = text(entry, "seat_id");
+            let Some(seat) = seats.get(id).copied() else {
+                continue;
+            };
+            let time = event_time(text(entry, "time"), &item.updated);
+            let mut identity = seat.clone();
+            identity["seat"] = json!(id);
+            if !text(entry, "reported_model").is_empty() {
+                identity["reported_model"] = entry["reported_model"].clone();
+            }
+            self.member(
+                snapshot,
+                &identity,
+                "succeeded",
+                text(entry, "text"),
+                "",
+                &time,
+            );
+            latest.insert(id, entry);
+            if self.include_messages {
+                let round = entry["round"].as_u64().unwrap_or_default();
+                let mut msg = Self::message(
+                    format!("{}:round:{round}:{id}:private", item.id),
+                    &time,
+                    &item.id,
+                    "reply",
+                    member_speaker(&identity),
+                    text(entry, "text"),
+                );
+                msg["private"] = json!(true);
+                msg["status"] = json!("succeeded");
+                msg["focus"] = json!(format!("seat:{}:{id}", item.id));
+                self.messages.push(msg);
+            }
+        }
         for (id, seat) in &seats {
             let run = array(&view["round"], "seats").find(|r| text(r, "seat_id") == *id);
             if let Some(run) = run {

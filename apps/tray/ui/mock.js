@@ -177,7 +177,7 @@ All checks passed!
       filler: (k) => `补充第 ${k - 2} 条理由…`,
       out: "我选“舞台”。它两字、好认，放在菜单栏里不拥挤。",
     });
-    const pi = spec("pi", null, { start: -5200, end: -5000, final: "succeeded", out: "安装文档已逐条核对，没有发现与 v0.20 不一致的命令。", prompt: "逐条核对安装文档里的命令是否与 v0.20 一致，只报告差异。" });
+    const pi = spec("pi", null, { start: -5200, end: -5000, private: true, final: "succeeded", out: "安装文档已逐条核对，没有发现与 v0.20 不一致的命令。", prompt: "逐条核对安装文档里的命令是否与 v0.20 一致，只报告差异。" });
     const show = {
       id: "20261017-1021-aabbcc", title: "舞台面板命名与边界", mode: "show",
       topics: [{ at: -900, text: "我们要给新的菜单面板起名，并划清它和群聊页的边界。请各自给出你认为最合适的名字，并说明理由与风险。", to: keysOf([grok, claude, gem]) }],
@@ -388,7 +388,7 @@ All checks passed!
         if (e.status === "running")
           typing.push({ ...base, id: e.key, time: nowIso(), kind: "typing", text: e.lines.join("\n"), status: "running", detail: null, _s: sp.start });
         else if (e.status === "succeeded")
-          out.push({ ...base, id: `r:${conv.id}:${e.key}`, kind: "reply", text: e.out, status: "succeeded", detail: null });
+          out.push({ ...base, id: `r:${conv.id}:${e.key}`, kind: "reply", text: e.out, status: "succeeded", detail: null, private: !!sp.private });
         else if (e.status === "review")
           out.push({ ...base, id: `n:review:${conv.id}:${e.key}`, kind: "notice", text: "待审核，请在主控中决定", status: "review", detail: null });
         else

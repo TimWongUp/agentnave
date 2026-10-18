@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncGenerator
@@ -1037,6 +1038,8 @@ class ReviewReceipt(TypedDict):
     decisions: dict[str, Decision]
     pending_review: list[str]
     committed: list[str]
+    status: Literal["running", "review", "finished", "failed", "cancelled", "interrupted"]
+    error: NotRequired[str]
 
 
 @mcp.tool(
@@ -1058,19 +1061,47 @@ async def decide_answers(
 
     Published answers become visible to other seats; discarded ones never do. Repeating a
     decision is idempotent; changing one is rejected. Parallel rounds commit once every
-    answer is decided; a serial round continues with its next seat. The receipt confirms
-    saved decisions, not round completion; wait_round to confirm.
+    answer is decided; a serial round continues with its next seat. Once no execution or
+    review remains, this call waits for local commit and returns the terminal status.
+    status=finished needs no confirmation call; running/review still requires wait_round.
     """
     try:
-        saved = _conversations(ctx).decide(round_id, decisions)
-        return {
+        conversations = _conversations(ctx)
+        saved = conversations.decide(round_id, decisions)
+        try:
+            live = conversations.round(round_id)
+        except KeyError:
+            live = None  # Restored history has no running driver.
+        if (
+            live is not None
+            and not saved.pending_review()
+            and all(run.status not in ("pending", "running") for run in live.runs)
+        ):
+            # Only local commits remain; never wait for a future serial seat here.
+            assert live.task is not None
+            await asyncio.shield(live.task)
+            saved = next(
+                item
+                for item in conversations.record(live.group.id).state.rounds
+                if item.id == round_id
+            )
+        receipt: ReviewReceipt = {
             "round_id": round_id,
             "decisions": dict(decisions),
             "pending_review": [seat.seat_id for seat in saved.seats if seat.review == "pending"],
             "committed": [
                 seat.seat_id for seat in saved.seats if seat.committed and seat.review != "discard"
             ],
+            "status": "review" if saved.pending_review() else saved.status,
         }
+        if live is not None and live.finished:
+            receipt["status"] = (
+                "failed" if live.error else "cancelled" if live.cancelling else "finished"
+            )
+        error = live.error if live is not None else saved.error
+        if error:
+            receipt["error"] = error
+        return receipt
     except KeyError as exc:
         raise ToolError("Unknown round_id; read_conversation lists saved rounds.") from exc
     except (OSError, ValueError) as exc:
