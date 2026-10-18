@@ -1012,11 +1012,16 @@ function renderTranscript(detail, cast) {
             h("span.meta", {}, identityNote(seat)),
             message.kind === "task"
               ? h("span.badge.show", {}, "本轮任务")
-              : null,
+              : message.kind === "forward"
+                ? h("span.badge.forward", {}, "转发")
+                : null,
             h("time", { datetime: message.time }, when(message.time)),
             h("span.num", {}, "#" + String(index + 1).padStart(3, "0")),
-            h("span.tools", {}, copyButton(message.text)),
+            h("span.tools", {}, copyButton(message.text || "")),
           ),
+          message.kind === "forward" && message.forward_source
+            ? h("p.forward-source", {}, "转发自 " + message.forward_source)
+            : null,
           foldable(`msg:${detail.id}:${index}`, message.text),
         ),
       ),
@@ -1084,6 +1089,13 @@ function renderTask() {
                 {},
                 h("span.chip", { title: "模型" }, task.model || "原生设置"),
                 h("span.chip", { title: task.cwd }, task.cwd),
+                task.forward && task.forward.length
+                  ? h(
+                      "span.chip",
+                      { title: task.forward.join("\n") },
+                      `转发 ${task.forward.length} 条`,
+                    )
+                  : null,
               ),
               task.prompt
                 ? h(

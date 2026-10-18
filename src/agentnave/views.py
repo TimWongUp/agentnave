@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 
-from agentnave.store import Conversation, RoundRecord, Unavailable
+from agentnave.store import Conversation, EntryRecord, RoundRecord, Unavailable
 
 _ABSENT = {
     "failed": "失败",
@@ -17,6 +17,14 @@ _ABSENT = {
 
 def _encode(data: dict[str, object]) -> bytes:
     return json.dumps(data, ensure_ascii=False).encode()
+
+
+def _speaker(entry: EntryRecord) -> str | None:
+    if entry.kind == "forward":
+        return "@forward"  # forwarded content is the manager's action, never a host remark
+    if entry.kind in ("task", "host"):
+        return "@host"
+    return entry.seat
 
 
 def _show(state: Conversation, view: str) -> dict[str, object]:
@@ -69,7 +77,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
         ],
         "messages": [
             {
-                "speaker": "@host" if entry.kind in ("task", "host") else entry.seat,
+                "speaker": _speaker(entry),
                 "kind": entry.kind,
                 "round": entry.round,
                 "text": (
@@ -81,6 +89,11 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                 "manager_model": entry.manager_model,
                 "manager_reported_model": entry.manager_reported_model,
                 "reported_model": entry.reported_model,
+                **(
+                    {"forward_id": entry.forward_id, "forward_source": entry.forward_source}
+                    if entry.kind == "forward"
+                    else {}
+                ),
                 **(
                     {"recipients": recipients(entry.round, entry.kind)}
                     if entry.kind in ("task", "host")

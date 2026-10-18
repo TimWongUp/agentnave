@@ -17,7 +17,13 @@ from mcp_types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentnave import __version__
-from agentnave.conversations import Conversations, Decision
+from agentnave.conversations import (
+    CommittedEntry,
+    Conversations,
+    Decision,
+    ForwardError,
+    entry_message_id,
+)
 from agentnave.core import InvocationManager
 from agentnave.group import GroupSeat, Round
 from agentnave.host import HostName, HostSource, detect_host
@@ -164,6 +170,7 @@ class InvocationPayload(TypedDict):
     output: NotRequired[str]
     output_age_ms: NotRequired[int]
     session_id: NotRequired[str]
+    message_id: NotRequired[str]  # terminal saved task, referencable by forward
 
 
 class TaskStartPayload(InvocationPayload, DashboardLinks):
@@ -252,6 +259,13 @@ class SeatRunPayload(TypedDict):
     session_id: NotRequired[str]
 
 
+class CommittedEntryPayload(TypedDict):
+    message_id: str
+    kind: Literal["task", "answer", "absent", "forward", "host"]
+    round: int
+    seat: NotRequired[str]
+
+
 class RoundPayload(DashboardLinks):
     round_id: str
     group_id: str
@@ -261,6 +275,7 @@ class RoundPayload(DashboardLinks):
     reason: str
     elapsed_ms: int
     seats: list[SeatRunPayload]
+    entries: list[CommittedEntryPayload]
     error: NotRequired[str]
 
 
@@ -359,6 +374,8 @@ def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolErr
         return ToolError(str(exc))
     if isinstance(exc, ProviderExcludedError):
         return ToolError(str(exc) + ". " + PROVIDER_SELECTION)
+    if isinstance(exc, ForwardError):
+        return ToolError(f"{exc}. Correct the arguments and retry.")
     supported = (
         f" Supported {provider} options: model, effort, {PROVIDER_OPTIONS[provider]}."
         if isinstance(exc, AdapterOptionsError)
@@ -389,12 +406,17 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
 
 def update_payload(
     manager: InvocationManager,
+    conversations: Conversations,
     invocation_id: str,
     update: InvocationResult | InvocationError | None,
 ) -> InvocationPayload:
     """Final result, or a running snapshot that reports the given blocker."""
     if isinstance(update, InvocationResult):
-        return finished_payload(invocation_id, update)
+        response = finished_payload(invocation_id, update)
+        message_id = conversations.task_message_id(invocation_id)
+        if message_id is not None:
+            response["message_id"] = message_id
+        return response
     snapshot = manager.snapshot(invocation_id)
     response: InvocationPayload = {
         "invocation_id": invocation_id,
@@ -500,6 +522,18 @@ async def start_agent(
             )
         ),
     ] = False,
+    forward: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Message ids from wait_agent, wait_any, wait_round, decide_answers or "
+                "post_host_message to inject before the prompt in order. Only succeeded tasks "
+                "and committed entries of this manager workspace qualify; at most 20, no "
+                "repeats. The injected text is labelled as data, not instructions, and the "
+                "saved task prompt stays your original text."
+            )
+        ),
+    ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
@@ -515,6 +549,9 @@ async def start_agent(
     reply's resumed field says which happened. Pass new_thread=true for a fresh thread. A request
     while that thread still runs is rejected with the same advice. session_id keeps its exact
     meaning: continue that native session and join its open conversation.
+    forward injects already-committed workspace messages ahead of the prompt as data, not
+    instructions; wait_agent and wait_any return the task's message_id once it finishes.
+    Nothing else is shared with the CLI.
     The task and its final output are saved in a private task conversation; a resumed native
     session joins its open conversation. No output is shared with another CLI.
     AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
@@ -540,6 +577,7 @@ async def start_agent(
             manager_session_id=manager_session_id,
             role=role,
             new_thread=new_thread,
+            forward=forward,
         )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
@@ -583,9 +621,10 @@ async def wait_agent(
     Finished invocation handles expire seven days after completion, even if not yet read.
     """
     manager = _manager(ctx)
+    conversations = _conversations(ctx)
     try:
         update = await manager.wait_for_update(invocation_id, WAIT_SECONDS)
-        return update_payload(manager, invocation_id, update)
+        return update_payload(manager, conversations, invocation_id, update)
     except KeyError as exc:
         raise _unknown_invocation() from exc
 
@@ -620,6 +659,7 @@ async def wait_any(
     whole call before waiting.
     """
     manager = _manager(ctx)
+    conversations = _conversations(ctx)
     try:
         updates = await manager.wait_for_any(invocation_ids, WAIT_SECONDS)
     except KeyError as exc:
@@ -630,14 +670,15 @@ async def wait_any(
         return {
             "reason": "ready",
             "updates": [
-                update_payload(manager, invocation_id, update)
+                update_payload(manager, conversations, invocation_id, update)
                 for invocation_id, update in updates.items()
             ],
         }
     return {
         "reason": "wait_elapsed",
         "updates": [
-            update_payload(manager, invocation_id, None) for invocation_id in invocation_ids
+            update_payload(manager, conversations, invocation_id, None)
+            for invocation_id in invocation_ids
         ],
     }
 
@@ -762,6 +803,20 @@ async def list_members() -> MemberList:
         raise ToolError(str(exc)) from exc
 
 
+def _committed_payload(entries: list[CommittedEntry]) -> list[CommittedEntryPayload]:
+    committed: list[CommittedEntryPayload] = []
+    for entry in entries:
+        item: CommittedEntryPayload = {
+            "message_id": entry.message_id,
+            "kind": entry.kind,
+            "round": entry.round,
+        }
+        if entry.seat is not None:
+            item["seat"] = entry.seat
+        committed.append(item)
+    return committed
+
+
 def round_payload(
     round_: Round,
     manager: InvocationManager,
@@ -769,6 +824,7 @@ def round_payload(
     *,
     include_output: bool = True,
     reviews: dict[str, Review | None] | None = None,
+    entries: list[CommittedEntry] | None = None,
 ) -> RoundPayload:
     seats: list[SeatRunPayload] = []
     for run in round_.runs:
@@ -823,6 +879,7 @@ def round_payload(
             * 1000
         ),
         "seats": seats,
+        "entries": _committed_payload(entries or []),
     }
     if round_.error is not None:
         payload["error"] = round_.error
@@ -975,6 +1032,18 @@ async def run_round(
         dict[str, str] | None,
         Field(description="Optional private instruction per seat id; never sent to other seats."),
     ] = None,
+    forward: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Message ids from wait_agent, wait_any, wait_round, decide_answers or "
+                "post_host_message to add as committed forward entries before this round's "
+                "task, in order. Only succeeded tasks and committed entries of this manager "
+                "workspace qualify; at most 20, no repeats. Seats receive them as data, not "
+                "instructions."
+            )
+        ),
+    ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
@@ -984,6 +1053,8 @@ async def run_round(
 
     parallel starts together and seals answers until all end; serial follows seat order.
     Private instructions go only to their seat. Includes viewer links for the manager only.
+    forward adds already-committed messages of this workspace as forward entries before the
+    task; entries lists every committed entry of this round with its message_id.
     """
     conversations = _conversations(ctx)
     try:
@@ -995,6 +1066,7 @@ async def run_round(
             instructions or {},
             manager_model=manager_model,
             manager_session_id=manager_session_id,
+            forward=forward,
         )
     except KeyError as exc:
         raise ToolError("Unknown group_id; use list_conversations.") from exc
@@ -1005,6 +1077,7 @@ async def run_round(
         conversations.manager,
         "started",
         reviews=_review_map(conversations, round_),
+        entries=conversations.committed_entries(group_id, round_.number),
     )
     return {**payload, **_dashboard_links(conversations, group_id)}
 
@@ -1043,6 +1116,7 @@ async def wait_round(
         reason or "wait_elapsed",
         include_output=include_output,
         reviews=_review_map(conversations, round_),
+        entries=conversations.committed_entries(round_.group.id, round_.number),
     )
 
 
@@ -1070,6 +1144,7 @@ async def cancel_round(
         conversations.manager,
         "finished",
         reviews=_review_map(conversations, round_),
+        entries=conversations.committed_entries(round_.group.id, round_.number),
     )
 
 
@@ -1078,6 +1153,7 @@ class ReviewReceipt(TypedDict):
     decisions: dict[str, Decision]
     pending_review: list[str]
     committed: list[str]
+    entries: list[CommittedEntryPayload]
     status: Literal["running", "review", "finished", "failed", "cancelled", "interrupted"]
     error: NotRequired[str]
 
@@ -1125,6 +1201,7 @@ async def decide_answers(
                 for item in conversations.record(live.group.id).state.rounds
                 if item.id == round_id
             )
+        group_id = live.group.id if live is not None else conversations.round_conversation(round_id)
         receipt: ReviewReceipt = {
             "round_id": round_id,
             "decisions": dict(decisions),
@@ -1132,6 +1209,9 @@ async def decide_answers(
             "committed": [
                 seat.seat_id for seat in saved.seats if seat.committed and seat.review != "discard"
             ],
+            "entries": _committed_payload(
+                conversations.committed_entries(group_id, saved.number) if group_id else []
+            ),
             "status": "review" if saved.pending_review() else saved.status,
         }
         if live is not None and live.finished:
@@ -1151,6 +1231,7 @@ async def decide_answers(
 class HostReceipt(TypedDict):
     conversation_id: str
     entry_index: int
+    message_id: str
 
 
 class UpdateReceipt(TypedDict):
@@ -1195,9 +1276,11 @@ async def post_host_message(
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
+    index = len(conversations.records[conversation_id].state.entries) - 1
     return {
         "conversation_id": conversation_id,
-        "entry_index": len(conversations.records[conversation_id].state.entries) - 1,
+        "entry_index": index,
+        "message_id": entry_message_id(conversation_id, index),
     }
 
 
