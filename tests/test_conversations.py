@@ -612,7 +612,7 @@ async def test_resume_uses_latest_binding_when_old_archived_history_duplicates_s
         path.write_text(json.dumps(legacy))
     studio = Conversations(InvocationManager(), data_root)
     try:
-        invocation, conversation = studio.start_task(
+        invocation, conversation, _ = studio.start_task(
             InvocationRequest("claude", "continue", tmp_path, "shared-session"), None, None
         )
         assert conversation == "999-new"
@@ -750,7 +750,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         save(record)
 
     try:
-        invocation_id, conversation_id = first.start_task(
+        invocation_id, conversation_id, _ = first.start_task(
             InvocationRequest("claude", "one", tmp_path), "Job", None
         )
         record = first.records[conversation_id]
@@ -761,7 +761,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         assert result is not None and result.session_id
         assert terminal_saves == 1 and record.lock is None
         second.update(conversation_id, "renamed elsewhere")
-        resumed, saved_id = second.start_task(
+        resumed, saved_id, _ = second.start_task(
             InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
         )
         assert saved_id == conversation_id
@@ -769,7 +769,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         await asyncio.gather(*second.collectors)
         assert second.records[conversation_id].lock is None
         monkeypatch.setattr(Record, "save", save)
-        third, saved_id = first.start_task(
+        third, saved_id, _ = first.start_task(
             InvocationRequest("claude", "three", tmp_path, result.session_id),
             None,
             conversation_id,
@@ -1052,7 +1052,7 @@ async def test_group_and_task_resumes_share_one_session_guard(
         await studio.wait(first.id, 3)
         session_id = first.group.states["a"].session_id
         assert first.finished and session_id
-        task_id, task_conversation = studio.start_task(
+        task_id, task_conversation, _ = studio.start_task(
             InvocationRequest(
                 "claude", "Private instruction for you only:\nSLEEP", tmp_path, session_id
             ),
@@ -1087,7 +1087,7 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     studio = Conversations(InvocationManager(), data_root)
-    invocation_id, conversation_id = studio.start_task(
+    invocation_id, conversation_id, _ = studio.start_task(
         InvocationRequest("claude", "one", tmp_path), "Job", None
     )
     replace = os.replace
@@ -1101,7 +1101,7 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     monkeypatch.setattr(os, "replace", replace)
     result = await studio.manager.wait(invocation_id)
     assert result is not None and result.session_id
-    resumed, resumed_conversation = studio.start_task(
+    resumed, resumed_conversation, _ = studio.start_task(
         InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
     )
     assert resumed_conversation == conversation_id
@@ -1117,7 +1117,7 @@ async def test_close_retries_a_task_after_its_terminal_save_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     studio = Conversations(InvocationManager(), data_root)
-    invocation_id, conversation_id = studio.start_task(
+    invocation_id, conversation_id, _ = studio.start_task(
         InvocationRequest("claude", "one", tmp_path), "Job", None
     )
     replace = os.replace
@@ -1585,7 +1585,7 @@ async def main():
     studio = Conversations(InvocationManager(), Path(sys.argv[1]))
     try:
         try:
-            invocation, _ = studio.start_task(
+            invocation, _, _ = studio.start_task(
                 InvocationRequest('claude', 'check', Path(sys.argv[2]), 'shared-native'),
                 None, None, manager_session_id='chat-b')
         except ValueError as exc:
@@ -1635,7 +1635,7 @@ asyncio.run(main())
 
     monkeypatch.setattr(Record, "save", before_running_is_saved)
     try:
-        invocation, _ = studio.start_task(
+        invocation, _, _ = studio.start_task(
             InvocationRequest("claude", "check", tmp_path, "shared-native"),
             None,
             None,
@@ -1676,8 +1676,8 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
     async with Client(mcp) as client:
         first = await start(client, "chat-a")
         ended = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
-        second = await start(client, "chat-a")
-        other = await start(client, "chat-b")
+        second = await start(client, "chat-a", new_thread=True)
+        other = await start(client, "chat-b", new_thread=True)
         show = await _call(
             client,
             "open_group",
@@ -1709,7 +1709,7 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
         assert rejected.is_error and "manager session" in str(rejected.content)
 
     async with Client(mcp) as client:
-        after_restart = await start(client, "chat-a")
+        after_restart = await start(client, "chat-a", new_thread=True)
         assert saved(after_restart)["manager_session"] == session
         unknown = await _call(
             client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
@@ -1721,13 +1721,194 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
         )
         assert saved(from_env)["manager_session"] == session
         # A per-call identity must not become shared mutable state on the MCP connection.
-        explicit = await start(client, "chat-b")
+        explicit = await start(client, "chat-b", new_thread=True)
         assert saved(explicit)["manager_session"] == saved(other)["manager_session"]
         monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
         unknown_again = await _call(
             client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
         )
         assert saved(unknown_again)["manager_session"] is None
+
+
+@pytest.mark.asyncio
+async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async with Client(mcp) as client:
+        started = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "role": "  reviewer  ",
+            },
+        )
+        assert started["resumed"] is False
+        await _call(client, "wait_agent", {"invocation_id": started["invocation_id"]})
+        directory = data_root / "conversations" / str(started["conversation_id"])
+        saved = json.loads((directory / "state.json").read_text())
+        assert saved["tasks"][0]["role"] == "reviewer"
+        task_views = json.loads((directory / "views.json").read_text())["director"]["tasks"]
+        assert task_views[0]["role"] == "reviewer"
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Desks",
+                "cwd": str(tmp_path),
+                "seats": [
+                    {"id": "a", "provider": "claude", "role": " author "},
+                    {"id": "b", "provider": "claude"},
+                ],
+            },
+        )
+        assert [seat["role"] for seat in _seats(show)] == ["author", None]
+        show_directory = data_root / "conversations" / str(show["group_id"])
+        saved_show = json.loads((show_directory / "state.json").read_text())
+        assert [seat["role"] for seat in saved_show["seats"]] == ["author", None]
+        projected = json.loads((show_directory / "views.json").read_text())["director"]["seats"]
+        assert [seat["role"] for seat in projected] == ["author", None]
+        blank = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "one", "cwd": str(tmp_path), "role": "   "},
+        )
+        blank_directory = data_root / "conversations" / str(blank["conversation_id"])
+        assert json.loads((blank_directory / "state.json").read_text())["tasks"][0]["role"] is None
+        for role in ("x" * 41, "bad\nrole", "bad\trole"):
+            result = await client.call_tool(
+                "start_agent",
+                {"provider": "claude", "prompt": "one", "cwd": str(tmp_path), "role": role},
+            )
+            assert result.is_error and "role" in str(result.content)
+        rejected = await client.call_tool(
+            "open_group",
+            {
+                "title": "Bad role",
+                "cwd": str(tmp_path),
+                "seats": [
+                    {"id": "a", "provider": "claude", "role": "bad\nrole"},
+                    {"id": "b", "provider": "claude"},
+                ],
+            },
+        )
+        assert rejected.is_error and "role" in str(rejected.content)
+
+
+@pytest.mark.asyncio
+async def test_start_agent_continues_the_desk_recent_private_thread(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async def start(client: Client, **extra: object) -> dict[str, object]:
+        return await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-a",
+                **extra,
+            },
+        )
+
+    async with Client(mcp) as client:
+        first = await start(client, role="reviewer")
+        assert first["resumed"] is False
+        ended = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
+        second = await start(client, role="reviewer")
+        assert second["resumed"] is True
+        assert second["conversation_id"] == first["conversation_id"]
+        resumed = await _call(client, "wait_agent", {"invocation_id": second["invocation_id"]})
+        assert resumed["session_id"] == ended["session_id"]
+        # Role and model are part of the desk identity: neither may cross threads.
+        other_role = await start(client, role="author")
+        assert other_role["resumed"] is False
+        assert other_role["conversation_id"] != first["conversation_id"]
+        other_model = await start(client, role="reviewer", provider_options={"model": "other"})
+        assert other_model["resumed"] is False
+        assert other_model["conversation_id"] != first["conversation_id"]
+
+
+@pytest.mark.asyncio
+async def test_start_agent_does_not_resume_without_a_manager_identity(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async with Client(mcp) as client:
+        first = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-a",
+            },
+        )
+        await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
+        unknown = await _call(
+            client, "start_agent", {"provider": "claude", "prompt": "one", "cwd": str(tmp_path)}
+        )
+        assert unknown["resumed"] is False
+        assert unknown["conversation_id"] != first["conversation_id"]
+
+
+@pytest.mark.asyncio
+async def test_start_agent_rejects_resuming_a_running_desk_thread(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async def start(client: Client, **extra: object) -> dict[str, object]:
+        return await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-a",
+                **extra,
+            },
+        )
+
+    async with Client(mcp) as client:
+        first = await start(client)
+        ended = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
+        running = await start(
+            client,
+            session_id=ended["session_id"],
+            prompt="Private instruction for you only:\nSLEEP",
+        )
+        rejected = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-a",
+            },
+        )
+        assert rejected.is_error and "new_thread=true" in str(rejected.content)
+        fresh = await start(client, new_thread=True)
+        assert fresh["resumed"] is False
+        assert fresh["conversation_id"] != first["conversation_id"]
+        await _call(client, "cancel_agent", {"invocation_id": running["invocation_id"]})
+        await _call(client, "cancel_agent", {"invocation_id": fresh["invocation_id"]})
+
+
+@pytest.mark.asyncio
+async def test_start_agent_rejects_new_thread_with_an_explicit_thread(tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        for arguments in (
+            {"session_id": "native", "new_thread": True},
+            {"conversation_id": "saved", "new_thread": True},
+        ):
+            result = await client.call_tool(
+                "start_agent",
+                {"provider": "claude", "prompt": "one", "cwd": str(tmp_path), **arguments},
+            )
+            assert result.is_error and "new_thread" in str(result.content)
 
 
 @pytest.mark.asyncio

@@ -168,6 +168,7 @@ class InvocationPayload(TypedDict):
 
 class TaskStartPayload(InvocationPayload, DashboardLinks):
     conversation_id: str
+    resumed: bool  # true when start_agent continued this desk's most recent private thread
 
 
 class WaitAnyPayload(TypedDict):
@@ -205,6 +206,13 @@ class GroupSeatSpec(BaseModel):
         default=None,
         description="Absolute directory for this seat; defaults to the group cwd.",
     )
+    role: str | None = Field(
+        default=None,
+        description=(
+            "Optional desk role for this seat; 1–40 characters after trimming, no newlines "
+            "or control characters. Blank or omitted means no role."
+        ),
+    )
 
 
 class GroupSeatPayload(TypedDict):
@@ -213,6 +221,7 @@ class GroupSeatPayload(TypedDict):
     cwd: str
     model: str | None
     effort: str | None
+    role: str | None
     defaults_applied: list[str]
 
 
@@ -450,8 +459,10 @@ async def start_agent(
         Field(
             min_length=1,
             description=(
-                "To continue a conversation, use the session_id returned by a finished invocation "
-                "of the same provider; omit for a new conversation. Never use an invocation_id here."
+                "To continue a specific native conversation, use the session_id returned by a "
+                "finished invocation of the same provider; never use an invocation_id here. "
+                "When omitted with a known manager_session_id, the task continues this desk's "
+                "most recent private thread unless new_thread=true."
             ),
         ),
     ] = None,
@@ -470,6 +481,25 @@ async def start_agent(
     title: Annotated[
         str | None, Field(max_length=200, description="Title for a new task conversation.")
     ] = None,
+    role: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional desk role for this CLI; 1–40 characters after trimming, no newlines "
+                "or control characters. Blank or omitted means no role. The desk identity is "
+                "(provider, requested model, role)."
+            )
+        ),
+    ] = None,
+    new_thread: Annotated[
+        bool,
+        Field(
+            description=(
+                "true always opens a fresh private thread instead of continuing this desk's "
+                "most recent one; it cannot be combined with session_id or conversation_id."
+            )
+        ),
+    ] = False,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
@@ -480,6 +510,11 @@ async def start_agent(
     The reply includes the CLI and requested model/effort. defaults_applied reports App defaults;
     otherwise omitted settings inherit the native CLI configuration.
     These are requested settings, not confirmation of the CLI's effective settings.
+    With a known manager_session_id and neither session_id nor conversation_id given, the task
+    continues this desk's (provider, requested model, role) most recent private thread; the
+    reply's resumed field says which happened. Pass new_thread=true for a fresh thread. A request
+    while that thread still runs is rejected with the same advice. session_id keeps its exact
+    meaning: continue that native session and join its open conversation.
     The task and its final output are saved in a private task conversation; a resumed native
     session joins its open conversation. No output is shared with another CLI.
     AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
@@ -497,12 +532,14 @@ async def start_agent(
             provider_options=options,
         )
         validate_provider_options(request)
-        invocation_id, saved_id = _conversations(ctx).start_task(
+        started = _conversations(ctx).start_task(
             request,
             title,
             conversation_id,
             manager_model=manager_model,
             manager_session_id=manager_session_id,
+            role=role,
+            new_thread=new_thread,
         )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
@@ -511,9 +548,10 @@ async def start_agent(
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
     return {
-        **started_payload(invocation_id, request, defaults_applied),
-        "conversation_id": saved_id,
-        **_dashboard_links(_conversations(ctx), saved_id),
+        **started_payload(started.invocation_id, request, defaults_applied),
+        "conversation_id": started.conversation_id,
+        "resumed": started.resumed,
+        **_dashboard_links(_conversations(ctx), started.conversation_id),
     }
 
 
@@ -858,6 +896,7 @@ async def open_group(
                     seat.provider,
                     options,
                     Path(seat.cwd if seat.cwd is not None else cwd or "."),
+                    seat.role,
                 )
             )
         record = _conversations(ctx).open_show(
@@ -888,6 +927,7 @@ async def open_group(
                 "effort": str(seat.provider_options["effort"])
                 if "effort" in seat.provider_options
                 else None,
+                "role": seat.role,
                 "defaults_applied": defaults[seat.id],
             }
             for seat in state.seats

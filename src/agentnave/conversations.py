@@ -12,8 +12,9 @@ import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
+from dataclasses import replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 from uuid import uuid4
 
 from agentnave import views
@@ -42,6 +43,31 @@ from agentnave.store import (
 )
 
 type Decision = Literal["publish", "discard"]
+
+_ROLE_MAX_LENGTH = 40
+
+
+def normalize_role(role: str | None) -> str | None:
+    """Trim an optional desk role; blank means a role-less desk."""
+    if role is None:
+        return None
+    cleaned = role.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > _ROLE_MAX_LENGTH or not cleaned.isprintable():
+        raise ValueError(
+            "role must contain 1–40 printable characters and no newlines or control characters"
+        )
+    return cleaned
+
+
+class TaskStart(NamedTuple):
+    """A started task and whether it continued this desk's most recent private thread."""
+
+    invocation_id: str
+    conversation_id: str
+    resumed: bool = False
+
 
 _LIVE_SECONDS = 1.5  # also how often the dashboard re-projects running work
 _STALE_LIVE_SECONDS = 3600
@@ -235,6 +261,7 @@ class Conversations(Groups):
         manager_session_id: str | None = None,
     ) -> Record:
         manager_session = self._manager_session(manager_session_id)
+        seats = [replace(seat, role=normalize_role(seat.role)) for seat in seats]
         conversation_id = uuid4().hex
         directory = self._directory(conversation_id)
         if isolated:
@@ -246,6 +273,7 @@ class Conversations(Groups):
                     seat.provider,
                     {**seat.provider_options, "restricted_tools": True},
                     directory / "seats" / seat.id,
+                    seat.role,
                 )
                 for seat in seats
             ]
@@ -272,6 +300,7 @@ class Conversations(Groups):
                         provider=seat.provider,
                         provider_options=dict(seat.provider_options),
                         cwd=str(seat.cwd),
+                        role=seat.role,
                     )
                     for seat in group.seats.values()
                 ],
@@ -297,7 +326,11 @@ class Conversations(Groups):
                 Path(state.cwd),
                 {
                     seat.id: GroupSeat(
-                        seat.id, seat.provider, dict(seat.provider_options), Path(seat.cwd)
+                        seat.id,
+                        seat.provider,
+                        dict(seat.provider_options),
+                        Path(seat.cwd),
+                        seat.role,
                     )
                     for seat in state.seats
                 },
@@ -484,6 +517,27 @@ class Conversations(Groups):
 
     # Tasks
 
+    def _recent_task_thread(
+        self, request: InvocationRequest, manager_session: str, role: str | None
+    ) -> TaskRecord | None:
+        """The same desk's latest saved private thread in this manager chat, if any."""
+        self.scan()  # Include records another server saved.
+        model = request.provider_options.get("model")
+        expected_model = None if model is None else str(model)
+        candidates = [
+            (task.time, record.state.created, record.state.id, task.id, task)
+            for record in self.records.values()
+            if record.state.kind == "task" and record.state.manager_session == manager_session
+            for task in record.state.tasks
+            if task.provider == request.provider
+            and (task.model or None) == expected_model
+            and task.role == role
+            and task.session_id is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[:4])[4]
+
     def start_task(
         self,
         request: InvocationRequest,
@@ -492,8 +546,31 @@ class Conversations(Groups):
         *,
         manager_model: str | None = None,
         manager_session_id: str | None = None,
-    ) -> tuple[str, str]:
+        role: str | None = None,
+        new_thread: bool = False,
+    ) -> TaskStart:
+        role = normalize_role(role)
+        if new_thread and (request.session_id is not None or conversation_id is not None):
+            raise ValueError(
+                "new_thread=true cannot be combined with session_id or conversation_id"
+            )
         manager_session = self._manager_session(manager_session_id)
+        resumed = False
+        if (
+            request.session_id is None
+            and conversation_id is None
+            and not new_thread
+            and manager_session is not None
+        ):
+            recent = self._recent_task_thread(request, manager_session, role)
+            if recent is not None:
+                if recent.status == "running" or recent.id in self.running_tasks:
+                    raise ValueError(
+                        "This desk's most recent private thread is still running; pass "
+                        "new_thread=true to start a new thread"
+                    )
+                request = replace(request, session_id=recent.session_id)
+                resumed = True
         self.manager.check_start(request)
         if conversation_id:
             self.record(conversation_id)  # Reject missing history before creating startup metadata.
@@ -586,6 +663,7 @@ class Conversations(Groups):
                 manager_reported_model=self._manager_model(manager_session),
                 session_id=request.session_id,
                 time=now(),
+                role=role,
             )
             record.state.tasks.append(task)
             self._persist(record)
@@ -603,7 +681,7 @@ class Conversations(Groups):
             self.collectors.append(
                 asyncio.create_task(self._collect(record, task.id, invocation_id))
             )
-            return invocation_id, record.state.id
+            return TaskStart(invocation_id, record.state.id, resumed)
         finally:
             try:
                 if not started:

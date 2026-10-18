@@ -43,6 +43,7 @@ class SeatRecord(BaseModel):
     provider: str
     provider_options: dict[str, ProviderOption] = Field(default_factory=lambda: {})
     cwd: str
+    role: str | None = None  # absent in records saved before desks existed
 
 
 class EntryRecord(BaseModel):
@@ -109,6 +110,7 @@ class TaskRecord(BaseModel):
     time: str
     manager_model: str | None = None
     manager_reported_model: str | None = None
+    role: str | None = None  # absent in records saved before desks existed
 
 
 class Conversation(BaseModel):

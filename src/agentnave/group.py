@@ -46,6 +46,7 @@ class GroupSeat:
     provider: str
     provider_options: dict[str, ProviderOption]
     cwd: Path
+    role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
