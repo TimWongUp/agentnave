@@ -667,7 +667,8 @@ impl Hosts {
             if !self.detect(&host).0
                 || !host.root.confirmed
                 || self.settings_error.is_some()
-                || self.shell.as_ref().is_some_and(Result::is_err)
+                || (self.shell.as_ref().is_some_and(Result::is_err)
+                    && !self.manual_roots.contains(host.id))
             {
                 continue;
             }
@@ -685,17 +686,11 @@ impl Hosts {
                     continue;
                 }
             };
-            let managed_entry = layers.iter().any(|(_, entry)| {
-                entry
-                    .as_ref()
-                    .and_then(|entry| host.command(entry))
-                    .is_some_and(|command| matches!(entry_kind(command), "agentnave" | "legacy"))
-            });
             let signature = serde_json::to_string(&(host.id, &layers, "takeover")).unwrap();
             if self.failed.get(host.id) == Some(&signature) {
                 continue;
             }
-            let result: Result<bool, String> = (|| {
+            let result: Result<(bool, bool), String> = (|| {
                 let mut changed = false;
                 for (path, _) in &layers {
                     let mut layer = host.clone();
@@ -732,10 +727,12 @@ impl Hosts {
                         },
                     )?;
                 }
-                Ok(changed)
+                // Re-read after the transaction so a concurrent removal observed by its final
+                // rebase cannot leave us acting on the stale preflight entry.
+                Ok((changed, self.has_managed_entry(&host)?))
             })();
             match result {
-                Ok(changed) => match self.ensure_skill(&host, managed_entry) {
+                Ok((changed, managed_entry)) => match self.ensure_skill(&host, managed_entry) {
                     Ok(skill_changed) if changed || skill_changed => {
                         let text = format!(
                             "已接管条目或更新 Skill{}；{}",
@@ -874,6 +871,8 @@ impl Hosts {
                 _ => return Err("未知宿主操作".into()),
             }
             self.write(&host, &before, desired.as_ref())?;
+            // The MCP entry is already connected even if the following Skill write fails.
+            self.manual_roots.insert(id.into());
             let skill_changed = operation == "connect" && self.ensure_skill(&host, true)?;
             let state = host
                 .skill
@@ -964,6 +963,19 @@ impl Hosts {
             Ok(false)
         }
     }
+    fn has_managed_entry(&self, host: &Host) -> Result<bool, String> {
+        for path in &host.user_layers {
+            if host
+                .read_at(path)?
+                .entry
+                .as_ref()
+                .is_some_and(|entry| managed_entry(host, entry))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 fn attention(code: &str, message: &str) -> Value {
     json!({"code":code,"message":message})
@@ -994,6 +1006,10 @@ fn reload_hint(id: &str) -> &'static str {
         "hermes" => "重启 Hermes 网关，或新建会话后生效",
         _ => "重启宿主应用，或新建会话后生效",
     }
+}
+fn managed_entry(host: &Host, entry: &Value) -> bool {
+    host.command(entry)
+        .is_some_and(|command| matches!(entry_kind(command), "agentnave" | "legacy"))
 }
 fn message(error: &str) -> &str {
     error_parts(error, "takeover_failed").1

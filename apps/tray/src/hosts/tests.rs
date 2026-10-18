@@ -839,6 +839,32 @@ fn refresh_installs_missing_skill_only_for_managed_host_entry() {
 }
 
 #[test]
+#[cfg(unix)]
+fn connect_skill_failure_keeps_manual_root_for_refresh_retry() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let path = h.skill.as_ref().unwrap();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    hosts.shell = Some(Err("shell probe failed".into()));
+    save(path.parent().unwrap(), "not a directory");
+
+    let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
+    assert_eq!(result["ok"], false);
+    assert!(h.read().unwrap().entry.is_some());
+    assert!(hosts.manual_roots.contains("pi"));
+
+    fs::remove_file(path.parent().unwrap()).unwrap();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    hosts.refresh_probed();
+    let state = hosts.state(&h);
+    assert_eq!(
+        skill::state(path, &hosts.context.home)["state"],
+        "app",
+        "{state}"
+    );
+}
+
+#[test]
 fn skill_ownership_links_and_refresh_version_update_preserve_external_content() {
     let (_temp, mut hosts) = fixture();
     let h = host(&hosts, "pi");
