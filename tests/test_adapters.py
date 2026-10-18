@@ -17,6 +17,39 @@ from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
 from agentnave.processes import provider_environment
 
 
+def test_native_models_do_not_attribute_child_or_usage_models_to_main_assistant() -> None:
+    assistant: dict[str, object] = {"type": "assistant", "message": {"model": "main"}}
+    assert base.model_from_event("claude", assistant) == "main"
+    assert base.model_from_event("codebuddy", assistant) == "main"
+    assert base.model_from_event("claude", {**assistant, "parent_tool_use_id": "child"}) is None
+    for model in ("unknown", "<synthetic>", "", "\nsecret"):
+        assert (
+            base.model_from_event("claude", {"type": "assistant", "message": {"model": model}})
+            is None
+        )
+    assert base.model_from_event("claude", {"type": "result", "modelUsage": {"child": {}}}) is None
+    assert (
+        base.model_from_event("claude", {"type": "system", "subtype": "init", "model": "selected"})
+        is None
+    )
+    assert (
+        base.model_from_event(
+            "pi",
+            {
+                "type": "message_end",
+                "message": {"role": "assistant", "model": "requested", "responseModel": "served"},
+            },
+        )
+        == "served"
+    )
+    assert (
+        base.model_from_event(
+            "pi", {"type": "message_end", "message": {"role": "toolResult", "model": "tool-model"}}
+        )
+        is None
+    )
+
+
 @pytest.fixture(autouse=True)
 def no_installed_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Argv assertions use bare names; keep real CLIs on this machine out of resolution.
@@ -347,6 +380,15 @@ def test_provider_environment_orders_executable_inherited_then_common_dirs(
         str(common),
     ]
     assert os.environ["PATH"] == os.pathsep.join(("/usr/bin", "/bin", "/usr/bin"))
+
+
+def test_provider_environment_keeps_manager_chat_identity_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "private-manager-chat")
+    provider_keys = set(provider_environment(("claude",)))
+    assert "AGENTNAVE_HOST_SESSION_ID" not in provider_keys
+    assert os.environ["AGENTNAVE_HOST_SESSION_ID"] == "private-manager-chat"
 
 
 def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:

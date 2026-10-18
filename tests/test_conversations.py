@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import cast
@@ -34,6 +35,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from agentnave.host import Host
 
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
+    monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID", raising=False)
     monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
     monkeypatch.setattr(mcp_server, "HOST", Host())
     monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
@@ -51,6 +53,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "    time.sleep(30)\n"
         "session = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--resume=')),\n"
         "               'session-' + uuid.uuid4().hex[:8])\n"
+        "if 'REPORT_MODEL' in prompt:\n"
+        "    print(json.dumps({'type':'assistant','message':{'model':'claude-reported-model'}}))\n"
         "seen = {'cwd': os.getcwd(), 'argv': sys.argv[1:], 'prompt': prompt}\n"
         "print(json.dumps({'type': 'result', 'result': json.dumps(seen), 'session_id': session,\n"
         "                  'num_turns': 1, 'is_error': False}))\n",
@@ -827,6 +831,10 @@ async def test_save_failure_stops_a_serial_round_before_the_next_seat(
     assert [seat["status"] for seat in saved["rounds"][0]["seats"]] == ["succeeded", "not_started"]
     assert [entry["kind"] for entry in saved["entries"]] == ["task", "answer", "host"]
     assert saved["sessions"]["a"]["session_id"] is not None
+    view = json.loads(
+        (data_root / "conversations" / str(show["group_id"]) / "views.json").read_text()
+    )["director"]
+    assert [target["seat"] for target in view["messages"][0]["recipients"]] == ["a"]
 
 
 @pytest.mark.asyncio
@@ -1222,7 +1230,13 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
                 order="parallel",
                 status="finished",
                 seats=[
-                    SeatRunRecord(seat_id="a", status="succeeded", review="discard", output=""),
+                    SeatRunRecord(
+                        seat_id="a",
+                        status="succeeded",
+                        review="discard",
+                        output="",
+                        reported_model="native-model",
+                    ),
                     SeatRunRecord(seat_id="b", status="succeeded", review="discard", output=None),
                 ],
             )
@@ -1230,7 +1244,15 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
     )
     projected = views.snapshot(state, "")
     private = _data(projected["director"])["private_messages"]
-    assert private == [{"round": 1, "seat_id": "a", "text": "", "time": state.created}]
+    assert private == [
+        {
+            "round": 1,
+            "seat_id": "a",
+            "text": "",
+            "time": state.created,
+            "reported_model": "native-model",
+        }
+    ]
     assert "private_messages" not in _data(projected["public"])
 
 
@@ -1455,6 +1477,260 @@ async def test_restored_review_receipt_counts_only_public_entries(data_root: Pat
 
 
 @pytest.mark.asyncio
+async def test_native_model_is_saved_and_round_recipients_match_selected_seats(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current_model = "manager-first"
+
+    def native_model(_host: object, _session: str | None) -> str:
+        return current_model
+
+    monkeypatch.setattr("agentnave.conversations.session_model", native_model)
+    async with Client(mcp) as client:
+        task = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "cwd": str(tmp_path),
+                "prompt": "REPORT_MODEL",
+                "manager_session_id": "manager-chat",
+            },
+        )
+        ended = await _call(client, "wait_agent", {"invocation_id": task["invocation_id"]})
+        assert ended["model"] == "claude-reported-model"
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Recipients",
+                "manager_session_id": "manager-chat",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b", "c")],
+            },
+        )
+        current_model = "manager-second"
+        round_ = await _call(
+            client,
+            "run_round",
+            {
+                "group_id": show["group_id"],
+                "seats": ["b", "a"],
+                "order": "parallel",
+                "prompt": "REPORT_MODEL",
+                "manager_session_id": "manager-chat",
+            },
+        )
+        await _wait(client, round_["round_id"])
+    saved_task = json.loads(
+        (data_root / "conversations" / str(task["conversation_id"]) / "state.json").read_text()
+    )
+    assert saved_task["tasks"][0]["reported_model"] == "claude-reported-model"
+    assert saved_task["tasks"][0]["manager_reported_model"] == "manager-first"
+    view = json.loads(
+        (data_root / "conversations" / str(show["conversation_id"]) / "views.json").read_text()
+    )["director"]
+    prompt = next(entry for entry in view["messages"] if entry["kind"] == "task")
+    assert prompt["manager_reported_model"] == "manager-second"
+    assert [recipient["seat"] for recipient in prompt["recipients"]] == ["b", "a"]
+    assert {recipient["model"] for recipient in prompt["recipients"]} == {"claude-reported-model"}
+    assert {entry["reported_model"] for entry in view["messages"] if entry["kind"] == "answer"} == {
+        "claude-reported-model"
+    }
+    saved = Record.read(data_root / "conversations" / str(show["conversation_id"]))
+    saved.state.rounds[0].seats[0].status = "failed"
+    saved.state.rounds[0].seats[0].error = "launch_error: missing binary"
+    projected = json.loads(views.public(saved.state))
+    assert [target["seat"] for target in projected["messages"][0]["recipients"]] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_task_start_failure_does_not_leave_a_running_record(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    studio = Conversations(InvocationManager(), data_root)
+
+    def fail_start(_request: InvocationRequest, *, prepared: object = None) -> str:
+        raise RuntimeError("start failed")
+
+    monkeypatch.setattr(studio.manager, "start", fail_start)
+    try:
+        with pytest.raises(RuntimeError, match="start failed"):
+            studio.start_task(
+                InvocationRequest("claude", "check", tmp_path, "native-session"),
+                None,
+                None,
+                manager_session_id="chat-a",
+            )
+        record = next(iter(studio.records.values()))
+        assert record.lock is None
+        saved = Record.read(record.directory)
+        assert saved.state.tasks[0].status == "failed"
+        assert saved.state.tasks[0].error == "start_failed"
+    finally:
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_native_resume_start_is_serialized_across_manager_processes(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = """
+import asyncio, sys
+from pathlib import Path
+from agentnave.conversations import Conversations
+from agentnave.core import InvocationManager
+from agentnave.models import InvocationRequest
+async def main():
+    studio = Conversations(InvocationManager(), Path(sys.argv[1]))
+    try:
+        try:
+            invocation, _ = studio.start_task(
+                InvocationRequest('claude', 'check', Path(sys.argv[2]), 'shared-native'),
+                None, None, manager_session_id='chat-b')
+        except ValueError as exc:
+            assert 'native session' in str(exc), str(exc)
+            print('blocked')
+        else:
+            await studio.manager.wait(invocation)
+            print('started')
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+asyncio.run(main())
+"""
+
+    def another_process() -> str:
+        return subprocess.run(
+            [sys.executable, "-c", child, str(data_root), str(tmp_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+
+    studio = Conversations(InvocationManager(), data_root)
+    save = Record.save
+    with pytest.raises(KeyError):
+        studio.start_task(
+            InvocationRequest("claude", "check", tmp_path, "shared-native"), None, "missing"
+        )
+    assert not data_root.exists()
+    with pytest.raises(ValueError):
+        studio.start_task(
+            InvocationRequest(
+                "claude", "check", tmp_path, "shared-native", {"unknown_option": True}
+            ),
+            None,
+            None,
+        )
+    assert not data_root.exists()
+
+    def before_running_is_saved(record: Record) -> None:
+        if record.state.tasks:
+            monkeypatch.setattr(Record, "save", save)
+            # The first record exists, but its running task has not reached disk yet.
+            assert another_process() == "blocked"
+        save(record)
+
+    monkeypatch.setattr(Record, "save", before_running_is_saved)
+    try:
+        invocation, _ = studio.start_task(
+            InvocationRequest("claude", "check", tmp_path, "shared-native"),
+            None,
+            None,
+            manager_session_id="chat-a",
+        )
+        await studio.manager.wait(invocation)
+        await asyncio.gather(*studio.collectors)
+        assert another_process() == "started"
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_history_follows_manager_chat_not_shared_mcp_connection(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def start(client: Client, session: str, **extra: object) -> dict[str, object]:
+        return await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "check",
+                "cwd": str(tmp_path),
+                "manager_session_id": session,
+                **extra,
+            },
+        )
+
+    def saved(result: dict[str, object]) -> dict[str, object]:
+        return json.loads(
+            (
+                data_root / "conversations" / str(result["conversation_id"]) / "state.json"
+            ).read_text()
+        )
+
+    async with Client(mcp) as client:
+        first = await start(client, "chat-a")
+        ended = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
+        second = await start(client, "chat-a")
+        other = await start(client, "chat-b")
+        show = await _call(
+            client,
+            "open_group",
+            {
+                "title": "Same chat",
+                "manager_session_id": "chat-a",
+                "cwd": str(tmp_path),
+                "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+            },
+        )
+        session = saved(first)["manager_session"]
+        assert str(session).startswith("s-")
+        assert saved(second)["manager_session"] == saved(show)["manager_session"] == session
+        assert saved(other)["manager_session"] != session
+        # Continuing a provider session from another manager chat keeps that chat separate.
+        resumed = await start(client, "chat-b", session_id=ended["session_id"])
+        assert resumed["conversation_id"] != first["conversation_id"]
+        assert saved(resumed)["manager_session"] == saved(other)["manager_session"]
+        rejected = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "check",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-b",
+                "conversation_id": first["conversation_id"],
+            },
+        )
+        assert rejected.is_error and "manager session" in str(rejected.content)
+
+    async with Client(mcp) as client:
+        after_restart = await start(client, "chat-a")
+        assert saved(after_restart)["manager_session"] == session
+        unknown = await _call(
+            client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
+        )
+        assert saved(unknown)["manager_session"] is None
+        monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "chat-a")
+        from_env = await _call(
+            client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
+        )
+        assert saved(from_env)["manager_session"] == session
+        # A per-call identity must not become shared mutable state on the MCP connection.
+        explicit = await start(client, "chat-b")
+        assert saved(explicit)["manager_session"] == saved(other)["manager_session"]
+        monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+        unknown_again = await _call(
+            client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
+        )
+        assert saved(unknown_again)["manager_session"] is None
+
+
+@pytest.mark.asyncio
 async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
@@ -1482,6 +1758,7 @@ async def test_studio_enforces_discussion_defaults_before_saving(
     from agentnave.host import Host
 
     monkeypatch.setattr(mcp_server, "HOST", Host("claude", "parent"))
+    monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
     monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     data_root.mkdir()
     path = data_root / "members.json"
@@ -1555,6 +1832,7 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
     from agentnave.host import Host
 
     monkeypatch.setattr(mcp_server, "HOST", Host("codex", "env"))
+    monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
 
     def unavailable(_studio: Conversations) -> str:
         raise OSError("viewer unavailable")
@@ -1592,7 +1870,7 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
         saved = json.loads((directory / "state.json").read_text())
         assert saved["host"] == "codex" and saved["host_source"] == "env"
         manager_session = saved["manager_session"]
-        assert len(manager_session) == 32 and int(manager_session, 16) >= 0
+        assert manager_session.startswith("s-") and len(manager_session) == 34
         assert saved["tasks"][0]["model"] == "chosen"
         summary = json.loads((directory / "views.json").read_text())["summary"]
         assert {key: summary[key] for key in ("host", "host_source", "manager_session")} == {
@@ -1601,7 +1879,8 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
             "manager_session": manager_session,
         }
         live = await _live(data_root)
-        assert live["manager_session"] == manager_session and live["manager_started_at"]
+        assert len(str(live["connection_id"])) == 32 and live["manager_started_at"]
+        assert "manager_session" not in live
         assert live["host"] == "codex" and live["host_source"] == "env"
         conversations = cast(dict[str, dict[str, dict[str, object]]], live["conversations"])
         assert (

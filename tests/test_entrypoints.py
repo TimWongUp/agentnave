@@ -219,7 +219,7 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     assert started.is_error is False
     assert started_payload["status"] == "running"
     assert started_payload["provider"] == "claude"
-    assert started_payload["model"] == "继承原生设置"
+    assert "model" not in started_payload
     assert started_payload["effort"] == "继承原生设置"
     assert "prompt" not in started_payload
     assert finished.is_error is False

@@ -164,8 +164,9 @@ function renderHead(c) {
     }
     const [label, tone2] = pick(MEMBER, m.status);
     setClass(chip, `mchip tone-${tone2}`);
-    setAttr(chip, "title", `${m.model} · ${m.provider} · ${label}\n${m.line}`);
-    setAttr(chip, "aria-label", `${m.model}，${label}，跳到最近一条消息`);
+    const name = m.model || m.label || m.provider;
+    setAttr(chip, "title", `${name} · ${m.provider} · ${label}${m.model ? "" : " · 模型信息不可用"}\n${m.line}`);
+    setAttr(chip, "aria-label", `${name}，${label}，跳到最近一条消息`);
     return chip;
   });
   for (const k of state.chips.keys()) if (!c.members.some((m) => m.key === k)) state.chips.delete(k);
@@ -203,6 +204,15 @@ function inline(parent, text) {
   return parent;
 }
 function renderMarkdown(root, text) {
+  const raw = String(text || "").trim();
+  const candidate = raw.replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, "$1");
+  if (/^[\[{]/.test(candidate)) {
+    try {
+      JSON.parse(candidate);
+      root.replaceChildren(h("pre", {}, h("code", {}, candidate)));
+      return;
+    } catch { /* Incomplete JSON remains ordinary message content. */ }
+  }
   const lines = String(text || "").replace(/\r/g, "").split("\n");
   const out = [];
   let para = [], list = null;
@@ -242,13 +252,17 @@ function who(m, c) {
   const s = m.speaker;
   if (s.role === "system") return { name: s.label || "系统", sub: "" };
   return {
-    name: s.model || "未记录模型",
+    name: s.model || s.label || (s.role === "manager" ? c.label : s.provider),
     sub: [s.role === "manager" ? "主控" : "组员", s.provider].filter(Boolean).join(" · "),
   };
 }
 function recipients(m, c) {
-  const names = (m.to || []).map((k) => c.members.find((x) => x.key === k)?.model || k);
-  return names.length > 3 ? `→ ${names.length} 位组员` : names.length ? "→ " + names.join("、") : "";
+  return m.recipients || (m.to || []).map((key) => {
+    const member = c.members.find((x) => x.key === key);
+    const [provider, ...parts] = key.split("/");
+    const model = parts.join("/");
+    return member || { key, provider, model, label: provider };
+  });
 }
 function speakerAvatar(m, c) {
   const s = m.speaker;
@@ -269,7 +283,7 @@ function createMessage(m, c) {
   rec.avaSlot = h("span.m-ava");
   rec.name = h("b.m-name");
   rec.sub = h("span.m-sub");
-  rec.to = h("span.m-to");
+  rec.to = h("div.m-to", { "aria-label": "消息收件人" });
   rec.private = h("span.m-private", { title: "这条消息不会向群内其他成员公开。", hidden: true }, "🔒 私密");
   rec.time = h("time");
   rec.md = h("div.md");
@@ -283,7 +297,7 @@ function createMessage(m, c) {
     else state.expanded.add(id);
     applyFold(rec);
   });
-  rec.el = h("article.msg", {}, rec.avaSlot, h("div.m-col", {}, h("div.m-head", {}, rec.name, rec.sub, rec.to, rec.private, rec.time), rec.bub, m.kind === "typing" ? null : rec.more));
+  rec.el = h("article.msg", {}, rec.avaSlot, h("div.m-col", {}, h("div.m-head", {}, rec.name, rec.sub, rec.private, rec.time), rec.to, rec.bub, m.kind === "typing" ? null : rec.more));
   return rec;
 }
 function updateMessage(rec, m, c, id) {
@@ -292,6 +306,7 @@ function updateMessage(rec, m, c, id) {
   const [label, tone] = pick(MEMBER, m.status);
   setAttr(rec.el, "data-key", s.role === "member" ? `${s.provider}/${s.model}` : null);
   setAttr(rec.el, "data-id", id);
+  setAttr(rec.el, "data-focus", m.focus || null);
   if (m.kind === "notice") {
     const key = s.provider + s.model;
     if (rec.avKey !== key) { rec.avKey = key; rec.ava.replaceChildren(s.role === "system" ? "" : avatar(s.provider, s.model, "sm")); }
@@ -311,7 +326,19 @@ function updateMessage(rec, m, c, id) {
   if (rec.avKey !== key) { rec.avKey = key; rec.avaSlot.replaceChildren(...[speakerAvatar(m, c)].filter(Boolean)); }
   setText(rec.name, w.name);
   setText(rec.sub, m.kind === "typing" ? `${w.sub} · 正在输入` : w.sub);
-  setText(rec.to, mine ? recipients(m, c) : "");
+  const targets = mine ? recipients(m, c) : [];
+  const toKey = JSON.stringify(targets);
+  if (rec.toKey !== toKey) {
+    rec.toKey = toKey;
+    rec.to.replaceChildren(...targets.map((target) => {
+      const name = target.model || target.label || target.provider;
+      const label = `${name}${target.seat ? ` · ${target.seat}` : ""}`;
+      const chip = h("button.recipient", { type: "button", title: `发给 ${label}`, "aria-label": `发给 ${label}，跳到该组员` }, avatar(target.provider, target.model, "sm"));
+      chip.addEventListener("click", () => focusMember(target.focus || target.key));
+      return chip;
+    }));
+  }
+  setAttr(rec.name, "title", s.model ? (s.model_source === "native" ? "CLI 回报的模型" : mine ? "主控记录的模型" : "调用时指定的模型") : "此条记录没有可靠的模型信息");
   rec.private.hidden = !m.private;
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
@@ -439,8 +466,9 @@ if (document.fonts?.ready) document.fonts.ready.then(measureAll);
 // flash it. Used by the head chips and by #<key> links, including links from 管理会话.
 function focusMember(key) {
   const conv = key.startsWith("conv:") ? key.slice(5) : null;
+  const seat = key.startsWith("seat:");
   const all = el.inner.querySelectorAll(conv ? ".sep.conv[data-conv]" : ".msg[data-key], .note[data-key]");
-  const target = [...all].filter((n) => (conv ? n.dataset.conv === conv : n.dataset.key === key)).pop();
+  const target = [...all].filter((n) => (conv ? n.dataset.conv === conv : seat ? n.dataset.focus === key : n.dataset.key === key)).pop();
   if (!target) return;
   target.scrollIntoView({ block: "center", behavior: "smooth" });
   target.classList.remove("flash");

@@ -17,6 +17,63 @@ from agentnave.nesting import (
 from agentnave.processes import spawn_process, terminate_process_tree
 
 
+def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host, session_model
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    session = "01a14d5a-d23d-7263-b50d-ca6b5ac429dd"
+    folder = tmp_path / "sessions" / "2026" / "10" / "18"
+    folder.mkdir(parents=True)
+    path = folder / f"rollout-2026-10-18T01-00-00-{session}.jsonl"
+
+    def turn(model: str, timestamp: str) -> str:
+        return (
+            json.dumps(
+                {"type": "turn_context", "timestamp": timestamp, "payload": {"model": model}}
+            )
+            + "\n"
+        )
+
+    path.write_text(
+        turn("old-model", "2026-01-01T00:00:00Z")
+        + turn("current-model", "2026-01-01T01:00:00Z")
+        + turn("future-model", "2999-01-01T00:00:00Z")
+        + '{"partial":'
+    )
+    (tmp_path / "config.toml").write_text('model = "wrong-default"')
+    assert session_model(Host("codex"), session) == "current-model"
+    from datetime import UTC, datetime
+
+    assert session_model(Host("codex"), session, since=datetime(2026, 2, 1, tzinfo=UTC)) is None
+    assert session_model(Host("codex"), "01a14d5a-d23d-7263-b50d-ca6b5ac429de") is None
+    assert session_model(Host("codex"), "../" + session) is None
+    assert session_model(Host("grok"), session) is None
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    claude = tmp_path / "projects" / "project" / f"{session}.jsonl"
+    claude.parent.mkdir(parents=True)
+    claude.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {"model": "claude-main"},
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-01T01:00:00Z",
+                "parent_tool_use_id": "tool-1",
+                "message": {"model": "child"},
+            }
+        )
+    )
+    assert session_model(Host("claude"), session) == "claude-main"
+
+
 def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     from agentnave import host
 

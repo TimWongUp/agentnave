@@ -42,7 +42,7 @@ STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
 
 
 def main() -> None:
-    """Entry point of `agentnave-mcp`; one manager identity survives child upgrades."""
+    """Entry point of `agentnave-mcp`; one connection identity survives child upgrades."""
     env = {
         **os.environ,
         SESSION_ENV: uuid4().hex,

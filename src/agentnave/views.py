@@ -20,6 +20,35 @@ def _encode(data: dict[str, object]) -> bytes:
 
 
 def _show(state: Conversation, view: str) -> dict[str, object]:
+    seats = {seat.id: seat for seat in state.seats}
+    rounds = {round_.number: round_ for round_ in state.rounds}
+
+    def recipients(number: int, kind: str) -> list[dict[str, object]]:
+        round_ = rounds.get(number)
+        targets = (
+            [
+                (run.seat_id, run.reported_model)
+                for run in round_.seats
+                if run.status not in {"pending", "not_started"}
+                and not (run.error or "").startswith(
+                    ("launch_error:", "state_write_failed:", "state_update_failed:")
+                )
+            ]
+            if kind == "task" and round_ is not None
+            else [(seat.id, None) for seat in state.seats]
+            if kind == "host"
+            else []
+        )
+        return [
+            {
+                "seat": seat_id,
+                "provider": seats[seat_id].provider,
+                "model": reported or seats[seat_id].provider_options.get("model", ""),
+            }
+            for seat_id, reported in targets
+            if seat_id in seats
+        ]
+
     return {
         "view": view,
         "host": state.host,
@@ -32,7 +61,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
             {
                 "id": seat.id,
                 "label": seat.id,
-                "model": str(seat.provider_options.get("model", "原生设置")),
+                "model": str(seat.provider_options.get("model", "")),
                 "provider": seat.provider,
             }
             for seat in state.seats
@@ -49,6 +78,13 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                 ),
                 "time": entry.time,
                 "manager_model": entry.manager_model,
+                "manager_reported_model": entry.manager_reported_model,
+                "reported_model": entry.reported_model,
+                **(
+                    {"recipients": recipients(entry.round, entry.kind)}
+                    if entry.kind in ("task", "host")
+                    else {}
+                ),
             }
             for entry in state.entries
         ],
@@ -73,6 +109,7 @@ def _round(round_: RoundRecord, tails: dict[str, str]) -> dict[str, object]:
                 "output": tails.get(seat.seat_id) if seat.status == "running" else seat.output,
                 "review": seat.review,
                 "error": seat.error,
+                "reported_model": seat.reported_model,
             }
             for seat in round_.seats
         ],
@@ -143,6 +180,7 @@ def _director(
             "round": round_.number,
             "seat_id": seat.seat_id,
             "text": seat.output,
+            "reported_model": seat.reported_model,
             "time": round_times.get(round_.number, state.created),
         }
         for round_ in state.rounds

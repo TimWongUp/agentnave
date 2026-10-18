@@ -7,9 +7,12 @@ import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, get_args
+from uuid import UUID
 
+from agentnave.adapters.base import model_from_event, object_dict, parse_json_object
 from agentnave.nesting import read_process_argv, read_process_parent
 
 type HostName = Literal[
@@ -39,6 +42,69 @@ class Host:
         if self.name in {"gemini", "opencode", "hermes"}:
             return None
         return self.name
+
+
+def session_model(
+    host: Host, session_id: str | None, *, since: datetime | None = None
+) -> str | None:
+    """Read this native session's latest model, never a CLI-wide default or other chat."""
+    if host.name not in {"codex", "claude"} or session_id is None:
+        return None
+    try:
+        native_id = str(UUID(session_id))
+    except ValueError:
+        return None
+    if native_id != session_id.lower():
+        return None
+    if host.name == "codex":
+        root = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "sessions"
+        pattern = f"*/*/*/rollout-*-{native_id}.jsonl"
+    else:
+        root = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects"
+        pattern = f"*/{native_id}.jsonl"
+    latest: tuple[datetime, str] | None = None
+    cutoff = datetime.now(UTC)
+    try:
+        paths = list(root.glob(pattern))
+        if len(paths) != 1 or not paths[0].resolve().is_relative_to(root.resolve()):
+            return None
+        with paths[0].open("rb") as stream:
+            total = 0
+            while line := stream.readline(1_048_577):
+                total += len(line)
+                if len(line) > 1_048_576 or total > 32 * 1_048_576:
+                    return None  # Cannot establish the latest turn from a partial transcript.
+                event = parse_json_object(line.decode("utf-8"))
+                if event is None:
+                    continue
+                try:
+                    stamp = datetime.fromisoformat(str(event.get("timestamp", "")))
+                    if (
+                        stamp.tzinfo is None
+                        or stamp > cutoff
+                        or (since is not None and stamp < since)
+                    ):
+                        continue
+                except ValueError:
+                    continue
+                if host.name == "codex" and event.get("type") == "turn_context":
+                    value = object_dict(event.get("payload")).get("model")
+                    model = value if isinstance(value, str) and value.strip() else None
+                elif host.name == "claude":
+                    model = model_from_event("claude", event)
+                else:
+                    model = None
+                if (
+                    model
+                    and model not in {"unknown", "<synthetic>"}
+                    and len(model) <= 200
+                    and model.isprintable()
+                    and (latest is None or stamp >= latest[0])
+                ):
+                    latest = stamp, model.strip()
+    except (OSError, UnicodeError):
+        return None
+    return latest[1] if latest else None
 
 
 def _match(executable: str) -> HostName | None:

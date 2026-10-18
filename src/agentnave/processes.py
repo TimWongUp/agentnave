@@ -69,6 +69,9 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     install directories.
     """
     env = dict(os.environ)
+    env.pop("AGENTNAVE_HOST_SESSION_ID", None)
+    if os.name == "nt":
+        return env
     inherited = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
     leading = [os.path.dirname(argv[0])] if argv and os.path.isabs(argv[0]) else []
     path: list[str] = []
@@ -120,6 +123,7 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=provider_environment(argv),
         )
     except Exception:
         status_path.unlink(missing_ok=True)

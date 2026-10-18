@@ -42,11 +42,6 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 /* top bar */
-.bar { flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
-.nav { display: flex; gap: 2px; }
-.nav a { padding: 5px 12px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 550; }
-.nav a:hover { background: var(--hover); color: var(--ink); }
-.nav a[aria-current] { background: var(--card); color: var(--ink); }
 .banner { flex: none; padding: 6px 18px; text-align: center; font-size: 12px; color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); }
 
 .app { flex: 1; min-height: 0; display: grid; grid-template-columns: 320px minmax(0, 1fr); }
@@ -122,12 +117,16 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .m-ava { flex: none; }
 .m-col { min-width: 0; max-width: min(640px, 82%); display: flex; flex-direction: column; gap: 4px; }
 .msg.mgr .m-col { align-items: flex-end; }
-.m-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 11.5px; color: var(--muted); }
+.m-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; font-size: 11.5px; color: var(--muted); }
 .msg.mgr .m-head { flex-direction: row-reverse; }
 .m-name { font-size: 13px; font-weight: 650; color: var(--ink); white-space: nowrap; }
 .msg.mgr .m-name { color: color-mix(in srgb, var(--mc) 72%, var(--ink)); }
 .m-sub, .m-to { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.m-to { color: var(--muted); }
+.m-to { display: flex; flex-wrap: wrap; gap: 5px; max-width: 100%; white-space: normal; overflow: visible; }
+.msg.mgr .m-to { justify-content: flex-end; }
+.recipient { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.recipient .avatar { width: 24px; height: 24px; flex: none; border-radius: 5px; }
+.recipient:hover { background: var(--card-hover); }
 .m-to:empty { display: none; }
 .m-private { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .m-private[hidden] { display: none; }
@@ -149,8 +148,9 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .md ul, .md ol { margin: 0 0 8px; padding-left: 20px; }
 .md li { margin: 2px 0; }
 .md code { font: 12px/1.5 var(--mono); padding: 1px 5px; border-radius: 5px; background: var(--card-hover); }
-.md pre { margin: 0 0 8px; padding: 9px 12px; border-radius: 9px; background: color-mix(in srgb, var(--solid) 70%, var(--card)); box-shadow: inset 0 0 0 1px var(--line); overflow-x: auto; }
-.md pre code { padding: 0; background: none; font-size: 12px; line-height: 1.55; white-space: pre; }
+.md { min-width: 0; max-width: 100%; }
+.md pre { max-width: 100%; margin: 0 0 8px; padding: 9px 12px; border-radius: 9px; background: color-mix(in srgb, var(--solid) 70%, var(--card)); box-shadow: inset 0 0 0 1px var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.md pre code { padding: 0; background: none; font-size: 12px; line-height: 1.55; white-space: inherit; overflow-wrap: anywhere; }
 
 /* the single in-place typing bubble of a running member */
 .typing-msg .bub { padding: 8.5px 12.5px; background: color-mix(in srgb, var(--run) 7%, var(--surface)); box-shadow: none; border: 1px dashed color-mix(in srgb, var(--run) 55%, transparent); }
@@ -206,8 +206,6 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- narrow: single column, back navigation ---- */
 @media (max-width: 760px) {
-  .bar { padding: 0 12px; }
-  .nav a { padding: 5px 8px; font-size: 12.5px; }
   .app { grid-template-columns: 1fr; }
   .app[data-view="list"] .chat-main { display: none; }
   .app[data-view="chat"] .side { display: none; }

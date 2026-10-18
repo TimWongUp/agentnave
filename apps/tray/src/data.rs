@@ -679,7 +679,7 @@ mod tests {
         }
     }
 
-    const MANAGER: &str = "0123456789abcdef0123456789abcdef";
+    const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
 
     fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
         json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
@@ -695,6 +695,46 @@ mod tests {
                 .join(value["summary"]["id"].as_str().unwrap())
                 .join("views.json"),
             value,
+        );
+    }
+
+    #[test]
+    fn chats_separate_host_sessions_and_do_not_merge_legacy_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        for (id, session) in [
+            ("a", MANAGER),
+            ("b", MANAGER),
+            ("c", "s-ffffffffffffffffffffffffffffffff"),
+            ("old-a", "0123456789abcdef0123456789abcdef"),
+            ("old-b", "0123456789abcdef0123456789abcdef"),
+        ] {
+            let mut item = task_snapshot(id, "succeeded", "2026-10-15T00:00:00Z");
+            item["summary"]["manager_session"] = json!(session);
+            save(dir.path(), &item);
+        }
+        let reader = Reader::new(dir.path().to_path_buf());
+        let groups = state(&reader, "/app/chats");
+        assert_eq!(groups["groups"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["conversations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            state(&reader, "/app/chats/c-old-a")["conversations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            state(&reader, "/app/chats/c-old-b")["conversations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
     }
 
@@ -731,7 +771,7 @@ mod tests {
         let legacy = state(&reader, "/app/chats/c-legacy");
         assert_eq!(legacy["host"], Value::Null);
         assert_eq!(legacy["label"], "未记录主控");
-        assert_eq!(legacy["members"][0]["key"], "codex/原生设置");
+        assert_eq!(legacy["members"][0]["key"], "codex/");
         assert_eq!(legacy["members"][0]["line"], "结果");
         assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
         assert!(legacy["color"].as_u64().unwrap() < 8);
@@ -825,10 +865,14 @@ mod tests {
         show["director"] = json!({"mode": "show", "seats": [
             {"id": "a", "label": "甲", "provider": "claude", "model": "m"},
             {"id": "b", "label": "乙", "provider": "codex", "model": "m"},
-            {"id": "c", "label": "丙", "provider": "grok", "model": "m"}],
+            {"id": "c", "label": "丙", "provider": "grok", "model": "m"},
+            {"id": "d", "label": "丁", "provider": "claude", "model": "m"}],
             "messages": [
-                {"kind": "task", "speaker": "@host", "manager_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z"},
+                {"kind": "task", "speaker": "@host", "manager_model": "requested", "manager_reported_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z", "recipients": [
+                    {"seat": "a", "provider": "claude", "model": "m"},
+                    {"seat": "d", "provider": "claude", "model": "m"}]},
                 {"kind": "answer", "speaker": "a", "round": 1, "text": "# 已提交", "time": "2026-10-15T00:00:01Z"},
+                {"kind": "answer", "speaker": "d", "round": 1, "text": "丁的回答", "time": "2026-10-15T00:00:01Z"},
                 {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
                 {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
             "round": {"number": 2, "seats": [
@@ -842,6 +886,19 @@ mod tests {
         assert_eq!(messages.iter().filter(|m| m["kind"] == "prompt").count(), 2);
         let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
         assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
+        assert_eq!(prompts[0]["speaker"]["model_source"], "native");
+        assert_eq!(prompts[0]["to"], json!(["claude/m", "claude/m"]));
+        assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
+        assert_ne!(
+            prompts[0]["recipients"][0]["focus"],
+            prompts[0]["recipients"][1]["focus"]
+        );
+        for (body, index) in [("# 已提交", 0), ("丁的回答", 1)] {
+            assert_eq!(
+                messages.iter().find(|m| m["text"] == body).unwrap()["focus"],
+                prompts[0]["recipients"][index]["focus"]
+            );
+        }
         assert_eq!(prompts[1]["speaker"]["model"], "");
         assert!(
             messages
@@ -859,6 +916,13 @@ mod tests {
                 .any(|m| m["kind"] == "notice" && m["text"] == "待审核，请在主控中决定")
         );
         assert!(!messages.iter().any(|m| m["text"] == "待审核私密回答"));
+        let review_notice = messages
+            .iter()
+            .find(|m| m["text"] == "待审核，请在主控中决定")
+            .unwrap();
+        assert_eq!(review_notice["status"], "review");
+        assert_eq!(review_notice["focus"], prompts[0]["recipients"][0]["focus"]);
+        assert_eq!(messages.last().unwrap()["focus"], "seat:show:b");
         assert_eq!(messages.last().unwrap()["kind"], "typing");
         let members = chat["members"].as_array().unwrap();
         assert_eq!(
@@ -884,10 +948,10 @@ mod tests {
             {"id": "a", "provider": "claude", "model": "m"}],
             "messages": [],
             "private_messages": [
-                {"round": 1, "seat_id": "a", "text": "旧轮私信", "time": "2026-10-15T00:00:00Z"},
-                {"round": 2, "seat_id": "a", "text": "本轮私信", "time": "2026-10-15T00:00:01Z"}],
+                {"round": 1, "seat_id": "a", "reported_model": "m-old", "text": "旧轮私信", "time": "2026-10-15T00:00:00Z"},
+                {"round": 2, "seat_id": "a", "reported_model": "m-native", "text": "本轮私信", "time": "2026-10-15T00:00:01Z"}],
             "round": {"number": 2, "seats": [
-                {"seat_id": "a", "status": "succeeded", "review": "discard", "output": "本轮私信"}]}});
+                {"seat_id": "a", "status": "succeeded", "reported_model": "m-native", "review": "discard", "output": "本轮私信"}]}});
         save(dir.path(), &show);
         let reader = Reader::new(dir.path().to_path_buf());
         let path = format!("/app/chats/{MANAGER}");
@@ -901,6 +965,10 @@ mod tests {
         );
         assert_eq!(messages[0]["text"], "旧轮私信");
         assert_eq!(messages[1]["text"], "本轮私信");
+        assert_eq!(messages[0]["speaker"]["model"], "m-old");
+        assert_eq!(messages[1]["speaker"]["model"], "m-native");
+        assert_eq!(messages[1]["speaker"]["model_source"], "native");
+        assert_eq!(messages[1]["focus"], "seat:private-show:a");
         show["director"]["round"] = json!({"number": 3, "seats": []});
         save(dir.path(), &show);
         assert_eq!(state(&reader, &path)["messages"], first["messages"]);
@@ -915,7 +983,7 @@ mod tests {
                 "succeeded",
                 &format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
             );
-            value["summary"]["manager_session"] = json!(format!("{i:032x}"));
+            value["summary"]["manager_session"] = json!(format!("s-{i:032x}"));
             save(dir.path(), &value);
         }
         // Active groups remain first even when old; idle groups outside two hours disappear.
@@ -933,7 +1001,7 @@ mod tests {
         assert_eq!(managers.len(), 6);
         assert_eq!(managers[0]["group"], "c-review");
         assert_eq!(managers[1]["group"], MANAGER);
-        assert_eq!(managers[2]["group"], format!("{:032x}", 204));
+        assert_eq!(managers[2]["group"], format!("s-{:032x}", 204));
         assert_eq!(stage["counts"], json!({"running": 1, "review": 1}));
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 200);
@@ -1219,7 +1287,7 @@ mod tests {
     fn revision_one_counts_members_and_assigns_consistent_collision_free_colors() {
         let dir = tempfile::tempdir().unwrap();
         let mut work = task_snapshot("work", "running", "2099-01-01T00:00:00Z");
-        work["summary"]["manager_session"] = json!(format!("{:032x}", 0));
+        work["summary"]["manager_session"] = json!(format!("s-{:032x}", 0));
         let mut pi = work["director"]["tasks"][0].clone();
         pi["id"] = json!("pi");
         pi["provider"] = json!("pi");
@@ -1237,7 +1305,7 @@ mod tests {
         save(dir.path(), &duplicate);
         // The IDs ending 0 and 8 collide in FNV-1a modulo 8.
         let mut other = task_snapshot("other", "succeeded", "2099-01-01T00:00:01Z");
-        other["summary"]["manager_session"] = json!(format!("{:032x}", 8));
+        other["summary"]["manager_session"] = json!(format!("s-{:032x}", 8));
         save(dir.path(), &other);
         let reader = Reader::new(dir.path().to_path_buf());
         let stage = state(&reader, "/app/stage");
@@ -1266,7 +1334,7 @@ mod tests {
         // The limit applies before counts, even if more active groups exist.
         for i in 1..=7 {
             let mut extra = task_snapshot(&format!("extra{i}"), "running", "2099-01-01T00:00:02Z");
-            extra["summary"]["manager_session"] = json!(format!("{:032x}", i));
+            extra["summary"]["manager_session"] = json!(format!("s-{:032x}", i));
             save(dir.path(), &extra);
         }
         let stage = state(&reader, "/app/stage");

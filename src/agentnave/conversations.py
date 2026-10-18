@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
 import json
 import os
@@ -21,7 +22,7 @@ from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
 from agentnave.group import Entry, Group, Groups, GroupSeat, Round, RoundOrder, SeatRun, SeatState
-from agentnave.host import Host, detect_host
+from agentnave.host import Host, detect_host, session_model
 from agentnave.models import InvocationRequest
 from agentnave.store import (
     Conversation,
@@ -34,6 +35,7 @@ from agentnave.store import (
     SessionRecord,
     TaskRecord,
     Unavailable,
+    lock_file,
     now,
     scan,
     write_file,
@@ -43,9 +45,9 @@ type Decision = Literal["publish", "discard"]
 
 _LIVE_SECONDS = 1.5  # also how often the dashboard re-projects running work
 _STALE_LIVE_SECONDS = 3600
-# The relay passes one session per host connection; a server started directly makes its own.
+# Relay identity is only a connection diagnostic, never a host chat identity.
 _RELAY_SESSION = os.environ.get("AGENTNAVE_MANAGER_SESSION", "")
-_MANAGER_SESSION = (
+_CONNECTION_ID = (
     _RELAY_SESSION
     if len(_RELAY_SESSION) == 32 and all(c in "0123456789abcdef" for c in _RELAY_SESSION)
     else uuid4().hex
@@ -74,7 +76,7 @@ class Conversations(Groups):
     def __init__(self, manager: InvocationManager, root: Path, *, host: Host | None = None) -> None:
         super().__init__(manager)
         self.host = host if host is not None else detect_host()
-        self.manager_session = _MANAGER_SESSION
+        self.connection_id = _CONNECTION_ID
         self.manager_started_at = _MANAGER_STARTED_AT
         self.root = root.resolve()  # created only by the first saved conversation
         self.records: dict[str, Record] = {}
@@ -87,6 +89,7 @@ class Conversations(Groups):
         self.home_token = uuid4().hex
         self.refresher: asyncio.Task[None] | None = None
         self.refresh_error: str | None = None
+        self._native_manager_sessions: dict[str, str] = {}
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
         # Completed replies remain readable, but never participate in group writes again.
         self._completed_rounds: dict[str, Round] = {}
@@ -192,10 +195,27 @@ class Conversations(Groups):
         with self._writing(group_id):
             return self._group(group_id)
 
-    def _create(self, state: Conversation, directory: Path) -> Record:
+    def _manager_session(self, session_id: str | None) -> str | None:
+        raw = session_id if session_id is not None else os.environ.get("AGENTNAVE_HOST_SESSION_ID")
+        if raw is None:
+            return None
+        if not raw.strip() or len(raw) > 200:
+            raise ValueError("manager_session_id must contain 1–200 non-blank characters")
+        # Namespace true chat identities separately from old per-connection UUIDs.
+        identity = json.dumps([self.host.name, raw], ensure_ascii=False).encode()
+        key = "s-" + hashlib.sha256(identity).hexdigest()[:32]
+        self._native_manager_sessions[key] = raw
+        return key
+
+    def _manager_model(self, session: str | None) -> str | None:
+        return session_model(self.host, self._native_manager_sessions.get(session or ""))
+
+    def _create(
+        self, state: Conversation, directory: Path, manager_session: str | None = None
+    ) -> Record:
         state.host = self.host.name
         state.host_source = self.host.source
-        state.manager_session = self.manager_session
+        state.manager_session = manager_session
         record = Record.create(directory, state)
         self.records[state.id] = record
         self._publish(record)
@@ -212,7 +232,9 @@ class Conversations(Groups):
         *,
         review: bool,
         isolated: bool,
+        manager_session_id: str | None = None,
     ) -> Record:
+        manager_session = self._manager_session(manager_session_id)
         conversation_id = uuid4().hex
         directory = self._directory(conversation_id)
         if isolated:
@@ -255,7 +277,7 @@ class Conversations(Groups):
                 ],
                 sessions={seat_id: SessionRecord() for seat_id in group.seats},
             )
-            record = self._create(state, directory)
+            record = self._create(state, directory, manager_session)
             self._release_idle(record)
             return record
         except BaseException:
@@ -286,6 +308,8 @@ class Conversations(Groups):
                         item.seat,
                         item.text,
                         item.manager_model,
+                        item.reported_model,
+                        item.manager_reported_model,
                     )
                     for item in state.entries
                 ],
@@ -307,10 +331,16 @@ class Conversations(Groups):
         instructions: dict[str, str],
         *,
         manager_model: str | None = None,
+        manager_session_id: str | None = None,
+        manager_reported_model: str | None = None,
     ) -> Round:
         with self._writing(group_id):
             self._group(group_id)
             state = self.records[group_id].state
+            if manager_session_id is not None:
+                session = self._manager_session(manager_session_id)
+                if session != state.manager_session:
+                    raise ValueError("Group belongs to a different manager session")
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
             return super().run(
@@ -320,16 +350,35 @@ class Conversations(Groups):
                 prompt,
                 instructions,
                 manager_model=manager_model,
+                manager_reported_model=self._manager_model(state.manager_session)
+                or manager_reported_model,
             )
 
-    def post(self, conversation_id: str, text: str, *, manager_model: str | None = None) -> None:
+    def post(
+        self,
+        conversation_id: str,
+        text: str,
+        *,
+        manager_model: str | None = None,
+        manager_session_id: str | None = None,
+    ) -> None:
         with self._writing(conversation_id):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
+            if manager_session_id is not None:
+                session = self._manager_session(manager_session_id)
+                if session != state.manager_session:
+                    raise ValueError("Group belongs to a different manager session")
             if group.active is not None or state.pending_review():
                 raise ValueError("post only between rounds, with no answers pending review")
             group.entries.append(
-                Entry(group.rounds, "host", text=text, manager_model=manager_model)
+                Entry(
+                    group.rounds,
+                    "host",
+                    text=text,
+                    manager_model=manager_model,
+                    manager_reported_model=self._manager_model(state.manager_session),
+                )
             )
             try:
                 self._save(group)
@@ -398,6 +447,8 @@ class Conversations(Groups):
                             item.seat,
                             item.text,
                             item.manager_model,
+                            item.reported_model,
+                            item.manager_reported_model,
                         )
                         for item in added
                     )
@@ -440,11 +491,38 @@ class Conversations(Groups):
         conversation_id: str | None,
         *,
         manager_model: str | None = None,
+        manager_session_id: str | None = None,
     ) -> tuple[str, str]:
+        manager_session = self._manager_session(manager_session_id)
         self.manager.check_start(request)
-        record = self.writable(conversation_id) if conversation_id else None
+        if conversation_id:
+            self.record(conversation_id)  # Reject missing history before creating startup metadata.
+        prepared = get_adapter(request.provider).prepare(request)
+        native_lock = None
+        started = False
+        record = None
         try:
             if request.session_id:
+                identity = json.dumps([request.provider, request.session_id]).encode()
+                locks = self.root / "native-session-locks"
+                locks.mkdir(parents=True, mode=0o700, exist_ok=True)
+                native_lock = lock_file(
+                    locks / (hashlib.sha256(identity).hexdigest() + ".lock"),
+                    "This native session is being started by another AgentNave server",
+                )
+            record = self.writable(conversation_id) if conversation_id else None
+            if (
+                record is not None
+                and record.state.manager_session != manager_session
+                and (
+                    manager_session is not None
+                    or (record.state.manager_session or "").startswith("s-")
+                )
+            ):
+                raise ValueError("Task conversation belongs to a different manager session")
+            if request.session_id:
+                # Under the native-session start lock, include other chats' active bindings.
+                self.scan()
 
                 def resumes(task: TaskRecord) -> bool:
                     return (
@@ -453,12 +531,19 @@ class Conversations(Groups):
 
                 if record is None:
                     # Another server may have created or extended this session's conversation.
-                    self.scan()
                     record = max(
                         (
                             item
                             for item in self.records.values()
-                            if item.state.kind == "task" and any(map(resumes, item.state.tasks))
+                            if item.state.kind == "task"
+                            and (
+                                item.state.manager_session == manager_session
+                                or (
+                                    manager_session is None
+                                    and not (item.state.manager_session or "").startswith("s-")
+                                )
+                            )
+                            and any(map(resumes, item.state.tasks))
                         ),
                         # Old versions could split a session after archiving its first record.
                         # Continue the most recent binding, independent of directory order.
@@ -470,7 +555,7 @@ class Conversations(Groups):
                         default=None,
                     )
                     if record is not None:
-                        # Lock before checking: never split one native session across conversations.
+                        # Keep a native session together within this manager chat.
                         record = self.writable(record.state.id)
                 if any(
                     task.status == "running" and resumes(task)
@@ -478,38 +563,40 @@ class Conversations(Groups):
                     for task in item.state.tasks
                 ):
                     raise ValueError("This native session already has an active task")
-            # Validate options before creating history; prepare only once.
-            prepared = get_adapter(request.provider).prepare(request)
-            try:
-                if record is None:
-                    conversation_id = uuid4().hex
-                    record = self._create(
-                        Conversation(
-                            id=conversation_id,
-                            title=title or f"{request.provider} 任务",
-                            kind="task",
-                        ),
-                        self._directory(conversation_id),
-                    )
-                if record.state.kind != "task":
-                    raise ValueError("Tasks need a task conversation")
-                task = TaskRecord(
-                    id=uuid4().hex,
-                    provider=request.provider,
-                    model=str(request.provider_options.get("model", "原生设置")),
-                    cwd=str(request.cwd),
-                    prompt=request.prompt,
-                    manager_model=manager_model,
-                    session_id=request.session_id,
-                    time=now(),
+            if record is None:
+                conversation_id = uuid4().hex
+                record = self._create(
+                    Conversation(
+                        id=conversation_id,
+                        title=title or f"{request.provider} 任务",
+                        kind="task",
+                    ),
+                    self._directory(conversation_id),
+                    manager_session,
                 )
-                record.state.tasks.append(task)
-                self._persist(record)
+            if record.state.kind != "task":
+                raise ValueError("Tasks need a task conversation")
+            task = TaskRecord(
+                id=uuid4().hex,
+                provider=request.provider,
+                model=str(request.provider_options.get("model", "")),
+                cwd=str(request.cwd),
+                prompt=request.prompt,
+                manager_model=manager_model,
+                manager_reported_model=self._manager_model(manager_session),
+                session_id=request.session_id,
+                time=now(),
+            )
+            record.state.tasks.append(task)
+            self._persist(record)
+            try:
                 invocation_id = self.manager.start(request, prepared=prepared)
-            except BaseException:
-                for path in prepared.cleanup_paths:
-                    Path(path).unlink(missing_ok=True)
+            except Exception:
+                task.status = "failed"
+                task.error = "start_failed"
+                self._persist(record)
                 raise
+            started = True
             self.invocations.setdefault(record.state.id, set()).add(invocation_id)
             self.running_tasks[task.id] = invocation_id
             self._publish(record)
@@ -518,8 +605,17 @@ class Conversations(Groups):
             )
             return invocation_id, record.state.id
         finally:
-            if record is not None:
-                self._release_idle(record)
+            try:
+                if not started:
+                    for path in prepared.cleanup_paths:
+                        Path(path).unlink(missing_ok=True)
+            finally:
+                try:
+                    if record is not None:
+                        self._release_idle(record)
+                finally:
+                    if native_lock is not None:
+                        native_lock.close()
 
     async def _collect(self, record: Record, task_id: str, invocation_id: str) -> None:
         result = await self.manager.wait(invocation_id)
@@ -531,6 +627,7 @@ class Conversations(Groups):
             task.output = result.output
             task.session_id = result.session_id or task.session_id
             task.elapsed_ms = result.duration_ms
+            task.reported_model = result.reported_model or task.reported_model
             task.error = error
 
         finish(result.status.value, result.error.code if result.error else None)
@@ -567,6 +664,8 @@ class Conversations(Groups):
                 text=item.text,
                 time=now(),
                 manager_model=item.manager_model,
+                manager_reported_model=item.manager_reported_model,
+                reported_model=item.reported_model,
             )
             for item in group.entries[len(state.entries) :]
         )
@@ -604,6 +703,8 @@ class Conversations(Groups):
             saved.error = round_.error
             for run, seat in zip(round_.runs, saved.seats, strict=True):
                 seat.status = run.status
+                if run.result is not None:
+                    seat.reported_model = run.result.reported_model or seat.reported_model
                 seat.output = run.result.output if run.result is not None else None
                 error = run.result.error if run.result is not None else run.launch_error
                 seat.error = f"{error.code}: {error.message}" if error is not None else None
@@ -676,11 +777,20 @@ class Conversations(Groups):
             for run in group.active.runs:
                 if run.status == "running" and run.invocation_id is not None:
                     tails[run.seat_id] = self.manager.recent_output(run.invocation_id)[0]
+                    saved = _find(record.state, group.active.id)
+                    if saved is not None:
+                        seat = next(s for s in saved.seats if s.seat_id == run.seat_id)
+                        seat.reported_model = (
+                            self.manager.reported_model(run.invocation_id) or seat.reported_model
+                        )
         for task in record.state.tasks:
             if task.id in self.running_tasks:
                 invocation_id = self.running_tasks[task.id]
                 tails[task.id] = self.manager.recent_output(invocation_id)[0]
                 elapsed[task.id] = self.manager.snapshot(invocation_id).elapsed_ms
+                task.reported_model = (
+                    self.manager.reported_model(invocation_id) or task.reported_model
+                )
         return tails, elapsed
 
     def _publish(self, record: Record, *, home: bool = True) -> None:
@@ -772,7 +882,7 @@ class Conversations(Groups):
                     "updated_at": now(),
                     "host": self.host.name,
                     "host_source": self.host.source,
-                    "manager_session": self.manager_session,
+                    "connection_id": self.connection_id,
                     "manager_started_at": self.manager_started_at,
                 }
                 try:

@@ -54,6 +54,21 @@ type ManagerModel = Annotated[
     ),
 ]
 
+type ManagerSessionId = Annotated[
+    str | None,
+    Field(
+        min_length=1,
+        max_length=200,
+        description=(
+            "Current manager chat/session ID, shared by all tasks and groups in that chat. "
+            "Use the host's real session ID when available; otherwise generate one UUID once "
+            "for this manager chat and keep reusing it. A different chat needs a different ID. "
+            "Never use the CLI name, MCP connection ID, or subagent session_id. "
+            "Omission uses AGENTNAVE_HOST_SESSION_ID if configured, else keeps records separate."
+        ),
+    ),
+]
+
 
 def _read_excluded_providers() -> frozenset[str]:
     excluded = frozenset(
@@ -316,16 +331,18 @@ def _dashboard_links(conversations: Conversations, conversation_id: str) -> Dash
 def started_payload(
     invocation_id: str, request: InvocationRequest, defaults_applied: list[str] | None = None
 ) -> InvocationPayload:
-    return {
+    payload: InvocationPayload = {
         "invocation_id": invocation_id,
         "status": "running",
         "reason": "started",
         "elapsed_ms": 0,
         "provider": request.provider,
         "defaults_applied": defaults_applied or [],
-        "model": str(request.provider_options.get("model", "继承原生设置")),
         "effort": str(request.provider_options.get("effort", "继承原生设置")),
     }
+    if "model" in request.provider_options:
+        payload["model"] = str(request.provider_options["model"])
+    return payload
 
 
 def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolError:
@@ -354,6 +371,8 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
         payload["output"] = result.output
     if result.session_id:
         payload["session_id"] = result.session_id
+    if result.reported_model:
+        payload["model"] = result.reported_model
     if result.error:
         payload["error"] = {"code": result.error.code, "message": result.error.message}
     return payload
@@ -452,6 +471,7 @@ async def start_agent(
         str | None, Field(max_length=200, description="Title for a new task conversation.")
     ] = None,
     manager_model: ManagerModel = None,
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
@@ -478,7 +498,11 @@ async def start_agent(
         )
         validate_provider_options(request)
         invocation_id, saved_id = _conversations(ctx).start_task(
-            request, title, conversation_id, manager_model=manager_model
+            request,
+            title,
+            conversation_id,
+            manager_model=manager_model,
+            manager_session_id=manager_session_id,
         )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
@@ -804,6 +828,7 @@ async def open_group(
             )
         ),
     ] = False,
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> ShowPayload:
@@ -841,6 +866,7 @@ async def open_group(
             prepared_seats,
             review=review,
             isolated=isolated,
+            manager_session_id=manager_session_id,
         )
     except MemberFileError as exc:
         raise ToolError(str(exc)) from exc
@@ -910,6 +936,7 @@ async def run_round(
         Field(description="Optional private instruction per seat id; never sent to other seats."),
     ] = None,
     manager_model: ManagerModel = None,
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> RoundPayload:
@@ -921,7 +948,13 @@ async def run_round(
     conversations = _conversations(ctx)
     try:
         round_ = conversations.run(
-            group_id, seats, order, prompt, instructions or {}, manager_model=manager_model
+            group_id,
+            seats,
+            order,
+            prompt,
+            instructions or {},
+            manager_model=manager_model,
+            manager_session_id=manager_session_id,
         )
     except KeyError as exc:
         raise ToolError("Unknown group_id; use list_conversations.") from exc
@@ -1102,6 +1135,7 @@ async def post_host_message(
     conversation_id: str,
     text: Annotated[str, Field(min_length=1, max_length=12000)],
     manager_model: ManagerModel = None,
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> HostReceipt:
@@ -1111,7 +1145,12 @@ async def post_host_message(
     """
     conversations = _conversations(ctx)
     try:
-        conversations.post(conversation_id, text, manager_model=manager_model)
+        conversations.post(
+            conversation_id,
+            text,
+            manager_model=manager_model,
+            manager_session_id=manager_session_id,
+        )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
     except (OSError, ValueError) as exc:

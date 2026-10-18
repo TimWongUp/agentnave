@@ -12,10 +12,11 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agentnave.adapters import ProviderAdapter, get_adapter
-from agentnave.adapters.base import PreparedCommand, parse_json_object
+from agentnave.adapters.base import PreparedCommand, model_from_event, parse_json_object
 from agentnave.models import (
     InvocationError,
     InvocationListing,
@@ -50,6 +51,8 @@ _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 @dataclass(slots=True)
 class _InvocationRecord:
     request: InvocationRequest
+    reported_model: str | None = None
+    started_wall_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: float = field(default_factory=time.monotonic)
     phase: InvocationPhase = InvocationPhase.PREPARING
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -77,6 +80,7 @@ class _InvocationRecord:
         if event is None:
             return
         self.last_event_at = time.monotonic()
+        self.reported_model = model_from_event(self.request.provider, event) or self.reported_model
         activity = adapter.activity(event)
         if activity is not None:
             code = activity.blocking_error
@@ -345,6 +349,10 @@ class InvocationManager:
         )
         return record.output_tail, age
 
+    def reported_model(self, invocation_id: str) -> str | None:
+        record = self._records.get(invocation_id)
+        return record.reported_model if record is not None else None
+
     async def cancel(self, invocation_id: str) -> InvocationResult:
         record = self._record(invocation_id)
         record.phase = InvocationPhase.STOPPING
@@ -390,7 +398,16 @@ class InvocationManager:
         self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
     ) -> InvocationResult:
         try:
-            return await self._run(record, adapter, prepared)
+            result = await self._run(record, adapter, prepared)
+            reported = record.reported_model
+            if reported is None and record.request.provider == "codex":
+                from agentnave.host import Host, session_model
+
+                reported = session_model(
+                    Host("codex"), result.session_id, since=record.started_wall_at
+                )
+            record.reported_model = reported
+            return replace(result, reported_model=reported)
         except Exception:
             logging.getLogger(__name__).exception("Unexpected invocation failure")
             return InvocationResult(
