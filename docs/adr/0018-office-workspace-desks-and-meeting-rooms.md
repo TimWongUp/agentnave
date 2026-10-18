@@ -1,6 +1,6 @@
 # ADR-0018：主控工作区、工位与会议室
 
-- 状态：提议
+- 状态：已接受
 - 日期：2026-10-18
 - 修订 [ADR-0013](0013-members-defaults-and-host-identity.md) 的组员身份与模式命名、[ADR-0017](0017-manager-chat-session-identity.md) 的 App 群聊展示；不改变 Manager 拥有编排决策、Provider 原生权限是安全边界的约定。
 
@@ -61,3 +61,12 @@
 - 新增 `forward` 条目种类；看板与 App 投影需识别，旧版 App 读取新记录时应忽略未知种类而非失败。
 - 托盘面板只有 480×640，办公室视图在面板中只保留缩略版。
 - 旧群聊页、「任」「节」分段与按 `(provider, model)` 合并成员的展示被移除。
+
+## 实现说明
+
+- 消息 ID 为不透明字符串，格式为 `<会话ID>:t:<任务ID>`（私聊任务）与 `<会话ID>:e:<条目序号>`（节目条目）；私聊任务仅在终态后才有 ID，`wait_agent`、`wait_any` 的终态回执带 `message_id`，`run_round`、`wait_round`、`cancel_round`、`decide_answers` 回执的 `entries` 列出已提交条目，`post_host_message` 返回 `message_id`。
+- 可转发的是成功的私聊任务，以及节目中已提交的 `answer`、`host`、`task`、`forward` 条目；`absent` 条目、失败／受阻／取消的任务一并拒绝。待审与被丢弃的回答没有消息 ID。
+- 默认续接按请求的 model（而非回报模型）匹配工位，并要求候选线程已有原生 session；回执 `resumed` 标明是否续接。`role` 为 1–40 个可打印字符，空白等同无角色。
+- 私聊中的转发内容前置于送给 Provider 的 prompt，会话历史仍只保存主控原文；会议室中转发在本轮任务前提交为 `forward` 条目，视图中以 `@forward` 作发言方。
+- 视图中的私聊线程键 `thread` 是由 Provider 与原生 session 派生的不可逆 16 位十六进制键，不暴露原生 session；会议室线程以会议室 ID 标识。
+- 工位以 `private_allowed` 标记是否允许私聊，与宿主同类的 CLI 为 false。

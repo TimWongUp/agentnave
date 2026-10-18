@@ -151,7 +151,10 @@ For example: `describe_provider({"provider": "grok"})` → `start_agent(...)` �
 Starts one provider invocation and immediately returns an in-memory `invocation_id`. It requires
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional. `title` names a new task conversation; `conversation_id` adds
-to an existing one. Tasks and final replies are saved automatically.
+to an existing one. Tasks and final replies are saved automatically. `role` labels the desk
+(provider, model, role); with a known `manager_session_id` and no `session_id`, the call continues
+that desk's most recent private thread (`new_thread=true` starts a fresh one), and `forward`
+injects completed workspace messages by `message_id`.
 
 启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。`open_group` 每席使用 discussion 配置，并返回 model、effort（未配置时为 null）与 `defaults_applied`。
 
