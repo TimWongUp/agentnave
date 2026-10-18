@@ -29,14 +29,16 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 a { color: inherit; text-decoration: none; }
 a:hover { color: var(--accent); }
 p { margin: 0; }
-.top, .intro, .tools, .selection { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.intro, .tools, .selection { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .brand { display: flex; gap: 9px; align-items: center; font-size: 14px; font-weight: 650; }
 .mark { display: grid; place-items: center; width: 23px; height: 25px; border-radius: 6px 6px 9px 3px; background: var(--accent); color: var(--bg); font: italic 700 17px Georgia, serif; }
-/* Same main navigation as the chat page, so every page can get back. */
+/* One viewport-wide header for chat, management and settings. */
+.bar { position: sticky; top: 0; z-index: 200; flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.bar a { white-space: nowrap; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .nav { display: flex; gap: 2px; }
 .nav a { padding: 5px 12px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 550; }
 .nav a:hover { background: var(--hover); color: var(--ink); }
-.nav a[aria-current] { background: var(--surface); color: var(--ink); }
+.nav a[aria-current] { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
 .intro { margin: 48px 0 26px; align-items: flex-end; }
 .eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .12em; margin-bottom: 10px; }
 h1 { font-size: 30px; line-height: 1.2; font-weight: 620; letter-spacing: -.04em; margin: 0; }
@@ -85,6 +87,10 @@ h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
 .results strong { font-weight: 500; color: var(--ink); }
 .results .failure { color: var(--bad); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 760px) {
+  .bar { padding: 0 12px; }
+  .nav a { padding: 5px 8px; font-size: 12.5px; }
+}
 @media (max-width: 700px) {
   main { padding: 18px 16px 30px; }
   .intro { margin-top: 32px; align-items: flex-start; flex-direction: column; gap: 14px; }
