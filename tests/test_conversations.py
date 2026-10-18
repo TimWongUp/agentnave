@@ -48,7 +48,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     script.write_text(
         "#!/usr/bin/env python3\n"
         "import json, os, sys, time, uuid\n"
-        "prompt = sys.stdin.read()\n"
+        "prompt = sys.stdin.buffer.read().decode('utf-8')\n"
         "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
         "session = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--resume=')),\n"
@@ -2548,7 +2548,9 @@ async def test_run_round_commits_forward_entries_and_seats_receive_them(
         assert entries[3]["forward_id"] == answer_id
         assert str(entries[3]["forward_source"]).startswith("Room · 未记录模型 · claude")
         assert str(entries[4]["forward_source"]).startswith("Room · 主持人")
-        views = json.loads((data_root / "conversations" / group_id / "views.json").read_text())
+        views = json.loads(
+            (data_root / "conversations" / group_id / "views.json").read_text(encoding="utf-8")
+        )
         forwarded = [item for item in views["director"]["messages"] if item["kind"] == "forward"]
         assert [item["forward_id"] for item in forwarded] == [answer_id, posted["message_id"]]
         assert all(item["speaker"] == "@forward" and item["forward_source"] for item in forwarded)
