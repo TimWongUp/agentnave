@@ -520,7 +520,7 @@ pub(crate) fn service(tools: &Option<PathBuf>) -> Value {
 }
 
 /// The version in `agentnave-<version>.dist-info` inside a uv tool environment.
-fn installed_version(env: &Path) -> Option<String> {
+pub(crate) fn installed_version(env: &Path) -> Option<String> {
     installed_metadata(env)?
         .file_name()?
         .to_str()?

@@ -134,9 +134,11 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 ## 托盘宿主接入
 
+设置的“接入与更新”在同页展示版本操作与宿主卡片，保留旧 `#updates` 链接。各宿主的重启确认与当前 App／已安装服务版本、用户级接入条目及 Skill 状态绑定；首次未确认或绑定内容变化时显示待重启确认。用户重启或重连后，通过带当前 token 的显式 POST 确认，旧 token 拒绝；确认持久保存在 App 偏好，移除接入时清除。此状态只记录用户确认，不证明宿主已刷新工具 schema；自定义或无法读取的连接保持未知，不自动确认。中继空闲切换服务不保证宿主重载工具接口，App 不自动重启宿主。
+
 App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`。检测查可执行文件与已知应用包，保留的配置目录不单独证明仍安装。返回 `absent|available|connected|needs_attention|orphaned`，隐藏 absent；完好且命令可解析的已有条目即为 connected，用 has_host_env 表示是否已接管。命令按条目 env.PATH 解析，无法确定为 command_state=unknown，不自动替换。tested 按 App 接管及宿主真实调用验收结果标记，具体支持情况见安装文档；connected 不证明已加载工具、登录或模型可用。
 
-根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 只保存宿主根目录覆盖和 first_seen。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。
+根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 保存宿主根目录覆盖、first_seen 及按宿主记录的重启确认。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。
 
 启动、POST /app/hosts/refresh 和服务安装成功后接管已有用户级条目。先解析全部用户层，复用备份、并发重读、原子替换及写后校验；确认安装元数据只声明 `agentnave-mcp = agentnave.relay:main` 且 launcher 可执行后，才将已识别的旧 `agentnave-studio-mcp`（含 `.exe`）迁到统一命令，并修复已缺失的 `agentnave-mcp` 路径。服务尚未就绪时不改命令，自定义命令不自动替换；保留参数、环境、启停、工具过滤、未知字段与注释，补齐宿主标识。失败抑制签名包含宿主、各用户层路径及目标条目；无关字段变化不重试。项目层只提示、不改写。旧连接须重连，旧工作室中继仍指向已移除模块，旧核心的内存组不能迁移。
 
@@ -144,7 +146,7 @@ App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 
 构建时嵌入完整同版本 agentnave-manager。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
-GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
+GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root|confirm-reload 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
 
 ### 主控模型与头像
 

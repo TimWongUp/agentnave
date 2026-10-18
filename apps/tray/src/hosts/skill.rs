@@ -9,7 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/manager_skill.rs"));
 const MARKER: &str = ".agentnave-app";
 const MANIFEST: &str = ".agentnave-app-manifest.json";
 
-fn hash(bytes: &[u8]) -> String {
+pub(super) fn hash(bytes: &[u8]) -> String {
     // A deterministic content fingerprint; ownership is not an adversarial trust boundary.
     let value = bytes.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)

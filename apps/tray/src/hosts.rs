@@ -609,10 +609,46 @@ impl Hosts {
             .iter()
             .find(|l| l["scope"] == "project" && l["has_entry"] == true)
             .map(|l| l["path"].clone());
+        let skill = host
+            .skill
+            .as_ref()
+            .map(|p| skill::state(p, &self.context.home))
+            .unwrap_or_else(|| json!({"state":"manual","path":null,"version":null}));
+        let reload = if !has_entry || !installed {
+            json!({"state":"not_connected"})
+        } else if let Some(token) = self.reload_token(host, &skill) {
+            let confirmed = &self.settings[host.id]["reload_confirmed"];
+            json!({"state":if confirmed["token"] == token {"confirmed"} else {"required"}, "token":token, "confirmed_at":confirmed["at"]})
+        } else {
+            json!({"state":"unknown"})
+        };
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":host.skill.as_ref().map(|p|skill::state(p,&self.context.home)).unwrap_or_else(||json!({"state":"manual","path":null,"version":null})),
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
             "reload_hint":activation_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
+    }
+    /// Confirmation is version/config scoped, not evidence of a live MCP handshake.
+    fn reload_token(&self, host: &Host, skill: &Value) -> Option<String> {
+        let version = crate::update::installed_version(&self.tool_dirs()?.tools.join("agentnave"))?;
+        let mut entries = Vec::new();
+        for path in &host.user_layers {
+            let document = host.read_at(path).ok()?;
+            if let Some(entry) = document.entry {
+                if !managed_entry(host, &entry) {
+                    return None;
+                }
+                entries.push(json!({"path":path,"entry":entry}));
+            }
+        }
+        if entries.is_empty() {
+            return None;
+        }
+        Some(skill::hash(
+            &serde_json::to_vec(&json!({
+                "app":VERSION,"service":version,"entries":entries,"skill":skill
+            }))
+            .ok()?,
+        ))
     }
     pub fn cached_snapshot(&self) -> &Value {
         &self.cached
@@ -646,7 +682,10 @@ impl Hosts {
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {
-        json!({"installed":self.launcher().is_some(),"command":crate::update::service_command()})
+        let version = self
+            .tool_dirs()
+            .and_then(|dirs| crate::update::installed_version(&dirs.tools.join("agentnave")));
+        json!({"installed":self.launcher().is_some(),"version":version,"command":crate::update::service_command()})
     }
     pub fn refresh(&mut self) -> Value {
         let (shell, dirs) = probe_tools(&self.context);
@@ -816,6 +855,32 @@ impl Hosts {
             return Ok(json!({"host":self.state(&host),"ok":true,"message":"已更新配置根目录"}));
         }
         let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
+        if operation == "confirm-reload" {
+            if self.settings_error.is_some() {
+                return Err("请先修复 hosts.json".into());
+            }
+            let current = self.state(&host);
+            if current["status"] != "connected" {
+                return Err("请先修复宿主接入，再确认重启".into());
+            }
+            let token = current["reload"]["token"]
+                .as_str()
+                .ok_or("无法确认此宿主，请先修复接入并刷新检测")?;
+            if payload["token"].as_str() != Some(token) {
+                return Err("服务或接入配置已变化，请刷新并重新启动宿主后再确认".into());
+            }
+            let mut settings = self.settings.clone();
+            if !settings[id].is_object() {
+                settings[id] = json!({});
+            }
+            settings[id]["reload_confirmed"] = json!({"token":token,"at":timestamp()});
+            roots::save(&self.context, &settings)?;
+            self.settings = settings;
+            self.cached = self.snapshot();
+            return Ok(
+                json!({"host":self.state(&host),"ok":true,"message":"已记录你已重启或重连；未自动验证宿主接口"}),
+            );
+        }
         if !matches!(operation, "connect" | "remove") {
             return Err("未知宿主操作".into());
         }
@@ -828,6 +893,16 @@ impl Hosts {
                         .map_err(|e| format!("parse_failed:{e}"))?;
                 }
                 let mut removed = Vec::new();
+                // Clear before the first mutation: a later partial removal may fail.
+                if self.settings[id].get("reload_confirmed").is_some() {
+                    let mut settings = self.settings.clone();
+                    settings[id]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("reload_confirmed");
+                    roots::save(&self.context, &settings)?;
+                    self.settings = settings;
+                }
                 for path in &host.user_layers {
                     let mut layer = host.clone();
                     layer.config = path.clone();
@@ -996,21 +1071,21 @@ fn trust_hint(id: &str) -> &'static str {
     }
 }
 fn activation_hint(id: &str) -> String {
-    format!("接入或更新 Skill 后，{}", reload_hint(id))
+    format!("接入、更新服务或 Skill 后，{}", reload_hint(id))
 }
 fn reload_hint(id: &str) -> &'static str {
     match id {
-        "codex" => "重启 Codex 应用，或新建会话后生效",
-        "claude" => "重启 Claude Code，或新建会话后生效",
-        "codebuddy" => "重启 CodeBuddy Code，或新建会话后生效",
+        "codex" => "重启 Codex 应用（完整退出后重新打开）以生效",
+        "claude" => "重启 Claude Code 后生效",
+        "codebuddy" => "重启 CodeBuddy Code 后生效",
         "workbuddy" => "重启 WorkBuddy 后生效",
-        "grok" => "重启 Grok CLI，或新建会话后生效",
-        "antigravity" => "重启 Antigravity，或新建会话后生效",
-        "pi" => "重启 Pi，或新建会话后生效",
-        "gemini" => "重启 Gemini CLI，或新建会话后生效",
-        "opencode" => "重启 OpenCode，或新建会话后生效",
-        "hermes" => "重启 Hermes 网关，或新建会话后生效",
-        _ => "重启宿主应用，或新建会话后生效",
+        "grok" => "重启 Grok CLI 后生效",
+        "antigravity" => "重启 Antigravity 后生效",
+        "pi" => "重启 Pi 后生效",
+        "gemini" => "重启 Gemini CLI 后生效",
+        "opencode" => "重启 OpenCode 后生效",
+        "hermes" => "重启 Hermes 网关后生效",
+        _ => "重启宿主应用后生效",
     }
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {

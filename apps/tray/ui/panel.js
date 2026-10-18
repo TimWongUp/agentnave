@@ -195,11 +195,6 @@ function showBody(kind, retry) {
 }
 
 // ---------------------------------------------------------------- update / service notices
-function older(version, than) {
-  const a = String(version).split(".").map(Number), b = than.split(".").map(Number);
-  for (let i = 0; i < b.length; i++) if ((a[i] || 0) !== b[i]) return (a[i] || 0) < b[i];
-  return false;
-}
 function notice(title, detail, action, target, secondary) {
   const button = (text, to) => {
     const link = h("a.notice-action", { href: to }, text);
@@ -217,9 +212,9 @@ function notices(status, offline) {
   else if (update?.state === "failed") out.push(notice("更新失败", "检查网络后重试", "重试", "/app/update"));
   const service = status?.service;
   if (service?.state === "upgrading") out.push(notice("正在升级本机服务", `从 GitHub 安装 v${status.version}，约需一分钟`));
-  else if (service?.state === "done") out.push(notice(`本机服务已升级到 v${service.version}`, "各宿主会在空闲时自动切换到新版本"));
+  else if (service?.state === "done") out.push(notice(`本机服务已升级到 v${service.version}`, "请重启正在使用的 AI 应用，或重新连接 AgentNave MCP，以加载新版工具接口", "查看生效方式", "/settings/#hosts"));
   else if (service?.state === "failed") out.push(notice("升级本机服务失败", service.error, "重试", "/app/upgrade-service", ["复制命令", "/app/copy-service-command"]));
-  else if (service) out.push(notice(`本机服务 v${service.version} 比托盘 v${status.version} 旧`, older(service.version, "0.18.0") ? "升级后需重启一次各宿主，此后宿主会自动切换" : "升级后各宿主会在空闲时自动切换", "一键升级", "/app/upgrade-service"));
+  else if (service) out.push(notice(`本机服务 v${service.version} 比托盘 v${status.version} 旧`, "升级后请重启正在使用的 AI 应用，或重新连接 AgentNave MCP", "一键升级", "/app/upgrade-service"));
   if (offline) out.push(notice("读取中断，正在重试", "下方显示的是最近一次成功读取的内容"));
   return out;
 }

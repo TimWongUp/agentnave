@@ -95,7 +95,7 @@ let currentDoc = {
 };
 let detected = {};
 let currentMode = "task"; // "task" | "discussion"
-let currentTab = "members"; // "members" | "updates"
+let currentTab = "members"; // "members" | "avatars" | "hosts"
 let dirty = false;
 let busy = false;
 let documentError = null;
@@ -103,6 +103,7 @@ let docVersion = 0; // Monotonic counter for save race detection
 let expandedModel = null; // { provider: string, model: string } | null
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let appStatus = null;
+let installedService = null;
 let statusPollTimer = null;
 let lastMigrationData = { migrated: false, migration_skipped: [] };
 // Keep unfinished option edits across drawer/mode changes without writing invalid values.
@@ -243,21 +244,6 @@ const mockMembersData = {
   },
 };
 
-const mockStatusData = {
-  version: "0.20.0",
-  update: {
-    state: "available",
-    version: "0.20.1",
-    error: null,
-  },
-  service: {
-    state: "outdated",
-    version: "0.19.0",
-    error: null,
-  },
-  last_checked: new Date().toISOString(),
-};
-
 // API Helpers
 async function apiGetMembers(refresh = false) {
   if (isMock) {
@@ -291,7 +277,7 @@ async function apiPostMembers(doc) {
 
 async function apiGetStatus() {
   if (isMock) {
-    return JSON.parse(JSON.stringify(mockStatusData));
+    return window.AgentNaveMock.fetch("/app/status");
   }
   const res = await fetch("/app/status", { cache: "no-store" });
   if (!res.ok) throw new Error(`获取状态失败（${res.status}）`);
@@ -300,8 +286,7 @@ async function apiGetStatus() {
 
 async function apiCheckUpdate() {
   if (isMock) {
-    mockStatusData.last_checked = new Date().toISOString();
-    return JSON.parse(JSON.stringify(mockStatusData));
+    return window.AgentNaveMock.post("/app/update/check");
   }
   const res = await fetch("/app/update/check", {
     method: "POST",
@@ -316,15 +301,7 @@ async function apiCheckUpdate() {
 
 async function apiApplyUpdate() {
   if (isMock) {
-    mockStatusData.update.state = "installing";
-    setTimeout(() => {
-      mockStatusData.update.state = "none";
-      mockStatusData.service.state = "done";
-      mockStatusData.service.version = mockStatusData.update.version;
-      mockStatusData.version = mockStatusData.update.version;
-      renderUpdates();
-    }, 4000);
-    return JSON.parse(JSON.stringify(mockStatusData));
+    return window.AgentNaveMock.post("/app/update/apply");
   }
   const res = await fetch("/app/update/apply", {
     method: "POST",
@@ -510,14 +487,15 @@ function updateControls() {
 
 // Switch tabs
 function setTab(tab) {
+  if (tab === "updates") tab = "hosts"; // Preserve old update links.
   currentTab = tab;
-  for (const id of ["members", "avatars", "hosts", "updates"]) {
+  for (const id of ["members", "avatars", "hosts"]) {
     $("tab-" + id).classList.toggle("active", tab === id);
     $("tab-" + id).setAttribute("aria-selected", String(tab === id));
     $("tab-" + id).setAttribute("aria-controls", "pane-" + id);
     $("pane-" + id).hidden = tab !== id;
   }
-  if (tab === "updates") loadStatus();
+  if (tab === "hosts") loadStatus();
 }
 
 // Switch mode
@@ -1654,10 +1632,12 @@ function renderUpdates() {
   const serviceMsg = $("service-msg");
 
   if (!serviceInfo) {
-    $("service-version").textContent = "—";
+    $("service-version").textContent = installedService?.version ? `v${installedService.version}` : "—";
     serviceBadge.hidden = true;
     serviceMsg.hidden = false;
-    serviceMsg.textContent = "暂未提供可显示的服务版本；可到“宿主接入”查看本机服务是否已安装。";
+    serviceMsg.textContent = installedService?.installed
+      ? "本机服务已安装。各应用是否已确认重启，请查看下方宿主卡片。"
+      : "请在下方接入区安装本机服务。";
   } else {
     $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
     const isServiceOutdated =
@@ -1683,12 +1663,13 @@ function renderUpdates() {
       serviceMsg.hidden = false;
       serviceMsg.textContent = installWarning
         ? "重启后请手动升级本机服务"
-        : "升级后各宿主会在空闲时自动切换到新版本。";
+        : "升级后请重启正在使用的宿主应用，或重新连接 AgentNave MCP，以加载新版工具接口。";
     } else if (serviceInfo.state === "done") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag done";
-      serviceBadge.textContent = "已是最新";
-      serviceMsg.hidden = true;
+      serviceBadge.textContent = "安装完成";
+      serviceMsg.hidden = false;
+      serviceMsg.textContent = "请重启正在使用的宿主应用（如 Codex），或重新连接 AgentNave MCP。仅重启 AgentNave 不保证刷新宿主的工具接口。";
     } else {
       serviceBadge.hidden = true;
       serviceMsg.hidden = true;
@@ -1727,9 +1708,9 @@ function renderUpdates() {
     if (installWarning) {
       updateHint.textContent = "重启后请手动升级本机服务";
     } else if (hasAppUpdate) {
-      updateHint.textContent = "会先更新 App 并自动重启，重启后自动升级本机服务。";
+      updateHint.textContent = "会先更新 App 并自动重启，再自动升级本机服务。完成后，请重启正在使用的宿主应用或重新连接 AgentNave MCP。";
     } else {
-      updateHint.textContent = "将升级本机服务。";
+      updateHint.textContent = "将升级本机服务。完成后，请重启正在使用的宿主应用或重新连接 AgentNave MCP。";
     }
   }
 
@@ -1764,6 +1745,12 @@ function renderUpdates() {
     statusPollTimer = null;
   }
 }
+
+window.addEventListener("agentnave:hosts", ({ detail }) => {
+  installedService = detail.service;
+  renderUpdates();
+});
+window.addEventListener("agentnave:service-installed", () => loadStatus());
 
 async function loadStatus() {
   try {
@@ -1807,9 +1794,10 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
   operatedControl = e.target.closest("[data-focus-key]");
   queueMicrotask(() => { operatedControl = null; });
 }, true);
-for (const tab of ["members", "avatars", "hosts", "updates"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
-window.addEventListener("hashchange", () => setTab(["avatars", "hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members"));
-setTab(["avatars", "hosts", "updates"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members");
+for (const tab of ["members", "avatars", "hosts"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
+const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : location.hash === "#avatars" ? "avatars" : "members";
+window.addEventListener("hashchange", () => setTab(tabFromHash()));
+setTab(tabFromHash());
 
 for (const mode of ["task", "discussion"]) $("mode-" + mode).addEventListener("click", (e) => {
   e.currentTarget.focus({ preventScroll: true });

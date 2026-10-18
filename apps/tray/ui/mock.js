@@ -434,13 +434,14 @@ All checks passed!
     };
   }
 
+  let mockVersion = "0.21.0", updateOverride = null;
   function status() {
     const update = q.get("update");
     const service = q.get("service");
     return {
-      version: "0.21.0",
-      update: update ? { state: update, version: "0.21.0" } : { state: "current" },
-      service: service ? { state: service, version: service === "older" ? "0.19.2" : "0.21.0", error: "uv tool install 失败：无法连接 github.com" } : null,
+      version: mockVersion,
+      update: updateOverride || (update ? { state: update, version: "0.21.1" } : { state: "current" }),
+      service: service ? { state: service === "older" ? "outdated" : service, version: service === "older" ? "0.19.2" : mockVersion, error: service === "failed" ? "uv tool install 失败：无法连接 github.com" : null } : null,
     };
   }
 
@@ -478,7 +479,7 @@ All checks passed!
   const hostRows = ["codex", "pi", "workbuddy", "hermes"].map((id, index) => {
     const root = `/preview/${id}`;
     const label = HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id;
-    const reload = id === "workbuddy" ? "重启 WorkBuddy 后生效" : `重启 ${label}，或新建会话后生效`;
+    const reload = id === "codex" ? "重启 Codex 应用（完整退出后重新打开）以生效" : id === "workbuddy" ? "重启 WorkBuddy 后生效" : `重启 ${label} 后生效`;
     const connected = !freshHosts && index === 0;
     const orphan = !freshHosts && id === "hermes";
     return { id, label, installed: !orphan, detect_source: orphan ? "config" : "path",
@@ -486,7 +487,7 @@ All checks passed!
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
-      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入或更新 Skill 后，${reload}`, attention: null, last_action: null,
+      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入、更新服务或 Skill 后，${reload}`, attention: null, last_action: null,
       skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null } };
   });
   if (hostScene === "typical") {
@@ -496,7 +497,11 @@ All checks passed!
   }
   let membersReady = ["midway", "typical", "done"].includes(hostScene);
   let triedReady = hostScene === "done";
-  const hostView = () => ({ service: { installed: serviceReady, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${status().version}"` }, hosts: hostRows, backups: { dir: "/preview/backups", count: 0 } });
+  const confirmedReloads = new Map();
+  const hostView = () => ({ service: { installed: serviceReady, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
+    const token = `${host.id}:${mockVersion}`;
+    return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : "required", token } : { state: "not_connected" } };
+  }), backups: { dir: "/preview/backups", count: 0 } });
   const onboarding = () => ({ dismissed, steps: [
     { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
     { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },
@@ -509,6 +514,16 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
+    if (path === "/app/update/check") return p3Fetch("/app/status");
+    if (path === "/app/update/apply") {
+      updateOverride = { state: "installing", version: "0.21.1" };
+      setTimeout(() => {
+        mockVersion = "0.21.1";
+        updateOverride = { state: "none" };
+        installedState = { state: "done", version: mockVersion };
+      }, 900);
+      return p3Fetch("/app/status");
+    }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }
     if (path === "/app/onboarding/reopen") { dismissed = false; return { dismissed }; }
@@ -516,8 +531,13 @@ All checks passed!
     if (path === "/app/service/install") { installedState = { state: "installing" }; setTimeout(() => { serviceReady = true; installedState = { state: "done" }; }, 900); return { ok: true }; }
     const host = hostRows.find((h) => h.id === body.id);
     if (!host) throw new Error("未知宿主");
+    if (path.endsWith("/confirm-reload")) {
+      if (body.token !== `${host.id}:${mockVersion}` || host.status !== "connected") throw new Error("请刷新并重启宿主后再确认");
+      confirmedReloads.set(host.id, body.token);
+      return { ok: true, message: "预览：已记录你已重启或重连" };
+    }
     if (path.endsWith("/root")) host.root = { path: body.path || `/preview/${host.id}`, source: body.path ? "user" : "default" };
-    else if (path.endsWith("/remove")) { host.status = "available"; host.entry = host.command = host.command_state = null; host.layers.forEach((l) => l.has_entry = false); }
+    else if (path.endsWith("/remove")) { confirmedReloads.delete(host.id); host.status = "available"; host.entry = host.command = host.command_state = null; host.layers.forEach((l) => l.has_entry = false); }
     else { host.status = "connected"; host.entry = "agentnave"; host.command = "/preview/bin/agentnave-mcp"; host.has_host_env = true; host.command_state = "present"; host.layers.forEach((l) => l.has_entry = true); if (host.skill.state === "missing") host.skill = { ...host.skill, state: "app", version: status().version }; }
     host.attention = null;
     host.last_action = { ok: true, message: "预览操作完成", at: new Date().toISOString() };

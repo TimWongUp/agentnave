@@ -252,6 +252,7 @@ impl Reader {
                 | "/app/hosts/connect"
                 | "/app/hosts/remove"
                 | "/app/hosts/root"
+                | "/app/hosts/confirm-reload"
                 | "/app/hosts/reveal-backups"
                 | "/app/onboarding/dismiss"
                 | "/app/onboarding/reopen"

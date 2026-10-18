@@ -559,6 +559,109 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
 }
 
 #[test]
+fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
+    let (_temp, mut hosts) = fixture();
+    for id in ["codex", "pi"] {
+        let h = host(&hosts, id);
+        executable_file(
+            &hosts.context.search[0].join(h.binary),
+            "#!/bin/sh\nexit 99\n",
+        );
+        assert_eq!(hosts.state(&h)["reload"]["state"], "not_connected");
+        assert_eq!(
+            hosts.action("connect", &json!({"id":id})).unwrap()["ok"],
+            true
+        );
+    }
+    let h = host(&hosts, "codex");
+    let pending = hosts.state(&h)["reload"].clone();
+    assert_eq!(pending["state"], "required");
+    hosts
+        .action(
+            "confirm-reload",
+            &json!({"id":"codex","token":pending["token"]}),
+        )
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
+    assert_eq!(
+        hosts.state(&host(&hosts, "pi"))["reload"]["state"],
+        "required"
+    );
+
+    let shell = hosts.shell.clone();
+    let tools = hosts.tools.clone();
+    hosts = Hosts::from_probe(hosts.context, shell, tools);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
+    let preferences = fs::read(hosts.context.app.join("hosts.json")).unwrap();
+    hosts.snapshot();
+    assert_eq!(
+        fs::read(hosts.context.app.join("hosts.json")).unwrap(),
+        preferences
+    );
+
+    // The installed service changed while this app stayed open.
+    let site = hosts
+        .tool_dirs()
+        .unwrap()
+        .tools
+        .join("agentnave/lib/python3.12/site-packages");
+    fs::rename(
+        site.join("agentnave-0.22.0.dist-info"),
+        site.join("agentnave-0.23.0.dist-info"),
+    )
+    .unwrap();
+    let next = hosts.state(&h)["reload"].clone();
+    assert_eq!(next["state"], "required");
+    assert!(
+        hosts
+            .action(
+                "confirm-reload",
+                &json!({"id":"codex","token":pending["token"]})
+            )
+            .is_err()
+    );
+    hosts
+        .action(
+            "confirm-reload",
+            &json!({"id":"codex","token":next["token"]}),
+        )
+        .unwrap();
+
+    // An unrelated preference does not affect activation; the MCP entry does.
+    let raw = fs::read_to_string(&h.config).unwrap();
+    save(&h.config, &format!("{raw}\n[unrelated]\nflag = true\n"));
+    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
+    let before = h.read().unwrap();
+    let mut entry = before.entry.clone().unwrap();
+    entry["args"] = json!(["changed"]);
+    hosts.write(&h, &before, Some(&entry)).unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    let token = hosts.state(&h)["reload"]["token"].clone();
+    hosts
+        .action("confirm-reload", &json!({"id":"codex","token":token}))
+        .unwrap();
+    assert_eq!(
+        hosts.action("remove", &json!({"id":"codex"})).unwrap()["ok"],
+        true
+    );
+    assert_eq!(hosts.state(&h)["reload"]["state"], "not_connected");
+    assert_eq!(
+        hosts.action("connect", &json!({"id":"codex"})).unwrap()["ok"],
+        true
+    );
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    let token = hosts.state(&h)["reload"]["token"].clone();
+    hosts
+        .action("confirm-reload", &json!({"id":"codex","token":token}))
+        .unwrap();
+    save(
+        &h.skill.as_ref().unwrap().join("SKILL.md"),
+        "externally changed",
+    );
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+}
+
+#[test]
 fn legacy_commands_migrate_across_formats_without_changing_host_policy() {
     for id in IDS {
         let (_temp, mut hosts) = fixture();
@@ -947,6 +1050,7 @@ fn get_is_read_only_onboarding_uses_cache_and_post_routes_require_action_header(
     for path in [
         "/app/hosts/refresh",
         "/app/hosts/root",
+        "/app/hosts/confirm-reload",
         "/app/hosts/reveal-backups",
         "/app/onboarding/dismiss",
         "/app/onboarding/reopen",

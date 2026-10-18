@@ -31,6 +31,8 @@ const S = {
   batch: false,
   install: { busy: false, error: null },
   focus: null, // {id, act} restored after a re-render
+  updateKey: null,
+  updating: false,
 };
 
 // ---------------------------------------------------------------- small helpers
@@ -219,6 +221,7 @@ async function installSvc() {
   }
   S.install.busy = false;
   await reload();
+  window.dispatchEvent(new CustomEvent("agentnave:service-installed"));
 }
 async function connectAll(ids) {
   S.batch = true;
@@ -673,6 +676,8 @@ function buildCard(host) {
     }
   });
   const badges = [
+    host.reload?.state === "required" && h("span.badge.badge-warning", {}, "待重启确认"),
+    host.reload?.state === "confirmed" && h("span.badge.badge-run", {}, "已确认重启"),
     !host.tested &&
       h(
         "span.badge.badge-muted",
@@ -718,7 +723,7 @@ function buildCard(host) {
         h(
           "dd",
           {},
-          host.reload_hint || "接入或更新 Skill 后，重启宿主应用，或新建会话后生效",
+          host.reload_hint || "接入、更新服务或 Skill 后，重启宿主应用以加载新版工具接口",
         ),
       ),
       h(
@@ -769,6 +774,19 @@ function buildCard(host) {
         `${last.message} · ${relTime(last.at)}`,
       ),
     );
+  if (host.reload?.state === "required") {
+    main.push(h("div.hc-reload.hc-note.info", {},
+      h("div", {}, h("strong", {}, "需要重启或重新连接后确认"),
+        h("p", {}, "服务、Skill 或接入配置有变化，或尚未确认生效。请按上方方式重启 / 重连后确认；下次变更会再次提醒。")),
+      button("我已重启 / 重连", "", "confirm-reload", () =>
+        run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
+        Boolean(busy) || S.updating || host.status !== "connected"),
+    ));
+  } else if (host.reload?.state === "confirmed") {
+    main.push(h("p.hc-last", {}, "已按你的确认记录当前版本；软件未自动验证宿主接口。"));
+  } else if (host.reload?.state === "unknown" && host.status === "connected") {
+    main.push(h("p.hc-last", {}, "无法判断此连接是否需要重启，请按上方生效方式手动重连。"));
+  }
   main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
   // Keep the disclosure button above its content so it stays under the pointer.
   if (S.adv.has(id) && host.status !== "orphaned") main.push(advPanel(host));
@@ -794,6 +812,7 @@ function renderCards() {
 
 function renderAll() {
   if (!S.data) return;
+  window.dispatchEvent(new CustomEvent("agentnave:hosts", { detail: S.data }));
   renderBanner();
   renderCallout();
   renderSummary();
@@ -812,6 +831,12 @@ $("refresh-hosts").addEventListener("click", refreshAll);
 window.addEventListener("agentnave:status", ({ detail }) => {
   if (!S.data) return;
   const state = detail.service;
+  S.updating = ["checking", "installing"].includes(detail.update?.state) || ["upgrading", "installing"].includes(state?.state);
+  const key = JSON.stringify([detail.version, state]);
+  if (S.updateKey !== key) {
+    S.updateKey = key;
+    reload();
+  }
   const installing = state?.state === "installing";
   if (!installing && (!S.install.busy || !["done", "failed"].includes(state?.state))) return;
   S.install.busy = installing;
