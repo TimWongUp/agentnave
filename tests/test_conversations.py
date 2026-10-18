@@ -1251,6 +1251,7 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
             "text": "",
             "time": state.created,
             "reported_model": "native-model",
+            "message_id": None,
         }
     ]
     assert "private_messages" not in _data(projected["public"])
@@ -1270,6 +1271,7 @@ def test_host_projection_does_not_collide_with_director_seat() -> None:
     )
     projected = json.loads(views.public(state))
     assert [m["speaker"] for m in projected["messages"]] == ["@host", "director"]
+    assert [m["message_id"] for m in projected["messages"]] == ["show:e:0", "show:e:1"]
 
 
 def test_task_director_exposes_manager_identity() -> None:
@@ -1301,6 +1303,10 @@ def test_task_director_exposes_manager_identity() -> None:
     )
     assert projected["host"] == "codex"
     assert projected["tasks"][0]["manager_model"] == "gpt-6"
+    assert projected["tasks"][0]["message_id"] == "task:t:run"
+    assert "session_id" not in projected["tasks"][0]
+    assert projected["tasks"][0]["thread"] is None
+    assert projected["created"] == state.created
 
 
 def test_idle_http_connection_does_not_block_state_requests() -> None:
