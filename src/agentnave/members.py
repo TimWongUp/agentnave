@@ -10,11 +10,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentnave.adapters import get_adapter
-from agentnave.adapters.base import restricted_options
+from agentnave.adapters.base import RESTRICTED_EXTRA_OPTIONS, restricted_options
 from agentnave.host import Host, HostName, HostSource
 from agentnave.models import InvocationRequest, ProviderOption
 
-type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "grok", "pi"]
+type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi"]
 type Mode = Literal["task", "discussion"]
 
 
@@ -157,7 +157,7 @@ class MemberFile(StrictModel):
                 + ", ".join(config.efforts)
             )
         for key, value in config.options.items():
-            if restricted and not (provider == "pi" and key == "provider"):
+            if restricted and key not in RESTRICTED_EXTRA_OPTIONS.get(provider, set()):
                 continue
             if key not in result:
                 result[key] = value

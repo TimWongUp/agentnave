@@ -206,6 +206,14 @@ def option_args(request: InvocationRequest, allowlist: dict[str, str]) -> tuple[
     return tuple(args)
 
 
+# Options that grant no tools: Pi's and DeepSeek's provider only pick the model backend,
+# and DeepSeek's stored_credentials only restores the app's saved sign-in.
+RESTRICTED_EXTRA_OPTIONS: dict[str, set[str]] = {
+    "pi": {"provider"},
+    "deepseek": {"provider", "stored_credentials"},
+}
+
+
 def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
     """Explicit opt-in only; restricted profiles cannot enable other tools."""
     options = dict(request.provider_options)
@@ -213,10 +221,17 @@ def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, b
     if not isinstance(enabled, bool):
         raise ValueError("restricted_tools must be a boolean")
     if enabled:
-        if request.provider not in ("antigravity", "claude", "codebuddy", "codex", "grok", "pi"):
+        if request.provider not in (
+            "antigravity",
+            "claude",
+            "codebuddy",
+            "codex",
+            "deepseek",
+            "grok",
+            "pi",
+        ):
             raise ValueError("restricted_tools requires a registered provider")
-        # Pi's provider only picks the model backend; it grants no tools.
-        allowed = {"model", "effort"} | ({"provider"} if request.provider == "pi" else set[str]())
+        allowed = {"model", "effort"} | RESTRICTED_EXTRA_OPTIONS.get(request.provider, set())
         if set(options) - allowed:
             raise ValueError("restricted_tools accepts only model and effort")
     return replace(request, provider_options=options), enabled

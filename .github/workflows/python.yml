@@ -36,7 +36,7 @@ jobs:
                       "src/agentnave/mcp_server.py", "src/agentnave/conversations.py",
                       f"{skill}/references/studio.md"]
           required += [f"{skill}/references/{name}.md" for name in
-                       ("claude", "codebuddy", "codex", "grok", "antigravity", "pi")]
+                       ("claude", "codebuddy", "codex", "grok", "antigravity", "pi", "deepseek")]
           archive = subprocess.check_output(["git", "archive", "--format=tar", "HEAD", "--", *required])
           with tarfile.open(fileobj=io.BytesIO(archive)) as source:
               for name in required:

@@ -107,6 +107,7 @@ numbers, for example `1, 3`:
 4. Codex CLI (`codex`)
 5. Antigravity CLI (`agy`)
 6. Pi Coding Agent (`pi`)
+7. DeepSeek Harness (`dsh`; on macOS bundled in `DeepSeek Harness.app`)
 
 The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.
@@ -756,6 +757,7 @@ configuration, sessions, and user projects remain owned by the user and provider
 | Grok | 1.0.46 | ACP `x.ai/interject` 晚到时会自动 fallback 新 prompt，只有 sessionId，无 expectedTurnId 或禁用 fallback 的接口 | 明确拒绝运行中消息 |
 | Claude Code | 2.1.295 | stream-json 普通 user 输入无中断排队，可能并入当前 turn，也可能进入后续 turn；command_lifecycle 关联输入 UUID | 已实现显式 `queue`，保守要求 >=2.1.295；不声明 steer；2026-10-19 真实验收通过 |
 | CodeBuddy | 2.142.0 | stream-json `control_request/steer` 绑定当前 session 与原生 `_requestId`，拒绝 idle/stale；成功仅表示进入当前轮缓冲区 | 已实现 `steer`，保守要求 >=2.142.0 且收到原生请求 ID；2026-10-19 消息接入验收通过；原生后续回复不保证保持输出约束 |
+| DeepSeek Harness | dsh 0.2.1-rc.2 | headless 每次调用只执行一个任务，没有运行中输入通道；续接只能在完成后用 `--session-id` | 明确拒绝运行中消息 |
 | Antigravity | 1.4.2 | Headless NDJSON 每条输入执行一个 turn，核实完成后续轮与会话恢复；运行中 steer 与最低版本未核实 | 未接入，明确拒绝运行中消息 |
 
 来源：[Pi RPC 生命周期](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)、[Pi 命令](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md)、[Pi RPC 源码](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/rpc/rpc-mode.ts)；[Codex 0.99.0](https://github.com/openai/codex/releases/tag/rust-v0.99.0)；[Grok interject](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/extensions/interject.rs)、[Grok run loop](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs)；[Claude SDK 控制协议](https://github.com/anthropics/claude-agent-sdk-python/blob/f93e29cc951cd5fddcaaed9f3c49c3c38dedd6ab/src/claude_agent_sdk/_internal/query.py)；[Antigravity Headless](https://antigravity.google/docs/cli/headless/)。未核实的能力不能按第三方适配器或 SDK 示例推定为 AgentNave 已支持。

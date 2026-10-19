@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI 或 Pi Coding Agent 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的协作节目；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent 或 DeepSeek Harness 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的协作节目；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用 CLI
@@ -95,6 +95,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Grok CLI | `grok` | [Grok CLI](references/grok.md) |
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
+| DeepSeek Harness | `deepseek` | [DeepSeek Harness](references/deepseek.md) |
 
 参考 JSON 仅作补充指引，不保证账户可用；优先使用当前模式的 App 组员配置。用户指定字段覆盖默认，但不得超出允许范围；省略字段仍会套用 App 默认值，要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设定的默认 options 或用户本轮明确要求，主控不得自行追加；App 默认值会被套用并在 `defaults_applied` 注明，续接也适用。其他选项只显式传明确选择的值。首次调用前用 `describe_provider` 核对允许状态和支持参数并复用结果；它不检查安装、登录。模型不可用时报告原错误，不静默替换；旧服务的模型指引不覆盖用户和本 Skill。
 

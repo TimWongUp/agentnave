@@ -116,6 +116,14 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
         "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
         "restricted_tools (boolean; native read/tool restrictions)"
     ),
+    "deepseek": (
+        "provider (model route; requires model; omitted with model uses deepseek-official), "
+        "effort requires model, "
+        "permission_mode (read-only, workspace-write or danger-full-access), "
+        "stored_credentials (boolean; true reuses the sign-in and keys saved by the "
+        "DeepSeek Harness app; otherwise headless reads DEEPSEEK_API_KEY), "
+        "restricted_tools (boolean; disables tool plugins, read-only sandbox)"
+    ),
     "grok": "permission_mode, agent, max_turns, sandbox, restricted_tools (boolean; denies tool execution)",
     "antigravity": (
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "

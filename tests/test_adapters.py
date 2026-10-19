@@ -13,6 +13,7 @@ from agentnave.adapters.antigravity import AntigravityAdapter, write_restricted_
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
+from agentnave.adapters.deepseek import DeepSeekAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
 from agentnave.processes import provider_environment
@@ -107,6 +108,8 @@ def no_installed_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             None,  # the HTTPS fallback may still succeed, so a retry is never a blocker
         ),
         ("grok", {"type": "error", "message": "secret"}, "provider_failed"),
+        ("deepseek", {"type": "error", "message": "secret"}, "provider_failed"),
+        ("deepseek", {"type": "tool_result", "callId": "c1", "status": "error"}, None),
         ("antigravity", {"event": "result", "result": {"status": "WAITING"}}, "provider_blocked"),
         ("antigravity", {"event": "result", "result": {"status": "ERROR"}}, None),
     ],
@@ -613,10 +616,25 @@ def test_provider_registry_returns_codex_adapter() -> None:
             "grok answer",
             "grok-session",
         ),
+        (
+            DeepSeekAdapter(),
+            b"\n".join(
+                json.dumps(event).encode()
+                for event in (
+                    {"type": "session", "sessionId": "deepseek-session", "cwd": "/w"},
+                    {"type": "text", "text": "intermediate"},
+                    {"type": "status", "phase": "step_end", "usage": {"inputTokens": [1]}},
+                    {"type": "status", "phase": "turn_end", "reason": {"kind": "completed"}},
+                    {"type": "final", "text": "deepseek answer"},
+                )
+            ),
+            "deepseek answer",
+            "deepseek-session",
+        ),
     ],
 )
 def test_adapters_drop_malformed_usage_without_losing_terminal_result(
-    adapter: ClaudeAdapter | CodeBuddyAdapter | AntigravityAdapter | GrokAdapter,
+    adapter: ClaudeAdapter | CodeBuddyAdapter | AntigravityAdapter | GrokAdapter | DeepSeekAdapter,
     stdout: bytes,
     expected_output: str,
     expected_session: str,
@@ -1208,6 +1226,12 @@ def test_adapter_rejects_implicit_or_unknown_provider_overrides(tmp_path: Path) 
             "ACTIVE",
             "run_command",
         ),
+        (
+            "deepseek",
+            {"type": "tool_call", "callId": "c1", "tool": "bash", "input": {"command": "hidden"}},
+            "running",
+            "bash",
+        ),
     ],
 )
 def test_activity_projects_native_tool_metadata_without_inputs(
@@ -1326,8 +1350,9 @@ def test_pi_rpc_is_opt_in_and_rejects_unverified_older_protocol(
     fake_pi_rpc.write_text(fake_pi_rpc.read_text().replace('print("1.1.0")', 'print("1.0.0")'))
     with pytest.raises(ValueError, match="Pi >= 1.1.0"):
         adapter.prepare(InvocationRequest("pi", "work", tmp_path, enable_messages=True))
-    with pytest.raises(ValueError, match="only by Pi, Codex, Claude and CodeBuddy"):
-        InvocationRequest("antigravity", "work", tmp_path, enable_messages=True)
+    for unsupported in ("antigravity", "deepseek"):
+        with pytest.raises(ValueError, match="only by Pi, Codex, Claude and CodeBuddy"):
+            InvocationRequest(unsupported, "work", tmp_path, enable_messages=True)
 
 
 def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Path) -> None:
@@ -1465,7 +1490,9 @@ def test_pi_retryable_message_error_does_not_signal_execution_blocker() -> None:
     assert activity is not None and activity.blocking_error is None
 
 
-@pytest.mark.parametrize("provider", ["claude", "grok", "codebuddy", "codex", "antigravity", "pi"])
+@pytest.mark.parametrize(
+    "provider", ["claude", "grok", "codebuddy", "codex", "antigravity", "pi", "deepseek"]
+)
 def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provider: str) -> None:
     adapter = get_adapter(provider)
     restricted = InvocationRequest(
@@ -1518,6 +1545,12 @@ def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provi
                 "--no-skills",
                 "--no-prompt-templates",
             } <= set(argv)
+        elif provider == "deepseek":
+            assert argv[argv.index("--session-id") + 1] == "own-seat-session"
+            patch = Path(argv[argv.index("--patch") + 1]).read_text()
+            assert "- id: tool-bash\n  disabled: true\n" in patch
+            assert "- id: plan-mode\n  disabled: true\n" in patch
+            assert "    mode: read-only\n" in patch
         else:
             assert argv[argv.index("--conversation") + 1] == "own-seat-session"
             assert {"--sandbox=true", "--disable-slash-commands=true"} <= set(argv)
@@ -1585,3 +1618,86 @@ def test_claude_queue_preserves_all_explicit_options(
     assert command.argv[command.argv.index("--model") + 1] == "chosen-model"
     assert command.argv[command.argv.index("--permission-mode") + 1] == "default"
     assert command.argv[command.argv.index("--max-budget-usd") + 1] == "1"
+
+
+def test_deepseek_options_become_a_temporary_patch_overlay(tmp_path: Path) -> None:
+    adapter = DeepSeekAdapter()
+    plain = adapter.prepare(request(tmp_path, "deepseek", session_id="session-1"))
+    # argv[0] may be the desktop bundle on this machine; resolution is covered elsewhere.
+    assert plain.argv[1:] == (
+        "--profile",
+        "headless",
+        "--json",
+        "--session-id",
+        "session-1",
+    )
+    assert plain.stdin == b"do the task" and plain.cleanup_paths == ()
+
+    command = adapter.prepare(
+        request(
+            tmp_path,
+            "deepseek",
+            provider_options={
+                "model": 'pro"\nx',
+                "effort": "max",
+                "permission_mode": "danger-full-access",
+                "stored_credentials": True,
+            },
+        )
+    )
+    try:
+        argv = command.argv
+        assert argv[-1] == "--json"
+        patch = Path(argv[argv.index("--patch") + 1]).read_text()
+        assert (
+            '    provider: "deepseek-official"\n    model: "pro\\"\\nx"\n'
+            '    reasoningEffort: "max"\n'
+        ) in patch
+        assert "    mode: danger-full-access\n" in patch and "    policy: never\n" in patch
+        assert "- id: credentials\n  disabled: false\n" in patch
+        assert "tool-bash" not in patch
+    finally:
+        for path in command.cleanup_paths:
+            path.unlink()
+
+    invalid: list[tuple[dict[str, ProviderOption], str]] = [
+        ({"effort": "high"}, "require model"),
+        ({"permission_mode": "yolo"}, "permission_mode must be"),
+        ({"stored_credentials": "yes"}, "must be a boolean"),
+        ({"agent": "x"}, "unsupported deepseek options: agent"),
+    ]
+    for options, message in invalid:
+        with pytest.raises(ValueError, match=message):
+            adapter.prepare(InvocationRequest("deepseek", "x", tmp_path, None, options))
+
+
+def test_deepseek_parse_maps_turn_end_and_keeps_only_terminal_events(tmp_path: Path) -> None:
+    adapter = DeepSeekAdapter()
+    capture = adapter.prepare(request(tmp_path, "deepseek")).capture_line
+    assert capture is not None
+    lines = [
+        {"type": "session", "sessionId": "session-1", "cwd": "/w"},
+        {"type": "tool_result", "callId": "c1", "status": "completed", "result": "x" * 9000},
+        {
+            "type": "status",
+            "phase": "turn_end",
+            "turn": 1,
+            "reason": {
+                "kind": "error",
+                "error": {"code": "MISSING_CREDENTIAL", "message": "no API key"},
+            },
+        },
+        {"type": "final", "text": ""},
+    ]
+    captured = b"".join(capture(json.dumps(line).encode()) for line in lines)
+    assert b"tool_result" not in captured and b'"turn"' not in captured
+    result = adapter.parse(1, captured, b"dsh: MISSING_CREDENTIAL: no API key")
+    assert result.status is InvocationStatus.BLOCKED
+    assert result.session_id == "session-1" and result.error_message == "no API key"
+
+    runner_error = json.dumps({"type": "error", "message": "unknown session id"}).encode()
+    failed = adapter.parse(1, runner_error, b"")
+    assert failed.status is InvocationStatus.FAILED
+    assert failed.error_message == "unknown session id"
+    incomplete = adapter.parse(0, json.dumps({"type": "final", "text": "partial"}).encode(), b"")
+    assert incomplete.status is InvocationStatus.FAILED and incomplete.output == "partial"
