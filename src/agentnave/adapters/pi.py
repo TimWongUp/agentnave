@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -21,6 +22,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.processes import provider_environment
 
 # Pi reports this on stderr before asking on stdin whether to fork another project's session.
 _FOREIGN_SESSION = re.compile(r"Session found in different project: ([^\n\x1b]*)")
@@ -30,6 +32,30 @@ _SKIPPABLE_OVERSIZED = (
     b'{"type":"turn_end"',
     b'{"type":"tool_execution_',
 )
+
+
+def _require_rpc_version(executable: str) -> None:
+    """Require the settled-event protocol; the inspected baseline is Pi 1.1.0."""
+    try:
+        result = subprocess.run(
+            (executable, "--version"),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5,
+            check=False,
+            env=provider_environment((executable,)),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("Pi RPC messages require a readable Pi version >= 1.1.0") from exc
+    match = re.fullmatch(rb"\s*(\d+)\.(\d+)\.(\d+)\s*", result.stdout)
+    if (
+        result.returncode != 0
+        or match is None
+        or tuple(int(part) for part in match.groups()) < (1, 1, 0)
+    ):
+        raise ValueError(
+            "Pi RPC messages require Pi >= 1.1.0; use ordinary invocation without enable_messages"
+        )
 
 
 def _text(message: dict[str, object]) -> str:
@@ -50,6 +76,12 @@ def _capture_line(line: bytes) -> bytes:
     kind = event.get("type")
     if kind == "session":
         kept = {"type": kind, "id": event.get("id")}
+    elif kind == "response" and event.get("command") == "get_state":
+        kept = {"type": "session", "id": object_dict(event.get("data")).get("sessionId")}
+    elif (
+        kind == "response" and event.get("command") == "prompt" and event.get("success") is not True
+    ):
+        kept = {"type": "response", "command": "prompt", "success": False}
     elif kind == "message_end" and object_dict(event.get("message")).get("role") == "assistant":
         message = object_dict(event.get("message"))
         kept = {
@@ -85,7 +117,8 @@ class PiAdapter:
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
-        argv = [resolve_executable("pi"), "--print", "--mode", "json"]
+        argv = [resolve_executable("pi")]
+        argv.extend(("--mode", "rpc") if request.enable_messages else ("--print", "--mode", "json"))
         if request.session_id is not None:
             argv.extend(("--session", request.session_id))
         argv.extend(self.option_args(request))
@@ -104,12 +137,23 @@ class PiAdapter:
         stdin = request.prompt.encode()
         if request.session_id is not None:
             stdin = b"\n" + stdin
+        if request.enable_messages:
+            _require_rpc_version(argv[0])
+            stdin = (
+                json.dumps({"id": "agentnave-state", "type": "get_state"})
+                + "\n"
+                + json.dumps(
+                    {"id": "agentnave-prompt", "type": "prompt", "message": request.prompt}
+                )
+                + "\n"
+            ).encode()
         return PreparedCommand(
             tuple(argv),
             request.cwd,
             stdin=stdin,
             capture_line=_capture_line,
             skip_oversized_line=lambda head: head.startswith(_SKIPPABLE_OVERSIZED),
+            input_protocol="pi_rpc" if request.enable_messages else None,
         )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:

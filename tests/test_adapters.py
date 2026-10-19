@@ -1298,6 +1298,27 @@ def test_pi_transport_and_explicit_options(tmp_path: Path) -> None:
         adapter.prepare(request(tmp_path, "pi", provider_options={"api_key": "secret"}))
 
 
+def test_pi_rpc_is_opt_in_and_rejects_unverified_older_protocol(
+    tmp_path: Path,
+    fake_pi_rpc: Path,
+) -> None:
+    adapter = get_adapter("pi")
+    command = adapter.prepare(InvocationRequest("pi", "work", tmp_path, enable_messages=True))
+    assert "--print" not in command.argv
+    assert command.argv[command.argv.index("--mode") + 1] == "rpc"
+    assert command.input_protocol == "pi_rpc"
+    assert command.stdin is not None
+    assert [json.loads(line)["type"] for line in command.stdin.splitlines()] == [
+        "get_state",
+        "prompt",
+    ]
+    fake_pi_rpc.write_text(fake_pi_rpc.read_text().replace('print("1.1.0")', 'print("1.0.0")'))
+    with pytest.raises(ValueError, match="Pi >= 1.1.0"):
+        adapter.prepare(InvocationRequest("pi", "work", tmp_path, enable_messages=True))
+    with pytest.raises(ValueError, match="only by Pi, Codex, Claude and CodeBuddy"):
+        InvocationRequest("antigravity", "work", tmp_path, enable_messages=True)
+
+
 def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Path) -> None:
     adapter = get_adapter("pi")
     command = adapter.prepare(request(tmp_path, "pi"))
@@ -1511,3 +1532,45 @@ def test_restricted_pi_keeps_only_its_model_backend(tmp_path: Path) -> None:
     assert argv[argv.index("--provider") + 1] == "p" and "--no-tools" in argv
     with pytest.raises(ValueError, match="only model and effort"):
         get_adapter("codex").prepare(InvocationRequest("codex", "speak", tmp_path, None, options))
+
+
+def test_codex_rpc_options_are_opt_in_and_permissions_not_added(
+    tmp_path: Path, fake_codex_rpc: Path
+) -> None:
+    command = get_adapter("codex").prepare(
+        InvocationRequest("codex", "work", tmp_path, enable_messages=True)
+    )
+    assert command.argv[1:] == ("app-server",)
+    assert command.input_protocol == "codex_rpc"
+    assert command.stdin is not None and json.loads(command.stdin)["method"] == "initialize"
+    fake_codex_rpc.write_text(
+        fake_codex_rpc.read_text().replace("codex-cli 0.161.0", "codex-cli 0.98.0")
+    )
+    with pytest.raises(ValueError, match=">= 0.99.0"):
+        get_adapter("codex").prepare(
+            InvocationRequest("codex", "work", tmp_path, enable_messages=True)
+        )
+
+
+def test_claude_queue_preserves_all_explicit_options(
+    tmp_path: Path, fake_claude_queue: Path
+) -> None:
+    command = get_adapter("claude").prepare(
+        InvocationRequest(
+            "claude",
+            "work",
+            tmp_path,
+            provider_options={
+                "model": "chosen-model",
+                "effort": "high",
+                "permission_mode": "default",
+                "max_budget_usd": 1,
+            },
+            enable_messages=True,
+        )
+    )
+    assert command.input_protocol == "claude_queue" and command.stdin is None
+    assert command.argv[command.argv.index("--input-format") + 1] == "stream-json"
+    assert command.argv[command.argv.index("--model") + 1] == "chosen-model"
+    assert command.argv[command.argv.index("--permission-mode") + 1] == "default"
+    assert command.argv[command.argv.index("--max-budget-usd") + 1] == "1"

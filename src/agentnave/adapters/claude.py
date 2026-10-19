@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 from collections.abc import Callable
 from typing import cast
 
@@ -21,6 +23,25 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.processes import provider_environment
+
+
+def _require_stream_version(executable: str, provider: str) -> None:
+    minimum = (2, 1, 295) if provider == "claude" else (2, 142, 0)
+    try:
+        result = subprocess.run(
+            (executable, "--version"),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5,
+            check=False,
+            env=provider_environment((executable,)),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(f"{provider} messages require a readable CLI version") from exc
+    match = re.search(rb"(\d+)\.(\d+)\.(\d+)", result.stdout)
+    if result.returncode != 0 or match is None or tuple(map(int, match.groups())) < minimum:
+        raise ValueError(f"{provider} messages require CLI >= {'.'.join(map(str, minimum))}")
 
 
 def _result_capture() -> Callable[[bytes], bytes]:
@@ -81,12 +102,25 @@ class ClaudeAdapter:
         argv.extend(self.option_args(request))
         if discussion:
             argv.extend(self._discussion_args)
+        if request.enable_messages:
+            _require_stream_version(argv[0], self.name)
+            argv.extend(("--input-format", "stream-json"))
         return PreparedCommand(
-            tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
+            tuple(argv),
+            request.cwd,
+            None if request.enable_messages else request.prompt.encode(),
+            capture_line=_result_capture(),
+            input_protocol=("claude_queue" if self.name == "claude" else "codebuddy_stream")
+            if request.enable_messages
+            else None,
         )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
+        if event_type == "agentnave.approval_required":
+            return ProviderActivity(
+                "lifecycle", "approval_required", "blocked", blocking_error="permission_required"
+            )
         if event_type == "system":
             subtype = event.get("subtype")
             if subtype == "api_retry":
