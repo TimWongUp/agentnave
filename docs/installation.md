@@ -774,7 +774,7 @@ CodeBuddy 仅在收到主会话的原生 `_requestId` 后启用投递，使用 `
 
 ### 验证记录
 
-本地 #80 worktree 已整合 `origin/main` 的 v0.26.0（`ffad5e8`），保留工作区、转发、工位访问等级与默认续接；尚未发布或部署消息功能。完整 pytest **277 项通过**（194.67 秒），Ruff lint/format、Pyright 与 diff whitespace 检查通过。回归用 fake CLI 和真实 JSONL 管道，覆盖原生轮次绑定、无绑定不发送、合并输入与多轮排队、迟到 result、完成/取消竞争、未知回执、磁盘写入失败、旧历史恢复、组席位拒绝，以及默认续接继承消息配置和 `access`。模拟测试不替代真实模型调用。
+PR 候选已整合 `origin/main` 的 v0.27.0（`61664fb`），保留工作区、转发、工位访问等级与默认续接；尚未发布或部署消息功能。完整 pytest **281 项通过**（201.42 秒），Ruff lint/format、Pyright 与 diff whitespace 检查通过；wheel/sdist 构建成功，临时安装的 wheel 通过启动器、17 个工具与按需看板验收。回归用 fake CLI 和真实 JSONL 管道，覆盖原生轮次绑定、无绑定不发送、合并输入与多轮排队、迟到 result、完成/取消竞争、未知回执、磁盘写入失败、旧历史恢复、组席位拒绝，以及默认续接继承消息配置和 `access`。模拟测试不替代真实模型调用。
 
 经当前会话授权，真实验收均通过该 worktree 的 STDIO MCP 发起；未指定模型/effort、未追加权限参数。同一 Invocation 与原生 session 的消息回执、最终输出和单 task 历史分别核对，并回读磁盘。
 
