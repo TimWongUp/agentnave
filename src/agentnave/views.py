@@ -80,6 +80,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                 "model": str(seat.provider_options.get("model", "")),
                 "provider": seat.provider,
                 "role": seat.role,
+                "access": seat.access,
             }
             for seat in state.seats
         ],

@@ -176,6 +176,7 @@ class InvocationPayload(TypedDict):
 class TaskStartPayload(InvocationPayload, DashboardLinks):
     conversation_id: str
     resumed: bool  # true when start_agent continued this desk's most recent private thread
+    access: str | None  # declared desk tier after inheritance; never enforced
 
 
 class WaitAnyPayload(TypedDict):
@@ -220,6 +221,10 @@ class GroupSeatSpec(BaseModel):
             "or control characters. Blank or omitted means no role."
         ),
     )
+    access: Literal["read", "write"] | None = Field(
+        default=None,
+        description="Declared desk access: read for exploring, planning or reviewing, write for changing files. Recorded and shown only; it does not change the CLI's native permissions. A desk keeps its first declared tier in this manager workspace; omitting it inherits that tier, and a different tier is rejected, so use another role and pass findings with forward or a meeting instead.",
+    )
 
 
 class GroupSeatPayload(TypedDict):
@@ -229,6 +234,7 @@ class GroupSeatPayload(TypedDict):
     model: str | None
     effort: str | None
     role: str | None
+    access: str | None
     defaults_applied: list[str]
 
 
@@ -534,6 +540,12 @@ async def start_agent(
             )
         ),
     ] = None,
+    access: Annotated[
+        Literal["read", "write"] | None,
+        Field(
+            description="Declared desk access: read for exploring, planning or reviewing, write for changing files. Recorded and shown only; it does not change the CLI's native permissions. A desk keeps its first declared tier in this manager workspace; omitting it inherits that tier, and a different tier is rejected, so use another role and pass findings with forward or a meeting instead."
+        ),
+    ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
@@ -578,6 +590,7 @@ async def start_agent(
             role=role,
             new_thread=new_thread,
             forward=forward,
+            access=access,
         )
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list_conversations.") from exc
@@ -589,6 +602,7 @@ async def start_agent(
         **started_payload(started.invocation_id, request, defaults_applied),
         "conversation_id": started.conversation_id,
         "resumed": started.resumed,
+        "access": started.access,
         **_dashboard_links(_conversations(ctx), started.conversation_id),
     }
 
@@ -954,6 +968,7 @@ async def open_group(
                     options,
                     Path(seat.cwd if seat.cwd is not None else cwd or "."),
                     seat.role,
+                    seat.access,
                 )
             )
         record = _conversations(ctx).open_show(
@@ -985,6 +1000,7 @@ async def open_group(
                 if "effort" in seat.provider_options
                 else None,
                 "role": seat.role,
+                "access": seat.access,
                 "defaults_applied": defaults[seat.id],
             }
             for seat in state.seats

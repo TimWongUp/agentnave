@@ -1434,6 +1434,7 @@ mod tests {
         let mut reviewer = task_snapshot("r1", "succeeded", "2026-10-15T01:00:00Z");
         reviewer["director"]["tasks"][0]["role"] = json!("reviewer");
         reviewer["director"]["tasks"][0]["thread"] = json!("native-1");
+        reviewer["director"]["tasks"][0]["access"] = json!("read");
         save(root, &reviewer);
         let mut author = task_snapshot("a1", "running", "2026-10-15T02:00:00Z");
         author["director"]["tasks"][0]["role"] = json!("author");
@@ -1469,6 +1470,8 @@ mod tests {
         );
         assert_eq!(desks[0]["label"], "m · Codex · reviewer");
         assert_eq!(desks[0]["role"], "reviewer");
+        assert_eq!(desks[0]["access"], "read");
+        assert_eq!(desks[1]["access"], Value::Null);
         assert_eq!(desks[0]["model"], "m");
         assert_eq!(desks[0]["first_seen"], "2026-10-15T01:00:00.000000Z");
         assert_eq!(desks[0]["last_active"], "2026-10-15T04:00:00.000000Z");

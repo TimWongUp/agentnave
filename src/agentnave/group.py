@@ -48,6 +48,7 @@ class GroupSeat:
     provider_options: dict[str, ProviderOption]
     cwd: Path
     role: str | None = None
+    access: str | None = None  # declared desk access tier
 
 
 @dataclass(frozen=True, slots=True)

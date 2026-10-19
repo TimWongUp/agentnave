@@ -290,9 +290,19 @@ struct Desk {
     sessionless: usize,
     running: usize,
     meeting: Option<(i64, String, String, String)>,
+    // The first declared access tier wins, matching the server's desk rule.
+    access: Option<(i64, String)>,
 }
 
 impl Desk {
+    fn declare(&mut self, at: i64, access: Option<String>) {
+        if let Some(access) = access
+            && self.access.as_ref().is_none_or(|(old_at, _)| at < *old_at)
+        {
+            self.access = Some((at, access));
+        }
+    }
+
     fn seen(&mut self, at: i64) {
         self.first = Some(self.first.map_or(at, |first| first.min(at)));
         self.last = Some(self.last.map_or(at, |last| last.max(at)));
@@ -341,6 +351,7 @@ impl Desk {
             "provider": self.provider,
             "model": self.model,
             "role": self.role,
+            "access": self.access.as_ref().map(|(_, access)| access),
             "label": desk_label(&self.model, &self.provider, self.role.as_deref()),
             "first_seen": iso(self.first.unwrap_or_default()),
             "last_active": iso(self.last.unwrap_or_default()),
@@ -682,6 +693,7 @@ impl Group {
             ..Desk::default()
         });
         desk.seen(created);
+        desk.declare(created, opt_text(identity, "access"));
         desk.seat(at, status, meeting);
     }
 
@@ -883,6 +895,10 @@ impl Group {
                     ..Desk::default()
                 });
                 entry.seen(timestamp(raw_start).unwrap_or_default());
+                entry.declare(
+                    timestamp(raw_start).unwrap_or_default(),
+                    opt_text(task, "access"),
+                );
                 entry.observe(timestamp(&time).unwrap_or_default(), status);
                 match opt_text(task, "thread") {
                     Some(session) => {
