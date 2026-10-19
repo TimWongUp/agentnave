@@ -14,11 +14,13 @@ been replaced.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -136,6 +138,21 @@ def _key(value: object) -> str:
     return json.dumps(value)
 
 
+def _tools_hash(result: Message | None) -> str | None:
+    if not result or result.get("nextCursor"):
+        return None  # Partial/paginated lists cannot prove that the full interface was delivered.
+    tools = result.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return None  # In particular, the nested zero-tool service has no runtime side effects.
+    entries = [_object(t) for t in cast(list[Any], tools)]
+    if any(t is None for t in entries):
+        return None
+    body = json.dumps(
+        sorted(cast(list[Message], entries), key=lambda t: str(t.get("name"))), sort_keys=True
+    )
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
 class Relay:
     def __init__(
         self,
@@ -155,8 +172,11 @@ class Relay:
         self.interval = interval
         self.lock = threading.Lock()
         self.out_lock = threading.Lock()
+        self.connection_lock = threading.Lock()
+        self.closing = threading.Event()
         self.stopped = threading.Event()
         self.host_pending: set[str] = set()
+        self.host_methods: dict[str, str] = {}
         self.child_pending: set[str] = set()
         self.paused = False
         self.held: list[bytes] = []
@@ -165,6 +185,18 @@ class Relay:
         self.replies: dict[str, queue.Queue[Message]] = {}
         self.sequence = 0
         self.code = 0
+        effective_env = env if env is not None else os.environ
+        self.host = effective_env.get("AGENTNAVE_HOST")
+        self.connection_path = (
+            Path(effective_env.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+            / "connections"
+            / f"{os.getpid()}-{uuid4().hex}.json"
+        )
+        self.started_ms = time.time_ns() // 1_000_000
+        self.runtime_version: str | None = None
+        self.runtime_tools_hash: str | None = None
+        self.host_tools_hash: str | None = None
+        self.notify_tools = False
         self.child = _Child(self.command, self._from_child, env=self.env)
 
     def run(self) -> int:
@@ -176,6 +208,7 @@ class Relay:
         since = 0.0
         reported = False
         while not self.stopped.wait(self.interval):
+            self._publish_connection()
             seen = fingerprint(self.site)
             if seen is None or seen == installed:
                 candidate = None
@@ -202,7 +235,47 @@ class Relay:
             elif not reported and time.monotonic() - since > _BUSY_REPORT:
                 reported = True
                 print(f"agentnave relay: update waiting, {self._busy_reason()}", file=sys.stderr)
+        with self.connection_lock, contextlib.suppress(OSError):
+            self.connection_path.unlink(missing_ok=True)
         return self.code
+
+    def _publish_connection(self) -> None:
+        """Best-effort, private observation; never contains prompts, tool bodies or credentials."""
+        with self.connection_lock:
+            self._write_connection()
+
+    def _write_connection(self) -> None:
+        with self.lock:
+            if (
+                self.closing.is_set()
+                or self.stopped.is_set()
+                or not self.host
+                or not self.host_tools_hash
+            ):
+                return
+            payload = {
+                "version": 1,
+                "host": self.host,
+                "started_ms": self.started_ms,
+                "runtime_version": self.runtime_version,
+                "runtime_tools_hash": self.runtime_tools_hash,
+                "host_tools_hash": self.host_tools_hash,
+            }
+        path = self.connection_path
+        try:
+            if path.parent.is_symlink() or path.parent.parent.is_symlink():
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+                temporary = Path(output.name)
+                try:
+                    output.write(json.dumps(payload).encode())
+                    output.close()
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        except OSError:
+            pass  # Tray observations must never break the transport.
 
     def _busy_reason(self) -> str:
         with self.lock:
@@ -227,8 +300,11 @@ class Relay:
                 child = self.child
             child.send(line)
         with self.lock:
+            self.closing.set()
             child = self.child
             child.retiring = True  # the host left; the child's exit is expected
+        with self.connection_lock, contextlib.suppress(OSError):
+            self.connection_path.unlink(missing_ok=True)
         child.close()
         self.code = child.process.wait()
         self.stopped.set()
@@ -238,12 +314,14 @@ class Relay:
             method = message.get("method")
             if "id" in message and method is not None:
                 self.host_pending.add(_key(message["id"]))
+                self.host_methods[_key(message["id"])] = str(method)
             elif "id" in message:
                 self.child_pending.discard(_key(message["id"]))
             if method == "notifications/cancelled":
                 # A cancelled request may never get a reply.
                 params = _object(message.get("params")) or {}
                 self.host_pending.discard(_key(params.get("requestId")))
+                self.host_methods.pop(_key(params.get("requestId")), None)
             elif method == "initialize":
                 self.initialize = message
             elif method == "notifications/initialized":
@@ -264,17 +342,49 @@ class Relay:
                 reply.put(messages[0])
                 return
         with self.lock:
+            rewritten = False
+            delivered_hash = None
+            completed: list[str] = []
             for message in messages:
                 if "id" in message and "method" in message:
                     self.child_pending.add(_key(message["id"]))
                 elif "id" in message:
-                    self.host_pending.discard(_key(message["id"]))
+                    ident = _key(message["id"])
+                    completed.append(ident)
+                    method = self.host_methods.pop(ident, None)
+                    result = _object(message.get("result"))
+                    if method == "initialize" and result:
+                        info = _object(result.get("serverInfo")) or {}
+                        self.runtime_version = str(info.get("version", "")) or None
+                        capabilities = _object(result.get("capabilities")) or {}
+                        tools = _object(capabilities.get("tools"))
+                        # Legacy STDIO notifications need no subscription. New protocol versions
+                        # require subscriptions/listen, which this relay does not synthesize.
+                        self.notify_tools = (
+                            tools is not None
+                            and str(result.get("protocolVersion", "")) < "2026-07-28"
+                        )
+                        if self.notify_tools and tools is not None:
+                            tools["listChanged"] = True
+                            rewritten = True
+                    elif method == "tools/list":
+                        delivered_hash = _tools_hash(result)
+                        self.runtime_tools_hash = delivered_hash
                 elif message.get("method") == "notifications/cancelled":
                     params = _object(message.get("params")) or {}
                     self.child_pending.discard(_key(params.get("requestId")))
         with self.out_lock:
-            self.stdout.write(line)
+            self.stdout.write(
+                (json.dumps(messages[0] if len(messages) == 1 else messages).encode() + b"\n")
+                if rewritten
+                else line
+            )
             self.stdout.flush()
+            with self.lock:
+                self.host_pending.difference_update(completed)
+                if delivered_hash:
+                    self.host_tools_hash = delivered_hash
+        self._publish_connection()
 
     def _ask(self, child: _Child, method: str, params: Message) -> Message | None:
         self.sequence += 1
@@ -321,7 +431,12 @@ class Relay:
     def _swap(self) -> str:
         """Return "swapped", "busy" (try again later) or "failed" (the new install did not start)."""
         with self.lock:
-            if self.initialize is None or self.initialized is None or not self._quiet():
+            if (
+                self.closing.is_set()
+                or self.initialize is None
+                or self.initialized is None
+                or not self._quiet()
+            ):
                 return "busy"
             self.paused = True
             old = self.child
@@ -330,7 +445,7 @@ class Relay:
             if not self._idle(old):
                 return "busy"
             with self.lock:
-                if not self._quiet() or self.stopped.is_set():
+                if not self._quiet() or self.closing.is_set() or self.stopped.is_set():
                     return "busy"
             try:
                 new = _Child(self.command, self._from_child, env=self.env, retiring=True)
@@ -341,15 +456,30 @@ class Relay:
             if not reply or "result" not in reply:
                 return "failed"
             new.send(self.initialized)
+            tools_reply = self._ask(new, "tools/list", {}) if self.host_tools_hash else None
+            current_hash = _tools_hash(_object(tools_reply.get("result")) if tools_reply else None)
             old.retiring = True
             old.close()
             try:
                 old.process.wait(_STOP_SECONDS)
             except subprocess.TimeoutExpired:
                 old.process.kill()
-            new.retiring = False
             with self.lock:
+                if self.closing.is_set():
+                    return "busy"
+                new.retiring = False
                 self.child, new = new, None
+                info = _object((_object(reply.get("result")) or {}).get("serverInfo")) or {}
+                self.runtime_version = str(info.get("version", "")) or None
+                self.runtime_tools_hash = current_hash
+                changed = current_hash is not None and current_hash != self.host_tools_hash
+            self._publish_connection()
+            if changed and self.notify_tools:
+                with self.out_lock:
+                    self.stdout.write(
+                        b'{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n'
+                    )
+                    self.stdout.flush()
             print("agentnave relay: switched to the updated installation", file=sys.stderr)
             return "swapped"
         finally:
