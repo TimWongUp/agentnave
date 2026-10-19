@@ -35,7 +35,7 @@ def finish():
     emit({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":json.dumps(messages)}],"stopReason":"stop"}})
     emit({"type":"agent_end", "willRetry":False})
     emit({"type":"agent_settled", "aborted":False})
-for line in sys.stdin:
+for line in sys.stdin.buffer:
     command = json.loads(line)
     with pathlib.Path("rpc-inputs.jsonl").open("a") as log:
         log.write(json.dumps(command) + "\\n")
@@ -95,7 +95,7 @@ turn = "codex-turn"
 messages = []
 def emit(event):
     print(json.dumps(event), flush=True)
-for line in sys.stdin:
+for line in sys.stdin.buffer:
     command = json.loads(line)
     with pathlib.Path("codex-rpc-inputs.jsonl").open("a") as log:
         log.write(json.dumps(command) + "\\n")
@@ -158,7 +158,7 @@ def emit(e):
     print(json.dumps(e), flush=True)
 def lifecycle(uuid, state):
     emit({"type":"command_lifecycle","command_uuid":uuid,"state":state,"session_id":session})
-for line in sys.stdin:
+for line in sys.stdin.buffer:
     command = json.loads(line)
     with pathlib.Path("claude-queue-inputs.jsonl").open("a") as log:
         log.write(json.dumps(command)+"\\n")
@@ -212,7 +212,7 @@ session = "buddy-session"
 owner = "native-buddy-request"
 def emit(e):
     print(json.dumps(e), flush=True)
-for line in sys.stdin:
+for line in sys.stdin.buffer:
     command = json.loads(line)
     with pathlib.Path("buddy-inputs.jsonl").open("a") as log:
         log.write(json.dumps(command)+"\\n")

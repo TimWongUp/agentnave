@@ -63,7 +63,7 @@ async def test_task_messages_are_saved_with_exact_invocation_and_survive_resume(
         assert [message.invocation_id for message in task.messages] == [invocation, invocation]
         assert [message.text for message in task.messages] == ["兼容旧接口", "finish"]
         disk = Conversation.model_validate_json(
-            (data_root / "conversations" / saved_id / "state.json").read_text()
+            (data_root / "conversations" / saved_id / "state.json").read_text(encoding="utf-8")
         )
         assert [message.status for message in disk.tasks[0].messages] == ["accepted", "accepted"]
         projected = views.snapshot(record.state, str(data_root))

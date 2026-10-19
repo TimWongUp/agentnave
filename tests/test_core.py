@@ -34,7 +34,11 @@ from agentnave.processes import (
 
 async def _rpc_ready(manager: InvocationManager, invocation_id: str) -> None:
     async with asyncio.timeout(5):
-        while manager.snapshot(invocation_id).last_activity is None:
+        while True:
+            activity = manager.snapshot(invocation_id).last_activity
+            # Codex thread initialization precedes turn/start; it is not input readiness.
+            if activity is not None and activity.event_type != "thread.started":
+                return
             await asyncio.sleep(0.01)
 
 
