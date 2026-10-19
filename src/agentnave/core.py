@@ -17,6 +17,15 @@ from pathlib import Path
 
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, model_from_event, parse_json_object
+from agentnave.messaging import (
+    ClaudeQueueChannel,
+    CodeBuddyChannel,
+    CodexRpcChannel,
+    MessageMode,
+    MessageReceipt,
+    MessageStatus,
+    PiRpcChannel,
+)
 from agentnave.models import (
     InvocationError,
     InvocationListing,
@@ -46,11 +55,13 @@ _OUTPUT_LIMIT_ERROR = InvocationError(
 )
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_MESSAGE_ACK_SECONDS = 5.0
 
 
 @dataclass(slots=True)
 class _InvocationRecord:
     request: InvocationRequest
+    channel: PiRpcChannel | None = None
     reported_model: str | None = None
     started_wall_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: float = field(default_factory=time.monotonic)
@@ -79,6 +90,9 @@ class _InvocationRecord:
         event = parse_json_object(line.decode(errors="replace"))
         if event is None:
             return
+        if self.channel is not None:
+            self.channel.observe(event)
+            event = self.channel.activity_event(event)
         self.last_event_at = time.monotonic()
         self.reported_model = model_from_event(self.request.provider, event) or self.reported_model
         activity = adapter.activity(event)
@@ -210,7 +224,18 @@ class InvocationManager:
         adapter = get_adapter(request.provider)
         prepared = prepared if prepared is not None else adapter.prepare(request)
         invocation_id = str(uuid.uuid4())
-        record = _InvocationRecord(request)
+        record = _InvocationRecord(
+            request,
+            channel=CodexRpcChannel(request)
+            if prepared.input_protocol == "codex_rpc"
+            else ClaudeQueueChannel(request)
+            if prepared.input_protocol == "claude_queue"
+            else CodeBuddyChannel(request)
+            if prepared.input_protocol == "codebuddy_stream"
+            else PiRpcChannel()
+            if prepared.input_protocol == "pi_rpc"
+            else None,
+        )
         self._records[invocation_id] = record
         record.task = asyncio.create_task(self._execute(record, adapter, prepared))
         record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
@@ -357,11 +382,66 @@ class InvocationManager:
         record = self._record(invocation_id)
         record.phase = InvocationPhase.STOPPING
         record.cancel_event.set()
+        if record.channel is not None:
+            record.channel.close()
         result = await self.wait(invocation_id)
         if result is None:
             raise RuntimeError("cancelled invocation did not terminate")
         record.result_read = True
         return result
+
+    async def send_message(
+        self, invocation_id: str, message_id: str, message: str, mode: MessageMode = "steer"
+    ) -> MessageReceipt:
+        record = self._record(invocation_id)
+        channel = record.channel
+        receipt: MessageReceipt = {
+            "invocation_id": invocation_id,
+            "message_id": message_id,
+            "status": "not_delivered",
+            "reason": "invocation_not_running",
+            "session_id": channel.session_id if channel else record.request.session_id,
+            "mode": mode,
+        }
+        if not message.strip() or len(message) > 12000:
+            raise ValueError("message must contain 1 to 12000 characters")
+        if channel is None:
+            receipt.update(status="unsupported", reason="messages_not_enabled")
+            return receipt
+        if mode not in channel.modes:
+            receipt.update(status="unsupported", reason="message_mode_unsupported")
+            return receipt
+        process = record.process
+        # No suspension between this identity/lifecycle check and the single pipe write.
+        if (
+            record.phase is not InvocationPhase.RUNNING
+            or record.cancel_event.is_set()
+            or channel.finished.is_set()
+            or not channel.active
+            or process is None
+            or process.returncode is not None
+            or process.stdin is None
+            or process.stdin.is_closing()
+        ):
+            return receipt
+        future: asyncio.Future[tuple[MessageStatus, str]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        channel.pending[message_id] = future
+        try:
+            try:
+                process.stdin.write(channel.message(message_id, message, mode))
+                async with asyncio.timeout(_MESSAGE_ACK_SECONDS):
+                    await process.stdin.drain()
+                    receipt["status"], receipt["reason"] = await asyncio.shield(future)
+            except TimeoutError:
+                receipt.update(status="unknown", reason="provider_ack_timeout")
+            except (BrokenPipeError, ConnectionResetError):
+                receipt.update(status="unknown", reason="pipe_closed_before_ack")
+        finally:
+            channel.pending.pop(message_id, None)
+            future.cancel()
+        return receipt
 
     async def shutdown(self) -> None:
         if self._closed:
@@ -407,7 +487,11 @@ class InvocationManager:
                     Host("codex"), result.session_id, since=record.started_wall_at
                 )
             record.reported_model = reported
-            return replace(result, reported_model=reported)
+            return replace(
+                result,
+                reported_model=reported,
+                native_turns=tuple(record.channel.turns) if record.channel else (),
+            )
         except Exception:
             logging.getLogger(__name__).exception("Unexpected invocation failure")
             return InvocationResult(
@@ -436,8 +520,18 @@ class InvocationManager:
             record.phase = InvocationPhase.RUNNING
             if process.stdout is None or process.stderr is None or process.stdin is None:
                 raise RuntimeError("provider subprocess pipes were not created")
+            if record.channel is not None:
+                record.channel.bind(process.stdin)
 
             output_exceeded = asyncio.Event()
+
+            def capture_line(line: bytes) -> bytes:
+                if record.channel is not None:
+                    event = parse_json_object(line.decode(errors="replace"))
+                    if event is None or not record.channel.accepts_event(event):
+                        return b""
+                return prepared.capture_line(line) if prepared.capture_line else line + b"\n"
+
             stdout_diagnostics = _StreamDiagnostics()
             stderr_diagnostics = _StreamDiagnostics()
             stdout_task = asyncio.create_task(
@@ -446,7 +540,7 @@ class InvocationManager:
                     _MAX_STDOUT_BYTES,
                     output_exceeded,
                     lambda line: record.observe_event(line, adapter),
-                    prepared.capture_line,
+                    capture_line if prepared.capture_line is not None else None,
                     prepared.skip_oversized_line,
                     event_limit=_MAX_EVENT_BYTES,
                     diagnostics=stdout_diagnostics,
@@ -460,7 +554,11 @@ class InvocationManager:
                     diagnostics=stderr_diagnostics,
                 )
             )
-            stdin_task = asyncio.create_task(_write_stdin(process.stdin, prepared.stdin))
+            stdin_task = asyncio.create_task(
+                _write_open_stdin(process.stdin, prepared.stdin)
+                if record.channel is not None
+                else _write_stdin(process.stdin, prepared.stdin)
+            )
             completion_task = supervised.completion
             cancel_task = asyncio.create_task(record.cancel_event.wait())
             exceeded_task = asyncio.create_task(output_exceeded.wait())
@@ -475,8 +573,16 @@ class InvocationManager:
                 )
             )
 
+            rpc_task = (
+                asyncio.create_task(record.channel.finished.wait())
+                if record.channel is not None
+                else None
+            )
+            if rpc_task is not None:
+                tasks.append(rpc_task)
+
             done, _ = await asyncio.wait(
-                (completion_task, cancel_task, exceeded_task),
+                (completion_task, cancel_task, exceeded_task, *([rpc_task] if rpc_task else [])),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if exceeded_task in done and output_exceeded.is_set():
@@ -485,12 +591,22 @@ class InvocationManager:
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")
+            elif rpc_task is not None and rpc_task in done:
+                # RPC stays alive between turns. agent_settled ends this invocation.
+                provider_returncode = 0
+                error = record.channel.error if record.channel else None
+                terminal = InvocationStatus.FAILED if error is not None else None
             else:
                 completion = completion_task.result()
                 if completion.kind == "exit" and completion.returncode is not None:
                     provider_returncode = completion.returncode
                     terminal = None
                     error = None
+                    if record.channel is not None and not record.channel.finished.is_set():
+                        terminal = InvocationStatus.FAILED
+                        error = InvocationError(
+                            "protocol_incomplete", "Provider exited before native turn completion"
+                        )
                 else:
                     terminal = InvocationStatus.FAILED
                     error = InvocationError(
@@ -503,6 +619,9 @@ class InvocationManager:
                     )
 
             record.phase = InvocationPhase.STOPPING
+            if record.channel is not None:
+                record.channel.close()
+                process.stdin.close()
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)
             stdout, stderr = await _finish_streams(stdout_task, stderr_task)
             # The provider may exit before the readers notice the limit while draining.
@@ -573,6 +692,8 @@ class InvocationManager:
                         for path in prepared.cleanup_paths:
                             Path(path).unlink(missing_ok=True)
             finally:
+                if record.channel is not None:
+                    record.channel.close()
                 record.process = None
                 record.tool_names.clear()
 
@@ -701,6 +822,15 @@ async def _write_stdin(writer: asyncio.StreamWriter, data: bytes | None) -> None
         writer.close()
         with suppress(BrokenPipeError, ConnectionResetError):
             await writer.wait_closed()
+
+
+async def _write_open_stdin(writer: asyncio.StreamWriter, data: bytes | None) -> None:
+    if data is not None:
+        try:
+            writer.write(data)
+            await writer.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 async def _finish_streams(

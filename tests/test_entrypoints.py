@@ -16,6 +16,7 @@ from agentnave.mcp_server import mcp
 
 EXPECTED_TOOLS = [
     "start_agent",
+    "send_agent_message",
     "wait_agent",
     "wait_any",
     "cancel_agent",
@@ -139,17 +140,20 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert result.tools[0].annotations.open_world_hint is True
     assert result.tools[0].annotations.destructive_hint is True
     assert result.tools[1].annotations is not None
-    assert result.tools[1].annotations.read_only_hint is True
+    assert result.tools[1].annotations.destructive_hint is True
+    assert result.tools[2].annotations is not None
+    assert result.tools[2].annotations.read_only_hint is True
     start_properties = _payload(result.tools[0].input_schema["properties"])
     assert "timeout_seconds" not in start_properties
-    wait_properties = _payload(result.tools[1].input_schema["properties"])
+    assert start_properties["enable_messages"] is not None
+    wait_properties = _payload(result.tools[2].input_schema["properties"])
     assert set(wait_properties) == {"invocation_id"}
     assert mcp_server.WAIT_SECONDS == 300
-    assert result.tools[3].annotations is not None
-    assert result.tools[3].annotations.destructive_hint is True
+    assert result.tools[4].annotations is not None
+    assert result.tools[4].annotations.destructive_hint is True
     assert all(
         tool.annotations is not None and tool.annotations.read_only_hint is True
-        for tool in (result.tools[2], result.tools[4])
+        for tool in (result.tools[3], result.tools[5])
     )
 
 
@@ -176,10 +180,27 @@ async def test_provider_details_are_disclosed_only_on_request(
             "supported_options",
             "host",
             "host_source",
+            "running_messages",
+            "message_requirements",
+            "message_modes",
         }
         assert "permission_mode" in str(payload["supported_options"])
         assert "gpt-6-astra" not in str(payload)
         assert await client.list_tools() == before
+        assert payload["running_messages"] is True
+        assert payload["message_modes"] == ["steer"]
+        pi = _payload(
+            (await client.call_tool("describe_provider", {"provider": "pi"})).structured_content
+        )
+        assert pi["running_messages"] is True and "1.1.0" in str(pi["message_requirements"])
+        claude = _payload(
+            (await client.call_tool("describe_provider", {"provider": "claude"})).structured_content
+        )
+        assert claude["message_modes"] == ["queue"]
+        grok = _payload(
+            (await client.call_tool("describe_provider", {"provider": "grok"})).structured_content
+        )
+        assert grok["running_messages"] is False and grok["message_modes"] == []
         invalid = await client.call_tool("describe_provider", {"provider": "unknown"})
         assert invalid.is_error is True
 
@@ -970,3 +991,12 @@ def test_host_startup_merges_exclusions_and_reports_identity(tmp_path: Path) -> 
         text=True,
     )
     assert invalid.returncode != 0 and "Unknown AGENTNAVE_HOST" in invalid.stderr
+
+
+def test_messaging_can_be_imported_before_adapter_registry() -> None:
+    subprocess.run(
+        [sys.executable, "-c", "import agentnave.messaging; import agentnave.mcp_server"],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )

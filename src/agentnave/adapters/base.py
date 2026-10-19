@@ -54,6 +54,12 @@ def resolve_executable(name: str, preferred: Iterable[str] = ()) -> str:
     return os.path.abspath(executable) if executable is not None else name
 
 
+def resolve_message_executable(executable: str) -> str:
+    """Pin the selected CLI so version probing and message startup use one path."""
+    found = shutil.which(executable)
+    return os.path.abspath(found) if found is not None else executable
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedCommand:
     argv: tuple[str, ...]
@@ -63,6 +69,7 @@ class PreparedCommand:
     capture_line: Callable[[bytes], bytes] | None = None
     # Given the head of a line above the capture limit, True drops it instead of failing.
     skip_oversized_line: Callable[[bytes], bool] | None = None
+    input_protocol: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

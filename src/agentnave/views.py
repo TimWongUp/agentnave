@@ -182,7 +182,12 @@ def _director(
     }
     if state.kind == "task":
         tasks = [
-            task.model_dump(exclude={"session_id"})
+            task.model_dump(
+                exclude={
+                    "session_id": True,
+                    "messages": {"__all__": {"session_id", "invocation_id"}},
+                }
+            )
             | {
                 "message_id": f"{state.id}:t:{task.id}",
                 "thread": _thread(task.provider, task.session_id),
@@ -247,6 +252,7 @@ def _status(state: Conversation) -> str:
 def _updated(state: Conversation) -> str:
     """When the conversation last saw activity: a message, a task start or a task end."""
     times = [_time(state.created)] + [_time(entry.time) for entry in state.entries]
+    times += [_time(message.time) for task in state.tasks for message in task.messages]
     times += [
         start + timedelta(milliseconds=task.elapsed_ms)
         for task in state.tasks

@@ -34,6 +34,7 @@ from agentnave.group import (
     SeatState,
 )
 from agentnave.host import Host, detect_host, session_model
+from agentnave.messaging import MessageMode, MessageReceipt
 from agentnave.models import InvocationRequest
 from agentnave.store import (
     Conversation,
@@ -44,6 +45,7 @@ from agentnave.store import (
     SeatRecord,
     SeatRunRecord,
     SessionRecord,
+    TaskMessageRecord,
     TaskRecord,
     Unavailable,
     lock_file,
@@ -635,6 +637,11 @@ class Conversations(Groups):
             (group is not None and group.active is not None)
             or record.state.pending_review()
             or any(task.status == "running" for task in record.state.tasks)
+            or any(
+                message.status == "pending"
+                for task in record.state.tasks
+                for message in task.messages
+            )
         )
 
     def restart_safe(self) -> bool:
@@ -1012,6 +1019,67 @@ class Conversations(Groups):
                     if native_lock is not None:
                         native_lock.close()
 
+    async def send_task_message(
+        self, invocation_id: str, text: str, mode: MessageMode = "steer"
+    ) -> MessageReceipt:
+        if not text.strip() or len(text) > 12000:
+            raise ValueError("message must contain 1 to 12000 characters")
+        self.manager.snapshot(invocation_id)  # Reject unknown or expired handles before writing.
+        message_id = str(uuid4())
+        binding = self.task_invocations.get(invocation_id)
+        if binding is None:
+            return {
+                "invocation_id": invocation_id,
+                "message_id": message_id,
+                "status": "unsupported",
+                "reason": "group_messages_unsupported",
+                "session_id": None,
+            }
+        conversation_id, task_id = binding
+        record = self.writable(conversation_id)
+        try:
+            task = next(item for item in record.state.tasks if item.id == task_id)
+            task.messages.append(
+                TaskMessageRecord(
+                    id=message_id,
+                    invocation_id=invocation_id,
+                    text=text,
+                    time=now(),
+                    session_id=task.session_id,
+                    mode=mode,
+                )
+            )
+            self._persist(record)  # Never send a message that has no saved intent.
+            receipt: MessageReceipt = {
+                "invocation_id": invocation_id,
+                "message_id": message_id,
+                "status": "unknown",
+                "reason": "caller_cancelled_before_ack",
+                "session_id": task.session_id,
+            }
+            try:
+                receipt = await self.manager.send_message(invocation_id, message_id, text, mode)
+            finally:
+
+                def finish() -> None:
+                    task = next(item for item in record.state.tasks if item.id == task_id)
+                    message = next(item for item in task.messages if item.id == message_id)
+                    message.status = receipt["status"]
+                    message.reason = receipt["reason"]
+                    message.session_id = receipt["session_id"]
+
+                finish()
+                try:
+                    self._persist(record)
+                    receipt["history_saved"] = True
+                except OSError:
+                    finish()  # Retain the outcome in memory; _unsaved keeps the OS lock.
+                    receipt["history_saved"] = False
+                self._publish(record)
+            return receipt
+        finally:
+            self._release_idle(record)
+
     async def _collect(self, record: Record, task_id: str, invocation_id: str) -> None:
         result = await self.manager.wait(invocation_id)
         assert result is not None
@@ -1020,6 +1088,7 @@ class Conversations(Groups):
             task = next(item for item in record.state.tasks if item.id == task_id)
             task.status = status
             task.output = result.output
+            task.native_turns = list(result.native_turns)
             task.session_id = result.session_id or task.session_id
             task.elapsed_ms = result.duration_ms
             task.reported_model = result.reported_model or task.reported_model

@@ -125,7 +125,7 @@ final replies and session bindings. Existing saved history stays in place.
 
 ## The MCP surface
 
-AgentNave exposes sixteen tools: task lifecycle and discovery, saved group rounds, history,
+AgentNave exposes seventeen tools: task lifecycle and discovery, saved group rounds, history,
 answer review and host messages. Provider-specific options are returned only when requested.
 App member defaults are applied by mode; CLI references provide supplementary guidance.
 After updating from the split runtime, reconnect MCP to refresh schemas. `open_group` requires
@@ -188,9 +188,14 @@ then the Codex desktop app, checking `/Applications` before `~/Applications` for
 This follows desktop app updates instead of selecting an independently installed CLI by PATH.
 If no executable bundle is found, or on other platforms, AgentNave uses `codex` from PATH,
 then from the common install directories listed in the installation guide.
-AgentNave does not install or upgrade Codex, compare version numbers, or change its model settings.
+AgentNave does not install or upgrade Codex or change its model settings. Ordinary calls do not
+compare versions; opting into running messages checks the selected CLI against the protocol minimum.
 
 用户可在单次任务中点名 CLI、模型与 effort，由主控显式传入 `provider_options`，覆盖 App 默认值但仍须处于该模式允许范围。长期默认值在 App 中维护；要继承 CLI 原生设置，应清除对应 App 默认字段并在调用时省略，单纯省略参数仍会套用已配置的默认值。新增模型可直接使用其精确 ID；若模式限制模型，须先在 App 中启用。模型不可用时报告原错误，不静默替换。
+
+### `send_agent_message`
+
+普通任务显式传 `start_agent(enable_messages=true)` 后，可用原 `invocation_id` 追加消息。Pi、Codex 和 CodeBuddy 支持 `steer`；Claude 只支持显式 `mode="queue"`，允许并入当前或后续原生轮次。默认任务路径不变，协作组席位不支持消息。`accepted` 表示原生接收，不保证模型采纳；继续用 `wait_agent` 等待结果。版本、回执和真实验收见[运行中消息能力](docs/installation.md#运行中消息能力)。
 
 ### `wait_agent`
 

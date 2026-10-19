@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 
+from agentnave import __version__
 from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
@@ -16,9 +18,11 @@ from agentnave.adapters.base import (
     parse_json_lines,
     parse_json_object,
     resolve_executable,
+    resolve_message_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.processes import provider_environment
 
 _DESKTOP_CODEX_PATHS = (
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
@@ -73,6 +77,34 @@ def _codex_executable() -> str:
     return resolve_executable("codex", _DESKTOP_CODEX_PATHS if sys.platform == "darwin" else ())
 
 
+def _capture_rpc_line(line: bytes) -> bytes:
+    from agentnave.messaging import codex_event, rpc_line
+
+    event = parse_json_object(line.decode(errors="replace"))
+    return _capture_line(rpc_line(codex_event(event))) if event is not None else b""
+
+
+def _require_rpc_version(executable: str) -> None:
+    try:
+        version = subprocess.run(
+            (executable, "--version"),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5,
+            check=False,
+            env=provider_environment((executable,)),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("Codex messages require readable app-server version >= 0.99.0") from exc
+    match = re.search(rb"(?:codex-cli\s+)?(\d+)\.(\d+)\.(\d+)", version.stdout)
+    if (
+        version.returncode != 0
+        or match is None
+        or tuple(int(part) for part in match.groups()) < (0, 99, 0)
+    ):
+        raise ValueError("Codex messages require app-server >= 0.99.0")
+
+
 class CodexAdapter:
     name = "codex"
     _options = {
@@ -102,6 +134,36 @@ class CodexAdapter:
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
+        if request.enable_messages:
+            from agentnave.messaging import rpc_line
+
+            self.option_args(request)
+            executable = resolve_message_executable(_codex_executable())
+            _require_rpc_version(executable)
+            argv = [executable, "app-server"]
+            if discussion:
+                raise ValueError(
+                    "Codex messages with restricted_tools are not yet supported; omit enable_messages"
+                )
+            return PreparedCommand(
+                tuple(argv),
+                request.cwd,
+                stdin=rpc_line(
+                    {
+                        "id": "agentnave-initialize",
+                        "method": "initialize",
+                        "params": {
+                            "clientInfo": {
+                                "name": "agentnave",
+                                "title": "AgentNave",
+                                "version": __version__,
+                            }
+                        },
+                    }
+                ),
+                capture_line=_capture_rpc_line,
+                input_protocol="codex_rpc",
+            )
         argv = [_codex_executable(), "exec"]
         if request.session_id is not None:
             argv.append("resume")
@@ -133,6 +195,10 @@ class CodexAdapter:
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
+        if event_type == "agentnave.approval_required":
+            return ProviderActivity(
+                "lifecycle", "approval_required", "blocked", blocking_error="permission_required"
+            )
         if event_type in ("thread.started", "turn.started", "turn.completed", "turn.failed"):
             return ProviderActivity(
                 "lifecycle",

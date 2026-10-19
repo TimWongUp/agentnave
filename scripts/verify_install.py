@@ -16,6 +16,7 @@ from mcp import Client, StdioServerParameters
 
 TOOLS = [
     "start_agent",
+    "send_agent_message",
     "wait_agent",
     "wait_any",
     "cancel_agent",

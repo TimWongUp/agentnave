@@ -248,7 +248,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the sixteen tools and the `codex` exclusion.
+Start a new session and confirm the seventeen tools and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -338,7 +338,7 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all AgentNave tools (sixteen); a
+tools, then asks whether to enable them. Complete that choice for all AgentNave tools (seventeen); a
 successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
 per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
@@ -462,7 +462,7 @@ A development Skill used with v0.5.0 does not change that older runtime's behavi
 
 主控先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `describe_provider` 核对参数与宿主身份。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；统一为 16 个工具。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；统一为 17 个工具。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
@@ -470,7 +470,7 @@ After registration or upgrade:
 2. Restart the server/session and confirm `list_members`, `describe_provider`, `start_agent`,
    `wait_agent`, `wait_any`, `cancel_agent`, `list_invocations`, `open_group`, `run_round`,
    `wait_round`, `cancel_round`, `decide_answers`, `post_host_message`, `list_conversations`,
-   `read_conversation` and `update_conversation` are visible (16 total).
+   `read_conversation`, `update_conversation` and `send_agent_message` are visible (17 total).
    Confirm the host also discovers `agentnave-manager` in the intended
    scope and can read its five referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
@@ -742,3 +742,49 @@ or symlink, preserving user-authored additions. Uninstalling the runtime does no
 history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
 Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
 configuration, sessions, and user projects remain owned by the user and providers.
+
+## 运行中消息能力
+
+`start_agent(enable_messages=true)` 显式为支持的普通任务启用持续输入，默认仍是原有 print/exec 路径。调用前读 `describe_provider` 的 `running_messages`、`message_modes` 和 `message_requirements`；能力声明不探测安装、认证或模型。启动前检查所选可执行文件的版本，过旧或不可识别时拒绝，不降级或换 Provider。追加消息用同一 `invocation_id` 调 `send_agent_message`，完成后仍通过 `session_id` 续接。默认 `mode=steer`；Claude 必须显式选择 `mode=queue`，不自动把 steering 改为下一轮排队。
+
+以下能力根据 2026-10-18 至 19 的原生协议、所选可执行文件与真实调用核验；CLI 版本样本与模型验收分别列出，未验收的能力不由帮助文本推定。
+
+| Provider | 核验样本 | 原生路径与已知限制 | AgentNave 首期 |
+| --- | --- | --- | --- |
+| Pi | 1.1.0 | RPC `steer` 进入当前 run 的队列；回执仅表示 queued 或扩展 handled，最终等待 `agent_settled` | 普通 task 显式启用；本实现下限 1.1.0，最早引入版本未核实 |
+| Codex | 所选桌面 CLI 0.163.0-alpha.10.2，已生成 schema 核对 | app-server v2 `turn/steer` 绑定 `expectedTurnId`，过期轮次由原生拒绝 | 已实现 `steer`，要求 >=0.99.0；普通 task，不与 restricted_tools 组合；2026-10-19 真实验收通过 |
+| Grok | 1.0.46 | ACP `x.ai/interject` 晚到时会自动 fallback 新 prompt，只有 sessionId，无 expectedTurnId 或禁用 fallback 的接口 | 明确拒绝运行中消息 |
+| Claude Code | 2.1.295 | stream-json 普通 user 输入无中断排队，可能并入当前 turn，也可能进入后续 turn；command_lifecycle 关联输入 UUID | 已实现显式 `queue`，保守要求 >=2.1.295；不声明 steer；2026-10-19 真实验收通过 |
+| CodeBuddy | 2.142.0 | stream-json `control_request/steer` 绑定当前 session 与原生 `_requestId`，拒绝 idle/stale；成功仅表示进入当前轮缓冲区 | 已实现 `steer`，保守要求 >=2.142.0 且收到原生请求 ID；2026-10-19 消息接入验收通过；原生后续回复不保证保持输出约束 |
+| Antigravity | 1.4.2 | Headless NDJSON 每条输入执行一个 turn，核实完成后续轮与会话恢复；运行中 steer 与最低版本未核实 | 未接入，明确拒绝运行中消息 |
+
+来源：[Pi RPC 生命周期](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)、[Pi 命令](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md)、[Pi RPC 源码](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/rpc/rpc-mode.ts)；[Codex 0.99.0](https://github.com/openai/codex/releases/tag/rust-v0.99.0)；[Grok interject](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/extensions/interject.rs)、[Grok run loop](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs)；[Claude SDK 控制协议](https://github.com/anthropics/claude-agent-sdk-python/blob/f93e29cc951cd5fddcaaed9f3c49c3c38dedd6ab/src/claude_agent_sdk/_internal/query.py)；[Antigravity Headless](https://antigravity.google/docs/cli/headless/)。未核实的能力不能按第三方适配器或 SDK 示例推定为 AgentNave 已支持。
+
+### 回执与历史
+
+Codex 依次 initialize、start/resume thread、start turn；`turn/steer` 必须带原 `expectedTurnId`，并核对回执返回的 turnId。仅该 thread 与 turn 的 `turn/completed` 可结束 Invocation；其他轮次事件不进入最终结果。模型、effort 来自原请求，缺省继承配置；只有原请求明确包含 bypass 权限时才映射对应字段。原生审批或交互请求上报 execution_blocked，不自动批准。app-server 本身不要求 Git 仓库，skip_git_repo_check 在此路径无需额外动作。
+
+Claude 的 `queue` 显式许可原生调度当前或后续 turn；按 `command_lifecycle.command_uuid` 关联输入。追踪全部在途消息，必须等队列耗尽和对应 result 终态后结束，lifecycle completed 不能替代最终回答。首个 result 若 `queued_turn_count>0` 则继续收集，最终输出最后一轮回答，并在原 task 的 `native_turns` 保存各轮正文、状态和输入 UUID；缺少队列元数据时失败，不把不完整证据当成功。原模型、effort、budget 与权限参数继续作用于整个 Invocation。生命周期字段仍属上游内部协议，因此采用保守版本门槛并单独进行真实验收。来源：[Claude 官方 SDK 变更记录](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md)。
+
+CodeBuddy 仅在收到主会话的原生 `_requestId` 后启用投递，使用 `expected_request_id` 绑定当前轮；初始 user UUID 不能代替它。`steered=true` 与匹配 session 的回执表示当前轮已缓冲，不能证明模型消费。缺少绑定信息时不发送，过期或 idle 由原生拒绝，不改为普通 user 输入或 cancel/resume。来源：[CodeBuddy 2.140.0 steer](https://www.codebuddy.cn/docs/cli/release-notes/v2.140.0)、[CodeBuddy 模型与排队说明](https://www.codebuddy.cn/docs/cli/models)。
+
+`accepted` 仅表示原生已确认入队或扩展处理，不保证已消费、采纳或完成；继续使用 `wait_agent`。`rejected` 为原生拒绝，`unsupported` 为未启用或能力不支持，`not_delivered` 为本次没有写入，`unknown` 为尝试写入但未收到确认；未知结果不自动重试。发送不自动中断、不换模型、不创建后续 Invocation。协作组席位一律拒绝，避免改变轮次快照、私密指令与审核可见性。
+
+消息先保存意图，再写入原进程；原 task 的 `messages` 保存文本、时间、原 Invocation、原生 session 与回执。`read_conversation` 可核对完整历史。`history_saved=false` 表示结果只留在内存、最终回执未落盘，应保留当前回执并处理存储故障。服务重启把未确认的 pending 消息标成 unknown，不恢复进程或自动重投。
+
+### 验证记录
+
+PR 候选已整合 `origin/main` 的 v0.27.0（`61664fb`），保留工作区、转发、工位访问等级与默认续接；尚未发布或部署消息功能。完整 pytest **281 项通过**（201.42 秒），Ruff lint/format、Pyright 与 diff whitespace 检查通过；wheel/sdist 构建成功，临时安装的 wheel 通过启动器、17 个工具与按需看板验收。回归用 fake CLI 和真实 JSONL 管道，覆盖原生轮次绑定、无绑定不发送、合并输入与多轮排队、迟到 result、完成/取消竞争、未知回执、磁盘写入失败、旧历史恢复、组席位拒绝，以及默认续接继承消息配置和 `access`。模拟测试不替代真实模型调用。
+
+经当前会话授权，真实验收均通过该 worktree 的 STDIO MCP 发起；未指定模型/effort、未追加权限参数。同一 Invocation 与原生 session 的消息回执、最终输出和单 task 历史分别核对，并回读磁盘。
+
+| Provider | 日期与调用基线 | 观察结果 |
+| --- | --- | --- |
+| Pi | 2026-10-18；Pi 1.1.0 | `accepted / queued_by_provider`，最终 `STEERING_LIVE_OK_80`，约 15.1 秒；回报模型 `deepseek-v4.1-flash` |
+| Codex | 2026-10-19；v0.25.0 基础，桌面 CLI 0.163.0-alpha.10.2 | `accepted_by_active_turn`，最终 `CODEX_LIVE_OK_80`，约 24.6 秒；回报模型 `opencode-go/deepseek-v4.1-flash` |
+| Claude | 2026-10-19；v0.26.0 基础，Claude 2.1.295 | `queued_provider_schedules_turn`，最终 `CLAUDE_LIVE_OK_80`，约 22.8 秒；回报模型 `claude-opus-5-5`。本次输入并入同一轮，`native_turns` 保存初始/追加 UUID 与正文 |
+| CodeBuddy | 2026-10-19；v0.26.0 基础，CodeBuddy 2.142.0 | 首次 `buffered_by_active_turn`，输出目标文字后被 `Bash: sleep 12` 的原生审批阻塞，未批准并已取消。另经授权做无工具调用，42.1 秒后原生 succeeded；消息被同一原生请求接收并采纳，单 task/session 与磁盘回执通过，消息接入验收通过；最终正文偏离目标作为模型/原生续写观察保留；回报模型 `hy4-preview` |
+
+Codex 自调用仅按用户明确许可，在临时验收服务移除同宿主排除；正式宿主配置、默认排除与原生权限未改。Claude/CodeBuddy 验收声明 `access=read`；该字段不赋予工具权限。真实记录不替代 Windows 实机或协作组支持验收。全局 Skill 部署审计仍有既有物理副本与其他宿主 Vault 路由问题，本次未修改全局部署。
+
+CodeBuddy 2.142.0 的无工具验收记录依次为：初始 `BASELINE` → steer 入轮后的 `CODEBUDDY_LIVE_OK_80` → 原生最终回复 “Nothing to continue … BASELINE …”。该原生请求 ID 全程一致，CLI 日志先记录注入当前轮，再记录 `Empty keep-alive continuation with assistant-trailing input detected` 并追加 meta user stub，之后出现第三段回复。消息投递、原轮绑定、原生接收、模型采纳与历史落盘均已核实，按消息接入标准验收通过。最终严格文字断言未满足属于后续模型/原生续写行为，不能据此判定消息接入失败；保留原生最终 result，不以中间正文替换。未修改供应商配置或权限、未自动重投。
