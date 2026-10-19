@@ -39,7 +39,7 @@ fn files(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) -> Result<
     }
     Ok(())
 }
-fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, String> {
+pub(super) fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut found = BTreeMap::new();
     files(path, path, &mut found)?;
     Ok(found)

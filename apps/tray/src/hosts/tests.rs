@@ -599,7 +599,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
         preferences
     );
 
-    // The installed service changed while this app stayed open.
+    // A version-only update does not require restarting an unchanged MCP interface/config.
     let site = hosts
         .tool_dirs()
         .unwrap()
@@ -611,15 +611,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
     )
     .unwrap();
     let next = hosts.state(&h)["reload"].clone();
-    assert_eq!(next["state"], "required");
-    assert!(
-        hosts
-            .action(
-                "confirm-reload",
-                &json!({"id":"codex","token":pending["token"]})
-            )
-            .is_err()
-    );
+    assert_eq!(next["state"], "confirmed");
     hosts
         .action(
             "confirm-reload",
@@ -636,6 +628,14 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
     entry["args"] = json!(["changed"]);
     hosts.write(&h, &before, Some(&entry)).unwrap();
     assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert!(
+        hosts
+            .action(
+                "confirm-reload",
+                &json!({"id":"codex","token":pending["token"]})
+            )
+            .is_err()
+    );
     let token = hosts.state(&h)["reload"]["token"].clone();
     hosts
         .action("confirm-reload", &json!({"id":"codex","token":token}))
@@ -659,6 +659,108 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
         "externally changed",
     );
     assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+}
+
+#[test]
+fn connection_receipts_confirm_interfaces_without_hiding_stale_peers_or_skill_changes() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    let dir = hosts.context.home.join(".agentnave/connections");
+    let since = hosts.settings["codex"]["reload_changed"]["at_ms"]
+        .as_u64()
+        .unwrap();
+    let mut receipt = json!({"version":1,"host":"codex","started_ms":since+1,"runtime_version":"0.22.0","runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64)});
+    save(&dir.join("new.json"), &receipt.to_string());
+    // Installing a Skill for the first time cannot be proven by a tools/list receipt.
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    let token = hosts.state(&h)["reload"]["token"].clone();
+    hosts
+        .action("confirm-reload", &json!({"id":"codex","token":token}))
+        .unwrap();
+    let before = h.read().unwrap();
+    let mut entry = before.entry.clone().unwrap();
+    entry["args"] = json!(["first-config-change"]);
+    hosts.write(&h, &before, Some(&entry)).unwrap();
+    hosts.refresh_probed();
+    receipt["started_ms"] = json!(
+        hosts.settings["codex"]["reload_changed"]["at_ms"]
+            .as_u64()
+            .unwrap()
+            + 1
+    );
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    receipt["host_tools_hash"] = json!("b".repeat(64));
+    save(&dir.join("old.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "tools");
+    let token = hosts.state(&h)["reload"]["token"].clone();
+    hosts
+        .action("confirm-reload", &json!({"id":"codex","token":token}))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    fs::remove_file(dir.join("old.json")).unwrap();
+    receipt["host_tools_hash"] = json!("a".repeat(64));
+    receipt["runtime_version"] = json!("0.21.0");
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
+    receipt["runtime_version"] = json!("0.22.0");
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+
+    // Actual Skill content changes remain separate from MCP interface delivery.
+    save(
+        &h.skill.as_ref().unwrap().join("SKILL.md"),
+        "changed instructions",
+    );
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    hosts.refresh_probed();
+    // A later config-only change must not erase an unconfirmed Skill change.
+    let before = h.read().unwrap();
+    let mut entry = before.entry.clone().unwrap();
+    entry["args"] = json!(["changed"]);
+    hosts.write(&h, &before, Some(&entry)).unwrap();
+    hosts.refresh_probed();
+    receipt["started_ms"] = json!(
+        hosts.settings["codex"]["reload_changed"]["at_ms"]
+            .as_u64()
+            .unwrap()
+            + 1
+    );
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    let token = hosts.state(&h)["reload"]["token"].clone();
+    hosts
+        .action("confirm-reload", &json!({"id":"codex","token":token}))
+        .unwrap();
+    let alternate = hosts.context.home.join("alternate-codex");
+    fs::rename(h.config.parent().unwrap(), &alternate).unwrap();
+    hosts
+        .action("root", &json!({"id":"codex","path":alternate}))
+        .unwrap();
+    let h = host(&hosts, "codex");
+    receipt["started_ms"] = json!(
+        hosts.settings["codex"]["reload_changed"]["at_ms"]
+            .as_u64()
+            .unwrap()
+            + 1
+    );
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    fs::write(dir.join("new.json"), "invalid").unwrap();
+    hosts.settings["codex"] =
+        json!({"reload_confirmed":{"token":"legacy-version-fingerprint","at":"old"}});
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    let file = fs::File::open(dir.join("new.json")).unwrap();
+    file.set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
 }
 
 #[test]

@@ -1636,7 +1636,7 @@ function renderUpdates() {
     serviceBadge.hidden = true;
     serviceMsg.hidden = false;
     serviceMsg.textContent = installedService?.installed
-      ? "本机服务已安装。各应用是否已确认重启，请查看下方宿主卡片。"
+      ? "本机服务已安装。各应用的实际连接状态，请查看下方宿主卡片。"
       : "请在下方接入区安装本机服务。";
   } else {
     $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
@@ -1663,13 +1663,13 @@ function renderUpdates() {
       serviceMsg.hidden = false;
       serviceMsg.textContent = installWarning
         ? "重启后请手动升级本机服务"
-        : "升级后请重启正在使用的宿主应用，或重新连接 AgentNave MCP，以加载新版工具接口。";
+        : "升级后将自动检测各宿主连接，仅在接口未同步或配置有变化时提示重新加载。";
     } else if (serviceInfo.state === "done") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag done";
       serviceBadge.textContent = "安装完成";
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "请重启正在使用的宿主应用（如 Codex），或重新连接 AgentNave MCP。仅重启 AgentNave 不保证刷新宿主的工具接口。";
+      serviceMsg.textContent = "安装完成。下方会自动检测各宿主连接，无需仅因版本变化逐个重启。";
     } else {
       serviceBadge.hidden = true;
       serviceMsg.hidden = true;
@@ -1708,9 +1708,9 @@ function renderUpdates() {
     if (installWarning) {
       updateHint.textContent = "重启后请手动升级本机服务";
     } else if (hasAppUpdate) {
-      updateHint.textContent = "会先更新 App 并自动重启，再自动升级本机服务。完成后，请重启正在使用的宿主应用或重新连接 AgentNave MCP。";
+      updateHint.textContent = "会先更新 App 并自动重启，再自动升级本机服务；各宿主是否需要重新加载，由下方连接检测结果决定。";
     } else {
-      updateHint.textContent = "将升级本机服务。完成后，请重启正在使用的宿主应用或重新连接 AgentNave MCP。";
+      updateHint.textContent = "将升级本机服务，空闲后自动切换；若工具接口仍未同步，下方会提示重新连接。";
     }
   }
 

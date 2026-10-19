@@ -34,6 +34,7 @@ button.sum-chip:hover:enabled { text-decoration: underline; }
 
 /* ---- host cards ---- */
 .host-cards { display: flex; flex-direction: column; gap: 14px; max-width: 980px; margin-bottom: 40px; }
+.host-cards { scroll-margin-top: 64px; }
 .hc { --st: var(--muted); display: grid; grid-template-columns: minmax(0, 1fr); padding: 16px 18px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; transition: border-color .15s ease; }
 .hc.tone-info { --st: var(--task); } .hc.tone-ok { --st: var(--run); } .hc.tone-warn { --st: var(--accent); } .hc.tone-idle { --st: var(--muted); }
 .hc:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
