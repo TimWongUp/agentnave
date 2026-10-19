@@ -12,7 +12,7 @@ from urllib.request import urlopen
 import pytest
 from mcp import Client
 
-from agentnave import mcp_server, store, views
+from agentnave import mcp_server, views
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
@@ -26,250 +26,8 @@ from agentnave.store import (
     RoundRecord,
     SeatRecord,
     SeatRunRecord,
-    TaskMessageRecord,
     TaskRecord,
 )
-
-
-@pytest.mark.asyncio
-async def test_task_messages_are_saved_with_exact_invocation_and_survive_resume(
-    tmp_path: Path,
-    data_root: Path,
-    fake_pi_rpc: Path,
-) -> None:
-    manager = InvocationManager()
-    studio = Conversations(manager, data_root)
-    try:
-        invocation, saved_id, *_ = studio.start_task(
-            InvocationRequest("pi", "work", tmp_path, enable_messages=True),
-            None,
-            None,
-            manager_session_id="manager-chat",
-            access="read",
-        )
-        async with asyncio.timeout(5):
-            while manager.snapshot(invocation).last_activity is None:
-                await asyncio.sleep(0.01)
-        first, second = await asyncio.gather(
-            studio.send_task_message(invocation, "兼容旧接口"),
-            studio.send_task_message(invocation, "finish"),
-        )
-        assert first["status"] == second["status"] == "accepted"
-        assert first.get("history_saved") is True and second.get("history_saved") is True
-        await asyncio.gather(*studio.collectors)
-        record = studio.records[saved_id]
-        task = record.state.tasks[0]
-        assert task.status == "succeeded" and task.session_id == "rpc-session"
-        assert [message.invocation_id for message in task.messages] == [invocation, invocation]
-        assert [message.text for message in task.messages] == ["兼容旧接口", "finish"]
-        disk = Conversation.model_validate_json(
-            (data_root / "conversations" / saved_id / "state.json").read_text(encoding="utf-8")
-        )
-        assert [message.status for message in disk.tasks[0].messages] == ["accepted", "accepted"]
-        projected = views.snapshot(record.state, str(data_root))
-        assert "rpc-session" not in json.dumps(projected)
-        assert invocation not in json.dumps(projected)
-        late = await studio.send_task_message(invocation, "不要投到下一轮")
-        assert late["status"] == "not_delivered"
-        resumed, same_id, was_resumed, inherited_access = studio.start_task(
-            InvocationRequest("pi", "finish-now", tmp_path, enable_messages=True),
-            None,
-            None,
-            manager_session_id="manager-chat",
-        )
-        assert same_id == saved_id and resumed != invocation and was_resumed
-        assert inherited_access == "read"
-        await asyncio.gather(*studio.collectors)
-        assert len(studio.records[saved_id].state.tasks) == 2
-        assert studio.records[saved_id].state.tasks[-1].messages == []
-    finally:
-        await manager.shutdown()
-        await studio.close()
-
-
-@pytest.mark.asyncio
-async def test_message_outcome_save_failure_remains_visible_and_blocks_restart(
-    tmp_path: Path,
-    data_root: Path,
-    fake_pi_rpc: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = InvocationManager()
-    studio = Conversations(manager, data_root)
-    original_replace = os.replace
-
-    def fail_outcome(source: str | Path, target: str | Path) -> None:
-        if Path(target).name == "state.json" and any(
-            message["status"] == "accepted"
-            for task in json.loads(Path(source).read_bytes())["tasks"]
-            for message in task["messages"]
-        ):
-            raise OSError("disk unavailable")
-        original_replace(source, target)
-
-    try:
-        invocation, saved_id, *_ = studio.start_task(
-            InvocationRequest("pi", "work", tmp_path, enable_messages=True),
-            None,
-            None,
-        )
-        async with asyncio.timeout(5):
-            while manager.snapshot(invocation).last_activity is None:
-                await asyncio.sleep(0.01)
-        monkeypatch.setattr(store.os, "replace", fail_outcome)
-        receipt = await studio.send_task_message(invocation, "保留此消息")
-        assert receipt["status"] == "accepted" and receipt.get("history_saved") is False
-        assert studio.records[saved_id].state.tasks[0].messages[0].status == "accepted"
-        assert studio.restart_safe() is False
-        monkeypatch.setattr(store.os, "replace", original_replace)
-        assert (await studio.send_task_message(invocation, "finish")).get("history_saved") is True
-        await asyncio.gather(*studio.collectors)
-        assert studio.restart_safe() is True
-    finally:
-        monkeypatch.setattr(store.os, "replace", original_replace)
-        await manager.shutdown()
-        await studio.close()
-
-
-def test_pending_message_recovers_as_unknown_and_old_tasks_still_load(tmp_path: Path) -> None:
-    task = TaskRecord(
-        id="task", provider="pi", model="model", cwd=str(tmp_path), time="2026-10-18T00:00:00Z"
-    )
-    assert task.messages == []
-    task.messages.append(
-        TaskMessageRecord(
-            id="message", invocation_id="old-invocation", text="追加", time="2026-10-18T01:00:00Z"
-        )
-    )
-    state = Conversation(id="saved", title="task", kind="task", tasks=[task], created=task.time)
-    state.recover()
-    assert task.messages[0].status == "unknown"
-    assert (
-        _data(views.snapshot(state, str(tmp_path))["summary"])["updated"]
-        == "2026-10-18T01:00:00+00:00"
-    )
-
-
-@pytest.mark.asyncio
-async def test_message_intent_save_failure_does_not_write_to_provider(
-    tmp_path: Path,
-    data_root: Path,
-    fake_pi_rpc: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = InvocationManager()
-    studio = Conversations(manager, data_root)
-    original_replace = os.replace
-
-    def fail_intent(source: str | Path, target: str | Path) -> None:
-        if Path(target).name == "state.json":
-            raise OSError("intent cannot be saved")
-        original_replace(source, target)
-
-    try:
-        invocation, saved_id, *_ = studio.start_task(
-            InvocationRequest("pi", "work", tmp_path, enable_messages=True), None, None
-        )
-        async with asyncio.timeout(5):
-            while manager.snapshot(invocation).last_activity is None:
-                await asyncio.sleep(0.01)
-        monkeypatch.setattr(store.os, "replace", fail_intent)
-        with pytest.raises(OSError, match="intent cannot be saved"):
-            await studio.send_task_message(invocation, "must never send")
-        assert studio.records[saved_id].state.tasks[0].messages == []
-        assert "steer" not in (tmp_path / "rpc-inputs.jsonl").read_text()
-        monkeypatch.setattr(store.os, "replace", original_replace)
-        await studio.send_task_message(invocation, "finish")
-    finally:
-        monkeypatch.setattr(store.os, "replace", original_replace)
-        await manager.shutdown()
-        await studio.close()
-
-
-@pytest.mark.asyncio
-async def test_group_seat_messages_are_rejected_without_touching_round(
-    tmp_path: Path, data_root: Path
-) -> None:
-    manager = InvocationManager()
-    studio = Conversations(manager, data_root)
-    try:
-        show = studio.open_show(
-            "group",
-            tmp_path,
-            [GroupSeat("seat", "claude", {}, tmp_path)],
-            review=False,
-            isolated=False,
-        )
-        round_ = studio.run(show.state.id, ["seat"], "parallel", "work", {"seat": "SLEEP"})
-        async with asyncio.timeout(5):
-            while round_.runs[0].invocation_id is None:
-                await asyncio.sleep(0.01)
-        invocation = round_.runs[0].invocation_id
-        assert invocation is not None
-        receipt = await studio.send_task_message(invocation, "must not reach seat")
-        assert (
-            receipt["status"] == "unsupported" and receipt["reason"] == "group_messages_unsupported"
-        )
-        assert show.state.tasks == []
-        assert await manager.wait(invocation, 0) is None
-    finally:
-        await studio.shutdown()
-        await manager.shutdown()
-        await studio.close()
-
-
-@pytest.mark.asyncio
-async def test_mcp_message_contract_and_history(
-    tmp_path: Path, fake_pi_rpc: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(mcp_server, "WAIT_SECONDS", 0.02)
-    async with Client(mcp) as client:
-        started = await _call(
-            client,
-            "start_agent",
-            {
-                "provider": "pi",
-                "prompt": "work",
-                "cwd": str(tmp_path),
-                "enable_messages": True,
-            },
-        )
-        assert started["messages_enabled"] is True
-        invocation = str(started["invocation_id"])
-        async with asyncio.timeout(5):
-            while not (await _call(client, "wait_agent", {"invocation_id": invocation})).get(
-                "activity"
-            ):
-                pass
-        receipt = await _call(
-            client, "send_agent_message", {"invocation_id": invocation, "message": "finish"}
-        )
-        assert receipt["status"] == "accepted" and receipt["history_saved"] is True
-        async with asyncio.timeout(5):
-            while (await _call(client, "wait_agent", {"invocation_id": invocation}))[
-                "status"
-            ] == "running":
-                pass
-        view = await _call(
-            client, "read_conversation", {"conversation_id": started["conversation_id"]}
-        )
-        task = _data(cast(list[object], _conversation(view)["tasks"])[0])
-        message = _data(cast(list[object], task["messages"])[0])
-        assert message["text"] == "finish" and message["invocation_id"] == invocation
-        unknown = await client.call_tool(
-            "send_agent_message", {"invocation_id": "unknown", "message": "never"}
-        )
-        assert unknown.is_error
-        unsupported = await client.call_tool(
-            "start_agent",
-            {
-                "provider": "antigravity",
-                "prompt": "never",
-                "cwd": str(tmp_path),
-                "enable_messages": True,
-            },
-        )
-        assert unsupported.is_error
 
 
 @pytest.fixture(autouse=True)
@@ -1632,7 +1390,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
         assert home["shows"][0]["title"] == "Renamed"
         assert "director_url" not in listed and "public_url" not in listed
         names = [tool.name for tool in (await client.list_tools()).tools]
-        assert len(names) == 17 and "delete_conversation" not in names
+        assert len(names) == 16 and "delete_conversation" not in names
         assert {"wait_any", "list_invocations", "list_members"} <= set(names)
 
     def fail(_self: Conversations, *, history_loaded: bool = False) -> str:
@@ -2270,7 +2028,7 @@ async def test_start_agent_rejects_new_thread_with_an_explicit_thread(tmp_path: 
 async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 17 and "list_profiles" not in tools
+        assert len(tools) == 16 and "list_profiles" not in tools
         annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
         assert (await _call(client, "list_members", {}))["configured"] is False
@@ -2976,57 +2734,3 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
             "forward",
             "task",
         ]
-
-
-@pytest.mark.asyncio
-async def test_mcp_claude_queue_mode_is_explicit_and_saved(
-    tmp_path: Path, data_root: Path, fake_claude_queue: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(mcp_server, "WAIT_SECONDS", 0.02)
-    async with Client(mcp) as client:
-        started = await _call(
-            client,
-            "start_agent",
-            {"provider": "claude", "cwd": str(tmp_path), "prompt": "work", "enable_messages": True},
-        )
-        invocation = str(started["invocation_id"])
-        async with asyncio.timeout(5):
-            while True:
-                listing = await _call(client, "list_invocations", {})
-                items = cast(list[dict[str, object]], listing["invocations"])
-                if any(
-                    item["invocation_id"] == invocation and item["events_seen"] for item in items
-                ):
-                    break
-                await asyncio.sleep(0.01)
-        rejected = await _call(
-            client, "send_agent_message", {"invocation_id": invocation, "message": "never steer"}
-        )
-        assert rejected["status"] == "unsupported"
-        accepted = await _call(
-            client,
-            "send_agent_message",
-            {"invocation_id": invocation, "message": "finish", "mode": "queue"},
-        )
-        assert accepted["status"] == "accepted" and accepted["mode"] == "queue"
-        async with asyncio.timeout(5):
-            while (await _call(client, "wait_agent", {"invocation_id": invocation}))[
-                "status"
-            ] == "running":
-                pass
-        view = await _call(
-            client, "read_conversation", {"conversation_id": started["conversation_id"]}
-        )
-        tasks = cast(list[dict[str, object]], _conversation(view)["tasks"])
-        messages = cast(list[dict[str, object]], tasks[0]["messages"])
-        assert messages[-1]["mode"] == "queue" and messages[-1]["status"] == "accepted"
-        assert tasks[0]["output"] == "queue reply"
-        turns = cast(list[dict[str, object]], tasks[0]["native_turns"])
-        assert [turn["output"] for turn in turns] == ["old reply", "queue reply"]
-        assert accepted["message_id"] in cast(list[str], turns[-1]["message_ids"])
-        disk = Conversation.model_validate_json(
-            (
-                data_root / "conversations" / str(started["conversation_id"]) / "state.json"
-            ).read_text()
-        )
-        assert [turn.output for turn in disk.tasks[0].native_turns] == ["old reply", "queue reply"]

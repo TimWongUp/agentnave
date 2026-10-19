@@ -19,7 +19,3 @@ dsh 没有模型、effort 或权限的命令行参数；Adapter 把显式选项�
 使用结果返回的 `session_id`（`session-<uuid>`）在相同 cwd 续接，Adapter 映射为 `--session-id`；dsh 拒绝不存在、属于其他 cwd 或子代理的会话。
 
 macOS 优先使用 `/Applications/DeepSeek Harness.app`（其次 `~/Applications`）内置的 `dsh`，再查 PATH 与常见安装目录。安装与登录在 DeepSeek Harness App 中完成；不把密钥放入 prompt 或 Provider Options。
-
-## 运行中消息
-
-不支持。headless 每次调用只执行一个任务，没有运行中输入通道；`start_agent(enable_messages=true)` 会被拒绝。完成后用 `start_agent(session_id=...)` 续接。

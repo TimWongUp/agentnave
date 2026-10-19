@@ -40,7 +40,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-统一核心共十七个工具。任务与协作工具：`list_members`、`describe_provider`、`start_agent`、`send_agent_message`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
+统一核心共十六个工具。任务与协作工具：`list_members`、`describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`open_group`、`run_round`、`wait_round`、`cancel_round`。
 
 | 用户需要 | 调用方式 |
 | --- | --- |
@@ -49,8 +49,6 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | 多轮各自答 | 连续 `parallel`，第二轮起收到上一轮全部答案 |
 | 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
 | 先各自答再讨论 | 先 `parallel`，再一轮或多轮 `serial` |
-
-需要运行中补充约束时，先用 `describe_provider` 核对 `running_messages`、`message_modes` 与 `message_requirements`。支持的普通任务在 `start_agent` 显式传 `enable_messages=true`，再用原 `invocation_id` 调 `send_agent_message`。默认 `mode=steer`；Claude 只支持显式 `mode=queue`，表示允许原生并入当前或后续 turn。不能自动把不支持的 steer 换成 queue、取消或重启。未启用的任务和协作组席位明确不支持。`accepted` 只证明原生接受输入或入队，继续等待最终结果；`unknown` 不自动重发。完成后用原有 `session_id` 续接。具体限制按所选 CLI 的参考文件读取。
 
 每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，持续续接自己的原生会话；席位只共享已提交条目（任务、最终回答、失败或取消的缺席记录），私密指令只给对应席位。同组同时一轮；`run_round` 立即返回 `round_id`，用 `wait_round` 等待。可单独 `cancel_agent` 取消某席，记缺席后串联轮继续。不自动重试、不设每席截止时间。并联写代码的席位各用独立 worktree；只读席位可共用目录。协作组保存为会话，可跨服务重启继续；运行中的进程和 invocation_id 不恢复。
 
@@ -131,8 +129,8 @@ CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时�
 4. 运行中 `activity` 给活动类型、原生状态、工具名和 `age_ms`；`output` 只给最新公开正文尾部（最多 1000 Unicode 字符）及 `output_age_ms`，无正文省略，旧内容可能重复。用正文判断方向、年龄判断新旧；不返回思考、工具参数或结果，无游标/分页/独立读取工具。一次观察不代表全部并发工作，材料不足就报告未知，不能凭此判定卡死。
 5. `reason=finished` 按 `status`、完整最终 `output`、`error` 和原生 `session_id` 验收。最终正文受整体捕获上限约束。`succeeded` 不证明用户目标完成，须核对命令、产物或检查；权限拒绝、未执行、目录不符如实报告。耗时用 `elapsed_ms`，不展示费用；旧 `state`、`snapshot`/`result` 结构按实时 schema 读取。
 
-正文有待确认问题时，主 Agent 先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。普通任务已启用消息且能力支持时，按“选择调用方式”的运行中消息合同补充答案；否则先核实是否需要显式取消，有非空 `session_id` 才能原会话续接。取消不代表完成或新增权限。
+正文有待确认问题时，主 Agent 先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。活跃调用不能接收答案，核实后显式取消，有非空 `session_id` 才能原会话续接，否则报告限制。取消不代表完成或新增权限。
 
 ## 取消与续接
 
-停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。运行中消息按“选择调用方式”的能力与启用条件处理。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；同工位不传 `session_id` 则默认续接其最近私聊线程（见“工位、续接与转发”）。不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新会话（`new_thread=true`）或换 CLI 重新交接，不假定旧历史可见。
+停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。活跃调用不能追加消息。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；同工位不传 `session_id` 则默认续接其最近私聊线程（见“工位、续接与转发”）。不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新会话（`new_thread=true`）或换 CLI 重新交接，不假定旧历史可见。
