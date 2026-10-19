@@ -95,8 +95,8 @@ _MAX_FORWARD = 20
 
 def _conversion_error(fixed: str, wanted: str | None) -> str:
     return (
-        f"This desk is declared {fixed} access and cannot take {wanted} work; use another role "
-        "and pass what it found with forward or a meeting instead of converting it"
+        f"This desk or thread has {fixed} access declared and cannot take {wanted} work; use "
+        "another role and pass what it found with forward or a meeting instead of converting it"
     )
 
 
@@ -789,23 +789,25 @@ class Conversations(Groups):
 
     def _thread_access(
         self, manager_session: str | None, provider: str, session_id: str
-    ) -> Access | None:
-        """The tier last recorded for one native private thread in this workspace."""
-        recorded: list[tuple[str, Access]] = []
+    ) -> tuple[bool, Access | None]:
+        """Whether this workspace recorded the native thread, and its latest declared tier."""
+        recorded: list[tuple[str, Access | None]] = []
         for record in self.records.values():
             if record.state.kind != "task" or record.state.manager_session != manager_session:
                 continue
             for task in record.state.tasks:
-                if (
-                    task.access is not None
-                    and task.provider == provider
-                    and task.session_id == session_id
-                ):
+                if task.provider == provider and task.session_id == session_id:
                     recorded.append((task.time, task.access))
-        return max(recorded)[1] if recorded else None
+        if not recorded:
+            return False, None
+        return True, max(recorded, key=lambda item: item[0])[1]
 
     def _recent_task_thread(
-        self, request: InvocationRequest, manager_session: str, role: str | None
+        self,
+        request: InvocationRequest,
+        manager_session: str,
+        role: str | None,
+        access: Access | None,
     ) -> TaskRecord | None:
         """The same desk's latest saved private thread in this manager chat, if any."""
         self.scan()  # Include records another server saved.
@@ -819,6 +821,7 @@ class Conversations(Groups):
             if task.provider == request.provider
             and (task.model or None) == expected_model
             and task.role == role
+            and task.access == access  # never adopt a thread recorded under another tier
             and task.session_id is not None
         ]
         if not candidates:
@@ -847,22 +850,6 @@ class Conversations(Groups):
         manager_session = self._manager_session(manager_session_id)
         forwarded = self._resolve_forwards(forward, manager_session)
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
-        resumed = False
-        if (
-            request.session_id is None
-            and conversation_id is None
-            and not new_thread
-            and manager_session is not None
-        ):
-            recent = self._recent_task_thread(request, manager_session, role)
-            if recent is not None:
-                if recent.status == "running" or recent.id in self.running_tasks:
-                    raise ValueError(
-                        "This desk's most recent private thread is still running; pass "
-                        "new_thread=true to start a new thread"
-                    )
-                request = replace(request, session_id=recent.session_id)
-                resumed = True
         model = request.provider_options.get("model")
         effective = self._effective_access(
             manager_session,
@@ -871,11 +858,30 @@ class Conversations(Groups):
             role,
             declared,
         )
-        if request.session_id is not None:
-            # An explicit native thread keeps the tier it was declared with.
-            thread = self._thread_access(manager_session, request.provider, request.session_id)
-            if thread is not None and effective is not None and thread != effective:
-                raise ValueError(_conversion_error(thread, effective))
+        resumed = False
+        if (
+            request.session_id is None
+            and conversation_id is None
+            and not new_thread
+            and manager_session is not None
+        ):
+            recent = self._recent_task_thread(request, manager_session, role, effective)
+            if recent is not None:
+                if recent.status == "running" or recent.id in self.running_tasks:
+                    raise ValueError(
+                        "This desk's most recent private thread is still running; pass "
+                        "new_thread=true to start a new thread"
+                    )
+                request = replace(request, session_id=recent.session_id)
+                resumed = True
+        if request.session_id is not None and not resumed:
+            # A thread already recorded in this workspace keeps the tier it ran with; an
+            # undeclared thread is not adopted by a declared call.
+            recorded, thread = self._thread_access(
+                manager_session, request.provider, request.session_id
+            )
+            if recorded and effective is not None and thread != effective:
+                raise ValueError(_conversion_error(thread or "no", effective))
             effective = effective or thread
         self.manager.check_start(request)
         if conversation_id:
