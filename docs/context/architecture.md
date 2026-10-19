@@ -42,7 +42,7 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
 
-私聊默认续接（[ADR-0018](../adr/0018-office-workspace-desks-and-meeting-rooms.md)）：`start_agent` 未传 `session_id` 与 `conversation_id` 且主控聊天身份已知时，续接同一工作区内同工位 `(provider, 请求的 model, role)` 最近一次有原生 session 的私聊线程，回执 `resumed` 标明是否发生；该线程仍在运行时拒绝并提示 `new_thread=true`；`new_thread=true` 开新线程且不能与 `session_id`、`conversation_id` 同用；身份未知时无法限定工作区，不自动续接。显式 `session_id` 语义不变。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只改变工位身份，不进入 prompt 或 Provider 参数。
+私聊默认续接（[ADR-0018](../adr/0018-office-workspace-desks-and-meeting-rooms.md)）：`start_agent` 未传 `session_id` 与 `conversation_id` 且主控聊天身份已知时，续接同一工作区内同工位 `(provider, 请求的 model, role)` 最近一次有原生 session 的私聊线程，回执 `resumed` 标明是否发生；该线程仍在运行时拒绝并提示 `new_thread=true`；`new_thread=true` 开新线程且不能与 `session_id`、`conversation_id` 同用；身份未知时无法限定工作区，不自动续接。显式 `session_id` 语义不变。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只改变工位身份，不进入 prompt 或 Provider 参数。可选 `access`（`read`／`write`）是工位的访问等级声明：同一工作区内以该工位第一次声明（任务或席位）为准，省略即继承，不同声明被拒绝；显式 `session_id` 续接时该原生线程已记录的等级也须一致。声明保存在任务与席位记录、返回在回执并投影到工位，不改变 Provider 参数，不由服务推断；主控身份未知时只记录不比对。
 
 转发：`start_agent` 与 `run_round` 的 `forward` 按序引用消息 ID，只用于本工作区、已完成的消息：成功的私聊任务终态，以及节目中已提交的 `answer`、`host`、`task`、`forward` 条目。运行中、失败或受阻的任务，待审、被丢弃的回答，`absent` 条目，另一工作区或身份未知的引用，重复引用与超过 20 条均整批拒绝，不部分注入。消息 ID 为不透明的稳定标识，来源于会话 ID 与任务或条目序号，由 `wait_agent`、`wait_any` 的终态、`run_round` 等回执的 `entries`、`decide_answers` 与 `post_host_message` 返回，跨重启不变。私聊中被转发内容前置于 prompt 并声明为数据，会话历史仍只存主控原文；会议室中在本轮任务之前提交为独立的 `forward` 条目，注明来源，随条目规则送达席位，不冒充主持人发言。声明只降低误导概率，不是安全边界。
 

@@ -56,7 +56,7 @@ function updateCell(rec, group, d, room) {
   }
   setClass(rec.el, `cell tone-${state.tone}${state.working ? " working" : ""}${room ? " away" : ""}${d.private_allowed ? "" : " only"}`);
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
-  setAttr(rec.el, "title", `${d.label}\n${state.word}${d.private_allowed ? "" : " · 仅会议"}\n${fullTime(d.last_active)}`);
+  setAttr(rec.el, "title", `${d.label}\n${state.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed ? "" : " · 仅会议"}\n${fullTime(d.last_active)}`);
   setText(rec.name, d.role || d.model || d.provider);
   rec.room.hidden = !room;
 }

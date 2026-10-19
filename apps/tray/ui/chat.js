@@ -393,6 +393,11 @@ function createDesk(d) {
       { title: "与主控宿主同类，只参加会议，不接受私聊", hidden: true },
       "仅会议",
     ),
+    access: h(
+      "span.tag.tag-access",
+      { title: "主控声明的访问等级，只是约定，不改变 CLI 的实际权限", hidden: true },
+      "",
+    ),
     priv: h(
       "span.tag.tag-priv",
       { title: "这个工位正在会议中，同时还有一条私聊在运行", hidden: true },
@@ -409,7 +414,7 @@ function createDesk(d) {
       {},
       rec.name,
       h("span.d-status", {}, rec.dot, rec.word),
-      h("span.d-tags", {}, rec.only, rec.priv),
+      h("span.d-tags", {}, rec.access, rec.only, rec.priv),
       rec.meta,
     ),
   );
@@ -428,6 +433,8 @@ function updateDesk(rec, d, rooms) {
   setText(rec.name, d.label);
   setText(rec.word, s.word);
   rec.only.hidden = d.private_allowed;
+  setText(rec.access, d.access === "read" ? "只读" : d.access === "write" ? "可写" : "");
+  rec.access.hidden = !d.access;
   rec.priv.hidden = !(room && d.private.running > 0);
   setText(
     rec.meta,

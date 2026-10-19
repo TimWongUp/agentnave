@@ -113,7 +113,7 @@ All checks passed!
 
   function groupA() {
     const codex = spec("codex", "gpt-6.1-sol", {
-      role: "实现者", start: -8, end: 40, pace: 3.4,
+      role: "实现者", access: "write", start: -8, end: 40, pace: 3.4,
       prompt: "在 src/agentnave/relay.py 里找出“空闲时换新进程”的判断，保证仍有 Provider 子进程树在运行时不会被换掉，并补一个回归测试。",
       base: [
         "读取 src/agentnave/relay.py，定位空闲换进程的判断",
@@ -152,7 +152,7 @@ All checks passed!
       out: OUT_BUDDY,
     });
     // Two rooms: a finished release review, and a running design discussion with a pending review.
-    const gem = spec("antigravity", "gemini-3.5-pro", { role: "评审员", start: -3700, end: -3480, out: OUT_GEMINI });
+    const gem = spec("antigravity", "gemini-3.5-pro", { role: "评审员", access: "read", start: -3700, end: -3480, out: OUT_GEMINI });
     const pi = spec("pi", null, { role: "挑刺者", start: -3700, end: -3300, final: "failed", err: "Provider 进程 600 秒无输出，已超时" });
     const room1 = {
       id: "20261017-0830-f1a2b3", title: "v0.20 发布前评审", mode: "show",
@@ -160,7 +160,7 @@ All checks passed!
       specs: [gem, pi],
     };
     const reviewer = spec("codex", "gpt-6.1-sol", {
-      role: "审查员", start: -30, end: 60, pace: 3.6,
+      role: "审查员", access: "read", start: -30, end: 60, pace: 3.6,
       base: ["对照实现者的补丁，逐条检查换进程的边界", "关注 Windows Job Object 路径是否受影响"],
       filler: (k) => `核对第 ${k - 1} 条边界条件…`,
       out: "我认为补丁本身正确，但“最后一个子进程退出”的判定需要加一个上限，避免孤儿进程让空闲计时永远不开始。",
@@ -172,7 +172,7 @@ All checks passed!
       out: "同意加上限；另外建议换进程前显式等待 supervisor 回收进程组。",
     });
     const gemSeat = spec("antigravity", "gemini-3.5-pro", {
-      role: "评审员", start: -10, end: 12, pace: 3, final: "review",
+      role: "评审员", access: "read", start: -10, end: 12, pace: 3, final: "review",
       base: ["从发布节奏看这个补丁的风险", "评估是否需要写进 Release 说明"],
       out: "建议作为 patch 版本发布，Release 说明里单列“换进程更稳”一条即可。",
     });
@@ -492,7 +492,7 @@ All checks passed!
     return [...map.values()]
       .sort((a, b) => a.first - b.first || (a.sp.desk < b.sp.desk ? -1 : 1))
       .map((d) => ({
-        key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, label: d.sp.deskLabel,
+        key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, label: d.sp.deskLabel,
         first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
         status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
         private_allowed: d.sp.provider !== hostCli,

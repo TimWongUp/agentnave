@@ -140,6 +140,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .d-tags:not(:has(:not([hidden]))) { display: none; }
 .tag { padding: 0 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; line-height: 17px; white-space: nowrap; background: var(--card-hover); color: var(--muted); }
 .tag-only { background: color-mix(in srgb, var(--idle) 20%, transparent); color: var(--muted); }
+.tag-access { background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
 .tag-priv { background: color-mix(in srgb, var(--show) 18%, transparent); color: var(--show); }
 .tag-review { background: color-mix(in srgb, var(--review) 18%, transparent); color: var(--review); }
 .d-meta { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

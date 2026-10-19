@@ -44,6 +44,7 @@ class SeatRecord(BaseModel):
     provider_options: dict[str, ProviderOption] = Field(default_factory=lambda: {})
     cwd: str
     role: str | None = None  # absent in records saved before desks existed
+    access: Literal["read", "write"] | None = None  # declared, never enforced
 
 
 class EntryRecord(BaseModel):
@@ -114,6 +115,7 @@ class TaskRecord(BaseModel):
     manager_model: str | None = None
     manager_reported_model: str | None = None
     role: str | None = None  # absent in records saved before desks existed
+    access: Literal["read", "write"] | None = None  # declared, never enforced
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
 
