@@ -16,7 +16,7 @@ AgentNave 只拥有：
 - 在 MCP server 生命周期内保存 Invocation 句柄；
 - 在 Manager 显式创建的协作组内，按名单并联或串联运行轮次，只在进程内存中保存各席最终回答与原生会话游标。
 
-发行包只保留 `agentnave`，唯一入口 `agentnave-mcp` 提供完整 17 个工具。普通任务与协作组均保存历史，包含可选审核、主持人发言、隔离席位和按需只读看板；App 负责安装接入、配置、展示与清理。不再提供无历史模式，数据根和既有会话格式沿用，见 [ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)。
+发行包只保留 `agentnave`，唯一入口 `agentnave-mcp` 提供完整 16 个工具。普通任务与协作组均保存历史，包含可选审核、主持人发言、隔离席位和按需只读看板；App 负责安装接入、配置、展示与清理。不再提供无历史模式，数据根和既有会话格式沿用，见 [ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)。
 
 AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI。托盘应用展示会话数据，并可在原生锁保护下清理会话记录，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md) 与 [ADR-0012](../adr/0012-tray-conversation-cleanup.md)。
 
@@ -38,7 +38,7 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 ## 稳定合同
 
-请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id`、`provider_options` 和普通任务的 `enable_messages`（默认 false）。Provider Options 可由调用方显式给出，或来自用户在 AgentNave App 中配置的组员默认值；均须通过对应 Adapter allowlist。显式参数优先，超出配置范围时拒绝，不替换为其他模型或 effort；未配置的参数继承 Provider 原生设置。默认值在服务入口套用，不下沉到 Adapter。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设置的默认 options 或用户本轮明确要求，主控不得自行追加；App 中的权限默认值会被套用并在回执注明。
+请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id` 和 `provider_options`。Provider Options 可由调用方显式给出，或来自用户在 AgentNave App 中配置的组员默认值；均须通过对应 Adapter allowlist。显式参数优先，超出配置范围时拒绝，不替换为其他模型或 effort；未配置的参数继承 Provider 原生设置。默认值在服务入口套用，不下沉到 Adapter。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设置的默认 options 或用户本轮明确要求，主控不得自行追加；App 中的权限默认值会被套用并在回执注明。
 
 同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
 
@@ -46,7 +46,7 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 转发：`start_agent` 与 `run_round` 的 `forward` 按序引用消息 ID，只用于本工作区、已完成的消息：成功的私聊任务终态，以及节目中已提交的 `answer`、`host`、`task`、`forward` 条目。运行中、失败或受阻的任务，待审、被丢弃的回答，`absent` 条目，另一工作区或身份未知的引用，重复引用与超过 20 条均整批拒绝，不部分注入。消息 ID 为不透明的稳定标识，来源于会话 ID 与任务或条目序号，由 `wait_agent`、`wait_any` 的终态、`run_round` 等回执的 `entries`、`decide_answers` 与 `post_host_message` 返回，跨重启不变。私聊中被转发内容前置于 prompt 并声明为数据，会话历史仍只存主控原文；会议室中在本轮任务之前提交为独立的 `forward` 条目，注明来源，随条目规则送达席位，不冒充主持人发言。声明只降低误导概率，不是安全边界。
 
-MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态与支持的选项，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。`describe_provider` 返回 `provider`、`permitted`、`supported_options`、`host` 与 `host_source`，另含 `running_messages`、`message_modes` 与 `message_requirements`，声明适配器的运行中消息能力和前提，不承载模型推荐。模型选择由 Manager 按用户要求与 `list_members` 返回的模式组员及说明决定。
+MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manager 首次使用某个 Provider 前调用只读 `describe_provider(provider)`，获取该 Provider 的允许状态与支持的选项，并在当前上下文中复用；详情查询不启动 CLI、不探测安装或认证、不改变工具列表。`describe_provider` 返回 `provider`、`permitted`、`supported_options`、`host` 与 `host_source`，不承载模型推荐。模型选择由 Manager 按用户要求与 `list_members` 返回的模式组员及说明决定。
 
 用户组员配置由 App 维护，位于数据根（`AGENTNAVE_DATA_DIR`，空值或未设置时为 `~/.agentnave`）的 `members.json`，版本为 1，顶层 `version`、`clis`、`modes` 三项必填。`clis.<provider>.models.<model>` 保存共享的 `efforts`、`effort`、`options`、`notes`；`options` 不得含 `model` 或 `effort`。`modes.task` 与 `modes.discussion` 分别配置允许的 CLI、模型列表、默认模型与按模型的 overrides。模式键缺失表示不限制；存在的空对象表示禁止全部 CLI；CLI 的空模型列表表示不限模型。模型列表、默认模型与 override 必须引用共享模型；默认模型必须在非空允许列表中。override 按出现字段整体替换共享配置，包含 `options` 整体替换；生效的默认 effort 必须在非空 `efforts` 中。未知字段、Provider、模式与结构错误均拒绝。
 
@@ -56,21 +56,13 @@ MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manage
 
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
-Adapter 每次准备命令时解析 Provider 可执行文件，加装或卸载 CLI 下次调用即生效：先查当前 PATH，再依次查 `~/.local/bin`、`~/.grok/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.bun/bin`、`~/.npm-global/bin`、`~/.volta/bin`、`~/.cargo/bin`，argv[0] 使用解析出的绝对路径；都找不到时保留裸命令名，启动失败仍以 `launch_error` 报告未找到。macOS 的 Codex 在此之前优先选择桌面应用附带的可执行 CLI：先 ChatGPT，再 Codex，每种应用先查系统 Applications，再查用户 Applications。启动与续接使用同一选择规则；普通调用不比较版本；显式启用消息时按 Provider 检查所选 CLI 的 `--version`，门槛由 `describe_provider` 声明。AgentNave 不负责安装升级，也不在选中的 CLI 启动失败后改用另一版本。Windows 的普通调用保持由 supervisor 在 PATH 中解析裸命令名；显式消息模式在准备阶段将选中的命令固定为绝对路径，版本探测与实际启动共用它，避免相对 PATH 随任务 cwd 改变而选中另一个 CLI。
+Adapter 每次准备命令时解析 Provider 可执行文件，加装或卸载 CLI 下次调用即生效：先查当前 PATH，再依次查 `~/.local/bin`、`~/.grok/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.bun/bin`、`~/.npm-global/bin`、`~/.volta/bin`、`~/.cargo/bin`，argv[0] 使用解析出的绝对路径；都找不到时保留裸命令名，启动失败仍以 `launch_error` 报告未找到。macOS 的 Codex 在此之前优先选择桌面应用附带的可执行 CLI：先 ChatGPT，再 Codex，每种应用先查系统 Applications，再查用户 Applications。启动与续接使用同一选择规则；AgentNave 不比较版本、不负责安装升级，也不在选中的 CLI 启动失败后改用另一版本。Windows 保持由 supervisor 在 PATH 中解析裸命令名。
 
 macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环境中补齐 PATH：依次为可执行文件所在目录、继承的 PATH、上述存在的常见目录（去重），不覆盖宿主选择的工具链，使 `#!/usr/bin/env node` 类 CLI 在宿主给的精简 PATH 下也能运行；服务自身环境不变。
 
 内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
-STDIO MCP 是任务与协作的唯一控制接口，基础工具为 `describe_provider`、`start_agent`、`send_agent_message`、`wait_agent`、`wait_any`、`cancel_agent` 和只读的 `list_invocations`、`list_members`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。全部 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 完成：显式 `session_id` 或上述默认续接。
-
-普通任务可显式传 `enable_messages=true`，支持的模式与版本由 `describe_provider.message_modes/message_requirements` 声明；默认 print/exec 路径不变。`send_agent_message(invocation_id, message, mode="steer")` 只接受本服务持有的普通 task 句柄，绑定原进程，不按 session 查找新轮，不覆盖协作组席位。Claude 仅支持显式 `mode=queue`，允许原生将输入并入当前或后续 turn；不把 steering 静默改成排队或中断续接。`accepted` 仅表示 Provider 确认接受输入、入队或扩展处理；`rejected` 为原生拒绝，`unsupported` 为未启用或能力不支持，`not_delivered` 为本次未写入，`unknown` 为写入尝试后没有确认。回执不是任务完成证明，未知结果不自动重发。结束后继续沿用 `start_agent(session_id=...)`，中断仍由 `cancel_agent` 显式执行。
-
-每次消息先在原 task 的 `messages` 保存意图，再按显式 mode 发送一条带独立 ID 的原生消息；按 ID 关联原生回执，最多等五秒，超时不终止任务。历史保存文本、时间、mode、原 Invocation、原生 session 与结果；最终回执落盘失败返回 `history_saved=false`，保留内存结果和会话锁，阻止中继重启。未确认的 pending 历史在重启后转为 unknown，不恢复或重投。状态更新与落盘在同一事件循环内连续执行；等待回执期间 pending 历史使会话保持忙碌，collector 可保存终态但不释放写锁。旧历史缺省空 messages 列表，格式版本不变。Claude 显式 queue 产生的各轮 result 另存原 task 的 `native_turns`（正文、状态和输入 UUID），公开最终 output 仍取最后一轮；必须等对应 result 和队列耗尽，lifecycle completed 不能代替结果。
-
-Codex 的 `turn/steer` 绑定原 thread 与 `expectedTurnId`，只接收匹配轮次的终态。CodeBuddy 的 steer 绑定主会话与原生 `_requestId`，没有该 ID 时不投递，成功只表示当前轮已缓冲。两者均不以普通 user 输入替代 steer。
-
-Pi RPC 的 `prompt` response 是接受回执；`agent_end` 可跟随重试或压缩，只有 `agent_settled` 才结束当前 Invocation。正常结算后关闭输入并通过原有 supervisor 清理进程树；输出来不及结算即退出时保留已捕获正文和 session，并标记失败。取消与消息共用 Invocation 状态，进入 stopping 后拒绝新写入；取消不撤销已执行的副作用。Provider 能力与版本核验见[安装说明](../installation.md#运行中消息能力)。
+STDIO MCP 是任务与协作的唯一控制接口，基础工具为 `describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent` 和只读的 `list_invocations`、`list_members`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。全部 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 完成：显式 `session_id` 或上述默认续接。
 
 启动回复另含 provider、model、effort、`defaults_applied` 与 `resumed`，不重复 prompt。model 与 effort 回显套用默认值后的请求值，仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。`open_group` 每席另返回 model、effort（未传且无默认时为 null）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
 
