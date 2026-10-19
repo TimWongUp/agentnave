@@ -26,7 +26,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - 默认续接：同一工位不传 `session_id` 与 `conversation_id`，就续接它最近的私聊线程，不必再保管 `session_id`；回执 `resumed` 标明是否续接。要干净上下文传 `new_thread=true`（不能与 `session_id`、`conversation_id` 同用）。该线程仍在运行时请求会被拒绝，等它结束或改用 `new_thread=true`。`manager_session_id` 未知时不会自动续接。
 - 转发：私聊默认不带任何工作区上下文。需要时用 `forward` 引用回执中的 `message_id`（`wait_agent`、`wait_any` 的终态，`run_round`、`wait_round`、`decide_answers` 回执的 `entries`，`post_host_message`），`start_agent` 与 `run_round` 都支持，至多 20 条，转入内容对接收方是数据。会议室内已提交条目自动共享，跨线程由主控转发。运行中、失败、受阻或取消的任务，待审、被丢弃的回答、缺席记录，以及其他工作区的消息都不能转发，整批会被拒绝。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室讨论；需要同类 CLI 执行任务时，优先用宿主自带的子代理能力。
-- 访问等级：派发时用 `access` 声明 `read` 或 `write`。工位以第一次声明为准，之后省略即继承，声明不同会被拒绝；显式续接另一工位的线程也会被拒绝。声明只是约定，不改变 CLI 权限；真正的只读仍靠 Provider 原生权限。
+- 访问等级：派发时用 `access` 声明 `read` 或 `write`。工位以第一次声明为准，之后省略即继承，声明不同会被拒绝；声明前的旧线程不会被续接，显式续接等级不符的线程也会被拒绝。声明只是约定，不改变 CLI 权限；真正的只读仍靠 Provider 原生权限。
 
 ### 角色协作
 
@@ -60,12 +60,12 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 | 场景 | 做法 |
 | --- | --- |
-| 问意见 | 派一个 CLI 只分析，给结论与理由，不改文件。prompt 约定不是保证；用户要求工具层面保证时才显式 `restricted_tools=true` |
-| 交叉复核 | 一个 CLI 做，另一个审其成果。主控先自行验收，再交给复核方，交接给出 diff、产物绝对路径与验收标准；复核意见由主控裁决 |
-| 分头做 | 多个 CLI 各用独立 worktree 做不同子任务（`start_agent` + `wait_any`），主控合并并验收 |
+| 问意见 | 派一个 CLI 只分析，给结论与理由，不改文件；用专门角色并声明 `access="read"`。声明与 prompt 都只是约定；用户要求工具层面保证时才显式 `restricted_tools=true` |
+| 交叉复核 | 一个 CLI 做（`access="write"`），另一个工位审其成果（评审角色，`access="read"`，不用实现工位本身）。主控先自行验收，再交给复核方，交接给出 diff、产物绝对路径与验收标准；复核意见由主控裁决后转回实现工位 |
+| 分头做 | 多个工位各用不同角色、`access="write"` 与独立 worktree 做不同子任务（`start_agent` + `wait_any`），主控合并并验收 |
 | 同题多做择优 | 同一任务在多个独立 worktree 并行做（分头做的一种），主控按事先写明的验收标准挑一份 |
 | 分歧收敛 | 先一轮 `parallel` 各自答；主控归纳分歧，用 `serial` 或私密指令把分歧交给对方。一致或达到轮数上限（用户未指定默认 3 轮）即止，可保留异议。向用户汇报结论、各方分歧及处理方式 |
-| 接力 | 按“目录与交接”清单让另一个 CLI 续做；换 CLI 重新交接，不假定历史可见 |
+| 接力 | 按“目录与交接”清单让另一个工位续做，前一棒的结论用 `forward` 转交；换 CLI 重新交接，不假定历史可见；不把只读工位续接成写入工位 |
 
 通则：每个场景都由主控验收，`succeeded` 不等于完成；失败、取消或缺席时由主控决定重派或排除，不自动重试。
 

@@ -1913,6 +1913,39 @@ async def test_desk_access_is_declared_once_and_never_converted(
 
 
 @pytest.mark.asyncio
+async def test_declared_desk_never_adopts_an_undeclared_thread(
+    tmp_path: Path, data_root: Path
+) -> None:
+    def task(**extra: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "provider": "claude",
+            "prompt": "one",
+            "cwd": str(tmp_path),
+            "manager_session_id": "chat-a",
+            "role": "mixed",
+        }
+        return {**base, **extra}
+
+    async with Client(mcp) as client:
+        # Work done before any declaration has an unknown tier.
+        undeclared = await _call(client, "start_agent", task())
+        assert undeclared["access"] is None
+        ended = await _call(client, "wait_agent", {"invocation_id": undeclared["invocation_id"]})
+        reader = await _call(client, "start_agent", task(access="read"))
+        assert reader["access"] == "read" and reader["resumed"] is False
+        assert reader["conversation_id"] != undeclared["conversation_id"]
+        read_ended = await _call(client, "wait_agent", {"invocation_id": reader["invocation_id"]})
+        # Later calls continue only the thread recorded with the desk's tier.
+        again = await _call(client, "start_agent", task())
+        assert again["resumed"] is True and again["access"] == "read"
+        assert again["conversation_id"] == reader["conversation_id"]
+        await _call(client, "wait_agent", {"invocation_id": again["invocation_id"]})
+        adopted = await client.call_tool("start_agent", task(session_id=str(ended["session_id"])))
+        assert adopted.is_error and "another role" in str(adopted.content)
+        assert read_ended["session_id"] != ended["session_id"]
+
+
+@pytest.mark.asyncio
 async def test_start_agent_does_not_resume_without_a_manager_identity(
     tmp_path: Path, data_root: Path
 ) -> None:
