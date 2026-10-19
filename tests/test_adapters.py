@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1301,12 +1302,22 @@ def test_pi_transport_and_explicit_options(tmp_path: Path) -> None:
 def test_pi_rpc_is_opt_in_and_rejects_unverified_older_protocol(
     tmp_path: Path,
     fake_pi_rpc: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", fake_pi_rpc.parent.name + os.pathsep + os.environ["PATH"])
     adapter = get_adapter("pi")
     command = adapter.prepare(InvocationRequest("pi", "work", tmp_path, enable_messages=True))
     assert "--print" not in command.argv
     assert command.argv[command.argv.index("--mode") + 1] == "rpc"
     assert command.input_protocol == "pi_rpc"
+    assert Path(command.argv[0]).is_absolute()
+    other_cwd = tmp_path / "other-cwd"
+    other_cwd.mkdir()
+    probed = subprocess.run(
+        (command.argv[0], "--version"), cwd=other_cwd, capture_output=True, check=True
+    )
+    assert probed.stdout.strip() == b"1.1.0"
     assert command.stdin is not None
     assert [json.loads(line)["type"] for line in command.stdin.splitlines()] == [
         "get_state",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 from collections.abc import Callable
 from typing import cast
@@ -21,6 +20,7 @@ from agentnave.adapters.base import (
     parse_json_lines,
     parse_json_object,
     resolve_executable,
+    resolve_message_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -31,7 +31,7 @@ def _require_stream_version(executable: str, provider: str) -> None:
     minimum = (2, 1, 295) if provider == "claude" else (2, 142, 0)
     try:
         result = subprocess.run(
-            (shutil.which(executable) or executable, "--version"),
+            (executable, "--version"),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
@@ -104,6 +104,7 @@ class ClaudeAdapter:
         if discussion:
             argv.extend(self._discussion_args)
         if request.enable_messages:
+            argv[0] = resolve_message_executable(argv[0])
             _require_stream_version(argv[0], self.name)
             argv.extend(("--input-format", "stream-json"))
         return PreparedCommand(

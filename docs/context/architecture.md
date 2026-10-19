@@ -56,7 +56,7 @@ MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manage
 
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
 
-Adapter 每次准备命令时解析 Provider 可执行文件，加装或卸载 CLI 下次调用即生效：先查当前 PATH，再依次查 `~/.local/bin`、`~/.grok/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.bun/bin`、`~/.npm-global/bin`、`~/.volta/bin`、`~/.cargo/bin`，argv[0] 使用解析出的绝对路径；都找不到时保留裸命令名，启动失败仍以 `launch_error` 报告未找到。macOS 的 Codex 在此之前优先选择桌面应用附带的可执行 CLI：先 ChatGPT，再 Codex，每种应用先查系统 Applications，再查用户 Applications。启动与续接使用同一选择规则；普通调用不比较版本；显式启用消息时按 Provider 检查所选 CLI 的 `--version`，门槛由 `describe_provider` 声明。AgentNave 不负责安装升级，也不在选中的 CLI 启动失败后改用另一版本。Windows 保持由 supervisor 在 PATH 中解析裸命令名。
+Adapter 每次准备命令时解析 Provider 可执行文件，加装或卸载 CLI 下次调用即生效：先查当前 PATH，再依次查 `~/.local/bin`、`~/.grok/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.bun/bin`、`~/.npm-global/bin`、`~/.volta/bin`、`~/.cargo/bin`，argv[0] 使用解析出的绝对路径；都找不到时保留裸命令名，启动失败仍以 `launch_error` 报告未找到。macOS 的 Codex 在此之前优先选择桌面应用附带的可执行 CLI：先 ChatGPT，再 Codex，每种应用先查系统 Applications，再查用户 Applications。启动与续接使用同一选择规则；普通调用不比较版本；显式启用消息时按 Provider 检查所选 CLI 的 `--version`，门槛由 `describe_provider` 声明。AgentNave 不负责安装升级，也不在选中的 CLI 启动失败后改用另一版本。Windows 的普通调用保持由 supervisor 在 PATH 中解析裸命令名；显式消息模式在准备阶段将选中的命令固定为绝对路径，版本探测与实际启动共用它，避免相对 PATH 随任务 cwd 改变而选中另一个 CLI。
 
 macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环境中补齐 PATH：依次为可执行文件所在目录、继承的 PATH、上述存在的常见目录（去重），不覆盖宿主选择的工具链，使 `#!/usr/bin/env node` 类 CLI 在宿主给的精简 PATH 下也能运行；服务自身环境不变。
 

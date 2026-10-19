@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
 
@@ -19,6 +18,7 @@ from agentnave.adapters.base import (
     parse_json_lines,
     parse_json_object,
     resolve_executable,
+    resolve_message_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -87,7 +87,7 @@ def _capture_rpc_line(line: bytes) -> bytes:
 def _require_rpc_version(executable: str) -> None:
     try:
         version = subprocess.run(
-            (shutil.which(executable) or executable, "--version"),
+            (executable, "--version"),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
@@ -138,7 +138,7 @@ class CodexAdapter:
             from agentnave.messaging import rpc_line
 
             self.option_args(request)
-            executable = _codex_executable()
+            executable = resolve_message_executable(_codex_executable())
             _require_rpc_version(executable)
             argv = [executable, "app-server"]
             if discussion:

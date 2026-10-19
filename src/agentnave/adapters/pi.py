@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 from typing import cast
 
@@ -20,6 +19,7 @@ from agentnave.adapters.base import (
     parse_json_lines,
     parse_json_object,
     resolve_executable,
+    resolve_message_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -39,7 +39,7 @@ def _require_rpc_version(executable: str) -> None:
     """Require the settled-event protocol; the inspected baseline is Pi 1.1.0."""
     try:
         result = subprocess.run(
-            (shutil.which(executable) or executable, "--version"),
+            (executable, "--version"),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
@@ -139,6 +139,7 @@ class PiAdapter:
         if request.session_id is not None:
             stdin = b"\n" + stdin
         if request.enable_messages:
+            argv[0] = resolve_message_executable(argv[0])
             _require_rpc_version(argv[0])
             stdin = (
                 json.dumps({"id": "agentnave-state", "type": "get_state"})
