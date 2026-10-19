@@ -144,7 +144,8 @@ function setData(data) {
 }
 async function reload() {
   try {
-    setData(await load("/app/hosts"));
+    const next = await load("/app/hosts");
+    if (!S.busy.size && !S.confirm && !document.activeElement?.closest(".hc-adv") && JSON.stringify(next) !== JSON.stringify(S.data)) setData(next);
   } catch {
     /* keep what is shown */
   }
@@ -676,8 +677,11 @@ function buildCard(host) {
     }
   });
   const badges = [
-    host.reload?.state === "required" && h("span.badge.badge-warning", {}, "待重启确认"),
-    host.reload?.state === "confirmed" && h("span.badge.badge-run", {}, "已确认重启"),
+    host.reload?.state === "required" && h("span.badge.badge-warning", {}, "需要重新加载"),
+    host.reload?.state === "confirmed" && h("span.badge.badge-run", {}, "已手动确认"),
+    host.reload?.state === "current" && h("span.badge.badge-run", {}, "接口已同步"),
+    host.reload?.state === "updating" && h("span.badge.badge-warning", {}, "等待空闲更新"),
+    host.reload?.state === "unknown" && h("span.badge.badge-muted", {}, "无法自动确认"),
     !host.tested &&
       h(
         "span.badge.badge-muted",
@@ -723,7 +727,7 @@ function buildCard(host) {
         h(
           "dd",
           {},
-          host.reload_hint || "接入、更新服务或 Skill 后，重启宿主应用以加载新版工具接口",
+          host.reload_hint || "接入配置或 Skill 内容变更时，重新加载宿主；接口状态见下方自动检测",
         ),
       ),
       h(
@@ -775,17 +779,22 @@ function buildCard(host) {
       ),
     );
   if (host.reload?.state === "required") {
+    const tools = host.reload.reason === "tools";
     main.push(h("div.hc-reload.hc-note.info", {},
-      h("div", {}, h("strong", {}, "需要重启或重新连接后确认"),
-        h("p", {}, "服务、Skill 或接入配置有变化，或尚未确认生效。请按上方方式重启 / 重连后确认；下次变更会再次提醒。")),
-      button("我已重启 / 重连", "", "confirm-reload", () =>
+      h("div", {}, h("strong", {}, tools ? "仍有连接使用旧工具接口" : "接入配置或 Skill 内容有变化"),
+        h("p", {}, tools ? "支持自动刷新的宿主会重新获取工具列表；若此状态持续，请重新连接 AgentNave MCP，必要时重启宿主。重连后会自动检测，无需手动确认。" : "请重新加载对应配置。Skill 是否已加载无法由 MCP 接口证明；无法自动检测时，可在操作后手动确认。")),
+      !tools && button("我已重新加载", "", "confirm-reload", () =>
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),
     ));
   } else if (host.reload?.state === "confirmed") {
-    main.push(h("p.hc-last", {}, "已按你的确认记录当前版本；软件未自动验证宿主接口。"));
+    main.push(h("p.hc-last", {}, "已记录你的手动确认；不代表已自动验证宿主接口。"));
+  } else if (host.reload?.state === "current") {
+    main.push(h("p.hc-last", {}, `已检测到的 ${host.reload.connections} 个连接均已收到当前工具接口，这些连接无需重启。旧中继连接需重连一次才能纳入检测；聊天是否采用新版工具仍由宿主决定。`));
+  } else if (host.reload?.state === "updating") {
+    main.push(h("p.hc-last", {}, "接口一致，服务将在空闲后自动切换到已安装的新版本；当前无需重启。"));
   } else if (host.reload?.state === "unknown" && host.status === "connected") {
-    main.push(h("p.hc-last", {}, "无法判断此连接是否需要重启，请按上方生效方式手动重连。"));
+    main.push(h("p.hc-last", {}, "尚无有效的连接检测记录，不能判断是否需要重新加载。旧版中继需重连一次才能启用自动检测；不会仅因版本变化要求重启。"));
   }
   main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
   // Keep the disclosure button above its content so it stays under the pointer.
@@ -828,6 +837,9 @@ function renderAll() {
 }
 
 $("refresh-hosts").addEventListener("click", refreshAll);
+setInterval(() => {
+  if (!document.hidden && !$("pane-hosts").hidden && !S.refreshing) reload();
+}, 2000);
 window.addEventListener("agentnave:status", ({ detail }) => {
   if (!S.data) return;
   const state = detail.service;

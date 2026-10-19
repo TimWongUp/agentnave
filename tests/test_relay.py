@@ -19,19 +19,24 @@ from agentnave import relay as launcher
 # while the file named in argv[1] exists, and fails to start while argv[1] + ".broken" exists.
 FAKE_SERVER = """
 import json, os, sys
+from pathlib import Path
 if os.path.exists(sys.argv[1] + ".broken"):
     sys.exit(1)
 ready = False
+version = Path(sys.argv[1] + ".version").read_text()
+schema = json.loads(Path(sys.argv[1] + ".tools").read_text()) if Path(sys.argv[1] + ".tools").exists() else {"type":"object"}
 for line in sys.stdin:
     message = json.loads(line)
     method, ident = message.get("method"), message.get("id")
     if method == "initialize":
-        result = {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": "fake", "version": "1"}}
+        result = {"protocolVersion": "2025-06-18", "capabilities": {"tools":{}}, "serverInfo": {"name": "fake", "version": version}}
     elif method == "notifications/initialized":
         ready = True
         continue
     elif not ready:
         result = {"isError": True, "content": [{"type": "text", "text": "not initialized"}]}
+    elif method == "tools/list":
+        result = {"tools":[{"name":"probe", "inputSchema":schema}] if schema is not None else []}
     elif message["params"]["name"] == "list_invocations":
         busy = [{"status": "succeeded", "result_read": False}] if os.path.exists(sys.argv[1]) else []
         result = {"structuredContent": {"invocations": busy, "restart_safe": True}}
@@ -73,6 +78,7 @@ class Host:
         self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
         self.sequence = 0
+        self.notifications: list[dict[str, Any]] = []
 
     def install(self, version: str) -> None:
         for old in self.site.glob("agentnave-*.dist-info"):
@@ -81,11 +87,15 @@ class Host:
         dist = self.site / f"agentnave-{version}.dist-info"
         dist.mkdir(parents=True)
         (dist / "RECORD").write_text(version)
+        self.busy.with_suffix(".version").write_text(version)
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         self.sequence += 1
         self.send({"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": params or {}})
         reply = json.loads(self.reader.readline())
+        while "id" not in reply:
+            self.notifications.append(reply)
+            reply = json.loads(self.reader.readline())
         assert reply["id"] == self.sequence
         return reply["result"]
 
@@ -156,6 +166,130 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
 
     host.writer.close()
     host.thread.join(10)
+
+
+def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path, env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)}
+    )
+
+    def observed(version: str) -> dict[str, Any]:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            for path in data.glob("connections/*.json"):
+                value = json.loads(path.read_bytes())
+                if value["runtime_version"] == version:
+                    return value
+            time.sleep(0.02)
+        raise AssertionError(f"missing connection observation for {version}")
+
+    try:
+        result = host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        assert result["capabilities"]["tools"]["listChanged"] is True
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert not data.exists()  # Handshakes alone, including nested servers, do not create data.
+        host.call("tools/list")
+        initial = observed("1.0")
+        assert initial["runtime_tools_hash"] == initial["host_tools_hash"]
+        assert set(initial) == {
+            "version",
+            "host",
+            "started_ms",
+            "runtime_version",
+            "runtime_tools_hash",
+            "host_tools_hash",
+        }
+
+        first = host.pid()
+        host.install("1.1")
+        same = observed("1.1")
+        assert host.pid() != first
+        assert same["runtime_tools_hash"] == same["host_tools_hash"] == initial["host_tools_hash"]
+        assert host.notifications == []
+
+        host.busy.with_suffix(".tools").write_text(
+            '{"type":"object","properties":{"new":{"type":"string"}}}'
+        )
+        host.install("1.2")
+        changed = observed("1.2")
+        assert changed["runtime_tools_hash"] != changed["host_tools_hash"]
+        host.call("tools/list")
+        refreshed = observed("1.2")
+        deadline = time.monotonic() + 5
+        while (
+            refreshed["runtime_tools_hash"] != refreshed["host_tools_hash"]
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+            refreshed = observed("1.2")
+        assert refreshed["runtime_tools_hash"] == refreshed["host_tools_hash"]
+        assert host.notifications == [
+            {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+        ]
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert not list(data.glob("connections/*.json"))
+
+
+def test_empty_data_root_matches_service_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(launcher.Path, "home", lambda: tmp_path / "home")
+    host = Host(tmp_path, env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": ""})
+    try:
+        assert host.relay.connection_path.parent.parent == tmp_path / "home/.agentnave"
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert not (tmp_path / "home").exists()
+
+
+def test_host_eof_removes_observation_and_prevents_swap_while_child_exits(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    gate = tmp_path / "busy.closing"
+    host = Host(
+        tmp_path,
+        env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)},
+        script_text=FAKE_SERVER
+        + '\nimport time\np = Path(sys.argv[1] + ".closing")\np.touch()\nwhile p.exists():\n    time.sleep(0.01)\n',
+    )
+    try:
+        host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        host.call("tools/list")
+        child = host.relay.child
+        host.writer.close()
+        deadline = time.monotonic() + 5
+        while not gate.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert gate.exists()  # Child deliberately remains alive after stdin EOF.
+        assert not list(data.glob("connections/*.json"))
+        host.install("1.1")
+        assert host.relay._swap() == "busy"  # pyright: ignore[reportPrivateUsage]
+        assert host.relay.child is child
+        assert child.process.poll() is None
+    finally:
+        gate.unlink(missing_ok=True)
+        host.thread.join(10)
+    assert host.code == [0]
+
+
+def test_zero_tool_relay_never_creates_connection_observations(tmp_path: Path) -> None:
+    (tmp_path / "busy.tools").write_text("null")
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path, env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)}
+    )
+    try:
+        host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert host.call("tools/list") == {"tools": []}
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert not data.exists()
 
 
 def test_real_server_keeps_pending_review_and_unsaved_results_during_upgrade(

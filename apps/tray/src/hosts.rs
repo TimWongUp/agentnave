@@ -617,8 +617,7 @@ impl Hosts {
         let reload = if !has_entry || !installed {
             json!({"state":"not_connected"})
         } else if let Some(token) = self.reload_token(host, &skill) {
-            let confirmed = &self.settings[host.id]["reload_confirmed"];
-            json!({"state":if confirmed["token"] == token {"confirmed"} else {"required"}, "token":token, "confirmed_at":confirmed["at"]})
+            self.reload_state(host, &token)
         } else {
             json!({"state":"unknown"})
         };
@@ -627,9 +626,8 @@ impl Hosts {
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
             "reload_hint":activation_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
-    /// Confirmation is version/config scoped, not evidence of a live MCP handshake.
-    fn reload_token(&self, host: &Host, skill: &Value) -> Option<String> {
-        let version = crate::update::installed_version(&self.tool_dirs()?.tools.join("agentnave"))?;
+    /// Only actual configuration/Skill content matters; release numbers do not.
+    fn reload_token(&self, host: &Host, _skill: &Value) -> Option<String> {
         let mut entries = Vec::new();
         for path in &host.user_layers {
             let document = host.read_at(path).ok()?;
@@ -643,12 +641,154 @@ impl Hosts {
         if entries.is_empty() {
             return None;
         }
+        let contents = self.skill_contents(host); // Unreadable/external Skills are not MCP proof.
         Some(skill::hash(
-            &serde_json::to_vec(&json!({
-                "app":VERSION,"service":version,"entries":entries,"skill":skill
-            }))
-            .ok()?,
+            &serde_json::to_vec(&json!({"entries":entries,"skill":contents})).ok()?,
         ))
+    }
+    fn skill_contents(&self, host: &Host) -> Option<Value> {
+        let Some(path) = &host.skill else {
+            return Some(Value::Null);
+        };
+        safe_path(path, &self.context.home).ok()?;
+        if !path.exists() {
+            return Some(Value::Null);
+        }
+        serde_json::to_value(skill::fingerprint(path).ok()?).ok()
+    }
+    fn reload_state(&self, host: &Host, token: &str) -> Value {
+        let confirmed = &self.settings[host.id]["reload_confirmed"];
+        let changed = &self.settings[host.id]["reload_changed"];
+        let manual = confirmed["v"] == 2 && confirmed["token"] == token;
+        let observed = &self.settings[host.id]["reload_observed"];
+        let pending = !manual
+            && ((changed["token"] == token)
+                || (confirmed["v"] == 2 && confirmed["token"] != token)
+                || (observed["token"].is_string() && observed["token"] != token));
+        let root = self.connection_root(host);
+        let now = SystemTime::now();
+        let connections: Vec<Value> = root
+            .into_iter()
+            .flat_map(|root| {
+                fs::read_dir(root.join("connections"))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+            })
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.is_symlink() || path.extension().is_none_or(|ext| ext != "json") {
+                    return None;
+                }
+                let meta = entry.metadata().ok()?;
+                if meta.len() > 16_384
+                    || now
+                        .duration_since(meta.modified().ok()?)
+                        .map_or(true, |age| age.as_secs() > 20)
+                {
+                    return None;
+                }
+                let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+                (value["version"] == 1 && value["host"] == host.id).then_some(value)
+            })
+            .collect();
+        let installed = self
+            .tool_dirs()
+            .and_then(|dirs| crate::update::installed_version(&dirs.tools.join("agentnave")));
+        let valid_hash = |v: &Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        let mut state = if pending {
+            "required"
+        } else if manual {
+            "confirmed"
+        } else {
+            "unknown"
+        };
+        let mut reason = if pending { "config" } else { "no_connection" };
+        if !connections.is_empty() {
+            if connections.iter().any(|c| {
+                valid_hash(&c["runtime_tools_hash"])
+                    && valid_hash(&c["host_tools_hash"])
+                    && c["runtime_tools_hash"] != c["host_tools_hash"]
+            }) {
+                state = "required";
+                reason = "tools";
+            } else if connections.iter().all(|c| {
+                valid_hash(&c["runtime_tools_hash"])
+                    && c["runtime_tools_hash"] == c["host_tools_hash"]
+            }) {
+                let newly_connected = changed["token"] == token
+                    && changed["at_ms"].as_u64().is_some_and(|at| {
+                        connections
+                            .iter()
+                            .all(|c| c["started_ms"].as_u64().is_some_and(|start| start > at))
+                    });
+                if !pending || (newly_connected && changed["skill"] == false) {
+                    state = if installed.is_none() {
+                        "unknown"
+                    } else if connections
+                        .iter()
+                        .all(|c| c["runtime_version"].as_str() == installed.as_deref())
+                    {
+                        "current"
+                    } else {
+                        "updating"
+                    };
+                    reason = "connection";
+                }
+            }
+        }
+        json!({"state":state,"reason":reason,"token":token,"connections":connections.len(),"confirmed_at":confirmed["at"]})
+    }
+    fn connection_root(&self, host: &Host) -> Option<PathBuf> {
+        let entry = host.read().ok()?.entry?;
+        let explicit = entry[host.env_key()]["AGENTNAVE_DATA_DIR"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| self.context.env.get("AGENTNAVE_DATA_DIR").cloned());
+        let root = explicit
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.context.home.join(".agentnave"));
+        (root.is_absolute() && !root.is_symlink() && !root.join("connections").is_symlink())
+            .then_some(root)
+    }
+    fn note_reload_change(
+        &self,
+        host: &Host,
+        before: &Value,
+        before_skill: &Option<Value>,
+        settings: &mut Value,
+    ) {
+        let current = self.reload_token(host, &Value::Null);
+        if let Some(token) = current {
+            let observed = self.settings[host.id]["reload_observed"].clone();
+            let contents = self.skill_contents(host);
+            let changed = if observed["token"].is_string() {
+                observed["token"] != token
+            } else {
+                *before != token
+            };
+            let previous = &self.settings[host.id]["reload_changed"];
+            let confirmed = &self.settings[host.id]["reload_confirmed"];
+            let pending_skill = previous["skill"] == true
+                && !(confirmed["v"] == 2 && confirmed["token"] == previous["token"]);
+            let skill_changed = pending_skill
+                || if observed["token"].is_string() {
+                    observed["skill"] != json!(contents)
+                } else {
+                    *before_skill != contents
+                };
+            if !settings[host.id].is_object() {
+                settings[host.id] = json!({});
+            }
+            settings[host.id]["reload_observed"] = json!({"token":token,"skill":contents});
+            if changed {
+                settings[host.id]["reload_changed"] = json!({"token":token,"at_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,"skill":skill_changed});
+            }
+        }
     }
     pub fn cached_snapshot(&self) -> &Value {
         &self.cached
@@ -697,6 +837,7 @@ impl Hosts {
         let mut settings = self.settings.clone();
         for host in self.registry() {
             let state = self.state(&host);
+            let before_skill = self.skill_contents(&host);
             if state["status"] != "absent" && settings[host.id].get("first_seen").is_none() {
                 if !settings[host.id].is_object() {
                     settings[host.id] = json!({});
@@ -802,6 +943,12 @@ impl Hosts {
                     self.record(host.id, Err(error), "");
                 }
             }
+            self.note_reload_change(
+                &host,
+                &state["reload"]["token"],
+                &before_skill,
+                &mut settings,
+            );
         }
         if settings != self.settings && self.settings_error.is_none() {
             match roots::save(&self.context, &settings) {
@@ -851,6 +998,12 @@ impl Hosts {
             self.failures.remove(id);
             self.record(id, Ok(()), "已更新配置根目录");
             let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
+            let mut settings = self.settings.clone();
+            self.note_reload_change(&host, &Value::Null, &None, &mut settings);
+            if settings != self.settings {
+                roots::save(&self.context, &settings)?;
+                self.settings = settings;
+            }
             self.cached = self.snapshot();
             return Ok(json!({"host":self.state(&host),"ok":true,"message":"已更新配置根目录"}));
         }
@@ -873,7 +1026,7 @@ impl Hosts {
             if !settings[id].is_object() {
                 settings[id] = json!({});
             }
-            settings[id]["reload_confirmed"] = json!({"token":token,"at":timestamp()});
+            settings[id]["reload_confirmed"] = json!({"v":2,"token":token,"at":timestamp()});
             roots::save(&self.context, &settings)?;
             self.settings = settings;
             self.cached = self.snapshot();
@@ -884,6 +1037,8 @@ impl Hosts {
         if !matches!(operation, "connect" | "remove") {
             return Err("未知宿主操作".into());
         }
+        let before_reload = self.state(&host)["reload"]["token"].clone();
+        let before_skill = self.skill_contents(&host);
         let result: Result<String, String> = (|| {
             if operation == "remove" {
                 // Preflight all layers; each subsequent replacement is independently checked.
@@ -972,6 +1127,14 @@ impl Hosts {
             Ok(format!("{done}{}；{}", trust_hint(id), activation_hint(id)))
         })();
         let ok = result.is_ok();
+        if operation == "connect" {
+            let mut settings = self.settings.clone();
+            self.note_reload_change(&host, &before_reload, &before_skill, &mut settings);
+            if settings != self.settings && self.settings_error.is_none() {
+                roots::save(&self.context, &settings)?;
+                self.settings = settings;
+            }
+        }
         let text = result
             .as_ref()
             .cloned()
@@ -1071,7 +1234,7 @@ fn trust_hint(id: &str) -> &'static str {
     }
 }
 fn activation_hint(id: &str) -> String {
-    format!("接入、更新服务或 Skill 后，{}", reload_hint(id))
+    format!("接入配置或 Skill 内容变更时，{}", reload_hint(id))
 }
 fn reload_hint(id: &str) -> &'static str {
     match id {

@@ -578,7 +578,7 @@ All checks passed!
   }
 
   // Preview parameters follow chat links; normal app links retain their production routes.
-  const keep = ["scene", "update", "service", "hosts"].filter((k) => q.has(k)).map((k) => `${k}=${encodeURIComponent(q.get(k))}`);
+  const keep = ["scene", "update", "service", "hosts", "activation"].filter((k) => q.has(k)).map((k) => `${k}=${encodeURIComponent(q.get(k))}`);
   function href(path) {
     const match = /^\/chat\/?([^/?#]*)(#.*)?$/.exec(path);
     if (!match) {
@@ -608,7 +608,7 @@ All checks passed!
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
-      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入、更新服务或 Skill 后，${reload}`, attention: null, last_action: null,
+      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入配置或 Skill 内容变更时，${reload}`, attention: null, last_action: null,
       skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null } };
   });
   if (hostScene === "typical") {
@@ -619,9 +619,13 @@ All checks passed!
   let membersReady = ["midway", "typical", "done"].includes(hostScene);
   let triedReady = hostScene === "done";
   const confirmedReloads = new Map();
+  let mockToolsSynced = q.get("activation") !== "refresh";
+  if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
   const hostView = () => ({ service: { installed: serviceReady, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
-    const token = `${host.id}:${mockVersion}`;
-    return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : "required", token } : { state: "not_connected" } };
+    const token = `${host.id}:${host.root.path}`;
+    const scene = q.get("activation");
+    const state = scene === "tools" || !mockToolsSynced ? "required" : scene === "updating" ? "updating" : host.id === "codex" && scene !== "unknown" ? "current" : "unknown";
+    return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : state, reason: state === "required" ? "tools" : "connection", connections: state === "unknown" ? 0 : 1, token } : { state: "not_connected" } };
   }), backups: { dir: "/preview/backups", count: 0 } });
   const onboarding = () => ({ dismissed, steps: [
     { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
@@ -653,7 +657,7 @@ All checks passed!
     const host = hostRows.find((h) => h.id === body.id);
     if (!host) throw new Error("未知宿主");
     if (path.endsWith("/confirm-reload")) {
-      if (body.token !== `${host.id}:${mockVersion}` || host.status !== "connected") throw new Error("请刷新并重启宿主后再确认");
+      if (body.token !== `${host.id}:${host.root.path}` || host.status !== "connected") throw new Error("接入配置已变化，请刷新后再确认");
       confirmedReloads.set(host.id, body.token);
       return { ok: true, message: "预览：已记录你已重启或重连" };
     }
