@@ -68,6 +68,7 @@ async def test_task_messages_are_saved_with_exact_invocation_and_survive_resume(
         assert [message.status for message in disk.tasks[0].messages] == ["accepted", "accepted"]
         projected = views.snapshot(record.state, str(data_root))
         assert "rpc-session" not in json.dumps(projected)
+        assert invocation not in json.dumps(projected)
         late = await studio.send_task_message(invocation, "不要投到下一轮")
         assert late["status"] == "not_delivered"
         resumed, same_id, was_resumed, inherited_access = studio.start_task(

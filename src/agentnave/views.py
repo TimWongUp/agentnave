@@ -182,7 +182,12 @@ def _director(
     }
     if state.kind == "task":
         tasks = [
-            task.model_dump(exclude={"session_id": True, "messages": {"__all__": {"session_id"}}})
+            task.model_dump(
+                exclude={
+                    "session_id": True,
+                    "messages": {"__all__": {"session_id", "invocation_id"}},
+                }
+            )
             | {
                 "message_id": f"{state.id}:t:{task.id}",
                 "thread": _thread(task.provider, task.session_id),
