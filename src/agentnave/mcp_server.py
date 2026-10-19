@@ -38,7 +38,6 @@ from agentnave.members import (
     validate_provider_options,
 )
 from agentnave.members import list_members as read_member_list
-from agentnave.messaging import MessageMode, MessageReceipt
 from agentnave.models import (
     InvocationError,
     InvocationRequest,
@@ -133,9 +132,6 @@ class ProviderDescriptionPayload(TypedDict):
     supported_options: str
     host: HostName | None
     host_source: HostSource
-    running_messages: bool
-    message_requirements: str
-    message_modes: list[MessageMode]
 
 
 class ViewerLinks(TypedDict):
@@ -181,7 +177,6 @@ class TaskStartPayload(InvocationPayload, DashboardLinks):
     conversation_id: str
     resumed: bool  # true when start_agent continued this desk's most recent private thread
     access: str | None  # declared desk tier after inheritance; never enforced
-    messages_enabled: bool
 
 
 class WaitAnyPayload(TypedDict):
@@ -553,12 +548,6 @@ async def start_agent(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
-    enable_messages: Annotated[
-        bool,
-        Field(
-            description="Opt in to running messages for an ordinary supported task. describe_provider returns message_modes and version requirements. Default preserves the native print invocation."
-        ),
-    ] = False,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
@@ -578,8 +567,7 @@ async def start_agent(
     The task and its final output are saved in a private task conversation; a resumed native
     session joins its open conversation. No output is shared with another CLI.
     AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
-    Provider-native limits still apply. enable_messages opts supported CLIs into native running input;
-    use send_agent_message with this invocation_id. Group seats are unsupported.
+    Provider-native limits still apply. Active invocations do not accept messages.
     """
     try:
         options, defaults_applied = apply_member(
@@ -591,7 +579,6 @@ async def start_agent(
             cwd=Path(cwd),
             session_id=session_id,
             provider_options=options,
-            enable_messages=enable_messages,
         )
         validate_provider_options(request)
         started = _conversations(ctx).start_task(
@@ -616,53 +603,8 @@ async def start_agent(
         "conversation_id": started.conversation_id,
         "resumed": started.resumed,
         "access": started.access,
-        "messages_enabled": enable_messages,
         **_dashboard_links(_conversations(ctx), started.conversation_id),
     }
-
-
-@mcp.tool(
-    title="Send a running subagent a message",
-    annotations=ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=True,
-        idempotent_hint=False,
-        open_world_hint=True,
-    ),
-)
-async def send_agent_message(
-    invocation_id: Annotated[
-        str,
-        Field(
-            min_length=1,
-            description="Exact running invocation_id from start_agent, never a native session ID.",
-        ),
-    ],
-    message: Annotated[str, Field(min_length=1, max_length=12000)],
-    mode: Annotated[
-        MessageMode,
-        Field(
-            description="steer requires current-turn injection; queue explicitly permits provider scheduling a subsequent turn (Claude only). No silent mode fallback."
-        ),
-    ] = "steer",
-    *,
-    ctx: Context[Runtime],
-) -> MessageReceipt:
-    """Message an ordinary supported CLI task started with enable_messages=true, without interruption.
-
-    accepted means only that the CLI acknowledged queuing or active-turn input, not applied or done.
-    mode=queue explicitly permits Claude to schedule another native turn; steer never falls back to queue.
-    unknown means an attempted write has no confirmed acknowledgement; do not automatically retry.
-    No implicit cancel, restart, model change, or mode fallback; group seats are unsupported.
-    Follow finished tasks with start_agent(session_id=...), under the existing authorization.
-    history_saved=false means the outcome remains in memory but has not been saved to disk.
-    """
-    try:
-        return await _conversations(ctx).send_task_message(invocation_id, message, mode)
-    except KeyError as exc:
-        raise _unknown_invocation() from exc
-    except (ValueError, OSError) as exc:
-        raise ToolError(f"Unable to prepare or save message: {exc}") from exc
 
 
 @mcp.tool(
@@ -854,21 +796,6 @@ async def describe_provider(
         "supported_options": "model, effort, " + PROVIDER_OPTIONS[provider],
         "host": HOST.name,
         "host_source": HOST.source,
-        "running_messages": provider in {"pi", "codex", "claude", "codebuddy"},
-        "message_modes": ["steer"]
-        if provider in {"pi", "codex", "codebuddy"}
-        else ["queue"]
-        if provider == "claude"
-        else [],
-        "message_requirements": "Pi >= 1.1.0, start_agent(enable_messages=true), ordinary tasks only"
-        if provider == "pi"
-        else "Codex app-server >= 0.99.0, start_agent(enable_messages=true), ordinary tasks without restricted_tools; native approval requests remain blocked"
-        if provider == "codex"
-        else "Claude >= 2.1.295, start_agent(enable_messages=true), explicit mode=queue; provider may merge input or start a subsequent native turn"
-        if provider == "claude"
-        else "CodeBuddy >= 2.142.0, start_agent(enable_messages=true), native _requestId required"
-        if provider == "codebuddy"
-        else "Unsupported; wait for completion and use start_agent(session_id=...)",
     }
 
 

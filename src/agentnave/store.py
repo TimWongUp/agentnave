@@ -15,8 +15,7 @@ from pydantic import BaseModel, Field
 
 from agentnave.group import RoundOrder
 from agentnave.host import HostName, HostSource
-from agentnave.messaging import MessageMode, MessageStatus
-from agentnave.models import NativeTurnResult, ProviderOption
+from agentnave.models import ProviderOption
 
 type Review = Literal["pending", "publish", "discard"]
 
@@ -100,17 +99,6 @@ class RoundRecord(BaseModel):
         return any(seat.review == "pending" for seat in self.seats)
 
 
-class TaskMessageRecord(BaseModel):
-    id: str
-    invocation_id: str
-    text: str
-    time: str
-    status: MessageStatus | Literal["pending"] = "pending"
-    reason: str = "awaiting_provider_ack"
-    session_id: str | None = None
-    mode: MessageMode = "steer"
-
-
 class TaskRecord(BaseModel):
     id: str
     provider: str
@@ -130,8 +118,6 @@ class TaskRecord(BaseModel):
     access: Literal["read", "write"] | None = None  # declared, never enforced
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
-    messages: list[TaskMessageRecord] = Field(default_factory=lambda: [])
-    native_turns: list[NativeTurnResult] = Field(default_factory=lambda: [])
 
 
 class Conversation(BaseModel):
@@ -157,11 +143,6 @@ class Conversation(BaseModel):
 
     def recover(self) -> None:
         """Mark work left running by an earlier writer as interrupted; never resume it."""
-        for task in self.tasks:
-            for message in task.messages:
-                if message.status == "pending":
-                    message.status = "unknown"
-                    message.reason = "server_restarted_before_ack_saved"
         for round_ in self.rounds:
             if round_.status == "running":
                 round_.status = "interrupted"

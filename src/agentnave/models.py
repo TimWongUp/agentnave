@@ -31,7 +31,6 @@ class InvocationRequest:
     cwd: Path
     session_id: str | None = None
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
-    enable_messages: bool = False
 
     def __post_init__(self) -> None:
         provider = self.provider.strip().lower()
@@ -42,10 +41,6 @@ class InvocationRequest:
             raise ValueError("provider must not be empty")
         if not self.prompt.strip():
             raise ValueError("prompt must not be empty")
-        if self.enable_messages and provider not in {"pi", "codex", "claude", "codebuddy"}:
-            raise ValueError(
-                "running messages are currently supported only by Pi, Codex, Claude and CodeBuddy"
-            )
         if not cwd.is_dir():
             raise ValueError(f"cwd is not a directory: {cwd}")
         if self.session_id is not None and not self.session_id.strip():
@@ -129,13 +124,6 @@ class InvocationListing:
 
 
 @dataclass(frozen=True, slots=True)
-class NativeTurnResult:
-    output: str
-    status: str
-    message_ids: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
 class InvocationResult:
     status: InvocationStatus
     provider: str
@@ -145,7 +133,6 @@ class InvocationResult:
     duration_ms: int
     error: InvocationError | None = None
     reported_model: str | None = None
-    native_turns: tuple[NativeTurnResult, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {

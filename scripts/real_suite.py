@@ -41,7 +41,6 @@ MODELS: dict[str, str] = {
     "antigravity": "gemini-3.8-flash-low",
     "pi": "opencode-go/deepseek-v4-flash",
 }
-MESSAGE_MODES = {"pi": "steer", "codex": "steer", "codebuddy": "steer", "claude": "queue"}
 TASK_LIMIT_SECONDS = 360.0
 CANCEL_AFTER_SECONDS = 8.0
 RUN_ID = time.strftime("%Y%m%d-%H%M%S")
@@ -185,7 +184,7 @@ class Suite:
     async def discovery(self) -> None:
         async def tools() -> str | None:
             names = {tool.name for tool in (await self.client.list_tools()).tools}
-            missing = {"start_agent", "send_agent_message", "open_group", "run_round"} - names
+            missing = {"start_agent", "cancel_agent", "open_group", "run_round"} - names
             if missing:
                 raise ToolFailure(f"missing tools {sorted(missing)}")
             return None
@@ -214,9 +213,6 @@ class Suite:
             if described["host"] != provider or not described["show_permitted"]:
                 raise ToolFailure("provider not permitted; unset AGENTNAVE_EXCLUDED_PROVIDERS")
             self.excluded.add(provider)
-        expected = [MESSAGE_MODES[provider]] if provider in MESSAGE_MODES else []
-        if described["message_modes"] != expected:
-            raise ToolFailure(f"message_modes={described['message_modes']} expected {expected}")
         return None
 
     async def tasks(self) -> None:
@@ -298,62 +294,11 @@ class Suite:
         started = await self.start(provider, LONG_PROMPT, new_thread=True)
         invocation_id = started["invocation_id"]
         await asyncio.sleep(CANCEL_AFTER_SECONDS)
-        receipt = await self.call(
-            "send_agent_message", {"invocation_id": invocation_id, "message": "probe"}
-        )
-        unsupported = receipt["status"] == "unsupported"
         result = await self.call("cancel_agent", {"invocation_id": invocation_id})
         if result["status"] == "succeeded":
             return "finished before cancellation"
         if result["status"] != "cancelled":
             raise ToolFailure(f"status={result['status']} error={result.get('error')}")
-        if not unsupported:
-            raise ToolFailure(f"message to a plain task returned {receipt['status']}")
-        return None
-
-    async def message(self, provider: str) -> str | None:
-        mode = MESSAGE_MODES.get(provider)
-        prompt = (
-            "Automated running-message check. Do not use any tools. Write a numbered list of 40 "
-            "short facts about the ocean, one per line."
-        )
-        if mode is None:
-            try:
-                await self.start(provider, prompt, new_thread=True, enable_messages=True)
-            except ToolFailure:
-                return None
-            raise ToolFailure("enable_messages was accepted by a provider without support")
-        marker = token("MARK")
-        started = await self.start(provider, prompt, new_thread=True, enable_messages=True)
-        invocation_id = started["invocation_id"]
-        receipt: dict[str, Any] = {}
-        for _ in range(60):
-            receipt = await self.call(
-                "send_agent_message",
-                {
-                    "invocation_id": invocation_id,
-                    "message": f"After the list, end your reply with a final line: {marker}",
-                    "mode": mode,
-                },
-            )
-            if receipt["status"] != "not_delivered":
-                break
-            listed = await self.call("list_invocations", {})
-            state = next(
-                item for item in listed["invocations"] if item["invocation_id"] == invocation_id
-            )
-            if state["status"] != "running":
-                break
-            await asyncio.sleep(1)
-        done = await self.finish(provider, invocation_id)
-        if receipt.get("status") == "not_delivered":
-            return "task finished before the message could be delivered"
-        if receipt.get("status") != "accepted":
-            raise ToolFailure(f"receipt {receipt.get('status')}: {receipt.get('reason')}")
-        if receipt.get("history_saved") is False:
-            raise ToolFailure("message outcome was not saved")
-        if marker not in done.get("output", ""):
-            return "accepted, but the final reply does not contain the marker"
         return None
 
     async def groups(self) -> None:
@@ -531,7 +476,6 @@ class Suite:
             ("explicit resume", self.resume),
             ("desk resume", self.desk_resume),
             ("cancel", self.cancel),
-            ("running messages", self.message),
         ):
             print(f"\n[{title}]")
             for provider in self.excluded:
@@ -572,17 +516,11 @@ class Suite:
                 )
                 for provider in self.task_providers
             ]
-            extra = cycle % 3
-            if extra == 0 and len(self.providers) >= 2:
+            if cycle % 2 == 0 and len(self.providers) >= 2:
                 steps.append(self.guarded("soak_round", "group", self._parallel_round()))
-            elif extra == 1:
+            else:
                 provider = random.choice(self.task_providers)
                 steps.append(self.guarded("soak_cancel", provider, self.cancel(provider)))
-            else:
-                choices = [p for p in self.task_providers if p in MESSAGE_MODES]
-                choices = choices or self.task_providers
-                provider = random.choice(choices)
-                steps.append(self.guarded("soak_message", provider, self.message(provider)))
             await asyncio.gather(*steps)
             self.sample_tree()
             await self.guarded("soak_idle", "-", self.idle())
