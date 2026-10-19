@@ -24,6 +24,7 @@ fn label(host: Option<&str>) -> &str {
         Some("grok") => "Grok",
         Some("antigravity") => "Antigravity",
         Some("pi") => "Pi",
+        Some("deepseek") => "DeepSeek Harness",
         Some("gemini") => "Gemini CLI",
         Some("opencode") => "OpenCode",
         Some("hermes") => "Hermes",
@@ -211,7 +212,9 @@ fn desk_key(provider: &str, model: &str, role: Option<&str>) -> String {
 
 fn cli_label(provider: &str) -> &str {
     match provider {
-        "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" => label(Some(provider)),
+        "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "deepseek" => {
+            label(Some(provider))
+        }
         other => other,
     }
 }

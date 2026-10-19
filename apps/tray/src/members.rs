@@ -9,7 +9,15 @@ use std::sync::Mutex;
 
 use serde_json::{Map, Value, json};
 
-pub const PROVIDERS: [&str; 6] = ["antigravity", "claude", "codebuddy", "codex", "grok", "pi"];
+pub const PROVIDERS: [&str; 7] = [
+    "antigravity",
+    "claude",
+    "codebuddy",
+    "codex",
+    "deepseek",
+    "grok",
+    "pi",
+];
 const MODES: [&str; 2] = ["task", "discussion"];
 const FILE: &str = "members.json";
 const LEGACY: &str = "profiles.json";
@@ -359,6 +367,10 @@ mod tests {
     fn accepts_the_contract_example_and_rejects_structural_or_reference_errors() {
         validate(&document()).unwrap();
         validate(&empty()).unwrap();
+        let mut deepseek = document();
+        deepseek["clis"]["deepseek"] = json!({"models": {"deepseek-flash": {"effort": "max"}}});
+        deepseek["modes"]["task"]["deepseek"] = json!({"models": ["deepseek-flash"]});
+        validate(&deepseek).unwrap();
         for key in ["version", "clis", "modes"] {
             let mut missing = empty();
             missing.as_object_mut().unwrap().remove(key);

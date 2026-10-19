@@ -53,8 +53,8 @@ if (location.protocol === "file:") {
   document.head.appendChild(link);
 }
 
-// 6 supported CLI providers
-const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi"];
+// 7 supported CLI providers
+const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek"];
 const PROVIDER_NAMES = {
   codex: "Codex CLI",
   claude: "Claude Code",
@@ -62,12 +62,14 @@ const PROVIDER_NAMES = {
   grok: "Grok CLI",
   antigravity: "Antigravity CLI",
   pi: "Pi Coding Agent",
+  deepseek: "DeepSeek Harness",
 };
 const SOURCE_LABELS = {
   "codex-cache": "Codex 缓存",
   command: "命令输出",
   help: "帮助信息",
   aliases: "别名配置",
+  catalog: "内置目录",
   none: "未检测到",
 };
 

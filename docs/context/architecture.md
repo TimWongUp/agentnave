@@ -142,7 +142,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 托盘设置使用独立 `/settings/` 页面，与 `/manage/` 在主窗口互相可达，入口为托盘右键“设置…”。托盘是数据根下 `members.json`（版本 1，结构见服务端组员合同）的唯一写入方（[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）。`GET /settings/members` 返回文档、错误、是否刚完成迁移、跳过的旧档案与各 CLI 探测结果；文件损坏时返回空文档与原因，页面禁止保存。首次读取时若只有 `profiles.json`，把每条档案迁移为共享模型配置（不创建 `modes`，两种模式保持不受限，但被迁移模型此后调用时开始套用其默认 effort 与参数；权限类参数不迁移，与无模型、重复的档案一起列入 `migration_skipped`；不改变已有宿主 MCP 配置），写入后把旧文件改名为 `profiles.json.migrated`。这是 GET 不写文件的唯一例外，以互斥锁串行化。`POST /app/members` 要求 `X-AgentNave-Action: 1`，只做与服务端一致的结构与引用校验（顶层 `version`、`clis`、`modes` 以及各 CLI 与模式条目的 `models` 必填，未知键或字段、引用未配置的模型、默认模型不在允许列表、默认 effort 不在允许档位；覆盖的模型只需已配置；另拒绝空白模型 ID），不做 Provider 语义校验（由服务的 `list_members` 负责，服务无配置写入工具）；通过同目录唯一临时文件写入、sync 与 rename 原子替换，失败清理临时文件并保留原目标；不会触碰会话文件。整份文件保存，并发编辑最后写入者生效。
 
-探测覆盖六个 Provider：可执行文件查找与 Python Adapter 相同；Codex 读取 `models_cache.json` 的可见模型及各模型的努力档位，Grok、Antigravity、Pi 运行各自的列举命令，CodeBuddy 解析 `--help` 中 `--model` 的支持列表，Claude 只给出别名。命令以空 stdin、系统临时目录为 cwd、补齐 PATH（同上顺序）并行运行，各在独立进程组中运行、15 秒超时后整组终止，不发起模型调用；结果缓存在内存，`?refresh=1` 重新探测。保持自定义协议、IPC 与 CSP 的既有边界，共享浏览器看板不增加设置或写入接口。
+探测覆盖七个 Provider：可执行文件查找与 Python Adapter 相同；Codex 读取 `models_cache.json` 的可见模型及各模型的努力档位，Grok、Antigravity、Pi 运行各自的列举命令，CodeBuddy 解析 `--help` 中 `--model` 的支持列表，Claude 只给出别名，DeepSeek（dsh 无列举命令）给出发行版内置目录 `deepseek-flash`、`deepseek-v4-pro`。命令以空 stdin、系统临时目录为 cwd、补齐 PATH（同上顺序）并行运行，各在独立进程组中运行、15 秒超时后整组终止，不发起模型调用；结果缓存在内存，`?refresh=1` 重新探测。保持自定义协议、IPC 与 CSP 的既有边界，共享浏览器看板不增加设置或写入接口。
 
 ## 托盘宿主接入
 
