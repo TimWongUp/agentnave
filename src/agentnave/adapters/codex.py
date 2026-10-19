@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 
@@ -86,7 +87,7 @@ def _capture_rpc_line(line: bytes) -> bytes:
 def _require_rpc_version(executable: str) -> None:
     try:
         version = subprocess.run(
-            (executable, "--version"),
+            (shutil.which(executable) or executable, "--version"),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,

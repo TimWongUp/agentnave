@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 from typing import cast
@@ -30,7 +31,7 @@ def _require_stream_version(executable: str, provider: str) -> None:
     minimum = (2, 1, 295) if provider == "claude" else (2, 142, 0)
     try:
         result = subprocess.run(
-            (executable, "--version"),
+            (shutil.which(executable) or executable, "--version"),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
