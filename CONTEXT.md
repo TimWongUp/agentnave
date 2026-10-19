@@ -32,7 +32,7 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 工位（Desk）
 
-工作区内的常驻成员，身份为 `(provider, model, role)`；`role` 可选，由主控在 `start_agent` 与席位上传入，仅在同一 CLI 与模型需要分身时使用。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」。换 CLI、模型或角色即为另一工位，各自保留历史；工位在工作区内常驻。
+工作区内的常驻成员，身份为 `(provider, model, role)`；`role` 可选，由主控在 `start_agent` 与席位上传入，仅在同一 CLI 与模型需要分身时使用。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」。换 CLI、模型或角色即为另一工位，各自保留历史；工位在工作区内常驻。工位可声明访问等级 `read`／`write`，以第一次声明为准、不可转换；它是约定，不改变 CLI 原生权限。不同等级的工作改用另一个角色，靠转发或会议传递信息。
 
 ## 模式（Mode）
 

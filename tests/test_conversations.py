@@ -612,7 +612,7 @@ async def test_resume_uses_latest_binding_when_old_archived_history_duplicates_s
         path.write_text(json.dumps(legacy))
     studio = Conversations(InvocationManager(), data_root)
     try:
-        invocation, conversation, _ = studio.start_task(
+        invocation, conversation, *_ = studio.start_task(
             InvocationRequest("claude", "continue", tmp_path, "shared-session"), None, None
         )
         assert conversation == "999-new"
@@ -750,7 +750,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         save(record)
 
     try:
-        invocation_id, conversation_id, _ = first.start_task(
+        invocation_id, conversation_id, *_ = first.start_task(
             InvocationRequest("claude", "one", tmp_path), "Job", None
         )
         record = first.records[conversation_id]
@@ -761,7 +761,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         assert result is not None and result.session_id
         assert terminal_saves == 1 and record.lock is None
         second.update(conversation_id, "renamed elsewhere")
-        resumed, saved_id, _ = second.start_task(
+        resumed, saved_id, *_ = second.start_task(
             InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
         )
         assert saved_id == conversation_id
@@ -769,7 +769,7 @@ async def test_task_lock_covers_terminal_save_and_reloads_other_hosts(
         await asyncio.gather(*second.collectors)
         assert second.records[conversation_id].lock is None
         monkeypatch.setattr(Record, "save", save)
-        third, saved_id, _ = first.start_task(
+        third, saved_id, *_ = first.start_task(
             InvocationRequest("claude", "three", tmp_path, result.session_id),
             None,
             conversation_id,
@@ -1052,7 +1052,7 @@ async def test_group_and_task_resumes_share_one_session_guard(
         await studio.wait(first.id, 3)
         session_id = first.group.states["a"].session_id
         assert first.finished and session_id
-        task_id, task_conversation, _ = studio.start_task(
+        task_id, task_conversation, *_ = studio.start_task(
             InvocationRequest(
                 "claude", "Private instruction for you only:\nSLEEP", tmp_path, session_id
             ),
@@ -1087,7 +1087,7 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     studio = Conversations(InvocationManager(), data_root)
-    invocation_id, conversation_id, _ = studio.start_task(
+    invocation_id, conversation_id, *_ = studio.start_task(
         InvocationRequest("claude", "one", tmp_path), "Job", None
     )
     replace = os.replace
@@ -1101,7 +1101,7 @@ async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     monkeypatch.setattr(os, "replace", replace)
     result = await studio.manager.wait(invocation_id)
     assert result is not None and result.session_id
-    resumed, resumed_conversation, _ = studio.start_task(
+    resumed, resumed_conversation, *_ = studio.start_task(
         InvocationRequest("claude", "two", tmp_path, result.session_id), None, None
     )
     assert resumed_conversation == conversation_id
@@ -1117,7 +1117,7 @@ async def test_close_retries_a_task_after_its_terminal_save_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     studio = Conversations(InvocationManager(), data_root)
-    invocation_id, conversation_id, _ = studio.start_task(
+    invocation_id, conversation_id, *_ = studio.start_task(
         InvocationRequest("claude", "one", tmp_path), "Job", None
     )
     replace = os.replace
@@ -1595,7 +1595,7 @@ async def main():
     studio = Conversations(InvocationManager(), Path(sys.argv[1]))
     try:
         try:
-            invocation, _, _ = studio.start_task(
+            invocation, _, *_ = studio.start_task(
                 InvocationRequest('claude', 'check', Path(sys.argv[2]), 'shared-native'),
                 None, None, manager_session_id='chat-b')
         except ValueError as exc:
@@ -1645,7 +1645,7 @@ asyncio.run(main())
 
     monkeypatch.setattr(Record, "save", before_running_is_saved)
     try:
-        invocation, _, _ = studio.start_task(
+        invocation, _, *_ = studio.start_task(
             InvocationRequest("claude", "check", tmp_path, "shared-native"),
             None,
             None,
@@ -1840,6 +1840,76 @@ async def test_start_agent_continues_the_desk_recent_private_thread(
         other_model = await start(client, role="reviewer", provider_options={"model": "other"})
         assert other_model["resumed"] is False
         assert other_model["conversation_id"] != first["conversation_id"]
+
+
+@pytest.mark.asyncio
+async def test_desk_access_is_declared_once_and_never_converted(
+    tmp_path: Path, data_root: Path
+) -> None:
+    def task(**extra: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "provider": "claude",
+            "prompt": "one",
+            "cwd": str(tmp_path),
+            "manager_session_id": "chat-a",
+        }
+        return {**base, **extra}
+
+    async with Client(mcp) as client:
+        explorer = await _call(client, "start_agent", task(role="explore", access="read"))
+        assert explorer["access"] == "read"
+        ended = await _call(client, "wait_agent", {"invocation_id": explorer["invocation_id"]})
+        inherited = await _call(client, "start_agent", task(role="explore"))
+        assert inherited["access"] == "read" and inherited["resumed"] is True
+        await _call(client, "wait_agent", {"invocation_id": inherited["invocation_id"]})
+        converted = await client.call_tool("start_agent", task(role="explore", access="write"))
+        assert converted.is_error and "another role" in str(converted.content)
+        # The explorer's native thread cannot be taken over by a writing desk either.
+        taken = await client.call_tool(
+            "start_agent", task(role="build", access="write", session_id=str(ended["session_id"]))
+        )
+        assert taken.is_error and "another role" in str(taken.content)
+        builder = await _call(client, "start_agent", task(role="build", access="write"))
+        assert builder["access"] == "write"
+        await _call(client, "wait_agent", {"invocation_id": builder["invocation_id"]})
+        seats = {"title": "Talk", "cwd": str(tmp_path), "manager_session_id": "chat-a"}
+        rejected = await client.call_tool(
+            "open_group",
+            {
+                **seats,
+                "seats": [
+                    {"id": "a", "provider": "claude", "role": "explore", "access": "write"},
+                    {"id": "b", "provider": "claude"},
+                ],
+            },
+        )
+        assert rejected.is_error and "another role" in str(rejected.content)
+        clash = await client.call_tool(
+            "open_group",
+            {
+                **seats,
+                "seats": [
+                    {"id": "a", "provider": "claude", "role": "new", "access": "read"},
+                    {"id": "b", "provider": "claude", "role": "new", "access": "write"},
+                ],
+            },
+        )
+        assert clash.is_error and "another role" in str(clash.content)
+        show = await _call(
+            client,
+            "open_group",
+            {
+                **seats,
+                "seats": [
+                    {"id": "a", "provider": "claude", "role": "explore"},
+                    {"id": "b", "provider": "claude", "role": "build"},
+                ],
+            },
+        )
+        assert [seat["access"] for seat in _seats(show)] == ["read", "write"]
+        directory = data_root / "conversations" / str(show["group_id"])
+        projected = json.loads((directory / "views.json").read_text(encoding="utf-8"))
+        assert [seat["access"] for seat in projected["director"]["seats"]] == ["read", "write"]
 
 
 @pytest.mark.asyncio

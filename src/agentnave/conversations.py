@@ -53,6 +53,7 @@ from agentnave.store import (
 )
 
 type Decision = Literal["publish", "discard"]
+type Access = Literal["read", "write"]
 
 _ROLE_MAX_LENGTH = 40
 
@@ -71,15 +72,32 @@ def normalize_role(role: str | None) -> str | None:
     return cleaned
 
 
+def normalize_access(access: str | None) -> Access | None:
+    """A declared desk access tier; AgentNave records it but does not enforce it."""
+    if access is None:
+        return None
+    if access not in ("read", "write"):
+        raise ValueError("access must be read or write")
+    return access
+
+
 class TaskStart(NamedTuple):
     """A started task and whether it continued this desk's most recent private thread."""
 
     invocation_id: str
     conversation_id: str
     resumed: bool = False
+    access: str | None = None  # the desk's declared tier
 
 
 _MAX_FORWARD = 20
+
+
+def _conversion_error(fixed: str, wanted: str | None) -> str:
+    return (
+        f"This desk is declared {fixed} access and cannot take {wanted} work; use another role "
+        "and pass what it found with forward or a meeting instead of converting it"
+    )
 
 
 class ForwardError(ValueError):
@@ -345,6 +363,17 @@ class Conversations(Groups):
     ) -> Record:
         manager_session = self._manager_session(manager_session_id)
         seats = [replace(seat, role=normalize_role(seat.role)) for seat in seats]
+        settled: dict[tuple[str, str | None, str | None], Access | None] = {}
+        for index, seat in enumerate(seats):
+            model = seat.provider_options.get("model")
+            desk = (seat.provider, None if model is None else str(model), seat.role)
+            declared = normalize_access(seat.access)
+            earlier = settled.get(desk)
+            if earlier is not None and declared not in (None, earlier):
+                raise ValueError(_conversion_error(earlier, declared))
+            access = self._effective_access(manager_session, *desk, declared or earlier)
+            settled[desk] = access
+            seats[index] = replace(seat, access=access)
         conversation_id = uuid4().hex
         directory = self._directory(conversation_id)
         if isolated:
@@ -357,6 +386,7 @@ class Conversations(Groups):
                     {**seat.provider_options, "restricted_tools": True},
                     directory / "seats" / seat.id,
                     seat.role,
+                    seat.access,
                 )
                 for seat in seats
             ]
@@ -384,6 +414,7 @@ class Conversations(Groups):
                         provider_options=dict(seat.provider_options),
                         cwd=str(seat.cwd),
                         role=seat.role,
+                        access=normalize_access(seat.access),
                     )
                     for seat in group.seats.values()
                 ],
@@ -414,6 +445,7 @@ class Conversations(Groups):
                         dict(seat.provider_options),
                         Path(seat.cwd),
                         seat.role,
+                        seat.access,
                     )
                     for seat in state.seats
                 },
@@ -709,6 +741,69 @@ class Conversations(Groups):
 
     # Tasks
 
+    def _desk_access(
+        self, manager_session: str, provider: str, model: str | None, role: str | None
+    ) -> Access | None:
+        """The access tier this desk first declared in the workspace, if any."""
+        self.scan()  # Include records another server saved.
+        declared: list[tuple[str, Access]] = []
+        for record in self.records.values():
+            if record.state.manager_session != manager_session:
+                continue
+            for task in record.state.tasks:
+                if (
+                    task.access is not None
+                    and task.provider == provider
+                    and (task.model or None) == model
+                    and task.role == role
+                ):
+                    declared.append((task.time, task.access))
+            for seat in record.state.seats:
+                seat_model = seat.provider_options.get("model")
+                if (
+                    seat.access is not None
+                    and seat.provider == provider
+                    and (None if seat_model is None else str(seat_model)) == model
+                    and seat.role == role
+                ):
+                    declared.append((record.state.created, seat.access))
+        return min(declared)[1] if declared else None
+
+    def _effective_access(
+        self,
+        manager_session: str | None,
+        provider: str,
+        model: str | None,
+        role: str | None,
+        access: Access | None,
+    ) -> Access | None:
+        """A desk keeps its first declared tier; a different declaration needs another role."""
+        if manager_session is None:
+            return access  # Without a workspace there is no desk to keep consistent.
+        fixed = self._desk_access(manager_session, provider, model, role)
+        if fixed is None:
+            return access
+        if access is not None and access != fixed:
+            raise ValueError(_conversion_error(fixed, access))
+        return fixed
+
+    def _thread_access(
+        self, manager_session: str | None, provider: str, session_id: str
+    ) -> Access | None:
+        """The tier last recorded for one native private thread in this workspace."""
+        recorded: list[tuple[str, Access]] = []
+        for record in self.records.values():
+            if record.state.kind != "task" or record.state.manager_session != manager_session:
+                continue
+            for task in record.state.tasks:
+                if (
+                    task.access is not None
+                    and task.provider == provider
+                    and task.session_id == session_id
+                ):
+                    recorded.append((task.time, task.access))
+        return max(recorded)[1] if recorded else None
+
     def _recent_task_thread(
         self, request: InvocationRequest, manager_session: str, role: str | None
     ) -> TaskRecord | None:
@@ -741,8 +836,10 @@ class Conversations(Groups):
         role: str | None = None,
         new_thread: bool = False,
         forward: list[str] | None = None,
+        access: str | None = None,
     ) -> TaskStart:
         role = normalize_role(role)
+        declared = normalize_access(access)
         if new_thread and (request.session_id is not None or conversation_id is not None):
             raise ValueError(
                 "new_thread=true cannot be combined with session_id or conversation_id"
@@ -766,6 +863,20 @@ class Conversations(Groups):
                     )
                 request = replace(request, session_id=recent.session_id)
                 resumed = True
+        model = request.provider_options.get("model")
+        effective = self._effective_access(
+            manager_session,
+            request.provider,
+            None if model is None else str(model),
+            role,
+            declared,
+        )
+        if request.session_id is not None:
+            # An explicit native thread keeps the tier it was declared with.
+            thread = self._thread_access(manager_session, request.provider, request.session_id)
+            if thread is not None and effective is not None and thread != effective:
+                raise ValueError(_conversion_error(thread, effective))
+            effective = effective or thread
         self.manager.check_start(request)
         if conversation_id:
             self.record(conversation_id)  # Reject missing history before creating startup metadata.
@@ -861,6 +972,7 @@ class Conversations(Groups):
                 session_id=request.session_id,
                 time=now(),
                 role=role,
+                access=effective,
                 forward=[item.message_id for item in forwarded],
             )
             record.state.tasks.append(task)
@@ -880,7 +992,7 @@ class Conversations(Groups):
             self.collectors.append(
                 asyncio.create_task(self._collect(record, task.id, invocation_id))
             )
-            return TaskStart(invocation_id, record.state.id, resumed)
+            return TaskStart(invocation_id, record.state.id, resumed, effective)
         finally:
             try:
                 if not started:
