@@ -504,7 +504,7 @@ function createDesk(d) {
     only: h(
       "span.tag.tag-only",
       { hidden: true, title: "与 boss 的宿主同类，只参加会议，不接受私聊" },
-      "只能开会",
+      "仅开会",
     ),
     st: h("div.st"),
   };
