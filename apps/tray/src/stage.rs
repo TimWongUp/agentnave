@@ -965,17 +965,18 @@ impl Group {
                 seat["handle"] = json!(handle);
             }
         }
-        let prompts: BTreeMap<_, _> = self
+        // The round's task comes first; a host remark posted after the round shares its number
+        // and must not take over as the prompt the answers reply to.
+        let mut prompts = BTreeMap::new();
+        for m in self
             .messages
             .iter()
             .filter(|m| m["kind"] == "prompt" && m["thread"]["kind"] == "room")
-            .map(|m| {
-                (
-                    (text(m, "conversation").to_owned(), m["round"].to_string()),
-                    m["id"].clone(),
-                )
-            })
-            .collect();
+        {
+            prompts
+                .entry((text(m, "conversation").to_owned(), m["round"].to_string()))
+                .or_insert_with(|| m["id"].clone());
+        }
         for msg in self
             .messages
             .iter_mut()
@@ -1729,12 +1730,11 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
 /// agent worktree such as `<repo>/.claude/worktrees/<name>`.
 fn project_name(cwd: &str) -> Option<String> {
     let parts: Vec<&str> = cwd.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
-    let end = parts
-        .iter()
-        .rposition(|p| *p == "worktrees")
-        .filter(|&i| i >= 2 && parts[i - 1].starts_with('.'))
-        .map_or(parts.len(), |i| i - 1);
-    parts[..end].last().map(|p| (*p).to_owned())
+    match parts.as_slice() {
+        [.., repo, dot, "worktrees", _] if dot.starts_with('.') => Some((*repo).to_owned()),
+        [.., last] => Some((*last).to_owned()),
+        [] => None,
+    }
 }
 
 #[cfg(test)]
@@ -1747,6 +1747,10 @@ mod tests {
         );
         assert_eq!(
             super::project_name("/Users/a/Code/app/.claude/worktrees/fix-1").as_deref(),
+            Some("app")
+        );
+        assert_eq!(
+            super::project_name("/Users/a/.codex/worktrees/ab12/app").as_deref(),
             Some("app")
         );
         assert_eq!(super::project_name("/"), None);

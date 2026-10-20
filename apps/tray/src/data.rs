@@ -1784,6 +1784,8 @@ mod tests {
         assert_eq!(stage["managers"][0]["threads"], chat["threads"]);
         show["director"]["round"]["seats"][0]["review"] = json!("publish");
         show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "answer", "speaker": "a", "round": 1, "text": "answer", "reported_model": "claude-opus-5-5", "time": "2099-01-01T00:00:01Z"}));
+        // A host remark after the round shares its number but is not what the answer replies to.
+        show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "host", "speaker": "@host", "round": 1, "text": "remark", "time": "2099-01-01T00:00:02Z"}));
         save(dir.path(), &show);
         let published = state(&reader, &path);
         let answer2 = published["messages"]

@@ -121,12 +121,12 @@ def _lines_from_end(
                 if oversized:
                     oversized = False  # this part ends the line that was too long
                     continue
-                if part:
+                if part and len(part) <= longest:
                     yield part
             if len(tail) > longest:
                 tail = b""
                 oversized = True
-        if tail and not oversized and position == 0:
+        if tail and not oversized and position == 0 and len(tail) <= longest:
             yield tail
 
 
