@@ -90,7 +90,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 ## 协作组
 
-取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 登记 2–6 个席位并保存会话，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options；宿主排除项不约束席位。席位可带 `role`，与 provider、model 一起对应工位，`seat id` 只是组内键，回执回显各席 `role`。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
+取舍见 [ADR-0006](../adr/0006-core-rounds-and-studio-split.md)。`open_group` 登记 2–7 个席位并保存会话，席位与 `start_agent` 同一合同：原生工具与权限、组级或席位级 cwd、显式 Provider Options；宿主排除项不约束席位。席位可带 `role`，与 provider、model 一起对应工位，`seat id` 只是组内键，回执回显各席 `role`。校验只调用 Adapter 的 `prepare` 并立即清理其临时文件，不启动进程。
 
 `run_round` 非阻塞地运行一轮：本轮共同任务先作为 `task` 条目提交；`parallel` 同步启动全部席位，在全部终态后按名单一次提交；`serial` 逐席启动、逐席提交，后席能看到前席。同组同一时间只有一个轮次。终态 succeeded 提交最终输出为 `answer`，failed、blocked、cancelled 提交 `absent`；运行中的阻塞提醒不提交。不重试、不设每席超时、不摘要或截断。
 

@@ -217,6 +217,18 @@ def _director(
         for seat in round_.seats
         if seat.review == "discard" and seat.output is not None
     ]
+    # Private instructions go to one seat only; the director view shows them to the boss.
+    data["instructions"] = [
+        {
+            "round": round_.number,
+            "seat_id": seat.seat_id,
+            "text": seat.instruction,
+            "time": round_times.get(round_.number, state.created),
+        }
+        for round_ in state.rounds
+        for seat in round_.seats
+        if seat.instruction
+    ]
     data.update(
         {
             "public_url": public_url,

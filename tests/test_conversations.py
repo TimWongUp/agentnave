@@ -1237,12 +1237,22 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
                         output="",
                         reported_model="native-model",
                     ),
-                    SeatRunRecord(seat_id="b", status="succeeded", review="discard", output=None),
+                    SeatRunRecord(
+                        seat_id="b",
+                        status="succeeded",
+                        review="discard",
+                        output=None,
+                        instruction="只看边界",
+                    ),
                 ],
             )
         ],
     )
     projected = views.snapshot(state, "")
+    assert _data(projected["director"])["instructions"] == [
+        {"round": 1, "seat_id": "b", "text": "只看边界", "time": state.created}
+    ]
+    assert "instructions" not in _data(projected["public"])
     private = _data(projected["director"])["private_messages"]
     assert private == [
         {

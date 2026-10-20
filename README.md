@@ -87,7 +87,7 @@ or history listing. There is no separate core/studio mode.
 
 ## Group rounds
 
-`open_group(title, seats, cwd)` registers 2–6 seats and saves a conversation. A seat is an ordinary subagent: native tools and
+`open_group(title, seats, cwd)` registers 2–7 seats and saves a conversation. A seat is an ordinary subagent: native tools and
 permissions, the group or its own `cwd`, and explicit provider options. `run_round` asks an ordered
 list of seats to answer one shared task once:
 

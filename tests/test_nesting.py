@@ -39,6 +39,9 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     path.write_text(
         turn("old-model", "2026-01-01T00:00:00Z")
         + turn("current-model", "2026-01-01T01:00:00Z")
+        # Generated images make single transcript lines larger than the line limit.
+        + json.dumps({"type": "event_msg", "image": "x" * 3_000_000})
+        + "\n"
         + turn("future-model", "2999-01-01T00:00:00Z")
         + '{"partial":'
     )
