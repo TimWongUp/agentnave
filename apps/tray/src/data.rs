@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 /// Studio rewrites live files every 1.5s; older ones were left by a server that crashed.
 const LIVE_FRESH: Duration = Duration::from_secs(10);
 const VERSION: u64 = 1;
+include!(concat!(env!("OUT_DIR"), "/office_art.rs"));
 
 /// The dashboard front end has one source, shared with the browser view.
 macro_rules! asset {
@@ -69,14 +70,21 @@ pub struct Overview {
     pub items: Vec<Item>,
     pub unavailable: Vec<(String, String)>,
     pub missing: bool,
+    pub running: usize,
+    pub review: usize,
 }
 
 impl Overview {
     pub fn count(&self, status: &str) -> usize {
-        self.items
-            .iter()
-            .filter(|item| item.status == status)
-            .count()
+        match status {
+            "running" => self.running,
+            "review" => self.review,
+            _ => self
+                .items
+                .iter()
+                .filter(|item| item.status == status)
+                .count(),
+        }
     }
 }
 
@@ -84,11 +92,13 @@ pub struct Response {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+    pub cache_control: &'static str,
 }
 
 impl Response {
     fn ok(content_type: &'static str, body: Vec<u8>) -> Self {
         Self {
+            cache_control: "no-store",
             status: 200,
             content_type,
             body,
@@ -104,6 +114,7 @@ impl Response {
 
     fn not_found() -> Self {
         Self {
+            cache_control: "no-store",
             status: 404,
             content_type: "text/plain; charset=utf-8",
             body: b"not found".to_vec(),
@@ -385,11 +396,35 @@ impl Reader {
         items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
         overview.items = items.into_iter().map(|(_, item)| item).collect();
         overview.unavailable.sort();
+        for snapshot in &snapshots {
+            let (running, review) = call_counts(snapshot);
+            overview.running += running;
+            overview.review += review;
+        }
         (overview, snapshots)
     }
 
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
+        if let Some(name) = path.strip_prefix("/art/") {
+            if name.contains("..") {
+                return Response::not_found();
+            }
+            return match ART.iter().find(|(key, _)| *key == name) {
+                Some((_, bytes)) => {
+                    let mime = match name.rsplit('.').next() {
+                        Some("webp") => "image/webp",
+                        Some("svg") => "image/svg+xml",
+                        Some("png") => "image/png",
+                        _ => "application/octet-stream",
+                    };
+                    let mut response = Response::ok(mime, bytes.to_vec());
+                    response.cache_control = "public, max-age=31536000";
+                    response
+                }
+                None => Response::not_found(),
+            };
+        }
         if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
             return crate::stage::respond(path, self.scan().1, self.root.is_dir());
         }
@@ -527,6 +562,23 @@ pub(crate) fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// Count actual invocations, never conversations or merged desk identities.
+pub(crate) fn call_counts(snapshot: &Snapshot) -> (usize, usize) {
+    let view = &snapshot.view["director"];
+    let tasks = view["tasks"].as_array().into_iter().flatten();
+    let seats = view["round"]["seats"].as_array().into_iter().flatten();
+    let mut running = 0;
+    let mut review = 0;
+    for call in tasks.chain(seats) {
+        if call["review"] == "pending" || call["status"] == "review" {
+            review += 1;
+        } else if call["status"] == "running" {
+            running += 1;
+        }
+    }
+    (running, review)
+}
+
 /// A versioned snapshot document, or None when missing, unreadable or of another version.
 fn read_json(path: &Path) -> Option<Value> {
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
@@ -558,7 +610,7 @@ mod tests {
         json!({
             "version": 1,
             "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "status": status, "updated": "2026-10-15T00:00:00+00:00"},
-            "director": {"view": "director", "mode": "show", "status": status, "messages": [{"text": "hi"}]},
+            "director": {"view": "director", "mode": "show", "status": status, "round": {"seats": [{"seat_id": "a", "status": if status == "review" { "succeeded" } else { status }, "review": if status == "review" { "pending" } else { "none" }}]}, "messages": [{"text": "hi"}]},
             "public": {"view": "public", "mode": "show", "messages": [{"text": "hi"}]},
         })
     }
@@ -748,7 +800,8 @@ mod tests {
             &task_snapshot("z", "succeeded", "2026-10-15T02:00:01.000001Z"),
         );
         // A different offset still denotes a newer activity than z, even within the same millisecond.
-        let newer = task_snapshot("b", "blocked", "2026-10-15T10:00:01.000002+08:00");
+        let mut newer = task_snapshot("b", "blocked", "2026-10-15T10:00:01.000002+08:00");
+        newer["director"]["cwd"] = json!("/work/newer-project");
         save(root, &newer);
         let mut legacy = task_snapshot("legacy", "succeeded", "2026-10-15T00:00:00Z");
         legacy["summary"]["manager_session"] = Value::Null;
@@ -762,7 +815,8 @@ mod tests {
         assert_eq!(groups["groups"].as_array().unwrap().len(), 2);
         assert_eq!(groups["groups"][0]["group"], MANAGER);
         assert_eq!(groups["groups"][0]["conversations"], 2);
-        assert_eq!(groups["groups"][0]["title"], "任务 b");
+        assert_eq!(groups["groups"][0]["title"], "newer-project");
+        assert_eq!(groups["groups"][0]["project"], "newer-project");
         assert_eq!(groups["groups"][0]["label"], "Claude Code");
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
         assert_eq!(chat["members"].as_array().unwrap().len(), 1);
@@ -771,8 +825,12 @@ mod tests {
         assert_eq!(chat["conversations"][0]["id"], "z");
         let legacy = state(&reader, "/app/chats/c-legacy");
         assert_eq!(legacy["host"], Value::Null);
-        assert_eq!(legacy["label"], "未记录主控");
+        assert_eq!(legacy["label"], "未记录 boss");
         assert_eq!(legacy["members"][0]["key"], "codex/");
+        assert_eq!(legacy["desks"][0]["label"], "默认模型 · Codex");
+        assert_eq!(legacy["desks"][0]["handle"], "@默认模型·Codex");
+        assert_eq!(legacy["desks"][0]["model_source"], "unknown");
+        assert_eq!(legacy["project"], Value::Null);
         assert_eq!(legacy["members"][0]["line"], "结果");
         assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
         assert!(legacy["color"].as_u64().unwrap() < 8);
@@ -889,7 +947,7 @@ mod tests {
         let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
         assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
         assert_eq!(prompts[0]["speaker"]["model_source"], "native");
-        assert_eq!(prompts[0]["to"], json!(["claude/m", "claude/m"]));
+        assert_eq!(prompts[0]["to"], json!([{"key": "@all", "handle": "@all"}]));
         assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
         assert_ne!(
             prompts[0]["recipients"][0]["focus"],
@@ -915,12 +973,12 @@ mod tests {
         assert!(
             messages
                 .iter()
-                .any(|m| m["kind"] == "notice" && m["text"] == "待审核，请在主控中决定")
+                .any(|m| m["kind"] == "reply" && m["text"] == "待审核私密回答")
         );
-        assert!(!messages.iter().any(|m| m["text"] == "待审核私密回答"));
+        assert!(messages.iter().any(|m| m["text"] == "待审核私密回答"));
         let review_notice = messages
             .iter()
-            .find(|m| m["text"] == "待审核，请在主控中决定")
+            .find(|m| m["text"] == "待审核私密回答")
             .unwrap();
         assert_eq!(review_notice["status"], "review");
         assert_eq!(review_notice["focus"], prompts[0]["recipients"][0]["focus"]);
@@ -929,7 +987,7 @@ mod tests {
         let members = chat["members"].as_array().unwrap();
         assert_eq!(
             members.iter().find(|m| m["key"] == "claude/m").unwrap()["line"],
-            "待审核：请在主控中决定"
+            "待审核：请在 boss 中决定"
         );
         assert_eq!(
             members.iter().find(|m| m["key"] == "codex/m").unwrap()["line"],
@@ -1274,8 +1332,8 @@ mod tests {
                 .map(|m| m["id"].as_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "show:entry:0",
-                "show:entry:1",
+                "show:round:1:z:result",
+                "show:round:1:a:result",
                 "show:entry:2",
                 "task:task:t-task:prompt",
                 "task:task:t-task:result",
@@ -1311,7 +1369,7 @@ mod tests {
         save(dir.path(), &other);
         let reader = Reader::new(dir.path().to_path_buf());
         let stage = state(&reader, "/app/stage");
-        assert_eq!(stage["counts"], json!({"running": 2, "review": 1}));
+        assert_eq!(stage["counts"], json!({"running": 3, "review": 1}));
         assert_eq!(stage["empty"], Value::Null);
         let managers = stage["managers"].as_array().unwrap();
         assert_eq!(managers.len(), 2);
@@ -1510,8 +1568,8 @@ mod tests {
         assert_eq!(
             rooms[0]["seats"],
             json!([
-                {"seat": "a", "desk": "claude|m|reviewer"},
-                {"seat": "b", "desk": "codex|m|"}
+                {"seat": "a", "desk": "claude|m|reviewer", "handle": "@m·Claude Code·reviewer"},
+                {"seat": "b", "desk": "codex|m|", "handle": "@m·Codex"}
             ])
         );
         assert_eq!(rooms[1]["id"], "newer");
@@ -1585,13 +1643,14 @@ mod tests {
             forward["forward"],
             json!({"message_id": "task:t:t-task", "source": "房间 · 工位 · 时间"})
         );
-        assert_eq!(forward["speaker"]["label"], "主控转发");
+        assert_eq!(forward["speaker"]["label"], "boss 转发");
         let absent = by_id("show:entry:2");
         assert_eq!(absent["visibility"], "public");
         assert_eq!(absent["message_id"], "show:e:2");
         assert_eq!(absent["desk"], "codex|m|");
         let private = by_id("show:round:1:a:private");
         assert_eq!(private["visibility"], "private");
+        assert_eq!(private["discarded"], true);
         assert_eq!(private["message_id"], Value::Null);
         let typing = messages.iter().find(|m| m["kind"] == "typing").unwrap();
         assert_eq!(typing["desk"], "claude|m|reviewer");
@@ -1646,5 +1705,163 @@ mod tests {
             .unwrap();
         assert_eq!(prompt["message_id"], Value::Null);
         assert_eq!(prompt["thread"], json!({"kind": "desk", "key": "codex|m|"}));
+    }
+    #[test]
+    fn office_resources_are_embedded_cached_and_reject_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let reader = Reader::new(dir.path().to_path_buf());
+        assert_eq!(reader.request("GET", "/art/../x", None, &[]).status, 404);
+        assert_eq!(reader.respond("/art/missing.webp").status, 404);
+        if let Some((name, bytes)) = ART.first() {
+            let response = reader.request("GET", &format!("/art/{name}"), None, &[]);
+            assert_eq!(response.status, 200);
+            assert_eq!(&response.body, bytes);
+            assert_eq!(response.cache_control, "public, max-age=31536000");
+            assert!(response.content_type.starts_with("image/"));
+        }
+    }
+
+    #[test]
+    fn office_messages_keep_identity_routes_and_review_id_when_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let reader = Reader::new(dir.path().to_path_buf());
+        let mut show = office_show("show", "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z");
+        show["director"]["cwd"] = json!("/work/project-name");
+        show["director"]["seats"][0]["model"] = json!("");
+        show["director"]["seats"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "c", "provider": "claude", "model": "", "role": "reviewer"}));
+        // The old recipient model is native and its role is absent. Identity comes from seats.
+        show["director"]["messages"] = json!([{"kind": "task", "round": 1, "text": "body @boss @all is not routing", "time": "2099-01-01T00:00:00Z", "recipients": [{"seat": "a", "provider": "claude", "model": "native"}]}]);
+        show["director"]["round"] = json!({"number": 1, "order": "serial", "status": "review", "seats": [
+            {"seat_id": "a", "status": "succeeded", "review": "pending", "reported_model": "claude-opus-5-5", "output": "answer"},
+            {"seat_id": "c", "status": "not_started"}]});
+        show["director"]["instructions"] =
+            json!([{"round": 1, "seat_id": "a", "text": "secret", "time": "2099-01-01T00:00:00Z"}]);
+        save(dir.path(), &show);
+        let path = format!("/app/chats/{MANAGER}");
+        let chat = state(&reader, &path);
+        assert_eq!(chat["project"], "project-name");
+        assert_eq!(chat["title"], "project-name");
+        let messages = chat["messages"].as_array().unwrap();
+        let prompt = messages.iter().find(|m| m["kind"] == "prompt").unwrap();
+        assert_eq!(prompt["speaker"]["handle"], "@boss");
+        assert_eq!(prompt["to"], json!([{"key": "@all", "handle": "@all"}]));
+        assert_eq!(
+            prompt["answering"],
+            json!([
+                "@claude-opus-5-5·Claude Code·reviewer·席①",
+                "@claude-opus-5-5·Claude Code·reviewer·席②"
+            ])
+        );
+        let instruction = messages
+            .iter()
+            .find(|m| m["kind"] == "instruction")
+            .unwrap();
+        assert_eq!(instruction["visibility"], "private");
+        assert_eq!(instruction["to"][0]["key"], "claude||reviewer");
+        assert_eq!(instruction["to"][0]["handle"], prompt["answering"][0]);
+        let answer = messages.iter().find(|m| m["status"] == "review").unwrap();
+        assert_eq!(answer["text"], "answer");
+        assert_eq!(answer["to"], json!([{"key": "@boss", "handle": "@boss"}]));
+        assert_eq!(answer["reply_to"], prompt["id"]);
+        assert_eq!(answer["speaker"]["handle"], prompt["answering"][0]);
+        let desk = chat["desks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["key"] == "claude||reviewer")
+            .unwrap();
+        assert_eq!(desk["display_model"], "claude-opus-5-5");
+        assert_eq!(desk["model_source"], "native");
+        assert_eq!(
+            chat["rooms"][0]["round"],
+            json!({"number": 1, "order": "serial", "status": "review"})
+        );
+        let stage = state(&reader, "/app/stage");
+        assert_eq!(stage["counts"], json!({"running": 0, "review": 1}));
+        assert_eq!(stage["managers"][0]["threads"], chat["threads"]);
+        show["director"]["round"]["seats"][0]["review"] = json!("publish");
+        show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "answer", "speaker": "a", "round": 1, "text": "answer", "reported_model": "claude-opus-5-5", "time": "2099-01-01T00:00:01Z"}));
+        save(dir.path(), &show);
+        let published = state(&reader, &path);
+        let answer2 = published["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "answer")
+            .unwrap();
+        assert_eq!(answer2["id"], answer["id"]);
+        assert_eq!(answer2["visibility"], "public");
+        assert_eq!(answer2["to"], json!([{"key": "@all", "handle": "@all"}]));
+        assert_eq!(answer2["reply_to"], prompt["id"]);
+    }
+
+    #[test]
+    fn office_counts_activities_and_threads_preserve_concurrent_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        for id in ["one", "two"] {
+            save(
+                dir.path(),
+                &office_show(id, "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z"),
+            );
+        }
+        let mut task = task_snapshot("private", "running", "2099-01-01T00:00:00Z");
+        task["director"]["tasks"][0]["provider"] = json!("claude");
+        task["director"]["tasks"][0]["role"] = json!("reviewer");
+        task["director"]["tasks"][0]["reported_model"] = json!("native-model");
+        save(dir.path(), &task);
+        let reader = Reader::new(dir.path().to_path_buf());
+        assert_eq!(reader.overview().count("running"), 3);
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let desk = chat["desks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["key"] == "claude|m|reviewer")
+            .unwrap();
+        assert_eq!(desk["activities"].as_array().unwrap().len(), 3);
+        let first_meeting = desk["activities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["kind"] == "meeting")
+            .unwrap();
+        assert_eq!(desk["meeting"]["room"], first_meeting["room"]);
+        assert_eq!(desk["model_source"], "requested");
+        assert_eq!(desk["display_model"], "m");
+        assert_eq!(chat["threads"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            state(&reader, "/app/stage")["counts"],
+            json!({"running": 3, "review": 0})
+        );
+    }
+
+    #[test]
+    fn office_timeline_reports_omitted_and_counts_full_threads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = task_snapshot("many", "succeeded", "2099-01-01T00:00:00Z");
+        let call = task["director"]["tasks"][0].clone();
+        task["director"]["tasks"] = json!(
+            (0..151)
+                .map(|i| {
+                    let mut call = call.clone();
+                    call["id"] = json!(i.to_string());
+                    call
+                })
+                .collect::<Vec<_>>()
+        );
+        save(dir.path(), &task);
+        let reader = Reader::new(dir.path().to_path_buf());
+        let path = format!("/app/chats/{MANAGER}");
+        let chat = state(&reader, &path);
+        assert_eq!(chat["omitted"], 2);
+        assert_eq!(chat["messages"].as_array().unwrap().len(), 300);
+        assert_eq!(chat["threads"][0]["count"], 302);
+        assert_eq!(chat["messages"][1]["reply_to"], chat["messages"][0]["id"]);
+        let focused = state(&reader, &format!("{path}/focus/many"));
+        assert_eq!(focused["omitted"], 0);
+        assert_eq!(focused["messages"].as_array().unwrap().len(), 302);
     }
 }

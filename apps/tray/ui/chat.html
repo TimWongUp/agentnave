@@ -28,35 +28,35 @@
     <div class="side-head"><h1>工作区</h1><span id="side-count" class="side-count"></span></div>
     <div class="gl-wrap"><div id="onboard-side" class="ob-slot"></div><div id="list" class="gl"></div></div>
   </aside>
-  <main id="pane" class="chat-main">
-    <header id="head" class="gh" hidden></header>
+  <main id="pane" class="floor-wrap">
+    <header id="head" class="floor-head" hidden></header>
     <div id="office" class="office" hidden>
       <div id="floor" class="floor">
-        <div id="mgr-desk"></div>
-        <div class="zones">
-          <section class="zone" aria-labelledby="desks-title">
-            <h2 class="zone-title" id="desks-title">工位<span id="desks-count" class="zone-count"></span></h2>
-            <div id="desks" class="desks"></div>
-          </section>
-          <section class="zone" aria-labelledby="rooms-title">
-            <h2 class="zone-title" id="rooms-title">会议室<span id="rooms-count" class="zone-count"></span></h2>
-            <div id="rooms" class="rooms"></div>
-          </section>
-        </div>
+        <section id="boss" class="zone boss-zone" aria-label="boss 办公室"></section>
+        <div id="rooms" class="rooms"></div>
+        <section class="zone wide desks-zone" aria-labelledby="desks-title">
+          <h2 class="zone-h" id="desks-title">开放工位<span id="desks-count" class="zone-count"></span><span class="r">点工位或会议室，看它们的对话</span></h2>
+          <div id="desks" class="desks"></div>
+        </section>
         <div id="fx" class="fx" aria-hidden="true"></div>
       </div>
     </div>
     <div id="blank" class="blank" hidden></div>
-    <aside id="drawer" class="drawer" aria-label="消息" hidden>
-      <header class="dr-head">
-        <div class="dr-id"><b id="dr-title" class="dr-title"></b><span id="dr-sub" class="dr-sub"></span></div>
-        <button id="dr-close" class="dr-close" type="button" aria-label="关闭消息面板">×</button>
-      </header>
-      <div id="timeline" class="tl" role="log" aria-label="消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
-      <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
-    </aside>
-    <div id="ro" class="ro" hidden>只读视图 · 待审核的回答请在主控中决定</div>
+    <footer id="ticker" class="ticker" hidden><span class="lbl">动态</span><span id="tick" class="tick"></span></footer>
   </main>
+  <aside id="drawer" class="conv" aria-label="对话" hidden>
+    <header class="conv-head">
+      <span id="dr-ico" class="dr-ico" aria-hidden="true"></span>
+      <div class="dr-id"><b id="dr-title" class="dr-title"></b><span id="dr-sub" class="dr-sub"></span></div>
+      <button id="dr-all" class="dr-all" type="button" hidden>全部消息</button>
+      <button id="dr-close" class="dr-close" type="button" aria-label="关闭对话栏">×</button>
+    </header>
+    <div id="portrait" class="portrait" hidden></div>
+    <p id="dr-note" class="dr-note" hidden></p>
+    <div id="timeline" class="tl" role="log" aria-label="消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
+    <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
+    <div id="ro" class="ro">只读视图 · 派任务和审核都在 boss 里进行</div>
+  </aside>
 </div>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 </body>

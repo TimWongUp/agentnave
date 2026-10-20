@@ -115,7 +115,7 @@ function modelName(seat) {
 }
 function identityNote(seat) {
   const host = seat.provider === "host";
-  return [host ? "主控" : "组员", host ? seat.host : seat.provider].filter(Boolean).join(" · ");
+  return [host ? "boss" : "组员", host ? seat.host : seat.provider].filter(Boolean).join(" · ");
 }
 function castOf(detail) {
   const lastManager = [...(detail.messages || [])].reverse().find((message) => message.speaker === "@host");
@@ -507,7 +507,7 @@ function renderSidebar() {
           {},
           shows.length
             ? "没有匹配的会话"
-            : "还没有会话。在主控 Agent 的对话中开始一档节目或一个任务。",
+            : "还没有会话。在 boss 的对话中开始一档节目或一个任务。",
         )
       : null,
   );
@@ -688,7 +688,7 @@ function renderOverview() {
       h(
         "p",
         {},
-        "在主控 Agent 的对话中说明用途和内容，主控会创建会话，这里自动同步。",
+        "在 boss 的对话中说明用途和内容，boss 会创建会话，这里自动同步。",
       ),
       EXAMPLES.map(([label, text]) =>
         h(
@@ -855,7 +855,7 @@ function renderDesk(detail, cast) {
       "div.empty",
       {},
       h("strong", {}, "还没有开始第一轮"),
-      "主控发起轮次后，各席位的进展会实时出现在这里。",
+      "boss 发起轮次后，各席位的进展会实时出现在这里。",
     );
   const state = statusOf("show", round.status);
   return [
@@ -917,7 +917,7 @@ function renderDesk(detail, cast) {
       ? h(
           "p.meta",
           { style: "color:var(--faint);font-size:12px;margin-top:16px" },
-          "发布或丢弃回答，请在主控 Agent 的对话中操作。",
+          "发布或丢弃回答，请在 boss 的对话中操作。",
         )
       : null,
   ];
@@ -1043,7 +1043,7 @@ function renderTask() {
     {},
     header(
       detail,
-      [h("span.badge.task", {}, "任务"), "仅主控可见 · 回复不等于验收通过"],
+      [h("span.badge.task", {}, "任务"), "仅 boss 可见 · 回复不等于验收通过"],
       state,
       `${tasks.length} 次调用${running ? ` · ${running} 个运行中` : ""}`,
       null,
@@ -1060,7 +1060,7 @@ function renderTask() {
               model: task.model,
             };
             const manager = {
-              label: detail.host || "主控",
+              label: detail.host || "boss",
               provider: "host",
               host: detail.host || "",
               model: task.manager_model || "",
@@ -1148,7 +1148,7 @@ function renderTask() {
           "div.empty",
           {},
           h("strong", {}, "还没有任务"),
-          "主控派发的任务会出现在这里。",
+          "boss 派发的任务会出现在这里。",
         ),
   );
 }

@@ -1253,6 +1253,12 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
         {"round": 1, "seat_id": "b", "text": "只看边界", "time": state.created}
     ]
     assert "instructions" not in _data(projected["public"])
+    assert _data(projected["director"])["rounds"] == [
+        {"number": 1, "seats": [{"seat_id": "a"}, {"seat_id": "b"}]}
+    ]
+    assert _data(projected["director"])["cwd"] == state.cwd
+    assert "cwd" not in _data(projected["public"])
+    assert "rounds" not in _data(projected["public"])
     private = _data(projected["director"])["private_messages"]
     assert private == [
         {
@@ -1312,6 +1318,7 @@ def test_task_director_exposes_manager_identity() -> None:
         )
     )
     assert projected["host"] == "codex"
+    assert projected["cwd"] == "/tmp"
     assert projected["tasks"][0]["manager_model"] == "gpt-6"
     assert projected["tasks"][0]["message_id"] == "task:t:run"
     assert "session_id" not in projected["tasks"][0]

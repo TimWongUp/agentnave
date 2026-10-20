@@ -18,26 +18,27 @@
 </header>
 <div id="notices" class="notices"></div>
 <main id="scroll">
-  <div id="stage" class="stage" hidden>
-    <div class="heads" aria-hidden="true">
-      <span class="head-l">主控</span>
-      <span class="hub" id="hub"><span class="mark">N</span></span>
-      <span class="head-r">办公室</span>
-    </div>
-    <svg id="wires" class="wires" aria-hidden="true" focusable="false">
-      <g id="layer-rail"></g><g id="layer-wires"></g><g id="layer-nodes"></g>
-    </svg>
+  <a id="ask" class="ask" hidden></a>
+  <div id="stage" hidden>
+    <div class="sec" id="sec-live">boss 与办公室<span class="r" id="live-count"></span></div>
     <div id="groups" class="groups"></div>
+    <div class="sec" id="sec-quiet">最近没有动静<span class="r" id="quiet-count"></span></div>
+    <div id="quiet" class="quiet"></div>
   </div>
-  <div id="ob-slot" class="ob-slot" hidden><p class="ob-note">在宿主里派出任务后，主控和组员会带着颜色连线出现在这里。</p></div>
+  <div id="ob-slot" class="ob-slot" hidden><p class="ob-note">在宿主里派出任务后，boss 和它的办公室会出现在这里。</p></div>
   <div id="calm" class="calm" hidden></div>
 </main>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 <footer class="foot">
   <a class="open" href="/chat/">打开 AgentNave</a>
-  <a class="plain" href="/manage/">管理会话</a>
-  <a class="plain" id="update" href="/app/update">检查更新</a>
-  <a class="plain quit" href="/app/quit">退出</a>
+  <a class="btn" href="/manage/">管理会话</a>
+  <button class="btn ico" id="more" type="button" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="menu"><span aria-hidden="true">⋯</span><i class="more-dot" hidden></i></button>
+  <div class="menu" id="menu" role="menu" hidden>
+    <a href="/settings/" role="menuitem">设置…</a>
+    <a id="update" href="/app/update" role="menuitem">检查更新</a>
+    <hr>
+    <a href="/app/quit" role="menuitem">退出 AgentNave</a>
+  </div>
 </footer>
 </body>
 </html>
