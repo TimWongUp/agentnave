@@ -295,8 +295,9 @@ class Conversations(Groups):
         self._groups.pop(conversation_id, None)
         for round_id, round_ in list(self._rounds.items()):
             if round_.group.id == conversation_id:
-                if round_.finished:
-                    # Replies stay readable; the group's history is not kept alive with them.
+                if round_.finished_at is not None:
+                    # Ended (its driver only saves and notifies now): replies stay readable, and
+                    # the group's history is not kept alive with them.
                     round_.group = Group(round_.group.id, round_.group.cwd, {})
                 self._completed_rounds[round_id] = self._rounds.pop(round_id)
                 self.reviews.pop(round_id, None)

@@ -143,17 +143,17 @@ type RouteKey = (Vec<crate::stage::SourceKey>, bool, u64);
 /// A route answer with the views it was computed from, held so their addresses stay unique.
 type RouteAnswer = (RouteKey, Vec<Arc<Value>>, Response);
 
-enum LiveView {
-    /// Version 1: the whole conversation projection.
-    Full(Value),
-    /// Version 2: running tasks' and seats' reply tails and reported models.
-    Tails(Value),
-}
-
+/// One server's publication for a conversation: version 1 holds its whole projection,
+/// version 2 (`tails`) only running tasks' and seats' reply tails and reported models.
 struct Live {
-    view: LiveView,
+    payload: Arc<Value>,
+    tails: bool,
     updated_at: Option<String>,
 }
+
+/// A live view built once per input: the saved views and live payload it came from (held so
+/// their addresses stay unique), the live time, and the result.
+type Merged = (Option<Arc<Value>>, Arc<Value>, Option<String>, Arc<Value>);
 
 pub(crate) struct Snapshot {
     pub item: Item,
@@ -170,6 +170,8 @@ pub struct Reader {
     summaries: Mutex<HashMap<PathBuf, Cached>>,
     /// Parsed live files, keyed the same way; several routes poll within one publication.
     live_files: Mutex<HashMap<PathBuf, Cached>>,
+    /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
+    merged: Mutex<HashMap<String, Merged>>,
     routes: Mutex<HashMap<String, RouteAnswer>>,
 }
 
@@ -181,6 +183,7 @@ impl Reader {
             tools: Arc::default(),
             summaries: Mutex::new(HashMap::new()),
             live_files: Mutex::new(HashMap::new()),
+            merged: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
         }
     }
@@ -352,6 +355,8 @@ impl Reader {
             ..Overview::default()
         };
         let mut live = self.live();
+        let mut merged = self.merged.lock().unwrap_or_else(|p| p.into_inner());
+        let mut shown = HashSet::new();
         let mut cache = self.summaries.lock().unwrap_or_else(|p| p.into_inner());
         let mut seen = HashSet::new();
         let mut snapshots = Vec::new();
@@ -372,23 +377,11 @@ impl Reader {
                 )
             });
             let saved = disk.as_ref().and_then(|d| d.1.clone());
-            let current = match live.remove(&id) {
-                Some(Live {
-                    view: LiveView::Full(view),
-                    updated_at,
-                }) if summary(&view).is_some() => Some((Arc::new(view), updated_at)),
-                // Tails need the saved views beneath them; until then the saved views show.
-                Some(Live {
-                    view: LiveView::Tails(tails),
-                    updated_at,
-                }) => saved.as_ref().map(|saved| {
-                    (
-                        Arc::new(lay_tails(saved, &tails, updated_at.as_deref())),
-                        updated_at,
-                    )
-                }),
-                _ => None,
-            };
+            let current = live.remove(&id).and_then(|live| {
+                let view = live_view(&mut merged, &id, saved.as_ref(), &live)?;
+                shown.insert(id.clone());
+                Some((view, live.updated_at))
+            });
             let is_live = current.is_some();
             let modified = if is_live {
                 SystemTime::now()
@@ -423,19 +416,24 @@ impl Reader {
         }
         // A version 1 live publication can precede the first disk snapshot.
         for (id, live) in live {
-            let LiveView::Full(view) = live.view else {
+            if !valid_id(&id) {
+                continue;
+            }
+            let Some(view) = live_view(&mut merged, &id, None, &live) else {
                 continue;
             };
-            if let Some(item) = summary(&view).filter(|item| item.id == id && valid_id(&id)) {
+            if let Some(item) = summary(&view).filter(|item| item.id == id) {
+                shown.insert(id.clone());
                 items.push((SystemTime::now(), item.clone()));
                 snapshots.push(Snapshot {
                     item,
-                    view: Arc::new(view),
+                    view,
                     live: true,
                     live_updated: live.updated_at,
                 });
             }
         }
+        merged.retain(|id, _| shown.contains(id));
         cache.retain(|path, _| seen.contains(path));
         items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
         overview.items = items.into_iter().map(|(_, item)| item).collect();
@@ -610,6 +608,7 @@ impl Reader {
             let Some(Value::Object(conversations)) = payload.get("conversations") else {
                 continue;
             };
+            let ids: Vec<String> = conversations.keys().cloned().collect();
             let tails = version(&payload) == Some(LIVE_TAILS);
             // Version 2 rewrites only changed content and refreshes its mtime otherwise.
             let updated_at = if tails {
@@ -624,21 +623,14 @@ impl Reader {
             };
             found.push((
                 modified,
-                conversations
-                    .iter()
-                    .map(|(id, view)| {
-                        let view = if tails {
-                            LiveView::Tails(view.clone())
-                        } else {
-                            LiveView::Full(view.clone())
+                ids.into_iter()
+                    .map(|id| {
+                        let live = Live {
+                            payload: payload.clone(),
+                            tails,
+                            updated_at: updated_at.clone(),
                         };
-                        (
-                            id.clone(),
-                            Live {
-                                view,
-                                updated_at: updated_at.clone(),
-                            },
-                        )
+                        (id, live)
                     })
                     .collect(),
             ));
@@ -650,6 +642,43 @@ impl Reader {
             .flat_map(|(_, conversations)| conversations)
             .collect()
     }
+}
+
+/// One conversation's live view: a version 1 projection as published, or version 2 tails laid
+/// over the saved views, which they need beneath them. Reused while its inputs are the same.
+fn live_view(
+    merged: &mut HashMap<String, Merged>,
+    id: &str,
+    saved: Option<&Arc<Value>>,
+    live: &Live,
+) -> Option<Arc<Value>> {
+    let view = live.payload.get("conversations")?.get(id)?;
+    let base = if live.tails {
+        Some(saved?.clone())
+    } else if summary(view).is_some() {
+        None
+    } else {
+        return None;
+    };
+    if let Some((held, payload, at, out)) = merged.get(id)
+        && Arc::ptr_eq(payload, &live.payload)
+        && *at == live.updated_at
+        && held.as_ref().map(Arc::as_ptr) == base.as_ref().map(Arc::as_ptr)
+    {
+        return Some(out.clone());
+    }
+    let out = Arc::new(match &base {
+        Some(saved) => lay_tails(saved, view, live.updated_at.as_deref()),
+        None => view.clone(),
+    });
+    let entry = (
+        base,
+        live.payload.clone(),
+        live.updated_at.clone(),
+        out.clone(),
+    );
+    merged.insert(id.to_owned(), entry);
+    Some(out)
 }
 
 /// A parsed JSON file from the cache, read again only when its mtime or size changed.

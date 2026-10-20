@@ -682,6 +682,8 @@ async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
         assert conversation_id not in second._groups  # pyright: ignore[reportPrivateUsage]
         assert reviewed.id not in second._rounds  # pyright: ignore[reportPrivateUsage]
         assert reviewed.id not in second.reviews
+        assert reviewed.group.entries == []  # an ended round no longer holds the group history
+        session = second.records[conversation_id].state.sessions["a"].session_id
 
         resumed = first.run(conversation_id, ["a"], "parallel", "continue", {})
         assert resumed.number == 3
@@ -689,7 +691,6 @@ async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
         result = resumed.runs[0].result
         assert result is not None
         seen = json.loads(result.output)
-        session = reviewed.group.states["a"].session_id
         assert session and f"--resume={session}" in seen["argv"]
         first.decide(resumed.id, {"a": "discard"})
         await first.wait(resumed.id, 30)
@@ -708,6 +709,9 @@ async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
         views_path.unlink()
         second.scan()
         assert views_path.is_file()  # filled in under the probe lock while idle
+        views_path.unlink()
+        second.scan()
+        assert views_path.is_file()  # also when state.json is unchanged since the last scan
         saved = (record.directory / "state.json").read_bytes()
         await first.close()
         assert (record.directory / "state.json").read_bytes() == saved
@@ -1063,7 +1067,7 @@ async def test_group_and_task_resumes_share_one_session_guard(
         )
         first = studio.run(record.state.id, ["a"], "serial", "one", {})
         await studio.wait(first.id, 3)
-        session_id = first.group.states["a"].session_id
+        session_id = record.state.sessions["a"].session_id
         assert first.finished and session_id
         task_id, task_conversation, *_ = studio.start_task(
             InvocationRequest(

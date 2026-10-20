@@ -217,6 +217,8 @@ class Record:
         self.saved: Conversation | None = None
         # state.json (mtime_ns, size) behind self.state, and whether it was read under the probe.
         self.loaded: tuple[int, int, bool] | None = None
+        # views.json (mtime_ns, size) once it matched the projection; None to check it again.
+        self.views: tuple[int, int] | None = None
         self.lock: IO[bytes] | None = None
 
     @classmethod
@@ -280,6 +282,9 @@ class Record:
             if self._reload(probed=True):
                 self.state.recover()  # shown as interrupted; acquire() persists it
                 self._write_views(only_if_changed=True)
+            elif self.views is None or self._views_stat() != self.views:
+                # Unchanged state: repair views that were removed or never written.
+                self._write_views(only_if_changed=True)
         finally:
             self._unlock(lock)
         return True
@@ -321,15 +326,23 @@ class Record:
         try:
             data = Record.project(self)
             # Compared by content: timestamps can tie or run backwards.
-            if only_if_changed and path.is_file() and path.read_bytes() == data:
-                return
-            write_file(path, data)
+            if not (only_if_changed and path.is_file() and path.read_bytes() == data):
+                write_file(path, data)
+            self.views = self._views_stat()
         except OSError as exc:
-            # Derived data: the saved state stands, and the next save writes the views again.
+            # Derived data: the saved state stands; the next save or scan writes the views again.
+            self.views = None
             print(
                 f"agentnave: could not write views for {self.state.id}: {exc}",
                 file=sys.stderr,
             )
+
+    def _views_stat(self) -> tuple[int, int] | None:
+        try:
+            stat = (self.directory / "views.json").stat()
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
 
     def release(self) -> None:
         if self.lock is not None:
