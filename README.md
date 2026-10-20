@@ -7,7 +7,7 @@
 **A thin local bridge from Agent Managers to CLI subagents.**
 
 AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI,
-Grok CLI, or Pi Coding Agent as subagents, one at a time or as a group answering in parallel or
+Grok CLI, Pi Coding Agent, or DeepSeek Harness as subagents, one at a time or as a group answering in parallel or
 serial rounds. Each provider keeps its native authentication,
 configuration, permissions, and session model; AgentNave supplies the adapter and process
 supervision around it.
@@ -160,12 +160,19 @@ instead of converting a reader into a writer. It is recorded only and never chan
 
 启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。`open_group` 每席使用 discussion 配置，并返回 model、effort（未配置时为 null）与 `defaults_applied`。
 
-支持的 Provider 为 `antigravity`、`claude`、`codebuddy`、`codex`、`grok`、`pi`。宿主识别优先 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层匹配 CLI 或应用包；Windows 只读环境变量。未知宿主不做自我排除，未知环境变量值使启动失败。宿主 Provider（WorkBuddy 对应 codebuddy）与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，只限制 task，不限制讨论席位；discussion 自身的组员名单仍生效。Codex 在非 Git 目录可显式传 `{"skip_git_repo_check": true}`，或在 App 组员 options 中保存该默认值。
+支持的 Provider 为 `antigravity`、`claude`、`codebuddy`、`codex`、`deepseek`、`grok`、`pi`。宿主识别优先 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层匹配 CLI 或应用包；Windows 只读环境变量。未知宿主不做自我排除，未知环境变量值使启动失败。宿主 Provider（WorkBuddy 对应 codebuddy）与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，只限制 task，不限制讨论席位；discussion 自身的组员名单仍生效。Codex 在非 Git 目录可显式传 `{"skip_git_repo_check": true}`，或在 App 组员 options 中保存该默认值。
 
 Pi Coding Agent uses `pi --print --mode json`, with prompts on stdin and native session IDs
 for continuation. Install it with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`,
 then run `pi` and `/login`. Without App defaults, omitted model and effort options use Pi's native settings; explicit
 `effort` maps to `--thinking`. Pi runs with the permissions of its launching process.
+
+DeepSeek Harness uses `dsh --profile headless --json`, with prompts on stdin and `--session-id`
+for continuation; on macOS AgentNave prefers the `dsh` bundled in `DeepSeek Harness.app`. dsh has no
+model, effort, or permission flags, so explicit `model`, `effort`, `provider`, `permission_mode`,
+and `stored_credentials` options become a temporary `--patch` overlay that is deleted after the
+call; dsh's own configuration is not changed. Headless ignores the app's saved sign-in and reads
+`DEEPSEEK_API_KEY` unless `{"stored_credentials": true}` is passed.
 
 ### Choosing a model and reasoning effort
 

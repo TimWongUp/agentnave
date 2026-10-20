@@ -40,7 +40,10 @@ MODELS: dict[str, str] = {
     "grok": "grok-4.7-build-fast",
     "antigravity": "gemini-3.8-flash-low",
     "pi": "opencode-go/deepseek-v4-flash",
+    "deepseek": "deepseek-flash",
 }
+# Headless dsh ignores the app's saved sign-in unless asked; this restores auth, not permissions.
+EXTRA_OPTIONS: dict[str, dict[str, bool]] = {"deepseek": {"stored_credentials": True}}
 TASK_LIMIT_SECONDS = 360.0
 CANCEL_AFTER_SECONDS = 8.0
 RUN_ID = time.strftime("%Y%m%d-%H%M%S")
@@ -50,6 +53,10 @@ LONG_PROMPT = (
     "Automated cancellation check. Do not use any tools. Write a numbered list of 400 distinct "
     "animals, one per line, with a one-sentence description for each."
 )
+
+
+def provider_options(provider: str) -> dict[str, Any]:
+    return {"model": MODELS[provider], **EXTRA_OPTIONS.get(provider, {})}
 
 
 def token(prefix: str) -> str:
@@ -137,7 +144,7 @@ class Suite:
             "provider": provider,
             "prompt": prompt,
             "cwd": str(self.workspace),
-            "provider_options": {"model": MODELS[provider]},
+            "provider_options": provider_options(provider),
             "manager_session_id": MANAGER,
             "role": "real-suite",
             "title": f"连通检查 · {provider}",
@@ -318,7 +325,7 @@ class Suite:
                 "id": provider,
                 "provider": provider,
                 "role": "real-suite",
-                "provider_options": {"model": MODELS[provider]},
+                "provider_options": provider_options(provider),
             }
             for provider in self.providers
         ]

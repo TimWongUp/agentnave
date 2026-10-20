@@ -20,7 +20,7 @@ _Avoid_: 群聊（App 层面）、项目
 
 ## Provider
 
-AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI 与 Pi Coding Agent。
+AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent 与 DeepSeek Harness。
 
 ## 宿主（Host）
 

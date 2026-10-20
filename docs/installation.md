@@ -107,6 +107,7 @@ numbers, for example `1, 3`:
 4. Codex CLI (`codex`)
 5. Antigravity CLI (`agy`)
 6. Pi Coding Agent (`pi`)
+7. DeepSeek Harness (`dsh`; on macOS bundled in `DeepSeek Harness.app`)
 
 The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.

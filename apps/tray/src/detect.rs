@@ -26,6 +26,11 @@ const COMMON_DIRS: [&str; 8] = [
     "~/.cargo/bin",
 ];
 #[cfg(target_os = "macos")]
+const DESKTOP_DSH: [&str; 2] = [
+    "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+    "~/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+];
+#[cfg(target_os = "macos")]
 const DESKTOP_CODEX: [&str; 4] = [
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
@@ -34,7 +39,7 @@ const DESKTOP_CODEX: [&str; 4] = [
 ];
 /// Known effort values, checked against each CLI's `--help` (Grok: its bundled `/effort` docs;
 /// Codex: the model cache when present).
-const EFFORTS: [(&str, &[&str]); 6] = [
+const EFFORTS: [(&str, &[&str]); 7] = [
     ("antigravity", &["low", "medium", "high", "xhigh", "max"]),
     ("claude", &["low", "medium", "high", "xhigh", "max"]),
     (
@@ -42,6 +47,7 @@ const EFFORTS: [(&str, &[&str]); 6] = [
         &["minimal", "low", "medium", "high", "xhigh", "max"],
     ),
     ("codex", &["minimal", "low", "medium", "high", "xhigh"]),
+    ("deepseek", &["off", "low", "high", "max"]),
     ("grok", &["low", "medium", "high", "xhigh"]),
     (
         "pi",
@@ -52,6 +58,8 @@ const EFFORT_ORDER: [&str; 8] = [
     "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ];
 const CLAUDE_ALIASES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
+/// dsh has no listing command; its bundled DeepSeek catalog, shipped default first.
+const DEEPSEEK_CATALOG: [&str; 2] = ["deepseek-flash", "deepseek-v4-pro"];
 
 static CACHE: Mutex<Option<Value>> = Mutex::new(None);
 
@@ -108,10 +116,10 @@ fn failure(provider: &str, path: Option<&Path>, error: &str) -> Value {
 }
 
 fn probe(provider: &str) -> Value {
-    let binary = if provider == "antigravity" {
-        "agy"
-    } else {
-        provider
+    let binary = match provider {
+        "antigravity" => "agy",
+        "deepseek" => "dsh",
+        other => other,
     };
     let Some(path) = find(binary) else {
         return failure(provider, None, "");
@@ -129,6 +137,14 @@ fn probe(provider: &str) -> Value {
             CLAUDE_ALIASES
                 .iter()
                 .map(|alias| model(alias, alias, false))
+                .collect(),
+        )),
+        "deepseek" => Ok((
+            "catalog",
+            DEEPSEEK_CATALOG
+                .iter()
+                .enumerate()
+                .map(|(index, id)| model(id, id, index == 0))
                 .collect(),
         )),
         "grok" => run(&path, &["models"]).map(|out| ("command", grok_models(&out))),
@@ -179,14 +195,20 @@ fn executable(path: &Path) -> bool {
     path.is_file()
 }
 
-/// The Codex desktop bundles on macOS, then PATH, then the common install directories.
+/// The Codex or DeepSeek Harness desktop bundles on macOS, then PATH, then the common
+/// install directories.
 fn find(name: &str) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
-    if name == "codex"
-        && let Some(path) = DESKTOP_CODEX
-            .iter()
-            .filter_map(|entry| expand(entry))
-            .find(|path| executable(path))
+    let desktop: &[&str] = match name {
+        "codex" => &DESKTOP_CODEX,
+        "dsh" => &DESKTOP_DSH,
+        _ => &[],
+    };
+    #[cfg(target_os = "macos")]
+    if let Some(path) = desktop
+        .iter()
+        .filter_map(|entry| expand(entry))
+        .find(|path| executable(path))
     {
         return Some(path);
     }

@@ -39,6 +39,7 @@
     grok: "Grok",
     antigravity: "Antigravity",
     pi: "Pi",
+    deepseek: "DeepSeek Harness",
   };
   const NATIVE = "";
   const keyOf = (provider, model) => `${provider}/${model || NATIVE}`;
