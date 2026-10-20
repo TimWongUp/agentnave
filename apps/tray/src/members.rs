@@ -303,8 +303,38 @@ pub fn migrate(root: &Path) -> Option<(Value, Vec<String>)> {
     Some((document, skipped))
 }
 
+/// A first document for a user without one: both modes keep every CLI with any model, and each
+/// detected CLI gets its main model as the default (ADR-0020). `None` when no CLI names one, so
+/// the file stays absent and every CLI keeps its native model.
+fn prefilled(detected: &Value) -> Option<Value> {
+    let mut document = empty();
+    let mut named = false;
+    for mode in MODES {
+        document["modes"][mode] = json!({});
+        for provider in PROVIDERS {
+            let mut member = json!({"models": []});
+            if let Some(model) = detected[provider]["primary"].as_str() {
+                document["clis"][provider]["models"][model] = json!({});
+                member["default"] = json!(model);
+                named = true;
+            }
+            document["modes"][mode][provider] = member;
+        }
+    }
+    named.then_some(document)
+}
+
+/// Run at App start, so a first document exists before Settings is ever opened.
+pub fn prepare(root: &Path) {
+    document_state(root, || crate::detect::detected(false));
+}
+
 /// The editable document, why it cannot be saved, and the outcome of a first-read migration.
-fn document_state(root: &Path) -> (Value, Value, bool, Vec<String>) {
+/// Without either file, the CLIs are probed once and their main models pre-filled.
+fn document_state(
+    root: &Path,
+    detect: impl FnOnce() -> Value,
+) -> (Value, Value, bool, Vec<String>) {
     let _migrating = MIGRATION
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
@@ -317,20 +347,30 @@ fn document_state(root: &Path) -> (Value, Value, bool, Vec<String>) {
                 let migrated = root.join(FILE).exists();
                 (document, Value::Null, migrated, skipped)
             }
-            None => (empty(), Value::Null, false, Vec::new()),
+            None => match prefilled(&detect()) {
+                // Unsaved, the CLIs keep their native models and the next read tries again.
+                Some(document)
+                    if validate(&document).is_ok()
+                        && write_atomic(root, FILE, &document).is_ok() =>
+                {
+                    (document, Value::Null, false, Vec::new())
+                }
+                _ => (empty(), Value::Null, false, Vec::new()),
+            },
         },
     }
 }
 
 /// `GET /settings/members`: the document, why it cannot be edited, and the detected CLIs.
 pub fn state(root: &Path, refresh: bool) -> Value {
-    let (document, error, migrated, skipped) = document_state(root);
+    let detected = crate::detect::detected(refresh);
+    let (document, error, migrated, skipped) = document_state(root, || detected.clone());
     json!({
         "document": document,
         "error": error,
         "migrated": migrated,
         "migration_skipped": skipped,
-        "detected": crate::detect::detected(refresh),
+        "detected": detected,
     })
 }
 
@@ -487,14 +527,52 @@ mod tests {
     fn broken_file_is_reported_and_left_untouched() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        assert_eq!(document_state(root), (empty(), Value::Null, false, vec![]));
+        assert_eq!(
+            document_state(root, || json!({})),
+            (empty(), Value::Null, false, vec![])
+        );
         fs::write(root.join(FILE), b"{").unwrap();
         fs::write(root.join(LEGACY), br#"{"version":1,"profiles":[]}"#).unwrap();
-        let (document, error, migrated, _) = document_state(root);
+        let (document, error, migrated, _) = document_state(root, || json!({}));
         assert_eq!(document, empty());
         assert!(error.as_str().unwrap().contains("损坏") && !migrated);
         assert_eq!(fs::read(root.join(FILE)).unwrap(), b"{");
         assert!(root.join(LEGACY).exists());
+    }
+
+    #[test]
+    fn first_read_prefills_each_detected_main_model_without_restricting_any_cli() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let nothing = json!({"codex": {"primary": null}, "pi": {"primary": null}});
+        assert_eq!(
+            document_state(root, || nothing),
+            (empty(), Value::Null, false, vec![])
+        );
+        assert!(!root.join(FILE).exists());
+
+        let detected = json!({"codex": {"primary": "gpt-6.1-sol"}, "claude": {"primary": "opus"}});
+        let (document, error, migrated, _) = document_state(root, || detected);
+        assert!(error.is_null() && !migrated);
+        assert_eq!(read(root).unwrap(), Some(document.clone()));
+        for mode in MODES {
+            let members = document["modes"][mode].as_object().unwrap();
+            assert_eq!(members.len(), PROVIDERS.len());
+            assert_eq!(
+                members["codex"],
+                json!({"models": [], "default": "gpt-6.1-sol"})
+            );
+            assert_eq!(members["claude"], json!({"models": [], "default": "opus"}));
+            assert_eq!(members["pi"], json!({"models": []}));
+        }
+        assert_eq!(
+            document["clis"]["codex"],
+            json!({"models": {"gpt-6.1-sol": {}}})
+        );
+        // Only a missing file is pre-filled; the user's later edits are never refilled.
+        save(root, &empty()).unwrap();
+        let again = json!({"codex": {"primary": "gpt-6-luna"}});
+        assert_eq!(document_state(root, || again).0, empty());
     }
 
     #[test]
@@ -513,7 +591,7 @@ mod tests {
         ]});
         fs::write(root.join(LEGACY), legacy.to_string()).unwrap();
 
-        let (document, _, migrated, skipped) = document_state(root);
+        let (document, _, migrated, skipped) = document_state(root, || json!({}));
         assert!(migrated);
         assert_eq!(
             document["clis"]["codex"]["models"]["gpt-6.1-sol"],

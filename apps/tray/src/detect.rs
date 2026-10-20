@@ -111,8 +111,28 @@ fn failure(provider: &str, path: Option<&Path>, error: &str) -> Value {
         "source": "none",
         "error": (!error.is_empty()).then_some(error),
         "models": [],
+        "primary": Value::Null,
         "efforts": efforts(provider),
     })
+}
+
+/// The model the App pre-fills as a CLI's default: Codex's first-priority GPT model, Claude's
+/// `opus`, the first Antigravity entry (agy's own default), otherwise the CLI's marked default.
+/// Pi and CodeBuddy list models without a default and keep their native choice.
+pub fn primary(provider: &str, models: &[Value]) -> Option<String> {
+    let id = |model: &Value| model["id"].as_str().map(str::to_owned);
+    match provider {
+        "codex" => models
+            .iter()
+            .filter_map(id)
+            .find(|model| model.starts_with("gpt-")),
+        "claude" => models.iter().filter_map(id).find(|model| model == "opus"),
+        "antigravity" => models.first().and_then(id),
+        _ => models
+            .iter()
+            .find(|model| model["default"] == true)
+            .and_then(id),
+    }
 }
 
 fn probe(provider: &str) -> Value {
@@ -159,6 +179,7 @@ fn probe(provider: &str) -> Value {
             "path": path.display().to_string(),
             "source": source,
             "error": Value::Null,
+            "primary": primary(provider, &models),
             "models": models,
             "efforts": efforts,
         }),
@@ -565,6 +586,25 @@ mod tests {
         let wrapped = "  --model <model>   Please provide the model ID. Currently\n      \
             supported: (hy4-preview,\n      glm-5.3)\n";
         assert_eq!(ids(&codebuddy_models(wrapped)), ["hy4-preview", "glm-5.3"]);
+
+        // The pre-filled default: each CLI's main model, never a guess for Pi or CodeBuddy.
+        let listed =
+            |ids: &[&str]| -> Vec<Value> { ids.iter().map(|id| model(id, id, false)).collect() };
+        let codex = listed(&["opencode-go/glm-5.3-flash", "gpt-6.1-sol", "gpt-6-luna"]);
+        assert_eq!(primary("codex", &codex).as_deref(), Some("gpt-6.1-sol"));
+        let claude = listed(&CLAUDE_ALIASES);
+        assert_eq!(primary("claude", &claude).as_deref(), Some("opus"));
+        assert_eq!(
+            primary("grok", &grok_models(grok)).as_deref(),
+            Some("grok-4.7")
+        );
+        assert_eq!(
+            primary("antigravity", &agy_models(agy)).as_deref(),
+            Some("gemini-3.8-flash-high")
+        );
+        assert_eq!(primary("pi", &pi_models(pi)), None);
+        assert_eq!(primary("codebuddy", &codebuddy_models(codebuddy)), None);
+        assert_eq!(primary("codex", &listed(&["grok/grok-4.7"])), None);
     }
 
     #[cfg(unix)]

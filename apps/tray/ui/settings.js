@@ -538,10 +538,10 @@ function toggleModeRestricted(restricted) {
   if (!currentDoc.modes) currentDoc.modes = {};
   if (restricted) {
     currentDoc.modes[currentMode] = {};
-    // Pre-enable all installed CLIs with models: [] (unlimited models)
+    // Pre-enable all installed CLIs with models: [] (unlimited models) and their main model
     for (const p of PROVIDERS) {
       if (detected[p]?.installed) {
-        currentDoc.modes[currentMode][p] = { models: [], overrides: {} };
+        currentDoc.modes[currentMode][p] = withPrimary(p, { models: [], overrides: {} });
       }
     }
   } else {
@@ -561,10 +561,10 @@ function toggleProviderInMode(provider, enabled, confirmed = false) {
   if (!isModeRestricted()) return;
   if (enabled) {
     if (!currentDoc.modes[currentMode][provider]) {
-      currentDoc.modes[currentMode][provider] = {
+      currentDoc.modes[currentMode][provider] = withPrimary(provider, {
         models: [],
         overrides: {},
-      };
+      });
     }
   } else {
     const previous = currentDoc.modes[currentMode][provider];
@@ -579,6 +579,16 @@ function toggleProviderInMode(provider, enabled, confirmed = false) {
   pendingDisable = null;
   incDocVersion();
   renderCards();
+}
+
+// A newly enabled CLI defaults to its main model when detection names one (ADR-0020).
+function withPrimary(provider, provConf) {
+  const primary = detected[provider]?.primary;
+  if (primary) {
+    ensureCliModel(provider, primary);
+    provConf.default = primary;
+  }
+  return provConf;
 }
 
 function ensureCliModel(provider, modelId) {
