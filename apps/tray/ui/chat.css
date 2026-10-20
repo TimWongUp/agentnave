@@ -102,9 +102,12 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .back { display: none; flex: none; padding: 4px 2px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .office { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .floor { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-content: start; gap: 12px; padding: 10px 20px 20px; }
-.floor.solo .zone, .wide, .rooms > .zone + .zone { grid-column: 1 / -1; }
+.floor.solo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.floor.solo .zone:not(.boss-zone, .todo-zone), .wide, .rooms > .zone + .zone { grid-column: 1 / -1; }
 .rooms { display: contents; }
-@container (max-width: 640px) { .floor { grid-template-columns: minmax(0, 1fr); } .floor .zone { grid-column: 1 / -1; } .boss-zone .scene { max-width: 210px; } }
+/* narrow: boss and the to-do board share the first row, everything else stacks below */
+@container (max-width: 640px) { .floor, .floor.solo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .floor .zone { grid-column: 1 / -1; } .floor .boss-zone, .floor .todo-zone { grid-column: auto; } .boss-zone .scene { max-width: 210px; } }
+@container (max-width: 400px) { .floor .boss-zone, .floor .todo-zone { grid-column: 1 / -1; } }
 .zone { position: relative; min-width: 0; border-radius: 16px; background: color-mix(in srgb, var(--surface) 84%, transparent); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .desks-zone { cursor: default; }
 .zone.sel { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
@@ -190,6 +193,23 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 /* access is a declared convention: outlined; meeting-only is a hard limit: filled */
 .tag-access { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--task) 55%, transparent); color: var(--task); }
 .tag-only { background: color-mix(in srgb, var(--idle) 30%, transparent); color: var(--soft); }
+
+/* ---- boss to-do: only beside the boss; a meeting in session takes that place on wide floors ---- */
+.todo-zone { display: flex; flex-direction: column; gap: 2px; cursor: default; }
+@container (min-width: 641px) { .floor:not(.solo) .todo-zone { display: none; } }
+.td-h { display: flex; align-items: center; gap: 5px; margin: 8px 0 2px; font-size: 11px; font-weight: 650; color: var(--muted); }
+.td-h b { font-weight: 650; color: var(--faint); }
+.td-h.review { color: var(--review); } .td-h.run { color: var(--run); } .td-h.bad { color: var(--bad); }
+.td-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 5px 6px; border: 0; border-radius: 9px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.td-row:hover { background: var(--card-hover); }
+.td-heads { flex: none; display: flex; padding-right: 7px; }
+.td-heads .head { width: 24px; height: 24px; margin-right: -7px; border-radius: 50%; background: var(--surface) center / cover; box-shadow: 0 0 0 2px var(--surface); }
+.td-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.td-name, .td-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.td-name { font-size: 12.5px; font-weight: 650; }
+.td-sub { font-size: 11px; color: var(--faint); }
+.td-time { flex: none; font-size: 10.5px; color: var(--faint); }
+.td-more { padding: 2px 6px; font-size: 11px; color: var(--faint); }
 
 /* ---- open desks ---- */
 .desks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
