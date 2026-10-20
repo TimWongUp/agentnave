@@ -12,6 +12,7 @@ from urllib.request import urlopen
 import pytest
 from mcp import Client
 
+import agentnave.conversations as conversations_module
 from agentnave import mcp_server, views
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
@@ -487,8 +488,9 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
 
 @pytest.mark.asyncio
 async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
-    tmp_path: Path, data_root: Path
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(conversations_module, "_LIVE_SECONDS", 0.05)
     async with Client(mcp) as client:
         first = await _call(
             client,
@@ -563,13 +565,24 @@ async def test_tasks_are_saved_and_grouped_with_automatic_dashboard_links(
             },
         )
         assert duplicate.is_error and "active invocation" in str(duplicate.content)
-        live = await _live(data_root)
-        assert live["pid"] == os.getpid()
+        await _live(data_root)
+        await asyncio.sleep(0.2)  # past the earlier tasks' last publication
+        path = next((data_root / "live").glob("*.json"))
+        before = path.stat()
+        live = json.loads(path.read_bytes())
+        assert live["pid"] == os.getpid() and live["version"] == 2
+        # Only what views.json lacks: the running task's tail, no saved history.
         live_views = cast(dict[str, dict[str, dict[str, object]]], live["conversations"])
-        tasks_live = cast(
-            list[dict[str, object]], live_views[str(conversation_id)]["director"]["tasks"]
-        )
-        assert tasks_live[-1]["status"] == "running"
+        saved_tasks = json.loads((directory / "views.json").read_text())["director"]["tasks"]
+        running_id = next(task["id"] for task in saved_tasks if task["status"] == "running")
+        assert live_views[str(conversation_id)] == {
+            "tasks": {running_id: {"output": "", "reported_model": None}},
+            "seats": {},
+        }
+        # Unchanged content is not rewritten; only its modification time moves.
+        await asyncio.sleep(0.3)
+        after = path.stat()
+        assert after.st_ino == before.st_ino and after.st_mtime_ns > before.st_mtime_ns
         await _call(client, "cancel_agent", {"invocation_id": sleeping["invocation_id"]})
         await asyncio.sleep(0.05)  # let the collector save the cancelled task
     assert not list((data_root / "live").glob("*.json"))  # removed once nothing runs
@@ -1442,6 +1455,7 @@ async def test_history_io_failure_keeps_urls_until_recovery(
             raise OSError("temporary history read failure")
 
         monkeypatch.setattr(Record, "_load", staticmethod(fail))
+        os.utime(root / "conversations" / "known" / "state.json", ns=(1, 1))  # changed: reread
         assert studio.scan()["known"] is False
         assert studio.urls("known") == urls
         failed = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
@@ -2193,11 +2207,7 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
         assert len(str(live["connection_id"])) == 32 and live["manager_started_at"]
         assert "manager_session" not in live
         assert live["host"] == "codex" and live["host_source"] == "env"
-        conversations = cast(dict[str, dict[str, dict[str, object]]], live["conversations"])
-        assert (
-            conversations[str(first["conversation_id"])]["summary"]["manager_session"]
-            == manager_session
-        )
+        assert str(first["conversation_id"]) in cast(dict[str, object], live["conversations"])
         await _call(client, "cancel_agent", {"invocation_id": first["invocation_id"]})
         show = await _call(
             client,

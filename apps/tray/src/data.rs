@@ -4,13 +4,18 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
 /// Studio rewrites live files every 1.5s; older ones were left by a server that crashed.
 const LIVE_FRESH: Duration = Duration::from_secs(10);
 const VERSION: u64 = 1;
+/// Live files of this version carry only reply tails, laid over the saved views.
+const LIVE_TAILS: u64 = 2;
+/// Route answers are reused while their inputs stay the same, at most this long, since the
+/// stage's two-hour window moves with the clock.
+const ROUTE_REUSE: Duration = Duration::from_secs(30);
 include!(concat!(env!("OUT_DIR"), "/office_art.rs"));
 
 /// The dashboard front end has one source, shared with the browser view.
@@ -88,6 +93,7 @@ impl Overview {
     }
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub status: u16,
     pub content_type: &'static str,
@@ -130,8 +136,22 @@ impl Response {
 
 type Cached = (SystemTime, u64, Option<Arc<Value>>);
 
+/// What identifies a route answer: each snapshot's view, whether the data root exists, and
+/// the reuse window.
+type RouteKey = (Vec<crate::stage::SourceKey>, bool, u64);
+
+/// A route answer with the views it was computed from, held so their addresses stay unique.
+type RouteAnswer = (RouteKey, Vec<Arc<Value>>, Response);
+
+enum LiveView {
+    /// Version 1: the whole conversation projection.
+    Full(Value),
+    /// Version 2: running tasks' and seats' reply tails and reported models.
+    Tails(Value),
+}
+
 struct Live {
-    view: Value,
+    view: LiveView,
     updated_at: Option<String>,
 }
 
@@ -148,6 +168,9 @@ pub struct Reader {
     tools: Arc<Mutex<Option<crate::hosts::ToolDirs>>>,
     /// Parsed views by path, keyed on (mtime, size), so polling parses only changed files.
     summaries: Mutex<HashMap<PathBuf, Cached>>,
+    /// Parsed live files, keyed the same way; several routes poll within one publication.
+    live_files: Mutex<HashMap<PathBuf, Cached>>,
+    routes: Mutex<HashMap<String, RouteAnswer>>,
 }
 
 impl Reader {
@@ -157,6 +180,8 @@ impl Reader {
             hosts: Mutex::new(None),
             tools: Arc::default(),
             summaries: Mutex::new(HashMap::new()),
+            live_files: Mutex::new(HashMap::new()),
+            routes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -339,25 +364,41 @@ impl Reader {
             }
             let path = directory.join("views.json");
             let disk = fs::metadata(&path).ok().map(|meta| {
-                let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                let fresh = matches!(cache.get(&path), Some((m, len, _)) if *m == modified && *len == meta.len());
-                if !fresh {
-                    cache.insert(path.clone(), (modified, meta.len(), read_json(&path).map(Arc::new)));
-                }
                 seen.insert(path.clone());
-                (modified, cache[&path].2.clone())
+                let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+                (
+                    modified,
+                    cached(&mut cache, &path, &meta, |v| version(v) == Some(VERSION)),
+                )
             });
-            let current = live.remove(&id).filter(|v| summary(&v.view).is_some());
+            let saved = disk.as_ref().and_then(|d| d.1.clone());
+            let current = match live.remove(&id) {
+                Some(Live {
+                    view: LiveView::Full(view),
+                    updated_at,
+                }) if summary(&view).is_some() => Some((Arc::new(view), updated_at)),
+                // Tails need the saved views beneath them; until then the saved views show.
+                Some(Live {
+                    view: LiveView::Tails(tails),
+                    updated_at,
+                }) => saved.as_ref().map(|saved| {
+                    (
+                        Arc::new(lay_tails(saved, &tails, updated_at.as_deref())),
+                        updated_at,
+                    )
+                }),
+                _ => None,
+            };
             let is_live = current.is_some();
-            let live_updated = current.as_ref().and_then(|v| v.updated_at.clone());
             let modified = if is_live {
                 SystemTime::now()
             } else {
-                disk.as_ref().map_or(SystemTime::UNIX_EPOCH, |d| d.0)
+                disk.as_ref().map_or(UNIX_EPOCH, |d| d.0)
             };
-            let view = current
-                .map(|live| Arc::new(live.view))
-                .or_else(|| disk.as_ref().and_then(|d| d.1.clone()));
+            let (view, live_updated) = match current {
+                Some((view, updated_at)) => (Some(view), updated_at),
+                None => (saved, None),
+            };
             if let Some(view) = view
                 && let Some(item) = summary(&view).filter(|item| item.id == id)
             {
@@ -380,13 +421,16 @@ impl Reader {
                 ));
             }
         }
-        // Atomic live publication can precede the first disk snapshot.
+        // A version 1 live publication can precede the first disk snapshot.
         for (id, live) in live {
-            if let Some(item) = summary(&live.view).filter(|item| item.id == id && valid_id(&id)) {
+            let LiveView::Full(view) = live.view else {
+                continue;
+            };
+            if let Some(item) = summary(&view).filter(|item| item.id == id && valid_id(&id)) {
                 items.push((SystemTime::now(), item.clone()));
                 snapshots.push(Snapshot {
                     item,
-                    view: Arc::new(live.view),
+                    view: Arc::new(view),
                     live: true,
                     live_updated: live.updated_at,
                 });
@@ -426,7 +470,7 @@ impl Reader {
             };
         }
         if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
-            return crate::stage::respond(path, self.scan().1, self.root.is_dir());
+            return self.route(path);
         }
         if path == "/avatar-settings" {
             return match crate::avatars::read(&self.root) {
@@ -503,8 +547,39 @@ impl Reader {
         }
     }
 
-    /// Snapshots of running conversations from servers that wrote within LIVE_FRESH.
+    /// Stage and chat answers, reused while every snapshot and the reuse window are unchanged.
+    fn route(&self, path: &str) -> Response {
+        let snapshots = self.scan().1;
+        let window = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / ROUTE_REUSE.as_secs();
+        let key = (
+            snapshots.iter().map(crate::stage::source_key).collect(),
+            self.root.is_dir(),
+            window,
+        );
+        let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((saved, _, response)) = routes.get(path)
+            && *saved == key
+        {
+            return response.clone();
+        }
+        let views = snapshots.iter().map(|s| s.view.clone()).collect();
+        let response = crate::stage::respond(path, snapshots, key.1);
+        // Focus routes vary; keep the few most recently asked for, not every group ever opened.
+        if routes.len() >= 8 && !routes.contains_key(path) {
+            routes.clear();
+        }
+        routes.insert(path.to_owned(), (key, views, response.clone()));
+        response
+    }
+
+    /// Running work from servers that wrote within LIVE_FRESH.
     fn live(&self) -> HashMap<String, Live> {
+        let mut cache = self.live_files.lock().unwrap_or_else(|p| p.into_inner());
+        let mut seen = HashSet::new();
         let mut found: Vec<(SystemTime, HashMap<String, Live>)> = Vec::new();
         for entry in fs::read_dir(self.root.join("live"))
             .into_iter()
@@ -512,7 +587,10 @@ impl Reader {
             .flatten()
         {
             let path = entry.path();
-            let Some(modified) = entry.metadata().ok().and_then(|meta| meta.modified().ok()) else {
+            let Some(meta) = entry.metadata().ok() else {
+                continue;
+            };
+            let Some(modified) = meta.modified().ok() else {
                 continue;
             };
             // A clock running behind the file's mtime counts as fresh.
@@ -523,35 +601,129 @@ impl Reader {
             {
                 continue;
             }
-            if let Some(mut payload) = read_json(&path) {
-                let updated_at = payload["updated_at"].as_str().map(str::to_owned);
-                if let Some(Value::Object(conversations)) =
-                    payload.get_mut("conversations").map(Value::take)
-                {
-                    found.push((
-                        modified,
-                        conversations
-                            .into_iter()
-                            .map(|(id, view)| {
-                                (
-                                    id,
-                                    Live {
-                                        view,
-                                        updated_at: updated_at.clone(),
-                                    },
-                                )
-                            })
-                            .collect(),
-                    ));
-                }
-            }
+            seen.insert(path.clone());
+            let Some(payload) = cached(&mut cache, &path, &meta, |v| {
+                matches!(version(v), Some(VERSION | LIVE_TAILS))
+            }) else {
+                continue;
+            };
+            let Some(Value::Object(conversations)) = payload.get("conversations") else {
+                continue;
+            };
+            let tails = version(&payload) == Some(LIVE_TAILS);
+            // Version 2 rewrites only changed content and refreshes its mtime otherwise.
+            let updated_at = if tails {
+                Some(crate::stage::iso(
+                    modified
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() as i64,
+                ))
+            } else {
+                payload["updated_at"].as_str().map(str::to_owned)
+            };
+            found.push((
+                modified,
+                conversations
+                    .iter()
+                    .map(|(id, view)| {
+                        let view = if tails {
+                            LiveView::Tails(view.clone())
+                        } else {
+                            LiveView::Full(view.clone())
+                        };
+                        (
+                            id.clone(),
+                            Live {
+                                view,
+                                updated_at: updated_at.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            ));
         }
+        cache.retain(|path, _| seen.contains(path));
         found.sort_by_key(|(modified, _)| *modified);
         found
             .into_iter()
             .flat_map(|(_, conversations)| conversations)
             .collect()
     }
+}
+
+/// A parsed JSON file from the cache, read again only when its mtime or size changed.
+fn cached(
+    cache: &mut HashMap<PathBuf, Cached>,
+    path: &Path,
+    meta: &fs::Metadata,
+    accept: impl Fn(&Value) -> bool,
+) -> Option<Arc<Value>> {
+    let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+    let fresh =
+        matches!(cache.get(path), Some((m, len, _)) if *m == modified && *len == meta.len());
+    if !fresh {
+        let value = fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .filter(|value| accept(value))
+            .map(Arc::new);
+        cache.insert(path.to_path_buf(), (modified, meta.len(), value));
+    }
+    cache[path].2.clone()
+}
+
+fn version(value: &Value) -> Option<u64> {
+    value.get("version").and_then(Value::as_u64)
+}
+
+/// The saved views with running work's reply tails, reported models and elapsed time laid
+/// over them. Only work the saved views still show as running takes a tail.
+fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
+    fn lay(target: &mut Value, tail: &Value) {
+        target["output"] = tail["output"].clone();
+        if let Some(model) = tail["reported_model"].as_str() {
+            target["reported_model"] = json!(model);
+        }
+    }
+    let now = updated_at.and_then(crate::stage::timestamp);
+    let mut view = saved.clone();
+    if let Some(tasks) = view
+        .pointer_mut("/director/tasks")
+        .and_then(Value::as_array_mut)
+    {
+        for task in tasks {
+            let Some(tail) = task["id"].as_str().and_then(|id| tails["tasks"].get(id)) else {
+                continue;
+            };
+            if task["status"] != "running" {
+                continue;
+            }
+            lay(task, tail);
+            if let (Some(now), Some(start)) =
+                (now, task["time"].as_str().and_then(crate::stage::timestamp))
+            {
+                task["elapsed_ms"] = json!((now - start).max(0) / 1000);
+            }
+        }
+    }
+    if let Some(seats) = view
+        .pointer_mut("/director/round/seats")
+        .and_then(Value::as_array_mut)
+    {
+        for seat in seats {
+            let Some(tail) = seat["seat_id"]
+                .as_str()
+                .and_then(|id| tails["seats"].get(id))
+            else {
+                continue;
+            };
+            if seat["status"] == "running" {
+                lay(seat, tail);
+            }
+        }
+    }
+    view
 }
 
 pub(crate) fn valid_id(id: &str) -> bool {
@@ -577,12 +749,6 @@ pub(crate) fn call_counts(snapshot: &Snapshot) -> (usize, usize) {
         }
     }
     (running, review)
-}
-
-/// A versioned snapshot document, or None when missing, unreadable or of another version.
-fn read_json(path: &Path) -> Option<Value> {
-    let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    (value.get("version").and_then(Value::as_u64) == Some(VERSION)).then_some(value)
 }
 
 fn summary(snapshot: &Value) -> Option<Item> {
@@ -913,6 +1079,36 @@ mod tests {
                 .iter()
                 .any(|m| m["kind"] == "typing")
         );
+    }
+
+    #[test]
+    fn tail_live_files_lay_over_saved_running_work_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        save(root, &task_snapshot("a", "running", "2026-10-15T02:00:00Z"));
+        save(
+            root,
+            &task_snapshot("c", "succeeded", "2026-10-15T03:00:00Z"),
+        );
+        write(
+            &root.join("live/1-tails.json"),
+            &json!({"version": 2, "conversations": {
+                "a": {"tasks": {"t-a": {"output": "streamed tail", "reported_model": null}}, "seats": {}},
+                "c": {"tasks": {"t-c": {"output": "late tail", "reported_model": null}}, "seats": {}},
+                // Tails without saved views beneath them show nothing.
+                "gone": {"tasks": {"t-gone": {"output": "x", "reported_model": null}}, "seats": {}}}}),
+        );
+        let reader = Reader::new(root.to_path_buf());
+        let overview = reader.overview();
+        assert_eq!((overview.items.len(), overview.count("running")), (2, 1));
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        assert_eq!(chat["live"], true);
+        let messages = chat["messages"].as_array().unwrap();
+        let typing: Vec<_> = messages.iter().filter(|m| m["kind"] == "typing").collect();
+        assert_eq!(typing.len(), 1);
+        assert_eq!(typing[0]["text"], "streamed tail");
+        // A finished task keeps its saved answer.
+        assert!(!messages.iter().any(|m| m["text"] == "late tail"));
     }
 
     #[test]

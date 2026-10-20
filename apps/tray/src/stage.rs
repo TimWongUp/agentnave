@@ -1,6 +1,7 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -40,7 +41,7 @@ fn color(group: &str) -> u64 {
 }
 
 /// Studio emits RFC3339 with microseconds. Compare instants, including offsets, not strings.
-fn timestamp(time: &str) -> Option<i64> {
+pub(crate) fn timestamp(time: &str) -> Option<i64> {
     if time.get(4..5) != Some("-")
         || time.get(7..8) != Some("-")
         || time.get(10..11) != Some("T")
@@ -107,7 +108,7 @@ fn timestamp(time: &str) -> Option<i64> {
     Some(((days * 24 + hour) * 3600 + minute * 60 + second - offset * 60) * 1_000_000 + fractional)
 }
 
-fn iso(time: i64) -> String {
+pub(crate) fn iso(time: i64) -> String {
     // Gregorian civil date from days since the Unix epoch.
     let seconds = time.div_euclid(1_000_000);
     let days = seconds.div_euclid(86400) + 719468;
@@ -1598,6 +1599,23 @@ pub(crate) fn chat_group(item: &Item) -> Option<String> {
     valid_id(&id).then_some(id)
 }
 
+/// One snapshot's identity for reuse: its view's address, and whether and when it is live.
+/// Unchanged saved views keep their parsed Arc, so the address changes with the content.
+pub(crate) type SourceKey = (usize, bool, Option<String>);
+
+pub(crate) fn source_key(snapshot: &Snapshot) -> SourceKey {
+    (
+        Arc::as_ptr(&snapshot.view) as usize,
+        snapshot.live,
+        snapshot.live_updated.clone(),
+    )
+}
+
+/// The chat list's previews by group, with the views each was computed from (held so their
+/// addresses stay unique); only groups whose snapshots changed are projected again.
+type Preview = (Vec<SourceKey>, Vec<Arc<Value>>, String);
+static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex::default);
+
 pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: bool) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let (requested, focus) = match requested {
@@ -1706,25 +1724,45 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
             &json!({"version": 1, "counts": {"running": running, "review": review}, "managers": managers, "empty": empty}),
         )
     } else {
+        let mut previews = PREVIEWS.lock().unwrap_or_else(|p| p.into_inner());
+        let mut kept = HashMap::new();
         let groups: Vec<_> = groups
             .into_iter()
             .take(200)
             .map(|mut g| {
-                g.project(&snapshots, true);
+                let key: Vec<_> = g
+                    .sources
+                    .iter()
+                    .map(|&i| source_key(&snapshots[i]))
+                    .collect();
+                let preview = match previews.remove(&g.id) {
+                    Some(preview) if preview.0 == key => preview,
+                    _ => {
+                        g.project(&snapshots, true);
+                        let text = g
+                            .timeline(None)
+                            .last()
+                            .map(|m| line("succeeded", text(m, "text"), ""))
+                            .unwrap_or_default();
+                        let views = g
+                            .sources
+                            .iter()
+                            .map(|&i| snapshots[i].view.clone())
+                            .collect();
+                        (key, views, text)
+                    }
+                };
                 let mut value = g.header();
                 value["title"] = json!(g.title);
                 value["conversations"] = json!(g.conversations.len());
                 value["desks_count"] = json!(g.desks.len());
                 value["rooms_count"] = json!(g.rooms.len());
-                value["preview"] = json!(
-                    g.timeline(None)
-                        .last()
-                        .map(|m| line("succeeded", text(m, "text"), ""))
-                        .unwrap_or_default()
-                );
+                value["preview"] = json!(preview.2);
+                kept.insert(g.id.clone(), preview);
                 value
             })
             .collect();
+        *previews = kept;
         Response::json(&json!({"groups": groups}))
     }
 }

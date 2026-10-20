@@ -280,13 +280,7 @@ def _time(text: str) -> datetime | None:
         return None
 
 
-def snapshot(
-    state: Conversation,
-    storage: str,
-    *,
-    tails: dict[str, str] | None = None,
-    elapsed: dict[str, int] | None = None,
-) -> dict[str, object]:
+def snapshot(state: Conversation, storage: str) -> dict[str, object]:
     """One conversation as the tray app reads it, linking to its routes: / , /c/<id>/, /p/<id>/."""
     show = state.kind == "show"
     return {
@@ -306,8 +300,8 @@ def snapshot(
             public_url=f"/p/{state.id}/" if show else "",
             home_url="/",
             storage=storage,
-            tails=tails or {},
-            elapsed=elapsed,
+            tails={},
+            elapsed=None,
             refresh_error=None,
         ),
         "public": _show(state, "public") | {"stale": False} if show else None,
