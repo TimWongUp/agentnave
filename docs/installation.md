@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.29.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.30.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.29.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.30.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -498,7 +498,7 @@ protocol/provider path, not every desktop host's discovery or long-result render
 versions above are observations from 2026-09-08, not an all-version compatibility guarantee.
 
 Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
-and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all six CLI
+and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all seven CLI
 references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
 through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
