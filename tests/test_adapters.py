@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from agentnave.adapters import base, codex, get_adapter
-from agentnave.adapters.antigravity import AntigravityAdapter, write_restricted_profile
+from agentnave.adapters.antigravity import (
+    AntigravityAdapter,
+    session_model,
+    write_restricted_profile,
+)
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
@@ -29,6 +33,9 @@ def test_native_models_do_not_attribute_child_or_usage_models_to_main_assistant(
             is None
         )
     assert base.model_from_event("claude", {"type": "result", "modelUsage": {"child": {}}}) is None
+    grok_end: dict[str, object] = {"type": "end", "modelUsage": {"grok-4.7-build": {}}}
+    assert base.model_from_event("grok", grok_end) == "grok-4.7-build"
+    assert base.model_from_event("grok", {"type": "end", "modelUsage": {"a": {}, "b": {}}}) is None
     assert (
         base.model_from_event("claude", {"type": "system", "subtype": "init", "model": "selected"})
         is None
@@ -819,6 +826,30 @@ def test_antigravity_authentication_error_is_blocked() -> None:
     assert result.status is InvocationStatus.BLOCKED
     assert result.session_id is None
     assert result.error_message == "authentication required"
+
+
+def test_antigravity_model_comes_from_its_run_log_for_that_conversation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    logs = tmp_path / ".gemini" / "antigravity-cli" / "log"
+    logs.mkdir(parents=True)
+    label = 'Propagating selected model override to backend: label="{}"\n'
+    (logs / "cli-1.log").write_text(
+        label.format("Gemini 3.8 Flash (High)") + "Print mode: conversation=c1, sending message\n"
+    )
+    (logs / "cli-2.log").write_text(
+        label.format("Gemini 3.8 Flash (Low)")
+        + label.format("Gemini 3.8 Pro")
+        + "Print mode: conversation=c2, sending message\n"
+    )
+    since = datetime.now(UTC) - timedelta(minutes=1)
+    assert session_model("c1", since=since) == "gemini-3.8-flash-high"
+    assert session_model("c2", since=since) is None  # two models in one run is ambiguous
+    assert session_model("c3", since=since) is None
+    assert session_model("c1", since=datetime.now(UTC) + timedelta(hours=1)) is None
 
 
 def test_antigravity_result_falls_back_to_stream_session_id() -> None:

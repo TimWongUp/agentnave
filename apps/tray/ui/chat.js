@@ -32,6 +32,7 @@ const {
   hostTile,
   deskName,
   activities,
+  clip,
 } = AN;
 
 const mockOn = !!(window.AgentNaveMock && window.AgentNaveMock.enabled());
@@ -43,6 +44,8 @@ const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follow
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
 const SLEEP_AFTER = 20 * 60e3; // an idle desk dozes off after this long
 
+// Tags stay short; the full text is in the tooltip.
+const ROLE_CHARS = 6;
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
 const handleOf = (d) =>
   d.handle ||
@@ -518,14 +521,10 @@ function createDesk(d) {
   rec.el = h(
     "button.desk",
     { type: "button" },
+    // role and access sit in the top-left corner so every card keeps the same height
+    h("span.desk-tags", {}, rec.role, rec.access, rec.only),
     rec.scene,
-    h(
-      "div.label",
-      {},
-      rec.nm,
-      h("div.cli", {}, rec.cliText, rec.role, rec.access, rec.only),
-      rec.st,
-    ),
+    h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.st),
   );
   rec.el.addEventListener("click", () =>
     openScope({ kind: "desk", key: d.key }, rec.el),
@@ -546,7 +545,8 @@ function updateDesk(rec, d, ctx) {
   setText(rec.nm, deskName(d));
   setText(rec.cliText, cliName(d.provider));
   rec.role.hidden = !d.role;
-  setText(rec.role, d.role || "");
+  setText(rec.role, clip(d.role || "", ROLE_CHARS));
+  setAttr(rec.role, "title", d.role && clip(d.role, ROLE_CHARS) !== d.role ? d.role : null);
   setText(
     rec.access,
     d.access === "read" ? "只读" : d.access === "write" ? "可写" : "",

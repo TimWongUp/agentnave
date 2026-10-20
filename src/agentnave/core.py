@@ -406,6 +406,10 @@ class InvocationManager:
                 reported = session_model(
                     Host("codex"), result.session_id, since=record.started_wall_at
                 )
+            elif reported is None and record.request.provider == "antigravity":
+                from agentnave.adapters.antigravity import session_model as agy_model
+
+                reported = agy_model(result.session_id, since=record.started_wall_at)
             record.reported_model = reported
             return replace(result, reported_model=reported)
         except Exception:

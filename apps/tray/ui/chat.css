@@ -102,7 +102,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .back { display: none; flex: none; padding: 4px 2px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .office { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .floor { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-content: start; gap: 12px; padding: 10px 20px 20px; }
-.floor.solo .boss-zone, .wide, .rooms > .zone + .zone { grid-column: 1 / -1; }
+.floor.solo .zone, .wide, .rooms > .zone + .zone { grid-column: 1 / -1; }
 .rooms { display: contents; }
 @container (max-width: 640px) { .floor { grid-template-columns: minmax(0, 1fr); } .floor .zone { grid-column: 1 / -1; } .boss-zone .scene { max-width: 210px; } }
 .zone { position: relative; min-width: 0; border-radius: 16px; background: color-mix(in srgb, var(--surface) 84%, transparent); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
@@ -189,11 +189,15 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 
 /* ---- open desks ---- */
 .desks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
-.desk { position: relative; display: block; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 6px 8px 9px; text-align: center; cursor: pointer; transition: background 0.2s; }
+.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 6px 8px 9px; text-align: center; cursor: pointer; transition: background 0.2s; }
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .desk.away .scene > .fig { opacity: 0; }
 .desk.only { opacity: 0.75; }
+.desk-tags { position: absolute; top: 7px; left: 8px; z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 46%; pointer-events: none; }
+.desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.desk .say { max-width: 50%; }
+.desk > .scene { width: 100%; }
 
 /* ---- meeting rooms: each seat brings its own stretch of table; layoutRooms() sets --S ---- */
 .mscene { --S: 98px; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: 22px 0; margin: 28px auto 4px; }

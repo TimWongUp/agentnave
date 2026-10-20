@@ -131,6 +131,12 @@ def model_from_event(provider: str, event: dict[str, object]) -> str | None:
             nested = object_dict(event.get("event"))
             if nested.get("type") == "message_start":
                 value = object_dict(nested.get("message")).get("model")
+    elif provider == "grok" and kind == "end":
+        # Grok reports no model per message; its final usage lists every model it called.
+        # Only a single entry is unambiguous: subagents may add other models.
+        usage = object_dict(event.get("modelUsage"))
+        if len(usage) == 1:
+            value = next(iter(usage))
     elif provider == "pi" and kind == "message_end":
         message = object_dict(event.get("message"))
         if message.get("role") == "assistant":
