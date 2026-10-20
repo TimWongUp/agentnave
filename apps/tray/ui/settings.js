@@ -529,7 +529,7 @@ function renderModeToolbar() {
       : "已关闭：不额外限制可用工具和模型。开启后可逐项选择，并为此场景设置默认模型。";
   }
   $("mode-description").textContent = currentMode === "task"
-    ? "私聊：主控把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
+    ? "私聊：boss 把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
     : "会议：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
 }
 
@@ -766,7 +766,7 @@ function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModel
     type.value = draft.type;
     const valueBox = el("span", { className: "option-value" });
     const warning = el("div", { className: "option-permission-warning", hidden: !isPermissionOptionKey(draft.key) },
-      "权限类参数：保存后会对该组员在此范围内的每次调用生效，主控不会再逐次征求你的同意。");
+      "权限类参数：保存后会对该组员在此范围内的每次调用生效，boss 不会再逐次征求你的同意。");
     const renderValue = () => {
       const value = draft.type === "boolean"
         ? el("select", { disabled: inherited }, el("option", { value: "true" }, "true"), el("option", { value: "false" }, "false"))
@@ -949,7 +949,7 @@ function renderModelDetail(provider, modelId) {
       { className: "detail-field" },
       el("div", { className: "field-heading-with-inherit" }, ...headingKids),
       checklist,
-      el("p", { className: "field-hint" }, "全部不勾选表示不限制；勾选后只允许主控使用这些档位。low 为较低、medium 为中等、high 为较高，xhigh / max / ultra 是更高档位；通常思考更多也更慢，实际支持情况由工具决定。")
+      el("p", { className: "field-hint" }, "全部不勾选表示不限制；勾选后只允许 boss 使用这些档位。low 为较低、medium 为中等、high 为较高，xhigh / max / ultra 是更高档位；通常思考更多也更慢，实际支持情况由工具决定。")
     );
     detailBox.appendChild(effortsField);
   }
@@ -1028,7 +1028,7 @@ function renderModelDetail(provider, modelId) {
     { className: "detail-field" },
     el("div", { className: "field-heading-with-inherit" }, ...effortHeadingKids),
     el("div", { className: effortInherited ? "field-inherited-area" : "" }, effortSelect),
-    el("p", { className: "field-hint" }, "主控没有指定思考档位时使用此值；“不设置”表示交给工具自行决定。默认值须在上方允许的档位内。")
+    el("p", { className: "field-hint" }, "boss 没有指定思考档位时使用此值；“不设置”表示交给工具自行决定。默认值须在上方允许的档位内。")
   );
   detailBox.appendChild(defaultEffortField);
 
@@ -1074,7 +1074,7 @@ function renderModelDetail(provider, modelId) {
     { className: "detail-field" },
     el("div", { className: "field-heading-with-inherit" }, ...notesHeadingKids),
     el("div", { className: notesInherited ? "field-inherited-area" : "" }, notesText),
-    el("p", { className: "field-hint" }, "写给主控的选择参考，例如“适合快速问答”或“适合多文件修改”。可以留空，它不会直接作为模型的任务指令。")
+    el("p", { className: "field-hint" }, "写给 boss 的选择参考，例如“适合快速问答”或“适合多文件修改”。可以留空，它不会直接作为模型的任务指令。")
   );
   detailBox.appendChild(notesField);
 
@@ -1290,7 +1290,7 @@ function renderCards() {
         const defaultLabel = el(
           "label",
           { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: modeRestricted
-            ? "主控未指定模型时使用；再次点击可取消默认" : "默认模型按场景保存，请先开启上方“自选可用工具和模型”" },
+            ? "boss 未指定模型时使用；再次点击可取消默认" : "默认模型按场景保存，请先开启上方“自选可用工具和模型”" },
           radioInput,
           textNode("默认")
         );
@@ -1444,7 +1444,7 @@ async function saveMembers() {
     if (savingVersion === docVersion) {
       dirty = false;
     }
-    feedback.textContent = "设置已保存 · 参数是否有效以主控读取时的校验为准";
+    feedback.textContent = "设置已保存 · 参数是否有效以 boss 读取时的校验为准";
     feedback.className = "save-feedback success";
     showNotice("设置已保存");
   } catch (err) {

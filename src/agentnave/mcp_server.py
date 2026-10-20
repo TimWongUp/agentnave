@@ -927,7 +927,7 @@ def _unknown_round() -> ToolError:
 )
 async def open_group(
     title: Annotated[str, Field(min_length=1, max_length=200)],
-    seats: Annotated[list[GroupSeatSpec], Field(min_length=2, max_length=6)],
+    seats: Annotated[list[GroupSeatSpec], Field(min_length=2, max_length=7)],
     cwd: Annotated[
         str | None,
         Field(description="Absolute existing directory seats run in; ignored when isolated."),
@@ -949,7 +949,7 @@ async def open_group(
     *,
     ctx: Context[Runtime],
 ) -> ShowPayload:
-    """Create a saved show of 2–6 CLI seats; drive it with run_round.
+    """Create a saved show of 2–7 CLI seats; drive it with run_round.
 
     group_id is the conversation id. Seats are subagents with native tools and permissions
     unless isolated. Each keeps its native session across rounds, including after restart.

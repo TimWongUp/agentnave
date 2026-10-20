@@ -75,7 +75,7 @@ The guide covers host registration, provider paths, Skill installation, paired u
 and removal. Provider CLIs must be installed and authenticated separately. `uv` manages only the
 runtime; it does not install the Skill or modify provider permissions and configuration.
 
-**The paired release is `v0.28.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.29.0`.** Install the runtime and complete Skill directory from that
 tag. `uv tool` installs only the runtime; Skill discovery is a separate step. Hosts without
 Skill support can still use MCP alone. The older `v0.5.0` tag contains only the runtime.
 `v0.10.0` is the first paired release with native Windows support.
@@ -87,7 +87,7 @@ or history listing. There is no separate core/studio mode.
 
 ## Group rounds
 
-`open_group(title, seats, cwd)` registers 2–6 seats and saves a conversation. A seat is an ordinary subagent: native tools and
+`open_group(title, seats, cwd)` registers 2–7 seats and saves a conversation. A seat is an ordinary subagent: native tools and
 permissions, the group or its own `cwd`, and explicit provider options. `run_round` asks an ordered
 list of seats to answer one shared task once:
 
@@ -197,7 +197,7 @@ If no executable bundle is found, or on other platforms, AgentNave uses `codex` 
 then from the common install directories listed in the installation guide.
 AgentNave does not install or upgrade Codex, compare version numbers, or change its model settings.
 
-用户可在单次任务中点名 CLI、模型与 effort，由主控显式传入 `provider_options`，覆盖 App 默认值但仍须处于该模式允许范围。长期默认值在 App 中维护；要继承 CLI 原生设置，应清除对应 App 默认字段并在调用时省略，单纯省略参数仍会套用已配置的默认值。新增模型可直接使用其精确 ID；若模式限制模型，须先在 App 中启用。模型不可用时报告原错误，不静默替换。
+用户可在单次任务中点名 CLI、模型与 effort，由 boss 显式传入 `provider_options`，覆盖 App 默认值但仍须处于该模式允许范围。长期默认值在 App 中维护；要继承 CLI 原生设置，应清除对应 App 默认字段并在调用时省略，单纯省略参数仍会套用已配置的默认值。新增模型可直接使用其精确 ID；若模式限制模型，须先在 App 中启用。模型不可用时报告原错误，不静默替换。
 
 ### `wait_agent`
 

@@ -133,7 +133,81 @@
     if (mock() && link?.getAttribute("href").startsWith("/app/")) event.preventDefault();
   });
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain };
+  // ---- appearance: system / light / dark, shared by every window through localStorage ----------
+  const THEME_KEY = "agentnave.theme";
+  const lightQuery = matchMedia("(prefers-color-scheme: light)");
+  const themeChoice = () => {
+    try { return localStorage.getItem(THEME_KEY) || "system"; } catch { return "system"; }
+  };
+  function applyTheme() {
+    const choice = themeChoice();
+    document.documentElement.dataset.theme = choice === "system" ? (lightQuery.matches ? "light" : "dark") : choice;
+    document.querySelectorAll("[data-theme-choice]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice)));
+  }
+  function themeSwitch() {
+    const labels = { system: ["◐", "跟随系统"], light: ["☀", "浅色"], dark: ["☾", "深色"] };
+    const group = h("div.theme", { role: "group", "aria-label": "外观" },
+      ...Object.entries(labels).map(([choice, [icon, title]]) => {
+        const b = h("button", { type: "button", title, "aria-label": title, "data-theme-choice": choice }, icon);
+        b.addEventListener("click", () => {
+          try { localStorage.setItem(THEME_KEY, choice); } catch { /* storage may be unavailable */ }
+          applyTheme();
+        });
+        return b;
+      }));
+    queueMicrotask(applyTheme);
+    return group;
+  }
+  lightQuery.addEventListener("change", applyTheme);
+  addEventListener("storage", (e) => e.key === THEME_KEY && applyTheme());
+  applyTheme();
+  document.querySelector("header.bar")?.append(themeSwitch());
+  // Painted art pauses with the window: a hidden window runs no animation at all.
+  const syncPaused = () => document.documentElement.classList.toggle("paused", document.hidden);
+  document.addEventListener("visibilitychange", syncPaused);
+  syncPaused();
+
+  // ---- painted office art (ui/art, served at /art/) -----------------------------------------
+  // Characters follow the model family, like the avatars; a model without a character of its own is
+  // the default newcomer. The CLI brand is never used to guess a model.
+  const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok" };
+  const STATES = ["idle", "blink", "working", "speaking", "review", "done", "sleep"];
+  const artUrl = (path) => href(`/art/${path}`);
+  const character = (provider, model) => FAMILY_ART[window.Avatars?.family(provider, model)] || "default";
+  // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
+  function figure(name, size = "s") {
+    const imgs = STATES.map((s) => h(`img.s-${s}`, { src: artUrl(`${size}/${name}/${s}.webp`), alt: "", decoding: "async", draggable: "false" }));
+    return h("span.fig", { "data-char": name, "aria-hidden": "true" }, h("span.fig-a", {}, h("span.fig-b", {}, imgs)));
+  }
+  const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${artUrl(`h/${name}/${state}.webp`)}")` });
+  // The laptop lid shows the model family's logo, or the default terminal mark.
+  function lid(provider, model) {
+    const known = window.Avatars && (Avatars.family(provider, model) || Avatars.custom("model", provider, model));
+    return known ? Avatars.create("model", provider, model, "lid") : h("img", { src: artUrl("logo-default.svg"), alt: "" });
+  }
+  // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
+  const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness" };
+  const cliName = (provider) => CLI[provider] || provider || "";
+  // A CLI's own brand mark, for the boss tile and CLI badges only; models never inherit it.
+  const HOST_FAMILY = { claude: "claude", codex: "gpt", grok: "grok", antigravity: "gemini", gemini: "gemini", deepseek: "deepseek" };
+  function hostTile(host, label) {
+    if (host && window.Avatars?.custom("host", host, "")) return Avatars.create("host", host, "");
+    const family = HOST_FAMILY[host];
+    return family && window.Avatars ? Avatars.create("family", family) : h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
+  }
+  const deskName = (d) => d.display_model || d.model || "默认模型";
+  // A desk's live activities: private chats and meeting seats can run at the same time.
+  function activities(d) {
+    if (Array.isArray(d.activities)) return d.activities;
+    const out = [];
+    if (d.meeting?.room) out.push({ kind: "meeting", room: d.meeting.room, seat: d.meeting.seat, status: d.meeting.status });
+    if (d.private?.running > 0) out.push({ kind: "private", status: "running" });
+    return out;
+  }
+
+  const art = { url: artUrl, character, figure, head, lid, STATES };
+
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, activities };
 })();
 
 (function () {
@@ -282,7 +356,7 @@
             h(
               "p.ob-lead",
               {},
-              "完成这几步，办公室里就会出现主控、工位和会议室。",
+              "完成这几步，办公室里就会出现 boss、工位和会议室。",
             ),
           );
         kids.push(

@@ -28,7 +28,7 @@ fn label(host: Option<&str>) -> &str {
         Some("gemini") => "Gemini CLI",
         Some("opencode") => "OpenCode",
         Some("hermes") => "Hermes",
-        _ => "未知主控",
+        _ => "未知 boss",
     }
 }
 
@@ -222,7 +222,7 @@ fn cli_label(provider: &str) -> &str {
 fn desk_label(model: &str, provider: &str, role: Option<&str>) -> String {
     let mut parts = vec![
         if model.is_empty() {
-            "未记录模型".to_owned()
+            "默认模型".to_owned()
         } else {
             model.to_owned()
         },
@@ -232,6 +232,27 @@ fn desk_label(model: &str, provider: &str, role: Option<&str>) -> String {
         parts.push(role.to_owned());
     }
     parts.join(" · ")
+}
+
+fn handle(model: &str, provider: &str, role: Option<&str>) -> String {
+    let chars: Vec<_> = model.chars().collect();
+    let model = if chars.len() > 20 {
+        format!(
+            "{}…{}",
+            chars[..10].iter().collect::<String>(),
+            chars[chars.len() - 9..].iter().collect::<String>()
+        )
+    } else if model.is_empty() {
+        "默认模型".to_owned()
+    } else {
+        model.to_owned()
+    };
+    let mut value = format!("@{model}·{}", cli_label(provider));
+    if let Some(role) = role {
+        value.push('·');
+        value.push_str(role);
+    }
+    value
 }
 
 /// The core `Host.provider` mapping: which CLI a host is excluded from in private tasks.
@@ -292,7 +313,8 @@ struct Desk {
     sessions: BTreeSet<String>,
     sessionless: usize,
     running: usize,
-    meeting: Option<(i64, String, String, String)>,
+    activities: Vec<Value>,
+    reported: Option<(i64, String)>,
     // The first declared access tier wins, matching the server's desk rule.
     access: Option<(i64, String)>,
 }
@@ -326,13 +348,30 @@ impl Desk {
         let status = member_status(status);
         if let Some((room, seat)) = meeting
             && active(status)
-            && self
-                .meeting
-                .as_ref()
-                .is_none_or(|(old, _, _, _)| at >= *old)
         {
-            self.meeting = Some((at, room.to_owned(), seat.to_owned(), status.to_owned()));
+            self.activities
+                .push(json!({"kind": "meeting", "room": room, "seat": seat, "status": status}));
         }
+    }
+
+    fn reported(&mut self, at: i64, identity: &Value) {
+        if let Some(model) = opt_text(identity, "reported_model")
+            && self.reported.as_ref().is_none_or(|(old, _)| at >= *old)
+        {
+            self.reported = Some((at, model));
+        }
+    }
+
+    fn display_model(&self) -> &str {
+        if !self.model.is_empty() {
+            &self.model
+        } else {
+            self.reported.as_ref().map_or("", |(_, model)| model)
+        }
+    }
+
+    fn handle(&self) -> String {
+        handle(self.display_model(), &self.provider, self.role.as_deref())
     }
 
     fn value(&self, host: Option<&str>) -> Value {
@@ -345,17 +384,25 @@ impl Desk {
                 _ => "idle",
             }
         };
-        let meeting = match &self.meeting {
-            Some((_, room, seat, status)) => json!({"room": room, "seat": seat, "status": status}),
-            None => json!({"room": Value::Null, "seat": Value::Null, "status": Value::Null}),
-        };
+        let meeting = self
+            .activities
+            .iter()
+            .rev()
+            .find(|a| a["kind"] == "meeting")
+            .map(|a| json!({"room": a["room"], "seat": a["seat"], "status": a["status"]}))
+            .unwrap_or_else(
+                || json!({"room": Value::Null, "seat": Value::Null, "status": Value::Null}),
+            );
         json!({
             "key": self.key,
             "provider": self.provider,
             "model": self.model,
             "role": self.role,
             "access": self.access.as_ref().map(|(_, access)| access),
-            "label": desk_label(&self.model, &self.provider, self.role.as_deref()),
+            "label": desk_label(self.display_model(), &self.provider, self.role.as_deref()),
+            "display_model": self.display_model(),
+            "model_source": if !self.model.is_empty() { "requested" } else if self.reported.is_some() { "native" } else { "unknown" },
+            "handle": self.handle(), "activities": self.activities.iter().rev().collect::<Vec<_>>(),
             "first_seen": iso(self.first.unwrap_or_default()),
             "last_active": iso(self.last.unwrap_or_default()),
             "status": status,
@@ -450,7 +497,7 @@ fn plain(line: &str) -> String {
 
 fn line(status: &str, output: &str, error: &str) -> String {
     if status == "review" {
-        return "待审核：请在主控中决定".into();
+        return "待审核：请在 boss 中决定".into();
     }
     let lines = || output.lines().map(plain).filter(|s| !s.is_empty());
     match status {
@@ -526,8 +573,8 @@ fn manager_speaker(identity: &Value, provider: &str, name: &str) -> Value {
 
 fn recipient(identity: &Value) -> Value {
     let provider = text(identity, "provider");
-    let model = model(identity);
-    json!({"key": format!("{provider}/{model}"), "provider": provider, "model": model,
+    let model = text(identity, "model");
+    json!({"key": desk_key(provider, model, desk_role(identity).as_deref()), "provider": provider, "model": model,
         "label": label(Some(provider)), "seat": text(identity, "seat")})
 }
 
@@ -558,7 +605,7 @@ fn route_to(message: &mut Value, mut recipients: Vec<Value>) {
     message["to"] = json!(
         recipients
             .iter()
-            .map(|r| text(r, "key"))
+            .map(|r| json!({"key": r["key"], "handle": r["handle"]}))
             .collect::<Vec<_>>()
     );
     message["recipients"] = json!(recipients);
@@ -575,6 +622,7 @@ struct Group {
     updated: String,
     at: i64,
     title: String,
+    project_name: Option<String>,
     live: bool,
     status: &'static str,
     latest_end: Option<(i64, String)>,
@@ -599,6 +647,7 @@ impl Group {
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
+            project_name: None,
             live: false,
             status: "idle",
             conversations: Vec::new(),
@@ -615,13 +664,14 @@ impl Group {
     /// Conversations saved before hosts were recorded have neither host nor manager session.
     fn manager_label(&self) -> &str {
         match self.host.as_deref() {
-            None if self.id.starts_with("c-") => "未记录主控",
+            None if self.id.starts_with("c-") => "未记录 boss",
             host => label(host),
         }
     }
 
     fn header(&self) -> Value {
         json!({"group": self.id, "host": self.host, "label": self.manager_label(),
+            "project": self.project_name, "title": self.title,
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
     }
 
@@ -698,6 +748,7 @@ impl Group {
         desk.seen(created);
         desk.declare(created, opt_text(identity, "access"));
         desk.seat(at, status, meeting);
+        desk.reported(at, identity);
     }
 
     fn message(
@@ -711,7 +762,7 @@ impl Group {
         json!({"id": id, "time": time, "conversation": conversation, "kind": kind,
             "speaker": who, "to": [], "text": body, "status": "", "detail": "",
             "message_id": Value::Null, "visibility": "private", "thread": Value::Null,
-            "desk": Value::Null, "forward": Value::Null})
+            "desk": Value::Null, "forward": Value::Null, "reply_to": Value::Null})
     }
 
     fn member(
@@ -791,6 +842,14 @@ impl Group {
                 message_id.as_deref(),
                 None,
             );
+            message["round"] = snapshot.view["director"]["round"]["number"].clone();
+            if seat.is_empty() {
+                message["reply_to"] = json!(format!(
+                    "{}:task:{}:prompt",
+                    snapshot.item.id,
+                    text(identity, "id")
+                ));
+            }
             // One bubble per running thread: desks sharing a provider/model, or one desk's private
             // and meeting work running together, must not overwrite each other.
             let typing_key = format!("typing:{desk}:{}:{seat}", snapshot.item.id);
@@ -824,7 +883,16 @@ impl Group {
             self.at = at;
             self.updated.clone_from(&item.updated);
             self.host.clone_from(&item.host);
-            self.title.clone_from(&item.title);
+            let director = &snapshot.view["director"];
+            let cwd = opt_text(director, "cwd").or_else(|| {
+                array(director, "tasks")
+                    .filter_map(|t| opt_text(t, "cwd"))
+                    .next_back()
+            });
+            if let Some(name) = cwd.as_deref().and_then(project_name) {
+                self.project_name = Some(name);
+            }
+            self.title = self.project_name.clone().unwrap_or_default();
         }
         self.live |= snapshot.live;
         let status = conversation_status(snapshot);
@@ -841,6 +909,9 @@ impl Group {
         self.include_messages = include_messages;
         self.latest_end = None;
         self.desks.clear();
+        self.members.clear();
+        self.messages.clear();
+        self.typing.clear();
         self.rooms.clear();
         for index in 0..self.sources.len() {
             let snapshot = &snapshots[self.sources[index]];
@@ -850,6 +921,7 @@ impl Group {
                 self.show(snapshot);
             }
         }
+        self.finish_messages();
         if !active(self.status) {
             self.status = if self
                 .latest_end
@@ -861,6 +933,160 @@ impl Group {
                 "idle"
             };
         }
+    }
+
+    fn finish_messages(&mut self) {
+        let handles: BTreeMap<_, _> = self
+            .desks
+            .iter()
+            .map(|(key, desk)| (key.clone(), desk.handle()))
+            .collect();
+        let mut seat_handles = BTreeMap::new();
+        for (_, room_id, room) in &mut self.rooms {
+            let mut occurrences = BTreeMap::<String, usize>::new();
+            for seat in array(room, "seats") {
+                *occurrences
+                    .entry(text(seat, "desk").to_owned())
+                    .or_default() += 1;
+            }
+            let mut indices = BTreeMap::<String, usize>::new();
+            for seat in room["seats"].as_array_mut().into_iter().flatten() {
+                let key = text(seat, "desk").to_owned();
+                let mut handle = handles.get(&key).cloned().unwrap_or_default();
+                if occurrences[&key] > 1 {
+                    let index = indices.entry(key.clone()).or_default();
+                    handle.push_str(&format!(
+                        "·席{}",
+                        ["①", "②", "③", "④", "⑤", "⑥", "⑦"][*index]
+                    ));
+                    *index += 1;
+                }
+                seat_handles.insert(
+                    (room_id.clone(), text(seat, "seat").to_owned()),
+                    handle.clone(),
+                );
+                seat["handle"] = json!(handle);
+            }
+        }
+        // The round's task comes first; a host remark posted after the round shares its number
+        // and must not take over as the prompt the answers reply to.
+        let mut prompts = BTreeMap::new();
+        for m in self
+            .messages
+            .iter()
+            .filter(|m| m["kind"] == "prompt" && m["thread"]["kind"] == "room")
+        {
+            prompts
+                .entry((text(m, "conversation").to_owned(), m["round"].to_string()))
+                .or_insert_with(|| m["id"].clone());
+        }
+        for msg in self
+            .messages
+            .iter_mut()
+            .chain(self.typing.values_mut().map(|(_, m)| m))
+        {
+            let conversation = text(msg, "conversation").to_owned();
+            let key = text(msg, "desk").to_owned();
+            let seat = text(msg, "focus").rsplit(':').next().unwrap_or_default();
+            let who = if msg["speaker"]["role"] == "manager" {
+                "@boss".to_owned()
+            } else {
+                seat_handles
+                    .get(&(conversation.clone(), seat.to_owned()))
+                    .or_else(|| handles.get(&key))
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            msg["speaker"]["handle"] = json!(who);
+            for target in msg["recipients"].as_array_mut().into_iter().flatten() {
+                target["handle"] = json!(
+                    seat_handles
+                        .get(&(conversation.clone(), text(target, "seat").to_owned()))
+                        .or_else(|| handles.get(text(target, "key")))
+                        .cloned()
+                        .unwrap_or_default()
+                );
+            }
+            if msg["kind"] == "instruction"
+                || (msg["kind"] == "prompt" && msg["thread"]["kind"] == "desk")
+            {
+                msg["to"] = json!(
+                    array(msg, "recipients")
+                        .map(|r| json!({"key": r["key"], "handle": r["handle"]}))
+                        .collect::<Vec<_>>()
+                );
+            } else if msg["visibility"] == "public" && msg["thread"]["kind"] == "room" {
+                msg["to"] = json!([{"key": "@all", "handle": "@all"}]);
+            } else {
+                msg["to"] = json!([{"key": "@boss", "handle": "@boss"}]);
+            }
+            if let Some(answering) = msg.get_mut("answering").and_then(Value::as_array_mut) {
+                for id in answering {
+                    *id = json!(
+                        seat_handles
+                            .get(&(
+                                conversation.clone(),
+                                id.as_str().unwrap_or_default().to_owned()
+                            ))
+                            .cloned()
+                            .unwrap_or_default()
+                    );
+                }
+            }
+            if msg["speaker"]["role"] != "manager" {
+                if msg["thread"]["kind"] == "room" {
+                    msg["reply_to"] = prompts
+                        .get(&(conversation, msg["round"].to_string()))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                } else if msg["kind"] != "typing"
+                    && let Some((prefix, _)) = text(msg, "id").rsplit_once(':')
+                {
+                    msg["reply_to"] = json!(format!("{prefix}:prompt"));
+                }
+            }
+        }
+    }
+
+    fn omitted(&self, focus: Option<&str>) -> usize {
+        (self.messages.len() + self.typing.len()).saturating_sub(self.timeline(focus).len())
+    }
+
+    fn threads(&self) -> Vec<Value> {
+        let mut threads = BTreeMap::<String, Value>::new();
+        for msg in self
+            .messages
+            .iter()
+            .chain(self.typing.values().map(|(_, m)| m))
+        {
+            let thread = &msg["thread"];
+            let key = thread.to_string();
+            let entry = threads.entry(key).or_insert_with(|| {
+                let mut value = thread.clone();
+                value["count"] = json!(0);
+                value["last"] = msg["time"].clone();
+                if thread["kind"] == "desk" {
+                    value["handle"] = self
+                        .desks
+                        .get(text(thread, "key"))
+                        .map_or(Value::Null, |d| json!(d.handle()));
+                } else {
+                    value["title"] = self
+                        .rooms
+                        .iter()
+                        .find(|(_, id, _)| id == text(thread, "id"))
+                        .map_or(Value::Null, |(_, _, r)| r["title"].clone());
+                }
+                value
+            });
+            entry["count"] = json!(entry["count"].as_u64().unwrap_or_default() + 1);
+            if timestamp(text(msg, "time")) > timestamp(text(entry, "last")) {
+                entry["last"] = msg["time"].clone();
+            }
+        }
+        let mut threads: Vec<_> = threads.into_values().collect();
+        threads.sort_by_key(|t| Reverse(timestamp(text(t, "last"))));
+        threads
     }
 
     fn tasks(&mut self, snapshot: &Snapshot) {
@@ -903,6 +1129,12 @@ impl Group {
                     opt_text(task, "access"),
                 );
                 entry.observe(timestamp(&time).unwrap_or_default(), status);
+                entry.reported(timestamp(&time).unwrap_or_default(), task);
+                if active(status) {
+                    entry.activities.push(
+                        json!({"kind": "private", "status": status, "conversation": item.id}),
+                    );
+                }
                 match opt_text(task, "thread") {
                     Some(session) => {
                         entry.sessions.insert(session);
@@ -974,7 +1206,7 @@ impl Group {
                 let body = if status == "succeeded" {
                     text(task, "output").to_owned()
                 } else if status == "review" {
-                    "待审核，请在主控中决定".into()
+                    "待审核，请在 boss 中决定".into()
                 } else {
                     failure(status).into()
                 };
@@ -1053,7 +1285,7 @@ impl Group {
                 continue;
             }
             let who = if forwarded {
-                manager_speaker(entry, self.host.as_deref().unwrap_or(""), "主控转发")
+                manager_speaker(entry, self.host.as_deref().unwrap_or(""), "boss 转发")
             } else if manager {
                 manager_speaker(
                     entry,
@@ -1085,6 +1317,22 @@ impl Group {
                     text(entry, "text")
                 },
             );
+            msg["round"] = entry["round"].clone();
+            if kind == "task" {
+                let round = array(view, "rounds")
+                    .find(|r| r["number"] == entry["round"])
+                    .or_else(|| {
+                        (view["round"]["number"] == entry["round"]).then_some(&view["round"])
+                    });
+                if let Some(round) = round {
+                    let answering: Vec<_> = array(round, "seats")
+                        .map(|r| json!(text(r, "seat_id")))
+                        .collect();
+                    if answering.len() < seats.len() {
+                        msg["answering"] = json!(answering);
+                    }
+                }
+            }
             let forward = if forwarded {
                 opt_text(entry, "forward_id").map(|message_id| {
                     json!({"message_id": message_id, "source": text(entry, "forward_source")})
@@ -1102,7 +1350,15 @@ impl Group {
             );
             if manager {
                 let recipients = if entry["recipients"].is_array() {
-                    array(entry, "recipients").map(recipient).collect()
+                    array(entry, "recipients")
+                        .filter_map(|r| {
+                            seats.get(text(r, "seat")).map(|seat| {
+                                let mut identity = (*seat).clone();
+                                identity["seat"] = r["seat"].clone();
+                                recipient(&identity)
+                            })
+                        })
+                        .collect()
                 } else {
                     seats.values().map(|s| recipient(s)).collect()
                 };
@@ -1113,7 +1369,47 @@ impl Group {
                     msg["focus"] = json!(format!("seat:{}:{}", item.id, text(entry, "speaker")));
                 }
             }
+            if kind == "answer" {
+                msg["id"] = json!(format!(
+                    "{}:round:{}:{}:result",
+                    item.id,
+                    entry["round"],
+                    text(entry, "speaker")
+                ));
+            }
             self.messages.push(msg);
+        }
+        for entry in array(view, "instructions") {
+            let id = text(entry, "seat_id");
+            if let Some(seat) = seats.get(id)
+                && self.include_messages
+            {
+                let mut identity = (*seat).clone();
+                identity["seat"] = json!(id);
+                let mut msg = Self::message(
+                    format!("{}:instruction:{}:{id}", item.id, entry["round"]),
+                    &event_time(text(entry, "time"), &item.updated),
+                    &item.id,
+                    "instruction",
+                    manager_speaker(
+                        entry,
+                        self.host.as_deref().unwrap_or(""),
+                        self.manager_label(),
+                    ),
+                    text(entry, "text"),
+                );
+                msg["round"] = entry["round"].clone();
+                route_to(&mut msg, vec![recipient(&identity)]);
+                annotate(
+                    &mut msg,
+                    "private",
+                    room_thread(&item.id),
+                    desk_of(&identity).as_deref(),
+                    None,
+                    None,
+                );
+                self.messages.push(msg);
+            }
         }
         for entry in array(view, "private_messages") {
             let id = text(entry, "seat_id");
@@ -1135,6 +1431,13 @@ impl Group {
                 &time,
             );
             latest.insert(id, entry);
+            self.desk_seat(
+                &identity,
+                "succeeded",
+                created,
+                timestamp(&time).unwrap_or(created),
+                None,
+            );
             if self.include_messages {
                 let round = entry["round"].as_u64().unwrap_or_default();
                 let mut msg = Self::message(
@@ -1146,6 +1449,8 @@ impl Group {
                     text(entry, "text"),
                 );
                 msg["private"] = json!(true);
+                msg["discarded"] = json!(true);
+                msg["round"] = entry["round"].clone();
                 msg["status"] = json!("succeeded");
                 msg["focus"] = json!(format!("seat:{}:{id}", item.id));
                 annotate(
@@ -1214,9 +1519,7 @@ impl Group {
                             )
                             && run["review"] != "discard"))
                 {
-                    let body = if status == "review" {
-                        "待审核，请在主控中决定".into()
-                    } else if status == "succeeded" {
+                    let body = if matches!(status, "review" | "succeeded") {
                         text(run, "output").to_owned()
                     } else {
                         failure(status).into()
@@ -1226,7 +1529,7 @@ impl Group {
                         format!("{}:round:{round}:{id}:result", item.id),
                         &time,
                         &item.id,
-                        if status == "succeeded" {
+                        if matches!(status, "review" | "succeeded") {
                             "reply"
                         } else {
                             "notice"
@@ -1235,6 +1538,7 @@ impl Group {
                         &body,
                     );
                     msg["status"] = json!(status);
+                    msg["round"] = json!(round);
                     msg["detail"] = json!(text(run, "error"));
                     msg["focus"] = json!(format!("seat:{}:{id}", item.id));
                     annotate(
@@ -1275,6 +1579,7 @@ impl Group {
                 "status": conversation_status(snapshot),
                 "seats": room_seats,
                 "pending_review": array(&view["round"], "seats").filter(|run| run["review"] == "pending").count(),
+                "round": view["round"].as_object().map(|r| json!({"number": r.get("number"), "order": r.get("order"), "status": r.get("status")})),
                 "board": array(view, "messages").filter(|entry| text(entry, "kind") != "absent").count(),
             }),
         ));
@@ -1363,23 +1668,33 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
         value["desks"] = json!(group.desks(host.as_deref()));
         value["rooms"] = json!(group.rooms());
         value["messages"] = json!(group.timeline(focus));
+        value["omitted"] = json!(group.omitted(focus));
+        value["threads"] = json!(group.threads());
         return Response::json(&value);
     }
     if path == "/app/stage" {
         let managers: Vec<_> = groups
             .into_iter()
             .filter(|g| stage_ids.contains(&g.id))
-            .map(|g| {
+            .map(|mut g| {
+                g.project(&snapshots, true);
                 let mut value = g.header();
+                value["threads"] = json!(g.threads());
+                value["omitted"] = json!(g.omitted(None));
                 value["members"] = json!(g.members());
                 value["desks"] = json!(g.desks(g.host.as_deref()));
                 value["rooms"] = json!(g.rooms());
                 value
             })
             .collect();
-        let members = || managers.iter().flat_map(|m| array(m, "members"));
-        let running = members().filter(|m| m["status"] == "running").count();
-        let review = members().filter(|m| m["status"] == "review").count();
+        let counts = snapshots
+            .iter()
+            .filter(|s| chat_group(&s.item).is_some_and(|id| stage_ids.contains(&id)))
+            .map(crate::data::call_counts)
+            .fold((0, 0), |(running, review), (r, v)| {
+                (running + r, review + v)
+            });
+        let (running, review) = counts;
         let empty = if !managers.is_empty() {
             None
         } else if !data_exists {
@@ -1411,5 +1726,46 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
             })
             .collect();
         Response::json(&json!({"groups": groups}))
+    }
+}
+
+/// The project a working directory belongs to: its folder name, or the repository's name for an
+/// agent worktree such as `<repo>/.claude/worktrees/<name>`.
+fn project_name(cwd: &str) -> Option<String> {
+    let parts: Vec<&str> = cwd.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
+    match parts.as_slice() {
+        [.., repo, dot, "worktrees", _] if dot.starts_with('.') => Some((*repo).to_owned()),
+        [.., last] => Some((*last).to_owned()),
+        [] => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn project_name_skips_agent_worktrees() {
+        assert_eq!(
+            super::project_name("/Users/a/Code/app/").as_deref(),
+            Some("app")
+        );
+        assert_eq!(
+            super::project_name("/Users/a/Code/app/.claude/worktrees/fix-1").as_deref(),
+            Some("app")
+        );
+        assert_eq!(
+            super::project_name("/Users/a/.codex/worktrees/ab12/app").as_deref(),
+            Some("app")
+        );
+        assert_eq!(super::project_name("/"), None);
+    }
+
+    use super::handle;
+
+    #[test]
+    fn handles_shorten_only_the_model_middle_by_unicode_characters() {
+        assert_eq!(
+            handle("backend/abcdefghijklmno尾部模型", "pi", Some("review")),
+            "@backend/ab…klmno尾部模型·Pi·review"
+        );
     }
 }

@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.28.0` contains the runtime source, `agentnave-manager` Skill and all six
+**Paired release:** `v0.29.0` contains the runtime source, `agentnave-manager` Skill and all six
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.28.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.29.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -461,7 +461,7 @@ A development Skill used with v0.5.0 does not change that older runtime's behavi
 
 ## 5. Verify MCP and Skill discovery
 
-主控先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `describe_provider` 核对参数与宿主身份。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
+boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `describe_provider` 核对参数与宿主身份。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
 配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；统一为 16 个工具。已有 PATH 与排除环境变量不需改写。
 

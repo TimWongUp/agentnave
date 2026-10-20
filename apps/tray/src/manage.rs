@@ -131,7 +131,7 @@ pub fn delete(root: &Path, id: &str) -> Value {
         Err(e) => return result(id, "error", &e),
     };
     if state.pending {
-        return result(id, "pending_review", "有待审回答，请先由主控处理");
+        return result(id, "pending_review", "有待审回答，请先由 boss 处理");
     }
     // Delete the derived view first: on failure the authoritative state is still retryable.
     for name in ["views.json", "state.json"] {
@@ -203,7 +203,7 @@ pub fn list(root: &Path, overview: Overview) -> Value {
         let reason = if let Some(error) = error {
             error
         } else if state.pending {
-            "有待审回答，请先由主控处理".to_owned()
+            "有待审回答，请先由 boss 处理".to_owned()
         } else if !held {
             "正在被某个宿主使用，请空闲后重试".to_owned()
         } else {

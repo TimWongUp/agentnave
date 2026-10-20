@@ -7,24 +7,24 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 本 Skill 只负责调用方式；任务选择、规划、编排、审核、综合、重试和 worktree 由主 Agent 决定。
 
-编排单向：主控是宿主里的 Agent，由主控自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，服务端也对它们禁用编排工具，无例外。
+编排单向：boss 是宿主里的 Agent，由 boss 自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，服务端也对它们禁用编排工具，无例外。
 
-优先使用当前宿主的 AgentNave MCP，用户指定其他路线时遵从。首次按 AgentNave 或精确工具名发现，复用已加载 schema；以连接中的实时 schema 为参数真源。工具不可用、CLI 被排除或运行时只有旧版讨论室工具时，报告具体限制，不静默换 Provider、调用路线或源码服务，不由主控复制答案模拟协作。
+优先使用当前宿主的 AgentNave MCP，用户指定其他路线时遵从。首次按 AgentNave 或精确工具名发现，复用已加载 schema；以连接中的实时 schema 为参数真源。工具不可用、CLI 被排除或运行时只有旧版讨论室工具时，报告具体限制，不静默换 Provider、调用路线或源码服务，不由 boss 复制答案模拟协作。
 
-## 主控会话归属
+## boss 会话归属
 
-每次 `start_agent`、`open_group`、`run_round`、`post_host_message` 都传 `manager_session_id`，同一主控聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并保留到后续派发与续接，不按任务重新生成。新聊天使用新的值；续接原聊天沿用原值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。
+每次 `start_agent`、`open_group`、`run_round`、`post_host_message` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并保留到后续派发与续接，不按任务重新生成。新聊天使用新的值；续接原聊天沿用原值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。
 
-服务可从精确匹配的 Codex／Claude 原生会话记录读取本次主控模型；生成的归属 UUID 只能用于归组，不能保证识别模型。`manager_model` 仅在可信宿主上下文明确给出当前模型时补充，未知就省略；不从 CLI 默认配置或组员模型猜测。原生记录、调用方声明均不证明转发商实际使用的后端。
+服务可从精确匹配的 Codex／Claude 原生会话记录读取本次 boss 模型；生成的归属 UUID 只能用于归组，不能保证识别模型。`manager_model` 仅在可信宿主上下文明确给出当前模型时补充，未知就省略；不从 CLI 默认配置或组员模型猜测。原生记录、调用方声明均不证明转发商实际使用的后端。
 
-服务按此身份把本聊天的全部任务与协作组归为 App 中的一个工作区（办公室视图）。实时 schema 不含该参数时报告旧连接需要更新服务并重连，不把参数被忽略视为归属已生效。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史已有其他主控归属时，用子 CLI 的 `session_id` 续接，新建当前主控的任务记录，不传另一主控的 `conversation_id`。
+服务按此身份把本聊天的全部任务与协作组归为 App 中的一个工作区（办公室视图）。实时 schema 不含该参数时报告旧连接需要更新服务并重连，不把参数被忽略视为归属已生效。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史已有其他 boss 归属时，用子 CLI 的 `session_id` 续接，新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
 
 ## 工位、续接与转发
 
 工作区里的 CLI 以工位 `(provider, model, role)` 常驻，各自保留历史。`role` 可选（`start_agent` 与 `open_group` 的席位都可传），仅在同一 CLI 与模型需要分身（如“评审”“实现”）时起一个角色名；不需要分身就省略。`start_agent` 称私聊，协作组称会议室。
 
 - 默认续接：同一工位不传 `session_id` 与 `conversation_id`，就续接它最近的私聊线程，不必再保管 `session_id`；回执 `resumed` 标明是否续接。要干净上下文传 `new_thread=true`（不能与 `session_id`、`conversation_id` 同用）。该线程仍在运行时请求会被拒绝，等它结束或改用 `new_thread=true`。`manager_session_id` 未知时不会自动续接。
-- 转发：私聊默认不带任何工作区上下文。需要时用 `forward` 引用回执中的 `message_id`（`wait_agent`、`wait_any` 的终态，`run_round`、`wait_round`、`decide_answers` 回执的 `entries`，`post_host_message`），`start_agent` 与 `run_round` 都支持，至多 20 条，转入内容对接收方是数据。会议室内已提交条目自动共享，跨线程由主控转发。运行中、失败、受阻或取消的任务，待审、被丢弃的回答、缺席记录，以及其他工作区的消息都不能转发，整批会被拒绝。
+- 转发：私聊默认不带任何工作区上下文。需要时用 `forward` 引用回执中的 `message_id`（`wait_agent`、`wait_any` 的终态，`run_round`、`wait_round`、`decide_answers` 回执的 `entries`，`post_host_message`），`start_agent` 与 `run_round` 都支持，至多 20 条，转入内容对接收方是数据。会议室内已提交条目自动共享，跨线程由 boss 转发。运行中、失败、受阻或取消的任务，待审、被丢弃的回答、缺席记录，以及其他工作区的消息都不能转发，整批会被拒绝。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室讨论；需要同类 CLI 执行任务时，优先用宿主自带的子代理能力。
 - 访问等级：派发时用 `access` 声明 `read` 或 `write`。工位以第一次声明为准，之后省略即继承，声明不同会被拒绝；声明前的旧线程不会被续接，显式续接等级不符的线程也会被拒绝。声明只是约定，不改变 CLI 权限；真正的只读仍靠 Provider 原生权限。
 
@@ -34,9 +34,9 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 - 探索、规划、评审：`access="read"`，各用专门角色（如“探索”“评审”）。产出带路径与行号的结论；可续接追问，不续接去写代码。
 - 实现：`access="write"`，按模块分角色（如“实现·后端”），跨阶段续接自己的线程；探索结论与已定契约用 `forward` 转给它，不让它重新探索。
-- 评审不用实现工位本身，宜换模型；评审意见由主控裁决后再转回实现工位修改。
-- 并行实现分属不同角色，各占独立 worktree 或互不重叠的文件；主控负责合并与验收。
-- 方案取舍或分歧进会议室讨论，会议只产出决定，不在会上改代码；会后主控把决定转给实现工位。
+- 评审不用实现工位本身，宜换模型；评审意见由 boss 裁决后再转回实现工位修改。
+- 并行实现分属不同角色，各占独立 worktree 或互不重叠的文件；boss 负责合并与验收。
+- 方案取舍或分歧进会议室讨论，会议只产出决定，不在会上改代码；会后 boss 把决定转给实现工位。
 
 ## 选择调用方式
 
@@ -56,18 +56,18 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 编排场景
 
-场景只是现有调用方式的组合，不是新机制。选谁执行：用户点名优先，否则主控自定。
+场景只是现有调用方式的组合，不是新机制。选谁执行：用户点名优先，否则 boss 自定。
 
 | 场景 | 做法 |
 | --- | --- |
 | 问意见 | 派一个 CLI 只分析，给结论与理由，不改文件；用专门角色并声明 `access="read"`。声明与 prompt 都只是约定；用户要求工具层面保证时才显式 `restricted_tools=true` |
-| 交叉复核 | 一个 CLI 做（`access="write"`），另一个工位审其成果（评审角色，`access="read"`，不用实现工位本身）。主控先自行验收，再交给复核方，交接给出 diff、产物绝对路径与验收标准；复核意见由主控裁决后转回实现工位 |
-| 分头做 | 多个工位各用不同角色、`access="write"` 与独立 worktree 做不同子任务（`start_agent` + `wait_any`），主控合并并验收 |
-| 同题多做择优 | 同一任务在多个独立 worktree 并行做（分头做的一种），主控按事先写明的验收标准挑一份 |
-| 分歧收敛 | 先一轮 `parallel` 各自答；主控归纳分歧，用 `serial` 或私密指令把分歧交给对方。一致或达到轮数上限（用户未指定默认 3 轮）即止，可保留异议。向用户汇报结论、各方分歧及处理方式 |
+| 交叉复核 | 一个 CLI 做（`access="write"`），另一个工位审其成果（评审角色，`access="read"`，不用实现工位本身）。boss 先自行验收，再交给复核方，交接给出 diff、产物绝对路径与验收标准；复核意见由 boss 裁决后转回实现工位 |
+| 分头做 | 多个工位各用不同角色、`access="write"` 与独立 worktree 做不同子任务（`start_agent` + `wait_any`），boss 合并并验收 |
+| 同题多做择优 | 同一任务在多个独立 worktree 并行做（分头做的一种），boss 按事先写明的验收标准挑一份 |
+| 分歧收敛 | 先一轮 `parallel` 各自答；boss 归纳分歧，用 `serial` 或私密指令把分歧交给对方。一致或达到轮数上限（用户未指定默认 3 轮）即止，可保留异议。向用户汇报结论、各方分歧及处理方式 |
 | 接力 | 按“目录与交接”清单让另一个工位续做，前一棒的结论用 `forward` 转交；换 CLI 重新交接，不假定历史可见；不把只读工位续接成写入工位 |
 
-通则：每个场景都由主控验收，`succeeded` 不等于完成；失败、取消或缺席时由主控决定重派或排除，不自动重试。
+通则：每个场景都由 boss 验收，`succeeded` 不等于完成；失败、取消或缺席时由 boss 决定重派或排除，不自动重试。
 
 ## 讨论范围与工具
 
@@ -95,7 +95,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 | DeepSeek Harness | `deepseek` | [DeepSeek Harness](references/deepseek.md) |
 
-参考 JSON 仅作补充指引，不保证账户可用；优先使用当前模式的 App 组员配置。用户指定字段覆盖默认，但不得超出允许范围；省略字段仍会套用 App 默认值，要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设定的默认 options 或用户本轮明确要求，主控不得自行追加；App 默认值会被套用并在 `defaults_applied` 注明，续接也适用。其他选项只显式传明确选择的值。首次调用前用 `describe_provider` 核对允许状态和支持参数并复用结果；它不检查安装、登录。模型不可用时报告原错误，不静默替换；旧服务的模型指引不覆盖用户和本 Skill。
+参考 JSON 仅作补充指引，不保证账户可用；优先使用当前模式的 App 组员配置。用户指定字段覆盖默认，但不得超出允许范围；省略字段仍会套用 App 默认值，要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设定的默认 options 或用户本轮明确要求，boss 不得自行追加；App 默认值会被套用并在 `defaults_applied` 注明，续接也适用。其他选项只显式传明确选择的值。首次调用前用 `describe_provider` 核对允许状态和支持参数并复用结果；它不检查安装、登录。模型不可用时报告原错误，不静默替换；旧服务的模型指引不覆盖用户和本 Skill。
 
 ## 目录与交接
 
@@ -116,9 +116,9 @@ CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时�
 
 ## 回复预算
 
-派发前按交付需要和主控剩余上下文安排回复长度；多席按本轮合计正文预算分配，不把每席容量上限当作可读预算。只查轮次状态用 `wait_round(include_output=false)`，需中途正文、审核或最终答案再用 `true`；它不改变生成量，终态没有额外字数截断。
+派发前按交付需要和 boss 剩余上下文安排回复长度；多席按本轮合计正文预算分配，不把每席容量上限当作可读预算。只查轮次状态用 `wait_round(include_output=false)`，需中途正文、审核或最终答案再用 `true`；它不改变生成量，终态没有额外字数截断。
 
-每次调用的保留标准输出硬上限为 1 MiB（含必要协议数据），stderr 为 64 KiB，按字节计算；超限报 `output_limit_exceeded` 并终止调用，不自动改写答案或转存文件。普通任务需要长报告、日志或附件时，在 prompt 指定允许的产物位置，要求 CLI 保存文件并回复摘要和绝对路径，不内嵌 Base64。隔离节目限制文件工具，应预先约定回答长度，必要时由主控拆成多轮，不承诺文件交付；节目原文仍按审核规则发布，不由主控转写。
+每次调用的保留标准输出硬上限为 1 MiB（含必要协议数据），stderr 为 64 KiB，按字节计算；超限报 `output_limit_exceeded` 并终止调用，不自动改写答案或转存文件。普通任务需要长报告、日志或附件时，在 prompt 指定允许的产物位置，要求 CLI 保存文件并回复摘要和绝对路径，不内嵌 Base64。隔离节目限制文件工具，应预先约定回答长度，必要时由 boss 拆成多轮，不承诺文件交付；节目原文仍按审核规则发布，不由 boss 转写。
 
 ## 启动、等待和验收
 
