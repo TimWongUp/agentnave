@@ -104,7 +104,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .floor { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); align-content: start; gap: 12px; padding: 10px 20px 20px; }
 .floor.solo .boss-zone, .wide, .rooms > .zone + .zone { grid-column: 1 / -1; }
 .rooms { display: contents; }
-@container (max-width: 640px) { .floor { grid-template-columns: minmax(0, 1fr); } .floor .zone { grid-column: 1 / -1; } }
+@container (max-width: 640px) { .floor { grid-template-columns: minmax(0, 1fr); } .floor .zone { grid-column: 1 / -1; } .boss-zone .scene { max-width: 210px; } }
 .zone { position: relative; min-width: 0; border-radius: 16px; background: color-mix(in srgb, var(--surface) 84%, transparent); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .desks-zone { cursor: default; }
 .zone.sel { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
@@ -257,6 +257,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .m-ava .avatar { width: 22px; height: 22px; border-radius: 6px; font-size: 10px; }
 .m-ava .head { width: 22px; height: 22px; border-radius: 50%; background: center / cover; }
 .m-name { color: var(--ink); font-weight: 650; white-space: nowrap; }
+.m-who { font-size: 11px; color: var(--faint); white-space: nowrap; }
+.m-who:empty { display: none; }
 .m-verb { white-space: nowrap; }
 .m-to { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .m-to:empty { display: none; }

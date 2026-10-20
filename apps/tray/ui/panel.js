@@ -84,10 +84,10 @@ function updateCell(rec, group, d) {
   }
   setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
-  setAttr(rec.el, "title", `${d.handle || deskName(d)}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 只能开会" : ""}\n最近 ${fullTime(d.last_active)}`);
+  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 只能开会" : ""}\n最近 ${fullTime(d.last_active)}`);
   setText(rec.name, deskName(d));
   setText(rec.role, d.role ? ` · ${d.role}` : "");
-  setText(rec.word, `${s.word}${cliName(d.provider) ? ` · ${cliName(d.provider)}` : ""}`);
+  setText(rec.word, s.word);
   return s;
 }
 
@@ -150,28 +150,31 @@ function updateBlock(rec, m) {
   const n = tally(m);
   const [word] = pick(GROUP, m.status);
   const name = m.project || m.label;
-  setClass(rec.el, `blk ${colorClass(m.color)}${n.running ? " run" : ""}${m.live ? "" : " off"}`);
+  setClass(rec.el, `blk ${colorClass(m.color)}${n.running ? " run" : ""}`);
   tile(rec, m);
   setClass(rec.presence, m.live ? "presence on" : "presence");
-  setAttr(rec.presence, "title", m.live ? "boss 在线" : "boss 已离线，只剩历史记录");
+  setAttr(rec.presence, "title", m.live ? "有任务在运行" : "没有运行中的任务");
   for (const a of [rec.boss, rec.head]) setAttr(a, "href", href(`/chat/${m.group}`));
   setAttr(rec.boss, "title", `${m.label} 里的 boss${m.project ? ` · ${m.project}` : ""}`);
-  setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}${m.live ? "" : "，离线"}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
+  setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
   setText(rec.project, name);
-  setText(rec.host, m.project ? m.label : m.live ? "在线" : "离线");
-  const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", m.live ? "空闲" : "离线"];
+  setText(rec.host, m.project ? m.label : "");
+  const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
   setText(rec.count, `· ${desks.length} 工位${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
   setText(rec.time, relTime(m.updated));
   setAttr(rec.time, "title", fullTime(m.updated));
 
-  // desks in the office's own (first seen) order; folded beyond SHOWN when there are FOLD_AT or more
+  // desks in the office's own (first seen) order; folded beyond SHOWN when there are FOLD_AT or more,
+  // with busy desks moved up so the fold never hides what is going on
   const byKey = new Map(desks.map((d) => [d.key, d]));
+  const busy = (d) => ["working", "review", "meeting"].includes(brief(d).mood);
+  const ordered = desks.length >= FOLD_AT ? [...desks.filter(busy), ...desks.filter((d) => !busy(d))] : desks;
   for (const key of rec.cellRecs.keys()) if (!byKey.has(key)) rec.cellRecs.delete(key);
   const folded = desks.length >= FOLD_AT && !state.expanded.has(m.group);
   let hiddenCount = 0, hiddenBusy = 0;
-  reconcile(rec.cells, desks.map((d, i) => {
+  reconcile(rec.cells, ordered.map((d, i) => {
     let cell = rec.cellRecs.get(d.key);
     if (!cell) rec.cellRecs.set(d.key, (cell = createCell()));
     const s = updateCell(cell, m.group, d);
@@ -346,8 +349,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------- refresh
-// A boss that is online or busy gets a full row; offline and idle ones fold to the end.
-const active = (m) => urgent(m.status) || m.live;
+// A boss with work going on or recent activity gets a full row; the rest fold to the end.
+const RECENT = 30 * 60e3;
+const active = (m) => urgent(m.status) || m.live || Date.now() - AN.at(m.updated) < RECENT;
 function render(data) {
   renderState(data);
   renderAsk(data.managers);
@@ -361,7 +365,7 @@ function render(data) {
     return;
   }
   showBody("stage");
-  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: urgent(m.status) ? 0 : m.live ? 1 : 2 })));
+  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: urgent(m.status) ? 0 : active(m) ? 1 : 2 })));
   const byGroup = new Map(data.managers.map((m) => [m.group, m]));
   for (const map of [state.blocks, state.quiet]) for (const id of map.keys()) if (!byGroup.has(id)) map.delete(id);
   const full = [], folded = [];
@@ -387,7 +391,7 @@ function render(data) {
   reconcile($("quiet"), folded);
   $("sec-live").hidden = !full.length;
   $("sec-quiet").hidden = !folded.length;
-  setText($("live-count"), `${data.managers.filter((m) => m.live).length} 个在线`);
+  setText($("live-count"), `${full.length} 个`);
   setText($("quiet-count"), `${folded.length} 个`);
 }
 

@@ -239,6 +239,7 @@ function updateItem(rec, g) {
     rec.tile.replaceChildren(hostTile(g.host, g.label));
   }
   setClass(rec.presence, g.live ? "presence on" : "presence");
+  setAttr(rec.presence, "title", g.live ? "有任务在运行" : null);
   setText(rec.label, name);
   setText(
     rec.meta,
@@ -392,7 +393,7 @@ function renderHead(c, n) {
   }
   const t = state.head;
   setText(t.title, c.project || c.label);
-  setText(t.sub, `boss 在 ${c.label} 里 · ${c.live ? "在线" : "离线"}`);
+  setText(t.sub, `boss 在 ${c.label} 里`);
   t.run.hidden = !n.running;
   setText(t.run, `${n.running} 个在工作`);
   t.review.hidden = !n.review;
@@ -406,6 +407,11 @@ function bossModel(c) {
     if (s?.role === "manager" && s.model) return s.model;
   }
   return "";
+}
+// `live` only means a server is running work right now; an idle boss dozes off after a while.
+function recentlyActive(c) {
+  const g = state.groupsData.find((x) => x.group === c.group);
+  return !!g && Date.now() - AN.at(g.updated) < SLEEP_AFTER;
 }
 function createBoss() {
   const rec = {
@@ -445,7 +451,7 @@ function updateBoss(rec, c, n) {
     ? "review"
     : n.running
       ? "working"
-      : c.live
+      : recentlyActive(c)
         ? "idle"
         : "sleep";
   el.boss.dataset.mood = mood;
@@ -461,7 +467,7 @@ function updateBoss(rec, c, n) {
   }
   state.pending = n.review;
   setText(rec.tray, String(n.review));
-  setText(rec.cli, `${c.label} · ${c.live ? "在线" : "离线"}`);
+  setText(rec.cli, c.label);
   setText(
     rec.st,
     n.review
@@ -974,6 +980,14 @@ function speakerName(m, ctx) {
   const d = speakerDesk(m, ctx);
   return d ? deskName(d) : s.model || cliName(s.provider) || "组员";
 }
+// CLI and role after the name, so several "默认模型" desks stay apart.
+function speakerSub(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system" || isBoss(m)) return "";
+  const d = speakerDesk(m, ctx);
+  const provider = d?.provider || s.provider;
+  return [cliName(provider), d?.role].filter(Boolean).join(" · ");
+}
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
   if (s.role === "system") return null;
@@ -1078,6 +1092,7 @@ function createMessage(m) {
   rec.time = h("time");
   rec.ava = h("span.m-ava");
   rec.name = h("b.m-name");
+  rec.who = h("span.m-who");
   if (m.kind === "notice") {
     rec.text_ = h("span.note-text");
     rec.detail = h("small.note-detail");
@@ -1086,6 +1101,7 @@ function createMessage(m) {
       {},
       rec.ava,
       rec.name,
+      rec.who,
       rec.text_,
       rec.time,
       rec.detail,
@@ -1125,6 +1141,7 @@ function createMessage(m) {
       {},
       rec.ava,
       rec.name,
+      rec.who,
       rec.verb,
       rec.to,
       rec.verb2,
@@ -1154,6 +1171,7 @@ function updateMessage(rec, m, ctx, id) {
   setAttr(rec.el, "data-kind", m.kind);
   setFace(rec, m, ctx);
   setText(rec.name, speakerName(m, ctx));
+  setText(rec.who, speakerSub(m, ctx));
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
   if (m.kind === "notice") {
