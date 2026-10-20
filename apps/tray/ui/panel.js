@@ -84,7 +84,7 @@ function updateCell(rec, group, d) {
   }
   setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
-  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 只能开会" : ""}\n最近 ${fullTime(d.last_active)}`);
+  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 仅开会" : ""}\n最近 ${fullTime(d.last_active)}`);
   setText(rec.name, deskName(d));
   setText(rec.role, d.role ? ` · ${clip(d.role, 6)}` : "");
   setText(rec.word, s.word);
