@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from agentnave.adapters.base import (
@@ -20,6 +22,40 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+
+_LABEL = re.compile(rb'Propagating selected model override to backend: label="([^"\n]{1,80})"')
+_LABEL_TEXT = re.compile(r"([A-Za-z0-9.]+(?: [A-Za-z0-9.]+)*)(?: \(([A-Za-z0-9 ]+)\))?")
+
+
+def session_model(conversation_id: str | None, *, since: datetime) -> str | None:
+    """The model agy used for this conversation, from its own run log; agy streams none.
+
+    The log names the selected model by label ("Gemini 3.8 Flash (High)"), which maps to the
+    model ID agy accepts ("gemini-3.8-flash-high"). Only one consistent label counts.
+    """
+    if not conversation_id:
+        return None
+    marker = f"Print mode: conversation={conversation_id},".encode()
+    root = Path.home() / ".gemini" / "antigravity-cli" / "log"
+    try:
+        logs = [
+            (stat.st_mtime, path)
+            for path in root.glob("cli-*.log")
+            if (stat := path.stat()).st_mtime >= since.timestamp() - 5 and stat.st_size < 16 << 20
+        ]
+        for _, path in sorted(logs, reverse=True)[:20]:
+            data = path.read_bytes()
+            if marker not in data:
+                continue
+            labels = {label.decode("utf-8", "replace") for label in _LABEL.findall(data)}
+            if len(labels) != 1 or not (match := _LABEL_TEXT.fullmatch(labels.pop())):
+                return None
+            parts = [match.group(1), *([match.group(2)] if match.group(2) else [])]
+            return "-".join(" ".join(parts).lower().split())
+    except OSError:
+        return None
+    return None
+
 
 _DISCUSSION_AGENT = """---
 name: agentnave-discussion

@@ -5,7 +5,7 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, activities,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, activities, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
@@ -86,7 +86,7 @@ function updateCell(rec, group, d) {
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
   setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 只能开会" : ""}\n最近 ${fullTime(d.last_active)}`);
   setText(rec.name, deskName(d));
-  setText(rec.role, d.role ? ` · ${d.role}` : "");
+  setText(rec.role, d.role ? ` · ${clip(d.role, 6)}` : "");
   setText(rec.word, s.word);
   return s;
 }

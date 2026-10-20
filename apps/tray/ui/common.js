@@ -196,6 +196,8 @@
     return family && window.Avatars ? Avatars.create("family", family) : h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
   }
   const deskName = (d) => d.display_model || d.model || "默认模型";
+  // Cut long labels to n characters (by code point) with an ellipsis.
+  const clip = (text, n) => { const chars = [...text]; return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text; };
   // A desk's live activities: private chats and meeting seats can run at the same time.
   function activities(d) {
     if (Array.isArray(d.activities)) return d.activities;
@@ -207,7 +209,7 @@
 
   const art = { url: artUrl, character, figure, head, lid, STATES };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, activities };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, activities, clip };
 })();
 
 (function () {
