@@ -1,193 +1,276 @@
 "use strict";
-// Menu bar panel, "stage": managers (host CLI sessions) on the left, AgentNave in the middle,
-// a thumbnail of each manager's office on the right (desk cells and meeting-room rows), wired in
-// the manager's colour. Every node is created once and then patched in place (keyed by group id /
-// desk key / room id); wires are an SVG overlay recomputed from layout after each render, resize and
-// fold. Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
+// Menu bar panel: one row per boss (the host CLI session) wired to a thumbnail of its office. Things
+// waiting on the user come first; offices with nothing going on fold into one line each at the end.
+// Every node is created once and then patched in place (keyed by group id / desk key / room id).
+// Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
-  h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass,
-  relTime, fullTime, setText, setAttr, setClass, reconcile, stickyOrder, poll,
+  h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, activities,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
 const SHOWN = 6; //   ... down to this many
-const SVG = "http://www.w3.org/2000/svg";
+const SLEEP_AFTER = 20 * 60e3; // an idle desk dozes off after this long
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
+document.querySelector("header.top").append(AN.themeSwitch());
 
 const ob = AN.onboarding({ variant: "full", onChange: () => syncOb() });
 function syncOb() {
   const slot = $("ob-slot");
   const on = ob.visible && stage.hidden && state.calm === "no_data";
   slot.hidden = !on;
-  $("calm").hidden = stage.hidden ? on : true; // the card replaces the ghost + generic hint
+  $("calm").hidden = stage.hidden ? on : true; // the card replaces the generic hint
   if (on && ob.el.parentNode !== slot) slot.prepend(ob.el);
 }
 
 const stage = $("stage");
-const groupsEl = $("groups");
 const state = {
-  blocks: new Map(), // group id -> block record
-  order: [], // sticky manager order
-  expanded: new Set(), // groups whose folded members are shown
-  seen: new Map(), // `${group}|${desk key}` -> last desk status (for announcements)
-  ready: false, // first render done: announcements start after it
-  failures: 0,
+  blocks: new Map(), // group id -> office block
+  quiet: new Map(), // group id -> folded row
+  order: [],
+  expanded: new Set(), // offices whose folded desks are shown
+  seen: new Map(), // `${group}|${desk key}` -> was running (for announcements)
+  ready: false,
   appStatus: null,
-  calm: "", // which body state is drawn: "", loading, empty, error
+  calm: "",
 };
 
-// ---------------------------------------------------------------- blocks
+// ---------------------------------------------------------------- what a desk is doing
+const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
+function brief(d) {
+  const acts = activities(d);
+  const run = acts.filter((a) => a.status === "running");
+  if (run.some((a) => a.kind === "private")) return { mood: "working", word: run.length > 1 ? "私聊中 · 也在开会" : "私聊中" };
+  if (run.length) return { mood: "working", word: "会议里作答中" };
+  if (acts.some((a) => a.status === "review")) return { mood: "review", word: "交卷 · 待审核" };
+  if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
+  if (d.status === "failed") return { mood: "failed", word: "上次失败" };
+  const idle = Date.now() - AN.at(d.last_active);
+  return idle > SLEEP_AFTER ? { mood: "sleep", word: `空闲 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
+}
+const HEAD = { working: "working", review: "review", sleep: "sleep" };
+const roomRound = (r) => {
+  if (r.pending_review) return "有回答待审核";
+  const n = r.round;
+  if (!n) return pick(GROUP, r.status)[0];
+  if (r.status === "running") return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次发言" : "同时作答"}`;
+  return `第 ${n.number} 轮 · ${pick(GROUP, r.status)[0]}`;
+};
+const BOARD = () => {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = '<rect x="2" y="2.5" width="12" height="8.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 6.2h6M5 8.4h3.6M5.5 11l-1.3 3M10.5 11l1.3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>';
+  return svg;
+};
+
+// ---------------------------------------------------------------- desk cell
 function createCell() {
-  const dot = h("i.dot"), name = h("span.cell-name"), room = h("i.cell-room", { "aria-hidden": "true" }, "会");
-  const ava = h("span.avatar");
-  const wrap = h("span.cell-ava", {}, ava, dot);
-  const el = h("a.cell", {}, wrap, name, room);
-  return { el, wrap, ava, name, room, avatarKey: "" };
-}
-
-function updateCell(rec, group, d, room) {
-  const state = deskState(d, room);
-  if (rec.avatarKey !== d.provider + d.model) {
-    rec.avatarKey = d.provider + d.model;
-    const next = avatar(d.provider, d.model);
-    rec.ava.replaceWith(next);
-    rec.ava = next;
-  }
-  setClass(rec.el, `cell tone-${state.tone}${state.working ? " working" : ""}${room ? " away" : ""}${d.private_allowed ? "" : " only"}`);
-  setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
-  setAttr(rec.el, "title", `${d.label}\n${state.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed ? "" : " · 仅会议"}\n${fullTime(d.last_active)}`);
-  setText(rec.name, d.role || d.model || d.provider);
-  rec.room.hidden = !room;
-}
-
-function createRoomRow() {
-  const title = h("span.rr-title"), seats = h("span.rr-seats"), board = h("span.rr-board"), review = h("span.tag.tag-review");
-  const el = h("a.rrow", {}, h("i.rr-glyph", { "aria-hidden": "true" }, "会"), title, seats, board, review);
-  return { el, title, seats, board, review, seatKey: "" };
-}
-
-function updateRoomRow(rec, group, r, seated) {
-  const [word, tone] = pick(GROUP, r.status);
-  setClass(rec.el, `rrow tone-${tone}`);
-  setAttr(rec.el, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
-  setAttr(rec.el, "title", `${r.title}\n${word} · 白板 ${r.board} 条${r.pending_review ? ` · 待审 ${r.pending_review}` : ""}`);
-  setText(rec.title, r.title);
-  setText(rec.board, `白板 ${r.board}`);
-  rec.review.hidden = !r.pending_review;
-  setText(rec.review, `待审 ${r.pending_review}`);
-  const key = seated.map((d) => d.provider + d.model).join();
-  if (rec.seatKey !== key) {
-    rec.seatKey = key;
-    rec.seats.replaceChildren(...seated.slice(0, 4).map((d) => avatar(d.provider, d.model)));
-  }
-}
-
-function createBlock(m) {
-  const mgrState = h("span.mgr-state", {}, h("i.dot"), h("span"));
-  const presence = h("i.presence");
-  const mgrName = h("span.mgr-name");
-  const mgr = h("a.mgr", {}, h("span.mgr-top", {}, h("span.mgr-ava", {}, presence), mgrName), mgrState);
-  const headCount = h("span.count"), headRun = h("span.tag.tag-run"), headReview = h("span.tag.tag-review"), headTime = h("time");
-  const head = h("a.grp-head", {}, headCount, headRun, headReview, headTime);
-  const cells = h("div.cells");
-  const rooms = h("div.rrows");
-  const foldText = h("span");
-  const fold = h("button.fold", { type: "button" }, h("i.chev"), foldText);
-  const grp = h("div.grp", {}, head, cells, fold, rooms);
-  const root = h("section.block.enter", {}, mgr, h("span.gap", { "aria-hidden": "true" }), grp);
-  const rec = { id: m.group, root, mgr, mgrName, mgrState, presence, grp, head, headCount, headRun, headReview, headTime, cells, rooms, fold, foldText, cellRecs: new Map(), roomRecs: new Map(), order: [], data: m };
-  fold.addEventListener("click", () => {
-    if (state.expanded.has(m.group)) state.expanded.delete(m.group);
-    else state.expanded.add(m.group);
-    updateBlock(rec, rec.data);
-    scheduleWires();
-  });
-  root.addEventListener("animationend", () => root.classList.remove("enter"), { once: true });
+  const rec = { face: h("span.face"), cli: h("span.cli"), name: h("b"), role: h("em"), word: h("span.w"), faceKey: "", cliKey: "" };
+  rec.el = h("a.cell", {}, h("span.face-wrap", {}, rec.face, rec.cli), h("span.nm", {}, h("span.nm-top", {}, rec.name, rec.role), rec.word));
   return rec;
 }
+function updateCell(rec, group, d) {
+  const s = brief(d);
+  const faceKey = `${deskChar(d)}|${HEAD[s.mood] || "idle"}`;
+  if (rec.faceKey !== faceKey) {
+    rec.faceKey = faceKey;
+    rec.face.replaceChildren(ART.head(deskChar(d), HEAD[s.mood] || "idle"));
+  }
+  if (rec.cliKey !== d.provider) {
+    rec.cliKey = d.provider;
+    rec.cli.replaceChildren(hostTile(d.provider));
+  }
+  setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
+  setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
+  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 只能开会" : ""}\n最近 ${fullTime(d.last_active)}`);
+  setText(rec.name, deskName(d));
+  setText(rec.role, d.role ? ` · ${d.role}` : "");
+  setText(rec.word, s.word);
+  return s;
+}
 
+// ---------------------------------------------------------------- meeting room row
+function createRoom() {
+  const rec = { title: h("b"), round: h("span"), seats: h("span.seats"), review: h("span.tag.tag-review"), seatKey: "" };
+  rec.el = h("a.room", {}, h("span.wb", {}, BOARD()), h("span.rt", {}, rec.title, rec.round), rec.seats, rec.review);
+  return rec;
+}
+function updateRoom(rec, group, r, desks) {
+  const [word, tone] = pick(GROUP, r.status);
+  setClass(rec.el, `room tone-${tone}`);
+  setAttr(rec.el, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
+  setAttr(rec.el, "title", `会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条${r.pending_review ? ` · ${r.pending_review} 条待审核` : ""}`);
+  setText(rec.title, r.title);
+  setText(rec.round, roomRound(r));
+  rec.review.hidden = !r.pending_review;
+  setText(rec.review, `${r.pending_review} 待审`);
+  const seated = r.seats.map((s) => desks.get(s.desk)).filter(Boolean);
+  const key = seated.map(deskChar).join();
+  if (rec.seatKey !== key) {
+    rec.seatKey = key;
+    rec.seats.replaceChildren(...seated.slice(0, 5).map((d) => ART.head(deskChar(d))));
+  }
+}
+
+// ---------------------------------------------------------------- one boss and its office
+function createBlock(m) {
+  const rec = {
+    id: m.group, data: m, tile: h("span.tile"), presence: h("i.presence"), project: h("b"), host: h("small"), bs: h("span.bs"),
+    count: h("span.count"), time: h("time"), cells: h("div.desks"), rooms: h("div.rooms"),
+    foldText: h("span"), cellRecs: new Map(), roomRecs: new Map(), tileKey: "",
+  };
+  rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile, rec.presence), rec.project, rec.host, rec.bs);
+  rec.head = h("a.o-head", {}, h("b", {}, "办公室"), rec.count, rec.time);
+  rec.fold = h("button.fold", { type: "button" }, h("i.chev"), rec.foldText);
+  rec.el = h("section.blk", {}, rec.boss, h("div.office", {}, rec.head, rec.cells, rec.fold, rec.rooms));
+  rec.fold.addEventListener("click", () => {
+    if (state.expanded.has(rec.id)) state.expanded.delete(rec.id);
+    else state.expanded.add(rec.id);
+    updateBlock(rec, rec.data);
+  });
+  return rec;
+}
+function tile(rec, m) {
+  const key = `${m.host}|${m.label}`;
+  if (rec.tileKey === key) return;
+  rec.tileKey = key;
+  rec.tile.replaceChildren(hostTile(m.host, m.label));
+}
+function tally(m) {
+  let running = 0;
+  for (const d of m.desks || []) running += activities(d).filter((a) => a.status === "running").length;
+  const review = (m.rooms || []).reduce((n, r) => n + (r.pending_review || 0), 0);
+  return { running, review };
+}
 function updateBlock(rec, m) {
   rec.data = m;
-  const [word, tone] = pick(GROUP, m.status);
-  const desks = m.desks || [];
-  const rooms = m.rooms || [];
-  const running = desks.filter((d) => d.status === "running").length;
-  const review = rooms.reduce((n, r) => n + (r.pending_review || 0), 0);
-  setClass(rec.root, `block ${colorClass(m.color)}${rec.root.classList.contains("enter") ? " enter" : ""}`);
-  setClass(rec.mgr, `mgr tone-${tone}${m.live ? "" : " off"}`);
-  setAttr(rec.mgr, "href", href(`/chat/${m.group}`));
-  setAttr(rec.mgr, "aria-label", `${m.label}，${word}${m.live ? "" : "，离线"}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
-  setText(rec.mgrName, m.label);
-  setText(rec.mgrState.lastChild, m.live ? word : `${word} · 离线`);
+  const desks = m.desks || [], rooms = m.rooms || [];
+  const n = tally(m);
+  const [word] = pick(GROUP, m.status);
+  const name = m.project || m.label;
+  setClass(rec.el, `blk ${colorClass(m.color)}${n.running ? " run" : ""}`);
+  tile(rec, m);
   setClass(rec.presence, m.live ? "presence on" : "presence");
-  setAttr(rec.presence, "title", m.live ? "主控在线" : "主控已离线，仅有历史记录");
-  setAttr(rec.head, "href", href(`/chat/${m.group}`));
-  setText(rec.headCount, `${desks.length} 工位 · ${rooms.length} 会议室`);
-  setText(rec.headRun, running ? `${running} 进行中` : "");
-  setText(rec.headReview, review ? `${review} 待审` : "");
-  setText(rec.headTime, relTime(m.updated));
+  setAttr(rec.presence, "title", m.live ? "有任务在运行" : "没有运行中的任务");
+  for (const a of [rec.boss, rec.head]) setAttr(a, "href", href(`/chat/${m.group}`));
+  setAttr(rec.boss, "title", `${m.label} 里的 boss${m.project ? ` · ${m.project}` : ""}`);
+  setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
+  setText(rec.project, name);
+  setText(rec.host, m.project ? m.label : "");
+  const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
+  setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
+  setText(rec.bs, bsText);
+  setText(rec.count, `· ${desks.length} 工位${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
+  setText(rec.time, relTime(m.updated));
+  setAttr(rec.time, "title", fullTime(m.updated));
 
-  // desk cells in the office's own (first seen) order; folded beyond SHOWN when there are FOLD_AT or more
-  const roomById = new Map(rooms.map((r) => [r.id, r]));
+  // desks in the office's own (first seen) order; folded beyond SHOWN when there are FOLD_AT or more,
+  // with busy desks moved up so the fold never hides what is going on
   const byKey = new Map(desks.map((d) => [d.key, d]));
+  const busy = (d) => ["working", "review", "meeting"].includes(brief(d).mood);
+  const ordered = desks.length >= FOLD_AT ? [...desks.filter(busy), ...desks.filter((d) => !busy(d))] : desks;
   for (const key of rec.cellRecs.keys()) if (!byKey.has(key)) rec.cellRecs.delete(key);
   const folded = desks.length >= FOLD_AT && !state.expanded.has(m.group);
-  let hiddenCount = 0, hiddenRunning = 0;
-  const cellNodes = desks.map((d, i) => {
+  let hiddenCount = 0, hiddenBusy = 0;
+  reconcile(rec.cells, ordered.map((d, i) => {
     let cell = rec.cellRecs.get(d.key);
     if (!cell) rec.cellRecs.set(d.key, (cell = createCell()));
-    updateCell(cell, m.group, d, d.meeting.room ? roomById.get(d.meeting.room) : null);
+    const s = updateCell(cell, m.group, d);
     cell.el.hidden = folded && i >= SHOWN;
     if (cell.el.hidden) {
       hiddenCount++;
-      if (d.status === "running") hiddenRunning++;
+      if (s.mood === "working" || s.mood === "review") hiddenBusy++;
     }
-    announce(m, d);
+    announce(m, d, s);
     return cell.el;
-  });
-  reconcile(rec.cells, cellNodes);
-
-  const foldable = desks.length >= FOLD_AT;
-  rec.fold.hidden = !foldable;
-  if (foldable) {
-    setText(rec.foldText, folded ? `另外 ${hiddenCount} 个工位${hiddenRunning ? ` · ${hiddenRunning} 进行中` : ""}` : "收起");
+  }));
+  rec.fold.hidden = desks.length < FOLD_AT;
+  if (!rec.fold.hidden) {
+    setText(rec.foldText, folded ? `另外 ${hiddenCount} 个工位${hiddenBusy ? ` · ${hiddenBusy} 个在忙` : ""}` : "收起");
     setAttr(rec.fold, "aria-expanded", folded ? "false" : "true");
-    setClass(rec.fold, folded && hiddenRunning ? "fold has-run" : "fold");
+    setClass(rec.fold, folded && hiddenBusy ? "fold busy" : "fold");
   }
-
+  const roomById = new Map(rooms.map((r) => [r.id, r]));
   for (const id of rec.roomRecs.keys()) if (!roomById.has(id)) rec.roomRecs.delete(id);
-  reconcile(rec.rooms, rooms.map((r) => {
+  // rooms in session first; at most three finished ones stay listed
+  const shown = [...rooms.filter((r) => urgent(r.status)), ...rooms.filter((r) => !urgent(r.status)).slice(0, Math.max(0, 3 - rooms.filter((r) => urgent(r.status)).length))];
+  reconcile(rec.rooms, shown.map((r) => {
     let row = rec.roomRecs.get(r.id);
-    if (!row) rec.roomRecs.set(r.id, (row = createRoomRow()));
-    updateRoomRow(row, m.group, r, desks.filter((d) => d.meeting.room === r.id));
+    if (!row) rec.roomRecs.set(r.id, (row = createRoom()));
+    updateRoom(row, m.group, r, byKey);
     return row.el;
   }));
 }
 
-// Only status *changes* are spoken to assistive tech, never tail updates.
-let spoken = [];
-function announce(m, desk) {
-  const id = `${m.group}|${desk.key}`;
-  const was = state.seen.get(id);
-  state.seen.set(id, desk.status);
-  if (state.ready && was === "running" && desk.status !== "running") spoken.push(`${m.label}：${desk.label} ${pick(MEMBER, desk.status === "idle" ? "succeeded" : desk.status)[0]}`);
+// ---------------------------------------------------------------- folded office
+function createQuiet() {
+  const rec = { tile: h("span.tile"), name: h("span.t"), faces: h("span.faces"), time: h("time"), tileKey: "", facesKey: "" };
+  rec.el = h("a.more-row", {}, rec.tile, rec.name, rec.faces, rec.time);
+  return rec;
+}
+function updateQuiet(rec, m) {
+  const desks = m.desks || [];
+  tile(rec, m);
+  setAttr(rec.el, "href", href(`/chat/${m.group}`));
+  setAttr(rec.el, "title", `${m.project || m.label} · ${m.label} · ${pick(GROUP, m.status)[0]}`);
+  const name = m.project || m.label;
+  const small = `${m.project ? `${m.label} · ` : ""}${desks.length} 工位${m.rooms?.length ? ` · ${m.rooms.length} 会议室` : ""}`;
+  if (rec.name.dataset.key !== name + small) {
+    rec.name.dataset.key = name + small;
+    rec.name.replaceChildren(name, h("small", {}, small));
+  }
+  const key = desks.slice(0, 5).map(deskChar).join();
+  if (rec.facesKey !== key) {
+    rec.facesKey = key;
+    rec.faces.replaceChildren(...desks.slice(0, 5).map((d) => ART.head(deskChar(d), "sleep")));
+  }
+  setText(rec.time, relTime(m.updated));
 }
 
-// ---------------------------------------------------------------- header, body states
+// Only status *changes* are spoken to assistive tech.
+let spoken = [];
+function announce(m, d, s) {
+  const id = `${m.group}|${d.key}`;
+  const was = state.seen.get(id);
+  const busy = s.mood === "working";
+  state.seen.set(id, busy);
+  if (state.ready && was && !busy) spoken.push(`${m.project || m.label}：${deskName(d)} ${s.mood === "review" ? "交了回答，等待审核" : pick(MEMBER, d.status === "idle" ? "succeeded" : d.status)[0]}`);
+}
+
+// ---------------------------------------------------------------- header, ask strip, body states
 let lastState = "";
-function renderState(stageData) {
-  const { running, review } = stageData.counts;
-  const failed = stageData.managers.some((m) => m.status === "failed");
+function renderState(data) {
+  const { running, review } = data.counts;
+  const failed = data.managers.some((m) => m.status === "failed");
   const pills = [];
-  if (running) pills.push(["run", `${running} 进行中`]);
+  if (running) pills.push(["run", `${running} 个在工作`]);
   if (review) pills.push(["review", `${review} 待审核`]);
   if (!pills.length) pills.push(failed ? ["bad", "有失败"] : ["idle", "空闲"]);
   const key = JSON.stringify(pills);
   if (key === lastState) return;
   lastState = key;
-  $("state").replaceChildren(...pills.map(([tone, text]) => h("span.state.tone-" + tone, {}, h("i.dot"), text)));
-  $("hub").classList.toggle("busy", running > 0);
+  $("state").replaceChildren(...pills.map(([tone, text]) => h(`span.state.tone-${tone}`, {}, h("i.dot"), text)));
+}
+// Answers waiting for review are the one thing that waits on the user: they head the panel.
+function renderAsk(managers) {
+  const ask = $("ask");
+  const waiting = managers.flatMap((m) => (m.rooms || []).filter((r) => r.pending_review).map((r) => ({ m, r })));
+  const total = waiting.reduce((n, { r }) => n + r.pending_review, 0);
+  ask.hidden = !total;
+  if (!total) return;
+  const { m, r } = waiting[0];
+  const where = `${m.project || m.label} · ${r.title}${waiting.length > 1 ? ` 等 ${waiting.length} 处` : ""}`;
+  const key = `${total}|${where}|${m.group}|${r.id}`;
+  if (ask.dataset.key === key) return;
+  ask.dataset.key = key;
+  setAttr(ask, "href", href(`/chat/${m.group}#conv:${encodeURIComponent(r.id)}`));
+  ask.replaceChildren(
+    h("span.ask-ico", { "aria-hidden": "true" }, String(total)),
+    h("span.t", {}, `${total} 份回答等 boss 审核`, h("small", {}, `${where} · 在 boss 里公开或丢弃`)),
+    h("span.go", {}, "查看 →"),
+  );
 }
 
 function showBody(kind, retry) {
@@ -197,17 +280,15 @@ function showBody(kind, retry) {
   calm.hidden = showStage;
   if (showStage || state.calm === kind) { syncOb(); return; }
   state.calm = kind;
-  const ghost = h("div.ghost", { "aria-hidden": "true" }, h("span.ghost-node"), h("i.ghost-wire"), h("span.hub", {}, h("span.mark", {}, "N")), h("i.ghost-wire"), h("span.ghost-node"));
   const copy = {
-    loading: [null, "正在读取…", "", null],
-    no_data: [ghost, "还没有工作室记录", "在主控里派出任务或开始会议后，它的工位和会议室会自动出现在这里。", ["打开办公室", "/chat/"]],
-    quiet: [ghost, "最近两小时没有活动", "历史会话仍可在办公室中查看。", ["打开办公室", "/chat/"]],
-    empty: [ghost, "最近没有主控在工作", "在主控 Agent（Claude Code、Codex CLI 等）里派出任务或开始会议，它的办公室会带着颜色连线出现在这里。", ["打开办公室", "/chat/"]],
-    error: [ghost, "无法读取工作室数据", "工作室数据目录可能还不存在，或本机服务没有响应。", ["重试", null]],
+    loading: ["正在读取…", "", null],
+    no_data: ["还没有办公室", "在 boss 里派出任务或开始会议后，它的工位和会议室会自动出现在这里。", ["打开 AgentNave", "/chat/"]],
+    quiet: ["最近两小时没有动静", "以前的办公室仍可在 AgentNave 里查看。", ["打开 AgentNave", "/chat/"]],
+    error: ["无法读取办公室数据", "数据目录可能还不存在，或本机服务没有响应。", ["重试", null]],
   }[kind];
-  const action = copy[3] && (copy[3][1] ? h("a.calm-link", { href: href(copy[3][1]) }, copy[3][0]) : h("button.calm-link", { type: "button" }, copy[3][0]));
-  if (action && !copy[3][1]) action.addEventListener("click", retry);
-  calm.replaceChildren(...[copy[0], h("strong", {}, copy[1]), copy[2] && h("p", {}, copy[2]), action].filter(Boolean));
+  const action = copy[2] && (copy[2][1] ? h("a.calm-link", { href: href(copy[2][1]) }, copy[2][0]) : h("button.calm-link", { type: "button" }, copy[2][0]));
+  if (action && !copy[2][1]) action.addEventListener("click", retry);
+  calm.replaceChildren(...[h("strong", {}, copy[0]), copy[1] && h("p", {}, copy[1]), action].filter(Boolean));
   syncOb();
 }
 
@@ -243,110 +324,84 @@ function renderNotices(status, offline) {
   $("notices").replaceChildren(...notices(status, offline));
   const update = status?.update;
   const link = $("update");
-  link.textContent = update?.state === "available" ? `更新到 v${update.version}` : update?.state === "installing" ? "正在更新…" : "检查更新";
-  link.classList.toggle("has-update", update?.state === "available");
+  link.replaceChildren(update?.state === "installing" ? "正在更新…" : "检查更新", update?.state === "available" ? h("small", {}, `v${update.version} 可用`) : "");
+  $("more").querySelector(".more-dot").hidden = update?.state !== "available";
 }
 
-// ---------------------------------------------------------------- wires
-// One SVG overlay over the stage, coordinates = stage-relative pixels. Per manager block:
-//   manager card --(straight)--> rail junction (railX, card centre)
-//   junction --(S-curve, cubic with horizontal tangents)--> left edge of the office card at its head.
-// All elements are pooled by id and patched, so nothing is rebuilt while cells update.
-const pool = new Map();
-const layers = { rail: $("layer-rail"), wires: $("layer-wires"), nodes: $("layer-nodes") };
-let wirePending = false;
-function scheduleWires() {
-  if (wirePending) return;
-  wirePending = true;
-  requestAnimationFrame(layoutWires);
+// ---------------------------------------------------------------- ⋯ menu
+const menu = $("menu"), more = $("more");
+function setMenu(open) {
+  menu.hidden = !open;
+  setAttr(more, "aria-expanded", open ? "true" : "false");
+  if (open) menu.querySelector("a")?.focus({ preventScroll: true });
 }
-function shape(layer, id, tag, cls, seen) {
-  let el = pool.get(id);
-  if (!el) { el = document.createElementNS(SVG, tag); layers[layer].append(el); pool.set(id, el); }
-  if (el.getAttribute("class") !== cls) el.setAttribute("class", cls);
-  seen.add(id);
-  return el;
-}
-const num = (x) => (Math.round(x * 2) / 2).toString();
-const curve = (x1, y1, x2, y2) => {
-  if (Math.abs(y2 - y1) < 1) return `M${num(x1)} ${num(y1)}H${num(x2)}`;
-  const dx = (x2 - x1) * 0.55;
-  return `M${num(x1)} ${num(y1)}C${num(x1 + dx)} ${num(y1)} ${num(x2 - dx)} ${num(y2)} ${num(x2)} ${num(y2)}`;
-};
-const wireTone = (status) => (status === "running" ? " on" : status === "review" ? " hold" : ["failed", "blocked", "interrupted"].includes(status) ? " bad" : "");
-function layoutWires() {
-  wirePending = false;
-  if (stage.hidden) return;
-  const box = stage.getBoundingClientRect();
-  const rel = (el) => {
-    const r = el.getBoundingClientRect();
-    return { l: r.left - box.left, r: r.right - box.left, cy: (r.top + r.bottom) / 2 - box.top };
-  };
-  $("wires").setAttribute("viewBox", `0 0 ${box.width.toFixed(1)} ${box.height.toFixed(1)}`);
-  const seen = new Set();
-  const railTop = stage.firstElementChild.offsetHeight - 4; // the sticky header keeps its flow slot
-  let railX = 0, lastY = railTop;
-  for (const id of state.order) {
-    const rec = state.blocks.get(id);
-    if (!rec) continue;
-    const c = colorClass(rec.data.color);
-    const m = rel(rec.mgr), g = rel(rec.grp), top = rel(rec.head);
-    railX = (m.r + g.l) / 2;
-    const y = m.cy;
-    lastY = Math.max(lastY, y);
-    shape("wires", `m:${id}`, "path", `wire ${c}${wireTone(rec.data.status)}`, seen).setAttribute("d", `M${num(m.r)} ${num(y)}H${num(railX)}`);
-    shape("nodes", `j:${id}`, "circle", `node junction ${c}`, seen).setAttribute("cx", num(railX));
-    pool.get(`j:${id}`).setAttribute("cy", num(y));
-    pool.get(`j:${id}`).setAttribute("r", "4");
-    shape("wires", `w:${id}`, "path", `wire ${c}${wireTone(rec.data.status)}`, seen).setAttribute("d", curve(railX, y, g.l, top.cy));
-    const dot = shape("nodes", `e:${id}`, "circle", `node end ${c}`, seen);
-    dot.setAttribute("cx", num(g.l));
-    dot.setAttribute("cy", num(top.cy));
-    dot.setAttribute("r", "2.5");
+more.addEventListener("click", (e) => { e.stopPropagation(); setMenu(menu.hidden); });
+document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target)) setMenu(false); });
+document.addEventListener("keydown", (e) => {
+  if (menu.hidden) return;
+  if (e.key === "Escape") { setMenu(false); more.focus(); }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const items = [...menu.querySelectorAll("a")];
+    const i = items.indexOf(document.activeElement);
+    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
   }
-  shape("rail", "rail", "path", "rail", seen).setAttribute("d", `M${num(railX)} ${num(railTop)}V${num(lastY)}`);
-  for (const [id, el] of pool) if (!seen.has(id)) { el.remove(); pool.delete(id); }
-}
-new ResizeObserver(scheduleWires).observe(stage);
-window.addEventListener("resize", scheduleWires);
-if (document.fonts?.ready) document.fonts.ready.then(scheduleWires);
+});
 
 // ---------------------------------------------------------------- refresh
+// A boss with work going on or recent activity gets a full row; the rest fold to the end.
+const RECENT = 30 * 60e3;
+const active = (m) => urgent(m.status) || m.live || Date.now() - AN.at(m.updated) < RECENT;
 function render(data) {
-  state.failures = 0;
   renderState(data);
+  renderAsk(data.managers);
   if (!data.managers.length) {
     showBody(data.empty === "no_data" ? "no_data" : "quiet");
     state.blocks.clear();
-    groupsEl.replaceChildren();
+    state.quiet.clear();
     state.order = [];
+    reconcile($("groups"), []);
+    reconcile($("quiet"), []);
     return;
   }
   showBody("stage");
-  const items = data.managers.map((m) => ({ id: m.group, rank: urgent(m.status) ? 0 : 1 }));
-  state.order = stickyOrder(state.order, items);
+  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: urgent(m.status) ? 0 : active(m) ? 1 : 2 })));
   const byGroup = new Map(data.managers.map((m) => [m.group, m]));
-  for (const id of state.blocks.keys()) if (!byGroup.has(id)) state.blocks.delete(id);
+  for (const map of [state.blocks, state.quiet]) for (const id of map.keys()) if (!byGroup.has(id)) map.delete(id);
+  const full = [], folded = [];
   for (const id of state.order) {
     const m = byGroup.get(id);
-    let rec = state.blocks.get(id);
-    if (!rec) {
-      state.blocks.set(id, (rec = createBlock(m)));
-      if (state.ready) spoken.push(`新主控 ${m.label} 出现`);
+    if (active(m)) {
+      let rec = state.blocks.get(id);
+      if (!rec) {
+        state.blocks.set(id, (rec = createBlock(m)));
+        if (state.ready) spoken.push(`${m.project || m.label} 的 boss 开始工作`);
+      }
+      updateBlock(rec, m);
+      full.push(rec.el);
+    } else {
+      state.blocks.delete(id);
+      let rec = state.quiet.get(id);
+      if (!rec) state.quiet.set(id, (rec = createQuiet()));
+      updateQuiet(rec, m);
+      folded.push(rec.el);
     }
-    updateBlock(rec, m);
   }
-  reconcile(groupsEl, state.order.map((id) => state.blocks.get(id).root));
-  scheduleWires();
+  reconcile($("groups"), full);
+  reconcile($("quiet"), folded);
+  $("sec-live").hidden = !full.length;
+  $("sec-quiet").hidden = !folded.length;
+  setText($("live-count"), `${full.length} 个`);
+  setText($("quiet-count"), `${folded.length} 个`);
 }
 
 async function refresh() {
   const [stageResult, statusResult] = await Promise.allSettled([load("/app/stage"), load("/app/status")]);
   if (statusResult.status === "fulfilled") state.appStatus = statusResult.value;
   if (stageResult.status === "rejected") {
-    state.failures++;
-    if (!state.blocks.size) showBody("error", () => { state.calm = ""; run(); });
-    renderNotices(state.appStatus, state.blocks.size > 0);
+    const shown = state.blocks.size + state.quiet.size > 0;
+    if (!shown) showBody("error", () => { state.calm = ""; run(); });
+    renderNotices(state.appStatus, shown);
     return;
   }
   spoken = [];

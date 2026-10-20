@@ -1,11 +1,11 @@
 "use strict";
-// App office: one workspace per manager session. Left: workspace list (running pinned). Right: the
-// selected workspace as a read-only office -- the manager's desk, one desk per (CLI, model, role) and
-// one meeting room per saved group. A drawer shows messages: the whole workspace's fused timeline, one
-// desk's history or one room's transcript. Everything is patched in place (list items keyed by group id,
-// desks by desk key, rooms by room id, message nodes by message id) so a 1.5 s poll never rebuilds the
-// DOM, never flickers and never moves the scroll position of a reader who scrolled up. Movement
-// (dispatch, return, forward, meeting seats) is inferred from the difference between two polls.
+// App office: one workspace per boss session. Left: workspace list (running pinned). Middle: the
+// selected workspace as a painted, read-only office -- the boss's office, one meeting room per saved
+// group and one desk per (CLI, model, role). Right: the conversation of whatever is selected (the whole
+// workspace, one desk or one room). Everything is patched in place (list items keyed by group id, desks
+// by desk key, rooms by room id, message nodes by message id) so a 1.5 s poll never rebuilds the DOM,
+// never flickers and never moves the scroll position of a reader who scrolled up. Movement (dispatch,
+// return, walking to a meeting) is inferred from the difference between two polls.
 const {
   h,
   $,
@@ -14,7 +14,6 @@ const {
   GROUP,
   pick,
   urgent,
-  deskState,
   avatar,
   colorClass,
   relTime,
@@ -28,14 +27,26 @@ const {
   stickyOrder,
   poll,
   plain,
+  art: ART,
+  cliName,
+  hostTile,
+  deskName,
+  activities,
 } = AN;
 
 const mockOn = !!(window.AgentNaveMock && window.AgentNaveMock.enabled());
 const narrow = window.matchMedia("(max-width: 760px)");
+const overlay = window.matchMedia("(max-width: 860px)"); // the conversation slides over the floor
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const FOLD_PX = 280; // a bubble taller than this is folded behind "展开全文"
+const FOLD_PX = 260; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
+const SLEEP_AFTER = 20 * 60e3; // an idle desk dozes off after this long
+
+const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
+const handleOf = (d) =>
+  d.handle ||
+  `@${deskName(d)}·${cliName(d.provider)}${d.role ? `·${d.role}` : ""}`;
 
 const nearBottom = () =>
   el.tl.scrollHeight - el.tl.scrollTop - el.tl.clientHeight < NEAR_BOTTOM;
@@ -44,25 +55,30 @@ const el = {
   list: $("list"),
   head: $("head"),
   office: $("office"),
-  mgrDesk: $("mgr-desk"),
+  floor: $("floor"),
+  boss: $("boss"),
   desks: $("desks"),
   rooms: $("rooms"),
   fx: $("fx"),
   deskCount: $("desks-count"),
-  roomCount: $("rooms-count"),
+  ticker: $("ticker"),
+  tick: $("tick"),
   drawer: $("drawer"),
+  drIco: $("dr-ico"),
   drTitle: $("dr-title"),
   drSub: $("dr-sub"),
+  drAll: $("dr-all"),
+  drNote: $("dr-note"),
+  portrait: $("portrait"),
   tl: $("timeline"),
   inner: $("tl-inner"),
   blank: $("blank"),
   jump: $("jump"),
-  ro: $("ro"),
   banner: $("banner"),
   count: $("side-count"),
 };
 const state = {
-  selected: null, // workspace id shown on the right
+  selected: null, // workspace id shown in the middle
   auto: false, // selected by default (no workspace in the URL), not by the user
   groupsData: [],
   order: [],
@@ -75,16 +91,20 @@ const state = {
   focused: false,
   headKey: "",
   // office
+  bossRec: null,
   deskRecs: new Map(),
   roomRecs: new Map(),
   seatRecs: new Map(),
-  pawns: new Map(),
+  away: new Map(), // desk key -> "room|seat" it currently sits in, for walking animations
   known: new Set(),
-  mgr: null,
-  // drawer: null | {kind:"all"} | {kind:"desk", key} | {kind:"room", id}
-  drawer: null,
+  pending: 0,
+  tickId: null,
+  // conversation: {kind:"all"} | {kind:"desk", key} | {kind:"room", id}
+  drawer: { kind: "all" },
+  convOpen: false, // only matters while the conversation is an overlay
   opener: null,
   scopeKey: "",
+  portraitKey: "",
   nodes: new Map(),
   expanded: new Set(),
   seenIds: new Set(),
@@ -158,38 +178,39 @@ window.addEventListener("hashchange", () => {
   sync();
   refresh();
 });
-narrow.addEventListener("change", () => {
-  sync();
-  renderList();
-  placeOb();
-  measureAll();
-});
+for (const query of [narrow, overlay])
+  query.addEventListener("change", () => {
+    sync();
+    renderList();
+    placeOb();
+    if (state.chat) renderAll(state.chat);
+  });
 
 // ---------------------------------------------------------------- workspace list
 function sectionEl(id, text) {
   return (state.sections[id] ||= h("div.gl-sec", {}, text));
 }
 function createItem(g) {
-  const presence = h("i.presence");
   const rec = {
     id: g.group,
-    presence,
+    tile: h("span.gi-tile"),
+    presence: h("i.presence"),
     label: h("b.gi-label"),
     meta: h("span.gi-meta"),
     time: h("time"),
-    title: h("span.gi-title"),
     prev: h("span.gi-prev"),
     pill: h("span.pill"),
+    tileKey: null,
   };
   rec.el = h(
     "a.gi",
     {},
-    h("span.gi-ava", {}, presence),
+    h("span.gi-host", {}, rec.tile, rec.presence),
     h(
       "span.gi-body",
       {},
-      h("span.gi-top", {}, rec.label, rec.meta, rec.time),
-      rec.title,
+      h("span.gi-top", {}, rec.label, rec.time),
+      rec.meta,
       h("span.gi-bottom", {}, rec.prev, rec.pill),
     ),
   );
@@ -203,21 +224,28 @@ function createItem(g) {
 function updateItem(rec, g) {
   const [word, tone] = pick(GROUP, g.status);
   const on = g.group === state.selected;
+  const name = g.project || g.label;
   setClass(
     rec.el,
     `gi ${colorClass(g.color)} tone-${tone}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
-  setAttr(rec.el, "aria-label", `${g.label}，${word}，${g.title}`);
+  setAttr(rec.el, "aria-label", `${name}，boss 在 ${g.label}，${word}`);
+  setAttr(rec.el, "title", `${name} · ${g.label}`);
+  const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
+  if (rec.tileKey !== tileKey) {
+    rec.tileKey = tileKey;
+    rec.tile.replaceChildren(hostTile(g.host, g.label));
+  }
   setClass(rec.presence, g.live ? "presence on" : "presence");
-  setText(rec.label, g.label);
+  setAttr(rec.presence, "title", g.live ? "有任务在运行" : null);
+  setText(rec.label, name);
   setText(
     rec.meta,
-    `${g.desks_count ?? 0} 个工位 · ${g.rooms_count ?? 0} 间会议室`,
+    `${g.project ? `${g.label} · ` : ""}${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
   );
   setText(rec.time, relTime(g.updated));
-  setText(rec.title, g.title);
   setText(rec.prev, g.preview);
   rec.pill.hidden = g.status === "idle";
   setClass(rec.pill, `pill tone-${tone}`);
@@ -252,9 +280,91 @@ function renderList() {
   reconcile(el.list, nodes);
 }
 
-// ---------------------------------------------------------------- workspace head
-function renderHead(c) {
-  const [word, tone] = pick(GROUP, c.status);
+// ---------------------------------------------------------------- what everyone is doing
+function counts(c) {
+  let running = 0;
+  for (const d of c.desks)
+    running += activities(d).filter((a) => a.status === "running").length;
+  const review = c.rooms.reduce((n, r) => n + (r.pending_review || 0), 0);
+  return { running, review };
+}
+// Mood picks the character frame; word is the plain status shown under the desk.
+function deskMood(d, ctx) {
+  const acts = activities(d);
+  const meeting = acts.find(
+    (a) => a.kind === "meeting" && ctx.fullRooms.has(a.room),
+  );
+  const privateRun = acts.some(
+    (a) => a.kind === "private" && a.status === "running",
+  );
+  if (privateRun)
+    return {
+      mood: "working",
+      say: "dots",
+      word: meeting ? "私聊处理中 · 另一席在开会" : "私聊处理中",
+      away: null,
+    };
+  if (meeting) {
+    const room = ctx.rooms.get(meeting.room);
+    return {
+      mood: "idle",
+      say: "去开会了",
+      word: `在会议室「${room?.title || "会议"}」`,
+      away: `${meeting.room}|${meeting.seat}`,
+    };
+  }
+  if (d.status === "failed")
+    return { mood: "failed", say: "上次失败", word: "上次失败", away: null };
+  if (d.status === "pending")
+    return { mood: "idle", say: "", word: "等待中", away: null };
+  const idleFor = Date.now() - AN.at(d.last_active);
+  return idleFor > SLEEP_AFTER
+    ? {
+        mood: "sleep",
+        say: "zz",
+        word: `空闲 · ${relTime(d.last_active)}`,
+        away: null,
+      }
+    : { mood: "idle", say: "", word: "空闲", away: null };
+}
+function setSay(node, say) {
+  const key = String(say);
+  if (node.dataset.say === key) return;
+  node.dataset.say = key;
+  if (say === "dots")
+    node.replaceChildren(h("span.dots", {}, h("i"), h("i"), h("i")));
+  else if (say === "zz") node.replaceChildren(h("span.zz", {}, "z z"));
+  else if (Array.isArray(say))
+    node.replaceChildren(say[0], h("span.dots", {}, h("i"), h("i"), h("i")));
+  else node.replaceChildren(say || "");
+}
+const img = (cls, file) =>
+  h(`img.${cls}`, {
+    src: ART.url(`office/${file}.webp`),
+    alt: "",
+    draggable: "false",
+  });
+// Swap the character figure only when the model family changes; the frames stay decoded otherwise.
+// The figure sits right before `before` (the desk), so the desk covers its lower half.
+function dress(rec, name, slot, before) {
+  if (rec.char !== name) {
+    rec.char = name;
+    const fig = ART.figure(name);
+    if (rec.fig) rec.fig.remove();
+    rec.fig = fig;
+  }
+  if (rec.fig.parentNode !== slot || rec.fig.nextSibling !== before)
+    slot.insertBefore(rec.fig, before);
+}
+function dressLid(rec, provider, model) {
+  const key = `${provider}|${model}|${!!window.Avatars?.custom("model", provider, model)}`;
+  if (rec.lidKey === key) return;
+  rec.lidKey = key;
+  rec.lid.replaceChildren(ART.lid(provider, model));
+}
+
+// ---------------------------------------------------------------- floor head
+function renderHead(c, n) {
   el.head.hidden = false;
   if (state.headKey !== c.group) {
     state.headKey = c.group;
@@ -268,333 +378,399 @@ function renderHead(c) {
       state.selected = null;
       go("/chat/");
     });
-    const all = h(
-      "button.all-btn",
-      { type: "button", "aria-expanded": "false" },
-      h("span", {}, "消息列表"),
-      h("b.all-count"),
-    );
-    all.addEventListener("click", () => {
-      if (state.drawer?.kind === "all") closeDrawer();
-      else openDrawer({ kind: "all" }, all);
-    });
     state.head = {
-      back,
-      ava: h("span.gh-ava", {}, h("i.presence")),
-      label: h("b.gh-label"),
-      pill: h("span.pill"),
-      sub: h("span.gh-sub"),
-      all,
+      title: h("h1"),
+      sub: h("span.fh-sub"),
+      run: h("span.pill.tone-run"),
+      review: h("span.pill.tone-review"),
     };
     el.head.replaceChildren(
-      h(
-        "div.gh-row",
-        {},
-        state.head.back,
-        state.head.ava,
-        h(
-          "div.gh-id",
-          {},
-          h("span.gh-line", {}, state.head.label, state.head.pill),
-          state.head.sub,
-        ),
-        all,
-      ),
+      back,
+      state.head.title,
+      state.head.sub,
+      h("span.fh-sum", {}, state.head.run, state.head.review),
     );
   }
   const t = state.head;
-  setClass(el.head, `gh ${colorClass(c.color)}`);
-  setClass(t.ava.lastChild, c.live ? "presence on" : "presence");
-  setText(t.label, c.label);
-  setClass(t.pill, `pill tone-${tone}`);
-  setText(t.pill, word);
-  setText(
-    t.sub,
-    `${c.live ? "主控在线" : "主控离线"} · ${c.desks.length} 个工位 · ${c.rooms.length} 间会议室`,
-  );
-  setText(
-    t.all.lastChild,
-    String(c.messages.filter((m) => m.kind !== "typing").length),
-  );
-  setAttr(
-    t.all,
-    "aria-expanded",
-    state.drawer?.kind === "all" ? "true" : "false",
-  );
+  setText(t.title, c.project || c.label);
+  setText(t.sub, `boss 在 ${c.label} 里`);
+  t.run.hidden = !n.running;
+  setText(t.run, `${n.running} 个在工作`);
+  t.review.hidden = !n.review;
+  setText(t.review, `${n.review} 条回答待审核`);
 }
 
-// ---------------------------------------------------------------- office
-const canAnimate = () =>
-  !reduceMotion.matches &&
-  !document.hidden &&
-  typeof Element.prototype.animate === "function";
-
-function createManagerDesk() {
+// ---------------------------------------------------------------- boss office
+function bossModel(c) {
+  for (let i = c.messages.length - 1; i >= 0; i--) {
+    const s = c.messages[i].speaker;
+    if (s?.role === "manager" && s.model) return s.model;
+  }
+  return "";
+}
+// `live` only means a server is running work right now; an idle boss dozes off after a while.
+function recentlyActive(c) {
+  const g = state.groupsData.find((x) => x.group === c.group);
+  return !!g && Date.now() - AN.at(g.updated) < SLEEP_AFTER;
+}
+function createBoss() {
   const rec = {
-    tile: h("span.md-tile"),
-    presence: h("i.presence"),
-    name: h("b.md-name"),
-    sub: h("span.md-sub"),
-    papers: h("span.papers", { "aria-hidden": "true" }),
-    review: h("span.md-review"),
-    hostKey: null,
+    say: h("span.say"),
+    tray: h("b.tray", { title: "待审核的回答", hidden: true }),
+    lid: h("span.lid"),
+    scene: null,
+    nm: h("div.nm", {}, "boss"),
+    cli: h("div.cli"),
+    st: h("div.st"),
+    state: h("span.r"),
   };
-  rec.el = h(
-    "button.mgr-desk",
-    { type: "button" },
-    h("span.md-ava", {}, rec.tile, rec.presence),
-    h("span.md-body", {}, h("span.md-line", {}, rec.name, rec.sub), rec.review),
-    rec.papers,
+  rec.desk = img("l-desk", "boss-desk");
+  rec.scene = h(
+    "div.scene",
+    {},
+    rec.say,
+    img("l-chair", "chair"),
+    rec.desk,
+    img("l-laptop", "laptop"),
+    rec.lid,
+    rec.tray,
   );
-  rec.el.addEventListener("click", () => openDrawer({ kind: "all" }, rec.el));
+  el.boss.replaceChildren(
+    h("h2.zone-h", {}, "boss 办公室", rec.state),
+    rec.scene,
+    h("div.label", {}, rec.nm, rec.cli, rec.st),
+  );
+  el.boss.onclick = () => openScope({ kind: "all" }, el.boss);
   return rec;
 }
-function updateManagerDesk(rec, c) {
-  const pending = c.rooms.reduce((n, r) => n + (r.pending_review || 0), 0);
-  const [word] = pick(GROUP, c.status);
-  setClass(
-    rec.el,
-    `mgr-desk ${colorClass(c.color)}${pending ? " has-review" : ""}`,
+function updateBoss(rec, c, n) {
+  const model = bossModel(c);
+  dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
+  dressLid(rec, c.host, model);
+  const mood = n.review
+    ? "review"
+    : n.running
+      ? "working"
+      : recentlyActive(c)
+        ? "idle"
+        : "sleep";
+  el.boss.dataset.mood = mood;
+  setSay(
+    rec.say,
+    n.running ? [`等 ${n.running} 个回复`] : mood === "sleep" ? "zz" : "",
   );
-  const custom = !!(c.host && window.Avatars?.custom("host", c.host, ""));
-  const key = `${c.host}|${custom}`;
-  if (rec.hostKey !== key) {
-    rec.hostKey = key;
-    rec.tile.replaceChildren(
-      custom
-        ? Avatars.create("host", c.host, "")
-        : (c.label || "?").slice(0, 1),
-    );
+  rec.tray.hidden = !n.review;
+  if (n.review !== state.pending && state.ready) {
+    rec.tray.classList.remove("bump");
+    void rec.tray.offsetWidth;
+    rec.tray.classList.add("bump");
   }
-  setClass(rec.presence, c.live ? "presence on" : "presence");
-  setText(rec.name, c.label);
-  setText(rec.sub, `主控办公室 · ${c.live ? "在线" : "离线"} · ${word}`);
-  setText(rec.review, pending ? `待审 ${pending}` : "没有待审");
-  setClass(rec.review, pending ? "md-review on" : "md-review");
-  const sheets = Math.min(pending, 5);
-  if (rec.papers.children.length !== sheets)
-    rec.papers.replaceChildren(...Array.from({ length: sheets }, () => h("i")));
-  setAttr(
-    rec.el,
-    "aria-label",
-    `${c.label}的办公桌，${pending ? `${pending} 条待审` : "没有待审"}，打开消息列表`,
+  state.pending = n.review;
+  setText(rec.tray, String(n.review));
+  setText(rec.cli, c.label);
+  setText(
+    rec.st,
+    n.review
+      ? `桌上 ${n.review} 份回答待审核`
+      : n.running
+        ? `等 ${n.running} 个回复`
+        : "空闲",
   );
+  setText(rec.state, model ? model : "");
+  setAttr(
+    el.boss,
+    "aria-label",
+    `boss 办公室，${rec.st.textContent}，查看全部消息`,
+  );
+  el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }
 
+// ---------------------------------------------------------------- desks
 function createDesk(d) {
   const rec = {
     key: d.key,
-    slot: h("span.slot"),
-    name: h("b.d-name"),
-    dot: h("i.dot"),
-    word: h("span"),
+    say: h("span.say"),
+    lid: h("span.lid"),
+    nm: h("div.nm"),
+    cliText: h("span"),
+    role: h("span.tag.tag-role", { hidden: true }),
+    access: h("span.tag", {
+      hidden: true,
+      title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
+    }),
     only: h(
-      "span.tag.tag-only",
-      { title: "与主控宿主同类，只参加会议，不接受私聊", hidden: true },
-      "仅会议",
+      "span.tag",
+      { hidden: true, title: "与 boss 的宿主同类，只参加会议，不接受私聊" },
+      "只能开会",
     ),
-    access: h(
-      "span.tag.tag-access",
-      { title: "主控声明的访问等级，只是约定，不改变 CLI 的实际权限", hidden: true },
-      "",
-    ),
-    priv: h(
-      "span.tag.tag-priv",
-      { title: "这个工位正在会议中，同时还有一条私聊在运行", hidden: true },
-      "私聊进行中",
-    ),
-    meta: h("span.d-meta"),
+    st: h("div.st"),
   };
+  rec.desk = img("l-desk", "desk");
+  rec.scene = h(
+    "div.scene",
+    {},
+    rec.say,
+    img("l-chair", "chair"),
+    rec.desk,
+    img("l-laptop", "laptop"),
+    rec.lid,
+  );
   rec.el = h(
     "button.desk",
     { type: "button" },
-    h("span.chair", {}, rec.slot),
+    rec.scene,
     h(
-      "span.d-body",
+      "div.label",
       {},
-      rec.name,
-      h("span.d-status", {}, rec.dot, rec.word),
-      h("span.d-tags", {}, rec.access, rec.only, rec.priv),
-      rec.meta,
+      rec.nm,
+      h("div.cli", {}, rec.cliText, rec.role, rec.access, rec.only),
+      rec.st,
     ),
   );
   rec.el.addEventListener("click", () =>
-    openDrawer({ kind: "desk", key: d.key }, rec.el),
+    openScope({ kind: "desk", key: d.key }, rec.el),
   );
   return rec;
 }
-function updateDesk(rec, d, rooms) {
-  const room = d.meeting.room ? rooms.get(d.meeting.room) : null;
-  const s = deskState(d, room);
+function updateDesk(rec, d, ctx) {
+  const s = deskMood(d, ctx);
+  rec.mood = s;
+  dress(rec, deskChar(d), rec.scene, rec.desk);
+  dressLid(rec, d.provider, d.display_model || d.model);
+  rec.el.dataset.mood = s.mood;
   setClass(
     rec.el,
-    `desk tone-${s.tone}${s.working ? " working" : ""}${room ? " away" : ""}${d.private_allowed ? "" : " only"}`,
+    `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${state.drawer.kind === "desk" && state.drawer.key === d.key ? " sel" : ""}`,
   );
-  setText(rec.name, d.label);
-  setText(rec.word, s.word);
-  rec.only.hidden = d.private_allowed;
-  setText(rec.access, d.access === "read" ? "只读" : d.access === "write" ? "可写" : "");
-  rec.access.hidden = !d.access;
-  rec.priv.hidden = !(room && d.private.running > 0);
+  setSay(rec.say, s.say);
+  setText(rec.nm, deskName(d));
+  setText(rec.cliText, cliName(d.provider));
+  rec.role.hidden = !d.role;
+  setText(rec.role, d.role || "");
   setText(
-    rec.meta,
-    [
-      d.private.threads ? `私聊 ${d.private.threads} 条线程` : "",
-      relTime(d.last_active),
-    ]
-      .filter(Boolean)
-      .join(" · "),
+    rec.access,
+    d.access === "read" ? "只读" : d.access === "write" ? "可写" : "",
   );
-  setAttr(rec.el, "title", `${d.label}\n首次出现 ${fullTime(d.first_seen)}`);
+  rec.access.hidden = !d.access;
+  rec.only.hidden = d.private_allowed !== false;
+  setText(rec.st, s.word);
+  setAttr(
+    rec.el,
+    "title",
+    `${handleOf(d)}\n首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}${d.model_source === "unknown" || (!d.model && !d.display_model) ? "\n调用时没有指定模型，CLI 也没有回报，用的是它的默认模型" : ""}`,
+  );
   setAttr(
     rec.el,
     "aria-label",
-    `${d.label}，${s.word}${d.private_allowed ? "" : "，仅会议"}${rec.priv.hidden ? "" : "，私聊进行中"}，查看历史消息`,
+    `${deskName(d)}，${cliName(d.provider)}${d.role ? `，${d.role}` : ""}，${s.word}，查看对话`,
   );
 }
 
+// ---------------------------------------------------------------- meeting rooms
+// A room in session is drawn in full; finished rooms fold into one line each.
+const fullRoom = (r) => urgent(r.status);
+function roundText(r) {
+  const n = r.round;
+  if (!n) return pick(GROUP, r.status)[0];
+  const order = n.order === "serial" ? "依次发言" : "同时作答";
+  return `第 ${n.number} 轮 · ${r.status === "review" ? "待审核" : r.status === "running" ? order : pick(GROUP, r.status)[0]}`;
+}
 function createRoom(r) {
   const rec = {
     id: r.id,
-    title: h("b.r-title"),
-    pill: h("span.pill"),
-    seats: h("div.seats"),
-    boardText: h("b.wb-count"),
+    title: h("span.zone-title"),
+    state: h("span.r"),
     review: h("span.tag.tag-review", { hidden: true }),
+    board: h("span.board", {}, "会议记录", h("b")),
+    scene: h("div.mscene"),
+    mini: h("div.mini"),
+    full: null,
   };
-  rec.open = h("button.r-open", { type: "button" }, rec.title);
-  rec.board = h(
-    "button.whiteboard",
-    { type: "button" },
-    h("i.wb-ico", { "aria-hidden": "true" }),
-    rec.boardText,
-    rec.review,
-  );
   rec.el = h(
-    "article.room",
-    {},
-    h("header.r-head", {}, rec.open, rec.pill),
-    rec.board,
-    rec.seats,
+    "section.zone.room",
+    { role: "button", tabindex: "0" },
+    h(
+      "h2.zone-h",
+      {},
+      h("span", {}, "会议室 · "),
+      rec.title,
+      rec.review,
+      rec.state,
+    ),
+    rec.scene,
+    rec.mini,
   );
-  for (const button of [rec.open, rec.board])
-    button.addEventListener("click", () =>
-      openDrawer({ kind: "room", id: r.id }, button),
-    );
+  const open = () => openScope({ kind: "room", id: r.id }, rec.el);
+  rec.el.addEventListener("click", open);
+  rec.el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open();
+    }
+  });
   return rec;
 }
 function seatRec(id) {
   let seat = state.seatRecs.get(id);
   if (!seat) {
-    seat = { slot: h("span.slot"), cap: h("span.seat-cap") };
-    seat.el = h("div.seat", {}, seat.slot, seat.cap);
+    seat = {
+      say: h("span.say"),
+      plate: h("span.plate"),
+      lid: null,
+    };
+    seat.el = h("div.seat", {}, seat.say, img("l-chair", "chair"), seat.plate);
     state.seatRecs.set(id, seat);
   }
   return seat;
 }
-function updateRoom(rec, r, desks) {
-  const [word, tone] = pick(GROUP, r.status);
-  setClass(rec.el, `room tone-${tone}${r.status === "running" ? " live" : ""}`);
+function seatMood(r, seat, d) {
+  const act = d
+    ? activities(d).find(
+        (a) => a.kind === "meeting" && a.room === r.id && a.seat === seat.seat,
+      )
+    : null;
+  if (act?.status === "running")
+    return { mood: "speaking", say: ["作答中"], word: "作答中" };
+  if (act?.status === "review")
+    return { mood: "review", say: "交卷 · 待审核", word: "待审核" };
+  return { mood: "idle", say: "", word: d ? "" : "缺席" };
+}
+function updateRoom(rec, r, ctx) {
+  const full = fullRoom(r);
+  const [, tone] = pick(GROUP, r.status);
+  setClass(
+    rec.el,
+    `zone room${state.drawer.kind === "room" && state.drawer.id === r.id ? " sel" : ""}`,
+  );
   setText(rec.title, r.title);
-  setAttr(rec.open, "title", r.title);
-  setClass(rec.pill, `pill tone-${tone}`);
-  setText(rec.pill, word);
-  setText(rec.boardText, `白板 ${r.board} 条`);
+  setText(rec.state, roundText(r));
+  setClass(rec.state, `r ${tone}`);
   rec.review.hidden = !r.pending_review;
-  setText(rec.review, `待审 ${r.pending_review}`);
+  setText(rec.review, `${r.pending_review} 待审`);
+  setText(rec.board.lastChild, String(r.board ?? 0));
+  rec.scene.hidden = !full;
+  rec.mini.hidden = full;
   setAttr(
-    rec.open,
+    rec.el,
     "aria-label",
-    `${r.title}，${word}，白板 ${r.board} 条${r.pending_review ? `，待审 ${r.pending_review}` : ""}，查看会议室消息`,
+    `会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条${r.pending_review ? `，${r.pending_review} 条待审` : ""}，查看会议`,
   );
-  reconcile(
-    rec.seats,
-    r.seats.map((seat) => {
+  if (full) {
+    const nodes = [rec.board];
+    for (const seat of r.seats) {
       const s = seatRec(`${r.id}|${seat.seat}`);
-      const d = desks.get(seat.desk);
-      setText(s.cap, d ? d.role || d.model || d.provider : "—");
-      setAttr(s.el, "title", `${d ? d.label : "—"} · 席位 ${seat.seat}`);
-      return s.el;
-    }),
-  );
-}
-
-function pawnFor(d) {
-  let pawn = state.pawns.get(d.key);
-  if (!pawn)
-    state.pawns.set(
-      d.key,
-      (pawn = { el: h("span.pawn", {}, avatar(d.provider, d.model)) }),
-    );
-  return pawn;
-}
-// Seat the avatars: in the meeting room's seat while the desk is in a meeting, otherwise at its own desk.
-function seatPawns(desks, animate) {
-  for (const d of desks) {
-    const pawn = pawnFor(d);
-    const seat =
-      d.meeting.room &&
-      state.seatRecs.get(`${d.meeting.room}|${d.meeting.seat}`);
-    const target = seat ? seat.slot : state.deskRecs.get(d.key).slot;
-    const from = pawn.el.parentNode;
-    if (from === target) continue;
-    const before =
-      from && animate && canAnimate() ? pawn.el.getBoundingClientRect() : null;
-    target.append(pawn.el);
-    if (!before || !before.width) continue;
-    const after = pawn.el.getBoundingClientRect();
-    pawn.el.animate(
-      [
-        {
-          transform: `translate(${before.left - after.left}px, ${before.top - after.top}px)`,
-        },
-        { transform: "none" },
-      ],
-      { duration: 700, easing: "cubic-bezier(.3,.7,.3,1)" },
-    );
-  }
-  for (const d of desks)
-    state.pawns
-      .get(d.key)
-      .el.classList.toggle(
-        "working",
-        state.deskRecs.get(d.key).el.classList.contains("working"),
+      const d = ctx.desks.get(seat.desk);
+      const m = seatMood(r, seat, d);
+      s.el.dataset.mood = m.mood;
+      s.el.dataset.key = `${r.id}|${seat.seat}`;
+      setClass(s.el, `seat${d ? "" : " empty"}`);
+      dress(s, d ? deskChar(d) : "default", s.el, s.plate);
+      setSay(s.say, m.say);
+      const name = d ? deskName(d) : seat.seat;
+      const small = d
+        ? `${cliName(d.provider)}${d.role ? ` · ${d.role}` : ""}`
+        : "缺席";
+      const plateKey = `${name}|${small}`;
+      if (s.plateKey !== plateKey) {
+        s.plateKey = plateKey;
+        s.plate.replaceChildren(name, h("small", {}, small));
+      }
+      setAttr(s.el, "title", d ? handleOf(d) : `席位 ${seat.seat}`);
+      nodes.push(s.el);
+    }
+    reconcile(rec.scene, nodes);
+  } else {
+    const heads = r.seats
+      .map((seat) => ctx.desks.get(seat.desk))
+      .filter(Boolean)
+      .map((d) => ART.head(deskChar(d)));
+    const key = r.seats.map((s) => s.desk).join();
+    if (rec.miniKey !== key) {
+      rec.miniKey = key;
+      rec.mini.replaceChildren(
+        ...heads,
+        h("span", {}, `${r.seats.length} 位参会 · 会议记录 ${r.board ?? 0} 条`),
       );
+    } else
+      setText(
+        rec.mini.lastChild,
+        `${r.seats.length} 位参会 · 会议记录 ${r.board ?? 0} 条`,
+      );
+  }
 }
+// Seat size follows the room's width and head count: the whiteboard takes one slot, every seat is
+// 64-98px, and the fewest rows win as long as people stay at least 80% of the largest possible size.
+function layoutRooms() {
+  for (const rec of state.roomRecs.values()) {
+    const m = rec.scene;
+    if (m.hidden || !m.isConnected) continue;
+    const avail = rec.el.clientWidth - 26;
+    const slots = m.children.length;
+    if (avail <= 0 || !slots) continue;
+    const plans = Array.from({ length: slots }, (_, i) => {
+      const perRow = Math.ceil(slots / (i + 1));
+      return [Math.min(98, Math.floor(avail / perRow)), perRow];
+    });
+    const best = Math.max(...plans.map(([size]) => size));
+    const [size, perRow] = plans.find(([s]) => s >= best * 0.8);
+    m.style.setProperty("--S", `${size}px`);
+    m.style.width = `${size * perRow}px`;
+    // the table texture continues across the seats of one row
+    for (const seat of m.querySelectorAll(".seat"))
+      seat.style.setProperty("--x", `${-seat.offsetLeft}px`);
+  }
+}
+new ResizeObserver(() => layoutRooms()).observe(el.floor);
 
-function renderOffice(c, newGroup) {
-  const desks = new Map(c.desks.map((d) => [d.key, d]));
-  const rooms = new Map(c.rooms.map((r) => [r.id, r]));
+// ---------------------------------------------------------------- the office, patched in place
+const canAnimate = () =>
+  !reduceMotion.matches &&
+  !document.hidden &&
+  typeof Element.prototype.animate === "function";
+
+function renderOffice(c, ctx, n, newGroup) {
   if (newGroup) {
     for (const map of [
       state.deskRecs,
       state.roomRecs,
       state.seatRecs,
-      state.pawns,
+      state.away,
       state.known,
     ])
       map.clear();
-    state.mgr = null;
+    state.bossRec = null;
     el.desks.replaceChildren();
     el.rooms.replaceChildren();
-    el.mgrDesk.replaceChildren();
     el.office.scrollTop = 0;
   }
-  if (!state.mgr) {
-    state.mgr = createManagerDesk();
-    el.mgrDesk.append(state.mgr.el);
-  }
-  updateManagerDesk(state.mgr, c);
+  if (!state.bossRec) state.bossRec = createBoss();
+  updateBoss(state.bossRec, c, n);
+
+  // rooms first: desks need to know which rooms are drawn in full
+  for (const id of state.roomRecs.keys())
+    if (!ctx.rooms.has(id)) state.roomRecs.delete(id);
+  const live = new Set();
+  const rooms = [...c.rooms].sort(
+    (a, b) => Number(fullRoom(b)) - Number(fullRoom(a)),
+  );
+  const roomNodes = rooms.map((r) => {
+    let rec = state.roomRecs.get(r.id);
+    if (!rec) state.roomRecs.set(r.id, (rec = createRoom(r)));
+    updateRoom(rec, r, ctx);
+    if (fullRoom(r)) for (const s of r.seats) live.add(`${r.id}|${s.seat}`);
+    return rec.el;
+  });
+  for (const id of state.seatRecs.keys())
+    if (!live.has(id)) state.seatRecs.delete(id);
+  reconcile(el.rooms, roomNodes);
+  el.floor.classList.toggle("solo", !rooms.some(fullRoom));
 
   for (const key of state.deskRecs.keys())
-    if (!desks.has(key)) {
-      state.deskRecs.delete(key);
-      state.pawns.delete(key);
-    }
+    if (!ctx.desks.has(key)) state.deskRecs.delete(key);
   const deskNodes = c.desks.map((d) => {
     let rec = state.deskRecs.get(d.key);
     if (!rec) state.deskRecs.set(d.key, (rec = createDesk(d)));
-    updateDesk(rec, d, rooms);
+    updateDesk(rec, d, ctx);
     return rec.el;
   });
   if (!deskNodes.length)
@@ -602,46 +778,60 @@ function renderOffice(c, newGroup) {
       h(
         "div.zone-empty",
         {},
-        "还没有工位。主控派出第一个私聊或会议席位后，工位会出现在这里并一直保留。",
+        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里并一直保留。",
       ),
     );
   reconcile(el.desks, deskNodes);
-  setText(el.deskCount, c.desks.length ? String(c.desks.length) : "");
-
-  for (const id of state.roomRecs.keys())
-    if (!rooms.has(id)) state.roomRecs.delete(id);
-  const seated = new Set();
-  const roomNodes = c.rooms.map((r) => {
-    let rec = state.roomRecs.get(r.id);
-    if (!rec) state.roomRecs.set(r.id, (rec = createRoom(r)));
-    updateRoom(rec, r, desks);
-    for (const seat of r.seats) seated.add(`${r.id}|${seat.seat}`);
-    return rec.el;
-  });
-  for (const id of state.seatRecs.keys())
-    if (!seated.has(id)) state.seatRecs.delete(id);
-  if (!roomNodes.length)
-    roomNodes.push(
-      h(
-        "div.zone-empty",
-        {},
-        "还没有会议室。主控开始会议后，每个协作组各占一间。",
-      ),
-    );
-  reconcile(el.rooms, roomNodes);
-  setText(el.roomCount, c.rooms.length ? String(c.rooms.length) : "");
-
-  seatPawns(c.desks, !newGroup && state.ready);
+  setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
+  layoutRooms();
+  walk(!newGroup && state.ready);
 }
 
-const GLYPH = { dispatch: "✉", return: "↩", forward: "↪", board: "✎" };
-const FLIGHT_LABEL = {
-  dispatch: "派单",
-  return: "交回",
-  forward: "转发",
-  board: "写上白板",
-};
-// A small token travels between two office elements. Purely decorative: it takes no focus.
+// A desk that leaves for a meeting walks to its seat (and back): a copy of its figure travels
+// between the two places while the real ones fade. Purely decorative.
+function walk(animate) {
+  for (const [key, rec] of state.deskRecs) {
+    const to = rec.mood?.away || null;
+    const from = state.away.get(key) ?? null;
+    if (to === from) continue;
+    if (to) state.away.set(key, to);
+    else state.away.delete(key);
+    if (!animate || !canAnimate()) continue;
+    const seatOf = (id) => state.seatRecs.get(id)?.fig;
+    const start = from ? seatOf(from) : rec.fig;
+    const end = to ? seatOf(to) : rec.fig;
+    travel(start, end, rec.char);
+  }
+}
+function travel(start, end, name) {
+  if (!start?.isConnected || !end?.isConnected) return;
+  const base = el.fx.getBoundingClientRect();
+  const a = start.getBoundingClientRect(),
+    b = end.getBoundingClientRect();
+  if (!a.width || !b.width) return;
+  const walker = ART.figure(name);
+  walker.classList.add("walker");
+  walker.style.cssText = `left:${a.left - base.left}px;top:${a.top - base.top}px;width:${a.width}px;height:${a.height}px`;
+  el.fx.append(walker);
+  const scale = b.width / a.width;
+  const run = walker.animate(
+    [
+      { transform: "none", opacity: 0.95 },
+      {
+        transform: `translate(${(b.left - a.left) / 2}px, ${(b.top - a.top) / 2 - 18}px) scale(${(1 + scale) / 2})`,
+        offset: 0.5,
+      },
+      {
+        transform: `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(${scale})`,
+        opacity: 0.95,
+      },
+    ],
+    { duration: 900, easing: "ease-in-out" },
+  );
+  run.onfinish = run.oncancel = () => walker.remove();
+}
+
+// An envelope travels between two office elements: dispatch, return, forward, writing to the minutes.
 function fly(kind, from, to, delay) {
   if (!from || !to || !from.isConnected || !to.isConnected) return;
   const base = el.fx.getBoundingClientRect();
@@ -650,11 +840,7 @@ function fly(kind, from, to, delay) {
   if (!a.width || !b.width || !base.width) return;
   const dx = b.left + b.width / 2 - a.left - a.width / 2,
     dy = b.top + b.height / 2 - a.top - a.height / 2;
-  const token = h(
-    `span.token.token-${kind}`,
-    { title: FLIGHT_LABEL[kind] },
-    GLYPH[kind],
-  );
+  const token = h(`span.token.token-${kind}`);
   token.style.left = `${a.left + a.width / 2 - base.left}px`;
   token.style.top = `${a.top + a.height / 2 - base.top}px`;
   el.fx.append(token);
@@ -664,21 +850,21 @@ function fly(kind, from, to, delay) {
       { transform: `${centre} scale(.5)`, opacity: 0 },
       { transform: `${centre} scale(1)`, opacity: 1, offset: 0.15 },
       {
-        transform: `${centre} translate(${dx}px, ${dy}px) scale(1)`,
+        transform: `${centre} translate(${dx}px, ${dy - 30}px) scale(1)`,
         opacity: 1,
-        offset: 0.85,
+        offset: 0.6,
       },
       {
         transform: `${centre} translate(${dx}px, ${dy}px) scale(.6)`,
         opacity: 0,
       },
     ],
-    { duration: 1200, delay, easing: "ease-in-out", fill: "backwards" },
+    { duration: 1100, delay, easing: "ease-in-out", fill: "backwards" },
   );
   run.onfinish = run.oncancel = () => token.remove();
 }
 // New messages since the previous poll tell what moved. Typing bubbles are in-place updates, not events.
-function ingest(c, newGroup) {
+function ingest(c, ctx, newGroup) {
   const fresh = [];
   for (const m of c.messages) {
     if (state.known.has(m.id)) continue;
@@ -686,32 +872,28 @@ function ingest(c, newGroup) {
     if (m.kind !== "typing") fresh.push(m);
   }
   if (newGroup || !state.ready || !fresh.length) return;
-  const spoken = fresh
-    .filter((m) => m.kind !== "prompt")
-    .map(
-      (m) =>
-        `${who(m, state.ctx).name}：${plain(m.text).split("\n")[0].slice(0, 60)}`,
-    );
+  const spoken = fresh.map((m) => plain(eventText(m, ctx).text));
   if (spoken.length) $("announce").textContent = spoken.join("；");
   if (fresh.length > MAX_FLIGHTS || !canAnimate()) return;
-  const deskEl = (key) => state.deskRecs.get(key)?.el;
+  const deskEl = (key) => state.deskRecs.get(key)?.scene;
   const roomEl = (id) => state.roomRecs.get(id)?.el;
-  const pawnEl = (key) => state.pawns.get(key)?.el;
-  const mgr = state.mgr.el;
+  const boss = state.bossRec?.scene;
   fresh.forEach((m, i) => {
     const delay = i * 160;
     const t = m.thread;
-    if (m.kind === "forward") fly("forward", mgr, roomEl(t?.id), delay);
-    else if (m.kind === "prompt" && m.speaker.role === "manager") {
-      if (t?.kind === "desk") fly("dispatch", mgr, deskEl(m.desk), delay);
-      else if (t?.kind === "room") fly("dispatch", mgr, roomEl(t.id), delay);
+    if (m.kind === "forward") fly("forward", boss, roomEl(t?.id), delay);
+    else if (m.speaker?.role === "manager") {
+      if (t?.kind === "desk") fly("dispatch", boss, deskEl(m.desk), delay);
+      else if (t?.kind === "room") fly("dispatch", boss, roomEl(t.id), delay);
     } else if (m.kind === "reply" || m.kind === "notice") {
-      if (t?.kind === "desk") fly("return", deskEl(m.desk), mgr, delay);
-      else if (t?.kind === "room") {
-        if (m.visibility === "public")
-          fly("board", pawnEl(m.desk), state.roomRecs.get(t.id)?.board, delay);
-        else fly("return", pawnEl(m.desk), mgr, delay);
-      }
+      if (t?.kind === "desk") fly("return", deskEl(m.desk), boss, delay);
+      else if (t?.kind === "room")
+        fly(
+          m.visibility === "public" ? "board" : "return",
+          roomEl(t.id),
+          m.visibility === "public" ? state.roomRecs.get(t.id)?.board : boss,
+          delay,
+        );
     }
   });
 }
@@ -785,75 +967,151 @@ function renderMarkdown(root, text) {
   root.replaceChildren(...out);
 }
 
-// ---------------------------------------------------------------- message nodes
+// ---------------------------------------------------------------- reading a message
 // ctx = lookup tables of the payload being rendered (see contextOf).
-function who(m, ctx) {
-  const s = m.speaker;
-  if (s.role === "system") return { name: s.label || "系统", sub: "" };
-  if (s.role === "manager")
-    return {
-      name: m.kind === "forward" ? s.label || "主控转发" : ctx.c.label,
-      sub: "主控",
-    };
-  const desk = m.desk && ctx.desks.get(m.desk);
-  return {
-    name: desk ? desk.label : s.model || s.label || s.provider,
-    sub: "",
-  };
+const isBoss = (m) => m.speaker?.role === "manager";
+function speakerDesk(m, ctx) {
+  return m.desk && ctx.desks.get(m.desk);
 }
-// Which thread a message belongs to: a private desk chat, or a room (public once committed to the board).
-function threadTag(m, ctx) {
-  if (m.private)
-    return {
-      text: "🔒 私密",
-      title: "这条消息不会向会议内其他成员公开。",
-      cls: "priv",
-    };
+function speakerName(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system") return s.label || "系统";
+  if (isBoss(m)) return "boss";
+  const d = speakerDesk(m, ctx);
+  return d ? deskName(d) : s.model || cliName(s.provider) || "组员";
+}
+// CLI and role after the name, so several "默认模型" desks stay apart.
+function speakerSub(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system" || isBoss(m)) return "";
+  const d = speakerDesk(m, ctx);
+  const provider = d?.provider || s.provider;
+  return [cliName(provider), d?.role].filter(Boolean).join(" · ");
+}
+function speakerFace(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system") return null;
+  if (isBoss(m)) return hostTile(ctx.c.host, ctx.c.label);
+  const d = speakerDesk(m, ctx);
+  return ART.head(d ? deskChar(d) : ART.character(s.provider, s.model), "idle");
+}
+// Recipients as chips. New payloads carry `to: [{key, handle}]`; older ones only `recipients`.
+function targets(m, ctx) {
+  if (Array.isArray(m.to) && m.to.length && typeof m.to[0] === "object")
+    return m.to.map((t) => {
+      if (t.key === "@boss") return { kind: "boss" };
+      if (t.key === "@all") return { kind: "all" };
+      const d = ctx.desks.get(t.key);
+      return { kind: "desk", d, handle: t.handle };
+    });
+  const list = (m.recipients || []).map((r) => {
+    const key = r.seat ? ctx.seatDesk.get(`${m.conversation}|${r.seat}`) : null;
+    const d =
+      (key && ctx.desks.get(key)) ||
+      (m.thread?.kind === "desk" ? ctx.desks.get(m.desk) : null);
+    return { kind: "desk", d, handle: d ? null : r.model || r.label };
+  });
+  const room = m.thread?.kind === "room" && ctx.rooms.get(m.thread.id);
+  if (room && list.length > 1 && list.length === room.seats.length)
+    return [{ kind: "all" }];
+  return list;
+}
+function chip(t) {
+  if (t.kind === "boss") return h("span.at.boss", {}, "@boss");
+  if (t.kind === "all")
+    return h("span.at.all", { title: "会议室里的所有人" }, "@all");
+  const name = t.d ? deskName(t.d) : (t.handle || "").replace(/^@/, "");
+  return h(
+    "span.at",
+    { title: t.d ? handleOf(t.d) : t.handle || "" },
+    t.d ? ART.head(deskChar(t.d)) : null,
+    name,
+    t.d?.role ? ` · ${t.d.role}` : "",
+  );
+}
+// "boss 对 @all 提问", "glm-5.3-flash 的回答 · 等 boss 审核" ...
+function verbOf(m, ctx) {
   const t = m.thread;
-  if (t?.kind === "desk")
-    return {
-      text: "🔒 私聊",
-      title: "主控与这个工位的一对一私聊，不会向会议公开。",
-      cls: "priv",
-    };
-  if (t?.kind === "room") {
-    const title = ctx.rooms.get(t.id)?.title || "会议室";
+  const room = t?.kind === "room";
+  if (m.kind === "typing") return ["正在作答", []];
+  if (m.kind === "instruction")
+    return ["只对", targets(m, ctx), "说", "🔒 仅此席"];
+  if (m.kind === "forward") return ["转发给", targets(m, ctx)];
+  if (isBoss(m))
+    return room ? ["对", targets(m, ctx), "提问"] : ["派给", targets(m, ctx)];
+  if (m.discarded) return ["的回答（已丢弃）", []];
+  if (m.status === "review") return ["的回答", [{ kind: "boss" }], "等审核"];
+  if (room)
     return m.visibility === "public"
-      ? { text: title, title: `会议室：${title}`, cls: "room" }
-      : {
-          text: `🔒 ${title} · 未公开`,
-          title: "运行中、待审或隔离席位的内容，尚未向会议公开。",
-          cls: "priv",
-        };
-  }
-  return null;
+      ? ["发言", []]
+      : ["回复", [{ kind: "boss" }], "", "🔒 未公开"];
+  return ["回复", [{ kind: "boss" }]];
 }
+function metaOf(m, ctx) {
+  if (Array.isArray(m.answering) && m.answering.length)
+    return `本轮回答：${m.answering.map((x) => String(x).replace(/^@/, "")).join("、")}`;
+  if (m.status === "review" && !m.discarded)
+    return "boss 公开后，会议室里的其他人才看得到";
+  return "";
+}
+// One-line ticker / screen-reader sentence for a message.
+function eventText(m, ctx) {
+  const who = speakerName(m, ctx);
+  const room = m.thread?.kind === "room" ? ctx.rooms.get(m.thread.id) : null;
+  const to = targets(m, ctx)
+    .map((t) =>
+      t.kind === "desk"
+        ? t.d
+          ? deskName(t.d)
+          : (t.handle || "").replace(/^@/, "")
+        : t.kind,
+    )
+    .join("、");
+  const text =
+    m.kind === "instruction"
+      ? `boss 私下提醒 ${to}`
+      : m.kind === "forward"
+        ? `boss 转发了一条消息${room ? `到「${room.title}」` : ""}`
+        : isBoss(m)
+          ? room
+            ? `boss 在「${room.title}」提问`
+            : `boss 给 ${to || "工位"} 派了任务`
+          : m.kind === "notice"
+            ? `${who} ${m.text}`
+            : m.status === "review"
+              ? `${who} 交了回答，放到 boss 桌上等审核`
+              : room && m.visibility === "public"
+                ? `${who} 在「${room.title}」发言`
+                : `${who} 交回了结果`;
+  return { who, text };
+}
+
+// ---------------------------------------------------------------- message nodes
 function createMessage(m) {
   const rec = { kind: m.kind, text: null };
-  rec.thread = h("span.m-thread");
   rec.time = h("time");
+  rec.ava = h("span.m-ava");
+  rec.name = h("b.m-name");
+  rec.who = h("span.m-who");
   if (m.kind === "notice") {
-    rec.ava = h("span.note-ava");
-    rec.name = h("b");
     rec.text_ = h("span.note-text");
     rec.detail = h("small.note-detail");
     rec.el = h(
       "div.note",
       {},
       rec.ava,
-      h(
-        "span.note-main",
-        {},
-        h("span.note-line", {}, rec.name, rec.text_, rec.thread, rec.time),
-        rec.detail,
-      ),
+      rec.name,
+      rec.who,
+      rec.text_,
+      rec.time,
+      rec.detail,
     );
     return rec;
   }
-  rec.avaSlot = h("span.m-ava");
-  rec.name = h("b.m-name");
-  rec.sub = h("span.m-sub");
-  rec.to = h("div.m-to", { "aria-label": "消息收件人" });
+  rec.verb = h("span.m-verb");
+  rec.to = h("span.m-to");
+  rec.verb2 = h("span.m-verb");
+  rec.lock = h("span.m-lock");
   rec.fwd = h("button.fwd", { type: "button", hidden: true });
   rec.fwd.addEventListener(
     "click",
@@ -867,6 +1125,7 @@ function createMessage(m) {
     {},
     m.kind === "typing" ? [rec.tail, rec.dots] : [rec.fwd, rec.md],
   );
+  rec.meta = h("div.m-meta");
   rec.more = h("button.more", { type: "button", hidden: true }, "展开全文");
   rec.more.addEventListener("click", () => {
     const id = rec.id;
@@ -877,103 +1136,68 @@ function createMessage(m) {
   rec.el = h(
     "article.msg",
     {},
-    rec.avaSlot,
     h(
-      "div.m-col",
+      "div.m-h",
       {},
-      h("div.m-head", {}, rec.name, rec.sub, rec.thread, rec.time),
+      rec.ava,
+      rec.name,
+      rec.who,
+      rec.verb,
       rec.to,
-      rec.bub,
-      m.kind === "typing" ? null : rec.more,
+      rec.verb2,
+      rec.lock,
+      rec.time,
     ),
+    rec.bub,
+    rec.meta,
+    m.kind === "typing" ? null : rec.more,
   );
   return rec;
 }
+function setFace(rec, m, ctx) {
+  const s = m.speaker || {};
+  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? ctx.c.host : ""}`;
+  if (rec.avKey === key) return;
+  rec.avKey = key;
+  const face = speakerFace(m, ctx);
+  rec.ava.replaceChildren(...(face ? [face] : []));
+}
 function updateMessage(rec, m, ctx, id) {
   rec.id = id;
-  const s = m.speaker;
-  const [, tone] = pick(AN.MEMBER, m.status);
-  const tag = threadTag(m, ctx);
+  const flashing = state.flashId === id ? " flash" : "";
   setAttr(rec.el, "data-id", id);
   setAttr(rec.el, "data-conv", m.conversation);
   setAttr(rec.el, "data-mid", m.message_id);
   setAttr(rec.el, "data-kind", m.kind);
-  setText(rec.thread, tag ? tag.text : "");
-  setClass(rec.thread, `m-thread${tag ? ` ${tag.cls}` : ""}`);
-  setAttr(rec.thread, "title", tag ? tag.title : null);
-  rec.thread.hidden = !tag;
-  const priv = tag?.cls === "priv" ? " thread-private" : "";
-  const flashing = state.flashId === id ? " flash" : "";
-  if (m.kind === "notice") {
-    const key = s.provider + s.model;
-    if (rec.avKey !== key) {
-      rec.avKey = key;
-      rec.ava.replaceChildren(
-        s.role === "system" ? "" : avatar(s.provider, s.model, "sm"),
-      );
-    }
-    setClass(rec.el, `note tone-${tone}${priv}${flashing}`);
-    setText(rec.name, who(m, ctx).name);
-    setText(rec.text_, m.text);
-    setText(rec.detail, m.detail || "");
-    rec.detail.hidden = !m.detail;
-    setText(rec.time, clock(m.time));
-    setAttr(rec.time, "title", fullTime(m.time));
-    return;
-  }
-  const w = who(m, ctx);
-  const mine = s.role === "manager";
-  setClass(
-    rec.el,
-    `msg ${mine ? "mgr" : "mem"}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${priv}${flashing}`,
-  );
-  const key =
-    (mine ? ctx.c.host : s.provider) +
-    "|" +
-    s.model +
-    "|" +
-    (mine ? ctx.c.group : "");
-  if (rec.avKey !== key) {
-    rec.avKey = key;
-    rec.avaSlot.replaceChildren(
-      ...[mine && !s.model ? null : avatar(s.provider, s.model)].filter(
-        Boolean,
-      ),
-    );
-  }
-  setText(rec.name, w.name);
-  setText(
-    rec.sub,
-    m.kind === "typing" ? `${w.sub ? `${w.sub} · ` : ""}正在输入` : w.sub,
-  );
-  const targets = mine ? m.recipients || [] : [];
-  const toKey = JSON.stringify(targets);
-  if (rec.toKey !== toKey) {
-    rec.toKey = toKey;
-    rec.to.replaceChildren(
-      ...targets.map((target) => {
-        const name = target.model || target.label || target.provider;
-        return h(
-          "span.recipient",
-          { title: `发给 ${name}${target.seat ? ` · ${target.seat}` : ""}` },
-          avatar(target.provider, target.model, "sm"),
-        );
-      }),
-    );
-  }
-  setAttr(
-    rec.name,
-    "title",
-    s.model
-      ? s.model_source === "native"
-        ? "CLI 回报的模型"
-        : mine
-          ? "主控记录的模型"
-          : "调用时指定的模型"
-      : "此条记录没有可靠的模型信息",
-  );
+  setFace(rec, m, ctx);
+  setText(rec.name, speakerName(m, ctx));
+  setText(rec.who, speakerSub(m, ctx));
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
+  if (m.kind === "notice") {
+    const [, tone] = pick(AN.MEMBER, m.status);
+    setClass(rec.el, `note tone-${tone}${flashing}`);
+    setText(rec.text_, m.text);
+    setText(rec.detail, m.detail || "");
+    return;
+  }
+  const [verb, to, verb2 = "", lock = ""] = verbOf(m, ctx);
+  const priv =
+    m.kind === "instruction" ||
+    (m.thread?.kind === "room" && m.visibility !== "public" && !isBoss(m));
+  setClass(
+    rec.el,
+    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.discarded ? " discarded" : ""}${m.reply_to && !isBoss(m) ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
+  );
+  setText(rec.verb, verb);
+  setText(rec.verb2, verb2);
+  setText(rec.lock, lock);
+  const toKey = JSON.stringify(to.map((t) => [t.kind, t.d?.key, t.handle]));
+  if (rec.toKey !== toKey) {
+    rec.toKey = toKey;
+    rec.to.replaceChildren(...to.map(chip));
+  }
+  setText(rec.meta, metaOf(m, ctx));
   if (m.kind !== "typing") {
     // A forwarded entry quotes a message by id; the card jumps to it while that message is still listed.
     const f = m.forward;
@@ -1002,71 +1226,124 @@ function updateMessage(rec, m, ctx, id) {
     }
   }
 }
-// Fold: clamp by CSS, show the button only when the content really overflows.
+// Fold: clamp by CSS, show the button only when the content really overflows. Discarded answers
+// start folded whatever their length.
 function applyFold(rec) {
   if (!rec.more || !rec.el.isConnected || !rec.el.offsetParent) return;
   const open = state.expanded.has(rec.id);
   rec.bub.classList.toggle("fold", !open);
-  const overflows = rec.bub.scrollHeight > FOLD_PX + 6; // scrollHeight ignores the clamp
+  const discarded = rec.el.classList.contains("discarded");
+  const overflows = discarded || rec.bub.scrollHeight > FOLD_PX + 6; // scrollHeight ignores the clamp
   rec.more.hidden = !overflows;
   rec.more.textContent = open ? "收起" : "展开全文";
   rec.more.setAttribute("aria-expanded", open ? "true" : "false");
   rec.bub.classList.toggle("fold", !open && overflows);
+  if (discarded && !open) rec.bub.style.maxHeight = "3.4em";
+  else rec.bub.style.maxHeight = "";
 }
 function measureAll() {
   for (const rec of state.nodes.values()) if (rec.more) applyFold(rec);
 }
 
-// ---------------------------------------------------------------- drawer: fused timeline, desk history, room transcript
-function openDrawer(scope, opener) {
+// ---------------------------------------------------------------- conversation column
+function openScope(scope, opener) {
   if (opener) state.opener = opener;
   state.drawer = scope;
+  state.convOpen = true;
   if (state.chat) renderAll(state.chat);
-  el.tl.focus({ preventScroll: true });
+  if (overlay.matches) el.tl.focus({ preventScroll: true });
 }
-function closeDrawer() {
-  state.drawer = null;
+function closeConv() {
+  state.convOpen = false;
   if (state.chat) renderAll(state.chat);
   const opener = state.opener;
   state.opener = null;
   if (opener?.isConnected) opener.focus({ preventScroll: true });
 }
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.drawer) closeDrawer();
+  if (e.key === "Escape" && overlay.matches && state.convOpen) closeConv();
 });
-$("dr-close").addEventListener("click", closeDrawer);
+$("dr-close").addEventListener("click", closeConv);
+el.drAll.addEventListener("click", () => openScope({ kind: "all" }));
 
-// Messages of the open scope. A desk's history is its own messages (private and meeting) plus the
-// manager prompts that were addressed to one of its seats.
+// Messages of the open scope. A desk's conversation is its own messages (private and meeting) plus
+// the boss prompts that were addressed to it.
 function inScope(m, ctx) {
   const d = state.drawer;
   if (d.kind === "all") return true;
   if (d.kind === "room") return m.conversation === d.id;
   if (m.desk === d.key) return true;
+  if (Array.isArray(m.to) && m.to.some((t) => t?.key === d.key)) return true;
   return (m.recipients || []).some(
     (r) => r.seat && ctx.seatDesk.get(`${m.conversation}|${r.seat}`) === d.key,
   );
 }
-function drawerTitle(ctx, shown) {
+function scopeHead(c, ctx, shown) {
   const d = state.drawer;
-  const real = shown.filter((m) => m.kind !== "typing");
-  const counts = `${real.length} 条 · 公开 ${real.filter((m) => m.visibility === "public").length} · 私聊 ${real.filter((m) => m.thread?.kind === "desk").length}`;
-  if (d.kind === "desk")
-    return [ctx.desks.get(d.key)?.label || "工位", `工位历史 · ${counts}`];
-  if (d.kind === "room")
-    return [ctx.rooms.get(d.id)?.title || "会议室", `会议室 · ${counts}`];
-  return ["消息列表", `整个工作区 · ${counts}`];
+  const real = shown.filter((m) => m.kind !== "typing").length;
+  if (d.kind === "desk") {
+    const desk = ctx.desks.get(d.key);
+    if (desk)
+      return {
+        key: `desk|${d.key}|${deskChar(desk)}`,
+        ico: () => ART.head(deskChar(desk)),
+        title: deskName(desk),
+        sub: `${cliName(desk.provider)}${desk.role ? ` · ${desk.role}` : ""} · ${real} 条消息`,
+        note: "私聊只有 boss 和这个工位能看到；它在会议里的发言也列在这里。",
+      };
+  }
+  if (d.kind === "room") {
+    const room = ctx.rooms.get(d.id);
+    if (room)
+      return {
+        key: `room|${d.id}`,
+        ico: () => h("span", {}, "会"),
+        title: room.title,
+        sub: `会议室 · ${room.seats.length} 位 · ${roundText(room)}`,
+        note: "会议室里的发言所有参会者都能看到；带锁的话只给某一位；待审核的回答要等 boss 公开后别人才看得到。",
+      };
+  }
+  return {
+    key: `all|${c.host}|${c.label}`,
+    ico: () => hostTile(c.host, c.label),
+    title: "boss",
+    sub: `${c.label} · 全部消息 ${real} 条`,
+    note: "",
+  };
+}
+function renderPortrait(ctx) {
+  const d = state.drawer.kind === "desk" && ctx.desks.get(state.drawer.key);
+  el.portrait.hidden = !d;
+  if (!d) {
+    state.portraitKey = "";
+    return;
+  }
+  const rec = state.deskRecs.get(d.key);
+  const name = deskChar(d);
+  if (state.portraitKey !== name) {
+    state.portraitKey = name;
+    el.portrait.replaceChildren(h("span.ps"), ART.figure(name, "m"));
+  }
+  const mood = rec?.mood?.mood || "idle";
+  el.portrait.dataset.mood = rec?.mood?.away ? "speaking" : mood;
+  setText(el.portrait.firstChild, rec?.mood?.word || "");
 }
 
-function renderDrawer(c, ctx) {
-  el.drawer.hidden = !state.drawer;
-  if (!state.drawer) {
+function renderConv(c, ctx) {
+  el.drawer.hidden = overlay.matches && !state.convOpen;
+  if (el.drawer.hidden) {
     state.scopeKey = "";
     return;
   }
+  // a selection that no longer exists falls back to the whole workspace
+  const d = state.drawer;
+  if (
+    (d.kind === "desk" && !ctx.desks.has(d.key)) ||
+    (d.kind === "room" && !ctx.rooms.has(d.id))
+  )
+    state.drawer = { kind: "all" };
   const scopeKey = c.group + JSON.stringify(state.drawer);
   const reset = state.scopeKey !== scopeKey;
-  setClass(el.tl, `tl ${colorClass(c.color)}`); // gives the manager bubbles their colour
   if (reset) {
     state.scopeKey = scopeKey;
     state.nodes.clear();
@@ -1077,31 +1354,46 @@ function renderDrawer(c, ctx) {
     el.tl.scrollTop = 0;
   }
   const shown = c.messages.filter((m) => inScope(m, ctx));
-  const [title, sub] = drawerTitle(ctx, shown);
-  setText(el.drTitle, title);
-  setText(el.drSub, sub);
-  setAttr(el.drawer, "aria-label", title);
+  const head = scopeHead(c, ctx, shown);
+  if (el.drIco.dataset.key !== head.key) {
+    el.drIco.dataset.key = head.key;
+    el.drIco.replaceChildren(head.ico());
+  }
+  setText(el.drTitle, head.title);
+  setText(el.drSub, head.sub);
+  setText(el.drNote, head.note);
+  el.drNote.hidden = !head.note;
+  el.drAll.hidden = state.drawer.kind === "all";
+  setAttr(el.drawer, "aria-label", `${head.title} 的对话`);
+  renderPortrait(ctx);
   // Geometry is the truth: a reader who is at the bottom follows new content, anyone else is left alone.
   const follow = reset || nearBottom();
   const order = [];
-  let day = null;
+  let day = null,
+    round = null;
   const node = (id, make) => {
     let rec = state.nodes.get(id);
     if (!rec) state.nodes.set(id, (rec = make()));
     order.push(id);
     return rec;
   };
+  const separator = (id, text) => {
+    const rec = node(id, () => ({ el: h("div.sep", {}, ""), sep: true }));
+    setText(rec.el, text);
+  };
+  if (c.omitted && state.drawer.kind === "all")
+    separator("omitted", `更早的 ${c.omitted} 条没有列出`);
   let fresh = 0;
   for (const m of shown) {
     const date = new Date(AN.at(m.time)).toDateString();
     if (date !== day) {
       day = date;
-      const label = dayLabel(m.time);
-      const rec = node(`day:${m.id}`, () => ({
-        el: h("div.sep.day", {}, h("span")),
-        sep: true,
-      }));
-      setText(rec.el.firstChild, label);
+      round = null;
+      separator(`day:${m.id}`, dayLabel(m.time));
+    }
+    if (state.drawer.kind === "room" && m.round != null && m.round !== round) {
+      round = m.round;
+      separator(`round:${m.conversation}:${m.round}`, `第 ${m.round} 轮`);
     }
     let rec = state.nodes.get(m.id);
     if (rec && rec.kind !== m.kind) {
@@ -1125,7 +1417,7 @@ function renderDrawer(c, ctx) {
     if (!keep.has(id)) state.nodes.delete(id);
   reconcile(
     el.inner,
-    order.map((id) => state.nodes.get(id).el),
+    [...keep].map((id) => state.nodes.get(id).el),
   );
   for (const rec of state.nodes.values())
     if (rec.dirty) {
@@ -1140,7 +1432,7 @@ function renderDrawer(c, ctx) {
   updateJump();
 }
 function updateJump() {
-  el.jump.hidden = !(state.drawer && state.unseen > 0 && !nearBottom());
+  el.jump.hidden = !(state.unseen > 0 && !nearBottom());
   el.jump.textContent = `${state.unseen} 条新消息 ↓`;
 }
 el.tl.addEventListener(
@@ -1179,7 +1471,7 @@ function jumpToMessage(mid) {
     [...el.inner.querySelectorAll("[data-mid]")]
       .filter((n) => n.dataset.mid === mid && n.dataset.kind !== "forward")
       .pop();
-  let target = state.drawer ? find() : null;
+  let target = find();
   if (!target) {
     state.drawer = { kind: "all" };
     renderAll(state.chat);
@@ -1195,26 +1487,40 @@ function focusConversation(id) {
   if (target) flash(target);
 }
 
+// ---------------------------------------------------------------- ticker
+function renderTicker(c, ctx) {
+  const last = [...c.messages].reverse().find((m) => m.kind !== "typing");
+  el.ticker.hidden = !last;
+  if (!last || state.tickId === last.id) return;
+  state.tickId = last.id;
+  const { text } = eventText(last, ctx);
+  el.tick.replaceChildren(h("time", {}, clock(last.time)), text);
+  el.tick.classList.remove("new");
+  void el.tick.offsetWidth;
+  el.tick.classList.add("new");
+  setAttr(el.tick, "title", `${fullTime(last.time)} ${text}`);
+}
+
 // ---------------------------------------------------------------- body states
 function showBlank(kind) {
   const none = !kind;
   el.blank.hidden = none;
   el.office.hidden = !none;
-  el.ro.hidden = !none;
   if (none) return;
   el.head.hidden = true;
   el.drawer.hidden = true;
+  el.ticker.hidden = true;
   state.headKey = "";
   state.loaded = null;
-  state.drawer = null;
+  state.drawer = { kind: "all" };
   const text = {
     nogroups: [
       "还没有工作区",
-      "在主控 Agent（Claude Code、Codex CLI 等）里派出任务或开始会议，对应的办公室会自动出现在这里。",
+      "在 boss（Claude Code、Codex CLI 等宿主里的 Agent）里派出任务或开始会议，对应的办公室会自动出现在这里。",
     ],
     pick: [
       "选一个工作区开始查看",
-      "左侧是每个主控会话的工作区，进行中的排在最前面。",
+      "左侧是每个 boss 会话的工作区，进行中的排在最前面。",
     ],
     missing: ["找不到这个工作区", "它可能已被删除。"],
     loading: ["正在读取办公室…", ""],
@@ -1242,6 +1548,7 @@ function contextOf(c) {
     seatDesk,
     desks: new Map(c.desks.map((d) => [d.key, d])),
     rooms: new Map(c.rooms.map((r) => [r.id, r])),
+    fullRooms: new Set(c.rooms.filter(fullRoom).map((r) => r.id)),
     sources: new Set(
       c.messages
         .filter((m) => m.message_id && m.kind !== "forward")
@@ -1251,21 +1558,23 @@ function contextOf(c) {
 }
 function renderAll(c, newGroup = false) {
   const ctx = (state.ctx = contextOf(c));
-  renderHead(c);
-  renderOffice(c, newGroup);
-  renderDrawer(c, ctx);
+  const n = counts(c);
+  renderHead(c, n);
+  renderOffice(c, ctx, n, newGroup);
+  renderConv(c, ctx);
+  renderTicker(c, ctx);
 }
-// #desk:<key> opens a desk's history, #conv:<id> a room's transcript (or the whole list, for a task).
+// #desk:<key> opens a desk's conversation, #conv:<id> a room's transcript (or everything, for a task).
 function applyHash(ctx) {
   const key = state.hashKey;
   if (!key || state.focused) return;
   state.focused = true;
   if (key.startsWith("desk:")) {
     if (ctx.desks.has(key.slice(5)))
-      openDrawer({ kind: "desk", key: key.slice(5) });
+      openScope({ kind: "desk", key: key.slice(5) });
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
-    openDrawer(ctx.rooms.has(id) ? { kind: "room", id } : { kind: "all" });
+    openScope(ctx.rooms.has(id) ? { kind: "room", id } : { kind: "all" });
     setTimeout(() => focusConversation(id), 0);
   }
 }
@@ -1328,14 +1637,16 @@ async function refresh() {
     const newGroup = state.loaded !== chat.group;
     state.loaded = chat.group;
     if (newGroup) {
-      state.drawer = null;
+      state.drawer = { kind: "all" };
+      state.convOpen = false;
       state.opener = null;
       state.scopeKey = "";
+      state.tickId = null;
     }
     state.chat = chat;
     showBlank(null);
     renderAll(chat, newGroup);
-    ingest(chat, newGroup);
+    ingest(chat, state.ctx, newGroup);
     applyHash(state.ctx);
     renderList(); // selected marker
     state.ready = true;

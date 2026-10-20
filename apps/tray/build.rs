@@ -16,6 +16,24 @@ fn main() {
         source,
     )
     .unwrap();
+    let art =
+        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("ui/art");
+    println!("cargo:rerun-if-changed={}", art.display());
+    let mut files = Vec::new();
+    if art.is_dir() {
+        collect(&art, &art, &mut files);
+    }
+    files.sort();
+    let mut source = String::from("pub const ART: &[(&str, &[u8])] = &[\n");
+    for (name, path) in files {
+        source.push_str(&format!("({name:?}, include_bytes!({path:?})),\n"));
+    }
+    source.push_str("];\n");
+    std::fs::write(
+        std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("office_art.rs"),
+        source,
+    )
+    .unwrap();
     tauri_build::build()
 }
 

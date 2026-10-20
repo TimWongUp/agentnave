@@ -39,12 +39,23 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     path.write_text(
         turn("old-model", "2026-01-01T00:00:00Z")
         + turn("current-model", "2026-01-01T01:00:00Z")
+        # Generated images make single transcript lines larger than the line limit.
+        + json.dumps({"type": "event_msg", "image": "x" * 3_000_000})
+        + "\n"
         + turn("future-model", "2999-01-01T00:00:00Z")
         + '{"partial":'
     )
     (tmp_path / "config.toml").write_text('model = "wrong-default"')
     assert session_model(Host("codex"), session) == "current-model"
     from datetime import UTC, datetime
+
+    from agentnave.host import _lines_from_end  # pyright: ignore[reportPrivateUsage]
+
+    lines = tmp_path / "lines.txt"
+    lines.write_bytes(b"old\n" + b"x" * 9 + b"\nnew\n")
+    for chunk in (3, 4, 64):
+        assert list(_lines_from_end(lines, chunk=chunk, longest=8)) == [b"new", b"old"]
+        assert list(_lines_from_end(lines, chunk=chunk, longest=9)) == [b"new", b"x" * 9, b"old"]
 
     assert session_model(Host("codex"), session, since=datetime(2026, 2, 1, tzinfo=UTC)) is None
     assert session_model(Host("codex"), "01a14d5a-d23d-7263-b50d-ca6b5ac429de") is None

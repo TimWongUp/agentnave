@@ -28,7 +28,7 @@ pub fn state(hosts: &Hosts, root: &Path) -> Value {
         {"id":"service","done":service,"detail":if service{"AgentNave 本机服务已安装"}else{"请安装或更新 AgentNave 本机服务"}},
         {"id":"host","done":connected>0,"detail":if connected>0{format!("已接入 {connected} 个宿主")}else{"在设置中接入一个宿主".into()}},
         {"id":"members","done":members,"detail":if members{"已保存或迁移组员设置"}else{"选择可以作为组员的 CLI 与模型"}},
-        {"id":"try","done":tried,"detail":if tried{"已有主控会话记录"}else{"在宿主里让 AgentNave 派一次任务"}}
+        {"id":"try","done":tried,"detail":if tried{"已有 boss 会话记录"}else{"在宿主里让 AgentNave 派一次任务"}}
     ],"dismissed":hosts.context.app.join("onboarding.dismissed").is_file()})
 }
 pub fn dismiss(hosts: &Hosts) -> Result<Value, String> {

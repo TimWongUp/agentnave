@@ -179,6 +179,7 @@ def _director(
         "storage": storage,
         "refresh_error": refresh_error,
         "created": state.created,
+        "cwd": state.tasks[-1].cwd if state.kind == "task" and state.tasks else state.cwd,
     }
     if state.kind == "task":
         tasks = [
@@ -216,6 +217,22 @@ def _director(
         for round_ in state.rounds
         for seat in round_.seats
         if seat.review == "discard" and seat.output is not None
+    ]
+    # Private instructions go to one seat only; the director view shows them to the boss.
+    data["rounds"] = [
+        {"number": round_.number, "seats": [{"seat_id": run.seat_id} for run in round_.seats]}
+        for round_ in state.rounds
+    ]
+    data["instructions"] = [
+        {
+            "round": round_.number,
+            "seat_id": seat.seat_id,
+            "text": seat.instruction,
+            "time": round_times.get(round_.number, state.created),
+        }
+        for round_ in state.rounds
+        for seat in round_.seats
+        if seat.instruction
     ]
     data.update(
         {

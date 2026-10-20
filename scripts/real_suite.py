@@ -95,6 +95,7 @@ class Suite:
         self.stats = {provider: Stats() for provider in providers}
         self.sessions: dict[str, str] = {}
         self.message_ids: dict[str, str] = {}
+        self.conversation_ids: set[str] = set()
         self.excluded: set[str] = set()  # the host's own CLI; start_agent rejects it
         self.tree_peak = 0
 
@@ -138,12 +139,16 @@ class Suite:
             "cwd": str(self.workspace),
             "provider_options": {"model": MODELS[provider]},
             "manager_session_id": MANAGER,
-            "title": f"[real suite] {provider} {RUN_ID}",
+            "role": "real-suite",
+            "title": f"连通检查 · {provider}",
         }
         arguments.update(extra)
         if "session_id" in extra or "conversation_id" in extra:
             arguments.pop("title")
-        return await self.call("start_agent", arguments)
+        started = await self.call("start_agent", arguments)
+        if started.get("conversation_id"):
+            self.conversation_ids.add(started["conversation_id"])
+        return started
 
     async def finish(self, provider: str, invocation_id: str) -> dict[str, Any]:
         """Wait until terminal; a blocker or the task limit cancels and fails the task."""
@@ -309,25 +314,31 @@ class Suite:
 
     async def _open_group(self) -> str | None:
         seats = [
-            {"id": provider, "provider": provider, "provider_options": {"model": MODELS[provider]}}
+            {
+                "id": provider,
+                "provider": provider,
+                "role": "real-suite",
+                "provider_options": {"model": MODELS[provider]},
+            }
             for provider in self.providers
         ]
         opened = await self.call(
             "open_group",
             {
-                "title": f"[real suite] show {RUN_ID}",
+                "title": "会议 · 并联与串联",
                 "seats": seats,
                 "cwd": str(self.workspace),
                 "manager_session_id": MANAGER,
             },
         )
         self.group_id = opened["group_id"]
+        self.conversation_ids.add(self.group_id)
         await self.guarded("parallel_round", "group", self._parallel_round())
         await self.guarded("host_and_serial", "group", self._serial_round())
         reviewed = await self.call(
             "open_group",
             {
-                "title": f"[real suite] review {RUN_ID}",
+                "title": "会议 · 审核与取消",
                 "seats": seats,
                 "review": True,
                 "isolated": True,
@@ -335,6 +346,7 @@ class Suite:
             },
         )
         self.review_id = reviewed["group_id"]
+        self.conversation_ids.add(self.review_id)
         await self.guarded("review_round", "group", self._review_round())
         await self.guarded("cancel_round", "group", self._cancel_round())
         return None
@@ -454,12 +466,16 @@ class Suite:
         listed = await self.call("list_conversations", {})
         if "dashboard_url" not in listed and "dashboard_error" not in listed:
             raise ToolFailure("list_conversations returned no dashboard link")
-        conversations = [item for item in listed["conversations"] if RUN_ID in item["title"]]
+        conversations = [
+            item
+            for item in listed["conversations"]
+            if item["conversation_id"] in self.conversation_ids
+        ]
         if not conversations:
             raise ToolFailure("no saved conversations from this run")
         target = conversations[0]["conversation_id"]
         await self.call("read_conversation", {"conversation_id": target})
-        title = f"[real suite] renamed {RUN_ID}"
+        title = "会议 · 重命名检查"
         renamed = await self.call(
             "update_conversation", {"conversation_id": target, "title": title}
         )
@@ -601,7 +617,7 @@ async def main() -> int:
         "--real-history",
         action="store_true",
         help="save into ~/.agentnave so the App and dashboard show the run live; App member "
-        "defaults apply. Titles start with [real suite] for later cleanup.",
+        "defaults apply. Test data uses role real-suite for later cleanup.",
     )
     args = parser.parse_args()
     providers = [name.strip() for name in args.providers.split(",") if name.strip()]
@@ -632,7 +648,7 @@ async def main() -> int:
     print(f"AgentNave real suite {RUN_ID}: {', '.join(providers)}; {args.duration:.0f}s")
     print(f"models: {json.dumps({p: MODELS[p] for p in providers})}\nroot: {root}")
     if args.real_history:
-        print("history: ~/.agentnave (visible in the App; titles start with [real suite])")
+        print("history: ~/.agentnave (visible in the App; role: real-suite)")
     began = time.monotonic()
     deadline = began + args.duration
     parameters = StdioServerParameters(command=command, args=command_args, env=env, cwd=root)

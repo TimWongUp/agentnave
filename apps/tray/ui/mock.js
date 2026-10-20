@@ -85,7 +85,7 @@ All checks passed!
 3. relay 重启后 \`live/\` 快照未清理，看板会短暂显示已退出的会话。`;
   const OUT_GEMINI = `发布前评审通过。三点建议：安装文档补上升级后需重启宿主一次的说明；Release 说明把托盘与服务端改动分开写；更新包签名密钥说明放进内部文档而不是公开 README。`;
   const OUT_BUDDY = `文档已更新：docs/context/architecture.md 新增“空闲换进程”一节，说明判定条件、等待上限与已知限制。`;
-  const OUT_NAME = `我倾向叫“舞台”：它直观表达“主控在左、组员在右、中间是 AgentNave”，也与办公室页的“工作区”形成一对。\n\n风险是“舞台”暗示表演，和“节目”概念重叠；建议菜单面板叫“舞台”，App 里的会话叫“工作区”，会议保持原名。`;
+  const OUT_NAME = `我倾向叫“舞台”：它直观表达“boss 在左、组员在右、中间是 AgentNave”，也与办公室页的“工作区”形成一对。\n\n风险是“舞台”暗示表演，和“节目”概念重叠；建议菜单面板叫“舞台”，App 里的会话叫“工作区”，会议保持原名。`;
 
   // ---- scenario specs ---------------------------------------------------------------------
   // One spec = one member's work inside one conversation (a task, or a seat of a show).
@@ -329,7 +329,7 @@ All checks passed!
 
   const lineOf = (e) => {
     if (e.status === "running") return clip(plain(e.lines[e.lines.length - 1]).join(" "));
-    if (e.status === "review") return "待审核：请在主控中决定";
+    if (e.status === "review") return "待审核：请在 boss 中决定";
     if (e.status === "succeeded") return clip(plain(e.out)[0] || "");
     return clip(`${STATE_WORD[e.status] || e.status}：${e.err || ""}`);
   };
@@ -360,7 +360,7 @@ All checks passed!
     const latest = [...members].sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))[0];
     return latest && FAILED.includes(latest.status) ? "failed" : "idle";
   }
-  const label = (g) => (g.host ? HOSTS[g.host] : "未记录主控");
+  const label = (g) => (g.host ? HOSTS[g.host] : "未记录 boss");
   const convStatus = (conv, w) => {
     const es = conv.specs.map((sp) => evalSpec(sp, w)).filter(Boolean);
     if (es.some((e) => e.status === "running")) return "running";
@@ -429,7 +429,7 @@ All checks passed!
       for (const f of conv.forwards || [])
         if (w.s >= f.at)
           out.push(office(
-            { id: `f:${conv.id}:${f.at}`, time: stamp(w, f.at), conversation: conv.id, kind: "forward", speaker: { role: "manager", provider: g.host, model: null, label: "主控转发" }, to: [], text: f.text, status: "succeeded", detail: null },
+            { id: `f:${conv.id}:${f.at}`, time: stamp(w, f.at), conversation: conv.id, kind: "forward", speaker: { role: "manager", provider: g.host, model: null, label: "boss 转发" }, to: [], text: f.text, status: "succeeded", detail: null },
             { visibility: "public", thread: room, message_id: `m-fw-${Math.abs(f.at)}`, forward: { message_id: midOf(f.from, f.spec), source: f.source } },
           ));
       for (const sp of conv.specs) {
@@ -456,7 +456,7 @@ All checks passed!
           ));
         else if (e.status === "review")
           out.push(office(
-            { ...base, id: `n:review:${conv.id}:${e.key}`, kind: "notice", text: "待审核，请在主控中决定", status: "review", detail: null },
+            { ...base, id: `n:review:${conv.id}:${e.key}`, kind: "notice", text: "待审核，请在 boss 中决定", status: "review", detail: null },
             { visibility: "private", thread, desk },
           ));
         else

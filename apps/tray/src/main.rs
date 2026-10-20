@@ -89,7 +89,7 @@ fn main() {
                 let response = Response::builder()
                     .status(reply.status)
                     .header(header::CONTENT_TYPE, reply.content_type)
-                    .header(header::CACHE_CONTROL, "no-store")
+                    .header(header::CACHE_CONTROL, reply.cache_control)
                     .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
                     .header(header::REFERRER_POLICY, "no-referrer")
                     .header(header::CONTENT_SECURITY_POLICY, CSP)
@@ -208,15 +208,9 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
 
 /// Text beside the menu bar icon, only while something needs attention.
 fn title(overview: &Overview) -> Option<String> {
-    let parts: Vec<String> = [
-        (overview.count("running"), "运行"),
-        (overview.count("review"), "待审"),
-    ]
-    .into_iter()
-    .filter(|(count, _)| *count > 0)
-    .map(|(count, label)| format!("{count} {label}"))
-    .collect();
-    (!parts.is_empty()).then(|| parts.join(" · "))
+    let review = overview.count("review");
+    let running = overview.count("running");
+    (review + running > 0).then(|| format!("待审 {review} · 运行 {running}"))
 }
 
 fn headline(overview: &Overview) -> String {
@@ -428,6 +422,20 @@ fn browse(target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_title_counts_calls_review_first() {
+        let mut overview = Overview {
+            running: 3,
+            review: 2,
+            ..Overview::default()
+        };
+        assert_eq!(title(&overview).as_deref(), Some("待审 2 · 运行 3"));
+        overview.review = 0;
+        assert_eq!(title(&overview).as_deref(), Some("待审 0 · 运行 3"));
+        overview.running = 0;
+        assert_eq!(title(&overview), None);
+    }
 
     #[test]
     fn windows_stay_on_tray_routes() {

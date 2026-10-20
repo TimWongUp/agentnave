@@ -42,3 +42,47 @@ def test_request_copies_and_freezes_provider_options(tmp_path: Path) -> None:
     assert request.provider_options["model"] == "first"
     with pytest.raises(TypeError):
         cast(dict[str, str | int | float | bool], request.provider_options)["model"] = "third"
+
+
+@pytest.mark.anyio
+async def test_real_suite_history_uses_created_ids_after_readable_titles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from mcp import Client
+
+    monkeypatch.setattr(sys, "path", [str(Path(__file__).parents[1]), *sys.path])
+    from scripts.real_suite import Suite
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_tool(name: str, arguments: dict[str, object], **_kwargs: object) -> object:
+        calls.append((name, arguments))
+        if name == "start_agent":
+            content = {"conversation_id": "suite-task", "invocation_id": "invocation"}
+        elif name == "list_conversations":
+            content = {
+                "dashboard_url": "http://localhost/",
+                "conversations": [
+                    {"conversation_id": "user-task", "title": "User history"},
+                    {"conversation_id": "suite-task", "title": "连通检查 · pi"},
+                ],
+            }
+        elif name == "update_conversation":
+            content = {"title": arguments["title"]}
+        else:
+            content = {}
+        return SimpleNamespace(is_error=False, structured_content=content)
+
+    suite = Suite(cast("Client", SimpleNamespace(call_tool=call_tool)), tmp_path, ["pi"])
+    await suite.start("pi", "hello")
+    assert calls[0][1]["title"] == "连通检查 · pi"
+    assert calls[0][1]["role"] == "real-suite"
+    await suite.history()
+    assert all(
+        arguments["conversation_id"] == "suite-task"
+        for name, arguments in calls
+        if name in {"read_conversation", "update_conversation"}
+    )

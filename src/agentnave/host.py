@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -62,49 +62,72 @@ def session_model(
     else:
         root = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects"
         pattern = f"*/{native_id}.jsonl"
-    latest: tuple[datetime, str] | None = None
     cutoff = datetime.now(UTC)
+    marker = b'"turn_context"' if host.name == "codex" else b'"assistant"'
     try:
         paths = list(root.glob(pattern))
         if len(paths) != 1 or not paths[0].resolve().is_relative_to(root.resolve()):
             return None
-        with paths[0].open("rb") as stream:
-            total = 0
-            while line := stream.readline(1_048_577):
-                total += len(line)
-                if len(line) > 1_048_576 or total > 32 * 1_048_576:
-                    return None  # Cannot establish the latest turn from a partial transcript.
-                event = parse_json_object(line.decode("utf-8"))
-                if event is None:
-                    continue
-                try:
-                    stamp = datetime.fromisoformat(str(event.get("timestamp", "")))
-                    if (
-                        stamp.tzinfo is None
-                        or stamp > cutoff
-                        or (since is not None and stamp < since)
-                    ):
-                        continue
-                except ValueError:
-                    continue
-                if host.name == "codex" and event.get("type") == "turn_context":
-                    value = object_dict(event.get("payload")).get("model")
-                    model = value if isinstance(value, str) and value.strip() else None
-                elif host.name == "claude":
-                    model = model_from_event("claude", event)
-                else:
-                    model = None
-                if (
-                    model
-                    and model not in {"unknown", "<synthetic>"}
-                    and len(model) <= 200
-                    and model.isprintable()
-                    and (latest is None or stamp >= latest[0])
-                ):
-                    latest = stamp, model.strip()
-    except (OSError, UnicodeError):
+        # Transcripts append in time order and can hold huge lines (generated images), so read
+        # from the end and stop at the newest qualifying turn instead of parsing everything.
+        for line in _lines_from_end(paths[0]):
+            if marker not in line:
+                continue
+            event = parse_json_object(line.decode("utf-8", "replace"))
+            if event is None:
+                continue
+            try:
+                stamp = datetime.fromisoformat(str(event.get("timestamp", "")))
+            except ValueError:
+                continue
+            if stamp.tzinfo is None or stamp > cutoff:
+                continue
+            if since is not None and stamp < since:
+                return None
+            if host.name == "codex" and event.get("type") == "turn_context":
+                value = object_dict(event.get("payload")).get("model")
+                model = value if isinstance(value, str) and value.strip() else None
+            else:
+                model = model_from_event("claude", event)
+            if (
+                model
+                and model not in {"unknown", "<synthetic>"}
+                and len(model) <= 200
+                and model.isprintable()
+            ):
+                return model.strip()
+    except OSError:
         return None
-    return latest[1] if latest else None
+    return None
+
+
+def _lines_from_end(
+    path: Path, *, chunk: int = 1 << 20, longest: int = 1 << 20, budget: int = 256 << 20
+) -> Iterator[bytes]:
+    """Yield complete lines newest first; lines over `longest` bytes are skipped unread."""
+    with path.open("rb") as stream:
+        position = stream.seek(0, os.SEEK_END)
+        stop = max(0, position - budget)
+        tail = b""
+        oversized = False
+        while position > stop:
+            size = min(chunk, position - stop)
+            position -= size
+            stream.seek(position)
+            block = stream.read(size) + tail
+            parts = block.split(b"\n")
+            tail = parts[0]
+            for part in reversed(parts[1:]):
+                if oversized:
+                    oversized = False  # this part ends the line that was too long
+                    continue
+                if part and len(part) <= longest:
+                    yield part
+            if len(tail) > longest:
+                tail = b""
+                oversized = True
+        if tail and not oversized and position == 0 and len(tail) <= longest:
+            yield tail
 
 
 def _match(executable: str) -> HostName | None:
