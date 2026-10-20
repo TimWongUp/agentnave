@@ -124,6 +124,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .l-desk, .l-laptop { left: 0; top: 35%; width: 100%; z-index: 3; }
 .l-laptop { z-index: 4; }
 .lid { position: absolute; left: 50%; top: 55.17%; width: 8.5%; min-width: 10px; aspect-ratio: 1; transform: translate(-50%, -50%); z-index: 5; border-radius: 3px; overflow: hidden; pointer-events: none; }
+.lid > img { display: block; }
 .lid > * { width: 100% !important; height: 100% !important; border-radius: 3px !important; box-shadow: none !important; font-size: 7px !important; }
 /* the boss desk's top edge sits 9 units higher on the 1200-high stage */
 .boss-zone .l-laptop { top: 34.25%; }
@@ -186,10 +187,13 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .tag { padding: 0 6px; border-radius: 99px; font-size: 10.5px; font-weight: 600; line-height: 16px; white-space: nowrap; background: var(--card-hover); color: var(--muted); }
 .tag-review { background: color-mix(in srgb, var(--review) 18%, transparent); color: var(--review); }
 .tag-role { background: color-mix(in srgb, var(--show) 16%, transparent); color: var(--show); }
+/* access is a declared convention: outlined; meeting-only is a hard limit: filled */
+.tag-access { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--task) 55%, transparent); color: var(--task); }
+.tag-only { background: color-mix(in srgb, var(--idle) 30%, transparent); color: var(--soft); }
 
 /* ---- open desks ---- */
 .desks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
-.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 6px 8px 9px; text-align: center; cursor: pointer; transition: background 0.2s; }
+.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 26px 8px 9px; text-align: center; cursor: pointer; transition: background 0.2s; }
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .desk.away .scene > .fig { opacity: 0; }

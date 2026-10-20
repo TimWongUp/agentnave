@@ -497,12 +497,12 @@ function createDesk(d) {
     nm: h("div.nm"),
     cliText: h("span"),
     role: h("span.tag.tag-role", { hidden: true }),
-    access: h("span.tag", {
+    access: h("span.tag.tag-access", {
       hidden: true,
       title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
     }),
     only: h(
-      "span.tag",
+      "span.tag.tag-only",
       { hidden: true, title: "与 boss 的宿主同类，只参加会议，不接受私聊" },
       "只能开会",
     ),

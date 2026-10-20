@@ -183,7 +183,7 @@
   // The laptop lid shows the model family's logo, or the default terminal mark.
   function lid(provider, model) {
     const known = window.Avatars && (Avatars.family(provider, model) || Avatars.custom("model", provider, model));
-    return known ? Avatars.create("model", provider, model, "lid") : h("img", { src: artUrl("logo-default.svg"), alt: "" });
+    return known ? Avatars.create("model", provider, model) : h("img", { src: artUrl("logo-default.svg"), alt: "" });
   }
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
   const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness" };
