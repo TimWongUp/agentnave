@@ -208,6 +208,7 @@ class Conversations(Groups):
         self.collectors: list[asyncio.Task[None]] = []
         self.dashboard: Dashboard | None = None
         self.tokens: dict[str, tuple[str, str]] = {}  # conversation id -> public, director
+        self._published: dict[str, Conversation] = {}  # the state each dashboard view shows
         self.home_token = uuid4().hex
         self.refresher: asyncio.Task[None] | None = None
         self.refresh_error: str | None = None
@@ -228,6 +229,7 @@ class Conversations(Groups):
         for conversation_id in set(self.records) - set(found):
             if self.records[conversation_id].lock is None:
                 self._forget(conversation_id)  # deleted by another server
+        previous_error = self.refresh_error
         writable: dict[str, bool] = {}
         read_error: str | None = None
         for conversation_id, directory in found.items():
@@ -249,7 +251,12 @@ class Conversations(Groups):
                 self.unavailable.append(Unavailable(path=str(directory), reason=str(exc)))
         self.refresh_error = read_error
         for record in list(self.records.values()):
-            self._publish(record, home=False)
+            # Re-project only what changed: a reload replaces the state object.
+            if (
+                record.state is not self._published.get(record.state.id)
+                or self.refresh_error != previous_error
+            ):
+                self._publish(record, home=False)
         self._publish_home()
         return writable
 
@@ -288,6 +295,10 @@ class Conversations(Groups):
         self._groups.pop(conversation_id, None)
         for round_id, round_ in list(self._rounds.items()):
             if round_.group.id == conversation_id:
+                if round_.finished_at is not None:
+                    # Ended (its driver only saves and notifies now): replies stay readable, and
+                    # the group's history is not kept alive with them.
+                    round_.group = Group(round_.group.id, round_.group.cwd, {})
                 self._completed_rounds[round_id] = self._rounds.pop(round_id)
                 self.reviews.pop(round_id, None)
 
@@ -1149,6 +1160,7 @@ class Conversations(Groups):
                 self.dashboard.close()
                 self.dashboard = None
                 self.tokens.clear()
+                self._published.clear()
                 raise
             self.refresher = asyncio.create_task(self._refresh_running())
         self._publish_home()
@@ -1196,6 +1208,7 @@ class Conversations(Groups):
         if self.dashboard is None:
             return
         state = record.state
+        self._published[state.id] = state
         public, director = self.tokens.setdefault(state.id, (uuid4().hex, uuid4().hex))
         tails, elapsed = self._tails(record)
         if state.kind == "show":
@@ -1217,6 +1230,7 @@ class Conversations(Groups):
 
     def _unpublish(self, conversation_id: str) -> None:
         tokens = self.tokens.pop(conversation_id, ())
+        self._published.pop(conversation_id, None)
         if self.dashboard is not None:
             for token in tokens:
                 self.dashboard.snapshots.pop(token, None)
@@ -1262,30 +1276,56 @@ class Conversations(Groups):
                 if self._running(record):
                     self._publish(record, home=False)
 
+    def _live_tails(self, record: Record) -> dict[str, object]:
+        """What running work adds to the saved views: reply tails and reported models."""
+        tails, _ = self._tails(record)
+        state = record.state
+        latest = state.rounds[-1].seats if state.rounds else []
+        return {
+            "tasks": {
+                task.id: {"output": tails[task.id], "reported_model": task.reported_model}
+                for task in state.tasks
+                if task.id in tails
+            },
+            "seats": {
+                seat.seat_id: {"output": tails[seat.seat_id], "reported_model": seat.reported_model}
+                for seat in latest
+                if seat.seat_id in tails
+            },
+        }
+
     async def _write_live(self) -> None:
-        """Keep live_path current while work runs; remove it once nothing runs."""
+        """Keep live_path current while work runs; remove it once nothing runs.
+
+        The file carries only what views.json lacks. Unchanged content is not rewritten; its
+        modification time alone shows the tray that this server is still running the work.
+        """
+        written: bytes | None = None
         try:
             self._prune_live()
             while running := [r for r in self.records.values() if self._running(r)]:
-                conversations: dict[str, object] = {}
-                for record in running:
-                    tails, elapsed = self._tails(record)
-                    conversations[record.state.id] = views.snapshot(
-                        record.state, str(record.directory), tails=tails, elapsed=elapsed
-                    )
-                payload = {
-                    "version": 1,
-                    "pid": os.getpid(),
-                    "updated_at": now(),
-                    "host": self.host.name,
-                    "host_source": self.host.source,
-                    "connection_id": self.connection_id,
-                    "manager_started_at": self.manager_started_at,
-                }
+                body = _json(
+                    {
+                        "version": 2,
+                        "pid": os.getpid(),
+                        "host": self.host.name,
+                        "host_source": self.host.source,
+                        "connection_id": self.connection_id,
+                        "manager_started_at": self.manager_started_at,
+                        "conversations": {
+                            record.state.id: self._live_tails(record) for record in running
+                        },
+                    }
+                )
                 try:
-                    self.live_path.parent.mkdir(mode=0o700, exist_ok=True)
-                    write_file(self.live_path, _json(payload | {"conversations": conversations}))
+                    if body == written:
+                        os.utime(self.live_path)
+                    else:
+                        self.live_path.parent.mkdir(mode=0o700, exist_ok=True)
+                        write_file(self.live_path, body)
+                        written = body
                 except OSError as exc:
+                    written = None  # write it whole next time, in case it was removed
                     print(f"agentnave: could not write live views: {exc}", file=sys.stderr)
                 await asyncio.sleep(_LIVE_SECONDS)
         finally:

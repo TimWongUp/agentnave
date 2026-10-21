@@ -213,7 +213,12 @@ class Record:
     def __init__(self, directory: Path, state: Conversation) -> None:
         self.directory = directory
         self.state = state
-        self.saved = state.model_copy(deep=True)
+        # The last saved state, kept only while this process holds the lock and may write.
+        self.saved: Conversation | None = None
+        # state.json (mtime_ns, size) behind self.state, and whether it was read under the probe.
+        self.loaded: tuple[int, int, bool] | None = None
+        # views.json (mtime_ns, size) once it matched the projection; None to check it again.
+        self.views: tuple[int, int] | None = None
         self.lock: IO[bytes] | None = None
 
     @classmethod
@@ -221,6 +226,7 @@ class Record:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         record = cls(directory, state)
         record.lock = record._lock()
+        record.saved = state.model_copy(deep=True)
         try:
             record.save()
         except OSError:
@@ -250,6 +256,7 @@ class Record:
             state = self._load(self.directory)
             if state.id != self.state.id:
                 raise ValueError("Conversation record was replaced; list conversations again")
+            self.saved = state.model_copy(deep=True)
             state.recover()
             self.state = state
             self.save()
@@ -258,21 +265,38 @@ class Record:
             raise
 
     def refresh(self) -> bool:
-        """Reload an unheld record and report whether this process could write it."""
+        """Reload an unheld record and report whether this process could write it.
+
+        An unchanged state.json is not parsed again, unless it was last read while another
+        server held it and that writer has since let go.
+        """
         if self.lock is not None:
             return True
         try:
             lock = self._lock()
         except ValueError:
-            self.state = self._load(self.directory)
+            self._reload(probed=False)
             return False
         # Read while holding the probe so a writer that just exited leaves no stale running view.
         try:
-            self.state = self._load(self.directory)
-            self.state.recover()  # shown as interrupted; acquire() persists it
-            self._write_views(only_if_changed=True)
+            if self._reload(probed=True):
+                self.state.recover()  # shown as interrupted; acquire() persists it
+                self._write_views(only_if_changed=True)
+            elif self.views is None or self._views_stat() != self.views:
+                # Unchanged state: repair views that were removed or never written.
+                self._write_views(only_if_changed=True)
         finally:
             self._unlock(lock)
+        return True
+
+    def _reload(self, *, probed: bool) -> bool:
+        # Stat before reading: a replacement in between is only read again next time.
+        stat = (self.directory / "state.json").stat()
+        loaded = (stat.st_mtime_ns, stat.st_size, probed)
+        if loaded == self.loaded:
+            return False
+        self.state = self._load(self.directory)
+        self.loaded = loaded
         return True
 
     def save(self) -> None:
@@ -287,6 +311,7 @@ class Record:
             self.saved = self.state.model_copy(deep=True)
         except OSError:
             # Memory must keep matching disk so a failed change is not applied.
+            assert self.saved is not None, "only the lock holder saves"
             self.state = self.saved.model_copy(deep=True)
             raise
         finally:
@@ -301,20 +326,30 @@ class Record:
         try:
             data = Record.project(self)
             # Compared by content: timestamps can tie or run backwards.
-            if only_if_changed and path.is_file() and path.read_bytes() == data:
-                return
-            write_file(path, data)
+            if not (only_if_changed and path.is_file() and path.read_bytes() == data):
+                write_file(path, data)
+            self.views = self._views_stat()
         except OSError as exc:
-            # Derived data: the saved state stands, and the next save writes the views again.
+            # Derived data: the saved state stands; the next save or scan writes the views again.
+            self.views = None
             print(
                 f"agentnave: could not write views for {self.state.id}: {exc}",
                 file=sys.stderr,
             )
 
+    def _views_stat(self) -> tuple[int, int] | None:
+        try:
+            stat = (self.directory / "views.json").stat()
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
     def release(self) -> None:
         if self.lock is not None:
             self.lock.close()
             self.lock = None
+        self.saved = None
+        self.loaded = None  # Read once more: this process wrote what is on disk.
 
     def _lock(self) -> IO[bytes]:
         # An OS lock keeps two MCP hosts from writing one conversation at the same time.
