@@ -116,23 +116,74 @@ fn failure(provider: &str, path: Option<&Path>, error: &str) -> Value {
     })
 }
 
-/// The model the App pre-fills as a CLI's default: Codex's first-priority GPT model, Claude's
-/// `opus`, the first Antigravity entry (agy's own default), otherwise the CLI's marked default.
-/// Pi and CodeBuddy list models without a default and keep their native choice.
-pub fn primary(provider: &str, models: &[Value]) -> Option<String> {
+/// The model the App pre-fills as a CLI's default: the listed model the CLI's own settings name
+/// (`configured`, matched by id or label), else Codex's first-priority GPT model, Claude's
+/// `opus` or the CLI's marked default, else the first listed model.
+pub fn primary(provider: &str, models: &[Value], configured: Option<&str>) -> Option<String> {
     let id = |model: &Value| model["id"].as_str().map(str::to_owned);
-    match provider {
+    let named = configured.and_then(|name| {
+        models
+            .iter()
+            .find(|model| model["id"] == name || model["label"] == name)
+    });
+    let preferred = match provider {
         "codex" => models
             .iter()
             .filter_map(id)
             .find(|model| model.starts_with("gpt-")),
         "claude" => models.iter().filter_map(id).find(|model| model == "opus"),
-        "antigravity" => models.first().and_then(id),
         _ => models
             .iter()
             .find(|model| model["default"] == true)
             .and_then(id),
-    }
+    };
+    named
+        .and_then(id)
+        .or(preferred)
+        .or_else(|| models.first().and_then(id))
+}
+
+/// The default model a CLI's own settings file names, if any: Codex `config.toml` `model`,
+/// Claude `settings.json` `model` without a `[1m]`-style suffix, Pi `defaultModel`, and the
+/// Antigravity CLI's `model` label.
+fn configured(provider: &str) -> Option<String> {
+    let home = dirs::home_dir()?;
+    let dir = |variable: &str, fallback: &str| match std::env::var_os(variable) {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => home.join(fallback),
+    };
+    let json = |path: PathBuf, key: &str| -> Option<String> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let value: Value = serde_json::from_str(&text).ok()?;
+        value[key].as_str().map(str::to_owned)
+    };
+    let name = match provider {
+        "codex" => {
+            let text = std::fs::read_to_string(dir("CODEX_HOME", ".codex").join("config.toml"));
+            let table: toml::Table = text.ok()?.parse().ok()?;
+            table.get("model")?.as_str().map(str::to_owned)
+        }
+        "claude" => json(
+            dir("CLAUDE_CONFIG_DIR", ".claude").join("settings.json"),
+            "model",
+        )
+        .map(|model| model.split('[').next().unwrap_or_default().to_owned()),
+        "pi" => {
+            let settings = dir("PI_CODING_AGENT_DIR", ".pi/agent").join("settings.json");
+            let model = json(settings.clone(), "defaultModel")?;
+            // Pi lists `provider/model`; its settings may keep the provider apart.
+            match json(settings, "defaultProvider") {
+                Some(owner) if !model.starts_with(&format!("{owner}/")) => {
+                    Some(format!("{owner}/{model}"))
+                }
+                _ => Some(model),
+            }
+        }
+        "antigravity" => json(home.join(".gemini/antigravity-cli/settings.json"), "model"),
+        _ => None,
+    }?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 fn probe(provider: &str) -> Value {
@@ -179,7 +230,7 @@ fn probe(provider: &str) -> Value {
             "path": path.display().to_string(),
             "source": source,
             "error": Value::Null,
-            "primary": primary(provider, &models),
+            "primary": primary(provider, &models, configured(provider).as_deref()),
             "models": models,
             "efforts": efforts,
         }),
@@ -587,24 +638,49 @@ mod tests {
             supported: (hy4-preview,\n      glm-5.3)\n";
         assert_eq!(ids(&codebuddy_models(wrapped)), ["hy4-preview", "glm-5.3"]);
 
-        // The pre-filled default: each CLI's main model, never a guess for Pi or CodeBuddy.
+        // The pre-filled default: the model the CLI's settings name, else its main model, else
+        // the first listed one.
         let listed =
             |ids: &[&str]| -> Vec<Value> { ids.iter().map(|id| model(id, id, false)).collect() };
         let codex = listed(&["opencode-go/glm-5.3-flash", "gpt-6.1-sol", "gpt-6-luna"]);
-        assert_eq!(primary("codex", &codex).as_deref(), Some("gpt-6.1-sol"));
-        let claude = listed(&CLAUDE_ALIASES);
-        assert_eq!(primary("claude", &claude).as_deref(), Some("opus"));
         assert_eq!(
-            primary("grok", &grok_models(grok)).as_deref(),
+            primary("codex", &codex, None).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            primary("codex", &codex, Some("gpt-6-luna")).as_deref(),
+            Some("gpt-6-luna")
+        );
+        let claude = listed(&CLAUDE_ALIASES);
+        assert_eq!(primary("claude", &claude, None).as_deref(), Some("opus"));
+        assert_eq!(
+            primary("grok", &grok_models(grok), None).as_deref(),
             Some("grok-4.7")
         );
+        let agy = agy_models(agy);
         assert_eq!(
-            primary("antigravity", &agy_models(agy)).as_deref(),
+            primary("antigravity", &agy, None).as_deref(),
             Some("gemini-3.8-flash-high")
         );
-        assert_eq!(primary("pi", &pi_models(pi)), None);
-        assert_eq!(primary("codebuddy", &codebuddy_models(codebuddy)), None);
-        assert_eq!(primary("codex", &listed(&["grok/grok-4.7"])), None);
+        let label = agy[1]["label"].as_str().unwrap();
+        assert_eq!(
+            primary("antigravity", &agy, Some(label)),
+            agy[1]["id"].as_str().map(str::to_owned)
+        );
+        let pi = pi_models(pi);
+        assert_eq!(
+            primary("pi", &pi, None),
+            pi[0]["id"].as_str().map(str::to_owned)
+        );
+        assert_eq!(
+            primary("codebuddy", &codebuddy_models(codebuddy), Some("unlisted")).as_deref(),
+            Some("hy4-preview")
+        );
+        assert_eq!(
+            primary("codex", &listed(&["grok/grok-4.7"]), None).as_deref(),
+            Some("grok/grok-4.7")
+        );
+        assert_eq!(primary("pi", &[], Some("anything")), None);
     }
 
     #[cfg(unix)]

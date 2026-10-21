@@ -333,8 +333,9 @@ pub fn migrate(root: &Path) -> Option<(Value, Vec<String>)> {
 }
 
 /// A first document for a user without one: both modes keep every CLI with any model, and each
-/// detected CLI gets its main model as the default (ADR-0020). `None` when no CLI names one, so
-/// the file stays absent and every CLI keeps its native model.
+/// detected CLI gets its main model as the default (ADR-0020), with the middle of its effort levels
+/// as the default effort. `None` when no CLI names one, so the file stays absent and every CLI
+/// keeps its native model.
 fn prefilled(detected: &Value) -> Option<Value> {
     let mut document = empty();
     let mut named = false;
@@ -343,7 +344,17 @@ fn prefilled(detected: &Value) -> Option<Value> {
         for provider in PROVIDERS {
             let mut member = json!({"models": []});
             if let Some(model) = detected[provider]["primary"].as_str() {
-                document["clis"][provider]["models"][model] = json!({});
+                let own = detected[provider]["models"]
+                    .as_array()
+                    .and_then(|models| models.iter().find(|listed| listed["id"] == model))
+                    .and_then(|listed| listed["efforts"].as_array());
+                let shared = match own.or(detected[provider]["efforts"].as_array()) {
+                    Some(levels) if !levels.is_empty() => {
+                        json!({"effort": levels[(levels.len() - 1) / 2]})
+                    }
+                    _ => json!({}),
+                };
+                document["clis"][provider]["models"][model] = shared;
                 member["default"] = json!(model);
                 named = true;
             }
@@ -590,7 +601,11 @@ mod tests {
         );
         assert!(!root.join(FILE).exists());
 
-        let detected = json!({"codex": {"primary": "gpt-6.1-sol"}, "claude": {"primary": "opus"}});
+        let detected = json!({
+            "codex": {"primary": "gpt-6.1-sol", "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
+            "claude": {"primary": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"],
+                "models": [{"id": "opus", "efforts": ["low", "high"]}]},
+        });
         let (document, error, migrated, _) = document_state(root, || detected);
         assert!(error.is_null() && !migrated);
         assert_eq!(read(root).unwrap(), Some(document.clone()));
@@ -606,7 +621,12 @@ mod tests {
         }
         assert_eq!(
             document["clis"]["codex"],
-            json!({"models": {"gpt-6.1-sol": {}}})
+            json!({"models": {"gpt-6.1-sol": {"effort": "medium"}}})
+        );
+        // A model's own levels win over the CLI's.
+        assert_eq!(
+            document["clis"]["claude"],
+            json!({"models": {"opus": {"effort": "low"}}})
         );
         // Only a missing file is pre-filled; the user's later edits are never refilled.
         save(root, &empty()).unwrap();
