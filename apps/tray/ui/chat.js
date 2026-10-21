@@ -60,6 +60,7 @@ const el = {
   office: $("office"),
   floor: $("floor"),
   boss: $("boss"),
+  todo: $("todo"),
   desks: $("desks"),
   rooms: $("rooms"),
   fx: $("fx"),
@@ -488,6 +489,75 @@ function updateBoss(rec, c, n) {
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }
 
+// ---------------------------------------------------------------- boss to-do
+// Beside the boss whenever the boss would otherwise fill a whole row: what waits on the boss now.
+const TODO_ROWS = 3;
+function todoItems(c, ctx) {
+  const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
+  const desk = (d) => ({
+    scope: { kind: "desk", key: d.key },
+    heads: [d],
+    name: deskName(d),
+    sub: `${cliName(d.provider)} · ${deskMood(d, ctx).word}`,
+    time: relTime(d.last_active),
+  });
+  const running = c.desks.filter((d) =>
+    activities(d).some((a) => a.status === "running"),
+  );
+  const sections = [
+    [
+      "review",
+      "待审",
+      c.rooms
+        .filter((r) => r.pending_review > 0)
+        .map((r) => ({
+          scope: { kind: "room", id: r.id },
+          heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
+          name: r.title,
+          sub: `会议室 · ${r.pending_review} 条回答待审核`,
+          time: "",
+        })),
+    ],
+    ["run", "进行中", running.sort(recent).map(desk)],
+    [
+      "bad",
+      "最近失败",
+      c.desks
+        .filter((d) => d.status === "failed" && !running.includes(d))
+        .sort(recent)
+        .map(desk),
+    ],
+  ].filter(([, , items]) => items.length);
+  if (!sections.length && c.desks.length)
+    sections.push(["", "最近活动", [...c.desks].sort(recent).map(desk)]);
+  return sections;
+}
+function renderTodo(c, ctx) {
+  const sections = todoItems(c, ctx);
+  const key = JSON.stringify(sections);
+  if (state.todoKey === key) return;
+  state.todoKey = key;
+  const nodes = [h("h2.zone-h", {}, "boss 待办")];
+  for (const [tone, label, items] of sections) {
+    nodes.push(h(`h3.td-h${tone ? `.${tone}` : ""}`, {}, label, h("b", {}, String(items.length))));
+    for (const item of items.slice(0, TODO_ROWS)) {
+      const row = h(
+        "button.td-row",
+        { type: "button", title: `${item.name}\n${item.sub}` },
+        h("span.td-heads", {}, item.heads.slice(0, 3).map((d) => ART.head(deskChar(d)))),
+        h("span.td-main", {}, h("span.td-name", {}, item.name), h("span.td-sub", {}, item.sub)),
+        item.time && h("span.td-time", {}, item.time),
+      );
+      row.addEventListener("click", () => openScope(item.scope, row));
+      nodes.push(row);
+    }
+    if (items.length > TODO_ROWS)
+      nodes.push(h("div.td-more", {}, `还有 ${items.length - TODO_ROWS} 个`));
+  }
+  if (!sections.length) nodes.push(h("div.td-more", {}, "暂时没有要处理的事"));
+  el.todo.replaceChildren(...nodes);
+}
+
 // ---------------------------------------------------------------- desks
 function createDesk(d) {
   const rec = {
@@ -783,6 +853,7 @@ function renderOffice(c, ctx, n, newGroup) {
     );
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
+  renderTodo(c, ctx);
   layoutRooms();
   walk(!newGroup && state.ready);
 }
