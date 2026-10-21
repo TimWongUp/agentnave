@@ -216,6 +216,8 @@ class Relay:
             / f"{os.getpid()}-{uuid4().hex}.json"
         )
         self.started_ms = time.time_ns() // 1_000_000
+        # The connection file's content as last written, guarded by connection_lock.
+        self.connection_written: bytes | None = None
         self.runtime_version: str | None = None
         self.runtime_tools_hash: str | None = None
         self.host_tools_hash: str | None = None
@@ -285,16 +287,24 @@ class Relay:
                 "host_tools_hash": self.host_tools_hash,
             }
         path = self.connection_path
+        body = json.dumps(payload).encode()
         try:
             if path.parent.is_symlink() or path.parent.parent.is_symlink():
                 return
+            if body == self.connection_written:
+                # Unchanged: the tray only needs a fresh modification time.
+                with contextlib.suppress(FileNotFoundError):
+                    os.utime(path)
+                    return
+            self.connection_written = None
             path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
                 temporary = Path(output.name)
                 try:
-                    output.write(json.dumps(payload).encode())
+                    output.write(body)
                     output.close()
                     os.replace(temporary, path)
+                    self.connection_written = body
                 finally:
                     temporary.unlink(missing_ok=True)
         except OSError:

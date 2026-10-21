@@ -259,7 +259,10 @@ class Record:
             self.saved = state.model_copy(deep=True)
             state.recover()
             self.state = state
-            self.save()
+            if state != self.saved:
+                self.save()  # persist what recovery changed
+            elif self.views is None or self._views_stat() != self.views:
+                self._write_views(only_if_changed=True)
         except Exception:
             self.release()
             raise
