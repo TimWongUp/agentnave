@@ -32,7 +32,7 @@ Windows 第一版只依赖环境标记及其 PID 存活检查，标记被过滤�
 
 运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，App 维护按模式生效的组员默认值，Skill 按说明选择组员；CLI 参考文件仅提供补充指引。MCP instructions 与 Tool 描述只保留轻量调用合同，`describe_provider` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 可由 App 安装内嵌副本，或由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。
 
-Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。launcher 先启动只用标准库的中继，由它把服务作为子进程运行并转发 STDIO；安装指纹变化后，中继在两侧无在途请求、无运行中或未读结果的 Invocation，且会话没有持锁或未落盘回写时，重放宿主握手换用新子进程，宿主不断线（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
+Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。launcher 先启动只用标准库的中继，由它把服务作为子进程运行并转发 STDIO；安装指纹变化后，中继在两侧无在途请求、无运行中或未读结果的 Invocation，且会话没有持锁或未落盘回写时，重放宿主握手换用新子进程，宿主不断线。2026-07-28 起的宿主没有握手，中继改用其请求信封探测与启动新子进程；`subscriptions/listen` 订阅流不算在途请求，切换时转交新子进程（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
 MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用户级 `agentnave` 注册及自身安装的 Skill（[ADR-0015](../adr/0015-app-host-integration.md)），由 App 定点编辑并校验，不调用宿主 CLI 写配置。安装 Python 运行时本身不会写入 Host Skills、全局规则或权限。Provider CLI 继续拥有自身的安装、认证、配置与 Session 数据，Invocation 句柄是进程内对象。核心在数据根保存会话历史；卸载不自动删除历史。
 

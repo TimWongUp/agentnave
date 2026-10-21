@@ -17,18 +17,34 @@ from agentnave import relay as launcher
 
 # A stand-in MCP server: refuses calls before the handshake, reports its pid and session, is busy
 # while the file named in argv[1] exists, and fails to start while argv[1] + ".broken" exists.
+# Like the real one, a first request carrying the 2026-07-28 envelope makes every request need it;
+# listen streams are acknowledged at once and end with an error when stdin closes.
 FAKE_SERVER = """
 import json, os, sys
 from pathlib import Path
 if os.path.exists(sys.argv[1] + ".broken"):
     sys.exit(1)
 ready = False
+modern = None
+listens = []
 version = Path(sys.argv[1] + ".version").read_text()
 schema = json.loads(Path(sys.argv[1] + ".tools").read_text()) if Path(sys.argv[1] + ".tools").exists() else {"type":"object"}
 for line in sys.stdin:
     message = json.loads(line)
     method, ident = message.get("method"), message.get("id")
-    if method == "initialize":
+    enveloped = "io.modelcontextprotocol/protocolVersion" in message.get("params", {}).get("_meta", {})
+    if modern is None and ident is not None:
+        modern = ready = method != "initialize" and enveloped
+    if modern and ident is not None and not enveloped:
+        result = {"isError": True, "content": [{"type": "text", "text": "missing envelope"}]}
+    elif method == "server/discover":
+        result = {"_meta": {"io.modelcontextprotocol/serverInfo": {"name": "fake", "version": version}}}
+    elif method == "subscriptions/listen":
+        listens.append(ident)
+        meta = {"io.modelcontextprotocol/subscriptionId": ident}
+        print(json.dumps({"jsonrpc": "2.0", "method": "notifications/subscriptions/acknowledged", "params": {"_meta": meta}}), flush=True)
+        continue
+    elif method == "initialize":
         result = {"protocolVersion": "2025-06-18", "capabilities": {"tools":{}}, "serverInfo": {"name": "fake", "version": version}}
     elif method == "notifications/initialized":
         ready = True
@@ -42,8 +58,10 @@ for line in sys.stdin:
         result = {"structuredContent": {"invocations": busy, "restart_safe": True}}
     else:
         session = os.environ.get("AGENTNAVE_MANAGER_SESSION")
-        result = {"structuredContent": {"pid": os.getpid(), "session": session}}
+        result = {"structuredContent": {"pid": os.getpid(), "session": session, "listens": len(listens)}}
     print(json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}), flush=True)
+for ident in listens:
+    print(json.dumps({"jsonrpc": "2.0", "id": ident, "error": {"code": -32000, "message": "Connection closed"}}), flush=True)
 """
 
 
@@ -143,6 +161,50 @@ def test_relay_swaps_only_when_idle_and_not_blocked_by_open_group(tmp_path: Path
 
     host.writer.close()
     host.thread.join(10)
+    assert host.code == [0]
+
+
+def test_relay_swaps_for_hosts_without_handshake_and_hands_over_listen_streams(
+    tmp_path: Path,
+) -> None:
+    host = Host(tmp_path)
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "modern", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+    def whoami() -> dict[str, Any]:
+        result = host.call("tools/call", {"name": "whoami", "_meta": meta})
+        return result["structuredContent"]
+
+    try:
+        host.call("server/discover", {"_meta": meta})
+        assert host.relay.runtime_version == "1.0"
+        # The listen request is answered only when its stream ends, so it must not pin the child.
+        listen = {"_meta": meta, "notifications": {"toolsListChanged": True}}
+        host.send(
+            {"jsonrpc": "2.0", "id": "listen:0", "method": "subscriptions/listen", "params": listen}
+        )
+        first = whoami()
+        host.install("1.1")
+        deadline = time.monotonic() + 10
+        while (second := whoami())["pid"] == first["pid"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert second["pid"] != first["pid"]
+        assert second["listens"] == first["listens"] == 1
+        assert host.relay.runtime_version == "1.1"
+        # One ack from the first child; the stream's end there and the second ack stay hidden.
+        assert host.notifications == [
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/subscriptions/acknowledged",
+                "params": {"_meta": {"io.modelcontextprotocol/subscriptionId": "listen:0"}},
+            }
+        ]
+    finally:
+        host.writer.close()
+        host.thread.join(10)
     assert host.code == [0]
 
 

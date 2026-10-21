@@ -4,9 +4,11 @@ Hosts keep one MCP process for as long as they run. The launchers therefore star
 which runs the real server as a child and forwards JSON-RPC lines both ways. When the installed
 distribution changes on disk and the child is idle, the relay starts a new child, replays the
 host's initialize handshake to it, and retires the old one; the host never sees a disconnect.
+Hosts on the 2026-07-28 protocol have no handshake: the relay reuses their request envelope and
+hands their open subscriptions/listen streams to the new child instead.
 
-Idle means no request is in flight either way and no invocation is running or holding an
-unread result. Saved conversations reload after a swap. Only the standard library is used and
+Idle means no request is in flight either way, apart from listen streams, and no invocation is
+running or holding an unread result. Saved conversations reload after a swap. Only the standard library is used and
 everything is imported at start, so the relay keeps working after the install it came from has
 been replaced.
 """
@@ -41,6 +43,15 @@ _STOP_SECONDS = 15.0
 _RELAY_ID = "agentnave-relay"
 SESSION_ENV = "AGENTNAVE_MANAGER_SESSION"
 STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
+# 2026-07-28 and later hosts skip initialize; every request carries this envelope instead.
+_PROTOCOL_KEY = "io.modelcontextprotocol/protocolVersion"
+_ENVELOPE_KEYS = (
+    _PROTOCOL_KEY,
+    "io.modelcontextprotocol/clientInfo",
+    "io.modelcontextprotocol/clientCapabilities",
+)
+_SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
+_SUBSCRIPTION_KEY = "io.modelcontextprotocol/subscriptionId"
 
 
 def main() -> None:
@@ -87,6 +98,8 @@ class _Child:
     ) -> None:
         # A child that is not yet serving, or no longer, may exit without ending the relay.
         self.retiring = retiring
+        # Listen streams handed over in a swap: the host must not see their extra ack or end.
+        self.muted: set[str] = set()
         self.process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env
         )
@@ -138,6 +151,13 @@ def _key(value: object) -> str:
     return json.dumps(value)
 
 
+def _version(result: Message | None) -> str | None:
+    result = result or {}
+    meta = _object(result.get("_meta")) or {}
+    info = _object(result.get("serverInfo")) or _object(meta.get(_SERVER_INFO_KEY)) or {}
+    return str(info.get("version", "")) or None
+
+
 def _tools_hash(result: Message | None) -> str | None:
     if not result or result.get("nextCursor"):
         return None  # Partial/paginated lists cannot prove that the full interface was delivered.
@@ -182,6 +202,9 @@ class Relay:
         self.held: list[bytes] = []
         self.initialize: Message | None = None
         self.initialized: bytes | None = None
+        self.envelope: Message | None = None
+        # Open subscriptions/listen requests; their reply is a stream that lasts the connection.
+        self.listens: dict[str, Message] = {}
         self.replies: dict[str, queue.Queue[Message]] = {}
         self.sequence = 0
         self.code = 0
@@ -277,9 +300,12 @@ class Relay:
         except OSError:
             pass  # Tray observations must never break the transport.
 
+    def _legacy(self) -> bool:
+        return self.initialize is not None and self.initialized is not None
+
     def _busy_reason(self) -> str:
         with self.lock:
-            if self.initialize is None or self.initialized is None:
+            if not self._legacy() and self.envelope is None:
                 return "the host has not finished the MCP handshake"
             if self.host_pending or self.child_pending:
                 return (
@@ -313,7 +339,13 @@ class Relay:
         for message in _messages(line):
             method = message.get("method")
             if "id" in message and method is not None:
-                self.host_pending.add(_key(message["id"]))
+                meta = _object((_object(message.get("params")) or {}).get("_meta")) or {}
+                if _PROTOCOL_KEY in meta and method != "initialize":
+                    self.envelope = {key: meta[key] for key in _ENVELOPE_KEYS if key in meta}
+                if method == "subscriptions/listen":
+                    self.listens[_key(message["id"])] = message
+                else:
+                    self.host_pending.add(_key(message["id"]))
                 self.host_methods[_key(message["id"])] = str(method)
             elif "id" in message:
                 self.child_pending.discard(_key(message["id"]))
@@ -322,6 +354,7 @@ class Relay:
                 params = _object(message.get("params")) or {}
                 self.host_pending.discard(_key(params.get("requestId")))
                 self.host_methods.pop(_key(params.get("requestId")), None)
+                self.listens.pop(_key(params.get("requestId")), None)
             elif method == "initialize":
                 self.initialize = message
             elif method == "notifications/initialized":
@@ -345,17 +378,23 @@ class Relay:
             rewritten = False
             delivered_hash = None
             completed: list[str] = []
+            if child.muted:
+                kept = [m for m in messages if not self._muted(child, m)]
+                if not kept:
+                    return
+                rewritten, messages = len(kept) < len(messages), kept
             for message in messages:
                 if "id" in message and "method" in message:
                     self.child_pending.add(_key(message["id"]))
                 elif "id" in message:
                     ident = _key(message["id"])
                     completed.append(ident)
+                    self.listens.pop(ident, None)
                     method = self.host_methods.pop(ident, None)
                     result = _object(message.get("result"))
+                    if method in ("initialize", "server/discover") and result:
+                        self.runtime_version = _version(result)
                     if method == "initialize" and result:
-                        info = _object(result.get("serverInfo")) or {}
-                        self.runtime_version = str(info.get("version", "")) or None
                         capabilities = _object(result.get("capabilities")) or {}
                         tools = _object(capabilities.get("tools"))
                         # Legacy STDIO notifications need no subscription. New protocol versions
@@ -386,14 +425,29 @@ class Relay:
                     self.host_tools_hash = delivered_hash
         self._publish_connection()
 
+    def _muted(self, child: _Child, message: Message) -> bool:
+        if "method" not in message:
+            return _key(message.get("id")) in child.muted  # the retired child's end of a stream
+        if message["method"] != "notifications/subscriptions/acknowledged":
+            return False
+        meta = _object((_object(message.get("params")) or {}).get("_meta")) or {}
+        ident = _key(meta.get(_SUBSCRIPTION_KEY))
+        if ident not in child.muted:
+            return False
+        child.muted.discard(ident)  # the host already has this stream's ack
+        return True
+
     def _ask(self, child: _Child, method: str, params: Message) -> Message | None:
+        if self.envelope is not None and not self._legacy():
+            params = {**params, "_meta": self.envelope}
         self.sequence += 1
         ident = f"{_RELAY_ID}-{self.sequence}"
         reply: queue.Queue[Message] = queue.Queue()
         self.replies[ident] = reply
         line = json.dumps({"jsonrpc": "2.0", "id": ident, "method": method, "params": params})
         child.send(line.encode() + b"\n")
-        deadline = time.monotonic() + (_START_SECONDS if method == "initialize" else _PROBE_SECONDS)
+        starting = method in ("initialize", "server/discover")
+        deadline = time.monotonic() + (_START_SECONDS if starting else _PROBE_SECONDS)
         try:
             while child.process.poll() is None and time.monotonic() < deadline:
                 try:
@@ -433,8 +487,7 @@ class Relay:
         with self.lock:
             if (
                 self.closing.is_set()
-                or self.initialize is None
-                or self.initialized is None
+                or not (self._legacy() or self.envelope is not None)
                 or not self._quiet()
             ):
                 return "busy"
@@ -451,13 +504,24 @@ class Relay:
                 new = _Child(self.command, self._from_child, env=self.env, retiring=True)
             except OSError:
                 return "failed"
-            params = _object(self.initialize.get("params")) or {}
-            reply = self._ask(new, "initialize", params)
+            if self.initialize is not None and self.initialized is not None:
+                params = _object(self.initialize.get("params")) or {}
+                reply = self._ask(new, "initialize", params)
+                if reply and "result" in reply:
+                    new.send(self.initialized)
+            else:
+                reply = self._ask(new, "server/discover", {})
             if not reply or "result" not in reply:
                 return "failed"
-            new.send(self.initialized)
+            with self.lock:
+                listens = list(self.listens.values())
+                new.muted.update(self.listens)
+            for message in listens:
+                new.send(json.dumps(message).encode() + b"\n")
             tools_reply = self._ask(new, "tools/list", {}) if self.host_tools_hash else None
             current_hash = _tools_hash(_object(tools_reply.get("result")) if tools_reply else None)
+            with self.lock:
+                old.muted.update(self.listens)
             old.retiring = True
             old.close()
             try:
@@ -469,8 +533,7 @@ class Relay:
                     return "busy"
                 new.retiring = False
                 self.child, new = new, None
-                info = _object((_object(reply.get("result")) or {}).get("serverInfo")) or {}
-                self.runtime_version = str(info.get("version", "")) or None
+                self.runtime_version = _version(_object(reply.get("result")))
                 self.runtime_tools_hash = current_hash
                 changed = current_hash is not None and current_hash != self.host_tools_hash
             self._publish_connection()
