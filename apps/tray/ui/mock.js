@@ -627,7 +627,7 @@ All checks passed!
     const scene = q.get("activation");
     const state = scene === "tools" || !mockToolsSynced ? "required" : scene === "updating" ? "updating" : host.id === "codex" && scene !== "unknown" ? "current" : "unknown";
     return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : state, reason: state === "required" ? "tools" : "connection", connections: state === "unknown" ? 0 : 1, token } : { state: "not_connected" } };
-  }), backups: { dir: "/preview/backups", count: 0 } });
+  }), backups: { dir: "/preview/backups", config: 0, skill: 0 } });
   const onboarding = () => ({ dismissed, steps: [
     { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
     { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },

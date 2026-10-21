@@ -105,7 +105,11 @@ fn effort_allowed(shared: &Value, modal: Option<&Value>, what: &str) -> Result<(
 
 pub fn validate(document: &Value) -> Result<(), String> {
     let top = object(document, "members.json")?;
-    only(top, &["version", "clis", "modes"], "members.json")?;
+    only(
+        top,
+        &["version", "clis", "modes", "defaults"],
+        "members.json",
+    )?;
     if document["version"].as_u64() != Some(1) {
         return Err("members.json 的 version 必须为 1".into());
     }
@@ -184,6 +188,31 @@ pub fn validate(document: &Value) -> Result<(), String> {
                     let what = format!("{what} / {model}");
                     settings(modal, &what)?;
                     effort_allowed(&known[model], Some(modal), &what)?;
+                }
+            }
+        }
+    }
+    // Default models kept for unrestricted modes after the user turned the allow-list off.
+    if let Some(defaults) = top.get("defaults") {
+        for (mode, members) in object(defaults, "defaults")? {
+            if !MODES.contains(&mode.as_str()) {
+                return Err(format!("未知模式：{mode}"));
+            }
+            if modes.contains_key(mode) {
+                return Err(format!("defaults.{mode} 只用于未自选的场景"));
+            }
+            for (provider, model) in object(members, &format!("defaults.{mode}"))? {
+                let what = format!("defaults.{mode}.{provider}");
+                let model = model
+                    .as_str()
+                    .ok_or_else(|| format!("{what} 必须为字符串"))?;
+                let known = clis
+                    .get(provider)
+                    .and_then(|cli| cli.get("models"))
+                    .and_then(Value::as_object)
+                    .unwrap_or(&empty);
+                if !known.contains_key(model) {
+                    return Err(format!("{what} 引用了未配置的模型 {model}"));
                 }
             }
         }
@@ -473,6 +502,16 @@ mod tests {
         // A CLI enabled with any model needs no shared model configuration.
         open["modes"]["discussion"]["grok"] = json!({"models": []});
         validate(&open).unwrap();
+        // An unrestricted mode keeps its default models under `defaults`.
+        let mut kept = document();
+        kept["modes"].as_object_mut().unwrap().remove("discussion");
+        kept["defaults"] = json!({"discussion": {"codex": "gpt-6-luna"}});
+        validate(&kept).unwrap();
+        for (mode, model) in [("discussion", "missing"), ("task", "gpt-6-luna")] {
+            let mut bad = kept.clone();
+            bad["defaults"] = json!({mode: {"codex": model}});
+            assert!(validate(&bad).is_err(), "{mode}");
+        }
     }
 
     #[test]

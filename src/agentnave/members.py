@@ -74,6 +74,8 @@ class MemberFile(StrictModel):
     version: int = Field(ge=1, le=1)
     clis: dict[ProviderName, CLIConfig]
     modes: dict[Mode, dict[ProviderName, ModeCLI]]
+    # Default models for unrestricted modes, kept when the user turns the allow-list off.
+    defaults: dict[Mode, dict[ProviderName, str]] = {}
 
     def effective(self, mode: Mode, provider: ProviderName, model: str) -> MemberConfig:
         cli = self.clis.get(provider)
@@ -103,6 +105,13 @@ class MemberFile(StrictModel):
                     raise ValueError(f"{mode}.{provider}: default must be an allowed model")
                 for model in models:
                     self.effective(mode, provider, model).validate_effort()
+        for mode, providers in self.defaults.items():
+            if mode in self.modes:
+                raise ValueError(f"defaults.{mode}: only unrestricted modes keep defaults here")
+            for provider, model in providers.items():
+                cli = self.clis.get(provider)
+                if model not in (cli.models if cli else {}):
+                    raise ValueError(f"defaults.{mode}.{provider}: unknown model {model!r}")
         return self
 
     def apply(
@@ -131,6 +140,9 @@ class MemberFile(StrictModel):
         selection = allowed.get(provider) if allowed is not None else None
         if "model" not in result and selection and "default" in selection.model_fields_set:
             result["model"] = selection.default
+            applied.append("model")
+        if "model" not in result and allowed is None and provider in self.defaults.get(mode, {}):
+            result["model"] = self.defaults[mode][provider]
             applied.append("model")
         if "model" not in result and selection and selection.models:
             raise ValueError(
@@ -266,9 +278,15 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                         MemberStatus(
                             provider=provider,
                             model=model,
-                            default=selection is not None
-                            and "default" in selection.model_fields_set
-                            and selection.default == model,
+                            default=(
+                                selection is not None
+                                and "default" in selection.model_fields_set
+                                and selection.default == model
+                            )
+                            or (
+                                providers is None
+                                and document.defaults.get(mode, {}).get(provider) == model
+                            ),
                             efforts=config.efforts,
                             effort=effort,
                             options=config.options,

@@ -398,9 +398,9 @@ function renderBackups() {
     h(
       "span",
       {},
-      b.count
-        ? `配置备份：已有 ${b.count} 个备份文件，保留最近 ${KEEP_BACKUPS} 个（每个被改写的文件各备份一份）`
-        : `配置备份：还没有备份（每次写入前自动备份，保留最近 ${KEEP_BACKUPS} 个文件）`,
+      b.config || b.skill
+        ? `备份：配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份，两类各保留最近 ${KEEP_BACKUPS} 份（每个被改写的文件各备份一份）`
+        : `备份：还没有备份（每次写入前自动备份，配置文件和 Skill 文件各保留最近 ${KEEP_BACKUPS} 份）`,
     ),
     h("span.sep", { "aria-hidden": "true" }, "·"),
     pathRow(b.dir),

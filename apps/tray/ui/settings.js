@@ -457,6 +457,12 @@ function configurationErrors() {
       }
     }
   }
+  for (const [mode, providers] of Object.entries(currentDoc.defaults || {})) {
+    const scope = mode === "task" ? "私聊" : "会议";
+    for (const [provider, model] of Object.entries(providers)) {
+      if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
+    }
+  }
   return errors;
 }
 
@@ -553,15 +559,15 @@ function renderModeToolbar() {
   if (toggle) toggle.checked = restricted;
   if (hint) {
     hint.textContent = restricted
-      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会清除本场景的名单、默认模型和专用设置，共享设置保留。"
-      : "已关闭：不额外限制可用工具和模型，也没有本场景的默认模型。开启后可逐项选择，并为此场景设置默认模型。";
+      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会保留各 CLI 的默认模型，清除本场景的名单和专用设置。"
+      : "已关闭：不额外限制可用工具和模型，仍可为本场景设置各 CLI 的默认模型。开启后可逐项选择可用名单。";
   }
   const confirm = $("restrict-confirm");
   if (confirm) {
     confirm.hidden = !pendingRestrictOff;
     const scene = currentMode === "task" ? "私聊" : "会议";
     confirm.replaceChildren(...(pendingRestrictOff ? [
-      el("p", {}, `关闭会清除${scene}的可用名单、默认模型和专用设置，共享设置保留。重新开启不会恢复这些设置，只会按检测结果补回各 CLI 的主力默认模型；点击“保存设置”后才生效。`),
+      el("p", {}, `关闭后${scene}不再限制工具和模型：保留各 CLI 的默认模型和共享设置，清除可用名单和${scene}专用设置。重新开启不会恢复名单和专用设置，默认模型沿用保留值，没有的按检测结果补主力模型；点击“保存设置”后才生效。`),
       el("div", { className: "btn-group" },
         el("button", { type: "button", onClick: () => { pendingRestrictOff = false; renderModeToolbar(); $("mode-restrict-toggle").focus({ preventScroll: true }); } }, "保留开启"),
         el("button", { type: "button", className: "danger", onClick: () => toggleModeRestricted(false, true) }, "确认关闭")),
@@ -581,20 +587,46 @@ function toggleModeRestricted(restricted, confirmed = false) {
   }
   pendingRestrictOff = false;
   if (!currentDoc.modes) currentDoc.modes = {};
+  // Default models survive the switch both ways; the allow-list and mode overrides do not (ADR-0021).
   if (restricted) {
+    const kept = currentDoc.defaults?.[currentMode] || {};
     currentDoc.modes[currentMode] = {};
-    // Pre-enable all installed CLIs with models: [] (unlimited models) and their main model
+    // Pre-enable all installed CLIs with models: [] (unlimited models) and their default model
     for (const p of PROVIDERS) {
       if (detected[p]?.installed) {
-        currentDoc.modes[currentMode][p] = withPrimary(p, { models: [], overrides: {} });
+        const conf = { models: [], overrides: {} };
+        if (kept[p]) conf.default = kept[p];
+        currentDoc.modes[currentMode][p] = kept[p] ? conf : withPrimary(p, conf);
       }
     }
+    setKeptDefaults({});
   } else {
+    const kept = {};
+    for (const [p, conf] of Object.entries(currentDoc.modes[currentMode] || {})) {
+      if (conf.default) kept[p] = conf.default;
+    }
     delete currentDoc.modes[currentMode];
+    setKeptDefaults(kept);
   }
   incDocVersion();
   renderModeToolbar();
   renderCards();
+}
+
+// Default models of an unrestricted mode; an empty map leaves no `defaults` key behind.
+function setKeptDefaults(kept, mode = currentMode) {
+  if (Object.keys(kept).length) {
+    currentDoc.defaults = { ...currentDoc.defaults, [mode]: kept };
+  } else if (currentDoc.defaults) {
+    delete currentDoc.defaults[mode];
+    if (!Object.keys(currentDoc.defaults).length) delete currentDoc.defaults;
+  }
+}
+
+function defaultModel(provider) {
+  return isModeRestricted()
+    ? currentDoc.modes[currentMode]?.[provider]?.default
+    : currentDoc.defaults?.[currentMode]?.[provider];
 }
 
 function isProviderEnabledInMode(provider) {
@@ -740,7 +772,13 @@ function toggleUnlimitedModels(provider, unlimited) {
 
 function setModelDefault(provider, modelId) {
   if (!isModeRestricted()) {
-    showNotice("默认模型按场景保存，请先开启上方“自选可用工具和模型”");
+    const kept = { ...currentDoc.defaults?.[currentMode] };
+    ensureCliModel(provider, modelId);
+    if (kept[provider] === modelId) delete kept[provider];
+    else kept[provider] = modelId;
+    setKeptDefaults(kept);
+    incDocVersion();
+    renderCards();
     return;
   }
   const provConf = currentDoc.modes[currentMode]?.[provider];
@@ -1141,7 +1179,11 @@ function renderModelDetail(provider, modelId) {
 // Render 6 CLI cards
 // One line that says what a folded card allows, so the list can stay closed.
 function cardSummary(provider, isEnabled, modeRestricted, info) {
-  if (!modeRestricted) return info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
+  if (!modeRestricted) {
+    const detectedCount = info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
+    const kept = defaultModel(provider);
+    return kept ? [detectedCount, `默认 ${kept}`].filter(Boolean).join(" · ") : detectedCount;
+  }
   if (!isEnabled) return "当前场景未启用";
   const conf = currentDoc.modes[currentMode]?.[provider] || {};
   const models = Array.isArray(conf.models) ? conf.models : [];
@@ -1283,9 +1325,6 @@ function renderCards() {
       }
 
       // Collect all models
-      if (!modeRestricted) {
-        body.appendChild(el("p", { className: "field-hint" }, "默认模型按场景保存，请先开启上方“自选可用工具和模型”"));
-      }
       const detectedModels = info.models || [];
       const allModelIds = getAllModelIds(provider);
 
@@ -1301,7 +1340,7 @@ function renderCards() {
           ["command", "codex-cache", "help"].includes(info.source);
 
         const isAllowed = isModelAllowed(provider, modelId);
-        const isDefault = provConf ? provConf.default === modelId : false;
+        const isDefault = defaultModel(provider) === modelId;
         const hasOverride = isModelOverridden(provider, modelId);
         const isExpanded =
           expandedModel &&
@@ -1338,14 +1377,12 @@ function renderCards() {
           dataset: { focusKey: `${provider}/${modelId}/default` },
           name: `default-${provider}-${currentMode}`,
           checked: isDefault,
-          disabled: !modeRestricted,
           onClick: () => setModelDefault(provider, modelId),
         });
 
         const defaultLabel = el(
           "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: modeRestricted
-            ? "boss 未指定模型时使用；再次点击可取消默认" : "默认模型按场景保存，请先开启上方“自选可用工具和模型”" },
+          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "boss 未指定模型时使用；再次点击可取消默认" },
           radioInput,
           textNode("默认")
         );
