@@ -800,7 +800,7 @@ impl Hosts {
             .map(|h| self.state(h))
             .filter(|h| h["status"] != "absent")
             .collect();
-        json!({"service":self.service(),"hosts":hosts,"backups":{"dir":self.context.app.join("backups"),"count":backup_paths(&self.context.app).len()}})
+        json!({"service":self.service(),"hosts":hosts,"backups":{"dir":self.context.app.join("backups"),"config":backup_paths(&self.context.app, CONFIG_BACKUP).len(),"skill":backup_paths(&self.context.app, SKILL_BACKUP).len()}})
     }
     pub fn reveal_backups(&self) -> Result<Value, String> {
         let path = self.context.app.join("backups");
@@ -1366,27 +1366,41 @@ pub(crate) fn atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     tmp.persist(path).map_err(|_| "无法原子替换配置")?;
     Ok(())
 }
-fn backup_paths(app: &Path) -> Vec<PathBuf> {
+/// Host config files and Skill files are kept apart, so Skill copies never evict config backups.
+/// Files written before the split carry no kind and count as config backups.
+const CONFIG_BACKUP: &str = "config";
+const SKILL_BACKUP: &str = "skill";
+const KEEP_BACKUPS: usize = 30;
+fn backup_paths(app: &Path, kind: &str) -> Vec<PathBuf> {
     let mut paths: Vec<_> = fs::read_dir(app.join("backups"))
         .into_iter()
         .flatten()
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.is_file() && !p.is_symlink())
+        .filter(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy();
+            let skill = name
+                .get(21..)
+                .is_some_and(|rest| rest.starts_with(&format!("{SKILL_BACKUP}-")));
+            skill == (kind == SKILL_BACKUP)
+        })
         .collect();
     paths.sort();
     paths
 }
+/// Backs up one Skill file; host config writes go through `backup_bytes` directly.
 fn backup(app: &Path, id: &str, path: &Path, home: &Path) -> Result<(), String> {
     safe_path(path, home)?;
     if !path.exists() {
         return Ok(());
     }
     let bytes = fs::read(path).map_err(|_| "write_failed:无法读取备份源")?;
-    backup_bytes(app, id, path, &bytes, home)
+    backup_bytes(app, SKILL_BACKUP, id, path, &bytes, home)
 }
 fn backup_bytes(
     app: &Path,
+    kind: &str,
     id: &str,
     path: &Path,
     bytes: &[u8],
@@ -1397,7 +1411,7 @@ fn backup_bytes(
     safe_path(&dir, home)?;
     fs::create_dir_all(&dir).map_err(|_| "无法创建备份目录")?;
     let prefix = format!(
-        "{:020}-{id}-{}-",
+        "{:020}-{kind}-{id}-{}-",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -1412,8 +1426,8 @@ fn backup_bytes(
         .and_then(|_| file.as_file().sync_all())
         .map_err(|_| "无法保存备份")?;
     file.keep().map_err(|_| "无法保留备份")?;
-    let paths = backup_paths(app);
-    for old in paths.iter().take(paths.len().saturating_sub(30)) {
+    let paths = backup_paths(app, kind);
+    for old in paths.iter().take(paths.len().saturating_sub(KEEP_BACKUPS)) {
         fs::remove_file(old).map_err(|_| "无法清理旧备份")?;
     }
     Ok(())

@@ -89,6 +89,11 @@ function isPermissionOptionKey(key) {
   return PERMISSION_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
+// `false` switches a permission flag off, so it grants nothing.
+function grantsPermission(key, value) {
+  return isPermissionOptionKey(key) && value !== false;
+}
+
 // Application state
 let currentDoc = {
   version: 1,
@@ -99,6 +104,9 @@ let detected = {};
 let currentMode = "task"; // "task" | "discussion"
 let currentTab = "members"; // "members" | "avatars" | "hosts"
 let dirty = false;
+let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
+let savedVersion = 0;
+let leaveTarget = null; // A navigation held back while there are unsaved changes.
 let busy = false;
 let documentError = null;
 let docVersion = 0; // Monotonic counter for save race detection
@@ -112,6 +120,7 @@ let lastMigrationData = { migrated: false, migration_skipped: [] };
 const optionDrafts = new WeakMap();
 let operatedControl = null;
 let pendingDisable = null;
+let pendingRestrictOff = false; // Turning a mode's selection off waits for confirmation.
 
 // Determine mock mode
 const isMock =
@@ -323,9 +332,22 @@ function showNotice(msg, isError = false) {
   notice.classList.toggle("error", isError);
 }
 
+function markSaved(snapshot = JSON.stringify(currentDoc)) {
+  savedSnapshot = snapshot;
+  savedVersion = docVersion;
+  refreshDirty();
+}
+
+// Unsaved means the document differs from the saved one, or an edit left an option draft
+// that cannot be written yet.
+function refreshDirty() {
+  dirty = docVersion !== savedVersion &&
+    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0);
+}
+
 function incDocVersion() {
   docVersion++;
-  dirty = true;
+  refreshDirty();
   updateControls();
 }
 
@@ -335,8 +357,8 @@ function countPermissionOptions() {
   for (const cli of Object.values(currentDoc.clis || {})) {
     for (const m of Object.values(cli.models || {})) {
       if (m.options && typeof m.options === "object") {
-        for (const k of Object.keys(m.options)) {
-          if (isPermissionOptionKey(k)) count++;
+        for (const [k, v] of Object.entries(m.options)) {
+          if (grantsPermission(k, v)) count++;
         }
       }
     }
@@ -345,8 +367,8 @@ function countPermissionOptions() {
     for (const provObj of Object.values(modeObj || {})) {
       for (const override of Object.values(provObj.overrides || {})) {
         if (override.options && typeof override.options === "object") {
-          for (const k of Object.keys(override.options)) {
-            if (isPermissionOptionKey(k)) count++;
+          for (const [k, v] of Object.entries(override.options)) {
+            if (grantsPermission(k, v)) count++;
           }
         }
       }
@@ -379,7 +401,7 @@ function parseOptionRows(rows) {
   for (const [index, row] of rows.entries()) {
     const label = `参数第 ${index + 1} 行`;
     if (!row.key.trim()) errors.push(`${label}：请填写参数键`);
-    if (keys.has(row.key)) errors.push(`${label}：参数键 ${row.key} 重复`);
+    if (row.key.trim() && keys.has(row.key)) errors.push(`${label}：参数键 ${row.key} 重复`);
     if (["model", "effort"].includes(row.key)) errors.push(`${label}：不能使用 ${row.key} 键`);
     keys.add(row.key);
     let value = row.raw;
@@ -418,7 +440,7 @@ function configurationErrors() {
     for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, "共享");
   }
   for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
-    const scope = mode === "task" ? "私聊模式" : "会议模式";
+    const scope = mode === "task" ? "私聊" : "会议";
     for (const [provider, selection] of Object.entries(providers)) {
       const models = currentDoc.clis?.[provider]?.models || {};
       for (const model of selection.models) {
@@ -435,11 +457,20 @@ function configurationErrors() {
       }
     }
   }
+  for (const [mode, providers] of Object.entries(currentDoc.defaults || {})) {
+    const scope = mode === "task" ? "私聊" : "会议";
+    for (const [provider, model] of Object.entries(providers)) {
+      if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
+    }
+  }
   return errors;
 }
 
 function updateControls() {
   $("dirty-text").textContent = dirty ? "有未保存的修改" : "没有未保存的修改";
+  $("members-badge").hidden = !dirty;
+  if (!dirty && !busy) leaveTarget = null;
+  renderLeaveConfirm();
 
   const emptyRestricted = hasEmptyRestrictedMode();
   const errors = configurationErrors();
@@ -451,7 +482,7 @@ function updateControls() {
   // Feedback hints
   const feedback = $("save-feedback");
   if (emptyRestricted) {
-    feedback.textContent = "受限模式至少启用一个 CLI，或关闭限制";
+    feedback.textContent = "开启自选的场景至少启用一个 CLI，或关闭自选";
     feedback.className = "save-feedback error";
     feedback.dataset.validation = "true";
   } else if (errors.length) {
@@ -490,6 +521,8 @@ function updateControls() {
 // Switch tabs
 function setTab(tab) {
   if (tab === "updates") tab = "hosts"; // Preserve old update links.
+  // Status lines belong to the tab that produced them.
+  if (currentTab !== tab) showNotice("");
   currentTab = tab;
   for (const id of ["members", "avatars", "hosts"]) {
     $("tab-" + id).classList.toggle("active", tab === id);
@@ -505,6 +538,7 @@ function setMode(mode) {
   if (currentMode === mode) return;
   currentMode = mode;
   pendingDisable = null;
+  pendingRestrictOff = false;
   $("mode-task").classList.toggle("active", mode === "task");
   $("mode-task").setAttribute("aria-checked", mode === "task" ? "true" : "false");
   $("mode-discussion").classList.toggle("active", mode === "discussion");
@@ -525,31 +559,74 @@ function renderModeToolbar() {
   if (toggle) toggle.checked = restricted;
   if (hint) {
     hint.textContent = restricted
-      ? "已开启：只允许使用下方启用的工具与模型。关闭后将清除本场景的名单、默认模型和专用设置，共享设置保留。"
-      : "已关闭：不额外限制可用工具和模型。开启后可逐项选择，并为此场景设置默认模型。";
+      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会保留各 CLI 的默认模型，清除本场景的名单和专用设置。"
+      : "已关闭：不额外限制可用工具和模型，仍可为本场景设置各 CLI 的默认模型。开启后可逐项选择可用名单。";
+  }
+  const confirm = $("restrict-confirm");
+  if (confirm) {
+    confirm.hidden = !pendingRestrictOff;
+    const scene = currentMode === "task" ? "私聊" : "会议";
+    confirm.replaceChildren(...(pendingRestrictOff ? [
+      el("p", {}, `关闭后${scene}不再限制工具和模型：保留各 CLI 的默认模型和共享设置，清除可用名单和${scene}专用设置。重新开启不会恢复名单和专用设置，默认模型沿用保留值，没有的按检测结果补主力模型；点击“保存设置”后才生效。`),
+      el("div", { className: "btn-group" },
+        el("button", { type: "button", onClick: () => { pendingRestrictOff = false; renderModeToolbar(); $("mode-restrict-toggle").focus({ preventScroll: true }); } }, "保留开启"),
+        el("button", { type: "button", className: "danger", onClick: () => toggleModeRestricted(false, true) }, "确认关闭")),
+    ] : []));
   }
   $("mode-description").textContent = currentMode === "task"
     ? "私聊：boss 把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
     : "会议：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
 }
 
-function toggleModeRestricted(restricted) {
+function toggleModeRestricted(restricted, confirmed = false) {
   pendingDisable = null;
+  if (!restricted && !confirmed) {
+    pendingRestrictOff = true;
+    renderModeToolbar();
+    return;
+  }
+  pendingRestrictOff = false;
   if (!currentDoc.modes) currentDoc.modes = {};
+  // Default models survive the switch both ways; the allow-list and mode overrides do not (ADR-0021).
   if (restricted) {
+    const kept = currentDoc.defaults?.[currentMode] || {};
     currentDoc.modes[currentMode] = {};
-    // Pre-enable all installed CLIs with models: [] (unlimited models) and their main model
+    // Pre-enable all installed CLIs with models: [] (unlimited models) and their default model
     for (const p of PROVIDERS) {
       if (detected[p]?.installed) {
-        currentDoc.modes[currentMode][p] = withPrimary(p, { models: [], overrides: {} });
+        const conf = { models: [], overrides: {} };
+        if (kept[p]) conf.default = kept[p];
+        currentDoc.modes[currentMode][p] = kept[p] ? conf : withPrimary(p, conf);
       }
     }
+    setKeptDefaults({});
   } else {
+    const kept = {};
+    for (const [p, conf] of Object.entries(currentDoc.modes[currentMode] || {})) {
+      if (conf.default) kept[p] = conf.default;
+    }
     delete currentDoc.modes[currentMode];
+    setKeptDefaults(kept);
   }
   incDocVersion();
   renderModeToolbar();
   renderCards();
+}
+
+// Default models of an unrestricted mode; an empty map leaves no `defaults` key behind.
+function setKeptDefaults(kept, mode = currentMode) {
+  if (Object.keys(kept).length) {
+    currentDoc.defaults = { ...currentDoc.defaults, [mode]: kept };
+  } else if (currentDoc.defaults) {
+    delete currentDoc.defaults[mode];
+    if (!Object.keys(currentDoc.defaults).length) delete currentDoc.defaults;
+  }
+}
+
+function defaultModel(provider) {
+  return isModeRestricted()
+    ? currentDoc.modes[currentMode]?.[provider]?.default
+    : currentDoc.defaults?.[currentMode]?.[provider];
 }
 
 function isProviderEnabledInMode(provider) {
@@ -695,7 +772,13 @@ function toggleUnlimitedModels(provider, unlimited) {
 
 function setModelDefault(provider, modelId) {
   if (!isModeRestricted()) {
-    showNotice("默认模型按场景保存，请先开启上方“自选可用工具和模型”");
+    const kept = { ...currentDoc.defaults?.[currentMode] };
+    ensureCliModel(provider, modelId);
+    if (kept[provider] === modelId) delete kept[provider];
+    else kept[provider] = modelId;
+    setKeptDefaults(kept);
+    incDocVersion();
+    renderCards();
     return;
   }
   const provConf = currentDoc.modes[currentMode]?.[provider];
@@ -775,8 +858,12 @@ function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModel
       ...[["string", "字符串"], ["number", "数字"], ["boolean", "布尔"]].map(([value, label]) => el("option", { value }, label)));
     type.value = draft.type;
     const valueBox = el("span", { className: "option-value" });
-    const warning = el("div", { className: "option-permission-warning", hidden: !isPermissionOptionKey(draft.key) },
+    const warning = el("div", { className: "option-permission-warning" },
       "权限类参数：保存后会对该组员在此范围内的每次调用生效，boss 不会再逐次征求你的同意。");
+    const markPermission = () => {
+      warning.hidden = !grantsPermission(draft.key, draft.type === "boolean" ? draft.raw === "true" : draft.raw);
+    };
+    markPermission();
     const renderValue = () => {
       const value = draft.type === "boolean"
         ? el("select", { disabled: inherited }, el("option", { value: "true" }, "true"), el("option", { value: "false" }, "false"))
@@ -789,6 +876,7 @@ function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModel
       const updateValue = () => {
         draft.raw = value.value; // Strings retain intentional whitespace.
         markInvalid();
+        markPermission();
         sync();
       };
       value.addEventListener("input", updateValue);
@@ -800,11 +888,12 @@ function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModel
       draft.type = type.value;
       if (draft.type === "boolean") draft.raw = "true";
       renderValue();
+      markPermission();
       sync();
     });
     key.addEventListener("input", () => {
       draft.key = key.value;
-      warning.hidden = !isPermissionOptionKey(draft.key);
+      markPermission();
       sync();
     });
     const row = el("div", { className: "option-row" }, key, type, valueBox,
@@ -868,7 +957,7 @@ function renderModelDetail(provider, modelId) {
     const overrideToggle = el(
       "div",
       { className: "detail-override-toggle" },
-      el("label", {}, overrideCheckbox, textNode(" 仅在当前模式使用不同设置")),
+      el("label", {}, overrideCheckbox, textNode(" 仅在当前场景使用不同设置")),
       el(
         "p",
         { className: "field-hint" },
@@ -920,13 +1009,9 @@ function renderModelDetail(provider, modelId) {
           } else {
             list = list.filter((item) => item !== eff);
           }
-          targetConfig.efforts = list; // In override, keep empty array [] if cleared
-
-          // Clearing shared efforts also clears its default. Other conflicts stay visible
-          // until the user explicitly resolves them, including defaults inherited by a mode.
-          if (!overridden && list.length === 0) {
-            delete targetConfig.effort;
-          }
+          // An empty list means unlimited, so a default effort stays valid; other conflicts
+          // stay visible until the user resolves them, including defaults inherited by a mode.
+          targetConfig.efforts = list;
           incDocVersion();
           renderCards();
         },
@@ -1094,8 +1179,12 @@ function renderModelDetail(provider, modelId) {
 // Render 6 CLI cards
 // One line that says what a folded card allows, so the list can stay closed.
 function cardSummary(provider, isEnabled, modeRestricted, info) {
-  if (!modeRestricted) return info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
-  if (!isEnabled) return "当前模式未启用";
+  if (!modeRestricted) {
+    const detectedCount = info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
+    const kept = defaultModel(provider);
+    return kept ? [detectedCount, `默认 ${kept}`].filter(Boolean).join(" · ") : detectedCount;
+  }
+  if (!isEnabled) return "当前场景未启用";
   const conf = currentDoc.modes[currentMode]?.[provider] || {};
   const models = Array.isArray(conf.models) ? conf.models : [];
   const scope = models.length === 0 ? "不限模型" : `${models.length} 个模型`;
@@ -1139,11 +1228,9 @@ function renderCards() {
 
     let enableControl;
     if (!modeRestricted) {
-      enableControl = el(
-        "span",
-        { className: "badge badge-run" },
-        "未限制：默认可用"
-      );
+      enableControl = info.installed
+        ? el("span", { className: "badge badge-run" }, "未限制：默认可用")
+        : el("span", { className: "badge badge-muted" }, "未安装，暂不可用");
     } else {
       const enableCheckbox = el("input", {
         type: "checkbox",
@@ -1213,7 +1300,7 @@ function renderCards() {
 
     if (!isEnabled) {
       body.appendChild(
-        el("p", { className: "cli-disabled-hint" }, "当前模式未启用该 CLI；启用后可配置允许调用的模型。")
+        el("p", { className: "cli-disabled-hint" }, "当前场景未启用该 CLI；启用后可配置允许调用的模型。")
       );
     } else {
       const provConf = modeRestricted ? currentDoc.modes[currentMode]?.[provider] : null;
@@ -1238,9 +1325,6 @@ function renderCards() {
       }
 
       // Collect all models
-      if (!modeRestricted) {
-        body.appendChild(el("p", { className: "field-hint" }, "默认模型按场景保存，请先开启上方“自选可用工具和模型”"));
-      }
       const detectedModels = info.models || [];
       const allModelIds = getAllModelIds(provider);
 
@@ -1256,7 +1340,7 @@ function renderCards() {
           ["command", "codex-cache", "help"].includes(info.source);
 
         const isAllowed = isModelAllowed(provider, modelId);
-        const isDefault = provConf ? provConf.default === modelId : false;
+        const isDefault = defaultModel(provider) === modelId;
         const hasOverride = isModelOverridden(provider, modelId);
         const isExpanded =
           expandedModel &&
@@ -1293,14 +1377,12 @@ function renderCards() {
           dataset: { focusKey: `${provider}/${modelId}/default` },
           name: `default-${provider}-${currentMode}`,
           checked: isDefault,
-          disabled: !modeRestricted,
           onClick: () => setModelDefault(provider, modelId),
         });
 
         const defaultLabel = el(
           "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: modeRestricted
-            ? "boss 未指定模型时使用；再次点击可取消默认" : "默认模型按场景保存，请先开启上方“自选可用工具和模型”" },
+          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "boss 未指定模型时使用；再次点击可取消默认" },
           radioInput,
           textNode("默认")
         );
@@ -1311,7 +1393,7 @@ function renderCards() {
           tags.push(el("span", { className: "badge badge-warning" }, "已不在列表"));
         }
         if (hasOverride) {
-          tags.push(el("span", { className: "badge badge-accent" }, "本模式已覆盖"));
+          tags.push(el("span", { className: "badge badge-accent" }, "本场景已覆盖"));
         }
 
         // Detail toggle button
@@ -1378,7 +1460,9 @@ function renderCards() {
         className: "add-model-input",
         dataset: { focusKey: `${provider}/add-input` },
         "aria-label": `${PROVIDER_NAMES[provider]} 的模型 ID`,
-        placeholder: "手动添加模型 ID，如 claude-3-7-sonnet…",
+        placeholder: detectedModels.length
+          ? `手动添加模型 ID，如 ${info.primary || detectedModels[0].id}…`
+          : "手动添加模型 ID…",
       });
       const submitModel = () => {
         if (!addInput.value.trim()) return;
@@ -1447,13 +1531,12 @@ async function saveMembers() {
   feedback.textContent = "正在保存…";
   feedback.className = "save-feedback";
 
-  const savingVersion = docVersion;
+  const saving = JSON.stringify(currentDoc);
 
   try {
-    await apiPostMembers(currentDoc);
-    if (savingVersion === docVersion) {
-      dirty = false;
-    }
+    await apiPostMembers(JSON.parse(saving));
+    savedSnapshot = saving;
+    refreshDirty();
     feedback.textContent = "设置已保存 · 参数是否有效以 boss 读取时的校验为准";
     feedback.className = "save-feedback success";
     showNotice("设置已保存");
@@ -1482,7 +1565,7 @@ function renderMigrationBanner(data) {
     banner.hidden = false;
     banner.className = "banner migration";
     if (title) {
-      title.textContent = "已将原编排档案的模型与说明迁移；两种模式当前未限制，如需限制再开启";
+      title.textContent = "已将原编排档案的模型与说明迁移；两种场景当前未限制，如需限制再开启";
     }
   } else if (hasSkipped) {
     banner.hidden = false;
@@ -1534,6 +1617,7 @@ async function refreshDetection() {
     // If no unsaved modifications, reload entire data including doc, error & migration
     if (!dirty) {
       currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+      markSaved();
       documentError = data.error || null;
       lastMigrationData = data;
       renderMigrationBanner(data);
@@ -1552,11 +1636,12 @@ async function refreshDetection() {
 
 // Load initial members data
 async function loadMembers() {
-  showNotice("正在读取成员与模型配置…");
+  if (currentTab === "members") showNotice("正在读取成员与模型配置…");
   try {
     const data = await apiGetMembers(false);
     detected = data.detected || {};
     currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+    markSaved();
     documentError = data.error || null;
     lastMigrationData = data;
 
@@ -1566,7 +1651,7 @@ async function loadMembers() {
 
     if (documentError) {
       showNotice(`配置文件损坏: ${documentError}。当前只读，禁止保存。`, true);
-    } else {
+    } else if (currentTab === "members") {
       showNotice("已载入执行者与模型配置");
     }
 
@@ -1633,6 +1718,11 @@ function renderUpdates() {
     appBadge.hidden = false;
     appBadge.className = "tag failed";
     appBadge.textContent = "更新失败";
+  } else if (updateInfo?.state === "none") {
+    appBadge.hidden = false;
+    appBadge.className = "tag done";
+    appBadge.textContent = "已是最新版本";
+    $("update-badge").hidden = true;
   } else {
     appBadge.hidden = true;
     $("update-badge").hidden = true;
@@ -1780,7 +1870,11 @@ async function triggerCheckUpdate() {
   try {
     showNotice("正在检查更新…");
     appStatus = await apiCheckUpdate();
-    showNotice("检查更新完成");
+    const state = appStatus?.update?.state;
+    showNotice(
+      state === "failed" ? "检查更新失败" : state === "available" ? `发现新版 v${appStatus.update.version}` : state === "none" ? "已是最新版本" : "检查更新完成",
+      state === "failed",
+    );
   } catch (err) {
     showNotice(`检查更新失败: ${err.message}`, true);
   } finally {
@@ -1835,6 +1929,35 @@ $("btn-retry-update").addEventListener("click", () => {
 $("dismiss-migration").addEventListener("click", () => {
   $("migration-banner").hidden = true;
 });
+
+// The app's web view does not show beforeunload prompts, so hold back in-app navigation.
+function renderLeaveConfirm() {
+  const box = $("leave-confirm");
+  box.hidden = !leaveTarget;
+  if (!leaveTarget) return box.replaceChildren();
+  if (box.childElementCount) return;
+  const stay = el("button", { type: "button", onClick: () => { leaveTarget = null; renderLeaveConfirm(); } }, "继续编辑");
+  box.replaceChildren(
+    el("p", {}, "有未保存的修改，离开设置页会丢失这些修改。"),
+    el("div", { className: "btn-group" }, stay,
+      el("button", { type: "button", className: "danger", onClick: () => {
+        const target = leaveTarget;
+        dirty = false;
+        location.href = target;
+      } }, "放弃修改并离开")));
+  stay.focus({ preventScroll: true });
+}
+document.querySelector("header.bar").addEventListener("click", (e) => {
+  const link = e.target.closest("a[href]");
+  if (!link || !(dirty || busy) || link.getAttribute("href") === "/settings/") return;
+  e.preventDefault();
+  leaveTarget = link.href;
+  if (currentTab !== "members") {
+    setTab("members");
+    history.replaceState(null, "", "#members");
+  }
+  renderLeaveConfirm();
+}, true);
 
 window.addEventListener("beforeunload", (e) => {
   if (dirty || busy) {

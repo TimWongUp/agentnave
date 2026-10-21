@@ -33,7 +33,7 @@
     </div>
   </section>
     <div class="tabs" role="tablist" aria-label="设置分区">
-      <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型</button>
+      <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></button>
       <button id="tab-avatars" class="tab-btn" role="tab" aria-selected="false" type="button">头像</button>
       <button id="tab-hosts" class="tab-btn" role="tab" aria-selected="false" type="button">接入与更新<span id="hosts-badge" class="badge-dot" hidden></span><span id="update-badge" class="badge-dot" hidden></span></button>
     </div>
@@ -51,7 +51,7 @@
   <section id="pane-members" class="tab-pane active" role="tabpanel" aria-labelledby="tab-members">
     <div id="migration-banner" class="banner migration" hidden>
       <div class="banner-content">
-        <strong id="migration-title">已将原编排档案的模型与说明迁移；两种模式当前未限制，如需限制再开启</strong>
+        <strong id="migration-title">已将原编排档案的模型与说明迁移；两种场景当前未限制，如需限制再开启</strong>
         <div id="migration-skipped-container"></div>
       </div>
       <button id="dismiss-migration" type="button">我知道了</button>
@@ -60,6 +60,7 @@
     <div class="settings-guide">
       <h2>选择 AI 助手和默认设置</h2>
       <p>执行者是本机已安装的 AI 命令行工具（CLI），每个工具可以使用不同模型。先选择使用场景，再展开工具查看模型。</p>
+      <p>boss 是派发任务的 AI。它明确指定的模型和思考档位优先；未指定时才使用这里的默认值。参数能否使用，会在 boss 读取配置时检查。</p>
       <p>这里的修改需要点击底部“保存设置”，才会用于之后发起或继续的任务。</p>
     </div>
     <div class="members-toolbar">
@@ -79,13 +80,14 @@
       </div>
       <input type="checkbox" role="switch" class="switch-input" id="mode-restrict-toggle" aria-describedby="mode-restrict-hint">
     </div>
-    <p class="guidance">boss 是派发任务的 AI。它明确指定的模型和思考档位优先；未指定时才使用这里的默认值。参数能否使用，会在 boss 读取配置时检查。</p>
+    <div id="restrict-confirm" class="disable-confirm restrict-confirm" role="group" aria-label="确认关闭自选" hidden></div>
 
     <!-- 6 个 Provider 卡片容器 -->
     <div id="cli-cards" class="cli-cards"></div>
 
     <!-- 底部固定保存条 -->
     <aside class="sticky-save-bar">
+      <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" hidden></div>
       <div class="save-bar-inner">
         <div class="save-bar-info">
           <span id="dirty-text" class="dirty-label">设置已载入</span>
@@ -109,7 +111,7 @@
       <div class="updates-card">
         <h2>版本与更新</h2>
         <p class="guidance">“检查更新”只查询版本；“全部更新”会更新 AgentNave 与本机服务，AgentNave 更新后自动重启。</p>
-        <div class="banner reload-notice" role="note">
+        <div id="reload-notice" class="banner reload-notice" role="note" hidden>
           <div class="banner-content">
             <strong>是否需要重新加载，请看各宿主的实际连接状态</strong>
             <p>界面更新无需重启宿主。服务内部更新会在空闲时自动切换；工具接口变化时，支持刷新的宿主会自动获取新版。仍未同步时才需要重连，必要时重启宿主。</p>
@@ -168,12 +170,12 @@
 
     <div class="hosts-toolbar">
       <div id="hosts-summary" class="hosts-summary" aria-live="polite"></div>
+      <span id="refresh-result" class="fine" role="status"></span>
       <button id="refresh-hosts" type="button">刷新检测</button>
     </div>
     <div id="backups-line" class="backups-line"></div>
-    <button id="onboarding-reopen" type="button">重新显示开始使用</button>
-
     <div id="host-cards" class="host-cards"></div>
+    <button id="onboarding-reopen" type="button">重新显示开始使用</button>
   </section>
 </main>
 </body>

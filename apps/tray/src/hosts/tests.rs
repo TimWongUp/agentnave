@@ -491,7 +491,7 @@ fn multilayer_migration_and_removal_leave_project_configuration_untouched() {
             .all(|l| l["has_entry"] == false)
     );
     assert_eq!(fs::read(project).unwrap(), project_bytes);
-    let config_backups = backup_paths(&hosts.context.app)
+    let config_backups = backup_paths(&hosts.context.app, CONFIG_BACKUP)
         .iter()
         .filter(|path| {
             let name = path.file_name().unwrap().to_string_lossy();
@@ -805,10 +805,13 @@ fn legacy_commands_migrate_across_formats_without_changing_host_policy() {
             assert_eq!(after.entry, Some(expected), "{id}: {name}");
             assert_eq!(after.rest, before.rest, "{id}: {name}");
             let bytes = fs::read(&h.config).unwrap();
-            let backups = backup_paths(&hosts.context.app).len();
+            let backups = backup_paths(&hosts.context.app, CONFIG_BACKUP).len();
             hosts.refresh();
             assert_eq!(fs::read(&h.config).unwrap(), bytes);
-            assert_eq!(backup_paths(&hosts.context.app).len(), backups);
+            assert_eq!(
+                backup_paths(&hosts.context.app, CONFIG_BACKUP).len(),
+                backups
+            );
         }
     }
 }
@@ -1171,16 +1174,38 @@ fn get_is_read_only_onboarding_uses_cache_and_post_routes_require_action_header(
 }
 
 #[test]
-fn backups_remain_global_and_bounded_at_thirty() {
+fn config_and_skill_backups_are_each_bounded_at_thirty() {
     let (_temp, hosts) = fixture();
-    let path = hosts.context.home.join("config");
+    let (app, home) = (&hosts.context.app, &hosts.context.home);
+    let path = home.join("config");
+    // A file from before the split counts as a config backup.
+    fs::create_dir_all(app.join("backups")).unwrap();
+    fs::write(
+        app.join("backups/00000000000000000001-pi-config-legacy"),
+        "legacy",
+    )
+    .unwrap();
+    for n in 0..5 {
+        backup_bytes(
+            app,
+            CONFIG_BACKUP,
+            "pi",
+            &path,
+            n.to_string().as_bytes(),
+            home,
+        )
+        .unwrap();
+    }
     for n in 0..35 {
         save(&path, &n.to_string());
-        backup(&hosts.context.app, "pi", &path, &hosts.context.home).unwrap();
+        backup(app, "pi", &path, home).unwrap();
     }
-    let kept = backup_paths(&hosts.context.app);
-    assert_eq!(kept.len(), 30);
-    assert_eq!(fs::read_to_string(&kept[0]).unwrap(), "5");
+    let skills = backup_paths(app, SKILL_BACKUP);
+    assert_eq!(skills.len(), 30);
+    assert_eq!(fs::read_to_string(&skills[0]).unwrap(), "5");
+    let configs = backup_paths(app, CONFIG_BACKUP);
+    assert_eq!(configs.len(), 6);
+    assert_eq!(fs::read_to_string(&configs[0]).unwrap(), "legacy");
 }
 
 #[test]
@@ -1205,6 +1230,29 @@ fn json_takeover_preserves_nested_indentation_order_and_untouched_lines() {
         "{written}"
     );
     assert!(written.contains("            \"env\": {\n                \"AGENTNAVE_HOST\": \"workbuddy\"\n            }"), "{written}");
+}
+
+#[test]
+fn json_removing_the_only_entry_and_reconnecting_restores_the_file() {
+    let raw = "{\n  \"mcpServers\": {\n    \"agentnave\": {\n      \"args\": [],\n      \"command\": \"/new\",\n      \"env\": {\n        \"AGENTNAVE_HOST\": \"pi\"\n      }\n    }\n  }\n}";
+    let removed = Document::parse(raw, Format::Json, "mcpServers")
+        .unwrap()
+        .render(None)
+        .unwrap();
+    assert_eq!(removed, "{\n  \"mcpServers\": {\n  }\n}");
+    let entry = json!({"args":[],"command":"/new","env":{"AGENTNAVE_HOST":"pi"}});
+    let restored = Document::parse(&removed, Format::Json, "mcpServers")
+        .unwrap()
+        .render(Some(&entry))
+        .unwrap();
+    assert_eq!(restored, raw);
+    let inline = Document::parse(
+        "{\"mcpServers\": {\"agentnave\": {\"command\": \"/x\"}}}",
+        Format::Json,
+        "mcpServers",
+    )
+    .unwrap();
+    assert_eq!(inline.render(None).unwrap(), "{\"mcpServers\": {}}");
 }
 
 #[test]

@@ -707,7 +707,12 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             provider: {"models": {"chosen": {"effort": "high", "notes": "核验"}}}
             for provider in ("codex", "claude", "codebuddy", "grok", "antigravity", "pi")
         }
-        document: dict[str, object] = {"version": 1, "clis": clis, "modes": {}}
+        document: dict[str, object] = {
+            "version": 1,
+            "clis": clis,
+            "modes": {},
+            "defaults": {"discussion": {"codex": "chosen"}},
+        }
         clis["antigravity"]["models"]["chosen"] = {"options": {"restricted_tools": True}}
         clis["codex"]["models"]["bad-option"] = {"options": {"unknown": True}}
         clis["codex"]["models"]["bad-type"] = {"options": {"skip_git_repo_check": "true"}}
@@ -731,6 +736,9 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         )
         discussion = cast(list[dict[str, object]], modes["discussion"]["members"])
         assert all(item["permitted"] for item in discussion)
+        assert [(item["provider"], item["model"]) for item in discussion if item["default"]] == [
+            ("codex", "chosen")
+        ]
         assert path.read_text(encoding="utf-8") == content
         assert list(root.iterdir()) == [path]
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")

@@ -40,6 +40,12 @@ def test_member_structure_references_and_effective_overrides() -> None:
         ["effort", "agent"],
     )
     assert parsed.apply("discussion", "grok", {}, frozenset({"grok"})) == ({}, [])
+    # Turning an allow-list off keeps each CLI's default model for that unrestricted mode.
+    kept = MemberFile.model_validate(dict(document, defaults={"discussion": {"claude": "chosen"}}))
+    assert kept.apply("discussion", "claude", {}, frozenset()) == (
+        {"model": "chosen", "effort": "high", "agent": "shared"},
+        ["model", "effort", "agent"],
+    )
     with pytest.raises(ProviderExcludedError, match="excluded by this host"):
         parsed.apply("task", "claude", {}, frozenset({"claude"}))
     # Fresh copies cover structural rules without depending on Adapter semantics.
@@ -51,6 +57,8 @@ def test_member_structure_references_and_effective_overrides() -> None:
         dict(document, modes={"task": {"claude": {"models": ["missing"]}}}),
         dict(document, modes={"task": {"claude": {"models": [], "default": "missing"}}}),
         dict(document, modes={"task": {"claude": {"models": [], "extra": True}}}),
+        dict(document, defaults={"task": {"claude": "chosen"}}),
+        dict(document, defaults={"discussion": {"claude": "missing"}}),
         dict(document, modes={"task": {"claude": {"models": [], "overrides": {"missing": {}}}}}),
         dict(document, clis={"claude": {"models": {"chosen": {"options": {"model": "x"}}}}}),
         dict(document, clis={"claude": {"models": {"chosen": {"options": {"effort": "high"}}}}}),

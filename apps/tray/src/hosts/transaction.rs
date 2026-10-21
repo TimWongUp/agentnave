@@ -1,6 +1,6 @@
 //! Optimistic file replacement, not an atomic compare-and-swap with other applications.
 use super::{
-    backup_bytes,
+    CONFIG_BACKUP, backup_bytes,
     config::{Document, Format},
 };
 use serde_json::Value;
@@ -111,7 +111,7 @@ pub(super) fn edit_observed(
             continue;
         }
         if let Some(bytes) = original.as_ref() {
-            backup_bytes(app, id, path, bytes, home)?;
+            backup_bytes(app, CONFIG_BACKUP, id, path, bytes, home)?;
         }
         // Recheck after making the backup, immediately before rename. Another application's
         // write between this check and rename remains an unavoidable, very short race window.
