@@ -42,7 +42,7 @@
   const model = h("input", { type: "text", placeholder: "模型 ID，例如 gpt-6", "aria-label": "模型 ID", required: true, maxlength: 500 });
   const submit = h("button", { type: "submit" }, "设置此模型头像");
   const form = h("form.avatar-add", {}, provider, model, submit);
-  form.addEventListener("submit", (event) => { event.preventDefault(); if (!busy && model.value.trim()) add(provider.value, model.value.trim()); });
+  form.addEventListener("submit", (event) => { event.preventDefault(); if (!busy && model.value.trim()) { add(provider.value, model.value.trim()); model.value = ""; } });
   window.addEventListener("agentnave:avatars", () => { submit.disabled = busy; });
   root.append(form, models);
   Avatars.load().then(async () => {

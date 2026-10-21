@@ -33,6 +33,7 @@ const S = {
   focus: null, // {id, act} restored after a re-render
   updateKey: null,
   updating: false,
+  refreshResult: "",
 };
 
 // ---------------------------------------------------------------- small helpers
@@ -202,11 +203,11 @@ async function refreshAll() {
       added.length && `发现新宿主 ${added.join("、")}`,
       touched && `更新了 ${touched} 个宿主的条目或 Skill`,
     ].filter(Boolean);
-    say(
-      parts.length ? `检测完成：${parts.join("，")}。` : "检测完成，没有变化。",
-    );
+    S.refreshResult = parts.length ? `检测完成：${parts.join("，")}。` : "检测完成，没有变化。";
+    say(S.refreshResult);
   } catch (e) {
-    say(`刷新检测失败：${e.message || "未知错误"}`, true);
+    S.refreshResult = `刷新检测失败：${e.message || "未知错误"}`;
+    say(S.refreshResult, true);
   }
   S.refreshing = false;
   setData(S.data);
@@ -357,6 +358,15 @@ function renderSummary() {
     });
     kids.push(b);
   }
+  const reloads = hosts.filter((x) => x.reload?.state === "required").length;
+  if (reloads) {
+    const b = h("button.sum-chip", { type: "button" }, `${reloads} 需要重新加载 ↓`);
+    b.addEventListener("click", () => {
+      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload"));
+      card?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    kids.push(b);
+  }
   if (n("orphaned"))
     kids.push(chip("var(--muted)", `${n("orphaned")} 个已卸载但仍有条目`));
   kids.push(
@@ -376,7 +386,10 @@ function renderSummary() {
       : ["刷新检测"]),
   );
   refresh.classList.toggle("pending", S.refreshing);
-  $("hosts-badge").hidden = !attention;
+  $("refresh-result").textContent = S.refreshing ? "" : S.refreshResult;
+  $("hosts-badge").hidden = !attention && !reloads;
+  // The general reload note only matters while some host still needs a reload.
+  $("reload-notice").hidden = !reloads;
 }
 
 function renderBackups() {
@@ -386,8 +399,8 @@ function renderBackups() {
       "span",
       {},
       b.count
-        ? `配置备份：已备份 ${b.count} 份，保留最近 ${KEEP_BACKUPS} 份`
-        : `配置备份：还没有备份（每次写入前自动备份，保留最近 ${KEEP_BACKUPS} 份）`,
+        ? `配置备份：已有 ${b.count} 个备份文件，保留最近 ${KEEP_BACKUPS} 个（每个被改写的文件各备份一份）`
+        : `配置备份：还没有备份（每次写入前自动备份，保留最近 ${KEEP_BACKUPS} 个文件）`,
     ),
     h("span.sep", { "aria-hidden": "true" }, "·"),
     pathRow(b.dir),
@@ -452,13 +465,17 @@ function advPanel(host) {
   const id = host.id;
   const busy = S.busy.has(id);
   const rootInput = h("input.root-input", { id: `root-${id}`, type: "text", value: S.roots.get(id) ?? host.root.path, disabled: busy || null, "aria-label": `${host.label} 的配置根目录`, placeholder: "绝对路径" });
-  rootInput.addEventListener("input", () => S.roots.set(id, rootInput.value));
+  const saveButton = button("保存根目录", "", "root-save", () => saveRoot(rootInput.value.trim()), busy || rootInput.value.trim() === host.root.path);
+  rootInput.addEventListener("input", () => {
+    S.roots.set(id, rootInput.value);
+    saveButton.disabled = busy || rootInput.value.trim() === host.root.path;
+  });
   const saveRoot = (path) => run(id, "root", () => post("/app/hosts/root", { id, path })).then((r) => { if (r?.ok) { S.roots.delete(id); renderAll(); } });
   const rootEditor = h("div.root-editor", {},
     h("label", { for: `root-${id}` }, "配置根目录"), rootInput,
     h("p.fine", {}, "通常保持自动即可。只有把这个应用的用户配置放在其他位置时才需要修改；填写绝对路径，保存后立即生效。“恢复自动”会重新使用检测到的目录。"),
     h("span.fine", {}, `来源：${({ user: "App 中的覆盖", env: "App 环境变量", shell: "登录 shell", default: "默认目录" })[host.root.source] || host.root.source}`),
-    h("div.adv-actions", {}, button("保存根目录", "", "root-save", () => saveRoot(rootInput.value.trim()), busy), button("恢复自动", "", "root-auto", () => saveRoot(null), busy)));
+    h("div.adv-actions", {}, saveButton, button("恢复自动", "", "root-auto", () => saveRoot(null), busy || host.root.source !== "user")));
   const kv = [
     [
       "命令",
@@ -486,7 +503,7 @@ function advPanel(host) {
     "div.hc-adv",
     { id: `adv-${id}` },
     rootEditor,
-    h("div.fine", {}, (host.layers || []).filter((l) => l.has_entry).map((l) => `${l.scope === "project" ? "项目（只读）" : "用户层"}：${l.path}`).join("；")),
+    h("div.fine", {}, (host.layers || []).filter((l) => l.has_entry).map((l) => `${l.scope === "project" ? "项目（只读）" : "用户层"}：${shortPath(l.path)}`).join("；")),
     h(
       "dl.adv-kv",
       {},

@@ -755,13 +755,24 @@ fn json_set(
             } else if let Some(previous) = fields.iter().rev().find(|f| f.2.end < full.start) {
                 range.start = previous.2.end;
             } else {
-                // Include a JSONC trailing comma if present.
-                while clean
-                    .as_bytes()
-                    .get(range.end)
+                // The only member: drop its line and a JSONC trailing comma, but keep the
+                // closing brace on its own line at its own indentation.
+                let bytes = clean.as_bytes();
+                while range.start > 0 && bytes[range.start - 1].is_ascii_whitespace() {
+                    range.start -= 1;
+                }
+                let mut end = range.end;
+                while bytes
+                    .get(end)
                     .is_some_and(|c| c.is_ascii_whitespace() || *c == b',')
                 {
-                    range.end += 1;
+                    if bytes[end] == b'\n' {
+                        range.end = end;
+                    }
+                    end += 1;
+                }
+                if !clean[range.end..end].contains('\n') {
+                    range.end = end;
                 }
             }
             out.replace_range(range, "");

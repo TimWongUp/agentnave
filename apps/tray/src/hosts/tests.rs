@@ -1208,6 +1208,29 @@ fn json_takeover_preserves_nested_indentation_order_and_untouched_lines() {
 }
 
 #[test]
+fn json_removing_the_only_entry_and_reconnecting_restores_the_file() {
+    let raw = "{\n  \"mcpServers\": {\n    \"agentnave\": {\n      \"args\": [],\n      \"command\": \"/new\",\n      \"env\": {\n        \"AGENTNAVE_HOST\": \"pi\"\n      }\n    }\n  }\n}";
+    let removed = Document::parse(raw, Format::Json, "mcpServers")
+        .unwrap()
+        .render(None)
+        .unwrap();
+    assert_eq!(removed, "{\n  \"mcpServers\": {\n  }\n}");
+    let entry = json!({"args":[],"command":"/new","env":{"AGENTNAVE_HOST":"pi"}});
+    let restored = Document::parse(&removed, Format::Json, "mcpServers")
+        .unwrap()
+        .render(Some(&entry))
+        .unwrap();
+    assert_eq!(restored, raw);
+    let inline = Document::parse(
+        "{\"mcpServers\": {\"agentnave\": {\"command\": \"/x\"}}}",
+        Format::Json,
+        "mcpServers",
+    )
+    .unwrap();
+    assert_eq!(inline.render(None).unwrap(), "{\"mcpServers\": {}}");
+}
+
+#[test]
 fn toml_takeover_preserves_table_positions_key_order_and_comments() {
     let raw = "# global\nmodel = 'keep'\n\n[marketplaces.openai-bundled]\nsource = 'keep'\n\n[mcp_servers.other]\ncommand = 'keep'\n\n# user registration\n[mcp_servers.agentnave]\ncommand = \"/old\" # launcher\nargs = []\nenabled = true\n\n[mcp_servers.agentnave.env]\nZ_LAST = 'keep'\nA_FIRST = 'keep too'\n\n[plugins.example]\nenabled = true\n";
     let expected = raw.replace(

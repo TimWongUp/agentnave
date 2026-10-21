@@ -195,6 +195,8 @@
 .settings-page { overflow-anchor: none; }
 .disable-confirm { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px 18px; background: color-mix(in srgb, var(--bad) 7%, var(--surface)); border-bottom: 1px solid var(--line); }
 .disable-confirm p { flex: 1 1 300px; font-size: 12px; line-height: 1.6; color: var(--soft); }
+.restrict-confirm { border: 1px solid var(--line); border-radius: 10px; margin: -4px 0 12px; }
+.leave-confirm { pointer-events: auto; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; box-shadow: 0 3px 14px #00000014; }
 .settings-page .intro { margin: 28px 0 20px; }
 .settings-page .tabs { display: flex; width: fit-content; max-width: 100%; flex-wrap: wrap; margin-bottom: 20px; }
 .settings-page .tab-btn { min-height: 36px; }
