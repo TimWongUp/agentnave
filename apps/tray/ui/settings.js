@@ -787,7 +787,11 @@ function renderEffortBar(provider, modelId) {
     if (kind === "lo") state.lo = Math.min(index, state.hi);
     if (kind === "hi") state.hi = Math.max(index, state.lo);
     if (kind === "def") state.def = nearest(index);
-    else if (state.def !== null) state.def = Math.max(state.lo, Math.min(state.hi, state.def));
+    // Moving an end back to where it was restores the gaps and the saved default.
+    else if (state.def !== null) {
+      const back = state.lo === initial.lo && state.hi === initial.hi && initial.def !== null;
+      state.def = back ? initial.def : nearest(state.def);
+    }
     paint();
   };
   // Touching the bar writes the shown default too, so a preset becomes the saved default.
