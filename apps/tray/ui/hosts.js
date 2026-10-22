@@ -744,7 +744,7 @@ function buildCard(host) {
         h(
           "dd",
           {},
-          host.reload_hint || "接入配置或 Skill 内容变更时，重新加载宿主；接口状态见下方自动检测",
+          host.reload_hint || "接入配置或 Skill 简介变更时，重新加载宿主；接口状态见下方自动检测",
         ),
       ),
       h(
@@ -798,8 +798,8 @@ function buildCard(host) {
   if (host.reload?.state === "required") {
     const tools = host.reload.reason === "tools";
     main.push(h("div.hc-reload.hc-note.info", {},
-      h("div", {}, h("strong", {}, tools ? "仍有连接使用旧工具接口" : "接入配置或 Skill 内容有变化"),
-        h("p", {}, tools ? "支持自动刷新的宿主会重新获取工具列表；若此状态持续，请重新连接 AgentNave MCP，必要时重启宿主。重连后会自动检测，无需手动确认。" : "请重新加载对应配置。Skill 是否已加载无法由 MCP 接口证明；无法自动检测时，可在操作后手动确认。")),
+      h("div", {}, h("strong", {}, tools ? "仍有连接使用旧工具接口" : "接入配置或 Skill 简介有变化"),
+        h("p", {}, tools ? "支持自动刷新的宿主会重新获取工具列表；若此状态持续，请重新连接 AgentNave MCP，必要时重启宿主。重连后会自动检测，无需手动确认。" : "重新打开宿主或新开会话即可；检测到所有连接都是变化之后建立的，视为已重新加载并自动消除提示（只重连 MCP、继续原聊天时，该聊天里的 Skill 简介可能仍是旧的）。Skill 只改正文时不需要重新加载。无法自动检测时，可在操作后手动确认。")),
       !tools && button("我已重新加载", "", "confirm-reload", () =>
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),

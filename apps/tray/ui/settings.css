@@ -88,6 +88,21 @@
 .default-radio-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; margin-left: 6px; cursor: pointer; }
 .default-radio-wrap input[type="radio"] { width: 14px; height: 14px; accent-color: var(--accent); margin: 0; }
 .default-radio-wrap.active { color: var(--accent); font-weight: 550; }
+/* Allowed effort range with the default effort knob; a common start column aligns a card's bars. */
+.model-controls > :first-child { min-width: 200px; }
+.effort-bar { display: inline-flex; align-items: center; gap: 10px; margin-left: 4px; }
+.effort-track { position: relative; width: 150px; height: 18px; margin: 0 7px; cursor: pointer; touch-action: none; }
+.effort-track::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 35%, transparent); }
+.effort-fill { position: absolute; top: 7px; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.effort-tick { position: absolute; top: 7px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--muted); }
+.effort-tick.on { background: var(--accent); }
+.effort-track .effort-handle { position: absolute; top: 3px; width: 6px; height: 12px; min-height: 0; margin-left: -3px; padding: 0; border: 0; border-radius: 3px; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); cursor: ew-resize; }
+.effort-track .effort-def { top: 2px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; border: 2px solid var(--accent); background: var(--bg); z-index: 1; }
+.effort-track .effort-def::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--accent); }
+.effort-track .effort-def.preset { border-style: dashed; }
+.effort-track .effort-def.preset::after { display: none; }
+.effort-track .effort-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.effort-text { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 .model-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .btn-detail { padding: 4px 10px; font-size: 12px; border-radius: 6px; color: var(--soft); }
 .btn-detail.active { background: var(--hover); color: var(--ink); border-color: var(--muted); }

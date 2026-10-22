@@ -70,7 +70,6 @@
           <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">会议</button>
         </div>
       </div>
-      <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务">重新检测工具</button>
     </div>
     <p id="mode-description" class="guidance">私聊：boss 把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。</p>
     <div class="mode-restrict-wrap setting-row">
@@ -95,6 +94,7 @@
           <span id="save-feedback" class="save-feedback"></span>
         </div>
         <div class="save-bar-actions">
+          <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务。回到设置页时也会自动检测">刷新模型列表</button>
           <button id="save-btn" class="primary" type="button" disabled>保存设置</button>
         </div>
       </div>
@@ -115,7 +115,7 @@
           <div class="banner-content">
             <strong>是否需要重新加载，请看各宿主的实际连接状态</strong>
             <p>界面更新无需重启宿主。服务内部更新会在空闲时自动切换；工具接口变化时，支持刷新的宿主会自动获取新版。仍未同步时才需要重连，必要时重启宿主。</p>
-            <p><a href="#host-cards">查看下方各应用的检测结果</a>；旧中继或 Skill 加载等无法检测的情况会单独说明。</p>
+            <p><a href="#host-cards">查看下方各应用的检测结果</a>；Skill 只改正文时无需重新加载，重新打开宿主后提示会自动消除，旧中继等无法检测的情况会单独说明。</p>
           </div>
         </div>
         <div class="status-grid">
