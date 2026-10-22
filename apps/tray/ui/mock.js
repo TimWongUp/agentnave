@@ -180,18 +180,27 @@ All checks passed!
     const pm = spec("claude", "opus-5", {
       role: "产品经理", start: -600, end: -300, out: "用户可见的变化只有一点：长任务期间不会再被意外打断。文案里不需要出现“换进程”。",
     });
+    // A DeepSeek desk that finished a private task walks over to the meeting, then back.
+    const ds = spec("deepseek", "deepseek-v4", { role: "资料员", access: "read", start: -900, end: -820, out: "已整理 relay 相关的三次历史改动，清单如下。" });
+    const dsSeat = spec("deepseek", "deepseek-v4", {
+      role: "资料员", access: "read", start: 8, end: 30, pace: 3,
+      base: ["翻出上次换进程失败的日志", "核对补丁是否覆盖那次的场景"],
+      filler: (k) => `补充第 ${k - 1} 条记录…`,
+      out: "上次失败的场景补丁已经覆盖，日志对得上。",
+    });
     const room2 = {
       id: "20261018-0905-c5d6e7", title: "relay 修复方案讨论", mode: "show",
-      topics: [{ at: -620, text: "实现者给出了 relay 补丁。请各自从自己的角色出发评价这个方案，指出风险。", to: keysOf([pm]) }, { at: -30, text: "请审查员与评审员继续看补丁，其余人补充。", to: keysOf([reviewer, grokSeat, gemSeat]) }],
+      topics: [{ at: -620, text: "实现者给出了 relay 补丁。请各自从自己的角色出发评价这个方案，指出风险。", to: keysOf([pm]) }, { at: -30, text: "请审查员与评审员继续看补丁，其余人补充。", to: keysOf([reviewer, grokSeat, gemSeat]) }, { at: 8, text: "请资料员核对历史记录。", to: keysOf([dsSeat]) }],
       forwards: [{ at: -400, text: "（转发的评审结论）三点建议：安装文档补上升级后需重启宿主一次的说明；Release 说明把托盘与服务端改动分开写；更新包签名密钥说明放进内部文档而不是公开 README。", source: gem.deskLabel, from: room1, spec: gem }],
-      specs: [reviewer, grokSeat, gemSeat, pm],
+      specs: [reviewer, grokSeat, gemSeat, pm, dsSeat],
     };
     const c1 = { id: "20261017-0912-a1b2c3", title: "relay 空闲换进程：保留活跃子进程树", mode: "task", specs: [codex] };
     const c4 = { id: "20261017-0915-b2c3d4", title: "审查 relay 换进程流程", mode: "task", specs: [grok] };
     const c3 = { id: "20261017-0958-c3d4e5", title: "补 relay 文档", mode: "task", specs: [buddy] };
+    const c5 = { id: "20261017-0930-d4e5f6", title: "整理 relay 历史改动", mode: "task", specs: [ds] };
     return {
       group: "3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", host: "claude", color: 0, live: true,
-      convs: [room1, c1, c4, room2, c3],
+      convs: [room1, c1, c4, room2, c3, c5],
     };
   }
 
