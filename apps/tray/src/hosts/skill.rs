@@ -39,6 +39,22 @@ fn files(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) -> Result<
     }
     Ok(())
 }
+/// SKILL.md's front matter, the part hosts load when a session starts; a file without one
+/// counts whole.
+pub(super) fn front_matter(text: &str) -> &str {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return text;
+    };
+    let end = rest
+        .match_indices("\n---")
+        .map(|(index, _)| index)
+        .find(|index| matches!(rest[index + 4..].chars().next(), None | Some('\n' | '\r')));
+    end.map_or(text, |end| &rest[..end])
+}
 pub(super) fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut found = BTreeMap::new();
     files(path, path, &mut found)?;

@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Format of the stored reload records; older records hashed whole Skill trees.
+const RELOAD_FORMAT: u64 = 3;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
@@ -646,24 +648,42 @@ impl Hosts {
             &serde_json::to_vec(&json!({"entries":entries,"skill":contents})).ok()?,
         ))
     }
+    /// What a host loads from the Skill when a session starts: the SKILL.md front matter. The
+    /// body and references are read on use, so changing only them needs no reload.
     fn skill_contents(&self, host: &Host) -> Option<Value> {
         let Some(path) = &host.skill else {
             return Some(Value::Null);
         };
         safe_path(path, &self.context.home).ok()?;
-        if !path.exists() {
+        let file = path.join("SKILL.md");
+        if !path.exists() || !file.exists() {
             return Some(Value::Null);
         }
-        serde_json::to_value(skill::fingerprint(path).ok()?).ok()
+        if file.is_symlink() || !file.is_file() {
+            return None;
+        }
+        let text = fs::read_to_string(file).ok()?;
+        Some(json!(skill::hash(skill::front_matter(&text).as_bytes())))
     }
     fn reload_state(&self, host: &Host, token: &str) -> Value {
-        let confirmed = &self.settings[host.id]["reload_confirmed"];
-        let changed = &self.settings[host.id]["reload_changed"];
-        let manual = confirmed["v"] == 2 && confirmed["token"] == token;
-        let observed = &self.settings[host.id]["reload_observed"];
+        // Records from before the front-matter-only token (v3) describe another token format.
+        let record = |name: &str| {
+            let value = &self.settings[host.id][name];
+            if value["v"] == RELOAD_FORMAT {
+                value
+            } else {
+                &Value::Null
+            }
+        };
+        let (confirmed, changed, observed) = (
+            record("reload_confirmed"),
+            record("reload_changed"),
+            record("reload_observed"),
+        );
+        let manual = confirmed["token"] == token;
         let pending = !manual
             && ((changed["token"] == token)
-                || (confirmed["v"] == 2 && confirmed["token"] != token)
+                || (confirmed["token"].is_string() && confirmed["token"] != token)
                 || (observed["token"].is_string() && observed["token"] != token));
         let root = self.connection_root(host);
         let now = SystemTime::now();
@@ -725,7 +745,9 @@ impl Hosts {
                             .iter()
                             .all(|c| c["started_ms"].as_u64().is_some_and(|start| start > at))
                     });
-                if !pending || (newly_connected && changed["skill"] == false) {
+                // Every live connection started after the change, so its host session has loaded
+                // the current configuration and Skill front matter.
+                if !pending || newly_connected {
                     state = if installed.is_none() {
                         "unknown"
                     } else if connections
@@ -755,38 +777,21 @@ impl Hosts {
         (root.is_absolute() && !root.is_symlink() && !root.join("connections").is_symlink())
             .then_some(root)
     }
-    fn note_reload_change(
-        &self,
-        host: &Host,
-        before: &Value,
-        before_skill: &Option<Value>,
-        settings: &mut Value,
-    ) {
+    fn note_reload_change(&self, host: &Host, before: &Value, settings: &mut Value) {
         let current = self.reload_token(host, &Value::Null);
         if let Some(token) = current {
-            let observed = self.settings[host.id]["reload_observed"].clone();
-            let contents = self.skill_contents(host);
-            let changed = if observed["token"].is_string() {
+            let observed = &self.settings[host.id]["reload_observed"];
+            let changed = if observed["v"] == RELOAD_FORMAT && observed["token"].is_string() {
                 observed["token"] != token
             } else {
                 *before != token
             };
-            let previous = &self.settings[host.id]["reload_changed"];
-            let confirmed = &self.settings[host.id]["reload_confirmed"];
-            let pending_skill = previous["skill"] == true
-                && !(confirmed["v"] == 2 && confirmed["token"] == previous["token"]);
-            let skill_changed = pending_skill
-                || if observed["token"].is_string() {
-                    observed["skill"] != json!(contents)
-                } else {
-                    *before_skill != contents
-                };
             if !settings[host.id].is_object() {
                 settings[host.id] = json!({});
             }
-            settings[host.id]["reload_observed"] = json!({"token":token,"skill":contents});
+            settings[host.id]["reload_observed"] = json!({"v":RELOAD_FORMAT,"token":token});
             if changed {
-                settings[host.id]["reload_changed"] = json!({"token":token,"at_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,"skill":skill_changed});
+                settings[host.id]["reload_changed"] = json!({"v":RELOAD_FORMAT,"token":token,"at_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64});
             }
         }
     }
@@ -837,7 +842,6 @@ impl Hosts {
         let mut settings = self.settings.clone();
         for host in self.registry() {
             let state = self.state(&host);
-            let before_skill = self.skill_contents(&host);
             if state["status"] != "absent" && settings[host.id].get("first_seen").is_none() {
                 if !settings[host.id].is_object() {
                     settings[host.id] = json!({});
@@ -943,12 +947,7 @@ impl Hosts {
                     self.record(host.id, Err(error), "");
                 }
             }
-            self.note_reload_change(
-                &host,
-                &state["reload"]["token"],
-                &before_skill,
-                &mut settings,
-            );
+            self.note_reload_change(&host, &state["reload"]["token"], &mut settings);
         }
         if settings != self.settings && self.settings_error.is_none() {
             match roots::save(&self.context, &settings) {
@@ -999,7 +998,7 @@ impl Hosts {
             self.record(id, Ok(()), "已更新配置根目录");
             let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
             let mut settings = self.settings.clone();
-            self.note_reload_change(&host, &Value::Null, &None, &mut settings);
+            self.note_reload_change(&host, &Value::Null, &mut settings);
             if settings != self.settings {
                 roots::save(&self.context, &settings)?;
                 self.settings = settings;
@@ -1026,7 +1025,8 @@ impl Hosts {
             if !settings[id].is_object() {
                 settings[id] = json!({});
             }
-            settings[id]["reload_confirmed"] = json!({"v":2,"token":token,"at":timestamp()});
+            settings[id]["reload_confirmed"] =
+                json!({"v":RELOAD_FORMAT,"token":token,"at":timestamp()});
             roots::save(&self.context, &settings)?;
             self.settings = settings;
             self.cached = self.snapshot();
@@ -1038,7 +1038,6 @@ impl Hosts {
             return Err("未知宿主操作".into());
         }
         let before_reload = self.state(&host)["reload"]["token"].clone();
-        let before_skill = self.skill_contents(&host);
         let result: Result<String, String> = (|| {
             if operation == "remove" {
                 // Preflight all layers; each subsequent replacement is independently checked.
@@ -1129,7 +1128,7 @@ impl Hosts {
         let ok = result.is_ok();
         if operation == "connect" {
             let mut settings = self.settings.clone();
-            self.note_reload_change(&host, &before_reload, &before_skill, &mut settings);
+            self.note_reload_change(&host, &before_reload, &mut settings);
             if settings != self.settings && self.settings_error.is_none() {
                 roots::save(&self.context, &settings)?;
                 self.settings = settings;
@@ -1234,7 +1233,7 @@ fn trust_hint(id: &str) -> &'static str {
     }
 }
 fn activation_hint(id: &str) -> String {
-    format!("接入配置或 Skill 内容变更时，{}", reload_hint(id))
+    format!("接入配置或 Skill 简介变更时，{}", reload_hint(id))
 }
 fn reload_hint(id: &str) -> &'static str {
     match id {

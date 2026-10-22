@@ -618,7 +618,7 @@ All checks passed!
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
-      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入配置或 Skill 内容变更时，${reload}`, attention: null, last_action: null,
+      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入配置或 Skill 简介变更时，${reload}`, attention: null, last_action: null,
       skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null } };
   });
   if (hostScene === "typical") {

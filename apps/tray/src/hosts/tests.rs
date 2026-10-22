@@ -662,7 +662,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
 }
 
 #[test]
-fn connection_receipts_confirm_interfaces_without_hiding_stale_peers_or_skill_changes() {
+fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stale_peers() {
     let (_temp, mut hosts) = fixture();
     let h = host(&hosts, "codex");
     executable_file(
@@ -676,12 +676,8 @@ fn connection_receipts_confirm_interfaces_without_hiding_stale_peers_or_skill_ch
         .unwrap();
     let mut receipt = json!({"version":1,"host":"codex","started_ms":since+1,"runtime_version":"0.22.0","runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64)});
     save(&dir.join("new.json"), &receipt.to_string());
-    // Installing a Skill for the first time cannot be proven by a tools/list receipt.
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
-    let token = hosts.state(&h)["reload"]["token"].clone();
-    hosts
-        .action("confirm-reload", &json!({"id":"codex","token":token}))
-        .unwrap();
+    // A session started after the Skill was installed has loaded it.
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
     let before = h.read().unwrap();
     let mut entry = before.entry.clone().unwrap();
     entry["args"] = json!(["first-config-change"]);
@@ -712,19 +708,26 @@ fn connection_receipts_confirm_interfaces_without_hiding_stale_peers_or_skill_ch
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
 
-    // Actual Skill content changes remain separate from MCP interface delivery.
-    save(
-        &h.skill.as_ref().unwrap().join("SKILL.md"),
-        "changed instructions",
-    );
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    // Hosts read the Skill body and references on use; only the front matter needs a reload.
+    let skill = h.skill.as_ref().unwrap().join("SKILL.md");
+    let text = fs::read_to_string(&skill).unwrap();
+    save(&skill, &format!("{text}\nchanged instructions\n"));
     hosts.refresh_probed();
-    // A later config-only change must not erase an unconfirmed Skill change.
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    save(
+        &skill,
+        &text.replacen("description:", "description: changed", 1),
+    );
+    hosts.refresh_probed();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    // The session from before the change still counts as stale after a config change; a new
+    // one started after both clears the reload without a manual confirmation.
     let before = h.read().unwrap();
     let mut entry = before.entry.clone().unwrap();
     entry["args"] = json!(["changed"]);
     hosts.write(&h, &before, Some(&entry)).unwrap();
     hosts.refresh_probed();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
     receipt["started_ms"] = json!(
         hosts.settings["codex"]["reload_changed"]["at_ms"]
             .as_u64()
@@ -732,7 +735,7 @@ fn connection_receipts_confirm_interfaces_without_hiding_stale_peers_or_skill_ch
             + 1
     );
     save(&dir.join("new.json"), &receipt.to_string());
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
     let token = hosts.state(&h)["reload"]["token"].clone();
     hosts
         .action("confirm-reload", &json!({"id":"codex","token":token}))
@@ -752,8 +755,12 @@ fn connection_receipts_confirm_interfaces_without_hiding_stale_peers_or_skill_ch
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
     fs::write(dir.join("new.json"), "invalid").unwrap();
-    hosts.settings["codex"] =
-        json!({"reload_confirmed":{"token":"legacy-version-fingerprint","at":"old"}});
+    // Records from older token formats, including a pending Skill change, are ignored.
+    hosts.settings["codex"] = json!({
+        "reload_confirmed":{"token":"legacy-version-fingerprint","at":"old"},
+        "reload_observed":{"token":"whole-skill-tree","skill":{}},
+        "reload_changed":{"v":2,"token":"whole-skill-tree","at_ms":0,"skill":true},
+    });
     assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
