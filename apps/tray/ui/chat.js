@@ -499,8 +499,7 @@ function updateBoss(rec, c, n) {
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }
 
-// ---------------------------------------------------------------- boss to-do
-// Beside the boss whenever the boss would otherwise fill a whole row: what waits on the boss now.
+// ---------------------------------------------------------------- beside the boss
 // Recent chats (running first) and meetings (in session first) beside the boss.
 function sideItems(c, ctx) {
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
@@ -735,29 +734,27 @@ function updateRoom(rec, r, ctx) {
     "aria-label",
     `会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条${r.pending_review ? `，${r.pending_review} 条待审` : ""}，查看会议`,
   );
-  {
-    const nodes = [];
-    for (const seat of r.seats) {
-      const s = seatRec(`${r.id}|${seat.seat}`);
-      const d = ctx.desks.get(seat.desk);
-      const m = seatMood(r, seat, d);
-      s.el.dataset.mood = m.mood;
-      s.el.dataset.key = `${r.id}|${seat.seat}`;
-      setClass(s.el, `seat${d ? "" : " empty"}`);
-      dress(s, d ? deskChar(d) : "default", s.el, s.plate);
-      setSay(s.say, m.say);
-      const name = d ? deskName(d) : seat.seat;
-      // model name and role only; the CLI is in the tooltip
-      const tag = d ? d.role || "" : "缺席";
-      setText(s.nm, name);
-      setText(s.plate, tag);
-      s.plate.hidden = !tag;
-      setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
-      setAttr(s.el, "title", d ? handleOf(d) : `席位 ${seat.seat}`);
-      nodes.push(s.el);
-    }
-    reconcile(rec.scene, nodes);
+  const nodes = [];
+  for (const seat of r.seats) {
+    const s = seatRec(`${r.id}|${seat.seat}`);
+    const d = ctx.desks.get(seat.desk);
+    const m = seatMood(r, seat, d);
+    s.el.dataset.mood = m.mood;
+    s.el.dataset.key = `${r.id}|${seat.seat}`;
+    setClass(s.el, `seat${d ? "" : " empty"}`);
+    dress(s, d ? deskChar(d) : "default", s.el, s.plate);
+    setSay(s.say, m.say);
+    const name = d ? deskName(d) : seat.seat;
+    // model name and role only; the CLI is in the tooltip
+    const tag = d ? d.role || "" : "缺席";
+    setText(s.nm, name);
+    setText(s.plate, tag);
+    s.plate.hidden = !tag;
+    setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
+    setAttr(s.el, "title", d ? handleOf(d) : `席位 ${seat.seat}`);
+    nodes.push(s.el);
   }
+  reconcile(rec.scene, nodes);
 }
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
 function layoutRooms() {
