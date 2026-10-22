@@ -745,8 +745,9 @@ impl Hosts {
                             .iter()
                             .all(|c| c["started_ms"].as_u64().is_some_and(|start| start > at))
                     });
-                // Every live connection started after the change, so its host session has loaded
-                // the current configuration and Skill front matter.
+                // Every live connection started after the change. Taken as a reload: a new relay
+                // usually means a restarted host or new session, though a bare MCP reconnect in an
+                // old chat keeps that chat's earlier Skill front matter (ADR-0022).
                 if !pending || newly_connected {
                     state = if installed.is_none() {
                         "unknown"
