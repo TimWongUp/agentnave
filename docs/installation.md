@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.33.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.34.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.33.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.34.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -569,6 +569,19 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.33.0 to v0.34.0
+
+`start_agent` no longer continues a desk's most recent private thread by default: every call
+starts a new native thread unless it passes `session_id`, or `continue_desk=true` to continue that
+desk's latest thread in the same `cwd` (see ADR-0023). `new_thread` is removed; callers that still
+pass `new_thread=true` keep getting a new thread. Callers that relied on the old implicit
+continuation must add `continue_desk=true`. Codex accepts a `sandbox` option, and Claude Code or
+CodeBuddy runs the CLI reports as successful stay `succeeded` even when a tool call was denied.
+
+Update the runtime and complete Skill together, then reconnect MCP on every host so the new
+`start_agent` schema and Skill description load. Saved history and member configuration are
+unchanged.
 
 ### Upgrading from v0.21.0 to v0.22.0
 
