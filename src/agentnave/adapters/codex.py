@@ -80,7 +80,9 @@ class CodexAdapter:
         "effort",
         "skip_git_repo_check",
         "dangerously_bypass_approvals_and_sandbox",
+        "sandbox",
     }
+    _sandboxes = ("read-only", "workspace-write", "danger-full-access")
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         unknown = sorted(set(request.provider_options) - self._options)
@@ -93,6 +95,11 @@ class CodexAdapter:
                 argv.extend(("--model", str(value)))
             elif key == "effort":
                 argv.extend(("--config", f"model_reasoning_effort={value}"))
+            elif key == "sandbox":
+                if value not in self._sandboxes:
+                    raise ValueError("codex sandbox must be one of: " + ", ".join(self._sandboxes))
+                # `exec resume` has no --sandbox flag; the config key works for both.
+                argv.extend(("--config", f'sandbox_mode="{value}"'))
             elif not isinstance(value, bool):
                 raise ValueError(f"codex option {key} must be a boolean")
             elif value:

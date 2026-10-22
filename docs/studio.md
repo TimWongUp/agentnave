@@ -6,7 +6,7 @@
 
 | 工具 | 说明 |
 | --- | --- |
-| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | `start_agent` 另接受 `title`、`conversation_id`、`role`、`access`、`new_thread` 与 `forward`，任务自动保存为私有任务会话，不传 `session_id` 时默认续接同工位最近私聊线程，模型按套用 App 默认值后的参数记录；`describe_provider` 另返回按当前 discussion CLI 名单计算的 `show_permitted` |
+| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | `start_agent` 另接受 `title`、`conversation_id`、`role`、`access`、`continue_desk` 与 `forward`，任务自动保存为私有任务会话，默认开新线程，`continue_desk=true` 时续接同工位同 cwd 的最近私聊线程，模型按套用 App 默认值后的参数记录；`describe_provider` 另返回按当前 discussion CLI 名单计算的 `show_permitted` |
 | `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态 |
 | `open_group` | 创建保存的节目：`title`、2–7 个席位、`cwd`，可选 `review`、`isolated`；返回的 `group_id` 就是会话 ID |
 | `run_round`、`wait_round`、`cancel_round` | 并联／串联轮次，`run_round` 可用 `forward` 把已完成消息转入会议室；审核节目中 `wait_round` 返回 `review_needed`，席位状态出现 `pending_review`、`discarded` |

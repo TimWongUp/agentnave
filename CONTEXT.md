@@ -40,7 +40,7 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 私聊
 
-工位与 boss 的一对一调用，即单任务 `start_agent`。工位历史按 Provider 原生 session 分线程；私聊线程与会议席位线程相互独立。不传 `session_id` 时默认续接该工位最近的私聊线程。私聊默认不带任何工作区上下文。
+工位与 boss 的一对一调用，即单任务 `start_agent`。工位历史按 Provider 原生 session 分线程；私聊线程与会议席位线程相互独立。每次私聊默认开新线程；传 `continue_desk=true` 时续接该工位在同一 cwd 下最近的私聊线程。私聊默认不带任何工作区上下文。
 
 ## 转发（Forward）
 
@@ -56,7 +56,7 @@ boss 按消息 ID 把本工作区内已完成的消息传给目标工位或会�
 
 ## Provider Session
 
-Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` 传给新的 Invocation，以继续同一 Provider 对话；私聊省略它时，默认由 AgentNave 续接该工位最近的私聊线程。它不是 AgentNave 的持久会话，也不出现在 App 视图中。
+Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` 传给新的 Invocation，以继续同一 Provider 对话；私聊省略它并传 `continue_desk=true` 时，由 AgentNave 续接该工位在同一 cwd 下最近的私聊线程。它不是 AgentNave 的持久会话，也不出现在 App 视图中。
 
 ## Invocation Result
 

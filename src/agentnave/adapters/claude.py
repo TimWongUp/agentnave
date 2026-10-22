@@ -194,8 +194,7 @@ class ClaudeAdapter:
                             public_output=brief(block.get("text"), 1000),
                         )
         if event_type == "result":
-            denied = event.get("permission_denials")
-            blocked = isinstance(denied, list) and len(cast(list[object], denied)) > 0
+            # Denied tool calls were already reported as they happened; only a failed run blocks.
             failed = event.get("is_error") is True or (
                 isinstance(event.get("subtype"), str) and str(event["subtype"]).startswith("error")
             )
@@ -203,11 +202,7 @@ class ClaudeAdapter:
                 "lifecycle",
                 "result",
                 brief(event.get("subtype")),
-                blocking_error="permission_denied"
-                if blocked
-                else "provider_failed"
-                if failed
-                else None,
+                blocking_error="provider_failed" if failed else None,
             )
         return None
 
@@ -252,13 +247,9 @@ class ClaudeAdapter:
             has_permission_denials = len(cast(list[object], permission_denials)) > 0
         structured_error = isinstance(subtype, str) and subtype.startswith("error")
         refused = isinstance(stop_reason, str) and stop_reason.lower() == "refusal"
-        if (
-            returncode == 0
-            and not is_error
-            and not structured_error
-            and not has_permission_denials
-            and not refused
-        ):
+        # A run the CLI reports as successful stays successful even if some tool calls were
+        # denied on the way: the model may have finished the task another way.
+        if returncode == 0 and not is_error and not structured_error and not refused:
             return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id, usage)
 
         if refused:

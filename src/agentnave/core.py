@@ -525,11 +525,13 @@ class InvocationManager:
                 parse_returncode = process.returncode if process.returncode is not None else 1
             parsed = adapter.parse(parse_returncode, stdout.data, stderr.data)
 
+            # Without a final answer, an interrupted run keeps the reply text seen so far.
+            partial = parsed.output or record.output_tail
             if terminal is not None:
                 return InvocationResult(
                     terminal,
                     record.request.provider,
-                    parsed.output,
+                    partial,
                     parsed.session_id or record.request.session_id,
                     parsed.usage,
                     _duration_ms(started),
@@ -545,7 +547,7 @@ class InvocationManager:
             return InvocationResult(
                 parsed.status,
                 record.request.provider,
-                parsed.output,
+                parsed.output if parsed.status is InvocationStatus.SUCCEEDED else partial,
                 parsed.session_id,
                 parsed.usage,
                 _duration_ms(started),

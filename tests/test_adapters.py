@@ -235,20 +235,23 @@ def test_codebuddy_adapter_parses_documented_result_contract() -> None:
     assert result.usage == {"num_turns": 3, "total_cost_usd": 0.03}
 
 
-def test_codebuddy_permission_denials_are_blocked() -> None:
+def test_codebuddy_permission_denials_block_only_a_failed_run() -> None:
     payload = {
         "type": "result",
         "subtype": "success",
-        "result": "partial",
+        "result": "done another way",
         "session_id": "session-5",
         "is_error": False,
         "permission_denials": [{"tool": "Bash"}],
     }
 
-    result = CodeBuddyAdapter().parse(0, json.dumps(payload).encode(), b"")
+    succeeded = CodeBuddyAdapter().parse(0, json.dumps(payload).encode(), b"")
+    failed = CodeBuddyAdapter().parse(1, json.dumps({**payload, "is_error": True}).encode(), b"")
 
-    assert result.status is InvocationStatus.BLOCKED
-    assert result.error_message == "codebuddy requires permission for one or more tool calls"
+    assert succeeded.status is InvocationStatus.SUCCEEDED
+    assert succeeded.output == "done another way"
+    assert failed.status is InvocationStatus.BLOCKED
+    assert failed.error_message == "codebuddy requires permission for one or more tool calls"
 
 
 def test_codebuddy_authentication_failure_is_blocked() -> None:
@@ -276,6 +279,7 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
             provider_options={
                 "model": "gpt-5.6-sol",
                 "effort": "high",
+                "sandbox": "workspace-write",
                 "skip_git_repo_check": True,
             },
         )
@@ -290,6 +294,8 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
         "gpt-5.6-sol",
         "--config",
         "model_reasoning_effort=high",
+        "--config",
+        'sandbox_mode="workspace-write"',
         "--skip-git-repo-check",
         "0199a213-81c0-7800-8aa1-bbab2a035a53",
         "-",
@@ -653,19 +659,24 @@ def test_adapters_drop_malformed_usage_without_losing_terminal_result(
     assert result.usage == {}
 
 
-def test_claude_permission_denials_are_blocked() -> None:
+def test_claude_permission_denials_block_only_a_failed_run() -> None:
+    # Claude 2.1.308 reports subtype=success when the model finishes after a denied tool call.
     payload = {
         "type": "result",
-        "result": "partial",
+        "subtype": "success",
+        "result": "FINISHED",
         "session_id": "session-2",
         "is_error": False,
         "permission_denials": [{"tool": "Bash"}],
     }
 
-    result = ClaudeAdapter().parse(0, json.dumps(payload).encode(), b"")
+    succeeded = ClaudeAdapter().parse(0, json.dumps(payload).encode(), b"")
+    failed = ClaudeAdapter().parse(1, json.dumps({**payload, "is_error": True}).encode(), b"")
 
-    assert result.status is InvocationStatus.BLOCKED
-    assert result.output == "partial"
+    assert succeeded.status is InvocationStatus.SUCCEEDED
+    assert succeeded.output == "FINISHED"
+    assert failed.status is InvocationStatus.BLOCKED
+    assert failed.output == "FINISHED"
 
 
 def test_claude_structured_error_preserves_usage_and_message() -> None:
@@ -1173,8 +1184,11 @@ def test_adapter_rejects_implicit_or_unknown_provider_overrides(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="unsupported codex options"):
         CodexAdapter().prepare(
-            request(tmp_path, "codex", provider_options={"sandbox": "danger-full-access"})
+            request(tmp_path, "codex", provider_options={"approval_policy": "never"})
         )
+
+    with pytest.raises(ValueError, match="codex sandbox must be one of"):
+        CodexAdapter().prepare(request(tmp_path, "codex", provider_options={"sandbox": "full"}))
 
 
 @pytest.mark.parametrize(

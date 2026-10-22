@@ -42,7 +42,7 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
 
-私聊默认续接（[ADR-0018](../adr/0018-office-workspace-desks-and-meeting-rooms.md)）：`start_agent` 未传 `session_id` 与 `conversation_id` 且 boss 聊天身份已知时，续接同一工作区内同工位 `(provider, 请求的 model, role)` 最近一次有原生 session 的私聊线程，回执 `resumed` 标明是否发生；该线程仍在运行时拒绝并提示 `new_thread=true`；`new_thread=true` 开新线程且不能与 `session_id`、`conversation_id` 同用；身份未知时无法限定工作区，不自动续接。显式 `session_id` 语义不变。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只改变工位身份，不进入 prompt 或 Provider 参数。可选 `access`（`read`／`write`）是工位的访问等级声明：同一工作区内以该工位第一次声明（任务或席位）为准，省略即继承，不同声明被拒绝；自动续接只接与生效等级相同的线程，声明前的未声明线程不被已声明工位续接；显式 `session_id` 续接本工作区已记录的线程时，其最近记录的等级（含未声明）也须一致，未记录过的原生线程不受此限。声明保存在任务与席位记录、返回在回执并投影到工位，不改变 Provider 参数，不由服务推断；boss 身份未知时只记录不比对。
+私聊续接（[ADR-0023](../adr/0023-explicit-desk-continuation.md)）：`start_agent` 默认开新线程。显式 `continue_desk=true` 时，续接同一工作区内同工位 `(provider, 请求的 model, role)`、同一 cwd 下最近一次有原生 session 的私聊线程，回执 `resumed` 标明是否找到（没找到即开新线程）；该线程仍在运行时拒绝；`continue_desk` 不能与 `session_id`、`conversation_id` 同用，boss 聊天身份未知时拒绝。显式 `session_id` 语义不变。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只改变工位身份，不进入 prompt 或 Provider 参数。可选 `access`（`read`／`write`）是工位的访问等级声明：同一工作区内以该工位第一次声明（任务或席位）为准，省略即继承，不同声明被拒绝；`continue_desk` 只接与生效等级相同的线程，声明前的未声明线程不被已声明工位续接；显式 `session_id` 续接本工作区已记录的线程时，其最近记录的等级（含未声明）也须一致，未记录过的原生线程不受此限。声明保存在任务与席位记录、返回在回执并投影到工位，不改变 Provider 参数，不由服务推断；boss 身份未知时只记录不比对。
 
 转发：`start_agent` 与 `run_round` 的 `forward` 按序引用消息 ID，只用于本工作区、已完成的消息：成功的私聊任务终态，以及节目中已提交的 `answer`、`host`、`task`、`forward` 条目。运行中、失败或受阻的任务，待审、被丢弃的回答，`absent` 条目，另一工作区或身份未知的引用，重复引用与超过 20 条均整批拒绝，不部分注入。消息 ID 为不透明的稳定标识，来源于会话 ID 与任务或条目序号，由 `wait_agent`、`wait_any` 的终态、`run_round` 等回执的 `entries`、`decide_answers` 与 `post_host_message` 返回，跨重启不变。私聊中被转发内容前置于 prompt 并声明为数据，会话历史仍只存 boss 原文；会议室中在本轮任务之前提交为独立的 `forward` 条目，注明来源，随条目规则送达席位，不冒充主持人发言。声明只降低误导概率，不是安全边界。
 
@@ -54,15 +54,15 @@ MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manage
 
 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，未知值使启动失败；否则 macOS／Linux 复用嵌套检测的平台读取能力，沿祖先进程最多检查 32 层，匹配可执行文件名、应用包路径或原生 Claude 的 `claude/versions/<版本号>` 路径；已知解释器／包装层（node、bun、deno、python／python3／python3.x、uv、uvx、npx、env、sh、bash、zsh、fish、dash）还按第一个非选项参数识别脚本，去掉 .js／.mjs／.cjs／.py 后缀后匹配。AgentNave 自身的 Python 中继脚本跳过；某层 argv 不可读时继续读父进程，父进程不可读或遇到未匹配宿主的非包装进程则停止，避免误认更外层 GUI。Windows 只读取环境变量。无法识别则 `host=null`、`host_source=unknown`；来源另可为 `env` 或 `parent`。WorkBuddy 映射 codebuddy，gemini／opencode／hermes 无对应 Provider，其余同名。排除集合为宿主 Provider 与 `AGENTNAVE_EXCLUDED_PROVIDERS` 的并集；旧环境变量的校验与行为保留。MCP instructions 按此并集公开允许项与排除项，只约束单任务 task，不作用于 discussion 的协作组；组员配置的 discussion 限制仍生效。允许项不代表已安装或认证。与宿主同类的 CLI 进入会议只为方便参与讨论；需要同类 CLI 执行任务时，boss 优先使用宿主自带的子代理能力，而不是通过 AgentNave 私聊，App 对这类工位标为「仅会议」。
 
-Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。
+Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。Codex 的 `sandbox`（`read-only`／`workspace-write`／`danger-full-access`）以 `--config sandbox_mode=…` 传入，因为 `exec resume` 不接受 `--sandbox`；它是权限类参数。
 
 Adapter 每次准备命令时解析 Provider 可执行文件，加装或卸载 CLI 下次调用即生效：先查当前 PATH，再依次查 `~/.local/bin`、`~/.grok/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.bun/bin`、`~/.npm-global/bin`、`~/.volta/bin`、`~/.cargo/bin`，argv[0] 使用解析出的绝对路径；都找不到时保留裸命令名，启动失败仍以 `launch_error` 报告未找到。macOS 的 Codex 在此之前优先选择桌面应用附带的可执行 CLI：先 ChatGPT，再 Codex，每种应用先查系统 Applications，再查用户 Applications。启动与续接使用同一选择规则；AgentNave 不比较版本、不负责安装升级，也不在选中的 CLI 启动失败后改用另一版本。Windows 保持由 supervisor 在 PATH 中解析裸命令名。
 
 macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环境中补齐 PATH：依次为可执行文件所在目录、继承的 PATH、上述存在的常见目录（去重），不覆盖宿主选择的工具链，使 `#!/usr/bin/env node` 类 CLI 在宿主给的精简 PATH 下也能运行；服务自身环境不变。
 
-内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
+内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result；取消、失败或超限而没有最终回答时，`output` 保留运行中最后的公开回复尾部（最多 1000 字符），不代表完成。CLI 报告成功的运行保持 `succeeded`：Claude／CodeBuddy 途中被拒的工具调用只在运行中作为阻塞提醒，不改写成功终态。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
-STDIO MCP 是任务与协作的唯一控制接口，基础工具为 `describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent` 和只读的 `list_invocations`、`list_members`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。全部 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 完成：显式 `session_id` 或上述默认续接。
+STDIO MCP 是任务与协作的唯一控制接口，基础工具为 `describe_provider`、`start_agent`、`wait_agent`、`wait_any`、`cancel_agent` 和只读的 `list_invocations`、`list_members`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。全部 Tool 都发布输入与输出 JSON Schema；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 完成：显式 `session_id` 或上述 `continue_desk=true`。
 
 启动回复另含 provider、model、effort、`defaults_applied` 与 `resumed`，不重复 prompt。model 与 effort 回显套用默认值后的请求值，仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。`open_group` 每席另返回 model、effort（未传且无默认时为 null）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
 
@@ -76,7 +76,7 @@ AgentNave 不提供总运行时限；`start_agent` 不接受截止时间参数�
 
 运行中回复同时提供最新原生活动与最多 1000 字符的公开回复尾部及其年龄。正文独立保留，不因后续工具事件消失；相同正文可能在不同等待中重复，无游标、分页或独立读取工具。只增加有界进程内尾部，不长期保存运行中的输出尾部。活动不返回原始事件名、工具调用 ID、工具参数/结果或推理正文；公开正文可能含任务数据，不提供自动脱敏保证。终态 `output` 保全最终回答，不应用中间正文长度限制；每次调用的保留 stdout 上限为 1 MiB（含必要协议数据），stderr 为 64 KiB，按字节计；采用事件过滤的 Provider 另沿用每条 8 MiB 的解析缓冲上限，工具／图片事件过滤后不累积保存，不占回复预算。超限返回 `output_limit_exceeded` 并终止进程树，不静默截断为成功。回复软预算由 Manager 在派发任务时安排，不能由容量推断模型上下文是否足够；长产物由有文件工具的 CLI 显式落盘并返回摘要与路径，服务不自动转存或传输附件。宿主超时限制由 Manager 尊重，无等待请求时不主动推送。
 
-Invocation 状态只存在于当前进程内。macOS／Linux 的每次 Invocation 由一个专用 supervisor 持续占有 POSIX 进程组，Provider 正常终止后也先清理该组再回收 supervisor，避免旧 PGID 被复用。Windows 的专用 supervisor 创建 kill-on-close Job Object，将 Provider 挂起创建、加入 Job 后再恢复；Provider 结束时关闭 Job 以清理后代，取消或 supervisor 丢失时也由句柄关闭终止整棵 Job 进程树。MCP server 退出时会尽力终止仍活跃的 supervisor；重启后旧 Invocation 句柄不可恢复。Provider 自己持久化的 Session 不受此限制。
+Invocation 状态只存在于当前进程内。macOS／Linux 的每次 Invocation 由一个专用 supervisor 持续占有 POSIX 进程组，Provider 正常终止后也先清理该组再回收 supervisor，避免旧 PGID 被复用。Windows 的专用 supervisor 创建 kill-on-close Job Object，将 Provider 挂起创建、加入 Job 后再恢复；Provider 结束时关闭 Job 以清理后代，取消或 supervisor 丢失时也由句柄关闭终止整棵 Job 进程树。MCP server 退出时会尽力终止仍活跃的 supervisor；POSIX supervisor 另每秒检查父进程，服务被强杀而父进程改变时自行终止整个进程组，不留无人回收的 Provider；重启后旧 Invocation 句柄不可恢复。Provider 自己持久化的 Session 不受此限制。
 
 AgentNave 不是沙箱或同用户恶意进程隔离边界。POSIX 上已获得命令执行权限的 Provider 或工具可以主动创建新 OS session、杀死 supervisor，或以其他方式脱离普通进程组；发生可检测的 supervisor 丢失时返回 `supervision_lost`，但不能安全地对可能已被复用的旧 PGID 继续发信号。Windows Job Object 提供进程树所有权，但不隔离同一用户账户下的其他资源；Job 分配不被当前宿主环境允许时以 `launch_error` 失败，不降级为无树级所有权的启动。是否允许 Provider 命令由其原生权限机制和 Manager 决定；需要抵抗恶意同用户进程时，应在 AgentNave 外使用降权、容器或平台级资源域。
 
@@ -118,7 +118,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`（[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。`start_agent`、`open_group` 接受 `manager_session_id`：同一 boss 聊天始终传同一宿主 session ID，不同聊天分开；宿主未公开原生 ID 时，boss 在该聊天首次调用前生成一次 UUID 并沿用。省略时只读取明确按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则保存 null。服务把宿主与原始 ID 的 SHA-256 前 32 位 hex 加 `s-` 前缀作为分组键，不保存原始 ID；CLI 名称和 MCP 连接 UUID 均不充当聊天身份。`views.json` 与 live 会话摘要保留创建归属；live 顶层的 `connection_id` 仅标识当前服务连接，`manager_started_at` 表示服务开始时间。后续接手不改写创建归属；已知 boss 身份时，任务原生续接只自动关联本 boss 会话的记录，显式指向另一 boss 的任务记录会拒绝。旧记录仍可读取与显式续接，历史内容不迁移。
 
-任务会话保存普通 `start_agent` 的 Provider、cwd、套用默认值后的模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一 boss 会话内的同一原生会话并入其任务会话；同一归属内存在多个相同 Provider／原生 session 的任务会话时，未显式指定会话的续接选择最近一次绑定该 session 的记录，保留其创建者归属；默认续接（见稳定合同）沿用同一规则并入该任务会话。并发续接同一会话被拒。任务续接先取得 `native-session-locks/<Provider与原生session的SHA-256>.lock`，在启动锁内刷新全部 boss 的活跃绑定并落盘运行记录，再释放启动锁；运行记录继续持有会话锁。锁文件保留以避免 inode 替换竞态；`AGENTNAVE_HOST_SESSION_ID` 从子 CLI 环境移除。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait_agent` 仍能读取结果。会话没有结束状态，MCP 不提供删除；删除只在托盘 App 中进行。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
+任务会话保存普通 `start_agent` 的 Provider、cwd、套用默认值后的模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一 boss 会话内的同一原生会话并入其任务会话；同一归属内存在多个相同 Provider／原生 session 的任务会话时，未显式指定会话的续接选择最近一次绑定该 session 的记录，保留其创建者归属；`continue_desk` 续接（见稳定合同）沿用同一规则并入该任务会话。并发续接同一会话被拒。任务续接先取得 `native-session-locks/<Provider与原生session的SHA-256>.lock`，在启动锁内刷新全部 boss 的活跃绑定并落盘运行记录，再释放启动锁；运行记录继续持有会话锁。锁文件保留以避免 inode 替换竞态；`AGENTNAVE_HOST_SESSION_ID` 从子 CLI 环境移除。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait_agent` 仍能读取结果。会话没有结束状态，MCP 不提供删除；删除只在托盘 App 中进行。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
 
 看板在成功创建或继续任务／节目后自动启动并返回入口；仅查看历史时 `list_conversations` 返回首页入口，随 server 退出；启动时为全部可读会话构建投影，之后由落盘与 1.5 秒的运行刷新更新。只监听 127.0.0.1 随机端口，以随机路径及精确 Host/Origin 检查限制访问，不提供写入或文件映射接口；CSP 禁止外部加载与内联脚本，页面用 textContent 渲染。节目公开页只投影已提交条目的白名单字段，导演页另含私密指令、待审回答与运行尾部，任务页只给 Manager；页面不显示原生会话或调用 ID。用于本机查看与录屏，不作网络托管。
 

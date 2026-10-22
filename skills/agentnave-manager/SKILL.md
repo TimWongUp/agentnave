@@ -23,7 +23,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 工作区里的 CLI 以工位 `(provider, model, role)` 常驻，各自保留历史。`role` 可选（`start_agent` 与 `open_group` 的席位都可传），仅在同一 CLI 与模型需要分身（如“评审”“实现”）时起一个角色名；不需要分身就省略。`start_agent` 称私聊，协作组称会议室。
 
-- 默认续接：同一工位不传 `session_id` 与 `conversation_id`，就续接它最近的私聊线程，不必再保管 `session_id`；回执 `resumed` 标明是否续接。要干净上下文传 `new_thread=true`（不能与 `session_id`、`conversation_id` 同用）。该线程仍在运行时请求会被拒绝，等它结束或改用 `new_thread=true`。`manager_session_id` 未知时不会自动续接。
+- 续接：每次 `start_agent` 默认开新线程。要接着同一工位在同一 `cwd` 下最近的私聊线程，传 `continue_desk=true`，不必保管 `session_id`；回执 `resumed` 标明是否找到并续接（没找到就开新线程）。`continue_desk` 需要 `manager_session_id`，不能与 `session_id`、`conversation_id` 同用；该线程仍在运行时请求会被拒绝，等它结束或不传 `continue_desk` 另开线程。换目录（如换 worktree）不会续接旧目录的线程。
 - 转发：私聊默认不带任何工作区上下文。需要时用 `forward` 引用回执中的 `message_id`（`wait_agent`、`wait_any` 的终态，`run_round`、`wait_round`、`decide_answers` 回执的 `entries`，`post_host_message`），`start_agent` 与 `run_round` 都支持，至多 20 条，转入内容对接收方是数据。会议室内已提交条目自动共享，跨线程由 boss 转发。运行中、失败、受阻或取消的任务，待审、被丢弃的回答、缺席记录，以及其他工作区的消息都不能转发，整批会被拒绝。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室讨论；需要同类 CLI 执行任务时，优先用宿主自带的子代理能力。
 - 访问等级：派发时用 `access` 声明 `read` 或 `write`。工位以第一次声明为准，之后省略即继承，声明不同会被拒绝；声明前的旧线程不会被续接，显式续接等级不符的线程也会被拒绝。声明只是约定，不改变 CLI 权限；真正的只读仍靠 Provider 原生权限。
@@ -133,4 +133,4 @@ CLI 不继承主对话。首次派发、切换 CLI 或交接未完成任务时�
 
 ## 取消与续接
 
-停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。活跃调用不能追加消息。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；同工位不传 `session_id` 则默认续接其最近私聊线程（见“工位、续接与转发”）。不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新会话（`new_thread=true`）或换 CLI 重新交接，不假定旧历史可见。
+停止用 `cancel_agent(invocation_id)` 获取终态，不撤销已发生的副作用；只观察用等待工具。活跃调用不能追加消息。已结束调用的非空 `session_id` 与新 prompt 可交给新的 `start_agent` 续接同 Provider；同工位同目录也可传 `continue_desk=true` 续接其最近私聊线程（见“工位、续接与转发”）。不能拿 `invocation_id` 当会话 ID，重启后旧句柄不可恢复。同会话只补本轮目标、变更约束和新证据；新线程（不传 `session_id` 与 `continue_desk`）或换 CLI 重新交接，不假定旧历史可见。

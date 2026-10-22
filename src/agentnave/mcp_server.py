@@ -111,6 +111,7 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",
     "codex": (
         "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
+        "sandbox (read-only, workspace-write or danger-full-access), "
         "dangerously_bypass_approvals_and_sandbox "
         "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
         "restricted_tools (boolean; native read/tool restrictions)"
@@ -183,7 +184,7 @@ class InvocationPayload(TypedDict):
 
 class TaskStartPayload(InvocationPayload, DashboardLinks):
     conversation_id: str
-    resumed: bool  # true when start_agent continued this desk's most recent private thread
+    resumed: bool  # true when continue_desk continued this desk's most recent private thread
     access: str | None  # declared desk tier after inheritance; never enforced
 
 
@@ -497,8 +498,7 @@ async def start_agent(
             description=(
                 "To continue a specific native conversation, use the session_id returned by a "
                 "finished invocation of the same provider; never use an invocation_id here. "
-                "When omitted with a known manager_session_id, the task continues this desk's "
-                "most recent private thread unless new_thread=true."
+                "Omitted, the task starts a new thread unless continue_desk=true."
             ),
         ),
     ] = None,
@@ -527,12 +527,13 @@ async def start_agent(
             )
         ),
     ] = None,
-    new_thread: Annotated[
+    continue_desk: Annotated[
         bool,
         Field(
             description=(
-                "true always opens a fresh private thread instead of continuing this desk's "
-                "most recent one; it cannot be combined with session_id or conversation_id."
+                "true continues this desk's most recent private thread in the same cwd, or "
+                "starts one when none exists; needs manager_session_id and cannot be combined "
+                "with session_id or conversation_id. Omitted, every task starts a new thread."
             )
         ),
     ] = False,
@@ -564,11 +565,11 @@ async def start_agent(
     The reply includes the CLI and requested model/effort. defaults_applied reports App defaults;
     otherwise omitted settings inherit the native CLI configuration.
     These are requested settings, not confirmation of the CLI's effective settings.
-    With a known manager_session_id and neither session_id nor conversation_id given, the task
-    continues this desk's (provider, requested model, role) most recent private thread; the
-    reply's resumed field says which happened. Pass new_thread=true for a fresh thread. A request
-    while that thread still runs is rejected with the same advice. session_id keeps its exact
-    meaning: continue that native session and join its open conversation.
+    Each task starts a new native thread unless session_id or continue_desk=true says otherwise.
+    continue_desk=true continues this desk's (provider, requested model, role) most recent
+    private thread in the same cwd; the reply's resumed field says whether one was found, and a
+    request while that thread still runs is rejected. session_id keeps its exact meaning:
+    continue that native session and join its open conversation.
     forward injects already-committed workspace messages ahead of the prompt as data, not
     instructions; wait_agent and wait_any return the task's message_id once it finishes.
     Nothing else is shared with the CLI.
@@ -596,7 +597,7 @@ async def start_agent(
             manager_model=manager_model,
             manager_session_id=manager_session_id,
             role=role,
-            new_thread=new_thread,
+            continue_desk=continue_desk,
             forward=forward,
             access=access,
         )
