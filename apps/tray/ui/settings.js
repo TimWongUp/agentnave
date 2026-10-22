@@ -732,7 +732,15 @@ function renderEffortBar(provider, modelId) {
   };
   const state = { ...initial };
   const position = (index) => `${last ? (index / last) * 100 : 50}%`;
-  const preset = () => (state.def ?? levels.indexOf(middleEffort(levels.slice(state.lo, state.hi + 1))));
+  // Levels the default may take: the allowed ones, gaps included, until an end is moved.
+  const choices = () => {
+    const moved = state.lo !== initial.lo || state.hi !== initial.hi;
+    return levels.map((_, index) => index)
+      .filter((index) => index >= state.lo && index <= state.hi && (moved || allowed.includes(levels[index])));
+  };
+  const nearest = (index) => choices().reduce((best, choice) =>
+    (Math.abs(choice - index) < Math.abs(best - index) ? choice : best));
+  const preset = () => state.def ?? middleEffort(choices());
 
   const fill = el("span", { className: "effort-fill" });
   const ticks = levels.map((level) => el("span", { className: "effort-tick", title: level }));
@@ -778,8 +786,8 @@ function renderEffortBar(provider, modelId) {
     index = Math.max(0, Math.min(last, index));
     if (kind === "lo") state.lo = Math.min(index, state.hi);
     if (kind === "hi") state.hi = Math.max(index, state.lo);
-    if (kind === "def") state.def = Math.max(state.lo, Math.min(state.hi, index));
-    if (state.def !== null) state.def = Math.max(state.lo, Math.min(state.hi, state.def));
+    if (kind === "def") state.def = nearest(index);
+    else if (state.def !== null) state.def = Math.max(state.lo, Math.min(state.hi, state.def));
     paint();
   };
   // Touching the bar writes the shown default too, so a preset becomes the saved default.
@@ -819,7 +827,10 @@ function renderEffortBar(provider, modelId) {
   for (const [kind, button] of Object.entries(handles)) {
     button.addEventListener("keydown", (e) => {
       const current = kind === "def" ? preset() : state[kind];
-      const next = { ArrowLeft: current - 1, ArrowDown: current - 1, ArrowRight: current + 1, ArrowUp: current + 1, Home: 0, End: last }[e.key];
+      const steps = kind === "def" ? choices() : levels.map((_, index) => index);
+      const lower = steps.filter((index) => index < current).pop() ?? current;
+      const higher = steps.find((index) => index > current) ?? current;
+      const next = { ArrowLeft: lower, ArrowDown: lower, ArrowRight: higher, ArrowUp: higher, Home: steps[0], End: steps[steps.length - 1] }[e.key];
       if (next === undefined) return;
       e.preventDefault();
       move(kind, next);
