@@ -262,6 +262,16 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
             "runtime_tools_hash",
             "host_tools_hash",
         }
+        # Unchanged observations only refresh the modification time; removal rewrites it.
+        path = host.relay.connection_path
+        written = path.stat()
+        os.utime(path, ns=(0, 0))
+        host.relay._publish_connection()  # pyright: ignore[reportPrivateUsage]
+        assert path.stat().st_ino == written.st_ino
+        assert path.stat().st_mtime_ns > 0
+        path.unlink()
+        host.relay._publish_connection()  # pyright: ignore[reportPrivateUsage]
+        assert json.loads(path.read_bytes()) == initial
 
         first = host.pid()
         host.install("1.1")
