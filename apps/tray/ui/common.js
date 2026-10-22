@@ -172,12 +172,24 @@
   // the default newcomer. The CLI brand is never used to guess a model.
   const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok" };
   const STATES = ["idle", "blink", "working", "speaking", "review", "done", "sleep"];
+  // Optional frames: a character without them keeps the older look (grey idle, gliding seat).
+  const EXTRA = ["sad", "walk-1", "walk-2"];
+  const missing = new Set();
   const artUrl = (path) => href(`/art/${path}`);
   const character = (provider, model) => FAMILY_ART[window.Avatars?.family(provider, model)] || "default";
   // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
+  // A missing optional frame marks the figure .no-<state> so CSS falls back.
   function figure(name, size = "s") {
-    const imgs = STATES.map((s) => h(`img.s-${s}`, { src: artUrl(`${size}/${name}/${s}.webp`), alt: "", decoding: "async", draggable: "false" }));
-    return h("span.fig", { "data-char": name, "aria-hidden": "true" }, h("span.fig-a", {}, h("span.fig-b", {}, imgs)));
+    const fig = h("span.fig", { "data-char": name, "aria-hidden": "true" });
+    const imgs = [...STATES, ...EXTRA].map((s) => {
+      const path = `${size}/${name}/${s}.webp`;
+      if (missing.has(path)) { fig.classList.add(`no-${s}`); return null; }
+      const img = h(`img.s-${s}`, { src: artUrl(path), alt: "", decoding: "async", draggable: "false" });
+      if (EXTRA.includes(s)) img.addEventListener("error", () => { missing.add(path); fig.classList.add(`no-${s}`); img.remove(); }, { once: true });
+      return img;
+    });
+    fig.append(h("span.fig-a", {}, h("span.fig-b", {}, imgs.filter(Boolean))));
+    return fig;
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${artUrl(`h/${name}/${state}.webp`)}")` });
   // The laptop lid shows the model family's logo, or the default terminal mark.
