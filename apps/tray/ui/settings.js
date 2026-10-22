@@ -108,6 +108,8 @@ let savedSnapshot = ""; // The document as last loaded or saved; dirty compares 
 let savedVersion = 0;
 let leaveTarget = null; // A navigation held back while there are unsaved changes.
 let busy = false;
+let probing = false; // A CLI re-probe is running; it never blocks saving.
+let probedAt = 0;
 let documentError = null;
 let docVersion = 0; // Monotonic counter for save race detection
 let expandedModel = null; // { provider: string, model: string } | null
@@ -477,7 +479,8 @@ function updateControls() {
   const canSave = !busy && dirty && !documentError && !emptyRestricted && errors.length === 0;
 
   $("save-btn").disabled = !canSave;
-  $("refresh-detection").disabled = busy;
+  $("refresh-detection").disabled = busy || probing;
+  $("refresh-detection").textContent = probing ? "正在检测…" : "刷新模型列表";
 
   // Feedback hints
   const feedback = $("save-feedback");
@@ -668,15 +671,178 @@ function withPrimary(provider, provConf) {
   return provConf;
 }
 
+// A model the App starts configuring gets the middle of its effort levels as the default effort.
 function ensureCliModel(provider, modelId) {
   if (!currentDoc.clis) currentDoc.clis = {};
   if (!currentDoc.clis[provider]) currentDoc.clis[provider] = { models: {} };
   if (!currentDoc.clis[provider].models) currentDoc.clis[provider].models = {};
   if (!Object.hasOwn(currentDoc.clis[provider].models, modelId)) {
+    const middle = middleEffort(effortLevels(provider, modelId));
     Object.defineProperty(currentDoc.clis[provider].models, modelId, {
-      value: {}, enumerable: true, configurable: true, writable: true,
+      value: middle ? { effort: middle } : {}, enumerable: true, configurable: true, writable: true,
     });
   }
+}
+
+const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+// A model's effort levels from low to high: its own detected levels, else its CLI's, plus any
+// configured value a probe no longer lists.
+function effortLevels(provider, modelId) {
+  const own = (detected[provider]?.models || []).find((m) => m.id === modelId)?.efforts;
+  const detectedEfforts = Array.isArray(own) && own.length ? own : detected[provider]?.efforts || [];
+  const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
+  const overrides = Object.values(currentDoc.modes || {})
+    .map((providers) => providers?.[provider]?.overrides?.[modelId])
+    .filter(Boolean);
+  const levels = new Set(detectedEfforts);
+  for (const config of [shared, ...overrides]) {
+    for (const effort of [...(config.efforts || []), config.effort]) {
+      if (typeof effort === "string" && effort) levels.add(effort);
+    }
+  }
+  const rank = (effort) => {
+    const index = EFFORT_ORDER.indexOf(effort);
+    return index < 0 ? EFFORT_ORDER.length : index;
+  };
+  return [...levels].sort((a, b) => rank(a) - rank(b));
+}
+
+function middleEffort(range) {
+  return range.length ? range[Math.floor((range.length - 1) / 2)] : undefined;
+}
+
+// The allowed efforts as a range bar after a model's default switch: two ends bound the
+// allowed levels (all of them when nothing is chosen), the round knob is the default effort.
+// Without a default the knob sits hollow on the middle level until the bar is touched.
+function renderEffortBar(provider, modelId) {
+  const levels = effortLevels(provider, modelId);
+  if (!levels.length) return null;
+  const overridden = isModelOverridden(provider, modelId);
+  const override = overridden ? currentDoc.modes[currentMode][provider].overrides[modelId] : null;
+  const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
+  const pick = (key) => (override && Object.hasOwn(override, key) ? override[key] : shared[key]);
+  const efforts = Array.isArray(pick("efforts")) ? pick("efforts") : [];
+  const allowed = efforts.length ? levels.filter((level) => efforts.includes(level)) : levels;
+  const last = levels.length - 1;
+  const initial = {
+    lo: allowed.length ? levels.indexOf(allowed[0]) : 0,
+    hi: allowed.length ? levels.indexOf(allowed[allowed.length - 1]) : last,
+    def: levels.includes(pick("effort")) ? levels.indexOf(pick("effort")) : null,
+  };
+  const state = { ...initial };
+  const position = (index) => `${last ? (index / last) * 100 : 50}%`;
+  // Levels the default may take: the allowed ones, gaps included, until an end is moved.
+  const choices = () => {
+    const moved = state.lo !== initial.lo || state.hi !== initial.hi;
+    return levels.map((_, index) => index)
+      .filter((index) => index >= state.lo && index <= state.hi && (moved || allowed.includes(levels[index])));
+  };
+  const nearest = (index) => choices().reduce((best, choice) =>
+    (Math.abs(choice - index) < Math.abs(best - index) ? choice : best));
+  const preset = () => state.def ?? middleEffort(choices());
+
+  const fill = el("span", { className: "effort-fill" });
+  const ticks = levels.map((level) => el("span", { className: "effort-tick", title: level }));
+  const handle = (kind, label) => el("button", {
+    type: "button",
+    role: "slider",
+    className: `effort-handle effort-${kind}`,
+    dataset: { focusKey: `${provider}/${modelId}/effort-${kind}`, handle: kind },
+    "aria-label": `${modelId} ${label}`,
+    "aria-valuemin": "0",
+    "aria-valuemax": String(last),
+  });
+  const handles = { lo: handle("lo", "最低允许档位"), hi: handle("hi", "最高允许档位"), def: handle("def", "默认思考档位") };
+  const text = el("span", { className: "effort-text" });
+  const track = el("div", { className: "effort-track" }, fill, ...ticks, handles.lo, handles.hi, handles.def);
+  const bar = el("div", { className: "effort-bar" }, track, text);
+
+  const paint = () => {
+    const def = preset();
+    fill.style.left = position(state.lo);
+    fill.style.width = `calc(${position(state.hi)} - ${position(state.lo)})`;
+    // A saved list with gaps keeps them until the range is moved.
+    const moved = state.lo !== initial.lo || state.hi !== initial.hi;
+    levels.forEach((level, index) => {
+      ticks[index].style.left = position(index);
+      ticks[index].classList.toggle("on", moved ? index >= state.lo && index <= state.hi : allowed.includes(level));
+    });
+    for (const [kind, index] of [["lo", state.lo], ["hi", state.hi], ["def", def]]) {
+      handles[kind].style.left = position(index);
+      handles[kind].setAttribute("aria-valuenow", String(index));
+      handles[kind].setAttribute("aria-valuetext", levels[index]);
+    }
+    handles.def.classList.toggle("preset", state.def === null);
+    const range = state.lo === 0 && state.hi === last
+      ? "全部档位"
+      : state.lo === state.hi ? levels[state.lo] : `${levels[state.lo]}–${levels[state.hi]}`;
+    text.textContent = `${range} · ${state.def === null ? "预选" : "默认"} ${levels[def]}`;
+    bar.title = state.def === null
+      ? "还没有默认思考档位：boss 未指定时由工具自行决定。拖动或点选后，按所示档位保存为默认值。"
+      : "两端是允许 boss 使用的档位范围，圆点是 boss 未指定时使用的默认档位。";
+  };
+  const move = (kind, index) => {
+    index = Math.max(0, Math.min(last, index));
+    if (kind === "lo") state.lo = Math.min(index, state.hi);
+    if (kind === "hi") state.hi = Math.max(index, state.lo);
+    if (kind === "def") state.def = nearest(index);
+    // Moving an end back to where it was restores the gaps and the saved default.
+    else if (state.def !== null) {
+      const back = state.lo === initial.lo && state.hi === initial.hi && initial.def !== null;
+      state.def = back ? initial.def : nearest(state.def);
+    }
+    paint();
+  };
+  // Touching the bar writes the shown default too, so a preset becomes the saved default.
+  const commit = () => {
+    ensureCliModel(provider, modelId);
+    const target = override || currentDoc.clis[provider].models[modelId];
+    if (state.lo !== initial.lo || state.hi !== initial.hi) {
+      target.efforts = state.lo === 0 && state.hi === last ? [] : levels.slice(state.lo, state.hi + 1);
+    }
+    target.effort = levels[preset()];
+    incDocVersion();
+    renderCards();
+  };
+  const indexAt = (x) => {
+    const box = track.getBoundingClientRect();
+    return last ? Math.round(((x - box.left) / box.width) * last) : 0;
+  };
+  track.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const index = indexAt(e.clientX);
+    const kind = e.target.dataset?.handle || (index < state.lo ? "lo" : index > state.hi ? "hi" : "def");
+    handles[kind].focus({ preventScroll: true });
+    track.setPointerCapture(e.pointerId);
+    move(kind, index);
+    const drag = (event) => move(kind, indexAt(event.clientX));
+    const drop = () => {
+      track.removeEventListener("pointermove", drag);
+      track.removeEventListener("pointerup", drop);
+      track.removeEventListener("pointercancel", drop);
+      commit();
+    };
+    track.addEventListener("pointermove", drag);
+    track.addEventListener("pointerup", drop);
+    track.addEventListener("pointercancel", drop);
+  });
+  for (const [kind, button] of Object.entries(handles)) {
+    button.addEventListener("keydown", (e) => {
+      const current = kind === "def" ? preset() : state[kind];
+      const steps = kind === "def" ? choices() : levels.map((_, index) => index);
+      const lower = steps.filter((index) => index < current).pop() ?? current;
+      const higher = steps.find((index) => index > current) ?? current;
+      const next = { ArrowLeft: lower, ArrowDown: lower, ArrowRight: higher, ArrowUp: higher, Home: steps[0], End: steps[steps.length - 1] }[e.key];
+      if (next === undefined) return;
+      e.preventDefault();
+      move(kind, next);
+      commit();
+    });
+  }
+  paint();
+  return bar;
 }
 
 // Model allowed in current mode
@@ -975,17 +1141,7 @@ function renderModelDetail(provider, modelId) {
   const targetConfig = overridden ? overrideConfig : sharedConfig;
 
   // 1. Efforts Field (checklist)
-  const detectedModelObj = (detected[provider]?.models || []).find((m) => m.id === modelId);
-  const modelEfforts = detectedModelObj?.efforts;
-  const detectedEfforts =
-    Array.isArray(modelEfforts) && modelEfforts.length > 0
-      ? modelEfforts
-      : detected[provider]?.efforts || [];
-  // Preserve configured values even when a probe no longer lists them.
-  const candidateEfforts = [...new Set([
-    ...detectedEfforts, ...(sharedConfig.efforts || []), ...(overrideConfig?.efforts || []),
-    ...[sharedConfig.effort, overrideConfig?.effort].filter((effort) => typeof effort === "string" && effort),
-  ])];
+  const candidateEfforts = effortLevels(provider, modelId);
 
   const effortsInherited = overridden && !("efforts" in overrideConfig);
   {
@@ -1422,7 +1578,8 @@ function renderCards() {
         } else {
           controlsKids.push(el("span", { className: "model-id" }, modelId));
         }
-        controlsKids.push(defaultLabel, ...tags);
+        const effortBar = renderEffortBar(provider, modelId);
+        controlsKids.push(defaultLabel, ...(effortBar ? [effortBar] : []), ...tags);
 
         if (isLastChecked) {
           controlsKids.push(
@@ -1605,33 +1762,49 @@ function renderErrorBanner() {
   }
 }
 
-// Refresh detection
-async function refreshDetection() {
-  if (busy) return;
-  busy = true;
+// Re-probe the CLIs. A quiet probe runs when Settings opens or regains focus and only speaks
+// up when the lists changed.
+async function refreshDetection(quiet = false) {
+  if (busy || probing) return;
+  probing = true;
+  probedAt = Date.now();
+  const before = savedSnapshot;
   updateControls();
-  showNotice("正在重新检测 CLI 与模型…");
+  if (!quiet) showNotice("正在重新检测 CLI 与模型…");
   try {
     const data = await apiGetMembers(true);
+    const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
-    // If no unsaved modifications, reload entire data including doc, error & migration
-    if (!dirty) {
-      currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+    // Without unsaved edits, or a save while probing, take the file as read too.
+    // An unchanged file keeps the current objects, which the rendered cards still edit.
+    const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
+    const fresh = !dirty && !busy && savedSnapshot === before;
+    const reloaded = fresh && JSON.stringify(fileDoc) !== savedSnapshot;
+    if (reloaded) {
+      currentDoc = fileDoc;
       markSaved();
+    }
+    if (fresh) {
       documentError = data.error || null;
       lastMigrationData = data;
       renderMigrationBanner(data);
       renderErrorBanner();
       renderModeToolbar();
     }
-    showNotice("检测结果已刷新");
-    renderCards();
+    if (!quiet) showNotice("检测结果已刷新");
+    else if (changed && currentTab === "members") showNotice("检测到工具或模型列表有变化，已自动刷新");
+    // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
+    if (!quiet || changed || reloaded) renderCards();
   } catch (err) {
-    showNotice(`刷新检测失败: ${err.message}`, true);
+    if (!quiet) showNotice(`刷新检测失败: ${err.message}`, true);
   } finally {
-    busy = false;
+    probing = false;
     updateControls();
   }
+}
+
+function probeWhenStale() {
+  if (document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
 }
 
 // Load initial members data
@@ -1913,7 +2086,9 @@ $("mode-restrict-toggle").addEventListener("change", (e) => {
   e.target.focus({ preventScroll: true });
   toggleModeRestricted(e.target.checked);
 });
-$("refresh-detection").addEventListener("click", refreshDetection);
+$("refresh-detection").addEventListener("click", () => refreshDetection());
+window.addEventListener("focus", probeWhenStale);
+document.addEventListener("visibilitychange", probeWhenStale);
 $("save-btn").addEventListener("click", saveMembers);
 
 $("btn-check-update").addEventListener("click", triggerCheckUpdate);
@@ -1966,6 +2141,6 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
-// Initialize
-loadMembers();
+// Initialize: show the cached detection at once, then re-probe for newly added models.
+loadMembers().then(() => refreshDetection(true));
 loadStatus();
