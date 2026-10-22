@@ -152,8 +152,8 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional. `title` names a new task conversation; `conversation_id` adds
 to an existing one. Tasks and final replies are saved automatically. `role` labels the desk
-(provider, model, role); with a known `manager_session_id` and no `session_id`, the call continues
-that desk's most recent private thread (`new_thread=true` starts a fresh one), and `forward`
+(provider, model, role); each call starts a new thread unless `session_id` is given or
+`continue_desk=true` continues that desk's most recent private thread in the same `cwd`, and `forward`
 injects completed workspace messages by `message_id`. `access` (`read` or `write`) declares
 the desk's tier: the first declaration sticks and a different one is rejected, so use another role
 instead of converting a reader into a writer. It is recorded only and never changes CLI permissions.
@@ -182,6 +182,9 @@ This skips approval prompts and disables sandboxing for that invocation, includi
 resuming a session. Only enable it when the user authorizes both effects. Passing `false`
 or omitting it when no App default exists adds no flag and inherits native settings; it does not force a sandbox
 or approvals back on. The CLI's saved configuration is unchanged.
+For a narrower grant, `{"sandbox": "workspace-write"}` (or `read-only`, `danger-full-access`)
+sets Codex's native sandbox mode for that invocation, also when resuming; like other
+permission options it comes only from App defaults or the user's explicit request.
 
 For Antigravity, explicitly pass `{"dangerously_skip_permissions": true}` in
 `provider_options` to enable native YOLO (`--dangerously-skip-permissions`) for one invocation.

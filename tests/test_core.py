@@ -357,8 +357,50 @@ async def test_wait_update_timeout_keeps_streaming_public_tail(
         with pytest.raises(asyncio.CancelledError):
             await waiting
         assert await manager.wait_for_update(invocation_id, 0.01) is None
+        # Cancelled before a final answer, the reply seen so far is kept in the result.
+        cancelled = await manager.cancel(invocation_id)
+        assert cancelled.status is InvocationStatus.CANCELLED
+        assert cancelled.output == "x" * 600 + "中文"
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX supervisor")
+def test_supervisor_ends_provider_group_when_server_dies(tmp_path: Path) -> None:
+    import signal
+    import subprocess
+
+    import agentnave.supervisor
+
+    marker = tmp_path / "provider.pid"
+    provider = f"import os,time; open({str(marker)!r},'w').write(str(os.getpid())); time.sleep(60)"
+    server = (
+        "import os,subprocess,sys,time\n"
+        "read, write = os.pipe()\n"
+        f"subprocess.Popen([sys.executable, '-I', {agentnave.supervisor.__file__!r}, str(write),"
+        f" sys.executable, '-c', {provider!r}], pass_fds=(write,), start_new_session=True)\n"
+        "time.sleep(60)\n"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", server])
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() or not marker.read_text():
+            assert time.monotonic() < deadline, "provider did not start"
+            time.sleep(0.05)
+        pid = int(marker.read_text())
+        parent.send_signal(signal.SIGKILL)  # the server dies without any cleanup
+        parent.wait()
+        deadline = time.monotonic() + 8
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            assert time.monotonic() < deadline, "provider outlived its dead server"
+            time.sleep(0.1)
+    finally:
+        if parent.poll() is None:
+            parent.kill()
 
 
 @pytest.mark.asyncio

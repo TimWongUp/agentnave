@@ -1724,8 +1724,8 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
     async with Client(mcp) as client:
         first = await start(client, "chat-a")
         ended = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
-        second = await start(client, "chat-a", new_thread=True)
-        other = await start(client, "chat-b", new_thread=True)
+        second = await start(client, "chat-a")
+        other = await start(client, "chat-b")
         show = await _call(
             client,
             "open_group",
@@ -1757,7 +1757,7 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
         assert rejected.is_error and "manager session" in str(rejected.content)
 
     async with Client(mcp) as client:
-        after_restart = await start(client, "chat-a", new_thread=True)
+        after_restart = await start(client, "chat-a")
         assert saved(after_restart)["manager_session"] == session
         unknown = await _call(
             client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
@@ -1771,7 +1771,7 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
         )
         assert saved(from_env)["manager_session"] == session
         # A per-call identity must not become shared mutable state on the MCP connection.
-        explicit = await start(client, "chat-b", new_thread=True)
+        explicit = await start(client, "chat-b")
         assert saved(explicit)["manager_session"] == saved(other)["manager_session"]
         monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
         unknown_again = await _call(
@@ -1848,7 +1848,7 @@ async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
 
 
 @pytest.mark.asyncio
-async def test_start_agent_continues_the_desk_recent_private_thread(
+async def test_start_agent_continues_a_desk_thread_only_when_asked(
     tmp_path: Path, data_root: Path
 ) -> None:
     async def start(client: Client, **extra: object) -> dict[str, object]:
@@ -1867,19 +1867,31 @@ async def test_start_agent_continues_the_desk_recent_private_thread(
     async with Client(mcp) as client:
         first = await start(client, role="reviewer")
         assert first["resumed"] is False
-        ended = await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
+        await _call(client, "wait_agent", {"invocation_id": first["invocation_id"]})
+        # Without continue_desk the same desk always starts a new thread.
         second = await start(client, role="reviewer")
-        assert second["resumed"] is True
-        assert second["conversation_id"] == first["conversation_id"]
-        resumed = await _call(client, "wait_agent", {"invocation_id": second["invocation_id"]})
+        assert second["resumed"] is False
+        assert second["conversation_id"] != first["conversation_id"]
+        ended = await _call(client, "wait_agent", {"invocation_id": second["invocation_id"]})
+        third = await start(client, role="reviewer", continue_desk=True)
+        assert third["resumed"] is True
+        assert third["conversation_id"] == second["conversation_id"]
+        resumed = await _call(client, "wait_agent", {"invocation_id": third["invocation_id"]})
         assert resumed["session_id"] == ended["session_id"]
-        # Role and model are part of the desk identity: neither may cross threads.
-        other_role = await start(client, role="author")
+        # cwd, role and model all bound the thread: none may cross.
+        elsewhere = tmp_path / "other"
+        elsewhere.mkdir()
+        other_cwd = await start(client, role="reviewer", continue_desk=True, cwd=str(elsewhere))
+        assert other_cwd["resumed"] is False
+        assert other_cwd["conversation_id"] != second["conversation_id"]
+        other_role = await start(client, role="author", continue_desk=True)
         assert other_role["resumed"] is False
         assert other_role["conversation_id"] != first["conversation_id"]
-        other_model = await start(client, role="reviewer", provider_options={"model": "other"})
+        other_model = await start(
+            client, role="reviewer", continue_desk=True, provider_options={"model": "other"}
+        )
         assert other_model["resumed"] is False
-        assert other_model["conversation_id"] != first["conversation_id"]
+        assert other_model["conversation_id"] != second["conversation_id"]
 
 
 @pytest.mark.asyncio
@@ -1899,7 +1911,7 @@ async def test_desk_access_is_declared_once_and_never_converted(
         explorer = await _call(client, "start_agent", task(role="explore", access="read"))
         assert explorer["access"] == "read"
         ended = await _call(client, "wait_agent", {"invocation_id": explorer["invocation_id"]})
-        inherited = await _call(client, "start_agent", task(role="explore"))
+        inherited = await _call(client, "start_agent", task(role="explore", continue_desk=True))
         assert inherited["access"] == "read" and inherited["resumed"] is True
         await _call(client, "wait_agent", {"invocation_id": inherited["invocation_id"]})
         converted = await client.call_tool("start_agent", task(role="explore", access="write"))
@@ -1971,12 +1983,12 @@ async def test_declared_desk_never_adopts_an_undeclared_thread(
         undeclared = await _call(client, "start_agent", task())
         assert undeclared["access"] is None
         ended = await _call(client, "wait_agent", {"invocation_id": undeclared["invocation_id"]})
-        reader = await _call(client, "start_agent", task(access="read"))
+        reader = await _call(client, "start_agent", task(access="read", continue_desk=True))
         assert reader["access"] == "read" and reader["resumed"] is False
         assert reader["conversation_id"] != undeclared["conversation_id"]
         read_ended = await _call(client, "wait_agent", {"invocation_id": reader["invocation_id"]})
         # Later calls continue only the thread recorded with the desk's tier.
-        again = await _call(client, "start_agent", task())
+        again = await _call(client, "start_agent", task(continue_desk=True))
         assert again["resumed"] is True and again["access"] == "read"
         assert again["conversation_id"] == reader["conversation_id"]
         await _call(client, "wait_agent", {"invocation_id": again["invocation_id"]})
@@ -2006,6 +2018,11 @@ async def test_start_agent_does_not_resume_without_a_manager_identity(
         )
         assert unknown["resumed"] is False
         assert unknown["conversation_id"] != first["conversation_id"]
+        asked = await client.call_tool(
+            "start_agent",
+            {"provider": "claude", "prompt": "one", "cwd": str(tmp_path), "continue_desk": True},
+        )
+        assert asked.is_error and "manager_session_id" in str(asked.content)
 
 
 @pytest.mark.asyncio
@@ -2033,48 +2050,38 @@ async def test_start_agent_rejects_resuming_a_running_desk_thread(
             session_id=ended["session_id"],
             prompt="Private instruction for you only:\nSLEEP",
         )
-        rejected = await client.call_tool(
-            "start_agent",
-            {
-                "provider": "claude",
-                "prompt": "one",
-                "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
-            },
-        )
-        assert rejected.is_error and "new_thread=true" in str(rejected.content)
-        fresh = await start(
-            client, new_thread=True, prompt="Private instruction for you only:\nSLEEP"
-        )
+        continuing = {
+            "provider": "claude",
+            "prompt": "one",
+            "cwd": str(tmp_path),
+            "manager_session_id": "chat-a",
+            "continue_desk": True,
+        }
+        rejected = await client.call_tool("start_agent", continuing)
+        assert rejected.is_error and "still running" in str(rejected.content)
+        # A new thread of the same desk may run alongside.
+        fresh = await start(client, prompt="Private instruction for you only:\nSLEEP")
         assert fresh["resumed"] is False
         assert fresh["conversation_id"] != first["conversation_id"]
         await _call(client, "cancel_agent", {"invocation_id": running["invocation_id"]})
         # The running new thread has no native session yet, but is still the latest thread.
-        rejected = await client.call_tool(
-            "start_agent",
-            {
-                "provider": "claude",
-                "prompt": "one",
-                "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
-            },
-        )
-        assert rejected.is_error and "new_thread=true" in str(rejected.content)
+        rejected = await client.call_tool("start_agent", continuing)
+        assert rejected.is_error and "still running" in str(rejected.content)
         await _call(client, "cancel_agent", {"invocation_id": fresh["invocation_id"]})
 
 
 @pytest.mark.asyncio
-async def test_start_agent_rejects_new_thread_with_an_explicit_thread(tmp_path: Path) -> None:
+async def test_start_agent_rejects_continue_desk_with_an_explicit_thread(tmp_path: Path) -> None:
     async with Client(mcp) as client:
         for arguments in (
-            {"session_id": "native", "new_thread": True},
-            {"conversation_id": "saved", "new_thread": True},
+            {"session_id": "native", "continue_desk": True},
+            {"conversation_id": "saved", "continue_desk": True},
         ):
             result = await client.call_tool(
                 "start_agent",
                 {"provider": "claude", "prompt": "one", "cwd": str(tmp_path), **arguments},
             )
-            assert result.is_error and "new_thread" in str(result.content)
+            assert result.is_error and "continue_desk" in str(result.content)
 
 
 @pytest.mark.asyncio
@@ -2462,8 +2469,10 @@ async def test_start_agent_injects_forwarded_messages_and_saves_the_reference(
         )
         assert cast(list[dict[str, object]], view["tasks"])[0]["forward"] == [source_id]
 
-        # Auto-resume and explicit session_id both still receive the injection.
-        resumed = await start(client, role="reviewer", prompt="three", forward=[source_id])
+        # continue_desk and explicit session_id both still receive the injection.
+        resumed = await start(
+            client, role="reviewer", prompt="three", forward=[source_id], continue_desk=True
+        )
         assert resumed["resumed"] is True
         resumed_result = await _call(
             client, "wait_agent", {"invocation_id": resumed["invocation_id"]}

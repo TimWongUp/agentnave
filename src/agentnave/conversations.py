@@ -820,7 +820,7 @@ class Conversations(Groups):
         role: str | None,
         access: Access | None,
     ) -> TaskRecord | None:
-        """The same desk's latest saved private thread in this manager chat, if any."""
+        """The same desk's latest saved private thread in this manager chat and cwd, if any."""
         self.scan()  # Include records another server saved.
         model = request.provider_options.get("model")
         expected_model = None if model is None else str(model)
@@ -831,6 +831,8 @@ class Conversations(Groups):
             for task in record.state.tasks
             if task.provider == request.provider
             and (task.model or None) == expected_model
+            # A native session keeps the context of the directory it ran in.
+            and task.cwd == str(request.cwd)
             and task.role == role
             and task.access == access  # never adopt a thread recorded under another tier
             # A new thread has no native session until it ends; while running it is the latest.
@@ -853,17 +855,19 @@ class Conversations(Groups):
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         role: str | None = None,
-        new_thread: bool = False,
+        continue_desk: bool = False,
         forward: list[str] | None = None,
         access: str | None = None,
     ) -> TaskStart:
         role = normalize_role(role)
         declared = normalize_access(access)
-        if new_thread and (request.session_id is not None or conversation_id is not None):
+        if continue_desk and (request.session_id is not None or conversation_id is not None):
             raise ValueError(
-                "new_thread=true cannot be combined with session_id or conversation_id"
+                "continue_desk=true cannot be combined with session_id or conversation_id"
             )
         manager_session = self._manager_session(manager_session_id)
+        if continue_desk and manager_session is None:
+            raise ValueError("continue_desk=true needs a manager_session_id to find the desk")
         forwarded = self._resolve_forwards(forward, manager_session)
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
         model = request.provider_options.get("model")
@@ -875,18 +879,13 @@ class Conversations(Groups):
             declared,
         )
         resumed = False
-        if (
-            request.session_id is None
-            and conversation_id is None
-            and not new_thread
-            and manager_session is not None
-        ):
+        if continue_desk and manager_session is not None:
             recent = self._recent_task_thread(request, manager_session, role, effective)
             if recent is not None:
                 if recent.status == "running" or recent.id in self.running_tasks:
                     raise ValueError(
-                        "This desk's most recent private thread is still running; pass "
-                        "new_thread=true to start a new thread"
+                        "This desk's most recent private thread is still running; wait for it, "
+                        "or omit continue_desk to start a new thread"
                     )
                 request = replace(request, session_id=recent.session_id)
                 resumed = True
