@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -134,7 +135,8 @@ impl Response {
     }
 }
 
-type Cached = (SystemTime, u64, Option<Arc<Value>>);
+/// (mtime, size, content hash, parsed value) of one JSON file.
+type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 
 /// What identifies a route answer: each snapshot's view, whether the data root exists, and
 /// the reuse window.
@@ -681,7 +683,8 @@ fn live_view(
     Some(out)
 }
 
-/// A parsed JSON file from the cache, read again only when its mtime or size changed.
+/// A parsed JSON file from the cache, read again only when its mtime or size changed and
+/// parsed again only when its content did: live heartbeats refresh the mtime alone.
 fn cached(
     cache: &mut HashMap<PathBuf, Cached>,
     path: &Path,
@@ -689,17 +692,33 @@ fn cached(
     accept: impl Fn(&Value) -> bool,
 ) -> Option<Arc<Value>> {
     let modified = meta.modified().unwrap_or(UNIX_EPOCH);
-    let fresh =
-        matches!(cache.get(path), Some((m, len, _)) if *m == modified && *len == meta.len());
-    if !fresh {
-        let value = fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .filter(|value| accept(value))
-            .map(Arc::new);
-        cache.insert(path.to_path_buf(), (modified, meta.len(), value));
+    let len = meta.len();
+    if let Some((m, l, _, value)) = cache.get(path)
+        && *m == modified
+        && *l == len
+    {
+        return value.clone();
     }
-    cache[path].2.clone()
+    let bytes = fs::read(path).ok();
+    let hash = bytes.as_deref().map_or(0, |bytes| {
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    });
+    if let Some((m, l, h, value)) = cache.get_mut(path)
+        && bytes.is_some()
+        && *l == len
+        && *h == hash
+    {
+        *m = modified;
+        return value.clone();
+    }
+    let value = bytes
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .filter(|value| accept(value))
+        .map(Arc::new);
+    cache.insert(path.to_path_buf(), (modified, len, hash, value.clone()));
+    value
 }
 
 fn version(value: &Value) -> Option<u64> {
@@ -1138,6 +1157,23 @@ mod tests {
         assert_eq!(typing[0]["text"], "streamed tail");
         // A finished task keeps its saved answer.
         assert!(!messages.iter().any(|m| m["text"] == "late tail"));
+        // A heartbeat that only refreshes the mtime keeps the parsed payload.
+        let path = root.join("live/1-tails.json");
+        let parsed = |reader: &Reader| reader.live_files.lock().unwrap()[&path].clone();
+        let before = parsed(&reader);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() + Duration::from_secs(1))
+            .unwrap();
+        reader.overview();
+        let after = parsed(&reader);
+        assert_ne!(after.0, before.0);
+        assert!(Arc::ptr_eq(
+            after.3.as_ref().unwrap(),
+            before.3.as_ref().unwrap()
+        ));
     }
 
     #[test]

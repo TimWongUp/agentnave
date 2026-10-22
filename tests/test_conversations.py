@@ -1373,9 +1373,12 @@ def test_writer_can_acquire_after_brief_probe_lock(
         reader._unlock(probe)  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setattr("agentnave.store.time.sleep", release_probe)
+    saved = (tmp_path / "state.json").stat().st_ino
     try:
         writer.acquire()
         assert writer.lock is not None
+        # Nothing to recover: the history is not written again.
+        assert (tmp_path / "state.json").stat().st_ino == saved
     finally:
         writer.release()
 
@@ -1760,6 +1763,8 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
             client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
         )
         assert saved(unknown)["manager_session"] is None
+        # The desk's running new thread would reject the default continuation below.
+        await _call(client, "wait_agent", {"invocation_id": after_restart["invocation_id"]})
         monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "chat-a")
         from_env = await _call(
             client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
@@ -2038,10 +2043,23 @@ async def test_start_agent_rejects_resuming_a_running_desk_thread(
             },
         )
         assert rejected.is_error and "new_thread=true" in str(rejected.content)
-        fresh = await start(client, new_thread=True)
+        fresh = await start(
+            client, new_thread=True, prompt="Private instruction for you only:\nSLEEP"
+        )
         assert fresh["resumed"] is False
         assert fresh["conversation_id"] != first["conversation_id"]
         await _call(client, "cancel_agent", {"invocation_id": running["invocation_id"]})
+        # The running new thread has no native session yet, but is still the latest thread.
+        rejected = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "one",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-a",
+            },
+        )
+        assert rejected.is_error and "new_thread=true" in str(rejected.content)
         await _call(client, "cancel_agent", {"invocation_id": fresh["invocation_id"]})
 
 

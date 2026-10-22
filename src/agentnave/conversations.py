@@ -833,7 +833,12 @@ class Conversations(Groups):
             and (task.model or None) == expected_model
             and task.role == role
             and task.access == access  # never adopt a thread recorded under another tier
-            and task.session_id is not None
+            # A new thread has no native session until it ends; while running it is the latest.
+            and (
+                task.session_id is not None
+                or task.status == "running"
+                or task.id in self.running_tasks
+            )
         ]
         if not candidates:
             return None
