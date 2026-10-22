@@ -367,7 +367,6 @@ async def test_wait_update_timeout_keeps_streaming_public_tail(
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX supervisor")
 def test_supervisor_ends_provider_group_when_server_dies(tmp_path: Path) -> None:
-    import signal
     import subprocess
 
     import agentnave.supervisor
@@ -388,7 +387,7 @@ def test_supervisor_ends_provider_group_when_server_dies(tmp_path: Path) -> None
             assert time.monotonic() < deadline, "provider did not start"
             time.sleep(0.05)
         pid = int(marker.read_text())
-        parent.send_signal(signal.SIGKILL)  # the server dies without any cleanup
+        parent.kill()  # SIGKILL: the server dies without any cleanup
         parent.wait()
         deadline = time.monotonic() + 8
         while True:

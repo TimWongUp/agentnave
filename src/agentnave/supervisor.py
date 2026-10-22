@@ -29,6 +29,8 @@ def _write_status(status_fd: int, payload: dict[str, object]) -> None:
 
 def _end_with_parent(parent: int) -> None:
     """Stop the whole group once the server is gone: nobody remains to collect or cancel it."""
+    if os.name == "nt":
+        return  # POSIX only; Windows relies on its kill-on-close Job Object.
     while os.getppid() == parent:
         time.sleep(1.0)
     group = os.getpgid(0)
