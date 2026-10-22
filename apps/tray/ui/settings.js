@@ -1761,9 +1761,15 @@ async function refreshDetection(quiet = false) {
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
     // Without unsaved edits, or a save while probing, take the file as read too.
-    if (!dirty && !busy && savedSnapshot === before) {
-      currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+    // An unchanged file keeps the current objects, which the rendered cards still edit.
+    const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
+    const fresh = !dirty && !busy && savedSnapshot === before;
+    const reloaded = fresh && JSON.stringify(fileDoc) !== savedSnapshot;
+    if (reloaded) {
+      currentDoc = fileDoc;
       markSaved();
+    }
+    if (fresh) {
       documentError = data.error || null;
       lastMigrationData = data;
       renderMigrationBanner(data);
@@ -1772,7 +1778,8 @@ async function refreshDetection(quiet = false) {
     }
     if (!quiet) showNotice("检测结果已刷新");
     else if (changed && currentTab === "members") showNotice("检测到工具或模型列表有变化，已自动刷新");
-    renderCards();
+    // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
+    if (!quiet || changed || reloaded) renderCards();
   } catch (err) {
     if (!quiet) showNotice(`刷新检测失败: ${err.message}`, true);
   } finally {
