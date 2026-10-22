@@ -43,6 +43,8 @@ const FOLD_PX = 260; // a bubble taller than this is folded behind "展开全文
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
 const SLEEP_AFTER = 20 * 60e3; // an idle desk dozes off after this long
+const FIG = 88; // character size at desks and meeting seats, in px (matches --fig in chat.css)
+const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 
 // Tags stay short; the full text is in the tooltip.
 const ROLE_CHARS = 6;
@@ -60,7 +62,6 @@ const el = {
   office: $("office"),
   floor: $("floor"),
   boss: $("boss"),
-  todo: $("todo"),
   desks: $("desks"),
   rooms: $("rooms"),
   fx: $("fx"),
@@ -435,14 +436,23 @@ function createBoss() {
     rec.say,
     img("l-chair", "chair"),
     rec.desk,
-    img("l-laptop", "laptop"),
+    img("l-laptop.l-open", "laptop"),
+    img("l-laptop.l-closed", "laptop-closed"),
     rec.lid,
     rec.tray,
   );
+  // boss sits in the middle; recent chats on the left, meetings on the right
+  rec.chats = h("div.boss-side");
+  rec.meets = h("div.boss-side");
   el.boss.replaceChildren(
     h("h2.zone-h", {}, "boss 办公室", rec.state),
-    rec.scene,
-    h("div.label", {}, rec.nm, rec.cli, rec.st),
+    h(
+      "div.boss-row",
+      {},
+      rec.chats,
+      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
+      rec.meets,
+    ),
   );
   el.boss.onclick = () => openScope({ kind: "all" }, el.boss);
   return rec;
@@ -491,71 +501,70 @@ function updateBoss(rec, c, n) {
 
 // ---------------------------------------------------------------- boss to-do
 // Beside the boss whenever the boss would otherwise fill a whole row: what waits on the boss now.
-const TODO_ROWS = 3;
-function todoItems(c, ctx) {
+// Recent chats (running first) and meetings (in session first) beside the boss.
+function sideItems(c, ctx) {
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
-  const desk = (d) => ({
-    scope: { kind: "desk", key: d.key },
-    heads: [d],
-    name: deskName(d),
-    sub: `${cliName(d.provider)} · ${deskMood(d, ctx).word}`,
-    time: relTime(d.last_active),
-  });
-  const running = c.desks.filter((d) =>
-    activities(d).some((a) => a.status === "running"),
-  );
-  const sections = [
-    [
-      "review",
-      "待审",
-      c.rooms
-        .filter((r) => r.pending_review > 0)
-        .map((r) => ({
-          scope: { kind: "room", id: r.id },
-          heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
-          name: r.title,
-          sub: `会议室 · ${r.pending_review} 条回答待审核`,
-          time: "",
-        })),
-    ],
-    ["run", "进行中", running.sort(recent).map(desk)],
-    [
-      "bad",
-      "最近失败",
-      c.desks
-        .filter((d) => d.status === "failed" && !running.includes(d))
-        .sort(recent)
-        .map(desk),
-    ],
-  ].filter(([, , items]) => items.length);
-  if (!sections.length && c.desks.length)
-    sections.push(["", "最近活动", [...c.desks].sort(recent).map(desk)]);
-  return sections;
+  const running = (d) => activities(d).some((a) => a.status === "running");
+  const chats = [...c.desks]
+    .sort((a, b) => Number(running(b)) - Number(running(a)) || recent(a, b))
+    .map((d) => {
+      const s = deskMood(d, ctx);
+      return {
+        scope: { kind: "desk", key: d.key },
+        heads: [d],
+        name: deskName(d),
+        sub: `${cliName(d.provider)} · ${s.word}`,
+        tone: running(d) ? "run" : s.mood === "failed" ? "bad" : "",
+        time: relTime(d.last_active),
+      };
+    });
+  const meets = [...c.rooms]
+    .sort((a, b) => Number(fullRoom(b)) - Number(fullRoom(a)))
+    .map((r) => ({
+      scope: { kind: "room", id: r.id },
+      heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
+      name: r.title,
+      sub: r.pending_review
+        ? `${r.pending_review} 条回答待审核`
+        : `${roundText(r)} · ${r.seats.length} 位参会`,
+      tone: r.pending_review ? "review" : r.status === "running" ? "run" : r.status === "failed" ? "bad" : "",
+      time: "",
+    }));
+  return { chats, meets };
 }
-function renderTodo(c, ctx) {
-  const sections = todoItems(c, ctx);
-  const key = JSON.stringify(sections);
-  if (state.todoKey === key) return;
-  state.todoKey = key;
-  const nodes = [h("h2.zone-h", {}, "boss 待办")];
-  for (const [tone, label, items] of sections) {
-    nodes.push(h(`h3.td-h${tone ? `.${tone}` : ""}`, {}, label, h("b", {}, String(items.length))));
-    for (const item of items.slice(0, TODO_ROWS)) {
-      const row = h(
-        "button.td-row",
-        { type: "button", title: `${item.name}\n${item.sub}` },
-        h("span.td-heads", {}, item.heads.slice(0, 3).map((d) => ART.head(deskChar(d)))),
-        h("span.td-main", {}, h("span.td-name", {}, item.name), h("span.td-sub", {}, item.sub)),
-        item.time && h("span.td-time", {}, item.time),
-      );
-      row.addEventListener("click", () => openScope(item.scope, row));
-      nodes.push(row);
-    }
-    if (items.length > TODO_ROWS)
-      nodes.push(h("div.td-more", {}, `还有 ${items.length - TODO_ROWS} 个`));
+function sideList(node, title, items, empty) {
+  const key = JSON.stringify([title, items]);
+  if (node.dataset.key === key) return;
+  node.dataset.key = key;
+  const rows = [];
+  for (const item of items) {
+    const row = h(
+      `button.td-row${item.tone ? `.${item.tone}` : ""}`,
+      { type: "button", title: `${item.name}\n${item.sub}` },
+      h("span.td-heads", {}, item.heads.slice(0, 3).map((d) => ART.head(deskChar(d)))),
+      h("span.td-main", {}, h("span.td-name", {}, item.name), h("span.td-sub", {}, item.sub)),
+      item.time && h("span.td-time", {}, item.time),
+    );
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openScope(item.scope, row);
+    });
+    rows.push(row);
   }
-  if (!sections.length) nodes.push(h("div.td-more", {}, "暂时没有要处理的事"));
-  el.todo.replaceChildren(...nodes);
+  if (!items.length) rows.push(h("div.td-more", {}, empty));
+  // three rows show at once; the rest scroll inside the list
+  const list = h("div.side-rows", {}, rows);
+  const top = node.querySelector(".side-rows")?.scrollTop || 0;
+  node.replaceChildren(
+    h("h3.td-h", {}, title, items.length ? h("b", {}, String(items.length)) : null),
+    list,
+  );
+  list.scrollTop = top;
+}
+function renderSides(rec, c, ctx) {
+  const { chats, meets } = sideItems(c, ctx);
+  sideList(rec.chats, "最近对话", chats, "还没有私聊");
+  sideList(rec.meets, "会议", meets, "还没有开过会");
 }
 
 // ---------------------------------------------------------------- desks
@@ -585,7 +594,8 @@ function createDesk(d) {
     rec.say,
     img("l-chair", "chair"),
     rec.desk,
-    img("l-laptop", "laptop"),
+    img("l-laptop.l-open", "laptop"),
+    img("l-laptop.l-closed", "laptop-closed"),
     rec.lid,
   );
   rec.el = h(
@@ -602,7 +612,12 @@ function createDesk(d) {
   return rec;
 }
 function updateDesk(rec, d, ctx) {
-  const s = deskMood(d, ctx);
+  let s = deskMood(d, ctx);
+  // The backend reports a finished task as idle; a desk that just stopped working cheers briefly.
+  const settled = s.mood === "idle" && !s.away;
+  if (rec.mood?.mood === "working" && settled) rec.doneUntil = Date.now() + DONE_FOR;
+  if (settled && rec.doneUntil > Date.now())
+    s = { ...s, mood: "done", say: "搞定" };
   rec.mood = s;
   dress(rec, deskChar(d), rec.scene, rec.desk);
   dressLid(rec, d.provider, d.display_model || d.model);
@@ -651,9 +666,7 @@ function createRoom(r) {
     title: h("span.zone-title"),
     state: h("span.r"),
     review: h("span.tag.tag-review", { hidden: true }),
-    board: h("span.board", {}, "会议记录", h("b")),
     scene: h("div.mscene"),
-    mini: h("div.mini"),
     full: null,
   };
   rec.el = h(
@@ -668,7 +681,6 @@ function createRoom(r) {
       rec.state,
     ),
     rec.scene,
-    rec.mini,
   );
   const open = () => openScope({ kind: "room", id: r.id }, rec.el);
   rec.el.addEventListener("click", open);
@@ -685,10 +697,12 @@ function seatRec(id) {
   if (!seat) {
     seat = {
       say: h("span.say"),
-      plate: h("span.plate"),
+      plate: h("span.plate.tag"),
+      nm: h("span.seat-nm"),
       lid: null,
     };
-    seat.el = h("div.seat", {}, seat.say, img("l-chair", "chair"), seat.plate);
+    // the role tag hangs on the table front, the model name sits below the table
+    seat.el = h("div.seat", {}, seat.say, img("l-chair", "chair"), seat.plate, seat.nm);
     state.seatRecs.set(id, seat);
   }
   return seat;
@@ -706,7 +720,6 @@ function seatMood(r, seat, d) {
   return { mood: "idle", say: "", word: d ? "" : "缺席" };
 }
 function updateRoom(rec, r, ctx) {
-  const full = fullRoom(r);
   const [, tone] = pick(GROUP, r.status);
   setClass(
     rec.el,
@@ -717,16 +730,13 @@ function updateRoom(rec, r, ctx) {
   setClass(rec.state, `r ${tone}`);
   rec.review.hidden = !r.pending_review;
   setText(rec.review, `${r.pending_review} 待审`);
-  setText(rec.board.lastChild, String(r.board ?? 0));
-  rec.scene.hidden = !full;
-  rec.mini.hidden = full;
   setAttr(
     rec.el,
     "aria-label",
     `会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条${r.pending_review ? `，${r.pending_review} 条待审` : ""}，查看会议`,
   );
-  if (full) {
-    const nodes = [rec.board];
+  {
+    const nodes = [];
     for (const seat of r.seats) {
       const s = seatRec(`${r.id}|${seat.seat}`);
       const d = ctx.desks.get(seat.desk);
@@ -737,52 +747,28 @@ function updateRoom(rec, r, ctx) {
       dress(s, d ? deskChar(d) : "default", s.el, s.plate);
       setSay(s.say, m.say);
       const name = d ? deskName(d) : seat.seat;
-      const small = d
-        ? `${cliName(d.provider)}${d.role ? ` · ${d.role}` : ""}`
-        : "缺席";
-      const plateKey = `${name}|${small}`;
-      if (s.plateKey !== plateKey) {
-        s.plateKey = plateKey;
-        s.plate.replaceChildren(name, h("small", {}, small));
-      }
+      // model name and role only; the CLI is in the tooltip
+      const tag = d ? d.role || "" : "缺席";
+      setText(s.nm, name);
+      setText(s.plate, tag);
+      s.plate.hidden = !tag;
+      setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
       setAttr(s.el, "title", d ? handleOf(d) : `席位 ${seat.seat}`);
       nodes.push(s.el);
     }
     reconcile(rec.scene, nodes);
-  } else {
-    const heads = r.seats
-      .map((seat) => ctx.desks.get(seat.desk))
-      .filter(Boolean)
-      .map((d) => ART.head(deskChar(d)));
-    const key = r.seats.map((s) => s.desk).join();
-    if (rec.miniKey !== key) {
-      rec.miniKey = key;
-      rec.mini.replaceChildren(
-        ...heads,
-        h("span", {}, `${r.seats.length} 位参会 · 会议记录 ${r.board ?? 0} 条`),
-      );
-    } else
-      setText(
-        rec.mini.lastChild,
-        `${r.seats.length} 位参会 · 会议记录 ${r.board ?? 0} 条`,
-      );
   }
 }
-// Seat size follows the room's width and head count: the whiteboard takes one slot, every seat is
-// 64-98px, and the fewest rows win as long as people stay at least 80% of the largest possible size.
+// Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
 function layoutRooms() {
   for (const rec of state.roomRecs.values()) {
     const m = rec.scene;
-    if (m.hidden || !m.isConnected) continue;
+    if (!m.isConnected) continue;
     const avail = rec.el.clientWidth - 26;
     const slots = m.children.length;
     if (avail <= 0 || !slots) continue;
-    const plans = Array.from({ length: slots }, (_, i) => {
-      const perRow = Math.ceil(slots / (i + 1));
-      return [Math.min(98, Math.floor(avail / perRow)), perRow];
-    });
-    const best = Math.max(...plans.map(([size]) => size));
-    const [size, perRow] = plans.find(([s]) => s >= best * 0.8);
+    const size = Math.min(FIG, avail);
+    const perRow = Math.min(slots, Math.max(1, Math.floor(avail / size)));
     m.style.setProperty("--S", `${size}px`);
     m.style.width = `${size * perRow}px`;
     // the table texture continues across the seats of one row
@@ -820,20 +806,18 @@ function renderOffice(c, ctx, n, newGroup) {
   for (const id of state.roomRecs.keys())
     if (!ctx.rooms.has(id)) state.roomRecs.delete(id);
   const live = new Set();
-  const rooms = [...c.rooms].sort(
-    (a, b) => Number(fullRoom(b)) - Number(fullRoom(a)),
-  );
+  // only rooms in session sit on the floor; finished ones are listed beside the boss
+  const rooms = c.rooms.filter(fullRoom);
   const roomNodes = rooms.map((r) => {
     let rec = state.roomRecs.get(r.id);
     if (!rec) state.roomRecs.set(r.id, (rec = createRoom(r)));
     updateRoom(rec, r, ctx);
-    if (fullRoom(r)) for (const s of r.seats) live.add(`${r.id}|${s.seat}`);
+    for (const s of r.seats) live.add(`${r.id}|${s.seat}`);
     return rec.el;
   });
   for (const id of state.seatRecs.keys())
     if (!live.has(id)) state.seatRecs.delete(id);
   reconcile(el.rooms, roomNodes);
-  el.floor.classList.toggle("solo", !rooms.some(fullRoom));
 
   for (const key of state.deskRecs.keys())
     if (!ctx.desks.has(key)) state.deskRecs.delete(key);
@@ -853,7 +837,7 @@ function renderOffice(c, ctx, n, newGroup) {
     );
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
-  renderTodo(c, ctx);
+  renderSides(state.bossRec, c, ctx);
   layoutRooms();
   walk(!newGroup && state.ready);
 }
@@ -882,14 +866,23 @@ function travel(start, end, name) {
   if (!a.width || !b.width) return;
   const walker = ART.figure(name);
   walker.classList.add("walker");
-  walker.style.cssText = `left:${a.left - base.left}px;top:${a.top - base.top}px;width:${a.width}px;height:${a.height}px`;
+  // With walking frames the figure strolls along a straight line; otherwise the seated figure hops over.
+  const walks =
+    !walker.classList.contains("no-walk-1") &&
+    !walker.classList.contains("no-walk-2");
+  if (walks) {
+    walker.classList.add("walk");
+    // each walker starts on a random foot so a group does not march in step
+    walker.style.setProperty("--step", `${-Math.random() * 0.36}s`);
+  }
+  walker.style.cssText += `left:${a.left - base.left}px;top:${a.top - base.top}px;width:${a.width}px;height:${a.height}px`;
   el.fx.append(walker);
   const scale = b.width / a.width;
   const run = walker.animate(
     [
       { transform: "none", opacity: 0.95 },
       {
-        transform: `translate(${(b.left - a.left) / 2}px, ${(b.top - a.top) / 2 - 18}px) scale(${(1 + scale) / 2})`,
+        transform: `translate(${(b.left - a.left) / 2}px, ${(b.top - a.top) / 2 - (walks ? 0 : 18)}px) scale(${(1 + scale) / 2})`,
         offset: 0.5,
       },
       {
@@ -897,12 +890,19 @@ function travel(start, end, name) {
         opacity: 0.95,
       },
     ],
-    { duration: 900, easing: "ease-in-out" },
+    walks
+      ? { duration: 1600, easing: "linear" }
+      : { duration: 900, easing: "ease-in-out" },
   );
-  run.onfinish = run.oncancel = () => walker.remove();
+  // The figure at the destination waits until the walker arrives, so the desk is never shown twice.
+  end.style.visibility = "hidden";
+  run.onfinish = run.oncancel = () => {
+    walker.remove();
+    end.style.visibility = "";
+  };
 }
 
-// An envelope travels between two office elements: dispatch, return, forward, writing to the minutes.
+// An envelope travels between two office elements: dispatch, return, forward.
 function fly(kind, from, to, delay) {
   if (!from || !to || !from.isConnected || !to.isConnected) return;
   const base = el.fx.getBoundingClientRect();
@@ -958,13 +958,9 @@ function ingest(c, ctx, newGroup) {
       else if (t?.kind === "room") fly("dispatch", boss, roomEl(t.id), delay);
     } else if (m.kind === "reply" || m.kind === "notice") {
       if (t?.kind === "desk") fly("return", deskEl(m.desk), boss, delay);
-      else if (t?.kind === "room")
-        fly(
-          m.visibility === "public" ? "board" : "return",
-          roomEl(t.id),
-          m.visibility === "public" ? state.roomRecs.get(t.id)?.board : boss,
-          delay,
-        );
+      // public answers stay in the room; only private ones travel back to the boss
+      else if (t?.kind === "room" && m.visibility !== "public")
+        fly("return", roomEl(t.id), boss, delay);
     }
   });
 }
