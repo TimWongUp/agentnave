@@ -595,9 +595,9 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
             .set_modified(SystemTime::now() - std::time::Duration::from_secs(seconds))
             .unwrap();
     };
-    age(60);
+    age(100);
     assert_eq!(hosts.state(&h)["reload"]["state"], "required");
-    age(120);
+    age(200);
     assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
     age(0);
     hosts
@@ -702,6 +702,18 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     save(&dir.join("new.json"), &receipt.to_string());
     // A session started after the Skill was installed has loaded it.
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    // Unless an older one is only paused while its relay swaps installs.
+    let mut paused = receipt.clone();
+    paused["started_ms"] = json!(1);
+    save(&dir.join("paused.json"), &paused.to_string());
+    fs::File::options()
+        .write(true)
+        .open(dir.join("paused.json"))
+        .unwrap()
+        .set_modified(SystemTime::now() - std::time::Duration::from_secs(100))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    fs::remove_file(dir.join("paused.json")).unwrap();
     let before = h.read().unwrap();
     let mut entry = before.entry.clone().unwrap();
     entry["args"] = json!(["first-config-change"]);

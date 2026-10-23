@@ -22,7 +22,7 @@ const RELOAD_FORMAT: u64 = 3;
 /// Matches the relay's own report that an update has waited too long.
 const STALE_RUNTIME_SECONDS: u64 = 600;
 /// A receipt this old with no refresh belongs to a relay that exited without removing it.
-const LINGER_SECONDS: u64 = 90;
+const LINGER_SECONDS: u64 = 150;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
@@ -692,7 +692,8 @@ impl Hosts {
         let root = self.connection_root(host);
         let now = SystemTime::now();
         // Live receipts refresh every five seconds; a relay swapping to a new install may pause
-        // that for up to a minute, so only a longer silence counts as no connection at all.
+        // that for up to 105 seconds, so only a longer silence counts as no connection at all.
+        // A paused one may predate the change, so it also keeps a reload from clearing.
         let mut lingering = false;
         let connections: Vec<Value> = root
             .into_iter()
@@ -765,7 +766,8 @@ impl Hosts {
                 valid_hash(&c["runtime_tools_hash"])
                     && c["runtime_tools_hash"] == c["host_tools_hash"]
             }) {
-                let newly_connected = changed["token"] == token
+                let newly_connected = !lingering
+                    && changed["token"] == token
                     && changed["at_ms"].as_u64().is_some_and(|at| {
                         connections
                             .iter()
