@@ -726,19 +726,37 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
             .set_modified(SystemTime::now() - Duration::from_secs(age))
             .unwrap();
     };
+    let now_ms = || {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    };
+    let started = receipt["started_ms"].clone();
     installed_at(3600);
     assert_eq!(hosts.state(&h)["reload"]["state"], "required");
     assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
-    installed_at(0);
-    // A relay that cannot report its runtime predates v0.31.0 and never swaps.
+    // A connection on the new install that has not shown its version does not hide that.
+    let mut fresh = receipt.clone();
+    fresh["runtime_version"] = Value::Null;
+    fresh["started_ms"] = json!(now_ms());
+    save(&dir.join("fresh.json"), &fresh.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
+    fs::remove_file(dir.join("fresh.json")).unwrap();
+    // Without a version long after the install, a relay started before it has not swapped:
+    // before v0.31.0 it cannot read the version from 2026-07-28 hosts.
     receipt["runtime_version"] = Value::Null;
+    receipt["started_ms"] = json!(now_ms() - 7_200_000);
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "required");
     assert_eq!(hosts.state(&h)["reload"]["reason"], "relay");
-    // A current relay that has not seen the version yet is unknown, not stuck.
-    receipt["envelope_aware"] = json!(true);
+    installed_at(0);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
+    // Started after the install it already runs it; only the version is not shown yet.
+    receipt["started_ms"] = json!(now_ms() + 1);
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    receipt["started_ms"] = started;
     receipt["runtime_version"] = json!("0.22.0");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");

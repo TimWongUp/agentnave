@@ -274,7 +274,6 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
             "runtime_version",
             "runtime_tools_hash",
             "host_tools_hash",
-            "envelope_aware",
         }
         # Unchanged observations only refresh the modification time; removal rewrites it.
         path = host.relay.connection_path

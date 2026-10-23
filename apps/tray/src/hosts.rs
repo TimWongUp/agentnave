@@ -716,12 +716,14 @@ impl Hosts {
             .collect();
         let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
         let installed = env.as_deref().and_then(crate::update::installed_version);
+        let installed_at = env.as_deref().and_then(crate::update::installed_since);
         // A relay swaps to a new install within seconds once idle; much later it is stuck.
-        let install_settled = env
-            .as_deref()
-            .and_then(crate::update::installed_since)
+        let install_settled = installed_at
             .and_then(|since| now.duration_since(since).ok())
             .is_some_and(|age| age.as_secs() > STALE_RUNTIME_SECONDS);
+        let installed_ms = installed_at
+            .and_then(|at| at.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|at| at.as_millis());
         let valid_hash = |v: &Value| {
             v.as_str()
                 .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -757,31 +759,42 @@ impl Hosts {
                 // old chat keeps that chat's earlier Skill front matter (ADR-0022).
                 if !pending || newly_connected {
                     reason = "connection";
-                    let unreported = |c: &&Value| c["runtime_version"].as_str().is_none();
-                    state = if connections
-                        .iter()
-                        .filter(unreported)
-                        .any(|c| c["envelope_aware"] != true)
-                    {
-                        // Relays before v0.31.0 cannot read the version from 2026-07-28 hosts and
-                        // never swap their server for such a host: only reconnecting helps.
-                        reason = "relay";
-                        "required"
-                    } else if installed.is_none() || connections.iter().any(|c| unreported(&c)) {
-                        // A current relay has not yet seen the version, e.g. before server/discover.
+                    // A relay started after the install already runs it. One started earlier
+                    // reports the version once it swaps; without one it has not swapped.
+                    let after_install = |c: &Value| {
+                        installed_ms.is_some_and(|at| {
+                            c["started_ms"]
+                                .as_u64()
+                                .is_some_and(|start| u128::from(start) > at)
+                        })
+                    };
+                    let unreported = |c: &Value| c["runtime_version"].as_str().is_none();
+                    let behind = |c: &&Value| {
+                        if unreported(c) {
+                            !after_install(c)
+                        } else {
+                            c["runtime_version"].as_str() != installed.as_deref()
+                        }
+                    };
+                    state = if installed.is_none() {
                         "unknown"
-                    } else if connections
-                        .iter()
-                        .all(|c| c["runtime_version"].as_str() == installed.as_deref())
-                    {
-                        "current"
-                    } else if install_settled {
-                        // Still serving an old version long after the install: busy all along,
-                        // holding an unread result, or otherwise unable to swap.
-                        reason = "stale";
-                        "required"
+                    } else if connections.iter().any(|c| behind(&c)) {
+                        if install_settled {
+                            // Long after the install: busy all along, holding an unread result,
+                            // or a relay before v0.31.0 that cannot swap for 2026-07-28 hosts.
+                            reason = if connections.iter().filter(behind).any(unreported) {
+                                "relay"
+                            } else {
+                                "stale"
+                            };
+                            "required"
+                        } else {
+                            "updating"
+                        }
+                    } else if connections.iter().any(unreported) {
+                        "unknown" // running the install, but the host has not shown its version
                     } else {
-                        "updating"
+                        "current"
                     };
                 }
             }

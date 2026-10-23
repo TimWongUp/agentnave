@@ -296,8 +296,6 @@ class Relay:
                 "runtime_version": self.runtime_version,
                 "runtime_tools_hash": self.runtime_tools_hash,
                 "host_tools_hash": self.host_tools_hash,
-                # Relays without this key predate 2026-07-28 envelopes and never swap for them.
-                "envelope_aware": True,
             }
         path = self.connection_path
         body = json.dumps(payload).encode()
