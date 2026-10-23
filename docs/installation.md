@@ -578,8 +578,8 @@ removed and conversations are renamed in the App. Review decisions are `publish`
 (saved `discard` reads as `private`), and `access` is recorded only. `list` returns the 20 most
 recent conversations by default (`limit` up to 200, `total` counts all matches).
 `read_conversation` no longer wraps its result in a `conversation` object: task conversations
-return top-level `tasks`, shows return `messages` (plus `latest_round` once a round exists), and private entries are
-omitted unless `include_private=true`.
+return top-level `tasks`, shows return `messages` (plus `latest_round` once a round exists), and
+private entries are omitted unless `include_private=true`.
 
 Each native thread is now one desk and `continue_desk` is removed: continue a thread by passing its
 `session_id` (see ADR-0025). Callers that still pass `continue_desk=true` silently get a new
