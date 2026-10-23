@@ -8,6 +8,7 @@ mod hosts;
 mod manage;
 mod members;
 mod onboarding;
+mod rules;
 mod stage;
 mod update;
 

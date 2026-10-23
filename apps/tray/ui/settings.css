@@ -272,3 +272,10 @@
   .save-bar-actions { flex: none; }
   .avatar-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.orchestration-template { white-space: pre-wrap; font-size: 12px; line-height: 1.6; background: var(--bg, transparent); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; user-select: text; -webkit-user-select: text; }
+.rule-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rule-files li { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.rule-label { min-width: 170px; font-weight: 550; }
+.rule-files code { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; flex: 1; }
+.rule-missing { color: var(--muted); font-size: 12px; }

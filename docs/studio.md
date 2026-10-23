@@ -6,29 +6,30 @@
 
 | 工具 | 说明 |
 | --- | --- |
-| `start_agent`、`wait_agent`、`wait_any`、`cancel_agent`、`list_invocations`、`describe_provider` | `start_agent` 另接受 `title`、`conversation_id`、`role`、`access`、`continue_desk` 与 `forward`，任务自动保存为私有任务会话，默认开新线程，`continue_desk=true` 时续接同工位同 cwd 的最近私聊线程，模型按套用 App 默认值后的参数记录；`describe_provider` 另返回按当前 discussion CLI 名单计算的 `show_permitted` |
-| `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态 |
-| `open_group` | 创建保存的节目：`title`、2–7 个席位、`cwd`，可选 `review`、`isolated`；返回的 `group_id` 就是会话 ID |
-| `run_round`、`wait_round`、`cancel_round` | 并联／串联轮次，`run_round` 可用 `forward` 把已完成消息转入会议室；审核节目中 `wait_round` 返回 `review_needed`，席位状态出现 `pending_review`、`discarded` |
-| `decide_answers` | `round_id` + `{seat_id: publish/discard}`，整批校验并保存后生效 |
-| `post_host_message` | 轮次之间以主持人身份发布公开发言 |
-| `list_conversations`、`read_conversation`、`update_conversation` | 列表、详情、改名 |
+| `start_agent` | 私聊任务，结果只回给 boss；另接受 `title`、`conversation_id`、`role`、`access`、`continue_desk` 与 `forward`，自动保存为私有任务会话，默认开新线程，`continue_desk=true` 时续接同工位同 cwd 的最近私聊线程；`access` 只记录 |
+| `run_round` | 不带 `group_id` 时用 `title`、2–7 个 `members`、`cwd`（可选 `review`、`isolated`）开节目，返回的 `group_id` 就是会话 ID；带 `seats` 跑一轮，不带 `seats` 发主持人发言；`forward` 把已完成消息转入会议室 |
+| `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；审核节目中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
+| `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |
+| `list`、`read_conversation` | 列出句柄与会话并启动看板；按 App 的方式读回一个会话的最终消息 |
+| `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |
+
+标题在创建时给出，之后只在 App 中改名；MCP 不提供改名工具。中继空闲探测使用的 `list_invocations` 仍可调用，但不在工具列表中（[ADR-0024](adr/0024-consolidated-tools-and-private-review.md)）。
 
 旧版的 `open_discussion`、`start_discussion_turn`、`decide_discussion_turn`、`decide_discussion_round`、`mark_discussion_absent`、`continue_discussion`、`reset_discussion_seat`、`open_workbench` 已移除：点名发言由串联轮取代，盲答揭晓由并联轮加审核取代，缺席自动记录，失败后的会话不确定由游标规则自动新开，换身份请新建节目。
 
 ## 一档节目怎么跑
 
-1. `open_group(title, seats, cwd, review=true)` 开节目，将返回的首页或导演地址给用户观看；参演 CLI 只接收公开条目。
-2. 需要时 `post_host_message` 开场；`run_round(group_id, seats, order, prompt, instructions)` 出题。并联轮里所有人同时独立作答；串联轮按名单依次作答、后者看得到前者。私密指令只发给对应席位。
-3. `wait_round` 返回 `review_needed` 时，用 `read_conversation` 或返回的 `output` 查看待审回答，再 `decide_answers`。并联轮全员结束后一起审，全部决定后按名单一次公开；串联轮逐席审，决定后才轮到下一席。
-4. 被丢弃的回答不会进入任何其他席位的输入；该席自己的原生会话仍记得它。失败、受阻、取消自动记为缺席，不需审核。
-5. 有待审回答时不能开新轮次或发主持人消息。`cancel_round` 与服务退出时，已决定发布的回答照常公开，未决定的丢弃。
+1. `run_round(title, members, cwd, review=true)` 开节目；用户在 App 中观看，参演 CLI 只接收公开条目。
+2. 需要时 `run_round(group_id, prompt)` 以主持人身份开场；`run_round(group_id, seats, order, prompt, instructions)` 出题。并联轮里所有人同时独立作答；串联轮按名单依次作答、后者看得到前者。私密指令只发给对应席位。
+3. `wait` 对轮次返回 `review_needed` 时，用 `read_conversation` 或返回的 `output` 查看待审回答，再 `decide_answers`。并联轮全员结束后一起审，全部决定后按名单一次公开；串联轮逐席审，决定后才轮到下一席。
+4. 选择 `private` 的回答不进入会议室，也不会进入任何其他席位的输入；它留在 boss 与该席之间，App 显示为该工位给 boss 的「🔒 未公开」回复。该席自己的原生会话仍记得它，下一次轮到它时会被告知这一回答未公开。失败、受阻、取消自动记为缺席，不需审核。
+5. 有待审回答时不能开新轮次或发主持人消息。`cancel(round_id)` 与服务退出时，已决定公开的回答照常公开，未决定的按不公开处理。旧记录中的 `discard` 读作 `private`。
 
 不审核（`review=false`）时，成功回答按并联／串联规则自动提交，历史照常保存。
 
-`start_agent` 使用 task 配置，`open_group` 每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建节目回执的各席另含 model、effort（未配置时为 null）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、节目与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
+`start_agent` 使用 task 配置，节目每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建节目回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、节目与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
 
-`wait_round(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，节目席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
+`wait(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，节目席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
 
 ## 隔离席位
 
@@ -56,13 +57,14 @@
 | 节目公开页 / `transcript.jsonl` | 席位资料与已提交条目：任务、主持人发言、公开回答、缺席 |
 | 参演 CLI | 自己的原生会话、尚未收到的条目、本轮任务与自己的私密指令 |
 | 导演页 | 公开页内容，另加本轮各席状态、私密指令、待审回答与运行中的回复尾部 |
-| `read_conversation` / 数据目录 | 完整会话状态，含原生会话 ID；只给 boss |
+| `read_conversation` | 与 App 相同的最终消息时间线（任务含原生会话 ID），`include_private=true` 另含私密指令与不公开回答；只给 boss |
+| 数据目录 | 完整会话状态；只给 boss |
 
-浏览器看板不是控制端，不显示原生会话或调用 ID；托盘专属管理页另可清理会话记录。
+浏览器看板不是控制端，不显示原生会话或调用 ID；托盘专属管理页另可改名与清理会话记录。
 
 ## 看板
 
-看板在成功创建或继续任务／节目后自动启动并返回入口；仅查看历史时 `list_conversations` 返回首页入口，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。重启后地址会更换。
+看板只在 boss 调用 `list` 时启动并返回首页入口，之后 `read_conversation` 附带该会话的页面地址，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。重启后地址会更换。
 
 界面是左右两栏的工作台：左侧按“需要关注／其他会话”分组列出会话，可搜索并按节目、任务筛选；“需要关注”只收进行中与待审核的会话，失败、受阻或中断是已交给 boss 的结果，带红色状态留在其他会话中。右侧未选会话时是总览（进行中与待审核的会话），选中后显示详情，切换会话不离开页面。节目详情分“本轮现场”（私有：各席位私密指令、实时回复、审核状态）和“公开记录”（按轮分隔的公开发言），有工作进行或待审核时默认停在现场；“选手视角”打开公开地址。任务详情按时间倒序显示每次调用的状态、模型、目录、耗时、boss 派发的任务原文与回复，“已回复”不等于已验收。公开地址只显示公开记录，不含会话列表。跟随系统浅色／深色，窄屏下列表与详情分屏显示。
 
@@ -74,7 +76,7 @@
 
 数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。每个会话一个目录，含原子替换的 `state.json` 与 `.lock` 文件锁。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`open_group` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时读取仅限逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则各记录独立。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。`views.json` 与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
 
-每次写入前取锁并在锁内重读磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list_conversations` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话的 `state.json` 已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；未知身份的旧调用仍可续接旧记录。
+每次写入前取锁并在锁内重读磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话的 `state.json` 已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；未知身份的旧调用仍可续接旧记录。
 
 重启后节目按保存的条目、席位会话与游标继续；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
 
@@ -92,7 +94,9 @@
 
 托盘提供只读 `GET /app/stage`、`GET /app/chats`、`GET /app/chats/<group>` 与 `GET /app/chats/<group>/focus/<会话ID>` 数据路由，面板与办公室每 1.5 秒轮询，页面隐藏时暂停；字段与边界见[架构与边界](context/architecture.md)。
 
-“管理会话…”在主窗口打开托盘专属页面，也可从面板底部进入。列表包含标题、类型、状态和最近活动时间；可按“空闲 / 失败 / 全部”及活动早于日期筛选。空闲指当前未占用且无待审回答的会话，失败筛选包含受阻与中断。单选或多选后点击“删除所选”，先在页面中核对并确认；“清理 N 天前的会话”针对**全部会话**中早于该天数且可删的记录，不受当前列表筛选限制，同样先确认。运行中、待审及被宿主占用的记录不可勾选，并显示原因；列表定期刷新，读取失败会保留画面并暂停删除，删除后刷新并逐条显示结果。缺少视图快照时回退到状态文件，最近活动时间回退到状态文件的修改时间。
+“管理会话…”在主窗口打开托盘专属页面，也可从面板底部进入。列表包含标题、类型、状态和最近活动时间；可按“空闲 / 失败 / 全部”及活动早于日期筛选。空闲指当前未占用且无待审回答的会话，失败筛选包含受阻与中断。单选或多选后点击“删除所选”，先在页面中核对并确认；“清理 N 天前的会话”针对**全部会话**中早于该天数且可删的记录，不受当前列表筛选限制，同样先确认。运行中、待审及被宿主占用的记录不可勾选，并显示原因；列表定期刷新，读取失败会保留画面并暂停删除，删除后刷新并逐条显示结果。缺少视图快照时回退到状态文件，最近活动时间回退到状态文件的修改时间。点「改名」可就地修改标题，Enter 保存、Esc 取消；改名在会话锁内进行，宿主占用时提示稍后重试。
+
+设置页「编排偏好」给出可复制的推荐写法，并列出各宿主常见的全局规则文件位置，可用默认编辑器打开已存在的文件；App 不创建也不写入这些文件，是否采用由用户决定。
 
 会话没有结束状态；托盘清理仍受会话锁与待审状态保护。Rust 在会话 `.lock` 上取得与 Python AgentNave相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。只删除 `state.json` 和 `views.json`，保留会话目录、`.lock`、全部席位及其文件；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或具体文件错误；两个文件的删除不保证同时成功，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
 

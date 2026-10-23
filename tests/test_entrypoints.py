@@ -9,28 +9,20 @@ from typing import cast
 
 import pytest
 from mcp import Client, StdioServerParameters
-from mcp_types import TextContent
+from mcp_types import CallToolResult, TextContent
 
 from agentnave import __version__, mcp_server
 from agentnave.mcp_server import mcp
 
 EXPECTED_TOOLS = [
     "start_agent",
-    "wait_agent",
-    "wait_any",
-    "cancel_agent",
-    "list_invocations",
-    "describe_provider",
+    "wait",
+    "cancel",
+    "list",
     "list_members",
-    "open_group",
     "run_round",
-    "wait_round",
-    "cancel_round",
     "decide_answers",
-    "post_host_message",
-    "list_conversations",
     "read_conversation",
-    "update_conversation",
 ]
 
 
@@ -98,6 +90,12 @@ def _payload(value: object) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
+def _first(result: object, key: str = "updates") -> dict[str, object]:
+    """The first task update (or round) of a wait result."""
+    content = _payload(cast(CallToolResult, result).structured_content)
+    return cast(list[dict[str, object]], content[key])[0]
+
+
 @pytest.mark.asyncio
 async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -109,8 +107,9 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
         async with asyncio.timeout(3):
-            response = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
-        payload = _payload(response.structured_content)
+            response = await client.call_tool("wait", {"ids": [invocation_id]})
+        assert _payload(response.structured_content)["reason"] == "ready"
+        payload = _first(response)
         assert payload["status"] == "running"
         assert payload["reason"] == "execution_blocked"
         assert _payload(payload["error"])["code"] == "authentication_failed"
@@ -118,14 +117,14 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         assert "DO_NOT_RETURN" not in str(payload)
         assert "provider_usage" not in payload
         monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.4)
-        later = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
-        assert _payload(later.structured_content)["reason"] == "wait_elapsed"
-        assert _payload(later.structured_content)["output"] == payload["output"]
-        assert cast(int, _payload(later.structured_content)["output_age_ms"]) > cast(
-            int, payload["output_age_ms"]
+        later = _first(await client.call_tool("wait", {"ids": [invocation_id]}))
+        assert later["reason"] == "wait_elapsed"
+        assert later["output"] == payload["output"]
+        assert cast(int, later["output_age_ms"]) > cast(int, payload["output_age_ms"])
+        cancelled = await client.call_tool("cancel", {"id": invocation_id})
+        assert _payload(_payload(cancelled.structured_content)["invocation"])["status"] == (
+            "cancelled"
         )
-        cancelled = await client.call_tool("cancel_agent", {"invocation_id": invocation_id})
-        assert _payload(cancelled.structured_content)["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -135,22 +134,19 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
 
     assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
     assert all(tool.output_schema is not None for tool in result.tools)
-    assert result.tools[0].annotations is not None
-    assert result.tools[0].annotations.open_world_hint is True
-    assert result.tools[0].annotations.destructive_hint is True
-    assert result.tools[1].annotations is not None
-    assert result.tools[1].annotations.read_only_hint is True
-    start_properties = _payload(result.tools[0].input_schema["properties"])
+    tools = {tool.name: tool for tool in result.tools}
+    start = tools["start_agent"].annotations
+    assert start is not None and start.open_world_hint is True and start.destructive_hint is True
+    start_properties = _payload(tools["start_agent"].input_schema["properties"])
     assert "timeout_seconds" not in start_properties
-    wait_properties = _payload(result.tools[1].input_schema["properties"])
-    assert set(wait_properties) == {"invocation_id"}
+    wait_properties = _payload(tools["wait"].input_schema["properties"])
+    assert set(wait_properties) == {"ids", "include_output"}
     assert mcp_server.WAIT_SECONDS == 300
-    assert result.tools[3].annotations is not None
-    assert result.tools[3].annotations.destructive_hint is True
-    assert all(
-        tool.annotations is not None and tool.annotations.read_only_hint is True
-        for tool in (result.tools[2], result.tools[4])
-    )
+    cancel = tools["cancel"].annotations
+    assert cancel is not None and cancel.destructive_hint is True
+    for name in ("wait", "list", "list_members", "read_conversation"):
+        annotations = tools[name].annotations
+        assert annotations is not None and annotations.read_only_hint is True
 
 
 @pytest.mark.asyncio
@@ -164,23 +160,16 @@ async def test_provider_details_are_disclosed_only_on_request(
         assert "hy4-preview" not in catalog
         assert "gpt-6-astra" not in catalog
         assert "permission_mode" not in catalog
-        assert "describe_provider" in catalog
-        described = await client.call_tool("describe_provider", {"provider": "codebuddy"})
-        payload = _payload(described.structured_content)
+        assert "list_members" in catalog
+        described = await client.call_tool("list_members", {"provider": "codebuddy"})
         assert described.is_error is False
+        payload = _payload(_payload(described.structured_content)["provider_details"])
         assert payload["provider"] == "codebuddy"
-        assert set(payload) == {
-            "provider",
-            "permitted",
-            "show_permitted",
-            "supported_options",
-            "host",
-            "host_source",
-        }
+        assert set(payload) == {"provider", "permitted", "show_permitted", "supported_options"}
         assert "permission_mode" in str(payload["supported_options"])
         assert "gpt-6-astra" not in str(payload)
         assert await client.list_tools() == before
-        invalid = await client.call_tool("describe_provider", {"provider": "unknown"})
+        invalid = await client.call_tool("list_members", {"provider": "unknown"})
         assert invalid.is_error is True
 
 
@@ -201,12 +190,9 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
         async with asyncio.timeout(3):
             while True:
                 finished = await client.call_tool(
-                    "wait_agent",
-                    {
-                        "invocation_id": started_payload["invocation_id"],
-                    },
+                    "wait", {"ids": [started_payload["invocation_id"]]}
                 )
-                payload = _payload(finished.structured_content)
+                payload = _first(finished)
                 if payload["status"] != "running":
                     break
                 running_payloads.append(payload)
@@ -214,7 +200,7 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     assert len(running_payloads) >= 2
     assert all(payload["reason"] == "wait_elapsed" for payload in running_payloads)
     assert any("working" in str(payload.get("output", "")) for payload in running_payloads)
-    finished_payload = _payload(finished.structured_content)
+    finished_payload = _first(finished)
     invocation_result = finished_payload
     assert started.is_error is False
     assert started_payload["status"] == "running"
@@ -236,11 +222,11 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
     _install_fake_claude(tmp_path, monkeypatch)
     async with Client(mcp) as client:
         opened = await client.call_tool(
-            "open_group",
+            "run_round",
             {
                 "title": "Parallel",
                 "cwd": str(tmp_path),
-                "seats": [{"id": s, "provider": "claude"} for s in "ab"],
+                "members": [{"id": s, "provider": "claude"} for s in "ab"],
             },
         )
         group_id = _payload(opened.structured_content)["group_id"]
@@ -254,16 +240,14 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
                 "instructions": {"b": "argue the other side"},
             },
         )
-        started_payload = _payload(started.structured_content)
+        started_payload = _payload(_payload(started.structured_content)["round"])
         assert started_payload["reason"] == "started"
         seats = cast(list[dict[str, object]], started_payload["seats"])
         assert [seat["status"] for seat in seats] == ["running", "running"]
         async with asyncio.timeout(10):
             while True:
-                waited = await client.call_tool(
-                    "wait_round", {"round_id": started_payload["round_id"]}
-                )
-                payload = _payload(waited.structured_content)
+                waited = await client.call_tool("wait", {"ids": [started_payload["round_id"]]})
+                payload = _first(waited, "rounds")
                 if payload["status"] != "running":
                     break
         rejected = await client.call_tool(
@@ -271,12 +255,15 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "x"},
         )
         status_only = await client.call_tool(
-            "wait_round", {"round_id": started_payload["round_id"], "include_output": False}
+            "wait", {"ids": [started_payload["round_id"]], "include_output": False}
         )
-        compact = _payload(status_only.structured_content)
+        compact = _first(status_only, "rounds")
         assert all("output" not in seat for seat in cast(list[dict[str, object]], compact["seats"]))
-        reread = await client.call_tool("wait_round", {"round_id": started_payload["round_id"]})
-        assert _payload(reread.structured_content) == payload
+        reread = await client.call_tool("wait", {"ids": [started_payload["round_id"]]})
+        assert _first(reread, "rounds") == payload
+        # The text content is the structured result, compact and without empty fields.
+        text = reread.content[0]
+        assert isinstance(text, TextContent) and "null" not in text.text and "\n" not in text.text
 
     assert payload["status"] == "finished" and payload["reason"] == "finished"
     outputs = [str(seat["output"]) for seat in cast(list[dict[str, object]], payload["seats"])]
@@ -297,10 +284,9 @@ async def test_mcp_preserves_terminal_result_when_provider_usage_is_malformed(
             {"provider": "claude", "prompt": "malformed usage", "cwd": str(tmp_path)},
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
-        finished = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
+        finished = await client.call_tool("wait", {"ids": [invocation_id]})
 
-    finished_payload = _payload(finished.structured_content)
-    invocation_result = finished_payload
+    invocation_result = _first(finished)
     assert finished.is_error is False
     assert invocation_result["status"] == "succeeded"
     assert invocation_result["output"] == "MALFORMED USAGE"
@@ -324,16 +310,16 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
         sleeping, finished = ids
         async with asyncio.timeout(3):
             for invalid in ([], [finished, finished], [sleeping, "missing"]):
-                rejected = await client.call_tool("wait_any", {"invocation_ids": invalid})
+                rejected = await client.call_tool("wait", {"ids": invalid})
                 assert rejected.is_error is True
-            ready = await client.call_tool("wait_any", {"invocation_ids": [sleeping, finished]})
+            ready = await client.call_tool("wait", {"ids": [sleeping, finished]})
         ready_payload = _payload(ready.structured_content)
         assert ready_payload["reason"] == "ready"
         (update,) = cast(list[dict[str, object]], ready_payload["updates"])
         assert update["invocation_id"] == finished
         assert (update["status"], update["reason"]) == ("succeeded", "finished")
 
-        listed = _payload((await client.call_tool("list_invocations", {})).structured_content)
+        listed = _payload((await client.call_tool("list", {})).structured_content)
         active, done = cast(list[dict[str, object]], listed["invocations"])
         assert active["invocation_id"] == sleeping
         assert (active["status"], active["phase"], active["events_seen"]) == (
@@ -355,18 +341,18 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
         assert "private task text" not in str(listed).lower()
 
         monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.2)
-        elapsed = _payload(
-            (await client.call_tool("wait_any", {"invocation_ids": [sleeping]})).structured_content
-        )
+        elapsed = _payload((await client.call_tool("wait", {"ids": [sleeping]})).structured_content)
         assert elapsed["reason"] == "wait_elapsed"
         (running,) = cast(list[dict[str, object]], elapsed["updates"])
         assert (running["invocation_id"], running["status"]) == (sleeping, "running")
         await asyncio.sleep(1.0)
+        # The relay's unlisted probe reports the same handles and whether a restart is safe.
         listed = _payload((await client.call_tool("list_invocations", {})).structured_content)
         assert [
             item["invocation_id"] for item in cast(list[dict[str, object]], listed["invocations"])
         ] == [sleeping]
-        await client.call_tool("cancel_agent", {"invocation_id": sleeping})
+        assert listed["restart_safe"] is False  # the sleeping task still holds its history
+        await client.call_tool("cancel", {"id": sleeping})
 
 
 @pytest.mark.asyncio
@@ -382,14 +368,11 @@ async def test_mcp_running_result_can_be_cancelled(
             {"provider": "claude", "prompt": "sleep", "cwd": str(tmp_path)},
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
-        running = await client.call_tool(
-            "wait_agent",
-            {"invocation_id": invocation_id},
-        )
-        cancelled = await client.call_tool("cancel_agent", {"invocation_id": invocation_id})
+        running = await client.call_tool("wait", {"ids": [invocation_id]})
+        cancelled = await client.call_tool("cancel", {"id": invocation_id})
 
-    running_payload = _payload(running.structured_content)
-    cancelled_payload = _payload(cancelled.structured_content)
+    running_payload = _first(running)
+    cancelled_payload = _payload(_payload(cancelled.structured_content)["invocation"])
     cancelled_result = cancelled_payload
     assert running_payload["status"] == "running"
     assert isinstance(running_payload["elapsed_ms"], int)
@@ -502,11 +485,14 @@ async def test_mcp_expired_invocation_returns_tool_error(
             "start_agent", {"provider": "claude", "prompt": "complete", "cwd": str(tmp_path)}
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
-        finished = await client.call_tool("wait_agent", {"invocation_id": invocation_id})
-        assert _payload(finished.structured_content)["status"] == "succeeded"
+        finished = await client.call_tool("wait", {"ids": [invocation_id]})
+        assert _first(finished)["status"] == "succeeded"
         await asyncio.sleep(0.6)
-        for tool in ("wait_agent", "cancel_agent"):
-            expired = await client.call_tool(tool, {"invocation_id": invocation_id})
+        for tool, arguments in (
+            ("wait", {"ids": [invocation_id]}),
+            ("cancel", {"id": invocation_id}),
+        ):
+            expired = await client.call_tool(tool, arguments)
             assert expired.is_error
             assert "expired" in str(expired.content)
             assert "seven days" in str(expired.content)
@@ -515,7 +501,7 @@ async def test_mcp_expired_invocation_returns_tool_error(
 @pytest.mark.asyncio
 async def test_mcp_unknown_invocation_error_tells_agent_how_to_recover() -> None:
     async with Client(mcp) as client:
-        result = await client.call_tool("wait_agent", {"invocation_id": "missing"})
+        result = await client.call_tool("wait", {"ids": ["missing"]})
 
     assert result.is_error is True
     assert result.content
@@ -536,13 +522,9 @@ async def test_mcp_provider_launch_failure_is_structured_and_hides_traceback(
             {"provider": "claude", "prompt": "finish", "cwd": str(tmp_path)},
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
-        finished = await client.call_tool(
-            "wait_agent",
-            {"invocation_id": invocation_id},
-        )
+        finished = await client.call_tool("wait", {"ids": [invocation_id]})
 
-    finished_payload = _payload(finished.structured_content)
-    invocation_result = finished_payload
+    invocation_result = _first(finished)
     error = _payload(invocation_result["error"])
     assert finished.is_error is False
     assert invocation_result["status"] == "failed"
@@ -598,22 +580,23 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         tools = (await client.list_tools()).tools
         description = str(tools[0].input_schema)
         assert client.instructions is not None
-        assert "describe_provider" in client.instructions
+        assert "list_members" in client.instructions
         assert "Excluded providers:" in client.instructions
         assert "Excluded providers:" in description
-        described = await client.call_tool("describe_provider", {"provider": "codex"})
-        assert _payload(described.structured_content)["permitted"] is False
+        described = await client.call_tool("list_members", {"provider": "codex"})
+        details = _payload(_payload(described.structured_content)["provider_details"])
+        assert details["permitted"] is False
         rejected = await client.call_tool(
             "start_agent", {"provider": "codex", "prompt": "finish", "cwd": str(tmp_path)}
         )
         assert rejected.is_error is True
         assert "excluded by this host" in str(rejected.content)
         grouped = await client.call_tool(
-            "open_group",
+            "run_round",
             {
                 "title": "Excluded",
                 "cwd": str(tmp_path),
-                "seats": [{"id": p, "provider": p} for p in ("codex", "grok")],
+                "members": [{"id": p, "provider": p} for p in ("codex", "grok")],
             },
         )
         assert grouped.is_error is False  # exclusions limit start_agent, not group seats
@@ -626,13 +609,9 @@ async def test_stdio_enforces_host_exclusions_before_launch(
             )
             assert started.is_error is False
             finished = await client.call_tool(
-                "wait_agent",
-                {
-                    "invocation_id": _payload(started.structured_content)["invocation_id"],
-                },
+                "wait", {"ids": [_payload(started.structured_content)["invocation_id"]]}
             )
-            result = _payload(finished.structured_content)
-            assert result["output"] == "FINISH"
+            assert _first(finished)["output"] == "FINISH"
 
 
 def test_stdio_rejects_unknown_exclusion_configuration() -> None:
@@ -771,11 +750,11 @@ async def test_members_report_corrupt_files_without_overwriting_them(
             for tool, arguments in (
                 ("start_agent", {"provider": "claude", "prompt": "x", "cwd": str(tmp_path)}),
                 (
-                    "open_group",
+                    "run_round",
                     {
                         "title": "Broken",
                         "cwd": str(tmp_path),
-                        "seats": [
+                        "members": [
                             {"id": "a", "provider": "claude"},
                             {"id": "b", "provider": "claude"},
                         ],
@@ -852,7 +831,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             )
             assert not result.is_error, result.content
             payload = _payload(result.structured_content)
-            await client.call_tool("wait_agent", {"invocation_id": payload["invocation_id"]})
+            await client.call_tool("wait", {"ids": [payload["invocation_id"]]})
             return payload
 
         monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
@@ -914,29 +893,29 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert rejected.is_error and "excluded by this host" in str(rejected.content)
         assert mcp_server.PROVIDER_SELECTION in str(rejected.content)
         grouped = await client.call_tool(
-            "open_group",
+            "run_round",
             {
                 "title": "Defaults",
                 "cwd": str(tmp_path),
-                "seats": [
+                "members": [
                     {"id": "a", "provider": "claude"},
                     {"id": "b", "provider": "claude", "provider_options": {"model": "outside"}},
                 ],
             },
         )
         assert not grouped.is_error, grouped.content
-        seats = cast(list[dict[str, object]], _payload(grouped.structured_content)["seats"])
+        seats = cast(list[dict[str, object]], _payload(grouped.structured_content)["members"])
         assert seats[0]["model"] == "chosen" and seats[0]["effort"] == "high"
         assert seats[0]["defaults_applied"] == ["model", "effort", "permission_mode"]
         assert seats[1]["model"] == "outside" and seats[1]["effort"] is None
         cast(dict[str, object], document["modes"])["discussion"] = {}
         path.write_text(json.dumps(document), encoding="utf-8")
         rejected = await client.call_tool(
-            "open_group",
+            "run_round",
             {
                 "title": "Restricted",
                 "cwd": str(tmp_path),
-                "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+                "members": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
             },
         )
         assert rejected.is_error and "allowed members: none" in str(rejected.content)
@@ -956,7 +935,7 @@ def test_host_startup_merges_exclusions_and_reports_identity(tmp_path: Path) -> 
             sys.executable,
             "-c",
             "import asyncio, json; from agentnave import mcp_server as s; "
-            "print(json.dumps([asyncio.run(s.describe_provider('codebuddy')), "
+            "print(json.dumps([asyncio.run(s.list_members('codebuddy')).model_dump(mode='json'), "
             "sorted(s.EXCLUDED_PROVIDERS), s.PROVIDER_SELECTION]))",
         ],
         env=environment,
@@ -967,7 +946,8 @@ def test_host_startup_merges_exclusions_and_reports_identity(tmp_path: Path) -> 
     )
     description, excluded, instructions = json.loads(completed.stdout)
     assert description["host"] == "workbuddy" and description["host_source"] == "env"
-    assert description["permitted"] is False and excluded == ["codebuddy", "grok"]
+    assert description["provider_details"]["permitted"] is False
+    assert excluded == ["codebuddy", "grok"]
     assert "Excluded providers: codebuddy, grok" in instructions
     environment["AGENTNAVE_HOST"] = "unknown"
     invalid = subprocess.run(

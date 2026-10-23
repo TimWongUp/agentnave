@@ -1103,7 +1103,8 @@ function verbOf(m, ctx) {
   if (m.kind === "forward") return ["转发给", targets(m, ctx)];
   if (isBoss(m))
     return room ? ["对", targets(m, ctx), "提问"] : ["派给", targets(m, ctx)];
-  if (m.discarded) return ["的回答（已丢弃）", []];
+  // Kept from the other seats in review: a reply only boss sees, never deleted.
+  if (m.kept_private) return ["回复", [{ kind: "boss" }], "", "🔒 未公开"];
   if (m.status === "review") return ["的回答", [{ kind: "boss" }], "等审核"];
   if (room)
     return m.visibility === "public"
@@ -1114,7 +1115,7 @@ function verbOf(m, ctx) {
 function metaOf(m, ctx) {
   if (Array.isArray(m.answering) && m.answering.length)
     return `本轮回答：${m.answering.map((x) => String(x).replace(/^@/, "")).join("、")}`;
-  if (m.status === "review" && !m.discarded)
+  if (m.status === "review" && !m.kept_private)
     return "boss 公开后，会议室里的其他人才看得到";
   return "";
 }
@@ -1251,7 +1252,7 @@ function updateMessage(rec, m, ctx, id) {
     (m.thread?.kind === "room" && m.visibility !== "public" && !isBoss(m));
   setClass(
     rec.el,
-    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.discarded ? " discarded" : ""}${m.reply_to && !isBoss(m) ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
+    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.reply_to && !isBoss(m) ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
   );
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
@@ -1296,14 +1297,11 @@ function applyFold(rec) {
   if (!rec.more || !rec.el.isConnected || !rec.el.offsetParent) return;
   const open = state.expanded.has(rec.id);
   rec.bub.classList.toggle("fold", !open);
-  const discarded = rec.el.classList.contains("discarded");
-  const overflows = discarded || rec.bub.scrollHeight > FOLD_PX + 6; // scrollHeight ignores the clamp
+  const overflows = rec.bub.scrollHeight > FOLD_PX + 6; // scrollHeight ignores the clamp
   rec.more.hidden = !overflows;
   rec.more.textContent = open ? "收起" : "展开全文";
   rec.more.setAttribute("aria-expanded", open ? "true" : "false");
   rec.bub.classList.toggle("fold", !open && overflows);
-  if (discarded && !open) rec.bub.style.maxHeight = "3.4em";
-  else rec.bub.style.maxHeight = "";
 }
 function measureAll() {
   for (const rec of state.nodes.values()) if (rec.more) applyFold(rec);

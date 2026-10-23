@@ -33,7 +33,7 @@ const SEAT = {
 const REVIEW = {
   pending: ["待审核", "review"],
   publish: ["已发布", "done"],
-  discard: ["已丢弃", "idle"],
+  private: ["未公开", "idle"],
 };
 const HOST = { id: "@host", label: "主持人", model: "", provider: "host" };
 const EXAMPLES = [
@@ -917,7 +917,7 @@ function renderDesk(detail, cast) {
       ? h(
           "p.meta",
           { style: "color:var(--faint);font-size:12px;margin-top:16px" },
-          "发布或丢弃回答，请在 boss 的对话中操作。",
+          "公开或不公开回答，请在 boss 的对话中操作。",
         )
       : null,
   ];

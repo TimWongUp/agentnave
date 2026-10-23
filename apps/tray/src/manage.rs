@@ -1,4 +1,4 @@
-//! Tray-only cleanup. Keep the lock inode and never walk into seat directories.
+//! Tray-only cleanup and renaming. Keep the lock inode and never walk into seat directories.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
@@ -99,33 +99,87 @@ fn result(id: &str, status: &str, message: &str) -> Value {
     json!({"id": id, "status": status, "message": message})
 }
 
-pub fn delete(root: &Path, id: &str) -> Value {
+/// The conversation directory with its lock held, or the result to report instead.
+fn locked(root: &Path, id: &str) -> Result<(PathBuf, File), Value> {
     let directory = match directory(root, id) {
         Ok(path) => path,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return result(id, "missing", "会话已不存在");
+            return Err(result(id, "missing", "会话已不存在"));
         }
-        Err(e) => return result(id, "error", &e.to_string()),
+        Err(e) => return Err(result(id, "error", &e.to_string())),
     };
-    let lock = match lock_file(&directory) {
-        Ok(lock) => lock,
-        Err(e) => return result(id, "error", &e.to_string()),
-    };
+    let lock = lock_file(&directory).map_err(|e| result(id, "error", &e.to_string()))?;
     // Probe locks are short-lived. Retry for at most one second before reporting contention.
     for attempt in 0..ATTEMPTS {
         match lock.try_lock() {
             Ok(()) => break,
             Err(TryLockError::WouldBlock) if attempt + 1 < ATTEMPTS => thread::sleep(RETRY),
             Err(TryLockError::WouldBlock) => {
-                return result(id, "in_use", "正在被某个宿主使用，请空闲后重试");
+                return Err(result(id, "in_use", "正在被某个宿主使用，请空闲后重试"));
             }
-            Err(e) => return result(id, "error", &e.to_string()),
+            Err(e) => return Err(result(id, "error", &e.to_string())),
         }
     }
     // Re-read only after acquiring the lock. A saved running status now means a crashed writer.
     if !directory.join("state.json").exists() {
-        return result(id, "missing", "会话已不存在");
+        return Err(result(id, "missing", "会话已不存在"));
     }
+    Ok((directory, lock))
+}
+
+/// Replace a file the way the server does: readers see the old or the new bytes.
+fn replace(path: &Path, value: &Value) -> io::Result<()> {
+    let temporary = path.with_file_name(format!(".rename-{}.json", std::process::id()));
+    let result = serde_json::to_vec(value)
+        .map_err(io::Error::other)
+        .and_then(|bytes| fs::write(&temporary, bytes))
+        .and_then(|()| fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+/// Rename an idle conversation; servers reload state.json the next time they read it.
+pub fn rename(root: &Path, id: &str, title: &str) -> Value {
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > 200 || title.chars().any(char::is_control) {
+        return result(id, "error", "标题需为 1–200 个字符，且不含换行或控制字符");
+    }
+    let (directory, _lock) = match locked(root, id) {
+        Ok(found) => found,
+        Err(report) => return report,
+    };
+    let mut state = match read_state(&directory, id) {
+        Ok(state) => state.value,
+        Err(e) => return result(id, "error", &e),
+    };
+    state["title"] = json!(title);
+    if let Err(e) = replace(&directory.join("state.json"), &state) {
+        return result(id, "error", &format!("保存标题失败：{e}"));
+    }
+    // The derived view follows at once so the office shows the new title before any server
+    // rewrites it; a missing or unreadable view is left for the next server to project.
+    let views = directory.join("views.json");
+    if let Ok(mut view) = fs::read(&views)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string()))
+    {
+        for key in ["summary", "director", "public"] {
+            if view[key].is_object() {
+                view[key]["title"] = json!(title);
+            }
+        }
+        let _ = replace(&views, &view);
+    }
+    json!({"id": id, "status": "renamed", "title": title, "message": "已改名"})
+}
+
+pub fn delete(root: &Path, id: &str) -> Value {
+    let (directory, _lock) = match locked(root, id) {
+        Ok(found) => found,
+        Err(report) => return report,
+    };
     let state = match read_state(&directory, id) {
         Ok(state) => state,
         Err(e) => return result(id, "error", &e),
@@ -277,6 +331,49 @@ mod tests {
         ));
         drop(lock);
         assert_eq!(delete(root.path(), "idle")["status"], "missing");
+    }
+
+    #[test]
+    fn rename_rewrites_state_and_views_under_the_lock() {
+        let root = tempfile::tempdir().unwrap();
+        let path = fixture(root.path(), "named");
+        fs::write(
+            path.join("views.json"),
+            json!({"summary": {"title": "测试"}, "director": {"title": "测试"}, "public": null})
+                .to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            rename(root.path(), "named", " 新标题 ")["status"],
+            "renamed"
+        );
+        let read = |name: &str| -> Value {
+            serde_json::from_slice(&fs::read(path.join(name)).unwrap()).unwrap()
+        };
+        let state = read("state.json");
+        assert_eq!(state["title"], "新标题");
+        assert_eq!(state["tasks"][0]["status"], "running"); // everything else kept
+        let views = read("views.json");
+        assert_eq!(views["summary"]["title"], "新标题");
+        assert_eq!(views["director"]["title"], "新标题");
+        assert!(views["public"].is_null());
+        assert_eq!(rename(root.path(), "named", "a\nb")["status"], "error");
+        assert_eq!(rename(root.path(), "named", " ")["status"], "error");
+        // As above, a process another test spawns may briefly hold rename's descriptor.
+        let lock = lock_file(&path).unwrap();
+        let mut held = lock.try_lock();
+        for _ in 1..ATTEMPTS {
+            if !matches!(held, Err(TryLockError::WouldBlock)) {
+                break;
+            }
+            thread::sleep(RETRY);
+            held = lock.try_lock();
+        }
+        held.unwrap();
+        assert_eq!(rename(root.path(), "named", "被占用")["status"], "in_use");
+        drop(lock);
+        assert_eq!(read("state.json")["title"], "新标题");
+        assert_eq!(rename(root.path(), "gone", "x")["status"], "missing");
     }
 
     #[test]

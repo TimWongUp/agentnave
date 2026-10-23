@@ -11,6 +11,7 @@ let pending = null;
 let busy = false;
 let loading = false;
 let loadFailed = true;
+let editing = null; // id of the conversation whose title is being edited
 const day = 86400000;
 const updated = (item) => Date.parse(item.updated) || item.updated_ms || NaN;
 const title = (item) => item.title || "未命名会话";
@@ -43,7 +44,7 @@ function controls() {
   $("refresh").disabled = busy || pending !== null || loading;
   $("confirm").disabled = busy;
   $("cancel").disabled = busy;
-  for (const input of $("list").querySelectorAll("input")) {
+  for (const input of $("list").querySelectorAll("input[type=checkbox]")) {
     const item = items.find((item) => item.id === input.value);
     input.disabled = locked || !item?.deletable;
   }
@@ -74,7 +75,34 @@ function render() {
     // A readable snapshot lets the chat page locate this conversation's messages.
     const link = node(item.group ? "a" : "span", title(item), "title");
     if (item.group) link.href = `/chat/${encodeURIComponent(item.group)}#conv:${encodeURIComponent(item.id)}`;
-    name.append(link, node("span", item.mode === "show" ? "节目" : "任务", `kind ${item.mode}`));
+    if (editing === item.id) {
+      const input = node("input", null, "rename");
+      input.value = title(item);
+      input.maxLength = 200;
+      input.setAttribute("aria-label", `新标题：${title(item)}`);
+      input.addEventListener("keydown", (event) => {
+        // Enter that confirms an input-method candidate is not a save.
+        if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) rename(item, input.value);
+        if (event.key === "Escape") { event.stopPropagation(); editing = null; render(); }
+      });
+      const save = node("button", "保存");
+      save.type = "button";
+      save.addEventListener("click", () => rename(item, input.value));
+      const back = node("button", "取消");
+      back.type = "button";
+      back.addEventListener("click", () => { editing = null; render(); });
+      name.append(input, save, back);
+      queueMicrotask(() => { input.focus(); input.select(); });
+    } else {
+      const edit = node("button", "改名", "edit");
+      edit.type = "button";
+      // Renaming takes the same lock as deleting, so a busy or pending record cannot be renamed.
+      edit.disabled = busy || pending !== null || !item.deletable;
+      if (item.reason) edit.title = item.reason;
+      edit.setAttribute("aria-label", `改名：${title(item)}`);
+      edit.addEventListener("click", () => { editing = item.id; render(); });
+      name.append(link, node("span", item.mode === "show" ? "节目" : "任务", `kind ${item.mode}`), edit);
+    }
     const status = node("td");
     status.append(node("span", labels[item.status] || item.status || "未知", `status ${item.status}`));
     const date = node("td");
@@ -89,8 +117,33 @@ function render() {
   }));
   controls();
 }
+async function rename(item, value) {
+  const next = value.trim();
+  if (!next || next === title(item)) { editing = null; render(); return; }
+  busy = true;
+  controls();
+  try {
+    const response = await fetch("/app/conversations/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+      body: JSON.stringify({ id: item.id, title: next }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || `改名失败（${response.status}）`);
+    if (data.status !== "renamed") throw new Error(data.message);
+    editing = null;
+    busy = false;
+    await refresh();
+    notice(`已改名为“${data.title}”`);
+  } catch (error) {
+    busy = false;
+    controls();
+    notice(`未能改名：${error.message}`, true);
+  }
+}
 async function refresh() {
-  if (busy || pending || loading) return;
+  // Keep a title being edited: re-rendering the list would discard it.
+  if (busy || pending || loading || editing) return;
   loading = true;
   controls();
   try {
@@ -164,7 +217,8 @@ async function remove() {
   }
 }
 $("refresh").addEventListener("click", refresh);
-for (const id of ["filter", "before"]) $(id).addEventListener("change", () => { selected.clear(); render(); });
+// A filter may hide the row being renamed; drop that edit so refreshes resume.
+for (const id of ["filter", "before"]) $(id).addEventListener("change", () => { selected.clear(); editing = null; render(); });
 $("select-all").addEventListener("change", () => {
   for (const item of visibleItems().filter((item) => item.deletable)) {
     if ($("select-all").checked) selected.add(item.id); else selected.delete(item.id);

@@ -52,7 +52,7 @@ from agentnave.store import (
     write_file,
 )
 
-type Decision = Literal["publish", "discard"]
+type Decision = Literal["publish", "private"]
 type Access = Literal["read", "write"]
 
 _ROLE_MAX_LENGTH = 40
@@ -87,17 +87,10 @@ class TaskStart(NamedTuple):
     invocation_id: str
     conversation_id: str
     resumed: bool = False
-    access: str | None = None  # the desk's declared tier
+    access: str | None = None  # the tier this call declared
 
 
 _MAX_FORWARD = 20
-
-
-def _conversion_error(fixed: str, wanted: str | None) -> str:
-    return (
-        f"This desk or thread has {fixed} access declared and cannot take {wanted} work; use "
-        "another role and pass what it found with forward or a meeting instead of converting it"
-    )
 
 
 class ForwardError(ValueError):
@@ -373,18 +366,10 @@ class Conversations(Groups):
         manager_session_id: str | None = None,
     ) -> Record:
         manager_session = self._manager_session(manager_session_id)
-        seats = [replace(seat, role=normalize_role(seat.role)) for seat in seats]
-        settled: dict[tuple[str, str | None, str | None], Access | None] = {}
-        for index, seat in enumerate(seats):
-            model = seat.provider_options.get("model")
-            desk = (seat.provider, None if model is None else str(model), seat.role)
-            declared = normalize_access(seat.access)
-            earlier = settled.get(desk)
-            if earlier is not None and declared not in (None, earlier):
-                raise ValueError(_conversion_error(earlier, declared))
-            access = self._effective_access(manager_session, *desk, declared or earlier)
-            settled[desk] = access
-            seats[index] = replace(seat, access=access)
+        seats = [
+            replace(seat, role=normalize_role(seat.role), access=normalize_access(seat.access))
+            for seat in seats
+        ]
         conversation_id = uuid4().hex
         directory = self._directory(conversation_id)
         if isolated:
@@ -597,9 +582,9 @@ class Conversations(Groups):
                 if review not in ("pending", decision):
                     raise ValueError(f"seat {seat_id} was already decided: {review}")
                 if live is not None and live.cancelling and review == "pending":
-                    # Cancel discards undecided answers; a late publish must not slip in.
+                    # Cancel keeps undecided answers private; a late publish must not slip in.
                     raise ValueError(
-                        "this round is being cancelled; undecided answers are discarded"
+                        "this round is being cancelled; undecided answers stay private"
                     )
             if live is not None:
                 before = dict(current)
@@ -651,19 +636,6 @@ class Conversations(Groups):
     def restart_safe(self) -> bool:
         """A held record may still own a review or a result that could not be saved."""
         return not self._unsaved and all(record.lock is None for record in self.records.values())
-
-    def update(self, conversation_id: str, title: str) -> Record:
-        with self._writing(conversation_id) as record:
-            if not title.strip() or len(title) > 200:
-                raise ValueError("Title must contain 1–200 characters")
-            record.state.title = title
-            group = self._groups.get(conversation_id)
-            if group is not None:
-                self._save(group)  # include any group changes an earlier failed save missed
-            else:
-                self._persist(record)
-                self._publish(record)
-            return record
 
     # Forwards
 
@@ -752,73 +724,11 @@ class Conversations(Groups):
 
     # Tasks
 
-    def _desk_access(
-        self, manager_session: str, provider: str, model: str | None, role: str | None
-    ) -> Access | None:
-        """The access tier this desk first declared in the workspace, if any."""
-        self.scan()  # Include records another server saved.
-        declared: list[tuple[str, Access]] = []
-        for record in self.records.values():
-            if record.state.manager_session != manager_session:
-                continue
-            for task in record.state.tasks:
-                if (
-                    task.access is not None
-                    and task.provider == provider
-                    and (task.model or None) == model
-                    and task.role == role
-                ):
-                    declared.append((task.time, task.access))
-            for seat in record.state.seats:
-                seat_model = seat.provider_options.get("model")
-                if (
-                    seat.access is not None
-                    and seat.provider == provider
-                    and (None if seat_model is None else str(seat_model)) == model
-                    and seat.role == role
-                ):
-                    declared.append((record.state.created, seat.access))
-        return min(declared)[1] if declared else None
-
-    def _effective_access(
-        self,
-        manager_session: str | None,
-        provider: str,
-        model: str | None,
-        role: str | None,
-        access: Access | None,
-    ) -> Access | None:
-        """A desk keeps its first declared tier; a different declaration needs another role."""
-        if manager_session is None:
-            return access  # Without a workspace there is no desk to keep consistent.
-        fixed = self._desk_access(manager_session, provider, model, role)
-        if fixed is None:
-            return access
-        if access is not None and access != fixed:
-            raise ValueError(_conversion_error(fixed, access))
-        return fixed
-
-    def _thread_access(
-        self, manager_session: str | None, provider: str, session_id: str
-    ) -> tuple[bool, Access | None]:
-        """Whether this workspace recorded the native thread, and its latest declared tier."""
-        recorded: list[tuple[str, Access | None]] = []
-        for record in self.records.values():
-            if record.state.kind != "task" or record.state.manager_session != manager_session:
-                continue
-            for task in record.state.tasks:
-                if task.provider == provider and task.session_id == session_id:
-                    recorded.append((task.time, task.access))
-        if not recorded:
-            return False, None
-        return True, max(recorded, key=lambda item: item[0])[1]
-
     def _recent_task_thread(
         self,
         request: InvocationRequest,
         manager_session: str,
         role: str | None,
-        access: Access | None,
     ) -> TaskRecord | None:
         """The same desk's latest saved private thread in this manager chat and cwd, if any."""
         self.scan()  # Include records another server saved.
@@ -834,7 +744,6 @@ class Conversations(Groups):
             # A native session keeps the context of the directory it ran in.
             and task.cwd == str(request.cwd)
             and task.role == role
-            and task.access == access  # never adopt a thread recorded under another tier
             # A new thread has no native session until it ends; while running it is the latest.
             and (
                 task.session_id is not None
@@ -870,17 +779,9 @@ class Conversations(Groups):
             raise ValueError("continue_desk=true needs a manager_session_id to find the desk")
         forwarded = self._resolve_forwards(forward, manager_session)
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
-        model = request.provider_options.get("model")
-        effective = self._effective_access(
-            manager_session,
-            request.provider,
-            None if model is None else str(model),
-            role,
-            declared,
-        )
         resumed = False
         if continue_desk and manager_session is not None:
-            recent = self._recent_task_thread(request, manager_session, role, effective)
+            recent = self._recent_task_thread(request, manager_session, role)
             if recent is not None:
                 if recent.status == "running" or recent.id in self.running_tasks:
                     raise ValueError(
@@ -889,15 +790,6 @@ class Conversations(Groups):
                     )
                 request = replace(request, session_id=recent.session_id)
                 resumed = True
-        if request.session_id is not None and not resumed:
-            # A thread already recorded in this workspace keeps the tier it ran with; an
-            # undeclared thread is not adopted by a declared call.
-            recorded, thread = self._thread_access(
-                manager_session, request.provider, request.session_id
-            )
-            if recorded and effective is not None and thread != effective:
-                raise ValueError(_conversion_error(thread or "no", effective))
-            effective = effective or thread
         self.manager.check_start(request)
         if conversation_id:
             self.record(conversation_id)  # Reject missing history before creating startup metadata.
@@ -993,7 +885,7 @@ class Conversations(Groups):
                 session_id=request.session_id,
                 time=now(),
                 role=role,
-                access=effective,
+                access=declared,
                 forward=[item.message_id for item in forwarded],
             )
             record.state.tasks.append(task)
@@ -1013,7 +905,7 @@ class Conversations(Groups):
             self.collectors.append(
                 asyncio.create_task(self._collect(record, task.id, invocation_id))
             )
-            return TaskStart(invocation_id, record.state.id, resumed, effective)
+            return TaskStart(invocation_id, record.state.id, resumed, declared)
         finally:
             try:
                 if not started:
@@ -1046,7 +938,7 @@ class Conversations(Groups):
         except OSError:
             # The rollback dropped the result; keep it in memory, marked as not saved, so a
             # resumed native session still joins this conversation.
-            finish("interrupted", "history_write_failed; use wait_agent for the invocation result")
+            finish("interrupted", "history_write_failed; use wait for the invocation result")
             record.saved = record.state.model_copy(deep=True)
         self.running_tasks.pop(task_id, None)
         self._publish(record)
@@ -1059,7 +951,7 @@ class Conversations(Groups):
             reviews = self.reviews.get(round_.id, {})
             for seat_id, decision in reviews.items():
                 if decision == "pending":
-                    reviews[seat_id] = "discard"
+                    reviews[seat_id] = "private"
         self._save(round_.group)
 
     def _save(self, group: Group) -> None:
@@ -1142,9 +1034,27 @@ class Conversations(Groups):
             await changed.wait()
         for seat in seat_ids:
             if reviews[seat] == "pending":
-                # Cancelled or stopped before a decision: discarded, never published.
-                reviews[seat] = "discard"
+                # Cancelled or stopped before a decision: kept private, never published.
+                reviews[seat] = "private"
         return {seat for seat in seat_ids if reviews[seat] == "publish"}
+
+    def _seat_note(self, group: Group, seat_id: str) -> str | None:
+        # The seat's native session remembers its last answer; tell it others never saw it.
+        state = self.records[group.id].state
+        earlier = [
+            (round_.number, seat.review)
+            for round_ in state.rounds
+            if round_.number < group.rounds
+            for seat in round_.seats
+            if seat.seat_id == seat_id and seat.status == "succeeded"
+        ]
+        if not earlier or earlier[-1][1] != "private":
+            return None
+        number = earlier[-1][0]
+        return (
+            f"Note: your answer in round {number} was kept private by the host; "
+            "other seats never saw it."
+        )
 
     def _ready(self, round_: Round) -> str | None:
         return "review_needed" if "pending" in self.reviews.get(round_.id, {}).values() else None
