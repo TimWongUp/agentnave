@@ -21,6 +21,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELOAD_FORMAT: u64 = 3;
 /// Matches the relay's own report that an update has waited too long.
 const STALE_RUNTIME_SECONDS: u64 = 600;
+/// A receipt this old with no refresh belongs to a relay that exited without removing it.
+const LINGER_SECONDS: u64 = 150;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
@@ -628,7 +630,7 @@ impl Hosts {
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
-            "reload_hint":activation_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
+            "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only actual configuration/Skill content matters; release numbers do not.
     fn reload_token(&self, host: &Host, _skill: &Value) -> Option<String> {
@@ -689,6 +691,10 @@ impl Hosts {
                 || (observed["token"].is_string() && observed["token"] != token));
         let root = self.connection_root(host);
         let now = SystemTime::now();
+        // Live receipts refresh every five seconds; a relay swapping to a new install may pause
+        // that for up to 105 seconds, so only a longer silence counts as no connection at all.
+        // A paused one may predate the change, so it also keeps a reload from clearing.
+        let mut lingering = false;
         let connections: Vec<Value> = root
             .into_iter()
             .flat_map(|root| {
@@ -703,15 +709,16 @@ impl Hosts {
                     return None;
                 }
                 let meta = entry.metadata().ok()?;
-                if meta.len() > 16_384
-                    || now
-                        .duration_since(meta.modified().ok()?)
-                        .map_or(true, |age| age.as_secs() > 20)
-                {
+                let age = now.duration_since(meta.modified().ok()?).ok()?.as_secs();
+                if meta.len() > 16_384 || age > LINGER_SECONDS {
                     return None;
                 }
                 let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-                (value["version"] == 1 && value["host"] == host.id).then_some(value)
+                if value["version"] != 1 || value["host"] != host.id {
+                    return None;
+                }
+                lingering |= age > 20;
+                (age <= 20).then_some(value)
             })
             .collect();
         let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
@@ -728,14 +735,25 @@ impl Hosts {
             v.as_str()
                 .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
         };
-        let mut state = if pending {
+        // Without a live connection nothing holds the old interface or Skill front matter: the
+        // next connection starts after the change, which already counts as a reload (ADR-0022).
+        let idle = connections.is_empty() && !lingering;
+        let mut state = if idle {
+            "idle"
+        } else if pending {
             "required"
         } else if manual {
             "confirmed"
         } else {
             "unknown"
         };
-        let mut reason = if pending { "config" } else { "no_connection" };
+        let mut reason = if idle {
+            "no_connection"
+        } else if pending {
+            "config"
+        } else {
+            "connection"
+        };
         if !connections.is_empty() {
             if connections.iter().any(|c| {
                 valid_hash(&c["runtime_tools_hash"])
@@ -748,7 +766,8 @@ impl Hosts {
                 valid_hash(&c["runtime_tools_hash"])
                     && c["runtime_tools_hash"] == c["host_tools_hash"]
             }) {
-                let newly_connected = changed["token"] == token
+                let newly_connected = !lingering
+                    && changed["token"] == token
                     && changed["at_ms"].as_u64().is_some_and(|at| {
                         connections
                             .iter()
@@ -962,11 +981,7 @@ impl Hosts {
             match result {
                 Ok((changed, managed_entry)) => match self.ensure_skill(&host, managed_entry) {
                     Ok(skill_changed) if changed || skill_changed => {
-                        let text = format!(
-                            "已接管条目或更新 Skill{}；{}",
-                            trust_hint(host.id),
-                            activation_hint(host.id)
-                        );
+                        let text = format!("已接管条目或更新 Skill{}", trust_hint(host.id));
                         self.record(host.id, Ok(()), &text)
                     }
                     Ok(_) => {
@@ -1161,7 +1176,7 @@ impl Hosts {
             } else {
                 "已接入；Skill 已是最新"
             };
-            Ok(format!("{done}{}；{}", trust_hint(id), activation_hint(id)))
+            Ok(format!("{done}{}", trust_hint(id)))
         })();
         let ok = result.is_ok();
         if operation == "connect" {
@@ -1270,22 +1285,19 @@ fn trust_hint(id: &str) -> &'static str {
         _ => "",
     }
 }
-fn activation_hint(id: &str) -> String {
-    format!("接入配置或 Skill 简介变更时，{}", reload_hint(id))
-}
 fn reload_hint(id: &str) -> &'static str {
     match id {
-        "codex" => "重启 Codex 应用（完整退出后重新打开）以生效",
-        "claude" => "重启 Claude Code 后生效",
-        "codebuddy" => "重启 CodeBuddy Code 后生效",
-        "workbuddy" => "重启 WorkBuddy 后生效",
-        "grok" => "重启 Grok CLI 后生效",
-        "antigravity" => "重启 Antigravity 后生效",
-        "pi" => "重启 Pi 后生效",
-        "gemini" => "重启 Gemini CLI 后生效",
-        "opencode" => "重启 OpenCode 后生效",
-        "hermes" => "重启 Hermes 网关后生效",
-        _ => "重启宿主应用后生效",
+        "codex" => "完整退出并重启 Codex 应用",
+        "claude" => "重启 Claude Code",
+        "codebuddy" => "重启 CodeBuddy Code",
+        "workbuddy" => "重启 WorkBuddy",
+        "grok" => "重启 Grok CLI",
+        "antigravity" => "重启 Antigravity",
+        "pi" => "重启 Pi",
+        "gemini" => "重启 Gemini CLI",
+        "opencode" => "重启 OpenCode",
+        "hermes" => "重启 Hermes 网关",
+        _ => "重启宿主应用",
     }
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {

@@ -695,10 +695,6 @@ function buildCard(host) {
   });
   const badges = [
     host.reload?.state === "required" && h("span.badge.badge-warning", {}, "需要重新加载"),
-    host.reload?.state === "confirmed" && h("span.badge.badge-run", {}, "已手动确认"),
-    host.reload?.state === "current" && h("span.badge.badge-run", {}, "接口已同步"),
-    host.reload?.state === "updating" && h("span.badge.badge-warning", {}, "等待空闲更新"),
-    host.reload?.state === "unknown" && h("span.badge.badge-muted", {}, "无法自动确认"),
     !host.tested &&
       h(
         "span.badge.badge-muted",
@@ -737,16 +733,6 @@ function buildCard(host) {
       {},
       h("div", {}, h("dt", {}, "入口"), h("dd", {}, entryNode(host))),
       h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
-      h(
-        "div",
-        {},
-        h("dt", {}, "生效"),
-        h(
-          "dd",
-          {},
-          host.reload_hint || "接入配置或 Skill 简介变更时，重新加载宿主；接口状态见下方自动检测",
-        ),
-      ),
       h(
         "div.wide",
         {},
@@ -795,8 +781,11 @@ function buildCard(host) {
         `${last.message} · ${relTime(last.at)}`,
       ),
     );
+  // Only a needed reload is shown; synced, idle or undetectable connections need nothing.
   if (host.reload?.state === "required") {
-    const [title, detail] = RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config;
+    const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(
+      host.reload_hint || "重启宿主应用",
+    );
     const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
       h("div", {}, h("strong", {}, title), h("p", {}, detail)),
@@ -804,14 +793,6 @@ function buildCard(host) {
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),
     ));
-  } else if (host.reload?.state === "confirmed") {
-    main.push(h("p.hc-last", {}, "已记录你的手动确认；不代表已自动验证宿主接口。"));
-  } else if (host.reload?.state === "current") {
-    main.push(h("p.hc-last", {}, `已检测到的 ${host.reload.connections} 个连接均已收到当前工具接口，这些连接无需重启。旧中继连接需重连一次才能纳入检测；聊天是否采用新版工具仍由宿主决定。`));
-  } else if (host.reload?.state === "updating") {
-    main.push(h("p.hc-last", {}, "接口一致，服务将在空闲后自动切换到已安装的新版本；当前无需重启。"));
-  } else if (host.reload?.state === "unknown" && host.status === "connected") {
-    main.push(h("p.hc-last", {}, "尚无有效的连接检测记录，不能判断是否需要重新加载。旧版中继需重连一次才能启用自动检测；不会仅因版本变化要求重启。"));
   }
   main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
   // Keep the disclosure button above its content so it stays under the pointer.
@@ -820,12 +801,12 @@ function buildCard(host) {
   return card;
 }
 
-// Why a reload is required; every reason but a config change is detected again automatically.
+// Why a reload is required, given how this host restarts; all but a config change clear themselves.
 const RELOAD_REASONS = {
-  config: ["接入配置或 Skill 简介有变化", "重新打开宿主或新开会话即可；检测到所有连接都是变化之后建立的，视为已重新加载并自动消除提示（只重连 MCP、继续原聊天时，该聊天里的 Skill 简介可能仍是旧的）。Skill 只改正文时不需要重新加载。无法自动检测时，可在操作后手动确认。"],
-  tools: ["仍有连接使用旧工具接口", "支持自动刷新的宿主会重新获取工具列表；若此状态持续，请重新连接 AgentNave MCP，必要时重启宿主。重连后会自动检测，无需手动确认。"],
-  relay: ["有连接未能换用新服务", "新版本已安装超过 10 分钟，这条连接仍报告不出运行版本。多半是 v0.31.0 之前启动的中继，认不出新版宿主协议，不会自动切换。请重新连接 AgentNave MCP 或重启宿主；重连会结束这条连接上正在运行的任务。重连后会自动检测，无需手动确认。"],
-  stale: ["有连接长时间仍在用旧版服务", "新版本已安装超过 10 分钟，这条连接仍未切换。通常是它一直有任务在运行，或有已结束任务的结果还没读取；处理完会自动切换。确认没有任务时，请重新连接 AgentNave MCP 或重启宿主。重连后会自动检测，无需手动确认。"],
+  config: (hint) => ["接入配置或 Skill 简介已更新", `运行中的会话还是旧的：新开会话，或${hint}，提示会自动消除。`],
+  tools: (hint) => ["有连接仍在用旧工具接口", `重新连接 AgentNave MCP，或${hint}；完成后提示自动消除。`],
+  relay: (hint) => ["有连接未能切换到新版服务", `这是 v0.31.0 之前启动的旧中继。重新连接 AgentNave MCP，或${hint}；会结束这条连接上运行中的任务。`],
+  stale: (hint) => ["有连接长时间仍在用旧版服务", `通常是任务还在运行或结果未读取，处理完会自动切换。没有任务时，重新连接 AgentNave MCP，或${hint}。`],
 };
 
 function renderCards() {
