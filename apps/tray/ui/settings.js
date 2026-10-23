@@ -2082,7 +2082,7 @@ function renderUpdates() {
     if (installWarning) {
       updateHint.textContent = "重启后请手动升级本机服务";
     } else if (hasAppUpdate) {
-      updateHint.textContent = "会先更新 App 并自动重启，再自动升级本机服务；各宿主是否需要重新加载，由下方连接检测结果决定。";
+      updateHint.textContent = "会先更新 App 并自动重启，再自动升级本机服务；需要重新加载的宿主会在下方单独提示。";
     } else {
       updateHint.textContent = "将升级本机服务，空闲后自动切换；若工具接口仍未同步，下方会提示重新连接。";
     }

@@ -573,7 +573,17 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
             true
         );
     }
+    // Without a live connection nothing holds the old configuration: the next one loads it.
     let h = host(&hosts, "codex");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
+    // A relay that reports no interface, live since before the change, needs a manual reload.
+    let dir = hosts.context.home.join(".agentnave/connections");
+    for id in ["codex", "pi"] {
+        save(
+            &dir.join(format!("{id}.json")),
+            &json!({"version":1,"host":id,"started_ms":1}).to_string(),
+        );
+    }
     let pending = hosts.state(&h)["reload"].clone();
     assert_eq!(pending["state"], "required");
     hosts
@@ -819,13 +829,13 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
         "reload_observed":{"token":"whole-skill-tree","skill":{}},
         "reload_changed":{"v":2,"token":"whole-skill-tree","at_ms":0,"skill":true},
     });
-    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
     let file = fs::File::open(dir.join("new.json")).unwrap();
     file.set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH))
         .unwrap();
-    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
 }
 
 #[test]

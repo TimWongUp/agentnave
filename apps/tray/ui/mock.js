@@ -623,7 +623,7 @@ All checks passed!
   const hostRows = ["codex", "pi", "workbuddy", "hermes"].map((id, index) => {
     const root = `/preview/${id}`;
     const label = HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id;
-    const reload = id === "codex" ? "重启 Codex 应用（完整退出后重新打开）以生效" : id === "workbuddy" ? "重启 WorkBuddy 后生效" : `重启 ${label} 后生效`;
+    const reload = id === "codex" ? "完整退出并重启 Codex 应用" : id === "workbuddy" ? "重启 WorkBuddy" : `重启 ${label}`;
     const connected = !freshHosts && index === 0;
     const orphan = !freshHosts && id === "hermes";
     return { id, label, installed: !orphan, detect_source: orphan ? "config" : "path",
@@ -631,7 +631,7 @@ All checks passed!
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
-      first_seen: "2026-10-17T00:00:00Z", reload_hint: `接入配置或 Skill 简介变更时，${reload}`, attention: null, last_action: null,
+      first_seen: "2026-10-17T00:00:00Z", reload_hint: reload, attention: null, last_action: null,
       skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null } };
   });
   if (hostScene === "typical") {
