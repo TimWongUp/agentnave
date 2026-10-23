@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-16
+- 托盘另可在同一把锁下改名，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
 
 托盘需在没有工作室服务运行、Python 未安装或版本不同的机器上管理历史，因此由 Rust 原生删除，不调用 Python 或 MCP。此决定修订 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 中托盘“不写数据根”的边界：托盘可删除会话的 `state.json` 与 `views.json`，保留会话目录、`.lock` 和全部席位文件；浏览器看板仍只读。
 

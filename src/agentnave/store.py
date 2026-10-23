@@ -9,15 +9,20 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, ClassVar, Literal
+from typing import IO, Annotated, ClassVar, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from agentnave.group import RoundOrder
 from agentnave.host import HostName, HostSource
 from agentnave.models import ProviderOption
 
-type Review = Literal["pending", "publish", "discard"]
+type Review = Literal["pending", "publish", "private"]
+
+
+def _legacy_review(value: object) -> object:
+    # Records before v0.35 called an unpublished answer "discard"; it was never deleted.
+    return "private" if value == "discard" else value
 
 
 def now() -> str:
@@ -83,7 +88,7 @@ class SeatRunRecord(BaseModel):
     output: str | None = None
     error: str | None = None
     # Set only in review conversations, once the answer succeeded.
-    review: Review | None = None
+    review: Annotated[Review | None, BeforeValidator(_legacy_review)] = None
     committed: bool = False
 
 
@@ -156,7 +161,9 @@ class Conversation(BaseModel):
                 elif self.review and seat.status == "succeeded" and not seat.committed:
                     if round_.status in ("cancelled", "failed"):
                         if seat.review in (None, "pending"):
-                            seat.review = "discard"  # stopped rounds discard undecided answers
+                            seat.review = (
+                                "private"  # stopped rounds never publish undecided answers
+                            )
                     elif seat.review is None:
                         seat.review = "pending"  # ended before its review began
             if not round_.pending_review():
@@ -185,7 +192,7 @@ class Conversation(BaseModel):
                         time=now(),
                     )
                 )
-            elif seat.review != "discard":
+            elif seat.review != "private":
                 added.append(
                     EntryRecord(
                         round=round_.number,

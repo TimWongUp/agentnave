@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-22
+- 续接不再按访问等级筛选线程，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
 
 修订 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 的私聊默认续接；工位、会议室与转发的其余约定不变。
 

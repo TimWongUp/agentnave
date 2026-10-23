@@ -16,21 +16,13 @@ from mcp import Client, StdioServerParameters
 
 TOOLS = [
     "start_agent",
-    "wait_agent",
-    "wait_any",
-    "cancel_agent",
-    "list_invocations",
-    "describe_provider",
+    "wait",
+    "cancel",
+    "list",
     "list_members",
-    "open_group",
     "run_round",
-    "wait_round",
-    "cancel_round",
     "decide_answers",
-    "post_host_message",
-    "list_conversations",
     "read_conversation",
-    "update_conversation",
 ]
 
 
@@ -77,7 +69,7 @@ async def _check(launcher: str, home: Path) -> None:
         assert names == TOOLS, names
         assert not any(home.iterdir()), f"{launcher} wrote files before any request"
         assert not _listening(), f"{launcher} listens before a saved operation or history listing"
-        opened = await client.call_tool("list_conversations", {})
+        opened = await client.call_tool("list", {})
         assert not opened.is_error, opened.content
         assert _listening(), "history listing did not start the dashboard"
 

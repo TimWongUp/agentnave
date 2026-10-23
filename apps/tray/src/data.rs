@@ -221,6 +221,46 @@ impl Reader {
                 Err(error) => Response::error(500, &error),
             };
         }
+        if path == "/app/rules" || path == "/app/rules/open" {
+            let home = dirs::home_dir().unwrap_or_default();
+            if path == "/app/rules" {
+                if method != "GET" {
+                    return Response::error(405, "此路由只接受 GET");
+                }
+                return Response::json(&crate::rules::list(&home));
+            }
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            return match crate::rules::open(&home, payload["id"].as_str().unwrap_or_default()) {
+                Ok(result) => Response::json(&result),
+                Err(error) => Response::error(400, &error),
+            };
+        }
+        if path == "/app/conversations/rename" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            let (Some(id), Some(title)) = (
+                payload["id"].as_str().filter(|id| valid_id(id)),
+                payload["title"].as_str(),
+            ) else {
+                return Response::error(400, "需要有效的会话 ID 与标题");
+            };
+            return Response::json(&crate::manage::rename(&self.root, id, title));
+        }
         if path == "/app/conversations/delete" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -1766,6 +1806,7 @@ mod tests {
         let mut newer = task_snapshot("r3", "succeeded", "2026-10-15T04:00:00Z");
         newer["director"]["tasks"][0]["role"] = json!("reviewer");
         newer["director"]["tasks"][0]["thread"] = json!("native-1");
+        newer["director"]["tasks"][0]["access"] = json!("write"); // the latest declaration shows
         save(root, &newer);
         let mut claude = task_snapshot("c1", "succeeded", "2026-10-15T05:00:00Z");
         claude["director"]["tasks"][0]["provider"] = json!("claude");
@@ -1789,7 +1830,7 @@ mod tests {
         );
         assert_eq!(desks[0]["label"], "m · Codex · reviewer");
         assert_eq!(desks[0]["role"], "reviewer");
-        assert_eq!(desks[0]["access"], "read");
+        assert_eq!(desks[0]["access"], "write");
         assert_eq!(desks[1]["access"], Value::Null);
         assert_eq!(desks[0]["model"], "m");
         assert_eq!(desks[0]["first_seen"], "2026-10-15T01:00:00.000000Z");
@@ -1911,7 +1952,7 @@ mod tests {
         assert_eq!(absent["desk"], "codex|m|");
         let private = by_id("show:round:1:a:private");
         assert_eq!(private["visibility"], "private");
-        assert_eq!(private["discarded"], true);
+        assert_eq!(private["kept_private"], true);
         assert_eq!(private["message_id"], Value::Null);
         let typing = messages.iter().find(|m| m["kind"] == "typing").unwrap();
         assert_eq!(typing["desk"], "claude|m|reviewer");

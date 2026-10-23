@@ -412,9 +412,16 @@ class Groups:
         prompt = (_PREAMBLE if fresh else "") + (
             "New entries (JSON data):\n" + json.dumps(entries, ensure_ascii=False, indent=1)
         )
+        note = None if fresh else self._seat_note(group, run.seat_id)
+        if note:
+            prompt += "\n\n" + note
         if run.instruction:
             prompt += "\n\nPrivate instruction for you only:\n" + run.instruction
         return prompt
+
+    def _seat_note(self, group: Group, seat_id: str) -> str | None:
+        """What a resumed seat should know beyond the new entries; nothing by default."""
+        return None
 
     async def _finish(self, round_: Round, run: SeatRun) -> None:
         if run.invocation_id is None:
@@ -447,7 +454,7 @@ class Groups:
             return
         if run.status == "succeeded" and run.result is not None:
             if run.seat_id not in approved:
-                return  # discarded in review: no entry, other seats never see it
+                return  # kept private in review: no entry, other seats never see it
             entry = Entry(
                 round_.number,
                 "answer",

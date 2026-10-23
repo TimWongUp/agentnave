@@ -130,7 +130,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`，未知值使启动失败；无法自动识别时保持未知、不自我排除。`describe_provider` 与 `list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`，未知值使启动失败；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
 宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
@@ -461,25 +461,23 @@ A development Skill used with v0.5.0 does not change that older runtime's behavi
 
 ## 5. Verify MCP and Skill discovery
 
-boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `describe_provider` 核对参数与宿主身份。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
+boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `list_members(provider=...)` 核对该 CLI 的允许状态与参数。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；统一为 16 个工具。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；工具为 8 个。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `list_members`, `describe_provider`, `start_agent`,
-   `wait_agent`, `wait_any`, `cancel_agent`, `list_invocations`, `open_group`, `run_round`,
-   `wait_round`, `cancel_round`, `decide_answers`, `post_host_message`, `list_conversations`,
-   `read_conversation` and `update_conversation` are visible (16 total).
+2. Restart the server/session and confirm `start_agent`, `wait`, `cancel`, `list`,
+   `list_members`, `run_round`, `decide_answers` and `read_conversation` are visible (8 total).
    Confirm the host also discovers `agentnave-manager` in the intended
    scope and can read its five referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
-3. Call `describe_provider` only for the selected CLI to confirm its permitted status and supported
+3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.
 4. A `start_agent` call selecting an excluded provider must return a Tool error without starting a CLI.
 5. With authorization for any provider quota consumption, run a small task through a permitted
-   provider and verify its final result using `wait_agent`. Check actual task evidence as well as
+   provider and verify its final result using `wait`. Check actual task evidence as well as
    status: a provider can finish its conversation successfully after a tool was denied.
 
 For Antigravity project work, use the absolute project directory as `cwd` and follow the

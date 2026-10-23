@@ -25,7 +25,7 @@ They stay in `avatars.json` in the local data directory and are shared by chat, 
 Uploads are limited to 5 MiB and 16 megapixels, then decoded at a bounded size and cropped locally.
 Manager and member message avatars both follow their model; CLI headings have no avatar.
 When known from trusted host context, pass your current model as `manager_model` to
-`start_agent`, `run_round`, and `post_host_message`. Each message records its own declaration;
+`start_agent` and `run_round`. Each message records its own declaration;
 omit it when unknown. The server does not infer the manager model from the CLI.
 
 ## What AgentNave owns
@@ -82,13 +82,12 @@ Skill support can still use MCP alone. The older `v0.5.0` tag contains only the 
 
 AgentNave uses one package and one MCP launcher, `agentnave-mcp`. Tasks and groups save history
 under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`). Provider authentication, configuration and native
-sessions remain provider-owned. A local read-only dashboard starts only after a saved operation
-or history listing. There is no separate core/studio mode.
+sessions remain provider-owned. A local read-only dashboard starts only when the Manager calls `list`. There is no separate core/studio mode.
 
 ## Group rounds
 
-`open_group(title, seats, cwd)` registers 2–7 seats and saves a conversation. A seat is an ordinary subagent: native tools and
-permissions, the group or its own `cwd`, and explicit provider options. `run_round` asks an ordered
+`run_round(title, members, cwd)` without `group_id` registers 2–7 seats and saves a conversation (with no `prompt` it only opens the show). A seat is an ordinary subagent: native tools and
+permissions, the group or its own `cwd`, and explicit provider options. `run_round(group_id, seats, prompt)` asks an ordered
 list of seats to answer one shared task once:
 
 - `parallel`: all start together and cannot see each other's answers in this round;
@@ -98,8 +97,9 @@ Seats share only final answers. Each round's task, answers and absences (failed,
 cancelled seats) become entries; every seat receives the entries it has not yet seen and resumes
 its own native session, and an optional private instruction goes to one seat only. Independent
 answers, several independent rounds, turn-taking discussion or "answer first, then discuss" are
-combinations of lists and orders, not modes. `wait_round` and `cancel_round` mirror `wait_agent`
-and `cancel_agent`; `cancel_agent` on one seat records it absent and lets a serial round continue.
+combinations of lists and orders, not modes. `run_round(group_id, prompt)` without seats posts a
+public host remark. `wait` and `cancel` take task `invocation_id`s and round `round_id`s alike;
+cancelling one seat's `invocation_id` records it absent and lets a serial round continue.
 Saved groups can continue after restart; running processes and invocation handles cannot. Seats sharing one repository can interfere; give writing
 seats their own worktree through the seat `cwd`.
 
@@ -108,7 +108,7 @@ from discussion to parallel does not restore blind answers; use new groups and n
 when independence from earlier discussion matters. Serial order intentionally gives later seats
 more information; a final parallel round lets everyone respond to all earlier objections.
 
-`wait_round(include_output=false)` omits answer bodies and running reply tails while keeping
+`wait(include_output=false)` omits answer bodies and running reply tails while keeping
 statuses, activity, errors and session IDs. The default remains `true`; answers can be read again
 with `true`, including answers awaiting review. Finished round elapsed time is fixed.
 Round `finished` means orchestration ended, not that every seat succeeded. Unexpected driver or
@@ -125,24 +125,22 @@ final replies and session bindings. Existing saved history stays in place.
 
 ## The MCP surface
 
-AgentNave exposes sixteen tools: task lifecycle and discovery, saved group rounds, history,
-answer review and host messages. Provider-specific options are returned only when requested.
+AgentNave exposes eight tools: `start_agent`, `wait`, `cancel`, `list`, `list_members`,
+`run_round`, `decide_answers` and `read_conversation`. Structured results are also returned as
+compact JSON text without null fields. Provider-specific options are returned only when requested.
 App member defaults are applied by mode; CLI references provide supplementary guidance.
-After updating from the split runtime, reconnect MCP to refresh schemas. `open_group` requires
-a title and saves its state; the old no-history contract no longer applies.
+After updating, reconnect MCP to refresh schemas. Titles are set when a conversation is created
+and renamed only in the App. The relay's idle probe `list_invocations` stays callable but is not
+listed. See [ADR-0024](docs/adr/0024-consolidated-tools-and-private-review.md).
 
-### `describe_provider`
-
-Call with the selected `provider` before its first use in the current context. Returns that
-provider's permitted status, supported options, and detected `host` / `host_source`.
-Reuse the result for later calls with the same provider. This tool neither launches a CLI nor
-checks installation or authentication; it does not consume provider quota or change the tool list.
-
-For example: `describe_provider({"provider": "grok"})` → `start_agent(...)` → `wait_agent(...)`.
+With `review=true`, `decide_answers` either publishes each answer to the meeting room or keeps it
+private between the Manager and that seat; the seat is told the next time it answers.
 
 ### `list_members`
 
 每次现读数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`，返回 `configured`、`host`、`host_source` 与 task／discussion 两种模式的生效组员配置。每个组员以 `(provider, model)` 为身份，包含默认标志、努力档位、参数、说明及 Adapter 校验的 `valid`／`error`。task 的 `permitted` 反映宿主排除集合，discussion 恒为 true；组员名单本身表达模式限制。工具不创建文件、不启动 CLI、不检查安装、认证或模型是否可用。
+
+传 `provider` 时另返回 `provider_details`：该 CLI 的 `permitted`（单任务，含宿主排除）、`show_permitted`（席位，按 discussion 名单）与支持的 options。首次使用某个 CLI 前调用一次，并在当前上下文中复用。
 
 模式键缺失表示不限制，空模式对象表示禁止全部 CLI，CLI 的空模型列表表示不限模型；除已配置模型外，还用 `model="*"` 的空配置条目说明不限模型。文件缺失时 `configured=false`，两种模式均不受限且名单为空；文件损坏返回 Tool error，需在 App 中修复。App 保存组员配置并迁移旧档案，服务不再提供 `list_profiles` 或读取 `profiles.json`。
 
@@ -154,11 +152,11 @@ Starts one provider invocation and immediately returns an in-memory `invocation_
 to an existing one. Tasks and final replies are saved automatically. `role` labels the desk
 (provider, model, role); each call starts a new thread unless `session_id` is given or
 `continue_desk=true` continues that desk's most recent private thread in the same `cwd`, and `forward`
-injects completed workspace messages by `message_id`. `access` (`read` or `write`) declares
-the desk's tier: the first declaration sticks and a different one is rejected, so use another role
-instead of converting a reader into a writer. It is recorded only and never changes CLI permissions.
+injects completed workspace messages by `message_id`. `access` (`read` or `write`) labels
+the call; the desk shows its latest label. It is recorded only: it never rejects a call, never
+changes which thread `continue_desk` picks and never changes CLI permissions.
 
-启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。`open_group` 每席使用 discussion 配置，并返回 model、effort（未配置时为 null）与 `defaults_applied`。
+启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。新开节目的 `run_round` 每席使用 discussion 配置，并返回 model、effort（未配置时省略）与 `defaults_applied`。
 
 支持的 Provider 为 `antigravity`、`claude`、`codebuddy`、`codex`、`deepseek`、`grok`、`pi`。宿主识别优先 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层匹配 CLI 或应用包；Windows 只读环境变量。未知宿主不做自我排除，未知环境变量值使启动失败。宿主 Provider（WorkBuddy 对应 codebuddy）与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，只限制 task，不限制讨论席位；discussion 自身的组员名单仍生效。Codex 在非 Git 目录可显式传 `{"skip_git_repo_check": true}`，或在 App 组员 options 中保存该默认值。
 
@@ -202,14 +200,21 @@ AgentNave does not install or upgrade Codex, compare version numbers, or change 
 
 用户可在单次任务中点名 CLI、模型与 effort，由 boss 显式传入 `provider_options`，覆盖 App 默认值但仍须处于该模式允许范围。长期默认值在 App 中维护；要继承 CLI 原生设置，应清除对应 App 默认字段并在调用时省略，单纯省略参数仍会套用已配置的默认值。新增模型可直接使用其精确 ID；若模式限制模型，须先在 App 中启用。模型不可用时报告原错误，不静默替换。
 
-### `wait_agent`
+### `wait`
 
-Each request has a fixed five-minute (300-second) wait window; `wait_agent` accepts only
-`invocation_id`. Completion or a recognized execution blocker returns early. Expiry leaves the
+Each request has a fixed five-minute (300-second) wait window over distinct task
+`invocation_id`s and round `round_id`s; an empty, repeated, unknown or expired ID rejects the
+whole call before waiting. Completion, a recognized execution blocker or answers awaiting review
+return early. Expiry leaves the
 invocation running; call again with the same ID to continue. If a host yields a background
 call handle, resume that call using the host's wait mechanism before issuing another request.
 
-Start, wait and cancel use one flat response: `invocation_id`, `status`, `reason`, `elapsed_ms`,
+It returns `{"reason": "ready" | "wait_elapsed", "updates": [...], "rounds": [...]}`. `ready`
+lists every task and round ready at that moment; the others keep running and are omitted. Only
+blockers placed in the reply are consumed. Finished handles stay ready on every call, so drop them
+from the next list. `wait_elapsed` returns a running snapshot of each and consumes nothing.
+
+Task start, wait updates and cancel use one flat response: `invocation_id`, `status`, `reason`, `elapsed_ms`,
 plus applicable `activity`, `error`, `output`, `output_age_ms` and `session_id` fields. Reasons are
 `started`, `wait_elapsed`, `execution_blocked` and `finished`. Running replies include the latest
 public reply tail (at most 1,000 Unicode characters), retained across tool events, and its age.
@@ -225,31 +230,23 @@ blocker; unrecognized errors may only become visible in output or the final resu
 unsolicited completion/error push without a pending wait request.
 
 Wait expiry never terminates the invocation. AgentNave has no total runtime deadline and
-`start_agent` has no runtime-limit parameter. Keep waiting for the result or use `cancel_agent`
+`start_agent` has no runtime-limit parameter. Keep waiting for the result or use `cancel`
 to stop work explicitly. Provider-native limits still apply.
 
-### `wait_any`
+### `cancel`
 
-Waits on several distinct, known `invocation_ids` with the same fixed five-minute window; an
-empty, repeated, unknown or expired ID rejects the whole call before waiting. It returns
-`{"reason": "ready" | "wait_elapsed", "updates": [...]}`, where each update has the
-`wait_agent` shape. `ready` lists every invocation that has finished or has an unread blocker at
-that moment; the others keep running and are omitted. Only blockers placed in the reply are
-consumed. Finished invocations stay ready on every call, so drop them from the next list.
-`wait_elapsed` returns a running snapshot of each invocation and consumes nothing.
+Stops a task or a round and returns its terminal result. A cancelled round records running seats
+absent, skips unstarted serial seats, keeps published answers and keeps undecided answers private.
+Use it only when the Manager intends to end active provider work; `wait` observes without cancelling.
 
-### `cancel_agent`
+### `list` and `read_conversation`
 
-Stops an invocation and returns its terminal result. Use it only when the Manager intends to end
-active provider work; `wait_agent` observes without cancelling.
-
-### `list_invocations`
-
-Read-only list of this server's active invocations and finished ones within the seven-day
-retention, oldest first: `invocation_id`, `provider`, `cwd`, `status`, `elapsed_ms` (fixed once
-finished) and `events_seen` (whether any structured provider event arrived), plus `phase` while
-active and a non-empty native `session_id` once finished. Prompts, replies and tool data are not
-returned; read results with `wait_agent` or `wait_any`.
+`list` returns this server's invocation handles (metadata only: no prompt, reply or tool data),
+saved conversations newest first with `total`, and the dashboard link. `read_conversation`
+returns one conversation as the App shows it: tasks with each prompt, final reply and native
+`session_id`; shows with seats, the latest round and ordered messages (tasks, published answers,
+absences, forwards, host remarks, answers awaiting review). `since_round` reads later rounds only;
+`include_private=true` adds private instructions and answers kept private.
 
 All tools publish input and output JSON Schemas. Agent-correctable request errors are MCP Tool
 errors with retry guidance; provider launch and execution outcomes remain structured Invocation
