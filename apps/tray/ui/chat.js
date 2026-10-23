@@ -1699,8 +1699,9 @@ function applyHash(ctx) {
   if (!key || state.focused) return;
   state.focused = true;
   if (key.startsWith("desk:")) {
-    if (ctx.desks.has(key.slice(5)))
-      openScope({ kind: "desk", key: key.slice(5) });
+    // A link made while a task had no native session yet names its earlier task key.
+    const desk = ctx.aliases.get(key.slice(5)) ?? key.slice(5);
+    if (ctx.desks.has(desk)) openScope({ kind: "desk", key: desk });
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
     openScope(ctx.rooms.has(id) ? { kind: "room", id } : { kind: "all" });
