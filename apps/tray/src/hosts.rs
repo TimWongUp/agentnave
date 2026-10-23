@@ -21,6 +21,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELOAD_FORMAT: u64 = 3;
 /// Matches the relay's own report that an update has waited too long.
 const STALE_RUNTIME_SECONDS: u64 = 600;
+/// A receipt this old with no refresh belongs to a relay that exited without removing it.
+const LINGER_SECONDS: u64 = 90;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
@@ -689,6 +691,9 @@ impl Hosts {
                 || (observed["token"].is_string() && observed["token"] != token));
         let root = self.connection_root(host);
         let now = SystemTime::now();
+        // Live receipts refresh every five seconds; a relay swapping to a new install may pause
+        // that for up to a minute, so only a longer silence counts as no connection at all.
+        let mut lingering = false;
         let connections: Vec<Value> = root
             .into_iter()
             .flat_map(|root| {
@@ -703,15 +708,16 @@ impl Hosts {
                     return None;
                 }
                 let meta = entry.metadata().ok()?;
-                if meta.len() > 16_384
-                    || now
-                        .duration_since(meta.modified().ok()?)
-                        .map_or(true, |age| age.as_secs() > 20)
-                {
+                let age = now.duration_since(meta.modified().ok()?).ok()?.as_secs();
+                if meta.len() > 16_384 || age > LINGER_SECONDS {
                     return None;
                 }
                 let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-                (value["version"] == 1 && value["host"] == host.id).then_some(value)
+                if value["version"] != 1 || value["host"] != host.id {
+                    return None;
+                }
+                lingering |= age > 20;
+                (age <= 20).then_some(value)
             })
             .collect();
         let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
@@ -730,7 +736,8 @@ impl Hosts {
         };
         // Without a live connection nothing holds the old interface or Skill front matter: the
         // next connection starts after the change, which already counts as a reload (ADR-0022).
-        let mut state = if connections.is_empty() {
+        let idle = connections.is_empty() && !lingering;
+        let mut state = if idle {
             "idle"
         } else if pending {
             "required"
@@ -739,7 +746,7 @@ impl Hosts {
         } else {
             "unknown"
         };
-        let mut reason = if connections.is_empty() {
+        let mut reason = if idle {
             "no_connection"
         } else if pending {
             "config"

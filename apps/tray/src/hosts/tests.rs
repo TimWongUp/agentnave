@@ -586,6 +586,20 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
     }
     let pending = hosts.state(&h)["reload"].clone();
     assert_eq!(pending["state"], "required");
+    // A relay swapping to a new install pauses its receipt; only a longer silence clears it.
+    let age = |seconds: u64| {
+        fs::File::options()
+            .write(true)
+            .open(dir.join("codex.json"))
+            .unwrap()
+            .set_modified(SystemTime::now() - std::time::Duration::from_secs(seconds))
+            .unwrap();
+    };
+    age(60);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    age(120);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
+    age(0);
     hosts
         .action(
             "confirm-reload",
