@@ -30,10 +30,12 @@ from agentnave.group import GroupSeat, Round
 from agentnave.host import detect_host
 from agentnave.members import (
     AdapterOptionsError,
+    CapacityError,
     MemberFileError,
     MemberList,
     ProviderExcludedError,
     ProviderName,
+    SettingsFileError,
     apply_member,
     read_members,
     validate_provider_options,
@@ -108,8 +110,7 @@ PROVIDER_SELECTION = (
 )
 ACCESS = (
     "Declared desk access: read for exploring, planning or reviewing, write for changing files. "
-    "Recorded and shown only; it never changes the CLI's native permissions or which thread "
-    "continue_desk picks."
+    "Recorded and shown only; it never changes the CLI's native permissions."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
@@ -182,7 +183,6 @@ class InvocationPayload(TypedDict):
 
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
-    resumed: bool  # true when continue_desk continued this desk's most recent private thread
     access: str | None  # the tier this call declared; recorded only, never enforced
 
 
@@ -421,7 +421,7 @@ def started_payload(
 
 
 def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolError:
-    if isinstance(exc, MemberFileError):
+    if isinstance(exc, (MemberFileError, SettingsFileError, CapacityError)):
         return ToolError(str(exc))
     if isinstance(exc, ProviderExcludedError):
         return ToolError(str(exc) + ". " + PROVIDER_SELECTION)
@@ -534,7 +534,7 @@ async def start_agent(
             description=(
                 "To continue a specific native conversation, use the session_id returned by a "
                 "finished invocation of the same provider; never use an invocation_id here. "
-                "Omitted, the task starts a new thread unless continue_desk=true."
+                "Omitted, the task starts a new native thread: a new desk in the App."
             ),
         ),
     ] = None,
@@ -557,22 +557,12 @@ async def start_agent(
         str | None,
         Field(
             description=(
-                "Optional desk role for this CLI; 1–40 characters after trimming, no newlines "
-                "or control characters. Blank or omitted means no role. The desk identity is "
-                "(provider, requested model, role)."
+                "Optional label shown on this task's desk; 1–40 characters after trimming, no "
+                "newlines or control characters. Blank or omitted means no label. Each native "
+                "thread is its own desk, whatever its role."
             )
         ),
     ] = None,
-    continue_desk: Annotated[
-        bool,
-        Field(
-            description=(
-                "true continues this desk's most recent private thread in the same cwd, or "
-                "starts one when none exists; needs manager_session_id and cannot be combined "
-                "with session_id or conversation_id. Omitted, every task starts a new thread."
-            )
-        ),
-    ] = False,
     forward: Annotated[
         list[str] | None,
         Field(
@@ -595,8 +585,9 @@ async def start_agent(
 
     The reply reports the requested model/effort, not the CLI's effective settings;
     defaults_applied lists App defaults, other omitted settings inherit the native CLI.
-    Each task starts a new native thread unless session_id or continue_desk=true says
-    otherwise; a resumed native session joins its open conversation. The task and its final
+    Each task starts a new native thread unless session_id continues one; a resumed native
+    session joins its open conversation. CLI runs active at once (tasks plus seats) are
+    limited by the App's setting, 8 by default; beyond it the call is rejected until some finish. The task and its final
     reply are saved in a private task conversation; nothing is shared with another CLI except
     what forward injects. No runtime deadline: cancel stops work explicitly. Active
     invocations do not accept messages.
@@ -620,7 +611,6 @@ async def start_agent(
             manager_model=manager_model,
             manager_session_id=manager_session_id,
             role=role,
-            continue_desk=continue_desk,
             forward=forward,
             access=access,
         )
@@ -633,7 +623,6 @@ async def start_agent(
     return {
         **started_payload(started.invocation_id, request, defaults_applied),
         "conversation_id": started.conversation_id,
-        "resumed": started.resumed,
         "access": started.access,
     }
 
@@ -1260,6 +1249,8 @@ async def run_round(
             raise ToolError(
                 f"Show {group_id} was opened but nothing was posted: {exc}. Retry with group_id."
             ) from exc
+        if isinstance(exc, (SettingsFileError, CapacityError)):
+            raise ToolError(str(exc)) from exc
         raise _rejected(exc) from exc
     payload["round"] = round_payload(
         round_,

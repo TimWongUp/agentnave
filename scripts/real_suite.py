@@ -295,14 +295,6 @@ class Suite:
             raise ToolFailure(f"did not recall token: {done.get('output', '')[:120]!r}")
         return None
 
-    async def desk_resume(self, provider: str) -> str | None:
-        value = token(provider.upper())
-        started = await self.start(provider, echo_prompt(value), continue_desk=True)
-        if not started.get("resumed"):
-            raise ToolFailure("continue_desk=true did not resume the desk thread")
-        await self.finish(provider, started["invocation_id"])
-        return None
-
     async def cancel(self, provider: str) -> str | None:
         started = await self.start(provider, LONG_PROMPT)
         invocation_id = started["invocation_id"]
@@ -501,7 +493,6 @@ class Suite:
         await self.tasks()
         for title, step in (
             ("explicit resume", self.resume),
-            ("desk resume", self.desk_resume),
             ("cancel", self.cancel),
         ):
             print(f"\n[{title}]")
@@ -553,7 +544,8 @@ class Suite:
             await self.guarded("soak_idle", "-", self.idle())
 
     async def _soak_task(self, provider: str, *, resume: bool) -> str | None:
-        await self.echo(provider, **({"continue_desk": True} if resume else {}))
+        session_id = self.sessions.get(provider) if resume else None
+        await self.echo(provider, **({"session_id": session_id} if session_id else {}))
         return None
 
     # Process leaks

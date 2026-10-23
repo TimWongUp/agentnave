@@ -716,7 +716,7 @@ function seatMood(r, seat, d) {
     return { mood: "speaking", say: ["作答中"], word: "作答中" };
   if (act?.status === "review")
     return { mood: "review", say: "交卷 · 待审核", word: "待审核" };
-  return { mood: "idle", say: "", word: d ? "" : "缺席" };
+  return { mood: "idle", say: "", word: d || seat.desk ? "" : "缺席" };
 }
 function updateRoom(rec, r, ctx) {
   const [, tone] = pick(GROUP, r.status);
@@ -741,17 +741,19 @@ function updateRoom(rec, r, ctx) {
     const m = seatMood(r, seat, d);
     s.el.dataset.mood = m.mood;
     s.el.dataset.key = `${r.id}|${seat.seat}`;
-    setClass(s.el, `seat${d ? "" : " empty"}`);
+    // a seat always names its desk; one missing from the payload is unknown, not absent
+    const absent = !d && !seat.desk;
+    setClass(s.el, `seat${absent ? " empty" : ""}`);
     dress(s, d ? deskChar(d) : "default", s.el, s.plate);
     setSay(s.say, m.say);
-    const name = d ? deskName(d) : seat.seat;
+    const name = d ? deskName(d) : seat.handle?.replace(/^@/, "") || seat.seat;
     // model name and role only; the CLI is in the tooltip
-    const tag = d ? d.role || "" : "缺席";
+    const tag = d ? d.role || "" : absent ? "缺席" : "";
     setText(s.nm, name);
     setText(s.plate, tag);
     s.plate.hidden = !tag;
     setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
-    setAttr(s.el, "title", d ? handleOf(d) : `席位 ${seat.seat}`);
+    setAttr(s.el, "title", d ? handleOf(d) : seat.handle || `席位 ${seat.seat}`);
     nodes.push(s.el);
   }
   reconcile(rec.scene, nodes);
@@ -817,7 +819,7 @@ function renderOffice(c, ctx, n, newGroup) {
   reconcile(el.rooms, roomNodes);
 
   for (const key of state.deskRecs.keys())
-    if (!ctx.desks.has(key)) state.deskRecs.delete(key);
+    if (!ctx.drawn.has(key)) state.deskRecs.delete(key);
   const deskNodes = c.desks.map((d) => {
     let rec = state.deskRecs.get(d.key);
     if (!rec) state.deskRecs.set(d.key, (rec = createDesk(d)));
@@ -829,14 +831,64 @@ function renderOffice(c, ctx, n, newGroup) {
       h(
         "div.zone-empty",
         {},
-        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里并一直保留。",
+        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时运行上限的空闲工位归入「已优化」。",
       ),
     );
+  if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
   renderSides(state.bossRec, c, ctx);
   layoutRooms();
   walk(!newGroup && state.ready);
+}
+
+// Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
+function optimizedNode(opt, ctx) {
+  const listed = opt.desks || [];
+  const key = JSON.stringify([state.optimizedOpen, opt.count, listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
+  let node = state.optimizedEl;
+  if (node && node.dataset.key === key) return node;
+  const toggle = h(
+    "button.optimized-h",
+    { type: "button", "aria-expanded": String(Boolean(state.optimizedOpen)) },
+    "已优化",
+    h("b", {}, `${opt.count} 人`),
+    h("span.r", {}, state.optimizedOpen ? "收起" : "展开"),
+  );
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.optimizedOpen = !state.optimizedOpen;
+    if (state.chat) renderAll(state.chat);
+  });
+  const rows = [];
+  if (state.optimizedOpen) {
+    for (const d of listed) {
+      const s = deskMood(d, ctx);
+      const row = h(
+        "button.td-row",
+        { type: "button", title: `${d.label}\n${s.word}` },
+        h("span.td-heads", {}, ART.head(deskChar(d))),
+        h("span.td-main", {}, h("span.td-name", {}, d.label), h("span.td-sub", {}, s.word)),
+        h("span.td-time", {}, relTime(d.last_active)),
+      );
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openScope({ kind: "desk", key: d.key }, row);
+      });
+      rows.push(row);
+    }
+    if (opt.count > listed.length)
+      rows.push(h("div.td-more", {}, `另有 ${opt.count - listed.length} 个更早的工位未列出`));
+  }
+  node = h(
+    "div.optimized",
+    { "aria-label": `已优化的工位，${opt.count} 人` },
+    toggle,
+    rows.length ? h("div.optimized-rows", {}, rows) : null,
+  );
+  node.dataset.key = key;
+  state.optimizedEl = node;
+  return node;
 }
 
 // A desk that leaves for a meeting walks to its seat (and back): a copy of its figure travels
@@ -1608,7 +1660,13 @@ function contextOf(c) {
   return {
     c,
     seatDesk,
-    desks: new Map(c.desks.map((d) => [d.key, d])),
+    // Drawn desks plus the listed "optimized" ones, so their messages and links still resolve.
+    desks: new Map([...c.desks, ...(c.optimized?.desks || [])].map((d) => [d.key, d])),
+    drawn: new Set(c.desks.map((d) => d.key)),
+    // a thread desk's earlier task keys, from before it had a native session
+    aliases: new Map(
+      [...c.desks, ...(c.optimized?.desks || [])].flatMap((d) => (d.aliases || []).map((a) => [a, d.key])),
+    ),
     rooms: new Map(c.rooms.map((r) => [r.id, r])),
     fullRooms: new Set(c.rooms.filter(fullRoom).map((r) => r.id)),
     sources: new Set(
@@ -1618,8 +1676,17 @@ function contextOf(c) {
     ),
   };
 }
+// A task desk that gained its native session comes back under its thread key: keep it open where it was.
+function followAlias(c, ctx) {
+  const d = state.drawer;
+  if (d.kind !== "desk" || ctx.desks.has(d.key) || !ctx.aliases.has(d.key)) return;
+  const moved = { kind: "desk", key: ctx.aliases.get(d.key) };
+  if (state.scopeKey === c.group + JSON.stringify(d)) state.scopeKey = c.group + JSON.stringify(moved);
+  state.drawer = moved;
+}
 function renderAll(c, newGroup = false) {
   const ctx = (state.ctx = contextOf(c));
+  followAlias(c, ctx);
   const n = counts(c);
   renderHead(c, n);
   renderOffice(c, ctx, n, newGroup);
@@ -1632,8 +1699,9 @@ function applyHash(ctx) {
   if (!key || state.focused) return;
   state.focused = true;
   if (key.startsWith("desk:")) {
-    if (ctx.desks.has(key.slice(5)))
-      openScope({ kind: "desk", key: key.slice(5) });
+    // A link made while a task had no native session yet names its earlier task key.
+    const desk = ctx.aliases.get(key.slice(5)) ?? key.slice(5);
+    if (ctx.desks.has(desk)) openScope({ kind: "desk", key: desk });
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
     openScope(ctx.rooms.has(id) ? { kind: "room", id } : { kind: "all" });

@@ -216,6 +216,14 @@ class InvocationManager:
         record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
         return invocation_id
 
+    def active_count(self) -> int:
+        """CLI runs of this server still in progress: private tasks and seats alike."""
+        return sum(
+            1
+            for record in self._records.values()
+            if record.task is not None and not record.task.done()
+        )
+
     def check_start(self, request: InvocationRequest) -> None:
         if self._closed:
             raise RuntimeError("invocation manager is closed")

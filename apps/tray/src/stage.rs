@@ -207,8 +207,17 @@ fn desk_role(identity: &Value) -> Option<String> {
     opt_text(identity, "role")
 }
 
-fn desk_key(provider: &str, model: &str, role: Option<&str>) -> String {
-    format!("{provider}|{model}|{}", role.unwrap_or_default())
+/// A desk is one native session: a private thread, or one seat of a saved show.
+fn task_desk(conversation: &str, task: &Value, task_id: &str) -> String {
+    match opt_text(task, "thread") {
+        Some(thread) => format!("thread:{thread}"),
+        // No native session yet (a new thread still running, or one that never started).
+        None => format!("task:{conversation}:{task_id}"),
+    }
+}
+
+fn seat_desk(conversation: &str, seat: &str) -> String {
+    format!("seat:{conversation}:{seat}")
 }
 
 fn cli_label(provider: &str) -> &str {
@@ -265,15 +274,10 @@ fn host_provider(host: Option<&str>) -> Option<&str> {
     }
 }
 
-fn desk_of(identity: &Value) -> Option<String> {
-    let provider = text(identity, "provider");
-    (!provider.is_empty()).then(|| {
-        desk_key(
-            provider,
-            text(identity, "model"),
-            desk_role(identity).as_deref(),
-        )
-    })
+/// The desk of a seat identity, which carries its seat id under `seat`.
+fn desk_of(conversation: &str, identity: &Value) -> Option<String> {
+    (!text(identity, "provider").is_empty())
+        .then(|| seat_desk(conversation, text(identity, "seat")))
 }
 
 fn desk_thread(key: &str) -> Value {
@@ -300,27 +304,51 @@ fn annotate(
     message["forward"] = forward.unwrap_or(Value::Null);
 }
 
-/// A desk seen in one workspace: identity plus its private and meeting history.
+/// A desk seen in one workspace: one native session (a private thread or a show seat), with
+/// the labels of its latest call and its history.
 #[derive(Default)]
 struct Desk {
     key: String,
+    // The room a seat desk belongs to; None for a private thread.
+    room: Option<String>,
     provider: String,
     model: String,
     role: Option<String>,
+    labelled: Option<i64>,
+    // Several desks with the same model, CLI and role are numbered by first appearance.
+    ordinal: usize,
     first: Option<i64>,
     last: Option<i64>,
     latest: Option<(i64, String)>,
     active: bool,
-    sessions: BTreeSet<String>,
-    sessionless: usize,
+    tasks: usize,
     running: usize,
     activities: Vec<Value>,
+    // A thread desk's earlier `task:` keys, from before its tasks had a native session.
+    aliases: Vec<String>,
     reported: Option<(i64, String)>,
     // The latest declared access tier; the server records declarations without enforcing them.
     access: Option<(i64, String)>,
 }
 
 impl Desk {
+    /// Model and role follow the desk's latest call; a resumed thread may relabel it.
+    fn label(&mut self, at: i64, model: &str, role: Option<String>) {
+        if self.labelled.is_none_or(|old| at >= old) {
+            self.labelled = Some(at);
+            self.model = model.to_owned();
+            self.role = role;
+        }
+    }
+
+    fn base(&self) -> (String, String, Option<String>) {
+        (
+            self.display_model().to_owned(),
+            self.provider.clone(),
+            self.role.clone(),
+        )
+    }
+
     fn declare(&mut self, at: i64, access: Option<String>) {
         if let Some(access) = access
             && self.access.as_ref().is_none_or(|(old_at, _)| at >= *old_at)
@@ -371,12 +399,24 @@ impl Desk {
         }
     }
 
-    fn handle(&self) -> String {
-        handle(self.display_model(), &self.provider, self.role.as_deref())
+    fn numbered(&self, name: String) -> String {
+        if self.ordinal == 0 {
+            name
+        } else {
+            format!("{name} #{}", self.ordinal)
+        }
     }
 
-    fn value(&self, host: Option<&str>) -> Value {
-        let status = if self.active {
+    fn handle(&self) -> String {
+        self.numbered(handle(
+            self.display_model(),
+            &self.provider,
+            self.role.as_deref(),
+        ))
+    }
+
+    fn status(&self) -> &'static str {
+        if self.active {
             "running"
         } else {
             match &self.latest {
@@ -384,7 +424,11 @@ impl Desk {
                 Some((_, status)) if urgency(status) == 1 => "failed",
                 _ => "idle",
             }
-        };
+        }
+    }
+
+    fn value(&self, host: Option<&str>) -> Value {
+        let status = self.status();
         let meeting = self
             .activities
             .iter()
@@ -396,11 +440,13 @@ impl Desk {
             );
         json!({
             "key": self.key,
+            "kind": if self.room.is_some() { "seat" } else { "task" },
+            "room": self.room,
             "provider": self.provider,
             "model": self.model,
             "role": self.role,
             "access": self.access.as_ref().map(|(_, access)| access),
-            "label": desk_label(self.display_model(), &self.provider, self.role.as_deref()),
+            "label": self.numbered(desk_label(self.display_model(), &self.provider, self.role.as_deref())),
             "display_model": self.display_model(),
             "model_source": if !self.model.is_empty() { "requested" } else if self.reported.is_some() { "native" } else { "unknown" },
             "handle": self.handle(), "activities": self.activities.iter().rev().collect::<Vec<_>>(),
@@ -408,7 +454,8 @@ impl Desk {
             "last_active": iso(self.last.unwrap_or_default()),
             "status": status,
             "private_allowed": host_provider(host) != Some(self.provider.as_str()),
-            "private": {"threads": self.sessions.len() + self.sessionless, "running": self.running},
+            "private": {"tasks": self.tasks, "running": self.running},
+            "aliases": self.aliases,
             "meeting": meeting,
         })
     }
@@ -572,16 +619,21 @@ fn manager_speaker(identity: &Value, provider: &str, name: &str) -> Value {
     who
 }
 
-fn recipient(identity: &Value) -> Value {
+fn recipient(desk: &str, identity: &Value) -> Value {
     let provider = text(identity, "provider");
     let model = text(identity, "model");
-    json!({"key": desk_key(provider, model, desk_role(identity).as_deref()), "provider": provider, "model": model,
+    json!({"key": desk, "provider": provider, "model": model,
         "label": label(Some(provider)), "seat": text(identity, "seat")})
 }
 
 /// The desk a committed entry belongs to: the speaking seat, or a single task recipient.
-fn entry_desk(entry: &Value, seats: &BTreeMap<&str, &Value>) -> Option<String> {
-    let seat_desk = |seat_id: &str| seats.get(seat_id).and_then(|seat| desk_of(seat));
+fn entry_desk(conversation: &str, entry: &Value, seats: &BTreeMap<&str, &Value>) -> Option<String> {
+    let seat_desk = |seat_id: &str| {
+        seats
+            .get(seat_id)
+            .filter(|seat| !text(seat, "provider").is_empty())
+            .map(|_| seat_desk(conversation, seat_id))
+    };
     match text(entry, "kind") {
         "task" => {
             let recipients = entry["recipients"].as_array()?;
@@ -710,12 +762,52 @@ impl Group {
             .collect()
     }
 
-    fn desks(&self, host: Option<&str>) -> Vec<Value> {
+    /// The desks an office draws, at most `limit` (the App's running limit) unless more are
+    /// running or under review, plus the rest as the "optimized" list, most recent first. The
+    /// list holds the `listed` most recent and every one the payload refers to, so seats and
+    /// messages always find their desk.
+    fn desks(
+        &self,
+        host: Option<&str>,
+        limit: usize,
+        listed: usize,
+        referenced: &BTreeSet<String>,
+    ) -> (Vec<Value>, Value) {
         let mut desks: Vec<_> = self.desks.values().collect();
-        desks.sort_by(|a, b| {
-            (a.first.unwrap_or_default(), &a.key).cmp(&(b.first.unwrap_or_default(), &b.key))
+        desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
+        let busy = desks.iter().filter(|d| d.active).count();
+        let rest = desks.split_off(limit.max(busy).min(desks.len()));
+        // Drawn desks keep the office's own order: first seen, so a desk never jumps.
+        desks.sort_by_key(|d| (d.first.unwrap_or_default(), &d.key));
+        let shown = desks.into_iter().map(|desk| desk.value(host)).collect();
+        let optimized = json!({
+            "count": rest.len(),
+            "desks": rest
+                .iter()
+                .enumerate()
+                .filter(|(index, desk)| *index < listed || referenced.contains(&desk.key))
+                .map(|(_, desk)| desk.value(host))
+                .collect::<Vec<_>>(),
         });
-        desks.into_iter().map(|desk| desk.value(host)).collect()
+        (shown, optimized)
+    }
+
+    /// Desks sharing model, CLI and role are numbered in the order they first appeared.
+    fn number_desks(&mut self) {
+        let mut same = BTreeMap::<_, Vec<(i64, String)>>::new();
+        for desk in self.desks.values() {
+            same.entry(desk.base())
+                .or_default()
+                .push((desk.first.unwrap_or_default(), desk.key.clone()));
+        }
+        for mut keys in same.into_values().filter(|keys| keys.len() > 1) {
+            keys.sort();
+            for (index, (_, key)) in keys.iter().enumerate() {
+                if let Some(desk) = self.desks.get_mut(key) {
+                    desk.ordinal = index + 1;
+                }
+            }
+        }
     }
 
     fn rooms(&self) -> Vec<Value> {
@@ -727,28 +819,28 @@ impl Group {
     /// Record one seat observation; `created` anchors first_seen so ordering stays stable.
     fn desk_seat(
         &mut self,
+        (room, seat): (&str, &str),
         identity: &Value,
         status: &str,
         created: i64,
         at: i64,
-        meeting: Option<(&str, &str)>,
+        meeting: bool,
     ) {
         let provider = text(identity, "provider");
         if provider.is_empty() {
             return;
         }
-        let role = desk_role(identity);
-        let key = desk_key(provider, text(identity, "model"), role.as_deref());
+        let key = seat_desk(room, seat);
         let desk = self.desks.entry(key.clone()).or_insert_with(|| Desk {
             key,
+            room: Some(room.to_owned()),
             provider: provider.to_owned(),
-            model: text(identity, "model").to_owned(),
-            role,
             ..Desk::default()
         });
+        desk.label(created, text(identity, "model"), desk_role(identity));
         desk.seen(created);
         desk.declare(created, opt_text(identity, "access"));
-        desk.seat(at, status, meeting);
+        desk.seat(at, status, meeting.then_some((room, seat)));
         desk.reported(at, identity);
     }
 
@@ -769,7 +861,7 @@ impl Group {
     fn member(
         &mut self,
         snapshot: &Snapshot,
-        identity: &Value,
+        (desk, identity): (&str, &Value),
         status: &str,
         output: &str,
         error: &str,
@@ -820,13 +912,8 @@ impl Group {
                 ));
             }
             let seat = text(identity, "seat");
-            let desk = desk_key(
-                provider,
-                text(identity, "model"),
-                desk_role(identity).as_deref(),
-            );
             let thread = if seat.is_empty() {
-                desk_thread(&desk)
+                desk_thread(desk)
             } else {
                 room_thread(&snapshot.item.id)
             };
@@ -839,7 +926,7 @@ impl Group {
                 &mut message,
                 "private",
                 thread,
-                Some(&desk),
+                Some(desk),
                 message_id.as_deref(),
                 None,
             );
@@ -922,6 +1009,7 @@ impl Group {
                 self.show(snapshot);
             }
         }
+        self.number_desks();
         self.finish_messages();
         if !active(self.status) {
             self.status = if self
@@ -944,24 +1032,9 @@ impl Group {
             .collect();
         let mut seat_handles = BTreeMap::new();
         for (_, room_id, room) in &mut self.rooms {
-            let mut occurrences = BTreeMap::<String, usize>::new();
-            for seat in array(room, "seats") {
-                *occurrences
-                    .entry(text(seat, "desk").to_owned())
-                    .or_default() += 1;
-            }
-            let mut indices = BTreeMap::<String, usize>::new();
             for seat in room["seats"].as_array_mut().into_iter().flatten() {
-                let key = text(seat, "desk").to_owned();
-                let mut handle = handles.get(&key).cloned().unwrap_or_default();
-                if occurrences[&key] > 1 {
-                    let index = indices.entry(key.clone()).or_default();
-                    handle.push_str(&format!(
-                        "·席{}",
-                        ["①", "②", "③", "④", "⑤", "⑥", "⑦"][*index]
-                    ));
-                    *index += 1;
-                }
+                // Each seat is its own desk; numbering already tells alike seats apart.
+                let handle = handles.get(text(seat, "desk")).cloned().unwrap_or_default();
                 seat_handles.insert(
                     (room_id.clone(), text(seat, "seat").to_owned()),
                     handle.clone(),
@@ -1112,18 +1185,20 @@ impl Group {
                 .unwrap_or_else(|| start.clone());
             let status = member_status(text(task, "status"));
             let provider = text(task, "provider");
-            let role = desk_role(task);
-            let desk = desk_key(provider, text(task, "model"), role.as_deref());
+            let desk = task_desk(&item.id, task, &task_id);
             let desk_ref = (!provider.is_empty()).then_some(desk.as_str());
             let message_id = opt_text(task, "message_id");
             if !provider.is_empty() {
                 let entry = self.desks.entry(desk.clone()).or_insert_with(|| Desk {
                     key: desk.clone(),
                     provider: provider.to_owned(),
-                    model: text(task, "model").to_owned(),
-                    role: role.clone(),
                     ..Desk::default()
                 });
+                entry.label(
+                    timestamp(raw_start).unwrap_or_default(),
+                    text(task, "model"),
+                    desk_role(task),
+                );
                 entry.seen(timestamp(raw_start).unwrap_or_default());
                 entry.declare(
                     timestamp(raw_start).unwrap_or_default(),
@@ -1136,11 +1211,9 @@ impl Group {
                         json!({"kind": "private", "status": status, "conversation": item.id}),
                     );
                 }
-                match opt_text(task, "thread") {
-                    Some(session) => {
-                        entry.sessions.insert(session);
-                    }
-                    None => entry.sessionless += 1,
+                entry.tasks += 1;
+                if desk.starts_with("thread:") {
+                    entry.aliases.push(format!("task:{}:{task_id}", item.id));
                 }
                 if status == "running" {
                     entry.running += 1;
@@ -1161,7 +1234,7 @@ impl Group {
                     ),
                     prompt,
                 );
-                route_to(&mut msg, vec![recipient(task)]);
+                route_to(&mut msg, vec![recipient(&desk, task)]);
                 annotate(
                     &mut msg,
                     "private",
@@ -1174,7 +1247,7 @@ impl Group {
             }
             self.member(
                 snapshot,
-                task,
+                (&desk, task),
                 status,
                 text(task, "output"),
                 text(task, "error"),
@@ -1269,17 +1342,27 @@ impl Group {
             } else {
                 "succeeded"
             };
-            let desk = entry_desk(entry, &seats);
+            let desk = entry_desk(&item.id, entry, &seats);
             let message_id = opt_text(entry, "message_id");
             if !manager && !forwarded && seat.is_some() {
-                self.member(snapshot, &identity, status, text(entry, "text"), "", &time);
-                latest.insert(text(entry, "speaker"), entry);
+                let speaker = text(entry, "speaker");
+                let seat_key = seat_desk(&item.id, speaker);
+                self.member(
+                    snapshot,
+                    (&seat_key, &identity),
+                    status,
+                    text(entry, "text"),
+                    "",
+                    &time,
+                );
+                latest.insert(speaker, entry);
                 self.desk_seat(
+                    (&item.id, speaker),
                     &identity,
                     status,
                     created,
                     timestamp(&time).unwrap_or(created),
-                    None,
+                    false,
                 );
             }
             if !self.include_messages {
@@ -1356,12 +1439,19 @@ impl Group {
                             seats.get(text(r, "seat")).map(|seat| {
                                 let mut identity = (*seat).clone();
                                 identity["seat"] = r["seat"].clone();
-                                recipient(&identity)
+                                recipient(&seat_desk(&item.id, text(r, "seat")), &identity)
                             })
                         })
                         .collect()
                 } else {
-                    seats.values().map(|s| recipient(s)).collect()
+                    seats
+                        .iter()
+                        .map(|(id, seat)| {
+                            let mut identity = (*seat).clone();
+                            identity["seat"] = json!(id);
+                            recipient(&seat_desk(&item.id, id), &identity)
+                        })
+                        .collect()
                 };
                 route_to(&mut msg, recipients);
             } else {
@@ -1400,12 +1490,15 @@ impl Group {
                     text(entry, "text"),
                 );
                 msg["round"] = entry["round"].clone();
-                route_to(&mut msg, vec![recipient(&identity)]);
+                route_to(
+                    &mut msg,
+                    vec![recipient(&seat_desk(&item.id, id), &identity)],
+                );
                 annotate(
                     &mut msg,
                     "private",
                     room_thread(&item.id),
-                    desk_of(&identity).as_deref(),
+                    desk_of(&item.id, &identity).as_deref(),
                     None,
                     None,
                 );
@@ -1425,7 +1518,7 @@ impl Group {
             }
             self.member(
                 snapshot,
-                &identity,
+                (&seat_desk(&item.id, id), &identity),
                 "succeeded",
                 text(entry, "text"),
                 "",
@@ -1433,11 +1526,12 @@ impl Group {
             );
             latest.insert(id, entry);
             self.desk_seat(
+                (&item.id, id),
                 &identity,
                 "succeeded",
                 created,
                 timestamp(&time).unwrap_or(created),
-                None,
+                false,
             );
             if self.include_messages {
                 let round = entry["round"].as_u64().unwrap_or_default();
@@ -1458,7 +1552,7 @@ impl Group {
                     &mut msg,
                     "private",
                     room_thread(&item.id),
-                    desk_of(&identity).as_deref(),
+                    desk_of(&item.id, &identity).as_deref(),
                     None,
                     None,
                 );
@@ -1498,18 +1592,19 @@ impl Group {
                 };
                 self.member(
                     snapshot,
-                    &identity,
+                    (&seat_desk(&item.id, id), &identity),
                     status,
                     text(run, "output"),
                     text(run, "error"),
                     &time,
                 );
                 self.desk_seat(
+                    (&item.id, id),
                     &identity,
                     status,
                     created,
                     timestamp(&time).unwrap_or(created),
-                    Some((&item.id, id)),
+                    true,
                 );
                 if self.include_messages
                     && (status == "review"
@@ -1547,7 +1642,7 @@ impl Group {
                         &mut msg,
                         "private",
                         room_thread(&item.id),
-                        desk_of(&identity).as_deref(),
+                        desk_of(&item.id, &identity).as_deref(),
                         None,
                         None,
                     );
@@ -1556,20 +1651,20 @@ impl Group {
             } else if !latest.contains_key(id) {
                 self.member(
                     snapshot,
-                    seat,
+                    (&seat_desk(&item.id, id), seat),
                     "pending",
                     "",
                     "",
                     &event_time("", &item.updated),
                 );
-                self.desk_seat(seat, "pending", created, created, None);
+                self.desk_seat((&item.id, id), seat, "pending", created, created, false);
             }
         }
         let room_seats: Vec<Value> = seats
             .values()
             .filter(|seat| !text(seat, "provider").is_empty())
             .map(
-                |seat| json!({"seat": text(seat, "id"), "desk": desk_of(seat).unwrap_or_default()}),
+                |seat| json!({"seat": text(seat, "id"), "desk": seat_desk(&item.id, text(seat, "id"))}),
             )
             .collect();
         self.rooms.push((
@@ -1617,7 +1712,35 @@ pub(crate) fn source_key(snapshot: &Snapshot) -> SourceKey {
 type Preview = (Vec<SourceKey>, Vec<Arc<Value>>, String);
 static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex::default);
 
-pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: bool) -> Response {
+/// At most this many undrawn desks are listed; the count still covers all of them.
+const OPTIMIZED_LISTED: usize = 200;
+
+/// Desks the returned seats and messages name, as speaker, thread or recipient.
+fn referenced_desks(rooms: &[Value], messages: &[Value]) -> BTreeSet<String> {
+    let seats = rooms.iter().flat_map(|room| array(room, "seats"));
+    let named = messages.iter().flat_map(|message| {
+        let thread = (message["thread"]["kind"] == "desk").then(|| &message["thread"]["key"]);
+        [&message["desk"]]
+            .into_iter()
+            .chain(thread)
+            .chain(array(message, "to").map(|to| &to["key"]))
+            .chain(array(message, "recipients").map(|to| &to["key"]))
+    });
+    seats
+        .map(|seat| &seat["desk"])
+        .chain(named)
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `limit` is the App's running limit (`settings.json`), which also caps the desks drawn.
+pub(crate) fn respond(
+    path: &str,
+    mut snapshots: Vec<Snapshot>,
+    data_exists: bool,
+    limit: usize,
+) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let (requested, focus) = match requested {
         Some(path) => match path.split_once("/focus/") {
@@ -1684,9 +1807,14 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
         value.as_object_mut().unwrap().remove("updated");
         value["conversations"] = json!(group.conversations);
         value["members"] = json!(group.members());
-        value["desks"] = json!(group.desks(host.as_deref()));
-        value["rooms"] = json!(group.rooms());
-        value["messages"] = json!(group.timeline(focus));
+        let rooms = group.rooms();
+        let messages = group.timeline(focus);
+        let referenced = referenced_desks(&rooms, &messages);
+        let (desks, optimized) = group.desks(host.as_deref(), limit, OPTIMIZED_LISTED, &referenced);
+        value["desks"] = json!(desks);
+        value["optimized"] = optimized;
+        value["rooms"] = json!(rooms);
+        value["messages"] = json!(messages);
         value["omitted"] = json!(group.omitted(focus));
         value["threads"] = json!(group.threads());
         return Response::json(&value);
@@ -1701,8 +1829,13 @@ pub(crate) fn respond(path: &str, mut snapshots: Vec<Snapshot>, data_exists: boo
                 value["threads"] = json!(g.threads());
                 value["omitted"] = json!(g.omitted(None));
                 value["members"] = json!(g.members());
-                value["desks"] = json!(g.desks(g.host.as_deref()));
-                value["rooms"] = json!(g.rooms());
+                let rooms = g.rooms();
+                // The panel only shows how many; the office lists them. Seats still need theirs.
+                let referenced = referenced_desks(&rooms, &[]);
+                let (desks, optimized) = g.desks(g.host.as_deref(), limit, 0, &referenced);
+                value["desks"] = json!(desks);
+                value["optimized"] = optimized;
+                value["rooms"] = json!(rooms);
                 value
             })
             .collect();

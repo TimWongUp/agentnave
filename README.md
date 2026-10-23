@@ -149,12 +149,13 @@ private between the Manager and that seat; the seat is told the next time it ans
 Starts one provider invocation and immediately returns an in-memory `invocation_id`. It requires
 `provider`, `prompt`, and an absolute existing `cwd`; `session_id` and explicit
 `provider_options` are optional. `title` names a new task conversation; `conversation_id` adds
-to an existing one. Tasks and final replies are saved automatically. `role` labels the desk
-(provider, model, role); each call starts a new thread unless `session_id` is given or
-`continue_desk=true` continues that desk's most recent private thread in the same `cwd`, and `forward`
-injects completed workspace messages by `message_id`. `access` (`read` or `write`) labels
-the call; the desk shows its latest label. It is recorded only: it never rejects a call, never
-changes which thread `continue_desk` picks and never changes CLI permissions.
+to an existing one. Tasks and final replies are saved automatically. Each native thread is
+one desk in the App: every call starts a new thread unless `session_id` continues one, and each
+show seat is a desk too. `role` is an optional label shown on the desk. `forward` injects
+completed workspace messages by `message_id`. `access` (`read` or `write`) labels the call; it
+is recorded only and never rejects a call or changes CLI permissions. CLI runs active at once
+(tasks plus seats) are limited by the App setting, 8 by default; a call beyond it is rejected
+until some finish.
 
 启动回执包含 `provider`、`model`、`effort` 与 `defaults_applied`，不重复 prompt。task 模式先检查允许的 CLI 与宿主排除项，再补齐 App 中配置的 model、effort 和其他 options；调用方显式参数优先，超出模式允许的模型或努力档位时拒绝；非空模型名单既无默认又未传 model 时也拒绝，不能退回原生模型。续接同样现读并套用默认值。参数仍经 Adapter 原有校验；未传且无默认值时显示 `继承原生设置`。`defaults_applied` 列出实际补齐的键，无则空列表；这些请求值不证明 CLI 实际生效的设置。新开节目的 `run_round` 每席使用 discussion 配置，并返回 model、effort（未配置时省略）与 `defaults_applied`。
 

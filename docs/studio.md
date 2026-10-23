@@ -6,7 +6,7 @@
 
 | 工具 | 说明 |
 | --- | --- |
-| `start_agent` | 私聊任务，结果只回给 boss；另接受 `title`、`conversation_id`、`role`、`access`、`continue_desk` 与 `forward`，自动保存为私有任务会话，默认开新线程，`continue_desk=true` 时续接同工位同 cwd 的最近私聊线程；`access` 只记录 |
+| `start_agent` | 私聊任务，结果只回给 boss；另接受 `title`、`conversation_id`、`role`、`access` 与 `forward`，自动保存为私有任务会话，默认开新线程，传 `session_id` 续接原线程；`access` 只记录 |
 | `run_round` | 不带 `group_id` 时用 `title`、2–7 个 `members`、`cwd`（可选 `review`、`isolated`）开节目，返回的 `group_id` 就是会话 ID；带 `seats` 跑一轮，不带 `seats` 发主持人发言；`forward` 把已完成消息转入会议室 |
 | `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；审核节目中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
 | `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |

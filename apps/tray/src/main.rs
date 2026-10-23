@@ -9,6 +9,7 @@ mod manage;
 mod members;
 mod onboarding;
 mod rules;
+mod settings;
 mod stage;
 mod update;
 
