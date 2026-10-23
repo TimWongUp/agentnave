@@ -164,11 +164,11 @@ class Suite:
         started = time.monotonic()
         stats.tasks += 1
         while True:
-            update = await self.call("wait_agent", {"invocation_id": invocation_id})
+            update = (await self.call("wait", {"ids": [invocation_id]}))["updates"][0]
             if update["status"] != "running" and update["status"] != "blocked":
                 break
             if update["status"] == "blocked" or time.monotonic() > deadline:
-                await self.call("cancel_agent", {"invocation_id": invocation_id})
+                await self.call("cancel", {"id": invocation_id})
                 raise ToolFailure(
                     f"{update['status']} after {time.monotonic() - started:.0f}s: "
                     f"{update.get('error') or update.get('activity')}"
@@ -196,7 +196,7 @@ class Suite:
     async def discovery(self) -> None:
         async def tools() -> str | None:
             names = {tool.name for tool in (await self.client.list_tools()).tools}
-            missing = {"start_agent", "cancel_agent", "open_group", "run_round"} - names
+            missing = {"start_agent", "wait", "cancel", "run_round"} - names
             if missing:
                 raise ToolFailure(f"missing tools {sorted(missing)}")
             return None
@@ -205,10 +205,10 @@ class Suite:
         await self.guarded("dashboard", "-", self._dashboard())
         await self.guarded("list_members", "-", self._members())
         for provider in self.providers:
-            await self.guarded("describe_provider", provider, self._describe(provider))
+            await self.guarded("provider_details", provider, self._describe(provider))
 
     async def _dashboard(self) -> str | None:
-        listed = await self.call("list_conversations", {})
+        listed = await self.call("list", {})
         url = listed.get("dashboard_url")
         if url is None:
             return f"no dashboard: {listed.get('dashboard_error')}"
@@ -220,15 +220,16 @@ class Suite:
         return None
 
     async def _describe(self, provider: str) -> str | None:
-        described = await self.call("describe_provider", {"provider": provider})
+        members = await self.call("list_members", {"provider": provider})
+        described = members["provider_details"]
         if not described["permitted"]:
-            if described["host"] != provider or not described["show_permitted"]:
+            if members["host"] != provider or not described["show_permitted"]:
                 raise ToolFailure("provider not permitted; unset AGENTNAVE_EXCLUDED_PROVIDERS")
             self.excluded.add(provider)
         return None
 
     async def tasks(self) -> None:
-        """Start every provider at once and collect results with wait_any."""
+        """Start every provider at once and collect results with wait."""
         started = time.monotonic()
         launched: dict[str, tuple[str, str]] = {}
         for provider in self.excluded:
@@ -236,17 +237,17 @@ class Suite:
         for provider in self.task_providers:
             value = token(provider.upper())
             try:
-                reply = await self.start(provider, echo_prompt(value), new_thread=True)
+                reply = await self.start(provider, echo_prompt(value))
                 launched[reply["invocation_id"]] = (provider, value)
             except Exception as exc:  # noqa: BLE001
                 self.record("start_agent", provider, "fail", started, str(exc))
         pending = list(launched)
         while pending:
-            ready = await self.call("wait_any", {"invocation_ids": pending})
+            ready = await self.call("wait", {"ids": pending})
             if ready["reason"] != "ready":
                 if time.monotonic() - started > TASK_LIMIT_SECONDS:
                     for invocation_id in pending:
-                        await self.call("cancel_agent", {"invocation_id": invocation_id})
+                        await self.call("cancel", {"id": invocation_id})
                         provider, _ = launched[invocation_id]
                         self.record("parallel_task", provider, "fail", started, "timed out")
                     break
@@ -271,7 +272,7 @@ class Suite:
 
     async def _rejected(self, provider: str) -> str | None:
         try:
-            await self.start(provider, echo_prompt(token("X")), new_thread=True)
+            await self.start(provider, echo_prompt(token("X")))
         except ToolFailure as exc:
             if "excluded" in str(exc):
                 return None
@@ -296,17 +297,17 @@ class Suite:
 
     async def desk_resume(self, provider: str) -> str | None:
         value = token(provider.upper())
-        started = await self.start(provider, echo_prompt(value))
+        started = await self.start(provider, echo_prompt(value), continue_desk=True)
         if not started.get("resumed"):
-            raise ToolFailure("start_agent without session_id did not resume the desk thread")
+            raise ToolFailure("continue_desk=true did not resume the desk thread")
         await self.finish(provider, started["invocation_id"])
         return None
 
     async def cancel(self, provider: str) -> str | None:
-        started = await self.start(provider, LONG_PROMPT, new_thread=True)
+        started = await self.start(provider, LONG_PROMPT)
         invocation_id = started["invocation_id"]
         await asyncio.sleep(CANCEL_AFTER_SECONDS)
-        result = await self.call("cancel_agent", {"invocation_id": invocation_id})
+        result = (await self.call("cancel", {"id": invocation_id}))["invocation"]
         if result["status"] == "succeeded":
             return "finished before cancellation"
         if result["status"] != "cancelled":
@@ -317,7 +318,7 @@ class Suite:
         if len(self.providers) < 2:
             self.record("groups", "-", "skip", time.monotonic(), "needs two providers")
             return
-        await self.guarded("open_group", "group", self._open_group())
+        await self.guarded("open_show", "group", self._open_group())
 
     async def _open_group(self) -> str | None:
         seats = [
@@ -330,10 +331,10 @@ class Suite:
             for provider in self.providers
         ]
         opened = await self.call(
-            "open_group",
+            "run_round",
             {
                 "title": "会议 · 并联与串联",
-                "seats": seats,
+                "members": seats,
                 "cwd": str(self.workspace),
                 "manager_session_id": MANAGER,
             },
@@ -343,10 +344,10 @@ class Suite:
         await self.guarded("parallel_round", "group", self._parallel_round())
         await self.guarded("host_and_serial", "group", self._serial_round())
         reviewed = await self.call(
-            "open_group",
+            "run_round",
             {
                 "title": "会议 · 审核与取消",
-                "seats": seats,
+                "members": seats,
                 "review": True,
                 "isolated": True,
                 "manager_session_id": MANAGER,
@@ -360,15 +361,20 @@ class Suite:
 
     async def _round(self, group_id: str, **arguments: Any) -> dict[str, Any]:
         started = time.monotonic()
-        round_ = await self.call(
-            "run_round", {"group_id": group_id, "manager_session_id": MANAGER, **arguments}
-        )
+        round_ = (
+            await self.call(
+                "run_round", {"group_id": group_id, "manager_session_id": MANAGER, **arguments}
+            )
+        )["round"]
         while round_["status"] == "running" and round_.get("reason") != "review_needed":
             if time.monotonic() - started > TASK_LIMIT_SECONDS * 2:
-                await self.call("cancel_round", {"round_id": round_["round_id"]})
+                await self.call("cancel", {"id": round_["round_id"]})
                 raise ToolFailure("round timed out")
-            round_ = await self.call("wait_round", {"round_id": round_["round_id"]})
+            round_ = await self._wait_round(round_["round_id"])
         return round_
+
+    async def _wait_round(self, round_id: str) -> dict[str, Any]:
+        return (await self.call("wait", {"ids": [round_id]}))["rounds"][0]
 
     @staticmethod
     def _failed(round_: dict[str, Any], allowed: set[str]) -> list[str]:
@@ -400,10 +406,10 @@ class Suite:
     async def _serial_round(self) -> str | None:
         keyword = token("HOST")
         await self.call(
-            "post_host_message",
+            "run_round",
             {
-                "conversation_id": self.group_id,
-                "text": f"Host keyword: {keyword}",
+                "group_id": self.group_id,
+                "prompt": f"Host keyword: {keyword}",
                 "manager_session_id": MANAGER,
             },
         )
@@ -435,11 +441,11 @@ class Suite:
         if round_.get("reason") != "review_needed":
             raise ToolFailure(f"expected review_needed, got {round_.get('reason')}")
         while any(seat["status"] == "running" for seat in round_["seats"]):
-            round_ = await self.call("wait_round", {"round_id": round_["round_id"]})
+            round_ = await self._wait_round(round_["round_id"])
         pending = [s["seat_id"] for s in round_["seats"] if s["status"] == "pending_review"]
         if not pending:
             raise ToolFailure(f"no answers held for review: {self._failed(round_, set())}")
-        decisions = {seat: "publish" if i % 2 == 0 else "discard" for i, seat in enumerate(pending)}
+        decisions = {seat: "publish" if i % 2 == 0 else "private" for i, seat in enumerate(pending)}
         receipt = await self.call(
             "decide_answers", {"round_id": round_["round_id"], "decisions": decisions}
         )
@@ -452,27 +458,29 @@ class Suite:
         return f"no reviewable answer from {sorted(absent)}" if absent else None
 
     async def _cancel_round(self) -> str | None:
-        round_ = await self.call(
-            "run_round",
-            {
-                "group_id": self.review_id,
-                "seats": self.providers,
-                "order": "parallel",
-                "prompt": LONG_PROMPT,
-            },
-        )
+        round_ = (
+            await self.call(
+                "run_round",
+                {
+                    "group_id": self.review_id,
+                    "seats": self.providers,
+                    "order": "parallel",
+                    "prompt": LONG_PROMPT,
+                },
+            )
+        )["round"]
         await asyncio.sleep(CANCEL_AFTER_SECONDS)
-        cancelled = await self.call("cancel_round", {"round_id": round_["round_id"]})
+        cancelled = (await self.call("cancel", {"id": round_["round_id"]}))["round"]
         if cancelled["status"] not in ("cancelled", "finished"):
-            raise ToolFailure(f"cancel_round status={cancelled['status']}")
+            raise ToolFailure(f"cancel status={cancelled['status']}")
         if cancelled["status"] == "finished":
             return "round finished before cancellation"
         return None
 
     async def history(self) -> str | None:
-        listed = await self.call("list_conversations", {})
+        listed = await self.call("list", {"limit": 200})
         if "dashboard_url" not in listed and "dashboard_error" not in listed:
-            raise ToolFailure("list_conversations returned no dashboard link")
+            raise ToolFailure("list returned no dashboard link")
         conversations = [
             item
             for item in listed["conversations"]
@@ -481,19 +489,15 @@ class Suite:
         if not conversations:
             raise ToolFailure("no saved conversations from this run")
         target = conversations[0]["conversation_id"]
-        await self.call("read_conversation", {"conversation_id": target})
-        title = "会议 · 重命名检查"
-        renamed = await self.call(
-            "update_conversation", {"conversation_id": target, "title": title}
-        )
-        if renamed["title"] != title:
-            raise ToolFailure("rename was not applied")
+        read = await self.call("read_conversation", {"conversation_id": target})
+        if not read.get("messages") and not read.get("tasks"):
+            raise ToolFailure("read_conversation returned no messages")
         return None
 
     async def coverage(self) -> None:
         print("\n[discovery]")
         await self.discovery()
-        print("\n[parallel tasks + wait_any]")
+        print("\n[parallel tasks + wait]")
         await self.tasks()
         for title, step in (
             ("explicit resume", self.resume),
@@ -515,10 +519,10 @@ class Suite:
         await self.groups()
         print("\n[history]")
         await self.guarded("history", "-", self.history())
-        await self.guarded("list_invocations", "-", self.idle())
+        await self.guarded("list", "-", self.idle())
 
     async def idle(self) -> str | None:
-        listed = await self.call("list_invocations", {})
+        listed = await self.call("list", {})
         running = [item for item in listed["invocations"] if item["status"] == "running"]
         if running:
             raise ToolFailure(f"{len(running)} invocations still running")
@@ -549,7 +553,7 @@ class Suite:
             await self.guarded("soak_idle", "-", self.idle())
 
     async def _soak_task(self, provider: str, *, resume: bool) -> str | None:
-        await self.echo(provider, **({} if resume else {"new_thread": True}))
+        await self.echo(provider, **({"continue_desk": True} if resume else {}))
         return None
 
     # Process leaks

@@ -316,14 +316,14 @@ struct Desk {
     running: usize,
     activities: Vec<Value>,
     reported: Option<(i64, String)>,
-    // The first declared access tier wins, matching the server's desk rule.
+    // The latest declared access tier; the server records declarations without enforcing them.
     access: Option<(i64, String)>,
 }
 
 impl Desk {
     fn declare(&mut self, at: i64, access: Option<String>) {
         if let Some(access) = access
-            && self.access.as_ref().is_none_or(|(old_at, _)| at < *old_at)
+            && self.access.as_ref().is_none_or(|(old_at, _)| at >= *old_at)
         {
             self.access = Some((at, access));
         }
@@ -1450,7 +1450,7 @@ impl Group {
                     text(entry, "text"),
                 );
                 msg["private"] = json!(true);
-                msg["discarded"] = json!(true);
+                msg["kept_private"] = json!(true);
                 msg["round"] = entry["round"].clone();
                 msg["status"] = json!("succeeded");
                 msg["focus"] = json!(format!("seat:{}:{id}", item.id));
@@ -1518,7 +1518,8 @@ impl Group {
                                 status,
                                 "failed" | "blocked" | "cancelled" | "interrupted" | "succeeded"
                             )
-                            && run["review"] != "discard"))
+                            // Records before v0.35 call an answer kept private "discard".
+                            && !matches!(run["review"].as_str(), Some("private" | "discard"))))
                 {
                     let body = if matches!(status, "review" | "succeeded") {
                         text(run, "output").to_owned()

@@ -62,7 +62,7 @@ async def test_real_suite_history_uses_created_ids_after_readable_titles(
         calls.append((name, arguments))
         if name == "start_agent":
             content = {"conversation_id": "suite-task", "invocation_id": "invocation"}
-        elif name == "list_conversations":
+        elif name == "list":
             content = {
                 "dashboard_url": "http://localhost/",
                 "conversations": [
@@ -70,8 +70,8 @@ async def test_real_suite_history_uses_created_ids_after_readable_titles(
                     {"conversation_id": "suite-task", "title": "连通检查 · pi"},
                 ],
             }
-        elif name == "update_conversation":
-            content = {"title": arguments["title"]}
+        elif name == "read_conversation":
+            content = {"conversation_id": arguments["conversation_id"], "tasks": ["saved"]}
         else:
             content = {}
         return SimpleNamespace(is_error=False, structured_content=content)
@@ -84,5 +84,5 @@ async def test_real_suite_history_uses_created_ids_after_readable_titles(
     assert all(
         arguments["conversation_id"] == "suite-task"
         for name, arguments in calls
-        if name in {"read_conversation", "update_conversation"}
+        if name == "read_conversation"
     )

@@ -318,7 +318,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .msg.pending .bub { background: transparent; border: 1px dashed color-mix(in srgb, var(--review) 55%, transparent); color: var(--muted); }
 .msg.reply { margin-left: 12px; padding-left: 10px; border-left: 2px solid var(--line); }
 .msg.forward .bub { box-shadow: inset 3px 0 0 var(--accent); }
-.msg.discarded .bub { opacity: 0.6; }
 .m-meta { margin: 4px 0 0 28px; font-size: 11px; color: var(--faint); }
 .m-meta:empty { display: none; }
 .bub.fold { max-height: 260px; overflow: hidden; }

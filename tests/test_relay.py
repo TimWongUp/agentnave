@@ -445,16 +445,16 @@ mcp_server.main()
         host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         first = host.relay.child.process.pid
         group = call(
-            "open_group",
+            "run_round",
             title="Review",
             cwd=str(tmp_path),
             review=True,
-            seats=[{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            members=[{"id": seat, "provider": "claude"} for seat in ("a", "b")],
         )
         round_ = call(
             "run_round", group_id=group["group_id"], seats=["a"], order="parallel", prompt="answer"
-        )
-        assert call("wait_round", round_id=round_["round_id"])["reason"] == "review_needed"
+        )["round"]
+        assert call("wait", ids=[round_["round_id"]])["rounds"][0]["reason"] == "review_needed"
         listed = call("list_invocations")
         assert all(item["result_read"] for item in listed["invocations"])
         assert listed["restart_safe"] is False
@@ -462,7 +462,7 @@ mcp_server.main()
         time.sleep(0.5)
         assert host.relay.child.process.pid == first
         call("decide_answers", round_id=round_["round_id"], decisions={"a": "publish"})
-        call("wait_round", round_id=round_["round_id"])
+        call("wait", ids=[round_["round_id"]])
         second = changed_pid(first)
         saved = json.loads((data / "conversations" / group["group_id"] / "state.json").read_bytes())
         assert saved["rounds"][0]["seats"][0]["review"] == "publish"
@@ -471,13 +471,21 @@ mcp_server.main()
         failure = tmp_path / "busy.write_failed"
         failure.touch()
         started = call("start_agent", provider="claude", prompt="answer", cwd=str(tmp_path))
-        assert call("wait_agent", invocation_id=started["invocation_id"])["status"] == "succeeded"
+        assert call("wait", ids=[started["invocation_id"]])["updates"][0]["status"] == "succeeded"
         assert call("list_invocations")["restart_safe"] is False
         host.install("1.2")
         time.sleep(0.5)
         assert host.relay.child.process.pid == second
         failure.unlink()
-        call("update_conversation", conversation_id=started["conversation_id"], title="Saved")
+        # The next write to that conversation saves the held result too.
+        again = call(
+            "start_agent",
+            provider="claude",
+            prompt="again",
+            cwd=str(tmp_path),
+            conversation_id=started["conversation_id"],
+        )
+        call("wait", ids=[again["invocation_id"]])
         changed_pid(second)
         saved = json.loads(
             (data / "conversations" / started["conversation_id"] / "state.json").read_bytes()

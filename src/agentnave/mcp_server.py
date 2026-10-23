@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal, NotRequired, TypedDict, get_args
+from typing import Annotated, Any, Literal, NotRequired, TypedDict, cast, get_args
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp_types import ToolAnnotations
+from mcp_types import CallToolResult, InputRequiredResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentnave import __version__
+from agentnave import __version__, views
 from agentnave.conversations import (
     CommittedEntry,
     Conversations,
@@ -26,7 +27,7 @@ from agentnave.conversations import (
 )
 from agentnave.core import InvocationManager
 from agentnave.group import GroupSeat, Round
-from agentnave.host import HostName, HostSource, detect_host
+from agentnave.host import detect_host
 from agentnave.members import (
     AdapterOptionsError,
     MemberFileError,
@@ -45,7 +46,7 @@ from agentnave.models import (
     ProviderOption,
 )
 from agentnave.nesting import detect_nesting
-from agentnave.store import Conversation, Review, Unavailable
+from agentnave.store import Review, Unavailable
 
 type ManagerModel = Annotated[
     str | None,
@@ -103,7 +104,12 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". start_agent rejects excluded providers; groups follow discussion member limits without host exclusions."
+    + ". start_agent rejects excluded providers; shows follow discussion member limits without host exclusions."
+)
+ACCESS = (
+    "Declared desk access: read for exploring, planning or reviewing, write for changing files. "
+    "Recorded and shown only; it never changes the CLI's native permissions or which thread "
+    "continue_desk picks."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
@@ -134,23 +140,15 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
 }
 
 
-class ProviderDescriptionPayload(TypedDict):
+class ProviderDetails(BaseModel):
     provider: ProviderName
-    permitted: bool
-    show_permitted: bool
+    permitted: bool  # start_agent; host exclusions apply
+    show_permitted: bool  # run_round seats; discussion member limits apply
     supported_options: str
-    host: HostName | None
-    host_source: HostSource
 
 
-class ViewerLinks(TypedDict):
-    dashboard_url: NotRequired[str]
-    dashboard_error: NotRequired[str]
-
-
-class DashboardLinks(ViewerLinks):
-    public_url: NotRequired[str]
-    director_url: NotRequired[str]
+class MemberListPayload(MemberList):
+    provider_details: ProviderDetails | None = None
 
 
 class InvocationErrorPayload(TypedDict):
@@ -182,15 +180,10 @@ class InvocationPayload(TypedDict):
     message_id: NotRequired[str]  # terminal saved task, referencable by forward
 
 
-class TaskStartPayload(InvocationPayload, DashboardLinks):
+class TaskStartPayload(InvocationPayload):
     conversation_id: str
     resumed: bool  # true when continue_desk continued this desk's most recent private thread
-    access: str | None  # declared desk tier after inheritance; never enforced
-
-
-class WaitAnyPayload(TypedDict):
-    reason: Literal["ready", "wait_elapsed"]
-    updates: list[InvocationPayload]
+    access: str | None  # the tier this call declared; recorded only, never enforced
 
 
 class InvocationListItem(TypedDict):
@@ -230,10 +223,7 @@ class GroupSeatSpec(BaseModel):
             "or control characters. Blank or omitted means no role."
         ),
     )
-    access: Literal["read", "write"] | None = Field(
-        default=None,
-        description="Declared desk access: read for exploring, planning or reviewing, write for changing files. Recorded and shown only; it does not change the CLI's native permissions. A desk keeps its first declared tier in this manager workspace; omitting it inherits that tier, and a different tier is rejected, so use another role and pass findings with forward or a meeting instead.",
-    )
+    access: Literal["read", "write"] | None = Field(default=None, description=ACCESS)
 
 
 class GroupSeatPayload(TypedDict):
@@ -247,12 +237,6 @@ class GroupSeatPayload(TypedDict):
     defaults_applied: list[str]
 
 
-class ShowPayload(DashboardLinks):
-    group_id: str
-    conversation_id: str
-    seats: list[GroupSeatPayload]
-
-
 class SeatRunPayload(TypedDict):
     seat_id: str
     status: Literal[
@@ -264,7 +248,7 @@ class SeatRunPayload(TypedDict):
         "cancelled",
         "not_started",
         "pending_review",
-        "discarded",
+        "private",
     ]
     invocation_id: NotRequired[str]
     activity: NotRequired[ActivityPayload]
@@ -281,7 +265,7 @@ class CommittedEntryPayload(TypedDict):
     seat: NotRequired[str]
 
 
-class RoundPayload(DashboardLinks):
+class RoundPayload(TypedDict):
     round_id: str
     group_id: str
     round: int
@@ -292,6 +276,42 @@ class RoundPayload(DashboardLinks):
     seats: list[SeatRunPayload]
     entries: list[CommittedEntryPayload]
     error: NotRequired[str]
+
+
+class WaitPayload(TypedDict):
+    reason: Literal["ready", "wait_elapsed"]
+    updates: list[InvocationPayload]
+    rounds: list[RoundPayload]
+
+
+class CancelPayload(TypedDict):
+    invocation: NotRequired[InvocationPayload]
+    round: NotRequired[RoundPayload]
+
+
+class ShowRunPayload(TypedDict):
+    group_id: str
+    members: NotRequired[list[GroupSeatPayload]]  # only when this call opened the show
+    entries: NotRequired[list[CommittedEntryPayload]]  # a host remark posted without seats
+    round: NotRequired[RoundPayload]
+
+
+class ConversationSummary(TypedDict):
+    conversation_id: str
+    title: str
+    kind: Literal["show", "task"]
+    writable: bool
+    created: str
+    updated: str
+
+
+class ListPayload(TypedDict):
+    invocations: list[InvocationListItem]
+    conversations: list[ConversationSummary]
+    total: int
+    unavailable: list[Unavailable]
+    dashboard_url: NotRequired[str]
+    dashboard_error: NotRequired[str]
 
 
 class Runtime:
@@ -316,23 +336,54 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
                 await runtime.conversations.close()
 
 
-mcp = MCPServer(
+# The relay's idle probe: callable by name, never listed to agents.
+_HIDDEN_TOOLS = frozenset({"list_invocations"})
+
+
+def _without_nulls(value: object) -> object:
+    if isinstance(value, dict):
+        items = cast(dict[str, object], value).items()
+        return {key: _without_nulls(item) for key, item in items if item is not None}
+    if isinstance(value, list):
+        return [_without_nulls(item) for item in cast(list[object], value)]
+    return value
+
+
+class _Server(MCPServer[Runtime]):
+    async def list_tools(self) -> list[Any]:
+        return [tool for tool in await super().list_tools() if tool.name not in _HIDDEN_TOOLS]
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
+    ) -> CallToolResult | InputRequiredResult:
+        result = await super().call_tool(name, arguments, context)
+        if (
+            isinstance(result, CallToolResult)
+            and not result.is_error
+            and result.structured_content is not None
+        ):
+            # The same data as structuredContent, compact and without empty fields.
+            text = json.dumps(
+                _without_nulls(result.structured_content), ensure_ascii=False, separators=(",", ":")
+            )
+            result = result.model_copy(update={"content": [TextContent(type="text", text=text)]})
+        return result
+
+
+mcp = _Server(
     "AgentNave",
     version=__version__,
     instructions=(
         "AgentNave launches local CLI subagents and saves their history. Use the "
         "agentnave-manager Skill for CLI usage and model selection. "
-        "start_agent/wait_agent/cancel_agent run tasks saved as private task conversations; "
-        "wait_any waits on several and list_invocations lists handles. "
-        "describe_provider reports permitted status and supported options. "
-        "list_members reads App members by mode; omitted model/effort/options use App defaults "
-        "reported in defaults_applied. Explicit arguments take priority within allowed ranges. "
-        "open_group creates a saved show; run_round, wait_round and cancel_round drive it. "
-        "With review=true, decide_answers publishes or discards answers before other seats see "
-        "them. post_host_message adds public host remarks. Saved operations and "
-        "list_conversations provide local read-only dashboard links; nothing listens before "
-        "these are called. History survives restart; running processes do not. "
-        "Invocation handles expire seven days after completion. "
+        "start_agent runs a private task whose result returns only to you; run_round opens a "
+        "saved show and runs rounds whose answers seats share automatically. wait and cancel "
+        "take task invocation_ids and round_ids; list shows handles, saved conversations and "
+        "the dashboard link; read_conversation reads one back. list_members reads App members "
+        "and, for one provider, its options; omitted model/effort/options use App defaults "
+        "reported in defaults_applied. With review=true, decide_answers publishes each answer "
+        "or keeps it private before other seats see it. History survives restart; running "
+        "processes do not. Invocation handles expire seven days after completion. "
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
         + PROVIDER_SELECTION
     ),
@@ -350,21 +401,6 @@ def _conversations(ctx: Context[Runtime]) -> Conversations:
 
 def _rejected(exc: Exception) -> ToolError:
     return ToolError(f"{exc}. Correct the request and retry.")
-
-
-def _dashboard_links(conversations: Conversations, conversation_id: str) -> DashboardLinks:
-    """A saved operation stays successful even if the optional viewer cannot start."""
-    try:
-        home = conversations.open_dashboard()
-    except OSError as exc:
-        return {"dashboard_error": str(exc)}
-    links: DashboardLinks = {"dashboard_url": home}
-    urls = conversations.urls(conversation_id)
-    if urls is not None:
-        links["director_url"] = urls[1]
-        if conversations.records[conversation_id].state.kind == "show":
-            links["public_url"] = urls[0]
-    return links
 
 
 def started_payload(
@@ -458,11 +494,11 @@ def update_payload(
     return response
 
 
-def _unknown_invocation() -> ToolError:
+def _unknown_handle(handle: str) -> ToolError:
     return ToolError(
-        "Unknown or expired invocation_id. Use the invocation_id returned by start_agent during "
-        "this MCP server session; handles expire seven days after completion. "
-        "Keep the final output and native session_id before expiry."
+        f"Unknown or expired id {handle}. Use an invocation_id from start_agent or a round_id "
+        "from run_round of this MCP server session; invocation handles expire seven days after "
+        "completion, and saved rounds of earlier servers are read with read_conversation."
     )
 
 
@@ -506,7 +542,7 @@ async def start_agent(
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                "Explicit options for the selected CLI. Call describe_provider(provider) for "
+                "Explicit options for the selected CLI. Call list_members(provider=...) for "
                 "supported keys. Omitted options use configured App defaults, then native CLI settings."
             )
         ),
@@ -541,42 +577,29 @@ async def start_agent(
         list[str] | None,
         Field(
             description=(
-                "Message ids from wait_agent, wait_any, wait_round, decide_answers or "
-                "post_host_message to inject before the prompt in order. Only succeeded tasks "
+                "Message ids from wait, run_round, decide_answers or read_conversation "
+                "to inject before the prompt in order. Only succeeded tasks "
                 "and committed entries of this manager workspace qualify; at most 20, no "
                 "repeats. The injected text is labelled as data, not instructions, and the "
                 "saved task prompt stays your original text."
             )
         ),
     ] = None,
-    access: Annotated[
-        Literal["read", "write"] | None,
-        Field(
-            description="Declared desk access: read for exploring, planning or reviewing, write for changing files. Recorded and shown only; it does not change the CLI's native permissions. A desk keeps its first declared tier in this manager workspace; omitting it inherits that tier, and a different tier is rejected, so use another role and pass findings with forward or a meeting instead."
-        ),
-    ] = None,
+    access: Annotated[Literal["read", "write"] | None, Field(description=ACCESS)] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
-    """Start one CLI invocation and return its invocation_id; use wait_agent for the result.
+    """Start one private CLI task and return its invocation_id; use wait for the result.
 
-    The reply includes the CLI and requested model/effort. defaults_applied reports App defaults;
-    otherwise omitted settings inherit the native CLI configuration.
-    These are requested settings, not confirmation of the CLI's effective settings.
-    Each task starts a new native thread unless session_id or continue_desk=true says otherwise.
-    continue_desk=true continues this desk's (provider, requested model, role) most recent
-    private thread in the same cwd; the reply's resumed field says whether one was found, and a
-    request while that thread still runs is rejected. session_id keeps its exact meaning:
-    continue that native session and join its open conversation.
-    forward injects already-committed workspace messages ahead of the prompt as data, not
-    instructions; wait_agent and wait_any return the task's message_id once it finishes.
-    Nothing else is shared with the CLI.
-    The task and its final output are saved in a private task conversation; a resumed native
-    session joins its open conversation. No output is shared with another CLI.
-    AgentNave imposes no runtime deadline; use cancel_agent to stop work explicitly.
-    Provider-native limits still apply. Active invocations do not accept messages.
+    The reply reports the requested model/effort, not the CLI's effective settings;
+    defaults_applied lists App defaults, other omitted settings inherit the native CLI.
+    Each task starts a new native thread unless session_id or continue_desk=true says
+    otherwise; a resumed native session joins its open conversation. The task and its final
+    reply are saved in a private task conversation; nothing is shared with another CLI except
+    what forward injects. No runtime deadline: cancel stops work explicitly. Active
+    invocations do not accept messages.
     """
     try:
         options, defaults_applied = apply_member(
@@ -602,7 +625,7 @@ async def start_agent(
             access=access,
         )
     except KeyError as exc:
-        raise ToolError("Unknown conversation_id; use list_conversations.") from exc
+        raise ToolError("Unknown conversation_id; use list.") from exc
     except ValueError as exc:
         raise invocation_request_error(provider, exc) from exc
     except OSError as exc:
@@ -612,149 +635,178 @@ async def start_agent(
         "conversation_id": started.conversation_id,
         "resumed": started.resumed,
         "access": started.access,
-        **_dashboard_links(_conversations(ctx), started.conversation_id),
     }
 
 
-@mcp.tool(
-    title="Wait for a subagent invocation",
-    annotations=ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    ),
-)
-async def wait_agent(
-    invocation_id: Annotated[
-        str,
-        Field(min_length=1, description="Invocation ID returned by start_agent."),
-    ],
-    *,
-    ctx: Context[Runtime],
-) -> InvocationPayload:
-    """Wait for a fixed window of five minutes; completion or an explicit CLI execution blocker returns early.
-
-    Running responses include the latest public reply tail (at most 1000 characters) and its age.
-    execution_blocked leaves the CLI running: continue waiting or cancel with the same ID.
-    Each blocker category wakes once per invocation. Ordinary tool failures, transient retries,
-    and silence are not proof the task cannot proceed. Finished responses contain the final reply.
-    Wait expiry leaves the invocation running. Call again with the same ID to continue.
-    This is request/response waiting, not a background notification subscription.
-    Finished invocation handles expire seven days after completion, even if not yet read.
-    """
-    manager = _manager(ctx)
-    conversations = _conversations(ctx)
+def _known_invocation(manager: InvocationManager, handle: str) -> bool:
     try:
-        update = await manager.wait_for_update(invocation_id, WAIT_SECONDS)
-        return update_payload(manager, conversations, invocation_id, update)
-    except KeyError as exc:
-        raise _unknown_invocation() from exc
+        manager.snapshot(handle)
+    except KeyError:
+        return False
+    return True
+
+
+async def _ready_handles(
+    manager: InvocationManager,
+    conversations: Conversations,
+    invocation_ids: list[str],
+    round_ids: list[str],
+) -> tuple[dict[str, InvocationResult | InvocationError], dict[str, tuple[Round, str | None]]]:
+    """Wait until any handle is ready, then collect every handle ready at that moment."""
+
+    def ready(found: tuple[Round, str | None]) -> bool:
+        return found[0].finished or found[1] is not None
+
+    invocations: asyncio.Task[dict[str, InvocationResult | InvocationError]] | None = None
+    if invocation_ids:
+        invocations = asyncio.create_task(manager.wait_for_any(invocation_ids, WAIT_SECONDS))
+    rounds = {
+        item: asyncio.create_task(conversations.wait(item, WAIT_SECONDS)) for item in round_ids
+    }
+    waiters: list[asyncio.Task[Any]] = [
+        task for task in (invocations, *rounds.values()) if task is not None
+    ]
+    try:
+        await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in waiters:
+            task.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+    # A finished waiter already consumed what it reports; poll only the ones cut short.
+    ready_invocations: dict[str, InvocationResult | InvocationError] = {}
+    if invocations is not None:
+        ready_invocations = (
+            await manager.wait_for_any(invocation_ids, 0)
+            if invocations.cancelled()
+            else invocations.result()
+        )
+    ready_rounds: dict[str, tuple[Round, str | None]] = {}
+    for item, task in rounds.items():
+        found = await conversations.wait(item, 0) if task.cancelled() else task.result()
+        if ready(found):
+            ready_rounds[item] = found
+    return ready_invocations, ready_rounds
 
 
 @mcp.tool(
-    title="Wait for any of several subagent invocations",
+    title="Wait for tasks or rounds",
     annotations=ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )
-async def wait_any(
-    invocation_ids: Annotated[
+async def wait(
+    ids: Annotated[
         list[str],
         Field(
             min_length=1,
-            description="Distinct invocation IDs returned by start_agent; all must be known.",
+            description="Distinct invocation_ids from start_agent and round_ids from run_round.",
         ),
     ],
+    include_output: Annotated[
+        bool,
+        Field(description="false omits reply bodies and tails, including answers under review."),
+    ] = True,
     *,
     ctx: Context[Runtime],
-) -> WaitAnyPayload:
-    """Wait up to five minutes for the first of several invocations to finish or report a blocker.
+) -> WaitPayload:
+    """Wait up to five minutes for the first listed task or round to become ready.
 
-    reason=ready returns every listed invocation that is finished or has an unread blocker, in
-    wait_agent's shape; the others keep running and are not in updates. Only the blockers
-    returned are consumed; a later wait still returns the rest. Finished invocations stay ready
-    on every call, so drop them from the next list. reason=wait_elapsed returns a running
-    snapshot of each and consumes nothing. Empty, repeated, unknown or expired IDs reject the
-    whole call before waiting.
+    A task is ready when it finished or reports a CLI execution blocker (it keeps running;
+    each blocker category wakes once). A round is ready when it finished, a seat reports a
+    blocker, or answers wait for review (reason=review_needed, seat status pending_review).
+    reason=ready returns every handle ready at that moment, in updates (tasks) and rounds;
+    finished ones stay ready, so drop them from the next call. reason=wait_elapsed returns a
+    running snapshot of each, with the latest reply tail (at most 1000 characters) and its age.
+    Unknown, expired or repeated ids reject the whole call before waiting. This is
+    request/response waiting, not a background subscription.
     """
     manager = _manager(ctx)
     conversations = _conversations(ctx)
-    try:
-        updates = await manager.wait_for_any(invocation_ids, WAIT_SECONDS)
-    except KeyError as exc:
-        raise _unknown_invocation() from exc
-    except ValueError as exc:
-        raise ToolError(f"Invalid invocation_ids: {exc}. Correct the list and retry.") from exc
-    if updates:
-        return {
-            "reason": "ready",
-            "updates": [
-                update_payload(manager, conversations, invocation_id, update)
-                for invocation_id, update in updates.items()
-            ],
-        }
-    return {
-        "reason": "wait_elapsed",
-        "updates": [
-            update_payload(manager, conversations, invocation_id, None)
-            for invocation_id in invocation_ids
-        ],
-    }
+    if len(set(ids)) != len(ids):
+        raise ToolError("ids must not repeat. Correct the list and retry.")
+    invocation_ids: list[str] = []
+    round_ids: list[str] = []
+    for handle in ids:
+        if _known_invocation(manager, handle):
+            invocation_ids.append(handle)
+            continue
+        try:
+            conversations.round(handle)
+        except KeyError as exc:
+            raise _unknown_handle(handle) from exc
+        round_ids.append(handle)
+    ready_invocations, ready_rounds = await _ready_handles(
+        manager, conversations, invocation_ids, round_ids
+    )
+    elapsed = not ready_invocations and not ready_rounds
+    updates = [
+        update_payload(manager, conversations, handle, ready_invocations.get(handle))
+        for handle in invocation_ids
+        if elapsed or handle in ready_invocations
+    ]
+    rounds: list[RoundPayload] = []
+    for handle in round_ids:
+        if not elapsed and handle not in ready_rounds:
+            continue
+        round_, reason = ready_rounds.get(handle) or (conversations.round(handle), None)
+        rounds.append(
+            round_payload(
+                round_,
+                manager,
+                reason or "wait_elapsed",
+                include_output=include_output,
+                reviews=_review_map(conversations, round_),
+                entries=conversations.committed_entries(round_.group.id, round_.number),
+            )
+        )
+    if not include_output:
+        for update in updates:
+            update.pop("output", None)
+            update.pop("output_age_ms", None)
+    return {"reason": "wait_elapsed" if elapsed else "ready", "updates": updates, "rounds": rounds}
 
 
 @mcp.tool(
-    title="Cancel a subagent invocation",
+    title="Cancel a task or round",
     annotations=ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=True,
-        idempotent_hint=True,
-        open_world_hint=False,
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
     ),
 )
-async def cancel_agent(
-    invocation_id: Annotated[
+async def cancel(
+    id: Annotated[  # noqa: A002 - the tool's public argument name
         str,
-        Field(min_length=1, description="Invocation ID returned by start_agent."),
+        Field(min_length=1, description="An invocation_id from start_agent or a round_id."),
     ],
     *,
     ctx: Context[Runtime],
-) -> InvocationPayload:
-    """Stop a task by invocation_id; use wait_agent to observe without stopping.
+) -> CancelPayload:
+    """Stop a task, or a round: its running seats are cancelled and recorded absent, unstarted
+    serial seats skip, published answers stay and undecided answers stay private.
 
-    Returns the cancelled or already-finished result. Does not undo prior CLI side effects.
-    Finished invocation handles expire seven days after completion.
+    Returns the cancelled or already-finished result. Does not undo CLI side effects.
     """
+    manager = _manager(ctx)
+    if _known_invocation(manager, id):
+        return {"invocation": finished_payload(id, await manager.cancel(id))}
+    conversations = _conversations(ctx)
     try:
-        result = await _manager(ctx).cancel(invocation_id)
+        round_ = await conversations.cancel(id)
     except KeyError as exc:
-        raise _unknown_invocation() from exc
-    return finished_payload(invocation_id, result)
+        raise _unknown_handle(id) from exc
+    return {
+        "round": round_payload(
+            round_,
+            conversations.manager,
+            "finished",
+            reviews=_review_map(conversations, round_),
+            entries=conversations.committed_entries(round_.group.id, round_.number),
+        )
+    }
 
 
-@mcp.tool(
-    title="List subagent invocations",
-    annotations=ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    ),
-)
-async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
-    """List this server's active invocations and finished ones not yet expired, oldest first.
-
-    Metadata only: no prompt, reply or tool data. events_seen tells whether the CLI has emitted
-    any structured event. Active entries include phase; finished ones keep a fixed elapsed_ms,
-    tell with result_read whether a wait or cancel has returned the final result, and include
-    a non-empty native session_id. Use wait_agent or wait_any to read results.
-    restart_safe is false while this server holds conversation work, review, or unsaved history.
-    """
+def _invocation_items(manager: InvocationManager) -> list[InvocationListItem]:
     items: list[InvocationListItem] = []
-    for listing in _manager(ctx).list_invocations():
+    for listing in manager.list_invocations():
         item: InvocationListItem = {
             "invocation_id": listing.invocation_id,
             "provider": listing.provider,
@@ -770,60 +822,119 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
         if listing.session_id:
             item["session_id"] = listing.session_id
         items.append(item)
-    return {"invocations": items, "restart_safe": _conversations(ctx).restart_safe()}
+    return items
 
 
 @mcp.tool(
-    title="Read one CLI's permitted status and options",
-    annotations=ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    ),
-)
-async def describe_provider(
-    provider: Annotated[
-        ProviderName, Field(description="Provider whose permitted status and options to return.")
-    ],
-) -> ProviderDescriptionPayload:
-    """Read one provider's permitted status and supported options.
-
-    Does not launch a CLI or check installation/login. permitted applies to start_agent.
-    show_permitted reads the current discussion CLI limits; host exclusions do not apply
-    to shows.
-    """
-    try:
-        document = read_members()
-    except MemberFileError as exc:
-        raise ToolError(str(exc)) from exc
-    discussion = document.modes.get("discussion") if document is not None else None
-    return {
-        "provider": provider,
-        "permitted": provider not in EXCLUDED_PROVIDERS,
-        "show_permitted": discussion is None or provider in discussion,
-        "supported_options": "model, effort, " + PROVIDER_OPTIONS[provider],
-        "host": HOST.name,
-        "host_source": HOST.source,
-    }
-
-
-@mcp.tool(
-    title="Read configured members by mode",
+    title="List invocations for the relay",
     annotations=ToolAnnotations(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )
-async def list_members() -> MemberList:
+async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
+    """Unlisted: the relay asks this before swapping servers; agents use list."""
+    return {
+        "invocations": _invocation_items(_manager(ctx)),
+        "restart_safe": _conversations(ctx).restart_safe(),
+    }
+
+
+@mcp.tool(
+    name="list",
+    title="List handles and saved conversations",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+async def list_all(
+    kind: Annotated[
+        Literal["show", "task"] | None, Field(description="Only shows or only task conversations.")
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=200, description="Most recent conversations.")] = 20,
+    *,
+    ctx: Context[Runtime],
+) -> ListPayload:
+    """List this server's invocation handles and saved conversations, most recent first.
+
+    Invocations carry metadata only: no prompt, reply or tool data; finished ones tell with
+    result_read whether a wait or cancel returned the final result. total counts every
+    matching conversation. writable=false means another AgentNave server holds it: read it
+    here, continue it there or once it becomes idle. unavailable lists unreadable or legacy
+    records. Also starts the local read-only dashboard and returns its link. Private: never
+    send this to seats.
+    """
+    conversations = _conversations(ctx)
+    try:
+        writable = conversations.scan()
+    except OSError as exc:
+        raise _rejected(exc) from exc
+    matching = sorted(
+        (
+            record.state
+            for record in conversations.records.values()
+            if kind is None or record.state.kind == kind
+        ),
+        key=lambda state: (views.updated(state), state.created),
+        reverse=True,
+    )
+    result: ListPayload = {
+        "invocations": _invocation_items(_manager(ctx)),
+        "conversations": [
+            {
+                "conversation_id": state.id,
+                "title": state.title,
+                "kind": state.kind,
+                "writable": writable.get(state.id, True),
+                "created": state.created,
+                "updated": views.updated(state),
+            }
+            for state in matching[:limit]
+        ],
+        "total": len(matching),
+        "unavailable": conversations.unavailable,
+    }
+    try:
+        result["dashboard_url"] = conversations.open_dashboard(history_loaded=True)
+    except OSError as exc:
+        result["dashboard_error"] = str(exc)
+    return result
+
+
+@mcp.tool(
+    title="Read configured members",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)
+async def list_members(
+    provider: Annotated[
+        ProviderName | None,
+        Field(description="Also return this CLI's permitted status and supported options."),
+    ] = None,
+) -> MemberListPayload:
     """Read members.json afresh, with effective defaults, mode limits and host permission.
 
     valid checks Adapter options, not installation, authentication or model availability.
     Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
     """
     try:
-        return read_member_list(EXCLUDED_PROVIDERS, HOST)
+        members = read_member_list(EXCLUDED_PROVIDERS, HOST)
     except (OSError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
+    payload = MemberListPayload.model_validate(members.model_dump())
+    if provider is not None:
+        try:
+            document = read_members()
+        except MemberFileError as exc:
+            raise ToolError(str(exc)) from exc
+        discussion = document.modes.get("discussion") if document is not None else None
+        payload.provider_details = ProviderDetails(
+            provider=provider,
+            permitted=provider not in EXCLUDED_PROVIDERS,
+            show_permitted=discussion is None or provider in discussion,
+            supported_options="model, effort, " + PROVIDER_OPTIONS[provider],
+        )
+    return payload
 
 
 def _committed_payload(entries: list[CommittedEntry]) -> list[CommittedEntryPayload]:
@@ -911,110 +1022,9 @@ def round_payload(
             review = reviews.get(seat["seat_id"])
             if review == "pending":
                 seat["status"] = "pending_review"
-            elif review == "discard":
-                seat["status"] = "discarded"
+            elif review == "private":
+                seat["status"] = "private"
     return payload
-
-
-def _unknown_round() -> ToolError:
-    return ToolError("Unknown round_id; read_conversation lists saved rounds.")
-
-
-@mcp.tool(
-    title="Open a saved show of CLI seats",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
-    ),
-)
-async def open_group(
-    title: Annotated[str, Field(min_length=1, max_length=200)],
-    seats: Annotated[list[GroupSeatSpec], Field(min_length=2, max_length=7)],
-    cwd: Annotated[
-        str | None,
-        Field(description="Absolute existing directory seats run in; ignored when isolated."),
-    ] = None,
-    review: Annotated[
-        bool,
-        Field(description="Hold each successful answer until decide_answers publishes it."),
-    ] = False,
-    isolated: Annotated[
-        bool,
-        Field(
-            description=(
-                "Give each seat its own empty directory and restricted_tools; seat options may "
-                "only set model and effort (and Pi's provider)."
-            )
-        ),
-    ] = False,
-    manager_session_id: ManagerSessionId = None,
-    *,
-    ctx: Context[Runtime],
-) -> ShowPayload:
-    """Create a saved show of 2–7 CLI seats; drive it with run_round.
-
-    group_id is the conversation id. Seats are subagents with native tools and permissions
-    unless isolated. Each keeps its native session across rounds, including after restart.
-    Host exclusions apply only to start_agent. Shows follow discussion member limits.
-    Isolation restricts tools; it is not an OS sandbox.
-    """
-    try:
-        document = read_members()
-        prepared_seats: list[GroupSeat] = []
-        defaults: dict[str, list[str]] = {}
-        for seat in seats:
-            options, defaults[seat.id] = apply_member(
-                document,
-                "discussion",
-                seat.provider,
-                seat.provider_options,
-                EXCLUDED_PROVIDERS,
-                restricted=isolated,
-            )
-            prepared_seats.append(
-                GroupSeat(
-                    seat.id,
-                    seat.provider,
-                    options,
-                    Path(seat.cwd if seat.cwd is not None else cwd or "."),
-                    seat.role,
-                    seat.access,
-                )
-            )
-        record = _conversations(ctx).open_show(
-            title,
-            Path(cwd) if cwd is not None else None,
-            prepared_seats,
-            review=review,
-            isolated=isolated,
-            manager_session_id=manager_session_id,
-        )
-    except MemberFileError as exc:
-        raise ToolError(str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc
-    state = record.state
-    return {
-        **_dashboard_links(_conversations(ctx), state.id),
-        "group_id": state.id,
-        "conversation_id": state.id,
-        "seats": [
-            {
-                "id": seat.id,
-                "provider": seat.provider,
-                "cwd": seat.cwd,
-                "model": str(seat.provider_options["model"])
-                if "model" in seat.provider_options
-                else None,
-                "effort": str(seat.provider_options["effort"])
-                if "effort" in seat.provider_options
-                else None,
-                "role": seat.role,
-                "access": seat.access,
-                "defaults_applied": defaults[seat.id],
-            }
-            for seat in state.seats
-        ],
-    }
 
 
 def _review_map(conversations: Conversations, round_: Round) -> dict[str, Review | None]:
@@ -1029,18 +1039,95 @@ def _review_map(conversations: Conversations, round_: Round) -> dict[str, Review
     }
 
 
+def _open_show(
+    conversations: Conversations,
+    title: str,
+    members: list[GroupSeatSpec],
+    cwd: str | None,
+    review: bool,
+    isolated: bool,
+    manager_session_id: str | None,
+) -> tuple[str, list[GroupSeatPayload]]:
+    document = read_members()
+    prepared: list[GroupSeat] = []
+    defaults: dict[str, list[str]] = {}
+    for seat in members:
+        options, defaults[seat.id] = apply_member(
+            document,
+            "discussion",
+            seat.provider,
+            seat.provider_options,
+            EXCLUDED_PROVIDERS,
+            restricted=isolated,
+        )
+        prepared.append(
+            GroupSeat(
+                seat.id,
+                seat.provider,
+                options,
+                Path(seat.cwd if seat.cwd is not None else cwd or "."),
+                seat.role,
+                seat.access,
+            )
+        )
+    state = conversations.open_show(
+        title,
+        Path(cwd) if cwd is not None else None,
+        prepared,
+        review=review,
+        isolated=isolated,
+        manager_session_id=manager_session_id,
+    ).state
+    return state.id, [
+        {
+            "id": seat.id,
+            "provider": seat.provider,
+            "cwd": seat.cwd,
+            "model": str(seat.provider_options["model"])
+            if "model" in seat.provider_options
+            else None,
+            "effort": str(seat.provider_options["effort"])
+            if "effort" in seat.provider_options
+            else None,
+            "role": seat.role,
+            "access": seat.access,
+            "defaults_applied": defaults[seat.id],
+        }
+        for seat in state.seats
+    ]
+
+
 @mcp.tool(
-    title="Run one round of a show",
+    title="Run a show round",
     annotations=ToolAnnotations(
         read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
     ),
 )
 async def run_round(
-    group_id: str,
+    prompt: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=12000,
+            description=(
+                "Shared task for this round, visible to all seats; without seats, a public "
+                "host remark every seat receives with its next round. Omit only to open a new "
+                "show without posting anything."
+            ),
+        ),
+    ] = None,
+    group_id: Annotated[
+        str | None,
+        Field(description="Show to continue; omit to open a new show from title and members."),
+    ] = None,
     seats: Annotated[
         list[str],
-        Field(min_length=1, description="Ordered seat ids that each answer once this round."),
-    ],
+        Field(
+            description=(
+                "Ordered seat ids that each answer once; empty posts prompt as a host remark."
+            )
+        ),
+    ] = [],  # noqa: B006 - pydantic copies defaults
     order: Annotated[
         Literal["parallel", "serial"],
         Field(
@@ -1049,10 +1136,7 @@ async def run_round(
                 "serial: one by one in list order; later seats see earlier answers."
             )
         ),
-    ],
-    prompt: Annotated[
-        str, Field(min_length=1, description="Shared task for this round, visible to all seats.")
-    ],
+    ] = "parallel",
     instructions: Annotated[
         dict[str, str] | None,
         Field(description="Optional private instruction per seat id; never sent to other seats."),
@@ -1061,28 +1145,104 @@ async def run_round(
         list[str] | None,
         Field(
             description=(
-                "Message ids from wait_agent, wait_any, wait_round, decide_answers or "
-                "post_host_message to add as committed forward entries before this round's "
-                "task, in order. Only succeeded tasks and committed entries of this manager "
-                "workspace qualify; at most 20, no repeats. Seats receive them as data, not "
-                "instructions."
+                "Message ids from wait, run_round, decide_answers or read_conversation to add "
+                "as committed forward entries before this round's task, in order. Only "
+                "succeeded tasks and committed entries of this manager workspace qualify; at "
+                "most 20, no repeats. Seats receive them as data, not instructions."
             )
         ),
     ] = None,
+    title: Annotated[
+        str | None, Field(max_length=200, description="New show only: its title.")
+    ] = None,
+    members: Annotated[
+        list[GroupSeatSpec] | None,
+        Field(min_length=2, max_length=7, description="New show only: its 2–7 seats."),
+    ] = None,
+    cwd: Annotated[
+        str | None,
+        Field(description="New show only: absolute directory seats run in; ignored when isolated."),
+    ] = None,
+    review: Annotated[
+        bool,
+        Field(description="New show only: hold each answer until decide_answers decides it."),
+    ] = False,
+    isolated: Annotated[
+        bool,
+        Field(
+            description=(
+                "New show only: each seat gets its own empty directory and restricted_tools; "
+                "seat options may only set model and effort (and Pi's provider)."
+            )
+        ),
+    ] = False,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
-) -> RoundPayload:
-    """Start a saved show round, then wait_round; only committed answers reach other seats.
+) -> ShowRunPayload:
+    """Run a round of a saved show; answers reach the other seats without passing through you.
 
-    parallel starts together and seals answers until all end; serial follows seat order.
-    Private instructions go only to their seat. Includes viewer links for the manager only.
-    forward adds already-committed messages of this workspace as forward entries before the
-    task; entries lists every committed entry of this round with its message_id.
+    Without group_id, opens a show of 2–7 seats first (group_id is its conversation id);
+    with no prompt it only opens the show.
+    Seats are subagents with native tools and permissions unless isolated; each keeps its
+    native session across rounds and restarts. Shows follow discussion member limits, not
+    host exclusions. A started round returns at once: use wait with its round_id. Private
+    instructions go only to their seat; with review=true each answer waits for decide_answers.
+    entries lists the round's committed entries with message ids. Isolation restricts tools;
+    it is not an OS sandbox.
     """
     conversations = _conversations(ctx)
+    new = group_id is None
+    if new:
+        if not title or not title.strip() or not members:
+            raise ToolError("A new show needs title and members. Correct the arguments and retry.")
+        unknown = sorted(set(seats) - {seat.id for seat in members})
+        if unknown:
+            raise ToolError("Unknown seat ids: " + ", ".join(unknown) + ". Correct and retry.")
+    elif title is not None or members is not None or cwd is not None or review or isolated:
+        raise ToolError(
+            "title, members, cwd, review and isolated only open a new show; omit them with "
+            "group_id."
+        )
+    if not seats and forward:
+        raise ToolError("forward needs seats to answer this round. Correct and retry.")
+    if prompt is None and (seats or not new):
+        raise ToolError("prompt is required unless only opening a new show. Correct and retry.")
+    opened: list[GroupSeatPayload] | None = None
+    if group_id is None:
+        assert title is not None and members is not None
+        try:
+            group_id, opened = _open_show(
+                conversations, title, members, cwd, review, isolated, manager_session_id
+            )
+        except MemberFileError as exc:
+            raise ToolError(str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc
+    payload: ShowRunPayload = {"group_id": group_id}
+    if opened is not None:
+        payload["members"] = opened
     try:
+        if prompt is None:
+            return payload
+        if not seats:
+            conversations.post(
+                group_id,
+                prompt,
+                manager_model=manager_model,
+                manager_session_id=manager_session_id,
+            )
+            index = len(conversations.records[group_id].state.entries) - 1
+            entry = conversations.records[group_id].state.entries[index]
+            payload["entries"] = [
+                {
+                    "message_id": entry_message_id(group_id, index),
+                    "kind": "host",
+                    "round": entry.round,
+                }
+            ]
+            return payload
         round_ = conversations.run(
             group_id,
             seats,
@@ -1094,83 +1254,21 @@ async def run_round(
             forward=forward,
         )
     except KeyError as exc:
-        raise ToolError("Unknown group_id; use list_conversations.") from exc
+        raise ToolError("Unknown group_id; use list.") from exc
     except (OSError, ValueError) as exc:
+        if new:
+            raise ToolError(
+                f"Show {group_id} was opened but nothing was posted: {exc}. Retry with group_id."
+            ) from exc
         raise _rejected(exc) from exc
-    payload = round_payload(
+    payload["round"] = round_payload(
         round_,
         conversations.manager,
         "started",
         reviews=_review_map(conversations, round_),
         entries=conversations.committed_entries(group_id, round_.number),
     )
-    return {**payload, **_dashboard_links(conversations, group_id)}
-
-
-@mcp.tool(
-    title="Wait for a show round",
-    annotations=ToolAnnotations(
-        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
-    ),
-)
-async def wait_round(
-    round_id: Annotated[str, Field(min_length=1)],
-    include_output: Annotated[
-        bool,
-        Field(
-            description="Include answer bodies and running reply tails; false returns status only."
-        ),
-    ] = True,
-    *,
-    ctx: Context[Runtime],
-) -> RoundPayload:
-    """Wait up to five minutes; returns early when the round finishes, a seat reports a blocker,
-    or answers wait for review (reason=review_needed, statuses pending_review).
-
-    Review answers by calling decide_answers, then wait again. Finished rounds can be read again.
-    include_output=false omits bodies, including pending review answers; true can read them later.
-    """
-    conversations = _conversations(ctx)
-    try:
-        round_, reason = await conversations.wait(round_id, WAIT_SECONDS)
-    except KeyError as exc:
-        raise _unknown_round() from exc
-    return round_payload(
-        round_,
-        conversations.manager,
-        reason or "wait_elapsed",
-        include_output=include_output,
-        reviews=_review_map(conversations, round_),
-        entries=conversations.committed_entries(round_.group.id, round_.number),
-    )
-
-
-@mcp.tool(
-    title="Cancel a show round",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
-    ),
-)
-async def cancel_round(
-    round_id: Annotated[str, Field(min_length=1)], *, ctx: Context[Runtime]
-) -> RoundPayload:
-    """Stop a round: running seats are cancelled and recorded absent, unstarted serial seats skip.
-
-    Answers already published or decided publish are kept; undecided answers are discarded.
-    Does not undo CLI side effects.
-    """
-    conversations = _conversations(ctx)
-    try:
-        round_ = await conversations.cancel(round_id)
-    except KeyError as exc:
-        raise _unknown_round() from exc
-    return round_payload(
-        round_,
-        conversations.manager,
-        "finished",
-        reviews=_review_map(conversations, round_),
-        entries=conversations.committed_entries(round_.group.id, round_.number),
-    )
+    return payload
 
 
 class ReviewReceipt(TypedDict):
@@ -1184,7 +1282,7 @@ class ReviewReceipt(TypedDict):
 
 
 @mcp.tool(
-    title="Publish or discard answers under review",
+    title="Publish answers under review or keep them private",
     annotations=ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
@@ -1193,18 +1291,19 @@ async def decide_answers(
     round_id: Annotated[str, Field(min_length=1)],
     decisions: Annotated[
         dict[str, Decision],
-        Field(min_length=1, description="seat_id -> publish or discard"),
+        Field(min_length=1, description="seat_id -> publish or private"),
     ],
     *,
     ctx: Context[Runtime],
 ) -> ReviewReceipt:
     """Decide answers held for review; the whole batch is checked and saved before it applies.
 
-    Published answers become visible to other seats; discarded ones never do. Repeating a
+    publish shares the answer with the other seats. private keeps it between you and that
+    seat: the others never see it, and the seat is told so with its next round. Repeating a
     decision is idempotent; changing one is rejected. Parallel rounds commit once every
     answer is decided; a serial round continues with its next seat. Once no execution or
     review remains, this call waits for local commit and returns the terminal status.
-    status=finished needs no confirmation call; running/review still requires wait_round.
+    status=finished needs no further call; running/review still requires wait.
     """
     try:
         conversations = _conversations(ctx)
@@ -1232,7 +1331,7 @@ async def decide_answers(
             "decisions": dict(decisions),
             "pending_review": [seat.seat_id for seat in saved.seats if seat.review == "pending"],
             "committed": [
-                seat.seat_id for seat in saved.seats if seat.committed and seat.review != "discard"
+                seat.seat_id for seat in saved.seats if seat.committed and seat.review != "private"
             ],
             "entries": _committed_payload(
                 conversations.committed_entries(group_id, saved.number) if group_id else []
@@ -1253,169 +1352,57 @@ async def decide_answers(
         raise _rejected(exc) from exc
 
 
-class HostReceipt(TypedDict):
-    conversation_id: str
-    entry_index: int
-    message_id: str
-
-
-class UpdateReceipt(TypedDict):
-    conversation_id: str
-    title: str
-
-
-class ConversationView(TypedDict):
-    conversation: Conversation
-    writable: bool
-    public_url: NotRequired[str]
-    director_url: NotRequired[str]
-
-
-@mcp.tool(
-    title="Post a host message to a show",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
-    ),
-)
-async def post_host_message(
-    conversation_id: str,
-    text: Annotated[str, Field(min_length=1, max_length=12000)],
-    manager_model: ManagerModel = None,
-    manager_session_id: ManagerSessionId = None,
-    *,
-    ctx: Context[Runtime],
-) -> HostReceipt:
-    """Add a public host remark that every seat receives as data with its next round.
-
-    Only between rounds, with no answers pending review.
-    """
-    conversations = _conversations(ctx)
-    try:
-        conversations.post(
-            conversation_id,
-            text,
-            manager_model=manager_model,
-            manager_session_id=manager_session_id,
-        )
-    except KeyError as exc:
-        raise ToolError("Unknown conversation_id; use list_conversations.") from exc
-    except (OSError, ValueError) as exc:
-        raise _rejected(exc) from exc
-    index = len(conversations.records[conversation_id].state.entries) - 1
-    return {
-        "conversation_id": conversation_id,
-        "entry_index": index,
-        "message_id": entry_message_id(conversation_id, index),
-    }
-
-
-def _view(conversations: Conversations, conversation_id: str, writable: bool) -> ConversationView:
-    view: ConversationView = {
-        "conversation": conversations.records[conversation_id].state,
-        "writable": writable,
-    }
-    urls = conversations.urls(conversation_id)
-    if urls is not None:
-        if conversations.records[conversation_id].state.kind == "show":
-            view["public_url"] = urls[0]
-        view["director_url"] = urls[1]
-    return view
-
-
-class ConversationSummary(TypedDict):
-    conversation_id: str
-    title: str
-    kind: Literal["show", "task"]
-    writable: bool
-    created: str
-
-
-class ConversationList(ViewerLinks):
-    conversations: list[ConversationSummary]
-    unavailable: list[Unavailable]
-
-
-@mcp.tool(
-    title="List saved conversations",
-    annotations=ToolAnnotations(
-        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
-    ),
-)
-async def list_conversations(*, ctx: Context[Runtime]) -> ConversationList:
-    """List saved shows and task conversations. Private: never send this to seats.
-
-    writable=false means another AgentNave server holds it: read it here, continue it there
-    or once it becomes idle. unavailable lists unreadable or legacy records.
-    """
-    conversations = _conversations(ctx)
-    try:
-        writable = conversations.scan()
-    except OSError as exc:
-        raise _rejected(exc) from exc
-    result: ConversationList = {
-        "conversations": [
-            {
-                "conversation_id": record.state.id,
-                "title": record.state.title,
-                "kind": record.state.kind,
-                "writable": writable.get(record.state.id, True),
-                "created": record.state.created,
-            }
-            for record in sorted(
-                conversations.records.values(), key=lambda item: item.state.created
-            )
-        ],
-        "unavailable": conversations.unavailable,
-    }
-    try:
-        result["dashboard_url"] = conversations.open_dashboard(history_loaded=True)
-    except OSError as exc:
-        result["dashboard_error"] = str(exc)
-    return result
-
-
 @mcp.tool(
     title="Read a saved conversation",
     annotations=ToolAnnotations(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )
-async def read_conversation(conversation_id: str, *, ctx: Context[Runtime]) -> ConversationView:
-    """Read a conversation, including private instructions, answers under review and native
-    session ids. Never forward this to seats. A show's id is its group_id for run_round.
+async def read_conversation(
+    conversation_id: str,
+    since_round: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Shows: only messages from this round on; 0 includes host remarks "
+            "posted before the first round.",
+        ),
+    ] = 0,
+    include_private: Annotated[
+        bool,
+        Field(
+            description=(
+                "Shows: also each seat's private instructions and the answers kept private."
+            )
+        ),
+    ] = False,
+    *,
+    ctx: Context[Runtime],
+) -> dict[str, Any]:
+    """Read a conversation back as its final messages, the way the App shows them.
+
+    Shows return seats, the latest round and messages in order: tasks, published answers,
+    absences, forwards, host remarks and answers waiting for review (pending_answer). Tasks
+    return each prompt, final reply and native session_id. Message ids can be forwarded.
+    Private: never forward this whole result to seats. A show's id is its group_id.
     """
     conversations = _conversations(ctx)
     try:
         record = conversations.record(conversation_id)
         writable = record.refresh()
     except KeyError as exc:
-        raise ToolError("Unknown conversation_id; use list_conversations.") from exc
+        raise ToolError("Unknown conversation_id; use list.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    return _view(conversations, conversation_id, writable)
-
-
-@mcp.tool(
-    title="Rename a conversation",
-    annotations=ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
-    ),
-)
-async def update_conversation(
-    conversation_id: str,
-    title: Annotated[str, Field(min_length=1, max_length=200)],
-    *,
-    ctx: Context[Runtime],
-) -> UpdateReceipt:
-    """Rename a conversation."""
-    conversations = _conversations(ctx)
-    try:
-        record = conversations.update(conversation_id, title)
-    except KeyError as exc:
-        raise ToolError("Unknown conversation_id; use list_conversations.") from exc
-    except (OSError, ValueError) as exc:
-        raise _rejected(exc) from exc
-    return {"conversation_id": conversation_id, "title": record.state.title}
+    data = views.timeline(
+        record.state, since_round=since_round, include_private=include_private
+    ) | {"writable": writable}
+    urls = conversations.urls(conversation_id)
+    if urls is not None:
+        if record.state.kind == "show":
+            data["public_url"] = urls[0]
+        data["director_url"] = urls[1]
+    return data
 
 
 def main() -> None:

@@ -527,13 +527,69 @@ function setTab(tab) {
   // Status lines belong to the tab that produced them.
   if (currentTab !== tab) showNotice("");
   currentTab = tab;
-  for (const id of ["members", "avatars", "hosts"]) {
+  for (const id of ["members", "avatars", "orchestration", "hosts"]) {
     $("tab-" + id).classList.toggle("active", tab === id);
     $("tab-" + id).setAttribute("aria-selected", String(tab === id));
     $("tab-" + id).setAttribute("aria-controls", "pane-" + id);
     $("pane-" + id).hidden = tab !== id;
   }
   if (tab === "hosts") loadStatus();
+  if (tab === "orchestration") loadRuleFiles();
+}
+
+// Orchestration preferences live in each host's own global rules; the App only opens them.
+async function loadRuleFiles() {
+  const list = $("rule-files");
+  try {
+    const response = await fetch("/app/rules", { cache: "no-store" });
+    if (!response.ok) throw new Error(`读取失败（${response.status}）`);
+    const data = await response.json();
+    list.replaceChildren(...data.files.map((file) => el("li", {},
+      el("span", { className: "rule-label" }, file.label),
+      el("code", {}, file.path),
+      file.exists
+        ? el("button", { type: "button", onClick: () => openRuleFile(file) }, "打开")
+        : el("span", { className: "rule-missing" }, "未找到"))));
+  } catch (error) {
+    list.replaceChildren(el("li", {}, `无法读取规则文件位置：${error.message}`));
+  }
+}
+
+async function openRuleFile(file) {
+  try {
+    const response = await fetch("/app/rules/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+      body: JSON.stringify({ id: file.id }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || `打开失败（${response.status}）`);
+    showNotice(data.message);
+  } catch (error) {
+    showNotice(error.message, true);
+  }
+}
+
+async function copyOrchestration() {
+  const text = $("orchestration-template").textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Some webviews deny the async clipboard; fall back to copying the selected text.
+    const range = document.createRange();
+    range.selectNodeContents($("orchestration-template"));
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const copied = document.execCommand("copy");
+    selection.removeAllRanges();
+    if (!copied) { showNotice("无法写入剪贴板，请手动选择文字复制", true); return; }
+  }
+  showNotice("已复制推荐写法");
+  // The page notice sits at the top, out of view below the template; confirm on the button too.
+  const button = $("copy-orchestration");
+  button.textContent = "已复制";
+  setTimeout(() => { button.textContent = "复制推荐写法"; }, 2000);
 }
 
 // Switch mode
@@ -2073,8 +2129,9 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
   operatedControl = e.target.closest("[data-focus-key]");
   queueMicrotask(() => { operatedControl = null; });
 }, true);
-for (const tab of ["members", "avatars", "hosts"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
-const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : location.hash === "#avatars" ? "avatars" : "members";
+for (const tab of ["members", "avatars", "orchestration", "hosts"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
+$("copy-orchestration").addEventListener("click", copyOrchestration);
+const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 

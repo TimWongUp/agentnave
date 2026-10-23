@@ -65,6 +65,8 @@ td { padding: 16px 14px; border-top: 1px solid var(--line); vertical-align: midd
 th.check, td.check { width: 40px; padding-left: 18px; padding-right: 0; }
 tr:hover td { background: var(--hover); }
 .title { display: block; font-size: 14px; font-weight: 550; max-width: 360px; overflow-wrap: anywhere; }
+button.edit { margin-top: 6px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
+input.rename { width: min(360px, 100%); margin-right: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .kind { font-size: 11px; color: var(--task); margin-top: 4px; display: block; }
 .kind.show { color: var(--show); }
 .status { white-space: nowrap; color: var(--soft); }

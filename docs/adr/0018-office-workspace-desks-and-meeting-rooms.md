@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-18
 - 私聊默认续接由 [ADR-0023](0023-explicit-desk-continuation.md) 改为显式 `continue_desk`。
+- 访问等级改为只记录、被丢弃的回答改称不公开，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
 - 修订 [ADR-0013](0013-members-defaults-and-host-identity.md) 的组员身份与模式命名、[ADR-0017](0017-manager-chat-session-identity.md) 的 App 群聊展示；不改变 Manager 拥有编排决策、Provider 原生权限是安全边界的约定。
 
 ## 背景

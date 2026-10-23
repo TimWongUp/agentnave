@@ -212,11 +212,11 @@ def _director(
             "text": seat.output,
             "reported_model": seat.reported_model,
             "time": round_times.get(round_.number, state.created),
-            "message_id": None,  # discarded answers are private and cannot be forwarded
+            "message_id": None,  # answers kept private are never shared, so never forwarded
         }
         for round_ in state.rounds
         for seat in round_.seats
-        if seat.review == "discard" and seat.output is not None
+        if seat.review == "private" and seat.output is not None
     ]
     # Private instructions go to one seat only; the director view shows them to the boss.
     data["rounds"] = [
@@ -247,6 +247,131 @@ def _director(
     return data
 
 
+def timeline(
+    state: Conversation, *, since_round: int = 0, include_private: bool = False
+) -> dict[str, object]:
+    """A conversation as the manager reads it back: final messages in order, like the App.
+
+    Shows list committed entries plus answers awaiting review; include_private adds each
+    seat's private instructions and the answers kept private. Tasks list prompt and reply.
+    """
+    data: dict[str, object] = {
+        "conversation_id": state.id,
+        "title": state.title,
+        "kind": state.kind,
+        "status": _status(state),
+        "created": state.created,
+    }
+    if state.kind == "task":
+        data["tasks"] = [
+            _compact(
+                {
+                    "message_id": f"{state.id}:t:{task.id}",
+                    "provider": task.provider,
+                    "model": task.reported_model or task.model or None,
+                    "role": task.role,
+                    "access": task.access,
+                    "cwd": task.cwd,
+                    "prompt": task.prompt,
+                    "status": task.status,
+                    "output": task.output or None,
+                    "error": task.error,
+                    "session_id": task.session_id,
+                    "time": task.time,
+                }
+            )
+            for task in state.tasks
+        ]
+        return data
+    data["cwd"] = state.cwd
+    data["review"] = state.review
+    data["seats"] = [
+        _compact(
+            {
+                "id": seat.id,
+                "provider": seat.provider,
+                "model": seat.provider_options.get("model"),
+                "role": seat.role,
+                "access": seat.access,
+            }
+        )
+        for seat in state.seats
+    ]
+    data["rounds"] = len(state.rounds)
+    if state.rounds:
+        latest = state.rounds[-1]
+        data["latest_round"] = {
+            "round_id": latest.id,
+            "round": latest.number,
+            "order": latest.order,
+            "status": "review" if latest.pending_review() else latest.status,
+        }
+    # Per round: private instructions, answers outside the entries, and the seat order.
+    extra: dict[int, tuple[list[dict[str, object]], list[dict[str, object]], list[str]]] = {}
+    for round_ in state.rounds:
+        if round_.number < since_round:
+            continue
+        before, answers, order = extra.setdefault(round_.number, ([], [], []))
+        for seat in round_.seats:
+            order.append(seat.seat_id)
+            if include_private and seat.instruction:
+                before.append(
+                    {
+                        "round": round_.number,
+                        "kind": "instruction",
+                        "to": seat.seat_id,
+                        "text": seat.instruction,
+                    }
+                )
+            if seat.review == "pending" or (include_private and seat.review == "private"):
+                answers.append(
+                    {
+                        "round": round_.number,
+                        "kind": f"{seat.review}_answer",
+                        "seat": seat.seat_id,
+                        "text": seat.output,
+                    }
+                )
+    messages: list[dict[str, object]] = []
+    numbers = sorted({entry.round for entry in state.entries} | set(extra))
+    for number in (n for n in numbers if n >= since_round):
+        before, answers, order = extra.get(number, ([], [], []))
+        # A round number holds forwards and the task, then the answers, then host remarks
+        # posted after the round (round 0 holds those posted before the first round).
+        head: list[dict[str, object]] = []
+        tail: list[dict[str, object]] = []
+        for index, entry in enumerate(state.entries):
+            if entry.round != number:
+                continue
+            message = _message(state.id, index, entry)
+            if entry.kind in ("answer", "absent"):
+                answers.append(message)
+            else:
+                (tail if entry.kind == "host" else head).append(message)
+        position = {seat_id: index for index, seat_id in enumerate(order)}
+        answers.sort(key=lambda message: position.get(str(message.get("seat")), len(order)))
+        messages.extend([*head, *before, *answers, *tail])
+    data["messages"] = messages
+    return data
+
+
+def _message(conversation_id: str, index: int, entry: EntryRecord) -> dict[str, object]:
+    return _compact(
+        {
+            "message_id": f"{conversation_id}:e:{index}",
+            "round": entry.round,
+            "kind": entry.kind,
+            "seat": entry.seat,
+            "text": entry.text,
+            "forward_source": entry.forward_source,
+        }
+    )
+
+
+def _compact(data: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in data.items() if value is not None}
+
+
 def _status(state: Conversation) -> str:
     return (
         "review"
@@ -261,7 +386,7 @@ def _status(state: Conversation) -> str:
     )
 
 
-def _updated(state: Conversation) -> str:
+def updated(state: Conversation) -> str:
     """When the conversation last saw activity: a message, a task start or a task end."""
     times = [_time(state.created)] + [_time(entry.time) for entry in state.entries]
     times += [
@@ -293,7 +418,7 @@ def snapshot(state: Conversation, storage: str) -> dict[str, object]:
             "host_source": state.host_source,
             "manager_session": state.manager_session,
             "status": _status(state),
-            "updated": _updated(state),
+            "updated": updated(state),
         },
         "director": _director(
             state,

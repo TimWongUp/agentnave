@@ -35,6 +35,7 @@
     <div class="tabs" role="tablist" aria-label="设置分区">
       <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></button>
       <button id="tab-avatars" class="tab-btn" role="tab" aria-selected="false" type="button">头像</button>
+      <button id="tab-orchestration" class="tab-btn" role="tab" aria-selected="false" type="button">编排偏好</button>
       <button id="tab-hosts" class="tab-btn" role="tab" aria-selected="false" type="button">接入与更新<span id="hosts-badge" class="badge-dot" hidden></span><span id="update-badge" class="badge-dot" hidden></span></button>
     </div>
 
@@ -104,6 +105,30 @@
   <section id="pane-avatars" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-avatars">
     <p class="guidance">这里调整办公室中的头像，上传或恢复后立即保存。默认使用模型家族图标；也可为某个工具下的指定模型单独设置。支持 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片居中裁剪，仅保存在本机，私聊与会议共用。</p>
     <div id="avatar-settings" aria-live="polite"></div>
+  </section>
+
+  <section id="pane-orchestration" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-orchestration">
+    <p class="guidance">AgentNave 只提供调用方式，不规定主控怎么分工。想让主控按固定方式编排时，把偏好写进宿主的全局规则文件，例如何时开会、谁做评审、分歧讨论几轮。AgentNave 不会替你写入这些文件。</p>
+    <div class="updates-panel">
+      <div class="updates-card">
+        <h2>推荐写法</h2>
+        <p class="guidance">可以按需删改后再贴入规则文件。</p>
+        <pre id="orchestration-template" class="orchestration-template">## AgentNave 编排偏好
+- 探索、规划和评审交给只读工位，实现交给可写工位，派发时用 access 标明（只是标记，实际权限看 CLI 原生设置）；评审不用实现工位本身，尽量换一个模型。
+- 实现工位按模块分角色，跨阶段用 continue_desk=true 续接；探索结论和已定契约用 forward 转给它，不让它重新探索。
+- 并行实现各用独立 worktree 或互不重叠的文件，由主控合并与验收。
+- 方案取舍或分歧进会议室讨论：会议只出决定，不在会上改代码；分歧收敛默认最多 3 轮，会后把决定转给实现工位。
+- 每个结果都由主控验收，succeeded 不等于完成；失败或取消由主控决定是否重派。</pre>
+        <div class="btn-group"><button id="copy-orchestration" type="button">复制推荐写法</button></div>
+      </div>
+    </div>
+    <div class="updates-panel">
+      <div class="updates-card">
+        <h2>宿主全局规则文件</h2>
+        <p class="guidance">以下是常见位置，具体以各 CLI 的文档为准。只能打开已存在的文件，不会自动创建。</p>
+        <ul id="rule-files" class="rule-files"></ul>
+      </div>
+    </div>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-hosts">
