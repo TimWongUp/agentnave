@@ -757,15 +757,18 @@ impl Hosts {
                 // old chat keeps that chat's earlier Skill front matter (ADR-0022).
                 if !pending || newly_connected {
                     reason = "connection";
+                    let unreported = |c: &&Value| c["runtime_version"].as_str().is_none();
                     state = if connections
                         .iter()
-                        .any(|c| c["runtime_version"].as_str().is_none())
+                        .filter(unreported)
+                        .any(|c| c["envelope_aware"] != true)
                     {
                         // Relays before v0.31.0 cannot read the version from 2026-07-28 hosts and
                         // never swap their server for such a host: only reconnecting helps.
                         reason = "relay";
                         "required"
-                    } else if installed.is_none() {
+                    } else if installed.is_none() || connections.iter().any(|c| unreported(&c)) {
+                        // A current relay has not yet seen the version, e.g. before server/discover.
                         "unknown"
                     } else if connections
                         .iter()

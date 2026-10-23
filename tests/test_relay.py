@@ -240,6 +240,8 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             for path in data.glob("connections/*.json"):
+                if path.name in {"dead.json", "alive.json"}:
+                    continue  # Never hold a handle on the samples the relay is pruning.
                 try:
                     value = json.loads(path.read_bytes())
                 except OSError:  # Being pruned; Windows refuses reads of files pending deletion.
@@ -272,6 +274,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
             "runtime_version",
             "runtime_tools_hash",
             "host_tools_hash",
+            "envelope_aware",
         }
         # Unchanged observations only refresh the modification time; removal rewrites it.
         path = host.relay.connection_path

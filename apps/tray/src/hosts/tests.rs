@@ -710,7 +710,18 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     );
     use std::time::Duration;
     let installed_at = |age: u64| {
-        fs::File::open(&metadata)
+        // Windows opens a directory only with backup semantics, and needs attribute-write access.
+        #[cfg(windows)]
+        let directory = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .access_mode(0x0100) // FILE_WRITE_ATTRIBUTES
+                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                .open(&metadata)
+        };
+        #[cfg(not(windows))]
+        let directory = fs::File::open(&metadata);
+        directory
             .unwrap()
             .set_modified(SystemTime::now() - Duration::from_secs(age))
             .unwrap();
@@ -724,6 +735,10 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "required");
     assert_eq!(hosts.state(&h)["reload"]["reason"], "relay");
+    // A current relay that has not seen the version yet is unknown, not stuck.
+    receipt["envelope_aware"] = json!(true);
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
     receipt["runtime_version"] = json!("0.22.0");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
