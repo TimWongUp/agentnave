@@ -59,6 +59,8 @@ for line in sys.stdin:
     else:
         session = os.environ.get("AGENTNAVE_MANAGER_SESSION")
         result = {"structuredContent": {"pid": os.getpid(), "session": session, "listens": len(listens)}}
+    if modern:  # 2026-07-28 results carry serverInfo, as the SDK stamps them
+        result.setdefault("_meta", {})["io.modelcontextprotocol/serverInfo"] = {"name": "fake", "version": version}
     print(json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}), flush=True)
 for ident in listens:
     print(json.dumps({"jsonrpc": "2.0", "id": ident, "error": {"code": -32000, "message": "Connection closed"}}), flush=True)
@@ -179,6 +181,8 @@ def test_relay_swaps_for_hosts_without_handshake_and_hands_over_listen_streams(
         return result["structuredContent"]
 
     try:
+        whoami()  # Before any server/discover, the stamped result already names the runtime.
+        assert host.relay.runtime_version == "1.0"
         host.call("server/discover", {"_meta": meta})
         assert host.relay.runtime_version == "1.0"
         # The listen request is answered only when its stream ends, so it must not pin the child.

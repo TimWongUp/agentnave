@@ -759,19 +759,20 @@ impl Hosts {
                 // old chat keeps that chat's earlier Skill front matter (ADR-0022).
                 if !pending || newly_connected {
                     reason = "connection";
-                    // A relay started after the install already runs it. One started earlier
-                    // reports the version once it swaps; without one it has not swapped.
-                    let after_install = |c: &Value| {
+                    // Current relays read the version from every 2026-07-28 result; released ones
+                    // before v0.35 only from server/discover. For those, a guess: one started
+                    // before the install reports the version once it swaps, so none means stuck.
+                    let before_install = |c: &Value| {
                         installed_ms.is_some_and(|at| {
                             c["started_ms"]
                                 .as_u64()
-                                .is_some_and(|start| u128::from(start) > at)
+                                .is_some_and(|start| u128::from(start) < at)
                         })
                     };
                     let unreported = |c: &Value| c["runtime_version"].as_str().is_none();
                     let behind = |c: &&Value| {
                         if unreported(c) {
-                            !after_install(c)
+                            before_install(c)
                         } else {
                             c["runtime_version"].as_str() != installed.as_deref()
                         }

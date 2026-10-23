@@ -417,6 +417,10 @@ class Relay:
                     result = _object(message.get("result"))
                     if method in ("initialize", "server/discover") and result:
                         self.runtime_version = _version(result)
+                    elif result and (stamped := _version(result)):
+                        # 2026-07-28 results carry serverInfo too, so hosts that never send
+                        # server/discover still show which runtime answered.
+                        self.runtime_version = stamped
                     if method == "initialize" and result:
                         capabilities = _object(result.get("capabilities")) or {}
                         tools = _object(capabilities.get("tools"))

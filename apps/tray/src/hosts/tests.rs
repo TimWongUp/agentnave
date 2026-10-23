@@ -752,10 +752,15 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     assert_eq!(hosts.state(&h)["reload"]["reason"], "relay");
     installed_at(0);
     assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
-    // Started after the install it already runs it; only the version is not shown yet.
+    // Started after the install, or at an unreadable time, the version is only unknown.
     receipt["started_ms"] = json!(now_ms() + 1);
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    installed_at(3600);
+    receipt["started_ms"] = Value::Null;
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    installed_at(0);
     receipt["started_ms"] = started;
     receipt["runtime_version"] = json!("0.22.0");
     save(&dir.join("new.json"), &receipt.to_string());
