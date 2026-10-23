@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.34.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.35.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.34.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.35.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -567,6 +567,23 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.34.0 to v0.35.0
+
+The MCP surface is consolidated into eight tools: `start_agent`, `wait`, `cancel`, `list`,
+`list_members`, `run_round`, `decide_answers` and `read_conversation` (see ADR-0024). `wait` and
+`cancel` take task `invocation_id`s and round `round_id`s; `run_round` also opens shows and posts
+host remarks; `list_members(provider=...)` replaces `describe_provider`; `update_conversation` is
+removed and conversations are renamed in the App. Review decisions are `publish` or `private`
+(saved `discard` reads as `private`), and `access` is recorded only.
+
+Each native thread is now one desk and `continue_desk` is removed: continue a thread by passing its
+`session_id` (see ADR-0025). Callers that still pass `continue_desk=true` silently get a new
+thread. CLI runs active at once (tasks plus seats) are limited by the App setting, 8 by default,
+stored in the data root's `settings.json`; a call beyond it is rejected.
+
+Update the runtime and complete Skill together, then reconnect MCP on every host so the new tool
+list and Skill load. Saved history and member configuration are unchanged.
 
 ### Upgrading from v0.33.0 to v0.34.0
 
