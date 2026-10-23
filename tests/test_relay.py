@@ -59,6 +59,8 @@ for line in sys.stdin:
     else:
         session = os.environ.get("AGENTNAVE_MANAGER_SESSION")
         result = {"structuredContent": {"pid": os.getpid(), "session": session, "listens": len(listens)}}
+    if modern:  # 2026-07-28 results carry serverInfo, as the SDK stamps them
+        result.setdefault("_meta", {})["io.modelcontextprotocol/serverInfo"] = {"name": "fake", "version": version}
     print(json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}), flush=True)
 for ident in listens:
     print(json.dumps({"jsonrpc": "2.0", "id": ident, "error": {"code": -32000, "message": "Connection closed"}}), flush=True)
@@ -179,6 +181,8 @@ def test_relay_swaps_for_hosts_without_handshake_and_hands_over_listen_streams(
         return result["structuredContent"]
 
     try:
+        whoami()  # Before any server/discover, the stamped result already names the runtime.
+        assert host.relay.runtime_version == "1.0"
         host.call("server/discover", {"_meta": meta})
         assert host.relay.runtime_version == "1.0"
         # The listen request is answered only when its stream ends, so it must not pin the child.
@@ -240,7 +244,12 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             for path in data.glob("connections/*.json"):
-                value = json.loads(path.read_bytes())
+                if path.name in {"dead.json", "alive.json"}:
+                    continue  # Never hold a handle on the samples the relay is pruning.
+                try:
+                    value = json.loads(path.read_bytes())
+                except OSError:  # Being pruned; Windows refuses reads of files pending deletion.
+                    continue
                 if value["runtime_version"] == version:
                     return value
             time.sleep(0.02)
@@ -251,8 +260,16 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         assert result["capabilities"]["tools"]["listChanged"] is True
         host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert not data.exists()  # Handshakes alone, including nested servers, do not create data.
+        # A relay that died left its file; a live one keeps touching its own.
+        (data / "connections").mkdir(parents=True)
+        dead, alive = data / "connections" / "dead.json", data / "connections" / "alive.json"
+        for path in (dead, alive):
+            path.write_text('{"runtime_version": "other"}')
+        os.utime(dead, (time.time() - 7200, time.time() - 7200))
         host.call("tools/list")
         initial = observed("1.0")
+        assert not dead.exists() and alive.exists()
+        alive.unlink()
         assert initial["runtime_tools_hash"] == initial["host_tools_hash"]
         assert set(initial) == {
             "version",

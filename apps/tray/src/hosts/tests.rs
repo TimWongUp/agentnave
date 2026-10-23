@@ -704,6 +704,64 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     receipt["runtime_version"] = json!("0.21.0");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
+    // Long after the install, an old runtime is stuck rather than waiting to swap.
+    let metadata = hosts.context.home.join(
+        ".local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave-0.22.0.dist-info",
+    );
+    use std::time::Duration;
+    let installed_at = |age: u64| {
+        // Windows opens a directory only with backup semantics, and needs attribute-write access.
+        #[cfg(windows)]
+        let directory = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .access_mode(0x0100) // FILE_WRITE_ATTRIBUTES
+                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                .open(&metadata)
+        };
+        #[cfg(not(windows))]
+        let directory = fs::File::open(&metadata);
+        directory
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(age))
+            .unwrap();
+    };
+    let now_ms = || {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    };
+    let started = receipt["started_ms"].clone();
+    installed_at(3600);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
+    // A connection on the new install that has not shown its version does not hide that.
+    let mut fresh = receipt.clone();
+    fresh["runtime_version"] = Value::Null;
+    fresh["started_ms"] = json!(now_ms());
+    save(&dir.join("fresh.json"), &fresh.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
+    fs::remove_file(dir.join("fresh.json")).unwrap();
+    // Without a version long after the install, a relay started before it has not swapped:
+    // before v0.31.0 it cannot read the version from 2026-07-28 hosts.
+    receipt["runtime_version"] = Value::Null;
+    receipt["started_ms"] = json!(now_ms() - 7_200_000);
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "relay");
+    installed_at(0);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
+    // Started after the install, or at an unreadable time, the version is only unknown.
+    receipt["started_ms"] = json!(now_ms() + 1);
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    installed_at(3600);
+    receipt["started_ms"] = Value::Null;
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    installed_at(0);
+    receipt["started_ms"] = started;
     receipt["runtime_version"] = json!("0.22.0");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");

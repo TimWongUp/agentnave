@@ -19,6 +19,8 @@ use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Format of the stored reload records; older records hashed whole Skill trees.
 const RELOAD_FORMAT: u64 = 3;
+/// Matches the relay's own report that an update has waited too long.
+const STALE_RUNTIME_SECONDS: u64 = 600;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
@@ -712,9 +714,16 @@ impl Hosts {
                 (value["version"] == 1 && value["host"] == host.id).then_some(value)
             })
             .collect();
-        let installed = self
-            .tool_dirs()
-            .and_then(|dirs| crate::update::installed_version(&dirs.tools.join("agentnave")));
+        let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
+        let installed = env.as_deref().and_then(crate::update::installed_version);
+        let installed_at = env.as_deref().and_then(crate::update::installed_since);
+        // A relay swaps to a new install within seconds once idle; much later it is stuck.
+        let install_settled = installed_at
+            .and_then(|since| now.duration_since(since).ok())
+            .is_some_and(|age| age.as_secs() > STALE_RUNTIME_SECONDS);
+        let installed_ms = installed_at
+            .and_then(|at| at.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|at| at.as_millis());
         let valid_hash = |v: &Value| {
             v.as_str()
                 .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -749,17 +758,45 @@ impl Hosts {
                 // usually means a restarted host or new session, though a bare MCP reconnect in an
                 // old chat keeps that chat's earlier Skill front matter (ADR-0022).
                 if !pending || newly_connected {
+                    reason = "connection";
+                    // Current relays read the version from every 2026-07-28 result; released ones
+                    // before v0.35 only from server/discover. For those, a guess: one started
+                    // before the install reports the version once it swaps, so none means stuck.
+                    let before_install = |c: &Value| {
+                        installed_ms.is_some_and(|at| {
+                            c["started_ms"]
+                                .as_u64()
+                                .is_some_and(|start| u128::from(start) < at)
+                        })
+                    };
+                    let unreported = |c: &Value| c["runtime_version"].as_str().is_none();
+                    let behind = |c: &&Value| {
+                        if unreported(c) {
+                            before_install(c)
+                        } else {
+                            c["runtime_version"].as_str() != installed.as_deref()
+                        }
+                    };
                     state = if installed.is_none() {
                         "unknown"
-                    } else if connections
-                        .iter()
-                        .all(|c| c["runtime_version"].as_str() == installed.as_deref())
-                    {
-                        "current"
+                    } else if connections.iter().any(|c| behind(&c)) {
+                        if install_settled {
+                            // Long after the install: busy all along, holding an unread result,
+                            // or a relay before v0.31.0 that cannot swap for 2026-07-28 hosts.
+                            reason = if connections.iter().filter(behind).any(unreported) {
+                                "relay"
+                            } else {
+                                "stale"
+                            };
+                            "required"
+                        } else {
+                            "updating"
+                        }
+                    } else if connections.iter().any(unreported) {
+                        "unknown" // running the install, but the host has not shown its version
                     } else {
-                        "updating"
+                        "current"
                     };
-                    reason = "connection";
                 }
             }
         }

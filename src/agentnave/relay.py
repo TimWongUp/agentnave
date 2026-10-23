@@ -41,6 +41,8 @@ _PROBE_SECONDS = 15.0
 _START_SECONDS = 60.0
 _STOP_SECONDS = 15.0
 _RELAY_ID = "agentnave-relay"
+# Live relays touch their file every few seconds; older ones were left by a relay that died.
+_STALE_CONNECTION_SECONDS = 3600.0
 SESSION_ENV = "AGENTNAVE_MANAGER_SESSION"
 STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
 # 2026-07-28 and later hosts skip initialize; every request carries this envelope instead.
@@ -81,6 +83,15 @@ def fingerprint(site: Path) -> Fingerprint | None:
     except OSError:
         return None
     return found or None
+
+
+def _prune_connections(directory: Path) -> None:
+    """Remove observations of relays that died without deleting their own file."""
+    with contextlib.suppress(OSError):
+        for path in directory.glob("*.json"):
+            with contextlib.suppress(OSError):
+                if time.time() - path.stat().st_mtime > _STALE_CONNECTION_SECONDS:
+                    path.unlink(missing_ok=True)
 
 
 def _site() -> Path:
@@ -298,6 +309,8 @@ class Relay:
                     return
             self.connection_written = None
             path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                _prune_connections(path.parent)  # once, as this relay first publishes
             with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
                 temporary = Path(output.name)
                 try:
@@ -404,6 +417,17 @@ class Relay:
                     result = _object(message.get("result"))
                     if method in ("initialize", "server/discover") and result:
                         self.runtime_version = _version(result)
+                    elif (
+                        method is not None
+                        and child is self.child
+                        and result
+                        and (stamped := _version(result))
+                    ):
+                        # 2026-07-28 results carry serverInfo too, so hosts that never send
+                        # server/discover still show which runtime answered. Only the active
+                        # child's answer to a host request counts: a swap candidate's late reply
+                        # to a timed-out probe does not.
+                        self.runtime_version = stamped
                     if method == "initialize" and result:
                         capabilities = _object(result.get("capabilities")) or {}
                         tools = _object(capabilities.get("tools"))

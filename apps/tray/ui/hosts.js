@@ -796,11 +796,11 @@ function buildCard(host) {
       ),
     );
   if (host.reload?.state === "required") {
-    const tools = host.reload.reason === "tools";
+    const [title, detail] = RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config;
+    const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
-      h("div", {}, h("strong", {}, tools ? "仍有连接使用旧工具接口" : "接入配置或 Skill 简介有变化"),
-        h("p", {}, tools ? "支持自动刷新的宿主会重新获取工具列表；若此状态持续，请重新连接 AgentNave MCP，必要时重启宿主。重连后会自动检测，无需手动确认。" : "重新打开宿主或新开会话即可；检测到所有连接都是变化之后建立的，视为已重新加载并自动消除提示（只重连 MCP、继续原聊天时，该聊天里的 Skill 简介可能仍是旧的）。Skill 只改正文时不需要重新加载。无法自动检测时，可在操作后手动确认。")),
-      !tools && button("我已重新加载", "", "confirm-reload", () =>
+      h("div", {}, h("strong", {}, title), h("p", {}, detail)),
+      !auto && button("我已重新加载", "", "confirm-reload", () =>
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),
     ));
@@ -819,6 +819,14 @@ function buildCard(host) {
   card.append(h("div.hc-main", {}, ...main));
   return card;
 }
+
+// Why a reload is required; every reason but a config change is detected again automatically.
+const RELOAD_REASONS = {
+  config: ["接入配置或 Skill 简介有变化", "重新打开宿主或新开会话即可；检测到所有连接都是变化之后建立的，视为已重新加载并自动消除提示（只重连 MCP、继续原聊天时，该聊天里的 Skill 简介可能仍是旧的）。Skill 只改正文时不需要重新加载。无法自动检测时，可在操作后手动确认。"],
+  tools: ["仍有连接使用旧工具接口", "支持自动刷新的宿主会重新获取工具列表；若此状态持续，请重新连接 AgentNave MCP，必要时重启宿主。重连后会自动检测，无需手动确认。"],
+  relay: ["有连接未能换用新服务", "新版本已安装超过 10 分钟，这条连接仍报告不出运行版本。多半是 v0.31.0 之前启动的中继，认不出新版宿主协议，不会自动切换。请重新连接 AgentNave MCP 或重启宿主；重连会结束这条连接上正在运行的任务。重连后会自动检测，无需手动确认。"],
+  stale: ["有连接长时间仍在用旧版服务", "新版本已安装超过 10 分钟，这条连接仍未切换。通常是它一直有任务在运行，或有已结束任务的结果还没读取；处理完会自动切换。确认没有任务时，请重新连接 AgentNave MCP 或重启宿主。重连后会自动检测，无需手动确认。"],
+};
 
 function renderCards() {
   const box = $("host-cards");

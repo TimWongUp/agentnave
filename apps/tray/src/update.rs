@@ -529,6 +529,11 @@ pub(crate) fn installed_version(env: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// When the installed version arrived: its dist-info directory is created by the install.
+pub(crate) fn installed_since(env: &Path) -> Option<std::time::SystemTime> {
+    installed_metadata(env)?.metadata().ok()?.modified().ok()
+}
+
 /// Recognize the unified runtime by its installed console-script contract, not an old core binary.
 pub(crate) fn unified_service(tools: &Path) -> bool {
     installed_metadata(&tools.join("agentnave"))
