@@ -240,7 +240,10 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             for path in data.glob("connections/*.json"):
-                value = json.loads(path.read_bytes())
+                try:
+                    value = json.loads(path.read_bytes())
+                except OSError:  # Being pruned; Windows refuses reads of files pending deletion.
+                    continue
                 if value["runtime_version"] == version:
                     return value
             time.sleep(0.02)
