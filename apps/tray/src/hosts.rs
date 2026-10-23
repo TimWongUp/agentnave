@@ -19,6 +19,8 @@ use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Format of the stored reload records; older records hashed whole Skill trees.
 const RELOAD_FORMAT: u64 = 3;
+/// Matches the relay's own report that an update has waited too long.
+const STALE_RUNTIME_SECONDS: u64 = 600;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
@@ -712,9 +714,14 @@ impl Hosts {
                 (value["version"] == 1 && value["host"] == host.id).then_some(value)
             })
             .collect();
-        let installed = self
-            .tool_dirs()
-            .and_then(|dirs| crate::update::installed_version(&dirs.tools.join("agentnave")));
+        let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
+        let installed = env.as_deref().and_then(crate::update::installed_version);
+        // A relay swaps to a new install within seconds once idle; much later it is stuck.
+        let install_settled = env
+            .as_deref()
+            .and_then(crate::update::installed_since)
+            .and_then(|since| now.duration_since(since).ok())
+            .is_some_and(|age| age.as_secs() > STALE_RUNTIME_SECONDS);
         let valid_hash = |v: &Value| {
             v.as_str()
                 .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -749,17 +756,30 @@ impl Hosts {
                 // usually means a restarted host or new session, though a bare MCP reconnect in an
                 // old chat keeps that chat's earlier Skill front matter (ADR-0022).
                 if !pending || newly_connected {
-                    state = if installed.is_none() {
+                    reason = "connection";
+                    state = if connections
+                        .iter()
+                        .any(|c| c["runtime_version"].as_str().is_none())
+                    {
+                        // Relays before v0.31.0 cannot read the version from 2026-07-28 hosts and
+                        // never swap their server for such a host: only reconnecting helps.
+                        reason = "relay";
+                        "required"
+                    } else if installed.is_none() {
                         "unknown"
                     } else if connections
                         .iter()
                         .all(|c| c["runtime_version"].as_str() == installed.as_deref())
                     {
                         "current"
+                    } else if install_settled {
+                        // Still serving an old version long after the install: busy all along,
+                        // holding an unread result, or otherwise unable to swap.
+                        reason = "stale";
+                        "required"
                     } else {
                         "updating"
                     };
-                    reason = "connection";
                 }
             }
         }

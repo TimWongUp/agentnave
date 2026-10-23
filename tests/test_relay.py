@@ -251,8 +251,16 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         assert result["capabilities"]["tools"]["listChanged"] is True
         host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert not data.exists()  # Handshakes alone, including nested servers, do not create data.
+        # A relay that died left its file; a live one keeps touching its own.
+        (data / "connections").mkdir(parents=True)
+        dead, alive = data / "connections" / "dead.json", data / "connections" / "alive.json"
+        for path in (dead, alive):
+            path.write_text('{"runtime_version": "other"}')
+        os.utime(dead, (time.time() - 7200, time.time() - 7200))
         host.call("tools/list")
         initial = observed("1.0")
+        assert not dead.exists() and alive.exists()
+        alive.unlink()
         assert initial["runtime_tools_hash"] == initial["host_tools_hash"]
         assert set(initial) == {
             "version",

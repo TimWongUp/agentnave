@@ -704,6 +704,26 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     receipt["runtime_version"] = json!("0.21.0");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
+    // Long after the install, an old runtime is stuck rather than waiting to swap.
+    let metadata = hosts.context.home.join(
+        ".local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave-0.22.0.dist-info",
+    );
+    use std::time::Duration;
+    let installed_at = |age: u64| {
+        fs::File::open(&metadata)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(age))
+            .unwrap();
+    };
+    installed_at(3600);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
+    installed_at(0);
+    // A relay that cannot report its runtime predates v0.31.0 and never swaps.
+    receipt["runtime_version"] = Value::Null;
+    save(&dir.join("new.json"), &receipt.to_string());
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "relay");
     receipt["runtime_version"] = json!("0.22.0");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
