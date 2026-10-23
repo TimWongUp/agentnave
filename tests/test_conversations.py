@@ -2025,9 +2025,10 @@ async def test_app_limit_caps_cli_runs_across_tasks_and_seats(
         )
         third = await client.call_tool("start_agent", {**task, "prompt": "three"})
         assert third.is_error and "2 CLI runs are active" in str(third.content)
-        settings.write_text(json.dumps({"version": 1, "max_running": 0}))
-        broken = await client.call_tool("start_agent", {**task, "prompt": "four"})
-        assert broken.is_error and "Repair it in the AgentNave App" in str(broken.content)
+        for invalid in ({"version": 1, "max_running": 0}, {"version": True, "max_running": 2}):
+            settings.write_text(json.dumps(invalid))
+            broken = await client.call_tool("start_agent", {**task, "prompt": "four"})
+            assert broken.is_error and "Repair it in the AgentNave App" in str(broken.content)
         await _cancel(client, sleeping["invocation_id"])
         await _cancel(client, second["invocation_id"])
 

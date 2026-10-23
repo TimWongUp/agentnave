@@ -206,13 +206,10 @@ def read_max_running() -> int:
             f"Unable to read settings.json: {exc}. Repair it in the AgentNave App."
         ) from exc
     settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
+    version = settings.get("version")
     value = settings.get("max_running", DEFAULT_MAX_RUNNING)
-    if (
-        settings.get("version") != 1
-        or not isinstance(value, int)
-        or isinstance(value, bool)
-        or not 1 <= value <= 32
-    ):
+    # Same rules as the App: integers only, so true or 1.0 are not accepted as 1.
+    if type(version) is not int or version != 1 or type(value) is not int or not 1 <= value <= 32:
         raise SettingsFileError(
             "Invalid settings.json: needs version 1 and max_running between 1 and 32. "
             "Repair it in the AgentNave App."

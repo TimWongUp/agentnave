@@ -1,6 +1,6 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -324,6 +324,8 @@ struct Desk {
     tasks: usize,
     running: usize,
     activities: Vec<Value>,
+    // A thread desk's earlier `task:` keys, from before its tasks had a native session.
+    aliases: Vec<String>,
     reported: Option<(i64, String)>,
     // The latest declared access tier; the server records declarations without enforcing them.
     access: Option<(i64, String)>,
@@ -453,6 +455,7 @@ impl Desk {
             "status": status,
             "private_allowed": host_provider(host) != Some(self.provider.as_str()),
             "private": {"tasks": self.tasks, "running": self.running},
+            "aliases": self.aliases,
             "meeting": meeting,
         })
     }
@@ -760,8 +763,16 @@ impl Group {
     }
 
     /// The desks an office draws, at most `limit` (the App's running limit) unless more are
-    /// running or under review, plus the rest as the "optimized" list, most recent first.
-    fn desks(&self, host: Option<&str>, limit: usize) -> (Vec<Value>, Value) {
+    /// running or under review, plus the rest as the "optimized" list, most recent first. The
+    /// list holds the `listed` most recent and every one the payload refers to, so seats and
+    /// messages always find their desk.
+    fn desks(
+        &self,
+        host: Option<&str>,
+        limit: usize,
+        listed: usize,
+        referenced: &BTreeSet<String>,
+    ) -> (Vec<Value>, Value) {
         let mut desks: Vec<_> = self.desks.values().collect();
         desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
@@ -771,7 +782,12 @@ impl Group {
         let shown = desks.into_iter().map(|desk| desk.value(host)).collect();
         let optimized = json!({
             "count": rest.len(),
-            "desks": rest.iter().take(OPTIMIZED_LISTED).map(|desk| desk.value(host)).collect::<Vec<_>>(),
+            "desks": rest
+                .iter()
+                .enumerate()
+                .filter(|(index, desk)| *index < listed || referenced.contains(&desk.key))
+                .map(|(_, desk)| desk.value(host))
+                .collect::<Vec<_>>(),
         });
         (shown, optimized)
     }
@@ -1196,6 +1212,9 @@ impl Group {
                     );
                 }
                 entry.tasks += 1;
+                if desk.starts_with("thread:") {
+                    entry.aliases.push(format!("task:{}:{task_id}", item.id));
+                }
                 if status == "running" {
                     entry.running += 1;
                 }
@@ -1696,6 +1715,25 @@ static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex
 /// At most this many undrawn desks are listed; the count still covers all of them.
 const OPTIMIZED_LISTED: usize = 200;
 
+/// Desks the returned seats and messages name, as speaker, thread or recipient.
+fn referenced_desks(rooms: &[Value], messages: &[Value]) -> BTreeSet<String> {
+    let seats = rooms.iter().flat_map(|room| array(room, "seats"));
+    let named = messages.iter().flat_map(|message| {
+        let thread = (message["thread"]["kind"] == "desk").then(|| &message["thread"]["key"]);
+        [&message["desk"]]
+            .into_iter()
+            .chain(thread)
+            .chain(array(message, "to").map(|to| &to["key"]))
+            .chain(array(message, "recipients").map(|to| &to["key"]))
+    });
+    seats
+        .map(|seat| &seat["desk"])
+        .chain(named)
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
 /// `limit` is the App's running limit (`settings.json`), which also caps the desks drawn.
 pub(crate) fn respond(
     path: &str,
@@ -1769,11 +1807,14 @@ pub(crate) fn respond(
         value.as_object_mut().unwrap().remove("updated");
         value["conversations"] = json!(group.conversations);
         value["members"] = json!(group.members());
-        let (desks, optimized) = group.desks(host.as_deref(), limit);
+        let rooms = group.rooms();
+        let messages = group.timeline(focus);
+        let referenced = referenced_desks(&rooms, &messages);
+        let (desks, optimized) = group.desks(host.as_deref(), limit, OPTIMIZED_LISTED, &referenced);
         value["desks"] = json!(desks);
         value["optimized"] = optimized;
-        value["rooms"] = json!(group.rooms());
-        value["messages"] = json!(group.timeline(focus));
+        value["rooms"] = json!(rooms);
+        value["messages"] = json!(messages);
         value["omitted"] = json!(group.omitted(focus));
         value["threads"] = json!(group.threads());
         return Response::json(&value);
@@ -1788,11 +1829,13 @@ pub(crate) fn respond(
                 value["threads"] = json!(g.threads());
                 value["omitted"] = json!(g.omitted(None));
                 value["members"] = json!(g.members());
-                let (desks, optimized) = g.desks(g.host.as_deref(), limit);
+                let rooms = g.rooms();
+                // The panel only shows how many; the office lists them. Seats still need theirs.
+                let referenced = referenced_desks(&rooms, &[]);
+                let (desks, optimized) = g.desks(g.host.as_deref(), limit, 0, &referenced);
                 value["desks"] = json!(desks);
-                // The panel only shows how many; the office lists them.
-                value["optimized"] = json!({"count": optimized["count"]});
-                value["rooms"] = json!(g.rooms());
+                value["optimized"] = optimized;
+                value["rooms"] = json!(rooms);
                 value
             })
             .collect();

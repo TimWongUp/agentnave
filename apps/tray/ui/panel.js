@@ -194,13 +194,15 @@ function updateBlock(rec, m) {
     setClass(rec.fold, folded && hiddenBusy ? "fold busy" : "fold");
   }
   const roomById = new Map(rooms.map((r) => [r.id, r]));
+  // a seat's desk may be folded into "已优化"; the payload still lists it for the seat
+  const seatDesks = new Map([...byKey, ...(m.optimized?.desks || []).map((d) => [d.key, d])]);
   for (const id of rec.roomRecs.keys()) if (!roomById.has(id)) rec.roomRecs.delete(id);
   // rooms in session first; at most three finished ones stay listed
   const shown = [...rooms.filter((r) => urgent(r.status)), ...rooms.filter((r) => !urgent(r.status)).slice(0, Math.max(0, 3 - rooms.filter((r) => urgent(r.status)).length))];
   reconcile(rec.rooms, shown.map((r) => {
     let row = rec.roomRecs.get(r.id);
     if (!row) rec.roomRecs.set(r.id, (row = createRoom()));
-    updateRoom(row, m.group, r, byKey);
+    updateRoom(row, m.group, r, seatDesks);
     return row.el;
   }));
 }

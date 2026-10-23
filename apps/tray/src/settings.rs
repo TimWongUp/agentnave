@@ -17,21 +17,21 @@ pub fn defaults() -> Value {
     json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING})
 }
 
-pub fn validate(document: &Value) -> Result<(), String> {
+/// The normalized document (only `version` and `max_running`); the same rules as the service:
+/// unknown keys are ignored and a missing `max_running` means the default.
+pub fn validate(document: &Value) -> Result<Value, String> {
     let object = document.as_object().ok_or("设置必须为 JSON 对象")?;
-    if let Some(key) = object
-        .keys()
-        .find(|key| !matches!(key.as_str(), "version" | "max_running"))
-    {
-        return Err(format!("未知的设置项：{key}"));
-    }
-    if object.get("version") != Some(&json!(1)) {
+    if object.get("version").and_then(Value::as_u64) != Some(1) {
         return Err("version 必须为 1".into());
     }
-    match object.get("max_running").and_then(Value::as_u64) {
-        Some(value) if MAX_RUNNING.contains(&value) => Ok(()),
-        _ => Err("max_running 必须为 1–32 的整数".into()),
-    }
+    let max_running = match object.get("max_running") {
+        None => DEFAULT_MAX_RUNNING,
+        Some(value) => value
+            .as_u64()
+            .filter(|value| MAX_RUNNING.contains(value))
+            .ok_or("max_running 必须为 1–32 的整数")?,
+    };
+    Ok(json!({"version": 1, "max_running": max_running}))
 }
 
 /// The saved document; `None` when there is none yet.
@@ -43,8 +43,9 @@ pub fn read(root: &Path) -> Result<Option<Value>, String> {
     };
     let document: Value =
         serde_json::from_slice(&content).map_err(|error| format!("{FILE} 损坏：{error}"))?;
-    validate(&document).map_err(|error| format!("{FILE} 格式错误：{error}"))?;
-    Ok(Some(document))
+    validate(&document)
+        .map(Some)
+        .map_err(|error| format!("{FILE} 格式错误：{error}"))
 }
 
 /// The effective limit: the saved one, or the default when the file is missing or broken.
@@ -66,8 +67,7 @@ pub fn state(root: &Path) -> Value {
 }
 
 pub fn save(root: &Path, document: &Value) -> Result<(), String> {
-    validate(document)?;
-    crate::members::write_atomic(root, FILE, document)
+    crate::members::write_atomic(root, FILE, &validate(document)?)
 }
 
 #[cfg(test)]
@@ -83,8 +83,10 @@ mod tests {
             json!({"version": 1, "max_running": 0}),
             json!({"version": 1, "max_running": 33}),
             json!({"version": 1, "max_running": 2.5}),
+            json!({"version": 1, "max_running": true}),
             json!({"version": 2, "max_running": 4}),
-            json!({"version": 1, "max_running": 4, "other": true}),
+            json!({"version": 1.0, "max_running": 4}),
+            json!({"version": true, "max_running": 4}),
             json!([]),
         ] {
             assert!(save(root.path(), &bad).is_err(), "{bad}");
@@ -93,6 +95,28 @@ mod tests {
         save(root.path(), &json!({"version": 1, "max_running": 3})).unwrap();
         assert_eq!(max_running(root.path()), 3);
         assert_eq!(state(root.path())["settings"]["max_running"], 3);
+        // Like the service: unknown keys are ignored, and saving keeps only the known two.
+        fs::write(
+            root.path().join(FILE),
+            br#"{"version":1,"max_running":2,"future":true}"#,
+        )
+        .unwrap();
+        assert_eq!(max_running(root.path()), 2);
+        assert_eq!(
+            state(root.path())["settings"],
+            json!({"version": 1, "max_running": 2})
+        );
+        save(
+            root.path(),
+            &json!({"version": 1, "max_running": 5, "x": 1}),
+        )
+        .unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
+        assert_eq!(saved, json!({"version": 1, "max_running": 5}));
+        fs::write(root.path().join(FILE), br#"{"version":1}"#).unwrap();
+        assert_eq!(max_running(root.path()), DEFAULT_MAX_RUNNING);
+        assert_eq!(state(root.path())["saved"], true);
         // A broken file keeps the default limit and tells the page why.
         fs::write(root.path().join(FILE), b"{oops").unwrap();
         assert_eq!(max_running(root.path()), DEFAULT_MAX_RUNNING);

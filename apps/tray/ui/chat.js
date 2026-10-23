@@ -716,7 +716,7 @@ function seatMood(r, seat, d) {
     return { mood: "speaking", say: ["作答中"], word: "作答中" };
   if (act?.status === "review")
     return { mood: "review", say: "交卷 · 待审核", word: "待审核" };
-  return { mood: "idle", say: "", word: d ? "" : "缺席" };
+  return { mood: "idle", say: "", word: d || seat.desk ? "" : "缺席" };
 }
 function updateRoom(rec, r, ctx) {
   const [, tone] = pick(GROUP, r.status);
@@ -741,17 +741,19 @@ function updateRoom(rec, r, ctx) {
     const m = seatMood(r, seat, d);
     s.el.dataset.mood = m.mood;
     s.el.dataset.key = `${r.id}|${seat.seat}`;
-    setClass(s.el, `seat${d ? "" : " empty"}`);
+    // a seat always names its desk; one missing from the payload is unknown, not absent
+    const absent = !d && !seat.desk;
+    setClass(s.el, `seat${absent ? " empty" : ""}`);
     dress(s, d ? deskChar(d) : "default", s.el, s.plate);
     setSay(s.say, m.say);
-    const name = d ? deskName(d) : seat.seat;
+    const name = d ? deskName(d) : seat.handle?.replace(/^@/, "") || seat.seat;
     // model name and role only; the CLI is in the tooltip
-    const tag = d ? d.role || "" : "缺席";
+    const tag = d ? d.role || "" : absent ? "缺席" : "";
     setText(s.nm, name);
     setText(s.plate, tag);
     s.plate.hidden = !tag;
     setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
-    setAttr(s.el, "title", d ? handleOf(d) : `席位 ${seat.seat}`);
+    setAttr(s.el, "title", d ? handleOf(d) : seat.handle || `席位 ${seat.seat}`);
     nodes.push(s.el);
   }
   reconcile(rec.scene, nodes);
@@ -1661,6 +1663,10 @@ function contextOf(c) {
     // Drawn desks plus the listed "optimized" ones, so their messages and links still resolve.
     desks: new Map([...c.desks, ...(c.optimized?.desks || [])].map((d) => [d.key, d])),
     drawn: new Set(c.desks.map((d) => d.key)),
+    // a thread desk's earlier task keys, from before it had a native session
+    aliases: new Map(
+      [...c.desks, ...(c.optimized?.desks || [])].flatMap((d) => (d.aliases || []).map((a) => [a, d.key])),
+    ),
     rooms: new Map(c.rooms.map((r) => [r.id, r])),
     fullRooms: new Set(c.rooms.filter(fullRoom).map((r) => r.id)),
     sources: new Set(
@@ -1670,8 +1676,17 @@ function contextOf(c) {
     ),
   };
 }
+// A task desk that gained its native session comes back under its thread key: keep it open where it was.
+function followAlias(c, ctx) {
+  const d = state.drawer;
+  if (d.kind !== "desk" || ctx.desks.has(d.key) || !ctx.aliases.has(d.key)) return;
+  const moved = { kind: "desk", key: ctx.aliases.get(d.key) };
+  if (state.scopeKey === c.group + JSON.stringify(d)) state.scopeKey = c.group + JSON.stringify(moved);
+  state.drawer = moved;
+}
 function renderAll(c, newGroup = false) {
   const ctx = (state.ctx = contextOf(c));
+  followAlias(c, ctx);
   const n = counts(c);
   renderHead(c, n);
   renderOffice(c, ctx, n, newGroup);

@@ -1904,6 +1904,9 @@ mod tests {
         assert_eq!(desks[0]["private_allowed"], true);
         assert_eq!(desks[1]["status"], "running");
         assert_eq!(desks[1]["private"]["running"], 1); // no session yet: its own desk
+        // A thread desk names the task keys its calls had before the session was known.
+        assert_eq!(desks[0]["aliases"], json!(["task:r1:t-r1", "task:r3:t-r3"]));
+        assert_eq!(desks[1]["aliases"], json!([]));
         assert_eq!(desks[3]["private_allowed"], false); // same as the workspace host's CLI
         assert_eq!(desks[3]["role"], Value::Null);
         assert_eq!(desks[3]["label"], "m · Claude Code");
@@ -2218,6 +2221,14 @@ mod tests {
         let limited = state(&reader, &format!("/app/chats/{MANAGER}"));
         assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
         assert_eq!(limited["optimized"]["count"], 2);
+        // The panel lists no folded desk except those its rooms' seats sit at.
+        let stage = state(&reader, "/app/stage");
+        let folded = stage["managers"][0]["optimized"]["desks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(stage["managers"][0]["optimized"]["count"], 2);
+        assert_eq!(folded.len(), 2);
+        assert!(folded.iter().all(|desk| desk["kind"] == "seat"));
         assert_eq!(chat["threads"].as_array().unwrap().len(), 3);
         assert_eq!(
             state(&reader, "/app/stage")["counts"],
@@ -2231,7 +2242,7 @@ mod tests {
         let mut task = task_snapshot("many", "succeeded", "2099-01-01T00:00:00Z");
         let call = task["director"]["tasks"][0].clone();
         task["director"]["tasks"] = json!(
-            (0..151)
+            (0..211)
                 .map(|i| {
                     let mut call = call.clone();
                     call["id"] = json!(i.to_string());
@@ -2243,25 +2254,49 @@ mod tests {
         let reader = Reader::new(dir.path().to_path_buf());
         let path = format!("/app/chats/{MANAGER}");
         let chat = state(&reader, &path);
-        assert_eq!(chat["omitted"], 2);
+        assert_eq!(chat["omitted"], 122);
         assert_eq!(chat["messages"].as_array().unwrap().len(), 300);
         // Calls without a native session are separate desks of two messages each.
-        assert_eq!(chat["threads"].as_array().unwrap().len(), 151);
+        assert_eq!(chat["threads"].as_array().unwrap().len(), 211);
         assert_eq!(chat["threads"][0]["count"], 2);
-        // The office draws as many desks as the running limit; the rest are "optimized".
+        // The office draws as many desks as the running limit; the rest are "optimized", listed
+        // up to 200 plus any the returned messages name, so every message finds its desk.
+        let resolves = |chat: &Value| {
+            let listed: Vec<_> = chat["desks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(chat["optimized"]["desks"].as_array().unwrap())
+                .map(|desk| desk["key"].clone())
+                .collect();
+            let listed_len = chat["optimized"]["desks"].as_array().unwrap().len();
+            assert!(
+                chat["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|message| listed.contains(&message["desk"]))
+            );
+            listed_len
+        };
         assert_eq!(chat["desks"].as_array().unwrap().len(), 8);
-        assert_eq!(chat["optimized"]["count"], 143);
-        assert_eq!(chat["optimized"]["desks"].as_array().unwrap().len(), 143);
+        assert_eq!(chat["optimized"]["count"], 203);
+        assert!((200..=203).contains(&resolves(&chat)));
         crate::settings::save(dir.path(), &json!({"version": 1, "max_running": 3})).unwrap();
         let limited = state(&reader, &path);
         assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
-        assert_eq!(limited["optimized"]["count"], 148);
+        assert_eq!(limited["optimized"]["count"], 208);
         let stage = state(&reader, "/app/stage");
         assert_eq!(stage["managers"][0]["desks"].as_array().unwrap().len(), 3);
-        assert_eq!(stage["managers"][0]["optimized"], json!({"count": 148}));
+        assert_eq!(
+            stage["managers"][0]["optimized"],
+            json!({"count": 208, "desks": []})
+        );
         assert_eq!(chat["messages"][1]["reply_to"], chat["messages"][0]["id"]);
         let focused = state(&reader, &format!("{path}/focus/many"));
         assert_eq!(focused["omitted"], 0);
-        assert_eq!(focused["messages"].as_array().unwrap().len(), 302);
+        assert_eq!(focused["messages"].as_array().unwrap().len(), 422);
+        // Focusing the conversation returns every message, so every folded desk is listed.
+        assert_eq!(resolves(&focused), 208);
     }
 }
