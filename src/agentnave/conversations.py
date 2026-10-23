@@ -34,6 +34,7 @@ from agentnave.group import (
     SeatState,
 )
 from agentnave.host import Host, detect_host, session_model
+from agentnave.members import CapacityError, read_max_running
 from agentnave.models import InvocationRequest
 from agentnave.store import (
     Conversation,
@@ -82,11 +83,10 @@ def normalize_access(access: str | None) -> Access | None:
 
 
 class TaskStart(NamedTuple):
-    """A started task and whether it continued this desk's most recent private thread."""
+    """A started task and the access tier it declared."""
 
     invocation_id: str
     conversation_id: str
-    resumed: bool = False
     access: str | None = None  # the tier this call declared
 
 
@@ -489,6 +489,8 @@ class Conversations(Groups):
                 raise ValueError("Group belongs to a different manager session")
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
+            # A parallel round starts every seat at once; a serial one runs a seat at a time.
+            self._check_capacity(len(seat_ids) if order == "parallel" else 1)
             manager_reported = self._manager_model(state.manager_session) or manager_reported_model
             added = [
                 Entry(
@@ -724,36 +726,15 @@ class Conversations(Groups):
 
     # Tasks
 
-    def _recent_task_thread(
-        self,
-        request: InvocationRequest,
-        manager_session: str,
-        role: str | None,
-    ) -> TaskRecord | None:
-        """The same desk's latest saved private thread in this manager chat and cwd, if any."""
-        self.scan()  # Include records another server saved.
-        model = request.provider_options.get("model")
-        expected_model = None if model is None else str(model)
-        candidates = [
-            (task.time, record.state.created, record.state.id, task.id, task)
-            for record in self.records.values()
-            if record.state.kind == "task" and record.state.manager_session == manager_session
-            for task in record.state.tasks
-            if task.provider == request.provider
-            and (task.model or None) == expected_model
-            # A native session keeps the context of the directory it ran in.
-            and task.cwd == str(request.cwd)
-            and task.role == role
-            # A new thread has no native session until it ends; while running it is the latest.
-            and (
-                task.session_id is not None
-                or task.status == "running"
-                or task.id in self.running_tasks
+    def _check_capacity(self, needed: int) -> None:
+        """Refuse work that would run more CLI processes at once than the App allows."""
+        limit = read_max_running()
+        running = self.manager.active_count()
+        if running + needed > limit:
+            raise CapacityError(
+                f"{running} CLI runs are active and this would start {needed}; the AgentNave App "
+                f"limits this server to {limit} at once. Wait for some to finish, then retry"
             )
-        ]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda item: item[:4])[4]
 
     def start_task(
         self,
@@ -764,33 +745,16 @@ class Conversations(Groups):
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         role: str | None = None,
-        continue_desk: bool = False,
         forward: list[str] | None = None,
         access: str | None = None,
     ) -> TaskStart:
         role = normalize_role(role)
         declared = normalize_access(access)
-        if continue_desk and (request.session_id is not None or conversation_id is not None):
-            raise ValueError(
-                "continue_desk=true cannot be combined with session_id or conversation_id"
-            )
         manager_session = self._manager_session(manager_session_id)
-        if continue_desk and manager_session is None:
-            raise ValueError("continue_desk=true needs a manager_session_id to find the desk")
         forwarded = self._resolve_forwards(forward, manager_session)
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
-        resumed = False
-        if continue_desk and manager_session is not None:
-            recent = self._recent_task_thread(request, manager_session, role)
-            if recent is not None:
-                if recent.status == "running" or recent.id in self.running_tasks:
-                    raise ValueError(
-                        "This desk's most recent private thread is still running; wait for it, "
-                        "or omit continue_desk to start a new thread"
-                    )
-                request = replace(request, session_id=recent.session_id)
-                resumed = True
         self.manager.check_start(request)
+        self._check_capacity(1)
         if conversation_id:
             self.record(conversation_id)  # Reject missing history before creating startup metadata.
         if forwarded:
@@ -905,7 +869,7 @@ class Conversations(Groups):
             self.collectors.append(
                 asyncio.create_task(self._collect(record, task.id, invocation_id))
             )
-            return TaskStart(invocation_id, record.state.id, resumed, declared)
+            return TaskStart(invocation_id, record.state.id, declared)
         finally:
             try:
                 if not started:

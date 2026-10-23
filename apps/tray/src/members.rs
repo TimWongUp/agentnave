@@ -233,7 +233,7 @@ pub fn read(root: &Path) -> Result<Option<Value>, String> {
 }
 
 /// Replace `name` under `root` atomically: a unique sibling file, synced, then renamed.
-fn write_atomic(root: &Path, name: &str, document: &Value) -> Result<(), String> {
+pub(crate) fn write_atomic(root: &Path, name: &str, document: &Value) -> Result<(), String> {
     let write = || -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(root)?;
         // Dropping the temporary file cleans it up on failure, leaving the old file intact.

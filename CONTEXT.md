@@ -32,7 +32,16 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 工位（Desk）
 
-工作区内的常驻成员，身份为 `(provider, model, role)`；`role` 可选，由 boss 在 `start_agent` 与席位上传入，仅在同一 CLI 与模型需要分身时使用。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」。换 CLI、模型或角色即为另一工位，各自保留历史；工位在工作区内常驻。每次派发可声明访问等级 `read`／`write`，只记录并按最近一次显示；它是约定，不拒绝调用、不影响续接哪条线程，也不改变 CLI 原生权限。
+工作区内的一个子代理：一条 Provider 原生线程（私聊任务及其用 `session_id` 的续接），或会议节目中的一个席位。`role` 是 boss 传入的可选显示标签，不参与身份。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」，模型、角色与访问等级取最近一次。每次派发可声明访问等级 `read`／`write`，只记录并显示；它是约定，不拒绝调用，也不改变 CLI 原生权限。
+_Avoid_: 按 `(provider, model, role)` 合并的工位
+
+## 同时运行上限
+
+每个 AgentNave 服务同时运行的 CLI 进程数上限，私聊任务与会议席位合计；用户在 App 中设置（1–32，默认 8），存于数据根 `settings.json`。超出时新的任务或轮次被拒绝，并联轮按席位数计，串联轮计一个。办公室最多画出同样数量的工位。
+
+## 已优化
+
+办公室里没画出来的工位所在的组：运行中与待审的工位总是画出，其余按最近活动填满名额，剩下的工位只在「已优化」中以文字列出。
 
 ## 模式（Mode）
 
@@ -40,7 +49,7 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 私聊
 
-工位与 boss 的一对一调用，即单任务 `start_agent`，结果只回给 boss，要进入会议室须经转发。工位历史按 Provider 原生 session 分线程；私聊线程与会议席位线程相互独立。每次私聊默认开新线程；传 `continue_desk=true` 时续接该工位在同一 cwd 下最近的私聊线程。私聊默认不带任何工作区上下文。
+工位与 boss 的一对一调用，即单任务 `start_agent`，结果只回给 boss，要进入会议室须经转发。每次私聊默认开新线程，即一个新工位；传 `session_id` 续接原线程。私聊线程与会议席位相互独立。私聊默认不带任何工作区上下文。
 
 ## 转发（Forward）
 
@@ -56,7 +65,7 @@ boss 按消息 ID 把本工作区内已完成的消息传给目标工位或会�
 
 ## Provider Session
 
-Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` 传给新的 Invocation，以继续同一 Provider 对话；私聊省略它并传 `continue_desk=true` 时，由 AgentNave 续接该工位在同一 cwd 下最近的私聊线程。它不是 AgentNave 的持久会话，也不出现在 App 视图中。
+Provider 原生会话标识。Manager 可把完成结果返回的 `session_id` 传给新的 Invocation，以继续同一 Provider 对话，这也是私聊续接的唯一方式。它不是 AgentNave 的持久会话，也不出现在 App 视图中。
 
 ## Invocation Result
 
@@ -64,7 +73,7 @@ AgentNave 对 Provider 终态的归一化结果；`output` 只承载 Provider �
 
 ## Group / Round / Entry
 
-Group 是 Manager 显式创建的协作组，在 App 中称会议室：席位的回答不经 boss 转发、自动在席位间公开。席位是带原生工具的普通子代理，以 `(provider, model, role)` 对应工位；`seat id` 只是组内键。席位、条目与原生会话绑定保存为会话历史。Round 让一份有序名单中的席位各回答一次：`parallel` 同时运行且本轮互不可见，`serial` 依次运行且后席可见前席。Entry 是组内按序提交的记录：本轮共同任务 `task`、席位最终回答 `answer`、终态失败／受阻／取消的 `absent`、boss 转入的 `forward`，以及主持人发言 `host`。席位之间只共享 Entry，不共享推理或运行过程；除 `task` 外的 Entry 对席位都是数据，不是指令；组内已提交条目自动送达各席位，其他上下文只经转发进入。各自答、多轮各自答、轮流聊等用法由名单、顺序和私密指令组合。会议室里已提交的条目合称会议记录（旧称白板）。
+Group 是 Manager 显式创建的协作组，在 App 中称会议室：席位的回答不经 boss 转发、自动在席位间公开。席位是带原生工具的普通子代理，每个席位是一个工位；`seat id` 只是组内键。席位、条目与原生会话绑定保存为会话历史。Round 让一份有序名单中的席位各回答一次：`parallel` 同时运行且本轮互不可见，`serial` 依次运行且后席可见前席。Entry 是组内按序提交的记录：本轮共同任务 `task`、席位最终回答 `answer`、终态失败／受阻／取消的 `absent`、boss 转入的 `forward`，以及主持人发言 `host`。席位之间只共享 Entry，不共享推理或运行过程；除 `task` 外的 Entry 对席位都是数据，不是指令；组内已提交条目自动送达各席位，其他上下文只经转发进入。各自答、多轮各自答、轮流聊等用法由名单、顺序和私密指令组合。会议室里已提交的条目合称会议记录（旧称白板）。
 _Avoid_: 游戏引擎
 
 ## Invocation Snapshot

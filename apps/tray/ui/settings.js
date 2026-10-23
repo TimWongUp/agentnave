@@ -534,7 +534,50 @@ function setTab(tab) {
     $("pane-" + id).hidden = tab !== id;
   }
   if (tab === "hosts") loadStatus();
-  if (tab === "orchestration") loadRuleFiles();
+  if (tab === "orchestration") {
+    loadRuleFiles();
+    loadLimit();
+  }
+}
+
+// The running limit lives in settings.json, read by the service before each start.
+let limitDoc = null;
+async function loadLimit() {
+  try {
+    const response = await fetch("/app/settings", { cache: "no-store" });
+    if (!response.ok) throw new Error(`读取失败（${response.status}）`);
+    const data = await response.json();
+    limitDoc = data.settings;
+    $("max-running").value = String(data.settings.max_running);
+    if (data.error) showNotice(`${data.error}；保存会用当前值覆盖`, true);
+  } catch (error) {
+    showNotice(`无法读取同时运行上限：${error.message}`, true);
+  }
+}
+
+async function saveLimit() {
+  const value = Number($("max-running").value);
+  if (!Number.isInteger(value) || value < 1 || value > 32) {
+    showNotice("同时运行上限必须为 1–32 的整数", true);
+    return;
+  }
+  const button = $("save-limit");
+  button.disabled = true;
+  try {
+    const response = await fetch("/app/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+      body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || `保存失败（${response.status}）`);
+    limitDoc = { version: 1, max_running: value };
+    showNotice(`已保存：同时最多运行 ${value} 个`);
+  } catch (error) {
+    showNotice(`未能保存：${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // Orchestration preferences live in each host's own global rules; the App only opens them.
@@ -2131,6 +2174,7 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
 }, true);
 for (const tab of ["members", "avatars", "orchestration", "hosts"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
 $("copy-orchestration").addEventListener("click", copyOrchestration);
+$("save-limit").addEventListener("click", saveLimit);
 const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());

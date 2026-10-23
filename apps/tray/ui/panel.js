@@ -162,7 +162,8 @@ function updateBlock(rec, m) {
   const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
-  setText(rec.count, `· ${desks.length} 工位${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
+  const optimized = m.optimized?.count || 0;
+  setText(rec.count, `· ${desks.length} 工位${optimized ? ` · 已优化 ${optimized}` : ""}${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
   setText(rec.time, relTime(m.updated));
   setAttr(rec.time, "title", fullTime(m.updated));
 

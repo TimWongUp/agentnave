@@ -817,7 +817,7 @@ function renderOffice(c, ctx, n, newGroup) {
   reconcile(el.rooms, roomNodes);
 
   for (const key of state.deskRecs.keys())
-    if (!ctx.desks.has(key)) state.deskRecs.delete(key);
+    if (!ctx.drawn.has(key)) state.deskRecs.delete(key);
   const deskNodes = c.desks.map((d) => {
     let rec = state.deskRecs.get(d.key);
     if (!rec) state.deskRecs.set(d.key, (rec = createDesk(d)));
@@ -829,14 +829,64 @@ function renderOffice(c, ctx, n, newGroup) {
       h(
         "div.zone-empty",
         {},
-        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里并一直保留。",
+        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时运行上限的空闲工位归入「已优化」。",
       ),
     );
+  if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
   renderSides(state.bossRec, c, ctx);
   layoutRooms();
   walk(!newGroup && state.ready);
+}
+
+// Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
+function optimizedNode(opt, ctx) {
+  const listed = opt.desks || [];
+  const key = JSON.stringify([state.optimizedOpen, opt.count, listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
+  let node = state.optimizedEl;
+  if (node && node.dataset.key === key) return node;
+  const toggle = h(
+    "button.optimized-h",
+    { type: "button", "aria-expanded": String(Boolean(state.optimizedOpen)) },
+    "已优化",
+    h("b", {}, `${opt.count} 人`),
+    h("span.r", {}, state.optimizedOpen ? "收起" : "展开"),
+  );
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.optimizedOpen = !state.optimizedOpen;
+    if (state.chat) renderAll(state.chat);
+  });
+  const rows = [];
+  if (state.optimizedOpen) {
+    for (const d of listed) {
+      const s = deskMood(d, ctx);
+      const row = h(
+        "button.td-row",
+        { type: "button", title: `${d.label}\n${s.word}` },
+        h("span.td-heads", {}, ART.head(deskChar(d))),
+        h("span.td-main", {}, h("span.td-name", {}, d.label), h("span.td-sub", {}, s.word)),
+        h("span.td-time", {}, relTime(d.last_active)),
+      );
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openScope({ kind: "desk", key: d.key }, row);
+      });
+      rows.push(row);
+    }
+    if (opt.count > listed.length)
+      rows.push(h("div.td-more", {}, `另有 ${opt.count - listed.length} 个更早的工位未列出`));
+  }
+  node = h(
+    "div.optimized",
+    { "aria-label": `已优化的工位，${opt.count} 人` },
+    toggle,
+    rows.length ? h("div.optimized-rows", {}, rows) : null,
+  );
+  node.dataset.key = key;
+  state.optimizedEl = node;
+  return node;
 }
 
 // A desk that leaves for a meeting walks to its seat (and back): a copy of its figure travels
@@ -1608,7 +1658,9 @@ function contextOf(c) {
   return {
     c,
     seatDesk,
-    desks: new Map(c.desks.map((d) => [d.key, d])),
+    // Drawn desks plus the listed "optimized" ones, so their messages and links still resolve.
+    desks: new Map([...c.desks, ...(c.optimized?.desks || [])].map((d) => [d.key, d])),
+    drawn: new Set(c.desks.map((d) => d.key)),
     rooms: new Map(c.rooms.map((r) => [r.id, r])),
     fullRooms: new Set(c.rooms.filter(fullRoom).map((r) => r.id)),
     sources: new Set(

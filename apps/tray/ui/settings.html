@@ -111,11 +111,23 @@
     <p class="guidance">AgentNave 只提供调用方式，不规定主控怎么分工。想让主控按固定方式编排时，把偏好写进宿主的全局规则文件，例如何时开会、谁做评审、分歧讨论几轮。AgentNave 不会替你写入这些文件。</p>
     <div class="updates-panel">
       <div class="updates-card">
+        <h2>同时运行上限</h2>
+        <p class="guidance">每个宿主连接最多同时运行几个 CLI（私聊任务与会议席位合计），超出时新的派发会被拒绝，由主控等待后再派。办公室也最多画这么多个工位，其余空闲工位归入「已优化」。</p>
+        <div class="limit-row">
+          <label for="max-running">上限</label>
+          <input id="max-running" type="number" min="1" max="32" step="1" value="8" inputmode="numeric">
+          <span class="guidance">1–32，默认 8</span>
+          <button id="save-limit" type="button">保存</button>
+        </div>
+      </div>
+    </div>
+    <div class="updates-panel">
+      <div class="updates-card">
         <h2>推荐写法</h2>
         <p class="guidance">可以按需删改后再贴入规则文件。</p>
         <pre id="orchestration-template" class="orchestration-template">## AgentNave 编排偏好
 - 探索、规划和评审交给只读工位，实现交给可写工位，派发时用 access 标明（只是标记，实际权限看 CLI 原生设置）；评审不用实现工位本身，尽量换一个模型。
-- 实现工位按模块分角色，跨阶段用 continue_desk=true 续接；探索结论和已定契约用 forward 转给它，不让它重新探索。
+- 实现工位按模块分角色，跨阶段传上次的 session_id 续接同一会话；探索结论和已定契约用 forward 转给它，不让它重新探索。
 - 并行实现各用独立 worktree 或互不重叠的文件，由主控合并与验收。
 - 方案取舍或分歧进会议室讨论：会议只出决定，不在会上改代码；分歧收敛默认最多 3 轮，会后把决定转给实现工位。
 - 每个结果都由主控验收，succeeded 不等于完成；失败或取消由主控决定是否重派。</pre>

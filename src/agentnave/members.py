@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -28,6 +29,17 @@ class ProviderExcludedError(ValueError):
 
 class AdapterOptionsError(ValueError):
     """Adapter option validation rejected the invocation options."""
+
+
+class SettingsFileError(ValueError):
+    """The App-owned settings.json cannot be read or validated."""
+
+
+class CapacityError(ValueError):
+    """Starting would exceed the App's limit on concurrently running CLI processes."""
+
+
+DEFAULT_MAX_RUNNING = 8
 
 
 def validate_provider_options(request: InvocationRequest) -> None:
@@ -180,6 +192,32 @@ class MemberFile(StrictModel):
 def check_excluded(mode: Mode, provider: str, excluded: frozenset[str]) -> None:
     if mode == "task" and provider in excluded:
         raise ProviderExcludedError(f"Provider '{provider}' is excluded by this host")
+
+
+def read_max_running() -> int:
+    """The App's limit on CLI runs (tasks plus seats) this server keeps active at once."""
+    root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+    try:
+        document = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return DEFAULT_MAX_RUNNING
+    except (OSError, ValueError) as exc:
+        raise SettingsFileError(
+            f"Unable to read settings.json: {exc}. Repair it in the AgentNave App."
+        ) from exc
+    settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
+    value = settings.get("max_running", DEFAULT_MAX_RUNNING)
+    if (
+        settings.get("version") != 1
+        or not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 1 <= value <= 32
+    ):
+        raise SettingsFileError(
+            "Invalid settings.json: needs version 1 and max_running between 1 and 32. "
+            "Repair it in the AgentNave App."
+        )
+    return value
 
 
 def read_members() -> MemberFile | None:

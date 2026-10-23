@@ -140,7 +140,8 @@ type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 
 /// What identifies a route answer: each snapshot's view, whether the data root exists, and
 /// the reuse window.
-type RouteKey = (Vec<crate::stage::SourceKey>, bool, u64);
+// Snapshots, whether the data root exists, the reuse window and the running limit.
+type RouteKey = (Vec<crate::stage::SourceKey>, bool, u64, usize);
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
 type RouteAnswer = (RouteKey, Vec<Arc<Value>>, Response);
@@ -217,6 +218,27 @@ impl Reader {
                 return Response::error(400, &error);
             }
             return match crate::members::save(&self.root, &payload) {
+                Ok(()) => Response::json(&json!({"saved": true})),
+                Err(error) => Response::error(500, &error),
+            };
+        }
+        if path == "/app/settings" {
+            if method == "GET" {
+                return Response::json(&crate::settings::state(&self.root));
+            }
+            if method != "POST" {
+                return Response::error(405, "此路由只接受 GET 或 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::settings::validate(&payload) {
+                return Response::error(400, &error);
+            }
+            return match crate::settings::save(&self.root, &payload) {
                 Ok(()) => Response::json(&json!({"saved": true})),
                 Err(error) => Response::error(500, &error),
             };
@@ -595,10 +617,12 @@ impl Reader {
             .unwrap_or_default()
             .as_secs()
             / ROUTE_REUSE.as_secs();
+        let limit = crate::settings::max_running(&self.root) as usize;
         let key = (
             snapshots.iter().map(crate::stage::source_key).collect(),
             self.root.is_dir(),
             window,
+            limit,
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -607,7 +631,7 @@ impl Reader {
             return response.clone();
         }
         let views = snapshots.iter().map(|s| s.view.clone()).collect();
-        let response = crate::stage::respond(path, snapshots, key.1);
+        let response = crate::stage::respond(path, snapshots, key.1, limit);
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
             routes.clear();
@@ -1135,12 +1159,12 @@ mod tests {
         let typing_a = |messages: &[Value]| {
             messages
                 .iter()
-                .find(|m| m["id"] == "typing:codex|m|:a:")
+                .find(|m| m["id"] == "typing:task:a:t-a:a:")
                 .cloned()
                 .unwrap()
         };
         assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 2);
-        assert!(messages.iter().any(|m| m["id"] == "typing:codex|m|:b:"));
+        assert!(messages.iter().any(|m| m["id"] == "typing:task:b:t-b:b:"));
         assert_eq!(typing_a(messages)["text"], "two\nthree\nfour\n**five**");
         a["director"]["tasks"][0]["output"] = json!("new tail");
         write(
@@ -1467,6 +1491,27 @@ mod tests {
         ] {
             assert_eq!(reader.request("GET", path, None, b"").status, 404, "{path}");
         }
+        // Settings: GET only reads; a save needs POST, the action header and a valid document.
+        let settings = reader.request("GET", "/app/settings", None, b"");
+        assert_eq!(settings.status, 200);
+        let good = br#"{"version": 1, "max_running": 4}"#;
+        assert_eq!(
+            reader.request("POST", "/app/settings", None, good).status,
+            403
+        );
+        assert_eq!(
+            reader
+                .request("PUT", "/app/settings", Some("1"), good)
+                .status,
+            405
+        );
+        let bad = br#"{"version": 1, "max_running": 99}"#;
+        assert_eq!(
+            reader
+                .request("POST", "/app/settings", Some("1"), bad)
+                .status,
+            400
+        );
         assert!(!root.exists());
         fs::create_dir(&root).unwrap();
         assert_eq!(state(&reader, "/app/stage")["empty"], "quiet");
@@ -1811,10 +1856,21 @@ mod tests {
         let mut claude = task_snapshot("c1", "succeeded", "2026-10-15T05:00:00Z");
         claude["director"]["tasks"][0]["provider"] = json!("claude");
         save(root, &claude);
+        // Another session with the same model, CLI and role is another desk.
+        let mut twin = task_snapshot("r4", "succeeded", "2026-10-15T06:00:00Z");
+        twin["director"]["tasks"][0]["role"] = json!("reviewer");
+        twin["director"]["tasks"][0]["thread"] = json!("native-3");
+        save(root, &twin);
+        // Resuming a thread under a new role relabels its desk.
+        let mut relabel = task_snapshot("r5", "succeeded", "2026-10-15T07:00:00Z");
+        relabel["director"]["tasks"][0]["role"] = json!("reviewer-b");
+        relabel["director"]["tasks"][0]["model"] = json!("m2");
+        relabel["director"]["tasks"][0]["thread"] = json!("native-2");
+        save(root, &relabel);
         let reader = Reader::new(root.to_path_buf());
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
         let desks = chat["desks"].as_array().unwrap();
-        assert_eq!(desks.len(), 4);
+        assert_eq!(desks.len(), 5);
         let keys: Vec<_> = desks
             .iter()
             .map(|desk| desk["key"].as_str().unwrap().to_owned())
@@ -1822,26 +1878,32 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "codex|m|reviewer",
-                "codex|m|author",
-                "codex|m2|reviewer",
-                "claude|m|"
+                "thread:native-1",
+                "task:a1:t-a1",
+                "thread:native-2",
+                "task:c1:t-c1",
+                "thread:native-3"
             ]
         );
-        assert_eq!(desks[0]["label"], "m · Codex · reviewer");
+        assert_eq!(desks[0]["label"], "m · Codex · reviewer #1");
+        assert_eq!(desks[4]["label"], "m · Codex · reviewer #2");
+        assert_eq!(desks[4]["handle"], "@m·Codex·reviewer #2");
+        assert_eq!(desks[0]["kind"], "task");
         assert_eq!(desks[0]["role"], "reviewer");
+        assert_eq!(desks[2]["role"], "reviewer-b");
+        assert_eq!(desks[2]["private"]["tasks"], 2);
         assert_eq!(desks[0]["access"], "write");
         assert_eq!(desks[1]["access"], Value::Null);
         assert_eq!(desks[0]["model"], "m");
         assert_eq!(desks[0]["first_seen"], "2026-10-15T01:00:00.000000Z");
         assert_eq!(desks[0]["last_active"], "2026-10-15T04:00:00.000000Z");
-        // The same native session stays one persistent desk thread.
-        assert_eq!(desks[0]["private"]["threads"], 1);
+        // The same native session stays one desk across its calls.
+        assert_eq!(desks[0]["private"]["tasks"], 2);
         assert_eq!(desks[0]["private"]["running"], 0);
         assert_eq!(desks[0]["status"], "idle");
         assert_eq!(desks[0]["private_allowed"], true);
         assert_eq!(desks[1]["status"], "running");
-        assert_eq!(desks[1]["private"]["threads"], 1); // no session id counts separately
+        assert_eq!(desks[1]["private"]["running"], 1); // no session yet: its own desk
         assert_eq!(desks[3]["private_allowed"], false); // same as the workspace host's CLI
         assert_eq!(desks[3]["role"], Value::Null);
         assert_eq!(desks[3]["label"], "m · Claude Code");
@@ -1870,8 +1932,8 @@ mod tests {
         assert_eq!(
             rooms[0]["seats"],
             json!([
-                {"seat": "a", "desk": "claude|m|reviewer", "handle": "@m·Claude Code·reviewer"},
-                {"seat": "b", "desk": "codex|m|", "handle": "@m·Codex"}
+                {"seat": "a", "desk": "seat:older:a", "handle": "@m·Claude Code·reviewer #1"},
+                {"seat": "b", "desk": "seat:older:b", "handle": "@m·Codex #1"}
             ])
         );
         assert_eq!(rooms[1]["id"], "newer");
@@ -1880,13 +1942,18 @@ mod tests {
         let desks = chat["desks"].as_array().unwrap();
         let reviewer = desks
             .iter()
-            .find(|desk| desk["key"] == "claude|m|reviewer")
+            .find(|desk| desk["key"] == "seat:newer:a")
             .unwrap();
+        assert_eq!(reviewer["kind"], "seat");
+        assert_eq!(reviewer["room"], "newer");
         assert_eq!(
             reviewer["meeting"],
             json!({"room": "newer", "seat": "a", "status": "review"})
         );
-        let pending = desks.iter().find(|desk| desk["key"] == "codex|m|").unwrap();
+        let pending = desks
+            .iter()
+            .find(|desk| desk["key"] == "seat:newer:b")
+            .unwrap();
         assert_eq!(pending["status"], "pending");
         assert_eq!(
             pending["meeting"],
@@ -1927,15 +1994,15 @@ mod tests {
         assert_eq!(prompt["message_id"], "task:t:t-task");
         assert_eq!(
             prompt["thread"],
-            json!({"kind": "desk", "key": "codex|m|reviewer"})
+            json!({"kind": "desk", "key": "thread:native-1"})
         );
-        assert_eq!(prompt["desk"], "codex|m|reviewer");
+        assert_eq!(prompt["desk"], "thread:native-1");
         assert_eq!(prompt["forward"], Value::Null);
         let entry = by_id("show:entry:0");
         assert_eq!(entry["visibility"], "public");
         assert_eq!(entry["message_id"], "show:e:0");
         assert_eq!(entry["thread"], json!({"kind": "room", "id": "show"}));
-        assert_eq!(entry["desk"], "claude|m|reviewer");
+        assert_eq!(entry["desk"], "seat:show:a");
         let forward = by_id("show:entry:1");
         assert_eq!(forward["kind"], "forward");
         assert_eq!(forward["visibility"], "public");
@@ -1949,13 +2016,13 @@ mod tests {
         let absent = by_id("show:entry:2");
         assert_eq!(absent["visibility"], "public");
         assert_eq!(absent["message_id"], "show:e:2");
-        assert_eq!(absent["desk"], "codex|m|");
+        assert_eq!(absent["desk"], "seat:show:b");
         let private = by_id("show:round:1:a:private");
         assert_eq!(private["visibility"], "private");
         assert_eq!(private["kept_private"], true);
         assert_eq!(private["message_id"], Value::Null);
         let typing = messages.iter().find(|m| m["kind"] == "typing").unwrap();
-        assert_eq!(typing["desk"], "claude|m|reviewer");
+        assert_eq!(typing["desk"], "seat:show:a");
         assert_eq!(typing["thread"], json!({"kind": "room", "id": "show"}));
         assert_eq!(typing["message_id"], Value::Null);
     }
@@ -1980,11 +2047,11 @@ mod tests {
         let reader = Reader::new(root.to_path_buf());
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
         let desks = chat["desks"].as_array().unwrap();
-        assert!(desks.iter().any(|desk| desk["key"] == "codex|m|"));
+        assert!(desks.iter().any(|desk| desk["key"] == "task:old:t-old"));
         assert!(
             desks
                 .iter()
-                .any(|desk| desk["key"] == "claude|m|" && desk["role"].is_null())
+                .any(|desk| desk["key"] == "seat:old-show:a" && desk["role"].is_null())
         );
         let rooms = chat["rooms"].as_array().unwrap();
         assert_eq!(rooms.len(), 1);
@@ -1998,7 +2065,7 @@ mod tests {
         assert_eq!(unknown["message_id"], Value::Null);
         assert_eq!(unknown["thread"], json!({"kind": "room", "id": "old-show"}));
         assert_eq!(unknown["visibility"], "public");
-        assert_eq!(unknown["desk"], "claude|m|");
+        assert_eq!(unknown["desk"], "seat:old-show:a");
         let prompt = chat["messages"]
             .as_array()
             .unwrap()
@@ -2006,7 +2073,10 @@ mod tests {
             .find(|m| m["kind"] == "prompt")
             .unwrap();
         assert_eq!(prompt["message_id"], Value::Null);
-        assert_eq!(prompt["thread"], json!({"kind": "desk", "key": "codex|m|"}));
+        assert_eq!(
+            prompt["thread"],
+            json!({"kind": "desk", "key": "task:old:t-old"})
+        );
     }
     #[test]
     fn office_resources_are_embedded_cached_and_reject_traversal() {
@@ -2053,8 +2123,8 @@ mod tests {
         assert_eq!(
             prompt["answering"],
             json!([
-                "@claude-opus-5-5·Claude Code·reviewer·席①",
-                "@claude-opus-5-5·Claude Code·reviewer·席②"
+                "@claude-opus-5-5·Claude Code·reviewer",
+                "@默认模型·Claude Code·reviewer"
             ])
         );
         let instruction = messages
@@ -2062,7 +2132,7 @@ mod tests {
             .find(|m| m["kind"] == "instruction")
             .unwrap();
         assert_eq!(instruction["visibility"], "private");
-        assert_eq!(instruction["to"][0]["key"], "claude||reviewer");
+        assert_eq!(instruction["to"][0]["key"], "seat:show:a");
         assert_eq!(instruction["to"][0]["handle"], prompt["answering"][0]);
         let answer = messages.iter().find(|m| m["status"] == "review").unwrap();
         assert_eq!(answer["text"], "answer");
@@ -2073,7 +2143,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|d| d["key"] == "claude||reviewer")
+            .find(|d| d["key"] == "seat:show:a")
             .unwrap();
         assert_eq!(desk["display_model"], "claude-opus-5-5");
         assert_eq!(desk["model_source"], "native");
@@ -2119,22 +2189,35 @@ mod tests {
         let reader = Reader::new(dir.path().to_path_buf());
         assert_eq!(reader.overview().count("running"), 3);
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let desk = chat["desks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|d| d["key"] == "claude|m|reviewer")
-            .unwrap();
-        assert_eq!(desk["activities"].as_array().unwrap().len(), 3);
-        let first_meeting = desk["activities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|a| a["kind"] == "meeting")
-            .unwrap();
-        assert_eq!(desk["meeting"]["room"], first_meeting["room"]);
-        assert_eq!(desk["model_source"], "requested");
-        assert_eq!(desk["display_model"], "m");
+        let desks = chat["desks"].as_array().unwrap();
+        let desk = |key: &str| desks.iter().find(|d| d["key"] == key).unwrap();
+        // Each concurrent call is its own session, so its own desk: none hides another.
+        for room in ["one", "two"] {
+            let seat = desk(&format!("seat:{room}:a"));
+            assert_eq!(seat["activities"].as_array().unwrap().len(), 1);
+            assert_eq!(seat["meeting"]["room"], room);
+        }
+        let private = desk("task:private:t-private");
+        assert_eq!(private["activities"][0]["kind"], "private");
+        assert_eq!(private["model_source"], "requested");
+        assert_eq!(private["display_model"], "m");
+        let mut labels: Vec<_> = desks.iter().filter_map(|d| d["label"].as_str()).collect();
+        labels.sort();
+        assert_eq!(
+            labels,
+            [
+                "m · Claude Code · reviewer #1",
+                "m · Claude Code · reviewer #2",
+                "m · Claude Code · reviewer #3",
+                "m · Codex #1",
+                "m · Codex #2"
+            ]
+        );
+        // Running and reviewed desks are drawn even past the limit; idle seats fold away.
+        crate::settings::save(dir.path(), &json!({"version": 1, "max_running": 1})).unwrap();
+        let limited = state(&reader, &format!("/app/chats/{MANAGER}"));
+        assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
+        assert_eq!(limited["optimized"]["count"], 2);
         assert_eq!(chat["threads"].as_array().unwrap().len(), 3);
         assert_eq!(
             state(&reader, "/app/stage")["counts"],
@@ -2162,7 +2245,20 @@ mod tests {
         let chat = state(&reader, &path);
         assert_eq!(chat["omitted"], 2);
         assert_eq!(chat["messages"].as_array().unwrap().len(), 300);
-        assert_eq!(chat["threads"][0]["count"], 302);
+        // Calls without a native session are separate desks of two messages each.
+        assert_eq!(chat["threads"].as_array().unwrap().len(), 151);
+        assert_eq!(chat["threads"][0]["count"], 2);
+        // The office draws as many desks as the running limit; the rest are "optimized".
+        assert_eq!(chat["desks"].as_array().unwrap().len(), 8);
+        assert_eq!(chat["optimized"]["count"], 143);
+        assert_eq!(chat["optimized"]["desks"].as_array().unwrap().len(), 143);
+        crate::settings::save(dir.path(), &json!({"version": 1, "max_running": 3})).unwrap();
+        let limited = state(&reader, &path);
+        assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
+        assert_eq!(limited["optimized"]["count"], 148);
+        let stage = state(&reader, "/app/stage");
+        assert_eq!(stage["managers"][0]["desks"].as_array().unwrap().len(), 3);
+        assert_eq!(stage["managers"][0]["optimized"], json!({"count": 148}));
         assert_eq!(chat["messages"][1]["reply_to"], chat["messages"][0]["id"]);
         let focused = state(&reader, &format!("{path}/focus/many"));
         assert_eq!(focused["omitted"], 0);

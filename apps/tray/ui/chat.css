@@ -221,6 +221,12 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 
 /* ---- open desks ---- */
 .desks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
+/* desks past the running limit: one folded row, a text list when opened */
+.optimized { grid-column: 1 / -1; border-radius: 12px; border: 1.5px dashed var(--line-strong); padding: 4px 6px; }
+.optimized-h { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 4px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.optimized-h b { font-weight: 650; color: var(--faint); }
+.optimized-h .r { margin-left: auto; font-weight: 500; color: var(--faint); }
+.optimized-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 6 + 10px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 26px 8px 9px; text-align: center; cursor: pointer; transition: background 0.2s; }
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }

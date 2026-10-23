@@ -32,12 +32,13 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 工位、续接与转发
 
-工作区里的 CLI 以工位 `(provider, model, role)` 常驻，App 按工位合并显示。`role` 按任务目的命名：目的不同就用不同 `role`，同一 CLI 做同类工作也一样，例如并行评审两个 PR 用“评审 #121”“评审 #122”，不要都叫“评审”。同一目的的后续复核或返工沿用原 `role` 并续接。只派一件事时可以省略。
+每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议节目的每个席位也是一个工位。`role` 是可选的显示标签，不影响身份。
 
-- 续接：`start_agent` 默认开新线程。接着同一工位在同一 `cwd` 下最近的私聊线程传 `continue_desk=true`（需要 `manager_session_id`，不与 `session_id`、`conversation_id` 同用），回执 `resumed` 标明是否续上；换目录不续接旧目录的线程。指定原生会话传已结束调用的 `session_id`，不能拿 `invocation_id` 当会话 ID。
+- 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
+- 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。
-- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，不拒绝调用、不影响续接哪条线程，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。
+- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，不拒绝调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。
 
 ## 选择调用方式
 

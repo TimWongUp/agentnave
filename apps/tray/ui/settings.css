@@ -153,6 +153,9 @@
 /* Version & Updates panel */
 .updates-panel { max-width: 980px; margin: 10px 0 28px; }
 .updates-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
+.limit-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.limit-row input { width: 72px; }
+.limit-row .guidance { margin: 0; }
 .updates-card h2 { font-size: 16px; font-weight: 600; margin: 0 0 18px; }
 .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
 .status-item { display: flex; flex-direction: column; gap: 6px; }

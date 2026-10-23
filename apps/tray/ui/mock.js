@@ -399,7 +399,7 @@ All checks passed!
       .slice(0, 6)
       .map(({ g, members, status, updated }) => ({
         group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status, updated, members,
-        desks: desksOf(g, w), rooms: roomsOf(g, w),
+        ...limited(desksOf(g, w), true), rooms: roomsOf(g, w),
       }));
     return {
       version: 1,
@@ -481,6 +481,18 @@ All checks passed!
     return [...out, ...typing].slice(-300);
   }
 
+  // The running limit caps drawn desks (?limit=N previews "已优化"); busy desks always show.
+  function limited(all, countOnly = false) {
+    const limit = Number(q.get("limit") || 8);
+    const busy = (d) => d.status === "running";
+    const order = [...all].sort((a, b) => Number(busy(b)) - Number(busy(a)) || Date.parse(b.last_active) - Date.parse(a.last_active));
+    const keep = new Set(order.slice(0, Math.max(limit, all.filter(busy).length)).map((d) => d.key));
+    const rest = order.filter((d) => !keep.has(d.key));
+    return {
+      desks: all.filter((d) => keep.has(d.key)),
+      optimized: countOnly ? { count: rest.length } : { count: rest.length, desks: rest },
+    };
+  }
   function desksOf(g, w) {
     const hostCli = g.host === "workbuddy" ? "codebuddy" : g.host;
     const map = new Map();
@@ -506,7 +518,8 @@ All checks passed!
         first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
         status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
         private_allowed: d.sp.provider !== hostCli,
-        private: { threads: d.threads, running: d.running },
+        kind: "task", room: null,
+        private: { tasks: d.threads, running: d.running },
         meeting: d.meeting ? { room: d.meeting.room, seat: d.meeting.seat, status: d.meeting.status } : { room: null, seat: null, status: null },
       }));
   }
@@ -559,7 +572,7 @@ All checks passed!
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
         .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
       members,
-      desks: desksOf(g, w),
+      ...limited(desksOf(g, w)),
       rooms: roomsOf(g, w),
       messages: messagesOf(g, w),
     };
