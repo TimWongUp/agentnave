@@ -417,9 +417,16 @@ class Relay:
                     result = _object(message.get("result"))
                     if method in ("initialize", "server/discover") and result:
                         self.runtime_version = _version(result)
-                    elif result and (stamped := _version(result)):
+                    elif (
+                        method is not None
+                        and child is self.child
+                        and result
+                        and (stamped := _version(result))
+                    ):
                         # 2026-07-28 results carry serverInfo too, so hosts that never send
-                        # server/discover still show which runtime answered.
+                        # server/discover still show which runtime answered. Only the active
+                        # child's answer to a host request counts: a swap candidate's late reply
+                        # to a timed-out probe does not.
                         self.runtime_version = stamped
                     if method == "initialize" and result:
                         capabilities = _object(result.get("capabilities")) or {}
