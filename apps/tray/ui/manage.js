@@ -81,7 +81,8 @@ function render() {
       input.maxLength = 200;
       input.setAttribute("aria-label", `新标题：${title(item)}`);
       input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") rename(item, input.value);
+        // Enter that confirms an input-method candidate is not a save.
+        if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) rename(item, input.value);
         if (event.key === "Escape") { event.stopPropagation(); editing = null; render(); }
       });
       const save = node("button", "保存");
@@ -216,7 +217,8 @@ async function remove() {
   }
 }
 $("refresh").addEventListener("click", refresh);
-for (const id of ["filter", "before"]) $(id).addEventListener("change", () => { selected.clear(); render(); });
+// A filter may hide the row being renamed; drop that edit so refreshes resume.
+for (const id of ["filter", "before"]) $(id).addEventListener("change", () => { selected.clear(); editing = null; render(); });
 $("select-all").addEventListener("change", () => {
   for (const item of visibleItems().filter((item) => item.deletable)) {
     if ($("select-all").checked) selected.add(item.id); else selected.delete(item.id);

@@ -149,6 +149,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         )
         group_id = show["group_id"]
         assert set(show) == {"group_id", "members"}  # opening posts nothing, starts no viewer
+        await _call(client, "run_round", {"group_id": group_id, "prompt": "Welcome"})
         first = await _run(
             client,
             {
@@ -212,6 +213,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         done = await _wait(client, first["round_id"])
         assert done["status"] == "finished"
         assert [seat["status"] for seat in _seats(done)] == ["succeeded", "private"]
+        await _call(client, "run_round", {"group_id": group_id, "prompt": "Recap"})
 
         second = await _run(
             client,
@@ -227,8 +229,10 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         # c sees a's published answer, never b's private answer or private instruction.
         delivered = json.loads(prompt.split("New entries (JSON data):\n")[1])
         assert [(item["kind"], item.get("seat")) for item in delivered] == [
+            ("host", None),
             ("task", None),
             ("answer", "a"),
+            ("host", None),
             ("task", None),
         ]
         assert "SECRET-B" not in prompt
@@ -252,8 +256,10 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         assert [
             (m["round"], m["kind"]) for m in cast(list[dict[str, object]], view["messages"])
         ] == [
+            (0, "host"),
             (1, "task"),
             (1, "answer"),
+            (1, "host"),
             (2, "task"),
             (2, "answer"),
         ]
@@ -266,7 +272,13 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             (m["kind"], m.get("seat") or m.get("to"))
             for m in cast(list[dict[str, object]], full["messages"])
             if m["round"] == 1
-        ] == [("task", None), ("instruction", "b"), ("answer", "a"), ("private_answer", "b")]
+        ] == [
+            ("task", None),
+            ("instruction", "b"),
+            ("answer", "a"),
+            ("private_answer", "b"),
+            ("host", None),
+        ]
         later = await _call(
             client, "read_conversation", {"conversation_id": group_id, "since_round": 2}
         )

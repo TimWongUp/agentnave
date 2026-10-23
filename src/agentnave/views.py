@@ -248,7 +248,7 @@ def _director(
 
 
 def timeline(
-    state: Conversation, *, since_round: int = 1, include_private: bool = False
+    state: Conversation, *, since_round: int = 0, include_private: bool = False
 ) -> dict[str, object]:
     """A conversation as the manager reads it back: final messages in order, like the App.
 
@@ -306,12 +306,14 @@ def timeline(
             "order": latest.order,
             "status": "review" if latest.pending_review() else latest.status,
         }
-    extra: dict[int, tuple[list[dict[str, object]], list[dict[str, object]]]] = {}
+    # Per round: private instructions, answers outside the entries, and the seat order.
+    extra: dict[int, tuple[list[dict[str, object]], list[dict[str, object]], list[str]]] = {}
     for round_ in state.rounds:
         if round_.number < since_round:
             continue
-        before, after = extra.setdefault(round_.number, ([], []))
+        before, answers, order = extra.setdefault(round_.number, ([], [], []))
         for seat in round_.seats:
+            order.append(seat.seat_id)
             if include_private and seat.instruction:
                 before.append(
                     {
@@ -322,7 +324,7 @@ def timeline(
                     }
                 )
             if seat.review == "pending" or (include_private and seat.review == "private"):
-                after.append(
+                answers.append(
                     {
                         "round": round_.number,
                         "kind": f"{seat.review}_answer",
@@ -333,18 +335,22 @@ def timeline(
     messages: list[dict[str, object]] = []
     numbers = sorted({entry.round for entry in state.entries} | set(extra))
     for number in (n for n in numbers if n >= since_round):
-        before, after = extra.get(number, ([], []))
-        entries = [
-            (index, entry) for index, entry in enumerate(state.entries) if entry.round == number
-        ]
-        tasks = [item for item in entries if item[1].kind == "task"]
-        for index, entry in entries:
-            messages.append(_message(state.id, index, entry))
-            if tasks and (index, entry) == tasks[0]:
-                messages.extend(before)
-        if not tasks:
-            messages.extend(before)
-        messages.extend(after)
+        before, answers, order = extra.get(number, ([], [], []))
+        # A round number holds forwards and the task, then the answers, then host remarks
+        # posted after the round (round 0 holds those posted before the first round).
+        head: list[dict[str, object]] = []
+        tail: list[dict[str, object]] = []
+        for index, entry in enumerate(state.entries):
+            if entry.round != number:
+                continue
+            message = _message(state.id, index, entry)
+            if entry.kind in ("answer", "absent"):
+                answers.append(message)
+            else:
+                (tail if entry.kind == "host" else head).append(message)
+        position = {seat_id: index for index, seat_id in enumerate(order)}
+        answers.sort(key=lambda message: position.get(str(message.get("seat")), len(order)))
+        messages.extend([*head, *before, *answers, *tail])
     data["messages"] = messages
     return data
 

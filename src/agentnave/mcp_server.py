@@ -1361,8 +1361,13 @@ async def decide_answers(
 async def read_conversation(
     conversation_id: str,
     since_round: Annotated[
-        int, Field(ge=1, description="Shows: only messages from this round on.")
-    ] = 1,
+        int,
+        Field(
+            ge=0,
+            description="Shows: only messages from this round on; 0 includes host remarks "
+            "posted before the first round.",
+        ),
+    ] = 0,
     include_private: Annotated[
         bool,
         Field(
