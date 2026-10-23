@@ -32,7 +32,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 工位、续接与转发
 
-工作区里的 CLI 以工位 `(provider, model, role)` 常驻。`role` 可选，仅在同一 CLI 与模型需要分身（如“评审”“实现”）时起名。
+工作区里的 CLI 以工位 `(provider, model, role)` 常驻，App 按工位合并显示。`role` 按任务目的命名：目的不同就用不同 `role`，同一 CLI 做同类工作也一样，例如并行评审两个 PR 用“评审 #121”“评审 #122”，不要都叫“评审”。同一目的的后续复核或返工沿用原 `role` 并续接。只派一件事时可以省略。
 
 - 续接：`start_agent` 默认开新线程。接着同一工位在同一 `cwd` 下最近的私聊线程传 `continue_desk=true`（需要 `manager_session_id`，不与 `session_id`、`conversation_id` 同用），回执 `resumed` 标明是否续上；换目录不续接旧目录的线程。指定原生会话传已结束调用的 `session_id`，不能拿 `invocation_id` 当会话 ID。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
