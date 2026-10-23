@@ -575,15 +575,21 @@ The MCP surface is consolidated into eight tools: `start_agent`, `wait`, `cancel
 `cancel` take task `invocation_id`s and round `round_id`s; `run_round` also opens shows and posts
 host remarks; `list_members(provider=...)` replaces `describe_provider`; `update_conversation` is
 removed and conversations are renamed in the App. Review decisions are `publish` or `private`
-(saved `discard` reads as `private`), and `access` is recorded only.
+(saved `discard` reads as `private`), and `access` is recorded only. `list` returns the 20 most
+recent conversations by default (`limit` up to 200, `total` counts all matches).
+`read_conversation` no longer wraps its result in a `conversation` object: task conversations
+return top-level `tasks`, shows return `messages` and `latest_round`, and private entries are
+omitted unless `include_private=true`.
 
 Each native thread is now one desk and `continue_desk` is removed: continue a thread by passing its
 `session_id` (see ADR-0025). Callers that still pass `continue_desk=true` silently get a new
-thread. CLI runs active at once (tasks plus seats) are limited by the App setting, 8 by default,
-stored in the data root's `settings.json`; a call beyond it is rejected.
+thread. CLI runs active at once (tasks plus seats) in one AgentNave server process are limited by
+the App setting, 8 by default, stored in the data root's `settings.json`; a call beyond it is
+rejected. Each host connection counts separately, so the machine total can exceed the setting.
 
-Update the runtime and complete Skill together, then reconnect MCP on every host so the new tool
-list and Skill load. Saved history and member configuration are unchanged.
+Update the runtime and the complete `v0.35.0` Skill together (step 4; App-managed Skill copies
+follow the App update), then reconnect MCP on every host so the new tool list and Skill load; an
+old Skill keeps calling removed tools. Saved history and member configuration are unchanged.
 
 ### Upgrading from v0.33.0 to v0.34.0
 
