@@ -335,6 +335,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .tail:not([hidden])::after { content: "\258D"; margin-left: 2px; color: var(--run); animation: caret 1s steps(2, start) infinite; }
 @keyframes caret { to { visibility: hidden; } }
 .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
+.typing-status { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.typing-status[hidden] { display: none; }
 .typing[hidden] { display: none; }
 .typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--run); animation: dot 1.2s infinite ease-in-out; }
 .typing i:nth-child(2) { animation-delay: 0.15s; }

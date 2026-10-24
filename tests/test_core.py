@@ -64,6 +64,25 @@ async def test_failed_codex_resume_does_not_reuse_old_turn_model(
         await manager.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_cancelled_run_keeps_the_session_named_at_launch(tmp_path: Path) -> None:
+    manager = InvocationManager()
+    try:
+        invocation = manager.start(
+            InvocationRequest("grok", "work", tmp_path),
+            prepared=PreparedCommand(
+                (sys.executable, "-c", "import time; time.sleep(30)"),
+                tmp_path,
+                session_id="named-at-launch",
+            ),
+        )
+        result = await manager.cancel(invocation)
+        assert result.status is InvocationStatus.CANCELLED
+        assert result.session_id == "named-at-launch"
+    finally:
+        await manager.shutdown()
+
+
 class FakeAdapter(ClaudeAdapter):
     name = "claude"
 
@@ -511,6 +530,7 @@ async def test_running_snapshot_reports_phase_elapsed_and_event_activity(
         assert snapshot.last_activity.kind == "retry"
         assert snapshot.last_activity.message == "authentication_failed"
         assert snapshot.last_activity_age_ms is not None
+        assert manager.progress(invocation_id)[0] == "retrying"
     finally:
         await manager.cancel(invocation_id)
         await manager.shutdown()
@@ -529,6 +549,9 @@ async def test_snapshot_joins_split_unicode_deltas(tmp_path: Path, fake_adapter:
                 break
         assert snapshot.last_activity is not None
         assert snapshot.last_activity.message == "x" * 510 + "中文"
+        doing, output_at = manager.progress(invocation_id)
+        assert doing == "writing" and output_at is not None
+        assert output_at == manager.progress(invocation_id)[1]  # stable between reads
     finally:
         await manager.shutdown()
 
@@ -550,6 +573,7 @@ async def test_snapshot_retains_tool_name_across_interleaved_calls(
         assert snapshot.last_activity.tool_call_id == "a"
         assert snapshot.last_activity.tool_name == "Bash"
         assert snapshot.last_activity.state == "completed"
+        assert manager.progress(invocation_id)[0] is None  # an ended call is not current work
     finally:
         await manager.shutdown()
 

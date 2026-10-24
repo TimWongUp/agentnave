@@ -17,7 +17,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | --- | --- |
 | `start_agent` | 私聊：一个 CLI 做一项任务，结果只回给 boss |
 | `run_round` | 会议室：不带 `group_id` 时用 `title`、`members` 新建；带 `seats` 跑一轮，答案自动在席位间共享；不带 `seats` 只发一条 boss 公开发言 |
-| `wait` | 等任务 `invocation_id` 和轮次 `round_id`，任一就绪即返回 |
+| `wait` | 等任务 `invocation_id` 和轮次 `round_id`，任一就绪即返回；省略 `ids` 等收件箱 |
 | `cancel` | 取消任务或轮次 |
 | `decide_answers` | `review=true` 的会议室：逐席公开或不公开 |
 | `list` | 本服务的句柄、保存的会话（最近在前）和只读看板链接 |
@@ -97,12 +97,12 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 回复预算
 
-按交付需要和 boss 剩余上下文安排回复长度；多席按本轮合计预算分配。只查状态用 `wait(include_output=false)`，回读历史优先 `read_conversation` 默认结果和 `since_round`。每次调用保留的标准输出上限 1 MiB、stderr 64 KiB，超限报 `output_limit_exceeded` 并终止；长报告、日志或附件让 CLI 保存到约定位置，回复摘要和绝对路径。
+按交付需要和 boss 剩余上下文安排回复长度；多席按本轮合计预算分配。只查状态用 `wait(include_output=false)`，回读历史优先 `read_conversation` 默认结果和 `since_round`，长会话加 `limit` 只取最近若干条。每次调用保留的标准输出上限 1 MiB、stderr 64 KiB，超限报 `output_limit_exceeded` 并终止；长报告、日志或附件让 CLI 保存到约定位置，回复摘要和绝对路径。
 
 ## 等待、验收与取消
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
-2. `wait(ids)` 每次最多等 5 分钟（`wait_seconds` 可缩短，`0` 只看一眼不阻塞），任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
+2. `wait(ids)` 每次最多等 5 分钟（`wait_seconds` 可缩短，`0` 只看一眼不阻塞），任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；普通工具失败、重试、沉默不证明任务失败。
 4. 运行中 `output` 只是最新公开正文尾部（最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。
 5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；`succeeded` 不证明用户目标完成，须核对命令、产物或检查。

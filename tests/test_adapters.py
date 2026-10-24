@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import uuid
 from pathlib import Path
 
 import pytest
@@ -1054,6 +1055,14 @@ def test_grok_adapter_uses_private_prompt_file_and_explicit_options(tmp_path: Pa
             "--cwd",
         )
         assert prepared.argv[-4:] == ("--reasoning-effort", "high", "--max-turns", "8")
+        # A new conversation is named up front, so a cancelled run can still be continued.
+        assert prepared.session_id is not None
+        assert str(uuid.UUID(prepared.session_id)) == prepared.session_id
+        assert f"--session-id={prepared.session_id}" in prepared.argv
+        resumed = GrokAdapter().prepare(request(tmp_path, "grok", session_id="s-old"))
+        resumed.cleanup_paths[0].unlink()
+        assert "--resume=s-old" in resumed.argv and resumed.session_id == "s-old"
+        assert not any(item.startswith("--session-id") for item in resumed.argv)
     finally:
         prompt_path.unlink()
 

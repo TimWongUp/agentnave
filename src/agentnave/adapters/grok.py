@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 from pathlib import Path
 
 from agentnave.adapters.base import (
@@ -81,8 +82,13 @@ class GrokAdapter:
             "--cwd",
             str(request.cwd),
         ]
+        # Grok reports the session only in its final event; naming a new one up front keeps it
+        # when the run is cancelled or fails before then.
+        session_id = request.session_id or str(uuid.uuid4())
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
+        else:
+            argv.append(f"--session-id={session_id}")
         argv.extend(options)
         if discussion:
             argv.extend(
@@ -98,7 +104,11 @@ class GrokAdapter:
                 ]
             )
         return PreparedCommand(
-            tuple(argv), request.cwd, cleanup_paths=(path,), capture_line=_capture_line
+            tuple(argv),
+            request.cwd,
+            cleanup_paths=(path,),
+            capture_line=_capture_line,
+            session_id=session_id,
         )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:

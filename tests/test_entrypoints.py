@@ -140,7 +140,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     start_properties = _payload(tools["start_agent"].input_schema["properties"])
     assert "timeout_seconds" not in start_properties
     wait_properties = _payload(tools["wait"].input_schema["properties"])
-    assert set(wait_properties) == {"ids", "include_output", "wait_seconds"}
+    assert set(wait_properties) == {"ids", "include_output", "wait_seconds", "manager_session_id"}
     assert mcp_server.WAIT_SECONDS == 300
     cancel = tools["cancel"].annotations
     assert cancel is not None and cancel.destructive_hint is True

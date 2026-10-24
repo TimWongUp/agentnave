@@ -1234,10 +1234,11 @@ function createMessage(m) {
   rec.md = h("div.md");
   rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
   rec.tail = h("div.tail");
+  rec.status = h("div.typing-status", { hidden: true });
   rec.bub = h(
     "div.bub",
     {},
-    m.kind === "typing" ? [rec.tail, rec.dots] : [rec.fwd, rec.md],
+    m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.md],
   );
   rec.meta = h("div.m-meta");
   rec.more = h("button.more", { type: "button", hidden: true }, "展开全文");
@@ -1275,6 +1276,21 @@ function setFace(rec, m, ctx) {
   rec.avKey = key;
   const face = speakerFace(m, ctx);
   rec.ava.replaceChildren(...(face ? [face] : []));
+}
+// A long run's tail can sit unchanged for minutes: say what the CLI is doing and how long the
+// reply has been quiet, so a thinking CLI does not look stuck.
+const STALE_TAIL_MS = 60_000;
+function typingStatus(m) {
+  const d = m.doing || "";
+  const doing = d === "thinking"
+    ? "思考中"
+    : d === "retrying"
+      ? "重试中"
+      : d.startsWith("tool:")
+        ? `正在使用 ${d.slice(5) || "工具"}`
+        : "";
+  const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
+  return [doing, quiet ? `上次输出 ${relTime(m.output_at)}` : ""].filter(Boolean).join(" · ");
 }
 function updateMessage(rec, m, ctx, id) {
   rec.id = id;
@@ -1327,6 +1343,11 @@ function updateMessage(rec, m, ctx, id) {
         rec.fwdId ? "跳到原消息" : "原消息不在当前列表中",
       );
     }
+  }
+  if (m.kind === "typing") {
+    const status = typingStatus(m);
+    setText(rec.status, status);
+    rec.status.hidden = !status;
   }
   if (rec.text !== m.text) {
     rec.text = m.text;
