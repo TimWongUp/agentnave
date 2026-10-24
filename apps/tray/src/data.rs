@@ -1878,13 +1878,15 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "thread:native-1",
-                "task:a1:t-a1",
-                "thread:native-2",
+                "thread:native-3",
                 "task:c1:t-c1",
-                "thread:native-3"
+                "thread:native-2",
+                "task:a1:t-a1",
+                "thread:native-1"
             ]
         );
+        // Newest first; the checks below go from the oldest.
+        let desks: Vec<_> = desks.iter().rev().collect();
         assert_eq!(desks[0]["label"], "m · Codex · reviewer #1");
         assert_eq!(desks[4]["label"], "m · Codex · reviewer #2");
         assert_eq!(desks[4]["handle"], "@m·Codex·reviewer #2");

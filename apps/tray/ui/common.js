@@ -218,10 +218,16 @@
     if (d.private?.running > 0) out.push({ kind: "private", status: "running" });
     return out;
   }
+  // An idle desk stays awake until the office starts a newer desk after it last worked. Seats of
+  // its own meeting do not count, so a serial round never sends its earlier speakers to sleep.
+  function dozing(d, desks) {
+    const last = at(d.last_active);
+    return desks.some((o) => o.key !== d.key && !(d.room && o.room === d.room) && at(o.first_seen) > last);
+  }
 
   const art = { url: artUrl, character, figure, head, lid, STATES };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, activities, clip };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, activities, dozing, clip };
 })();
 
 (function () {

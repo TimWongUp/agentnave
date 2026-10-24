@@ -777,8 +777,8 @@ impl Group {
         desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
         let rest = desks.split_off(limit.max(busy).min(desks.len()));
-        // Drawn desks keep the office's own order: first seen, so a desk never jumps.
-        desks.sort_by_key(|d| (d.first.unwrap_or_default(), &d.key));
+        // Drawn desks put the newest first; the others keep their order as new ones arrive.
+        desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
         let shown = desks.into_iter().map(|desk| desk.value(host)).collect();
         let optimized = json!({
             "count": rest.len(),
