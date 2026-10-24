@@ -66,6 +66,10 @@ def _scalar(raw: str) -> str:
         return value if isinstance(value, str) else ""
     if raw.startswith("'") and raw.endswith("'") and len(raw) > 1:
         return raw[1:-1].replace("''", "'")
+    # Tags (including !!js), aliases, anchors, collections and block scalars need YAML
+    # evaluation. They are not a static model identity and must never become literal IDs.
+    if not raw or raw[0] in "!&*[{|>'":
+        return ""
     return raw
 
 

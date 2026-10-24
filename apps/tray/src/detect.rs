@@ -285,6 +285,9 @@ fn dsh_scalar(raw: &str) -> Option<String> {
         serde_json::from_str::<String>(raw).ok()
     } else if raw.len() > 1 && raw.starts_with('\'') && raw.ends_with('\'') {
         Some(raw[1..raw.len() - 1].replace("''", "'"))
+    } else if raw.starts_with(['!', '&', '*', '[', '{', '|', '>', '\'']) {
+        // A tagged/dynamic value, alias or compound scalar is not a known identity.
+        None
     } else {
         Some(raw.to_owned())
     };
@@ -786,6 +789,18 @@ mod tests {
         assert_eq!(dsh_default(dump, "model").as_deref(), Some("gw/v4's"));
         assert_eq!(dsh_default(dump, "reasoningEffort"), None);
         assert_eq!(dsh_default("- id: jobs\n", "model"), None);
+        assert_eq!(
+            dsh_default(
+                "- id: agent-default-model\n  config:\n    model: !!js String('deepseek-flash')\n",
+                "model"
+            ),
+            None
+        );
+        assert_eq!(dsh_scalar("*default-model"), None);
+        assert_eq!(
+            dsh_scalar("'!!js literal'").as_deref(),
+            Some("!!js literal")
+        );
         let providers = "- id: llm-pi-ai\n  config:\n    providers:\n      gw:\n        models:\n\
             \x20         - id: opencode-go/v4.1\n            reasoningEfforts:\n\
             \x20         - id: \"codex/sol\"\n      gw2:\n        models:\n\

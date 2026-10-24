@@ -1756,6 +1756,16 @@ def test_deepseek_profile_routes_read_the_composed_entries(tmp_path: Path) -> No
     # A failed dump must not supply defaults even if it printed a partial config.
     dump.write_text(dump.read_text() + "exit 3\n")
     assert deepseek_adapter.profile_routes(str(dump)) == (None, {})
+    dump.write_text(
+        "#!/bin/sh\n/bin/cat <<'CONFIG'\n- id: agent-default-model\n  config:\n"
+        "    provider: !!js String('deepseek-official')\n"
+        "    model: !!js String('deepseek-flash')\nCONFIG\n"
+    )
+    assert deepseek_adapter.profile_routes(str(dump)) == (None, {})
+    adapter = DeepSeekAdapter()
+    adapter.executable = lambda: str(dump)
+    with pytest.raises(ValueError, match="Unable to read deepseek's default model"):
+        adapter.prepare(request(tmp_path, "deepseek", provider_options={"effort": "high"}))
 
 
 def test_deepseek_parse_maps_turn_end_and_keeps_only_terminal_events(tmp_path: Path) -> None:
