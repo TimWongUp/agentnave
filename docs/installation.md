@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.38.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.39.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.38.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.39.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -567,6 +567,16 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.38.0 to v0.39.0
+
+Update the App and the runtime together with "Update all"; no MCP tool or history migration. The
+App no longer writes default models or efforts for you: with nothing set, each CLI runs its own
+default, and Settings shows the detected CLI default model and effort (ADR-0028). Defaults an
+earlier App pre-filled into `members.json` stay in effect until you clear them in Settings.
+DeepSeek resolves a bare model to the route its dsh config declares, and the official route turns
+on `stored_credentials` unless the caller sets it (ADR-0027). Meeting answers keep the time each
+seat finished.
 
 ### Upgrading from v0.37.0 to v0.38.0
 
