@@ -570,8 +570,10 @@ separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it
 
 ### Upgrading from v0.39.0 to v0.40.0
 
-Update the App and runtime together with "Update all"; MCP tools and history need no migration.
-Settings now uses choices and range controls instead of free-text fields. Existing model options,
+"Update all" updates the App, runtime and App-managed Skills. For a manual upgrade, install the
+v0.40.0 App and runtime and replace any externally managed `agentnave-manager` Skill with its
+complete v0.40.0 directory, including `references/`; `uv tool install` updates only the runtime.
+MCP tools and history need no migration. Settings now uses choices and range controls instead of free-text fields. Existing model options,
 notes, mode overrides and host-root overrides are preserved. The App publishes the detected CLI
 default model so calls without a model can use its saved effort and ordinary options. This cached
 fallback skips permissions and execution controls because the CLI default may have changed; name
