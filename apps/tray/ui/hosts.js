@@ -803,7 +803,7 @@ function buildCard(host) {
 
 // Why a reload is required, given how this host restarts; all but a config change clear themselves.
 const RELOAD_REASONS = {
-  config: (hint) => ["接入配置或 Skill 简介已更新", `运行中的会话还是旧的：新开会话，或${hint}，提示会自动消除。`],
+  config: (hint) => ["接入配置已更新", `运行中的会话还是旧的：新开会话，或${hint}，提示会自动消除。`],
   tools: (hint) => ["有连接仍在用旧工具接口", `重新连接 AgentNave MCP，或${hint}；完成后提示自动消除。`],
   relay: (hint) => ["有连接未能切换到新版服务", `这是 v0.31.0 之前启动的旧中继。重新连接 AgentNave MCP，或${hint}；会结束这条连接上运行中的任务。`],
   stale: (hint) => ["有连接长时间仍在用旧版服务", `通常是任务还在运行或结果未读取，处理完会自动切换。没有任务时，重新连接 AgentNave MCP，或${hint}。`],

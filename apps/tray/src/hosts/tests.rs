@@ -682,7 +682,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
         &h.skill.as_ref().unwrap().join("SKILL.md"),
         "externally changed",
     );
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
 }
 
 #[test]
@@ -802,7 +802,8 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
 
-    // Hosts read the Skill body and references on use; only the front matter needs a reload.
+    // Agents read the Skill from disk on use; no part of it, front matter included, needs a
+    // reload.
     let skill = h.skill.as_ref().unwrap().join("SKILL.md");
     let text = fs::read_to_string(&skill).unwrap();
     save(&skill, &format!("{text}\nchanged instructions\n"));
@@ -813,9 +814,9 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
         &text.replacen("description:", "description: changed", 1),
     );
     hosts.refresh_probed();
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
-    // The session from before the change still counts as stale after a config change; a new
-    // one started after both clears the reload without a manual confirmation.
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    // The session from before a config change is stale; a new one started after it clears the
+    // reload without a manual confirmation.
     let before = h.read().unwrap();
     let mut entry = before.entry.clone().unwrap();
     entry["args"] = json!(["changed"]);
