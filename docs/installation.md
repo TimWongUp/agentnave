@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.35.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.36.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.35.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.36.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -567,6 +567,14 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.35.0 to v0.36.0
+
+The MCP tools and Skill are unchanged, so hosts need no reconnect. Saved seat runs gain an optional
+`finished` time; older servers read such records and drop the field when they rewrite them. The
+App now flags a reload only for MCP entry or tool interface changes, so Skill updates no longer ask
+for a restart. It ignores reload records from earlier versions, so a previous manual "I have
+reloaded" confirmation lapses without raising a new prompt.
 
 ### Upgrading from v0.34.0 to v0.35.0
 
