@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.36.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.37.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.36.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.37.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -567,6 +567,16 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.36.0 to v0.37.0
+
+Saved history moves into a single SQLite database, `agentnave.db`, in the data root (ADR-0026).
+History saved by earlier versions under `~/.agentnave/conversations/` is not migrated or read;
+delete that directory once it is no longer needed. Update the App and the runtime together with
+"Update all": the new App reads only the database and an older App cannot read it. Then reconnect
+MCP on every host, because `wait` gains `wait_seconds` and task starts and `list` report new
+fields. A server from an earlier version that is still running keeps writing the old directories,
+which the new App and runtime do not show.
 
 ### Upgrading from v0.35.0 to v0.36.0
 
