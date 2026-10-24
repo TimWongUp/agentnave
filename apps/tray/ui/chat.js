@@ -42,7 +42,7 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const FOLD_PX = 260; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
-const SLEEP_AFTER = 20 * 60e3; // an idle desk dozes off after this long
+const SLEEP_AFTER = 20 * 60e3; // an idle boss dozes off after this long
 const FIG = 88; // character size at desks and meeting seats, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 
@@ -322,8 +322,7 @@ function deskMood(d, ctx) {
     return { mood: "failed", say: "上次失败", word: "上次失败", away: null };
   if (d.status === "pending")
     return { mood: "idle", say: "", word: "等待中", away: null };
-  const idleFor = Date.now() - AN.at(d.last_active);
-  return idleFor > SLEEP_AFTER
+  return AN.dozing(d, ctx.c.desks)
     ? {
         mood: "sleep",
         say: "zz",

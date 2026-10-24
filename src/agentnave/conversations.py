@@ -974,6 +974,8 @@ class Conversations(Groups):
                 if run.result is not None:
                     seat.reported_model = run.result.reported_model or seat.reported_model
                 seat.output = run.result.output if run.result is not None else None
+                if run.result is not None and seat.finished is None:
+                    seat.finished = now()
                 error = run.result.error if run.result is not None else run.launch_error
                 seat.error = f"{error.code}: {error.message}" if error is not None else None
                 seat.committed = seat.committed or (round_.number, run.seat_id) in committed

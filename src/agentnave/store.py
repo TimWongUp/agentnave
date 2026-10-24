@@ -87,6 +87,8 @@ class SeatRunRecord(BaseModel):
     ] = "pending"
     output: str | None = None
     error: str | None = None
+    # When the seat's result was first saved; absent in older records.
+    finished: str | None = None
     # Set only in review conversations, once the answer succeeded.
     review: Annotated[Review | None, BeforeValidator(_legacy_review)] = None
     committed: bool = False

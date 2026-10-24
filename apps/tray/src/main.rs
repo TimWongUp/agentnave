@@ -48,9 +48,7 @@ fn main() {
     let reader = Arc::new(Reader::new(data::data_root()));
     let served = reader.clone();
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            open(app, "main", "/chat/")
-        }))
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let reader = served.clone();
@@ -130,11 +128,10 @@ fn main() {
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
                 .icon_as_template(true)
                 .tooltip(headline(&overview))
-                .title(title(&overview).unwrap_or_default())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => open(app, "main", "/chat/"),
+                    "open" => restore(app),
                     "manage" => open(app, "main", "/manage/"),
                     "settings" => open(app, "main", "/settings/"),
                     "update" => update::act(app),
@@ -184,12 +181,12 @@ fn main() {
         // Like any regular app, launching it shows the main window. Opening it once the event
         // loop runs keeps its first requests from stalling behind start-up.
         RunEvent::Ready => open(app, "main", "/chat/"),
-        // A click on the Dock icon brings the main window back.
+        // A click on the Dock icon brings the main window back where it was left.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen {
             has_visible_windows: false,
             ..
-        } => open(app, "main", "/chat/"),
+        } => restore(app),
         _ => {}
     });
 }
@@ -202,18 +199,10 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
             continue;
         }
         if let Some(tray) = app.tray_by_id(TRAY) {
-            let _ = tray.set_title(title(&overview));
             let _ = tray.set_tooltip(Some(headline(&overview)));
         }
         shown = overview;
     }
-}
-
-/// Text beside the menu bar icon, only while something needs attention.
-fn title(overview: &Overview) -> Option<String> {
-    let review = overview.count("review");
-    let running = overview.count("running");
-    (review + running > 0).then(|| format!("待审 {review} · 运行 {running}"))
 }
 
 fn headline(overview: &Overview) -> String {
@@ -382,6 +371,18 @@ fn destination(target: &Url) -> String {
     path
 }
 
+/// Bring the main window back on the page it was left on, or open the office if there is none.
+fn restore(app: &AppHandle) {
+    match app.get_webview_window("main") {
+        Some(window) => {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        None => open(app, "main", "/chat/"),
+    }
+}
+
 /// Show `path` in the window `label`, creating it on first use.
 fn open(app: &AppHandle, label: &str, path: &str) {
     let target = url(path);
@@ -408,6 +409,17 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         })
         .build();
     if let Ok(window) = built {
+        // Like other Mac apps, closing only hides the window; the Dock icon brings it back as it was.
+        #[cfg(target_os = "macos")]
+        {
+            let hidden = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = hidden.hide();
+                }
+            });
+        }
         let _ = window.set_focus();
     }
 }
@@ -425,20 +437,6 @@ fn browse(target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tray_title_counts_calls_review_first() {
-        let mut overview = Overview {
-            running: 3,
-            review: 2,
-            ..Overview::default()
-        };
-        assert_eq!(title(&overview).as_deref(), Some("待审 2 · 运行 3"));
-        overview.review = 0;
-        assert_eq!(title(&overview).as_deref(), Some("待审 0 · 运行 3"));
-        overview.running = 0;
-        assert_eq!(title(&overview), None);
-    }
 
     #[test]
     fn windows_stay_on_tray_routes() {

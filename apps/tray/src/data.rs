@@ -1832,6 +1832,30 @@ mod tests {
     }
 
     #[test]
+    fn a_private_answer_counts_until_the_next_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut show = office_show("show", "2026-10-15T03:00:00Z", "2026-10-15T00:00:00Z");
+        show["summary"]["status"] = json!("finished");
+        show["director"]["messages"] = json!([
+            {"kind": "task", "speaker": "@host", "round": 1, "text": "一", "time": "2026-10-15T01:00:00Z",
+                "recipients": [{"seat": "a", "provider": "claude", "model": "m"}]},
+            {"kind": "task", "speaker": "@host", "round": 2, "text": "二", "time": "2026-10-15T02:00:00Z",
+                "recipients": [{"seat": "b", "provider": "codex", "model": "m"}]}]);
+        show["director"]["private_messages"] = json!([
+            {"round": 1, "seat_id": "a", "text": "不公开", "time": "2026-10-15T01:00:00Z"}]);
+        show["director"]["round"] = json!({"number": 2, "seats": [
+            {"seat_id": "b", "status": "succeeded", "output": "好"}]});
+        save(root, &show);
+        let reader = Reader::new(root.to_path_buf());
+        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+        let desks = chat["desks"].as_array().unwrap();
+        let desk = desks.iter().find(|d| d["key"] == "seat:show:a").unwrap();
+        // Only round 1's start is recorded, but the answer was done by the time round 2 began.
+        assert_eq!(desk["last_active"], "2026-10-15T02:00:00.000000Z");
+    }
+
+    #[test]
     fn desks_stay_persistent_ordered_and_split_by_identity() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -1878,13 +1902,15 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "thread:native-1",
-                "task:a1:t-a1",
-                "thread:native-2",
+                "thread:native-3",
                 "task:c1:t-c1",
-                "thread:native-3"
+                "thread:native-2",
+                "task:a1:t-a1",
+                "thread:native-1"
             ]
         );
+        // Newest first; the checks below go from the oldest.
+        let desks: Vec<_> = desks.iter().rev().collect();
         assert_eq!(desks[0]["label"], "m · Codex · reviewer #1");
         assert_eq!(desks[4]["label"], "m · Codex · reviewer #2");
         assert_eq!(desks[4]["handle"], "@m·Codex·reviewer #2");

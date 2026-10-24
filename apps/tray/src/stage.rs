@@ -777,8 +777,8 @@ impl Group {
         desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
         let rest = desks.split_off(limit.max(busy).min(desks.len()));
-        // Drawn desks keep the office's own order: first seen, so a desk never jumps.
-        desks.sort_by_key(|d| (d.first.unwrap_or_default(), &d.key));
+        // Drawn desks put the newest first; the others keep their order as new ones arrive.
+        desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
         let shown = desks.into_iter().map(|desk| desk.value(host)).collect();
         let optimized = json!({
             "count": rest.len(),
@@ -1505,6 +1505,16 @@ impl Group {
                 self.messages.push(msg);
             }
         }
+        // A private answer carries its finish time; older records only have the
+        // round's start. The answer was done before a later round began, so the later of the two
+        // counts as the desk's work, and the conversation's last update when no round followed.
+        let ended = |round: u64| {
+            array(view, "messages")
+                .filter(|m| m["round"].as_u64().is_some_and(|r| r > round))
+                .filter_map(|m| timestamp(text(m, "time")))
+                .min()
+                .or_else(|| timestamp(&item.updated))
+        };
         for entry in array(view, "private_messages") {
             let id = text(entry, "seat_id");
             let Some(seat) = seats.get(id).copied() else {
@@ -1530,7 +1540,14 @@ impl Group {
                 &identity,
                 "succeeded",
                 created,
-                timestamp(&time).unwrap_or(created),
+                [
+                    ended(entry["round"].as_u64().unwrap_or_default()),
+                    timestamp(&time),
+                ]
+                .into_iter()
+                .flatten()
+                .max()
+                .unwrap_or(created),
                 false,
             );
             if self.include_messages {

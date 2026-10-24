@@ -211,7 +211,7 @@ def _director(
             "seat_id": seat.seat_id,
             "text": seat.output,
             "reported_model": seat.reported_model,
-            "time": round_times.get(round_.number, state.created),
+            "time": seat.finished or round_times.get(round_.number, state.created),
             "message_id": None,  # answers kept private are never shared, so never forwarded
         }
         for round_ in state.rounds

@@ -5,12 +5,11 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, activities, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, activities, dozing, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
 const SHOWN = 6; //   ... down to this many
-const SLEEP_AFTER = 20 * 60e3; // an idle desk dozes off after this long
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top").append(AN.themeSwitch());
@@ -38,7 +37,7 @@ const state = {
 
 // ---------------------------------------------------------------- what a desk is doing
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
-function brief(d) {
+function brief(d, desks) {
   const acts = activities(d);
   const run = acts.filter((a) => a.status === "running");
   if (run.some((a) => a.kind === "private")) return { mood: "working", word: run.length > 1 ? "私聊中 · 也在开会" : "私聊中" };
@@ -46,8 +45,8 @@ function brief(d) {
   if (acts.some((a) => a.status === "review")) return { mood: "review", word: "交卷 · 待审核" };
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
   if (d.status === "failed") return { mood: "failed", word: "上次失败" };
-  const idle = Date.now() - AN.at(d.last_active);
-  return idle > SLEEP_AFTER ? { mood: "sleep", word: `空闲 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
+  if (d.status === "pending") return { mood: "idle", word: "等待中" };
+  return dozing(d, desks) ? { mood: "sleep", word: `空闲 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
 }
 const HEAD = { working: "working", review: "review", sleep: "sleep" };
 const roomRound = (r) => {
@@ -71,8 +70,8 @@ function createCell() {
   rec.el = h("a.cell", {}, h("span.face-wrap", {}, rec.face, rec.cli), h("span.nm", {}, h("span.nm-top", {}, rec.name, rec.role), rec.word));
   return rec;
 }
-function updateCell(rec, group, d) {
-  const s = brief(d);
+function updateCell(rec, group, d, desks) {
+  const s = brief(d, desks);
   const faceKey = `${deskChar(d)}|${HEAD[s.mood] || "idle"}`;
   if (rec.faceKey !== faceKey) {
     rec.faceKey = faceKey;
@@ -167,10 +166,10 @@ function updateBlock(rec, m) {
   setText(rec.time, relTime(m.updated));
   setAttr(rec.time, "title", fullTime(m.updated));
 
-  // desks in the office's own (first seen) order; folded beyond SHOWN when there are FOLD_AT or more,
+  // desks in the office's own order, newest first; folded beyond SHOWN when there are FOLD_AT or more,
   // with busy desks moved up so the fold never hides what is going on
   const byKey = new Map(desks.map((d) => [d.key, d]));
-  const busy = (d) => ["working", "review", "meeting"].includes(brief(d).mood);
+  const busy = (d) => ["working", "review", "meeting"].includes(brief(d, desks).mood);
   const ordered = desks.length >= FOLD_AT ? [...desks.filter(busy), ...desks.filter((d) => !busy(d))] : desks;
   for (const key of rec.cellRecs.keys()) if (!byKey.has(key)) rec.cellRecs.delete(key);
   const folded = desks.length >= FOLD_AT && !state.expanded.has(m.group);
@@ -178,7 +177,7 @@ function updateBlock(rec, m) {
   reconcile(rec.cells, ordered.map((d, i) => {
     let cell = rec.cellRecs.get(d.key);
     if (!cell) rec.cellRecs.set(d.key, (cell = createCell()));
-    const s = updateCell(cell, m.group, d);
+    const s = updateCell(cell, m.group, d, desks);
     cell.el.hidden = folded && i >= SHOWN;
     if (cell.el.hidden) {
       hiddenCount++;
