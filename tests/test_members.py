@@ -210,3 +210,20 @@ def test_cached_native_model_does_not_transfer_execution_permissions(
         explicit,
         ["model", "effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
     )
+
+    # false can enable slash commands; it is execution control, not a harmless default.
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {
+                "antigravity": {
+                    "models": {"cached-A": {"options": {"disable_slash_commands": False}}}
+                }
+            },
+            "modes": {},
+        }
+    )
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"clis": {"antigravity": {"model": "cached-A"}}}), encoding="utf-8"
+    )
+    assert apply_member(document, "task", "antigravity", {}, frozenset()) == ({}, [])

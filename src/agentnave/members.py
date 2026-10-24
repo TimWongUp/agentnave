@@ -55,6 +55,7 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
         "mode",
         "project",
         "restricted_tools",
+        "disable_slash_commands",
     }
 )
 
