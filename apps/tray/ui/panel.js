@@ -45,6 +45,7 @@ function brief(d, desks) {
   if (acts.some((a) => a.status === "review")) return { mood: "review", word: "交卷 · 待审核" };
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
   if (d.status === "failed") return { mood: "failed", word: "上次失败" };
+  if (d.status === "pending") return { mood: "idle", word: "等待中" };
   return dozing(d, desks) ? { mood: "sleep", word: `空闲 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
 }
 const HEAD = { working: "working", review: "review", sleep: "sleep" };

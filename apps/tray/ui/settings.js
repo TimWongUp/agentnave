@@ -2113,7 +2113,7 @@ function renderUpdates() {
 
   // Manage polling
   if (isUpdating && !statusPollTimer) {
-    statusPollTimer = setInterval(loadStatus, 2000);
+    statusPollTimer = setInterval(() => document.hidden || loadStatus(), 2000);
   } else if (!isUpdating && statusPollTimer) {
     clearInterval(statusPollTimer);
     statusPollTimer = null;
@@ -2125,6 +2125,8 @@ window.addEventListener("agentnave:hosts", ({ detail }) => {
   renderUpdates();
 });
 window.addEventListener("agentnave:service-installed", () => loadStatus());
+// A hidden window skips the update poll; catch up as soon as it is shown again.
+document.addEventListener("visibilitychange", () => document.hidden || !statusPollTimer || loadStatus());
 
 async function loadStatus() {
   try {

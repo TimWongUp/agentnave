@@ -262,6 +262,8 @@
     if (!started.ok) throw new Error(started.message || "已有安装正在进行");
     for (let i = 0; i < 300; i++) {
       await sleep(800);
+      // A closed window stays loaded; check again once it is shown, the install keeps going.
+      if (document.hidden) await new Promise((resolve) => document.addEventListener("visibilitychange", resolve, { once: true }));
       const state = (await load("/app/status")).service;
       if (state?.state === "failed")
         throw new Error(state.error || "安装失败，请重试。");

@@ -512,7 +512,7 @@ All checks passed!
         } else if (isActive(e.status) && (!d.meeting || e.at >= d.meeting.at)) d.meeting = { at: e.at, room: conv.id, seat: seatOf(conv, sp), status: e.status };
       }
     return [...map.values()]
-      .sort((a, b) => a.first - b.first || (a.sp.desk < b.sp.desk ? -1 : 1))
+      .sort((a, b) => b.first - a.first || (a.sp.desk < b.sp.desk ? -1 : 1))
       .map((d) => ({
         key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, label: d.sp.deskLabel,
         first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),

@@ -1505,6 +1505,15 @@ impl Group {
                 self.messages.push(msg);
             }
         }
+        // A private answer only records its round's start; it ended before a later round began,
+        // or at the latest by the conversation's last update, so the desk counts that as its work.
+        let ended = |round: u64| {
+            array(view, "messages")
+                .filter(|m| m["round"].as_u64().is_some_and(|r| r > round))
+                .filter_map(|m| timestamp(text(m, "time")))
+                .min()
+                .or_else(|| timestamp(&item.updated))
+        };
         for entry in array(view, "private_messages") {
             let id = text(entry, "seat_id");
             let Some(seat) = seats.get(id).copied() else {
@@ -1530,7 +1539,9 @@ impl Group {
                 &identity,
                 "succeeded",
                 created,
-                timestamp(&time).unwrap_or(created),
+                ended(entry["round"].as_u64().unwrap_or_default())
+                    .or_else(|| timestamp(&time))
+                    .unwrap_or(created),
                 false,
             );
             if self.include_messages {
