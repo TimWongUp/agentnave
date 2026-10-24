@@ -36,5 +36,5 @@ App 在数据根既没有 `members.json`、也没有待迁移的 `profiles.json`
 
 ## 修订（2026-10-21）
 
-- 主力模型先取 CLI 自身设置指定、且在探测列表中的模型（Codex `config.toml` 的 `model`、Claude `settings.json` 的 `model` 去掉 `[1m]` 类后缀、Pi 的 `defaultModel`、Antigravity CLI 的 `model` 标签），再按上文规则；仍无法确定时取列表第一项。Pi 与 CodeBuddy 因此也会预填默认模型。
+- 主力模型先取 CLI 自身设置指定、且在探测列表中的模型（Codex `config.toml` 的 `model`、Claude `settings.json` 的 `model` 去掉 `[1m]` 类后缀、Pi 的 `defaultModel`、Antigravity CLI 的 `model` 标签、DeepSeek 由 `dsh --profile headless --dump-config` 合成的 `agent-default-model`），再按上文规则；DeepSeek 的该模型不在内置目录时加入列表首位。仍无法确定时取列表第一项。Pi 与 CodeBuddy 因此也会预填默认模型。
 - 首份配置不写默认思考档位，仍交给 CLI 自行决定。设置页新开始配置某个模型时，档位条预选该模型思考档位（按低到高排列）的中间档，偶数个时取偏低的一档，用户保存后才生效；已有配置中未设默认档位的模型不补填，直到用户在设置页选定。

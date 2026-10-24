@@ -1,4 +1,4 @@
-"""Saved conversations: one state.json per directory, written atomically under an OS lock."""
+"""Saved conversation records and their single-writer OS lock (ADR-0026)."""
 
 from __future__ import annotations
 
@@ -9,20 +9,18 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Annotated, ClassVar, Literal
+from typing import IO, TYPE_CHECKING, ClassVar, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, Field
 
 from agentnave.group import RoundOrder
 from agentnave.host import HostName, HostSource
 from agentnave.models import ProviderOption
 
+if TYPE_CHECKING:
+    from agentnave.db import Database
+
 type Review = Literal["pending", "publish", "private"]
-
-
-def _legacy_review(value: object) -> object:
-    # Records before v0.35 called an unpublished answer "discard"; it was never deleted.
-    return "private" if value == "discard" else value
 
 
 def now() -> str:
@@ -48,7 +46,7 @@ class SeatRecord(BaseModel):
     provider: str
     provider_options: dict[str, ProviderOption] = Field(default_factory=lambda: {})
     cwd: str
-    role: str | None = None  # absent in records saved before desks existed
+    role: str | None = None
     access: Literal["read", "write"] | None = None  # declared, never enforced
 
 
@@ -87,10 +85,10 @@ class SeatRunRecord(BaseModel):
     ] = "pending"
     output: str | None = None
     error: str | None = None
-    # When the seat's result was first saved; absent in older records.
+    # When the seat's result was first saved.
     finished: str | None = None
     # Set only in review conversations, once the answer succeeded.
-    review: Annotated[Review | None, BeforeValidator(_legacy_review)] = None
+    review: Review | None = None
     committed: bool = False
 
 
@@ -112,7 +110,7 @@ class TaskRecord(BaseModel):
     model: str
     reported_model: str | None = None
     cwd: str
-    prompt: str | None = None  # absent in tasks saved before v0.18.0
+    prompt: str
     session_id: str | None = None
     status: str = "running"
     output: str = ""
@@ -121,14 +119,13 @@ class TaskRecord(BaseModel):
     time: str
     manager_model: str | None = None
     manager_reported_model: str | None = None
-    role: str | None = None  # absent in records saved before desks existed
+    role: str | None = None
     access: Literal["read", "write"] | None = None  # declared, never enforced
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
 
 
 class Conversation(BaseModel):
-    version: Literal[2] = 2
     id: str
     title: str
     kind: Literal["show", "task"]
@@ -210,46 +207,48 @@ class Conversation(BaseModel):
 
 
 class Record:
-    """One conversation directory. Only the lock holder writes; others read.
+    """One saved conversation. Only the holder of its OS lock writes; others read.
 
-    views.json beside state.json is the tray app's projection of the same state, written with
-    every save and rewritten under the probe lock whenever it differs from the current
-    projection (missing, stale, or a crashed writer's running work now shown as interrupted).
+    Its views row is the tray app's projection of the same state, written with every save and
+    rewritten under the probe lock whenever it may differ from the current projection (first
+    read, another writer's change, or a crashed writer's running work now shown as interrupted).
     """
 
     project: ClassVar[Callable[[Record], bytes] | None] = None
 
-    def __init__(self, directory: Path, state: Conversation) -> None:
-        self.directory = directory
+    def __init__(self, db: Database, locks: Path, state: Conversation, rev: int) -> None:
+        self.db = db
+        self.locks = locks
         self.state = state
-        # The last saved state, kept only while this process holds the lock and may write.
+        # What a failed save rolls back to, kept only while this process holds the lock.
         self.saved: Conversation | None = None
-        # state.json (mtime_ns, size) behind self.state, and whether it was read under the probe.
-        self.loaded: tuple[int, int, bool] | None = None
-        # views.json (mtime_ns, size) once it matched the projection; None to check it again.
-        self.views: tuple[int, int] | None = None
+        # What the database holds, the base of the next save's changes; held like saved.
+        self.stored: Conversation | None = None
+        self.rev = rev  # the database revision behind self.state
+        # The revision whose views row matched the projection; None to check it again.
+        self.view_rev: int | None = None
+        # Another server held it at the last refresh: recover once the lock comes free.
+        self.contended = False
         self.lock: IO[bytes] | None = None
 
     @classmethod
-    def create(cls, directory: Path, state: Conversation) -> Record:
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        record = cls(directory, state)
+    def create(cls, db: Database, locks: Path, state: Conversation) -> Record:
+        record = cls(db, locks, state, 0)
         record.lock = record._lock()
-        record.saved = state.model_copy(deep=True)
         try:
-            record.save()
+            record.rev = db.save(None, state, record._projection())
         except OSError:
             record.release()
             raise
+        record.saved = state.model_copy(deep=True)
+        record.stored = state.model_copy(deep=True)
+        record.view_rev = record.rev
         return record
 
     @classmethod
-    def read(cls, directory: Path) -> Record:
-        return cls(directory, cls._load(directory))
-
-    @staticmethod
-    def _load(directory: Path) -> Conversation:
-        return Conversation.model_validate_json((directory / "state.json").read_bytes())
+    def read(cls, db: Database, locks: Path, conversation_id: str) -> Record:
+        state, rev = db.load(conversation_id)
+        return cls(db, locks, state, rev)
 
     def acquire(self) -> None:
         """Become the single writer until release, reloading what an earlier writer saved."""
@@ -262,16 +261,16 @@ class Record:
             time.sleep(0.05)
             self.lock = self._lock()
         try:
-            state = self._load(self.directory)
-            if state.id != self.state.id:
-                raise ValueError("Conversation record was replaced; list conversations again")
+            state, self.rev = self.db.load(self.state.id)
             self.saved = state.model_copy(deep=True)
+            self.stored = state.model_copy(deep=True)
             state.recover()
             self.state = state
+            self.contended = False
             if state != self.saved:
                 self.save()  # persist what recovery changed
-            elif self.views is None or self._views_stat() != self.views:
-                self._write_views(only_if_changed=True)
+            elif self.view_rev != self.rev:
+                self._write_view()
         except Exception:
             self.release()
             raise
@@ -279,94 +278,78 @@ class Record:
     def refresh(self) -> bool:
         """Reload an unheld record and report whether this process could write it.
 
-        An unchanged state.json is not parsed again, unless it was last read while another
-        server held it and that writer has since let go.
+        An unchanged revision is not read again, unless another server held it at the last
+        refresh and has since let go.
         """
         if self.lock is not None:
             return True
         try:
             lock = self._lock()
         except ValueError:
-            self._reload(probed=False)
+            self._reload()
+            self.contended = True
             return False
         # Read while holding the probe so a writer that just exited leaves no stale running view.
         try:
-            if self._reload(probed=True):
+            if self._reload() or self.contended or self.view_rev != self.rev:
+                self.contended = False
                 self.state.recover()  # shown as interrupted; acquire() persists it
-                self._write_views(only_if_changed=True)
-            elif self.views is None or self._views_stat() != self.views:
-                # Unchanged state: repair views that were removed or never written.
-                self._write_views(only_if_changed=True)
+                self._write_view()
         finally:
             self._unlock(lock)
         return True
 
-    def _reload(self, *, probed: bool) -> bool:
-        # Stat before reading: a replacement in between is only read again next time.
-        stat = (self.directory / "state.json").stat()
-        loaded = (stat.st_mtime_ns, stat.st_size, probed)
-        if loaded == self.loaded:
+    def _reload(self) -> bool:
+        rev = self.db.revision(self.state.id)
+        if rev is None:
+            raise FileNotFoundError(self.state.id)
+        if rev == self.rev:
             return False
-        self.state = self._load(self.directory)
-        self.loaded = loaded
+        self.state, self.rev = self.db.load(self.state.id)
         return True
 
     def save(self) -> None:
-        name: str | None = None
+        assert self.saved is not None and self.stored is not None, "only the lock holder saves"
         try:
-            fd, name = tempfile.mkstemp(prefix=".state-", dir=self.directory)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(self.state.model_dump_json(indent=1))
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(name, self.directory / "state.json")
-            self.saved = self.state.model_copy(deep=True)
+            self.rev = self.db.save(self.stored, self.state, self._projection())
         except OSError:
-            # Memory must keep matching disk so a failed change is not applied.
-            assert self.saved is not None, "only the lock holder saves"
+            # Memory must keep matching the database so a failed change is not applied.
             self.state = self.saved.model_copy(deep=True)
             raise
-        finally:
-            if name is not None:
-                Path(name).unlink(missing_ok=True)
-        self._write_views()
+        self.saved = self.state.model_copy(deep=True)
+        self.stored = self.state.model_copy(deep=True)
+        self.view_rev = self.rev
 
-    def _write_views(self, *, only_if_changed: bool = False) -> None:
-        if Record.project is None:
+    def _projection(self) -> bytes | None:
+        return None if Record.project is None else Record.project(self)
+
+    def _write_view(self) -> None:
+        view = self._projection()
+        if view is None:
             return
-        path = self.directory / "views.json"
         try:
-            data = Record.project(self)
-            # Compared by content: timestamps can tie or run backwards.
-            if not (only_if_changed and path.is_file() and path.read_bytes() == data):
-                write_file(path, data)
-            self.views = self._views_stat()
+            self.db.save_view(self.state.id, view)
+            self.view_rev = self.rev
         except OSError as exc:
-            # Derived data: the saved state stands; the next save or scan writes the views again.
-            self.views = None
+            # Derived data: the saved state stands; the next save or scan writes the view again.
+            self.view_rev = None
             print(
                 f"agentnave: could not write views for {self.state.id}: {exc}",
                 file=sys.stderr,
             )
-
-    def _views_stat(self) -> tuple[int, int] | None:
-        try:
-            stat = (self.directory / "views.json").stat()
-        except OSError:
-            return None
-        return stat.st_mtime_ns, stat.st_size
 
     def release(self) -> None:
         if self.lock is not None:
             self.lock.close()
             self.lock = None
         self.saved = None
-        self.loaded = None  # Read once more: this process wrote what is on disk.
+        self.stored = None
 
     def _lock(self) -> IO[bytes]:
         # An OS lock keeps two MCP hosts from writing one conversation at the same time.
+        self.locks.mkdir(parents=True, mode=0o700, exist_ok=True)
         return lock_file(
-            self.directory / ".lock",
+            self.locks / f"{self.state.id}.lock",
             "Conversation is held by another AgentNave server; continue it from that "
             "host or once it becomes idle",
         )
@@ -406,30 +389,3 @@ def lock_file(path: Path, busy_message: str) -> IO[bytes]:
 class Unavailable(BaseModel):
     path: str
     reason: str
-
-
-def scan(root: Path) -> tuple[dict[str, Path], list[Unavailable]]:
-    """Find saved conversations by id; report legacy or unreadable records without migrating."""
-    found: dict[str, Path] = {}
-    unavailable: list[Unavailable] = []
-    if (root / "catalog").is_dir():
-        unavailable.append(
-            Unavailable(
-                path=str(root / "catalog"),
-                reason="legacy AgentNave history (before 0.15); not migrated, safe to clear",
-            )
-        )
-    conversations = root / "conversations"
-    if not conversations.is_dir():
-        return found, unavailable
-    for directory in sorted(conversations.iterdir()):
-        if (directory / "state.json").is_file():
-            found[directory.name] = directory
-        elif (directory / "room.json").is_file():
-            unavailable.append(
-                Unavailable(
-                    path=str(directory),
-                    reason="legacy AgentNave history (before 0.15); not migrated, safe to clear",
-                )
-            )
-    return found, unavailable

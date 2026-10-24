@@ -74,15 +74,15 @@
 
 ## 保存与恢复
 
-数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。每个会话一个目录，含原子替换的 `state.json` 与 `.lock` 文件锁。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`open_group` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时读取仅限逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则各记录独立。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。`views.json` 与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
+数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`open_group` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时读取仅限逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则各记录独立。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
 
-每次写入前取锁并在锁内重读磁盘状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话的 `state.json` 已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；未知身份的旧调用仍可续接旧记录。
+每次写入前取锁并在锁内重读数据库状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；未知身份的旧调用仍可续接旧记录。
 
 重启后节目按保存的条目、席位会话与游标继续；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
 
 会话没有“结束”状态，boss 也不删除会话；清理由用户在托盘 App 的“管理会话”中进行。旧版本写入的 `archived` 字段读取时忽略。v0.15.0 之前的旧历史（数据根下的 `catalog/` 与含 `room.json` 的目录）不迁移，只在列表中标为不可用，可手动清除。
 
-托盘应用所需的数据由AgentNave写出：每个会话目录中的 `views.json` 视图快照，以及有工作运行时数据根下 `live/` 中的运行文件（结束即删除）；见 [ADR-0008](adr/0008-tray-app-reads-studio-snapshots.md)。
+托盘应用所需的数据由AgentNave写出：数据库 `views` 表中的视图快照，以及有工作运行时数据根下 `live/` 中的运行文件（结束即删除）；见 [ADR-0008](adr/0008-tray-app-reads-studio-snapshots.md)。
 
 ## 托盘应用（预览）
 
@@ -98,7 +98,7 @@
 
 设置页「编排偏好」给出可复制的推荐写法，并列出各宿主常见的全局规则文件位置，可用默认编辑器打开已存在的文件；App 不创建也不写入这些文件，是否采用由用户决定。
 
-会话没有结束状态；托盘清理仍受会话锁与待审状态保护。Rust 在会话 `.lock` 上取得与 Python AgentNave相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。只删除 `state.json` 和 `views.json`，保留会话目录、`.lock`、全部席位及其文件；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或具体文件错误；两个文件的删除不保证同时成功，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
+会话没有结束状态；托盘清理仍受会话锁与待审状态保护。Rust 在会话的 `locks/<会话ID>.lock` 上取得与 Python AgentNave相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。删除数据库中的会话及其消息、轮次、任务与视图，保留锁文件与席位目录；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或数据库错误；删除在一个事务内完成，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
 
 “设置…”在主窗口打开托盘专属设置页，与管理会话页在页头互相链接。设置页维护数据根下的组员配置 `members.json`：每个 CLI 下配置哪些模型及其允许的 effort、默认 effort、其他参数与说明，再分别为“任务”与“讨论”两种模式勾选可派出的组员、默认模型和按模式的覆盖；覆盖的字段整体替换共享值，options 也整体替换。服务只读且每次现读，不创建缺失文件。首次没有配置时，App 按探测到的主力模型预填两种模式的默认模型（Codex 取 GPT 模型，Claude 取 Opus，Pi 与 CodeBuddy 不预填），不限制任何 CLI；之后以用户的修改为准，开启自选或启用某个 CLI 时也会预选主力模型。关闭某个模式的自选会保留各 CLI 的默认模型，只清除名单和该模式的覆盖；不受限时也可设置默认模型（[ADR-0021](adr/0021-keep-default-models-when-unrestricted.md)）。页面会列出本机每个 CLI 是否安装、所在路径和它列出的模型：Codex 读取其模型缓存，Grok、Antigravity、Pi 运行各自的列举命令，CodeBuddy 读取帮助中的支持列表，Claude 只提供别名；探测只运行列举或帮助命令、不调用模型，每个命令最多 15 秒，结果在应用运行期间缓存，可手动刷新。探测失败时仍可手填模型 ID。
 

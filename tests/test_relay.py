@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from agentnave import relay as launcher
+from agentnave.db import Database
 
 # A stand-in MCP server: refuses calls before the handshake, reports its pid and session, is busy
 # while the file named in argv[1] exists, and fails to start while argv[1] + ".broken" exists.
@@ -381,6 +382,14 @@ def test_zero_tool_relay_never_creates_connection_observations(tmp_path: Path) -
     assert not data.exists()
 
 
+def _saved(data: Path, conversation_id: object) -> dict[str, Any]:
+    database = Database(data)
+    try:
+        return database.load(str(conversation_id))[0].model_dump(mode="json")
+    finally:
+        database.close()
+
+
 def test_real_server_keeps_pending_review_and_unsaved_results_during_upgrade(
     tmp_path: Path,
 ) -> None:
@@ -468,7 +477,7 @@ mcp_server.main()
         call("decide_answers", round_id=round_["round_id"], decisions={"a": "publish"})
         call("wait", ids=[round_["round_id"]])
         second = changed_pid(first)
-        saved = json.loads((data / "conversations" / group["group_id"] / "state.json").read_bytes())
+        saved = _saved(data, group["group_id"])
         assert saved["rounds"][0]["seats"][0]["review"] == "publish"
         assert saved["rounds"][0]["seats"][0]["output"] == "kept answer"
 
@@ -491,9 +500,7 @@ mcp_server.main()
         )
         call("wait", ids=[again["invocation_id"]])
         changed_pid(second)
-        saved = json.loads(
-            (data / "conversations" / started["conversation_id"] / "state.json").read_bytes()
-        )
+        saved = _saved(data, started["conversation_id"])
         assert saved["tasks"][0]["output"] == "kept answer"
         assert saved["tasks"][0]["session_id"] == "kept-session"
     finally:

@@ -138,6 +138,9 @@ impl Response {
 /// (mtime, size, content hash, parsed value) of one JSON file.
 type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 
+/// (view revision, parsed view) of one conversation.
+type CachedView = (i64, Option<Arc<Value>>);
+
 /// What identifies a route answer: each snapshot's view, whether the data root exists, and
 /// the reuse window.
 // Snapshots, whether the data root exists, the reuse window and the running limit.
@@ -169,8 +172,9 @@ pub struct Reader {
     root: PathBuf,
     hosts: Mutex<Option<crate::hosts::Hosts>>,
     tools: Arc<Mutex<Option<crate::hosts::ToolDirs>>>,
-    /// Parsed views by path, keyed on (mtime, size), so polling parses only changed files.
-    summaries: Mutex<HashMap<PathBuf, Cached>>,
+    /// Parsed views by conversation, keyed on the row's revision, so polling parses only
+    /// views that changed.
+    summaries: Mutex<HashMap<String, CachedView>>,
     /// Parsed live files, keyed the same way; several routes poll within one publication.
     live_files: Mutex<HashMap<PathBuf, Cached>>,
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
@@ -411,13 +415,24 @@ impl Reader {
         self.scan().0
     }
 
-    /// Share parsed disk snapshots across all polling routes; live files are always reread.
+    /// Share parsed saved views across all polling routes; live files are always reread.
     fn scan(&self) -> (Overview, Vec<Snapshot>) {
-        let entries = fs::read_dir(self.root.join("conversations"));
-        let mut overview = Overview {
-            missing: entries.is_err(),
-            ..Overview::default()
+        let mut overview = Overview::default();
+        let database = crate::db::read(&self.root);
+        let rows = match &database {
+            Ok(Some(connection)) => view_rows(connection),
+            Ok(None) => {
+                overview.missing = true;
+                Ok(Vec::new())
+            }
+            Err(error) => Err(error.clone()),
         };
+        let rows = rows.unwrap_or_else(|error| {
+            overview
+                .unavailable
+                .push((crate::db::path(&self.root).display().to_string(), error));
+            Vec::new()
+        });
         let mut live = self.live();
         let mut merged = self.merged.lock().unwrap_or_else(|p| p.into_inner());
         let mut shown = HashSet::new();
@@ -425,22 +440,26 @@ impl Reader {
         let mut seen = HashSet::new();
         let mut snapshots = Vec::new();
         let mut items = Vec::new();
-        for entry in entries.into_iter().flatten().flatten() {
-            let id = entry.file_name().to_string_lossy().into_owned();
-            let directory = entry.path();
-            if !valid_id(&id) || !directory.is_dir() {
+        for (id, rev, written_ms) in rows {
+            if !valid_id(&id) {
                 continue;
             }
-            let path = directory.join("views.json");
-            let disk = fs::metadata(&path).ok().map(|meta| {
-                seen.insert(path.clone());
-                let modified = meta.modified().unwrap_or(UNIX_EPOCH);
-                (
-                    modified,
-                    cached(&mut cache, &path, &meta, |v| version(v) == Some(VERSION)),
-                )
-            });
-            let saved = disk.as_ref().and_then(|d| d.1.clone());
+            seen.insert(id.clone());
+            let saved = match cache.get(&id) {
+                Some((cached, value)) if *cached == rev => value.clone(),
+                _ => {
+                    let value = database
+                        .as_ref()
+                        .ok()
+                        .and_then(Option::as_ref)
+                        .and_then(|connection| view_body(connection, &id))
+                        .and_then(|body| serde_json::from_str::<Value>(&body).ok())
+                        .filter(|value| version(value) == Some(VERSION))
+                        .map(Arc::new);
+                    cache.insert(id.clone(), (rev, value.clone()));
+                    value
+                }
+            };
             let current = live.remove(&id).and_then(|live| {
                 let view = live_view(&mut merged, &id, saved.as_ref(), &live)?;
                 shown.insert(id.clone());
@@ -450,8 +469,9 @@ impl Reader {
             let modified = if is_live {
                 SystemTime::now()
             } else {
-                disk.as_ref().map_or(UNIX_EPOCH, |d| d.0)
+                UNIX_EPOCH + Duration::from_millis(u64::try_from(written_ms).unwrap_or(0))
             };
+            let readable = saved.is_some();
             let (view, live_updated) = match current {
                 Some((view, updated_at)) => (Some(view), updated_at),
                 None => (saved, None),
@@ -466,15 +486,10 @@ impl Reader {
                     live: is_live,
                     live_updated,
                 });
-            } else if disk.is_some() || directory.join("state.json").exists() {
+            } else if !readable {
                 overview.unavailable.push((
-                    path.display().to_string(),
-                    if disk.is_some() {
-                        "视图快照无法读取或版本不受支持"
-                    } else {
-                        "尚无视图快照：任一工作室服务启动后会补写"
-                    }
-                    .to_owned(),
+                    format!("{}#{id}", crate::db::path(&self.root).display()),
+                    "视图快照无法读取或版本不受支持".to_owned(),
                 ));
             }
         }
@@ -498,7 +513,7 @@ impl Reader {
             }
         }
         merged.retain(|id, _| shown.contains(id));
-        cache.retain(|path, _| seen.contains(path));
+        cache.retain(|id, _| seen.contains(id));
         items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
         overview.items = items.into_iter().map(|(_, item)| item).collect();
         overview.unavailable.sort();
@@ -785,6 +800,27 @@ fn cached(
     value
 }
 
+/// Every saved view's conversation, revision and write time (milliseconds since the epoch).
+fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)>, String> {
+    let mut statement = connection
+        .prepare("SELECT conversation_id, rev, written_ms FROM views")
+        .map_err(|e| e.to_string())?;
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .and_then(Iterator::collect)
+        .map_err(|e| e.to_string())
+}
+
+fn view_body(connection: &rusqlite::Connection, id: &str) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT body FROM views WHERE conversation_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .ok()
+}
+
 fn version(value: &Value) -> Option<u64> {
     value.get("version").and_then(Value::as_u64)
 }
@@ -898,6 +934,12 @@ mod tests {
         fs::write(path, value.to_string()).unwrap();
     }
 
+    /// Save a conversation's view in the database, as a server does with every save.
+    fn save_view(root: &Path, id: &str, view: &Value) {
+        let state = json!({"kind": view["summary"]["mode"], "title": view["summary"]["title"]});
+        crate::db::put(root, id, &state, view);
+    }
+
     fn state(reader: &Reader, path: &str) -> Value {
         let response = reader.respond(path);
         assert_eq!(response.status, 200, "{path}");
@@ -908,22 +950,13 @@ mod tests {
     fn fresh_live_files_override_saved_views() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        write(
-            &root.join("conversations/a1/views.json"),
-            &snapshot("a1", "finished"),
-        );
-        write(
-            &root.join("conversations/b2/views.json"),
-            &json!({"version": 2}),
-        );
-        fs::write(root.join("conversations/b2/state.json"), "{}").unwrap();
-        fs::create_dir_all(root.join("conversations/c3")).unwrap();
-        fs::write(root.join("conversations/c3/state.json"), "{}").unwrap();
+        save_view(root, "a1", &snapshot("a1", "finished"));
+        save_view(root, "b2", &json!({"version": 2}));
         let reader = Reader::new(root.to_path_buf());
 
         let overview = reader.overview();
         assert_eq!(overview.items.len(), 1);
-        assert_eq!(overview.unavailable.len(), 2);
+        assert_eq!(overview.unavailable.len(), 1);
         assert_eq!(reader.overview().items[0].status, "finished");
 
         let live = root.join("live/1-x.json");
@@ -950,14 +983,11 @@ mod tests {
     fn routes_serve_views_and_reject_everything_else() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        write(
-            &root.join("conversations/a1/views.json"),
-            &snapshot("a1", "review"),
-        );
+        save_view(root, "a1", &snapshot("a1", "review"));
         let mut task = snapshot("t1", "succeeded");
         task["director"]["mode"] = json!("task");
         task["public"] = Value::Null;
-        write(&root.join("conversations/t1/views.json"), &task);
+        save_view(root, "t1", &task);
         let reader = Reader::new(root.to_path_buf());
 
         assert!(String::from_utf8_lossy(&reader.respond("/").body).contains("url=/chat/"));
@@ -1020,13 +1050,7 @@ mod tests {
     }
 
     fn save(root: &Path, value: &Value) {
-        write(
-            &root
-                .join("conversations")
-                .join(value["summary"]["id"].as_str().unwrap())
-                .join("views.json"),
-            value,
-        );
+        save_view(root, value["summary"]["id"].as_str().unwrap(), value);
     }
 
     #[test]
@@ -1392,8 +1416,14 @@ mod tests {
         assert_eq!(groups["groups"].as_array().unwrap().len(), 200);
         assert_eq!(groups["groups"][0]["group"], "c-review");
         // Remove recent groups: no fallback should bring the old idle group into the stage.
+        let connection = crate::db::write(dir.path()).unwrap().unwrap();
         for i in 0..205 {
-            fs::remove_file(dir.path().join(format!("conversations/c{i:03}/views.json"))).unwrap();
+            connection
+                .execute(
+                    "DELETE FROM conversations WHERE id = ?1",
+                    [format!("c{i:03}")],
+                )
+                .unwrap();
         }
         assert_eq!(
             state(&reader, "/app/stage")["managers"]

@@ -326,6 +326,7 @@ class InvocationManager:
                     status=None if result is None else result.status,
                     session_id=None if result is None else result.session_id,
                     result_read=record.result_read,
+                    error=None if result is None else result.error,
                 )
             )
         return listings

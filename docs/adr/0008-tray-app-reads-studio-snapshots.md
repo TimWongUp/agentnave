@@ -3,6 +3,7 @@
 - 状态：已接受（第一期：工作室数据合同；第二期：macOS 菜单栏应用 `apps/tray`；第三期起：macOS 发布产物与应用内更新；第四期：群聊面板与任务原文）
 - 日期：2026-10-15
 - 取代 [ADR-0002](0002-lightweight-cli-subagent-adapter.md) 中“不提供桌面状态 App”的条款；核心包边界不变。
+- 视图快照改存 SQLite `views` 表，`state.json`／`views.json` 不再存在，见 [ADR-0026](0026-sqlite-conversation-store.md)。
 
 ## 背景
 

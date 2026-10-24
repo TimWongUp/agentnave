@@ -140,7 +140,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     start_properties = _payload(tools["start_agent"].input_schema["properties"])
     assert "timeout_seconds" not in start_properties
     wait_properties = _payload(tools["wait"].input_schema["properties"])
-    assert set(wait_properties) == {"ids", "include_output"}
+    assert set(wait_properties) == {"ids", "include_output", "wait_seconds"}
     assert mcp_server.WAIT_SECONDS == 300
     cancel = tools["cancel"].annotations
     assert cancel is not None and cancel.destructive_hint is True
@@ -301,13 +301,21 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
     _install_fake_claude(tmp_path, monkeypatch)
     monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 1.0)
     async with Client(mcp) as client:
-        ids: list[object] = []
+        starts: list[dict[str, object]] = []
         for prompt in ("sleep", "private task text"):
             started = await client.call_tool(
                 "start_agent", {"provider": "claude", "prompt": prompt, "cwd": str(tmp_path)}
             )
-            ids.append(_payload(started.structured_content)["invocation_id"])
-        sleeping, finished = ids
+            starts.append(_payload(started.structured_content))
+        sleeping, finished = (start["invocation_id"] for start in starts)
+        # A second run in the same cwd is flagged, never refused.
+        assert "warnings" not in starts[0]
+        assert str(sleeping) in cast(list[str], starts[1]["warnings"])[0]
+        mistaken = await client.call_tool(
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "session_id": sleeping},
+        )
+        assert mistaken.is_error is True and "not a native session" in str(mistaken.content)
         async with asyncio.timeout(3):
             for invalid in ([], [finished, finished], [sleeping, "missing"]):
                 rejected = await client.call_tool("wait", {"ids": invalid})
@@ -340,6 +348,9 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
         }
         assert "private task text" not in str(listed).lower()
 
+        async with asyncio.timeout(1):
+            peek = await client.call_tool("wait", {"ids": [sleeping], "wait_seconds": 0})
+        assert _payload(peek.structured_content)["reason"] == "wait_elapsed"
         monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.2)
         elapsed = _payload((await client.call_tool("wait", {"ids": [sleeping]})).structured_content)
         assert elapsed["reason"] == "wait_elapsed"
