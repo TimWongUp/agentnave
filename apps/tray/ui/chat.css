@@ -288,9 +288,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .dr-all:hover { color: var(--ink); background: var(--card-hover); }
 .dr-close { display: none; flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
 .dr-close:hover { background: var(--card-hover); color: var(--ink); }
-.portrait { position: relative; flex: none; height: 196px; margin: 12px 14px 0; border-radius: 14px; overflow: hidden; background: radial-gradient(120% 80% at 50% 100%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%), var(--card); }
-.portrait .fig { position: absolute; left: 50%; bottom: -6px; width: 200px; height: 200px; margin-left: -100px; }
-.portrait .ps { position: absolute; left: 10px; top: 8px; z-index: 1; font-size: 11px; font-weight: 650; color: var(--soft); }
 .dr-note { flex: none; margin: 12px 14px 0; padding: 8px 10px; border-radius: 9px; background: var(--card); font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 .dr-empty { padding: 40px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
 

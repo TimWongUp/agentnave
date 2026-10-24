@@ -74,7 +74,6 @@ const el = {
   drSub: $("dr-sub"),
   drAll: $("dr-all"),
   drNote: $("dr-note"),
-  portrait: $("portrait"),
   tl: $("timeline"),
   inner: $("tl-inner"),
   blank: $("blank"),
@@ -109,7 +108,6 @@ const state = {
   convOpen: false, // only matters while the conversation is an overlay
   opener: null,
   scopeKey: "",
-  portraitKey: "",
   nodes: new Map(),
   expanded: new Set(),
   seenIds: new Set(),
@@ -1424,24 +1422,6 @@ function scopeHead(c, ctx, shown) {
     note: "",
   };
 }
-function renderPortrait(ctx) {
-  const d = state.drawer.kind === "desk" && ctx.desks.get(state.drawer.key);
-  el.portrait.hidden = !d;
-  if (!d) {
-    state.portraitKey = "";
-    return;
-  }
-  const rec = state.deskRecs.get(d.key);
-  const name = deskChar(d);
-  if (state.portraitKey !== name) {
-    state.portraitKey = name;
-    el.portrait.replaceChildren(h("span.ps"), ART.figure(name, "m"));
-  }
-  const mood = rec?.mood?.mood || "idle";
-  el.portrait.dataset.mood = rec?.mood?.away ? "speaking" : mood;
-  setText(el.portrait.firstChild, rec?.mood?.word || "");
-}
-
 function renderConv(c, ctx) {
   el.drawer.hidden = overlay.matches && !state.convOpen;
   if (el.drawer.hidden) {
@@ -1478,7 +1458,6 @@ function renderConv(c, ctx) {
   el.drNote.hidden = !head.note;
   el.drAll.hidden = state.drawer.kind === "all";
   setAttr(el.drawer, "aria-label", `${head.title} 的对话`);
-  renderPortrait(ctx);
   // Geometry is the truth: a reader who is at the bottom follows new content, anyone else is left alone.
   const follow = reset || nearBottom();
   const order = [];
