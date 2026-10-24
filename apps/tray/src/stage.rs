@@ -1505,8 +1505,9 @@ impl Group {
                 self.messages.push(msg);
             }
         }
-        // A private answer only records its round's start; it ended before a later round began,
-        // or at the latest by the conversation's last update, so the desk counts that as its work.
+        // A private answer carries its finish time; older records only have the
+        // round's start. The answer was done before a later round began, so the later of the two
+        // counts as the desk's work, and the conversation's last update when no round followed.
         let ended = |round: u64| {
             array(view, "messages")
                 .filter(|m| m["round"].as_u64().is_some_and(|r| r > round))
@@ -1539,9 +1540,14 @@ impl Group {
                 &identity,
                 "succeeded",
                 created,
-                ended(entry["round"].as_u64().unwrap_or_default())
-                    .or_else(|| timestamp(&time))
-                    .unwrap_or(created),
+                [
+                    ended(entry["round"].as_u64().unwrap_or_default()),
+                    timestamp(&time),
+                ]
+                .into_iter()
+                .flatten()
+                .max()
+                .unwrap_or(created),
                 false,
             );
             if self.include_messages {

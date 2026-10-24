@@ -248,6 +248,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         assert len(private) == 1
         assert private[0]["round"] == 1 and private[0]["seat_id"] == "b"
         assert private[0]["text"] == _seats(waited)[1]["output"]
+        private_time = private[0]["time"]
         assert "private_messages" not in json.loads(public)
         assert "Quiz" in home and "SECRET-B" not in home
         # Read back like the App: final messages only, private ones on request.
@@ -298,6 +299,9 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
     state_file = data_root / "conversations" / str(group_id) / "state.json"
     saved = json.loads(state_file.read_text())
     assert [seat["review"] for seat in saved["rounds"][-1]["seats"]] == ["private", "private"]
+    # A private answer shows when it finished, not when its round began.
+    assert all(seat["finished"] for seat in saved["rounds"][0]["seats"])
+    assert private_time == saved["rounds"][0]["seats"][1]["finished"]
 
     # Simulate a crash: one answer waiting for review, one seat still running.
     last = saved["rounds"][-1]
