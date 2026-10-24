@@ -795,13 +795,17 @@ function fallback(provider) {
   };
 }
 const CHOICE_BY = { app: "你设的默认", cli: "CLI 默认" };
+function needsExplicitModel(provider) {
+  return isModeRestricted() && currentDoc.modes[currentMode]?.[provider]?.models?.length > 0 && !defaultModel(provider);
+}
 function fallbackText(provider) {
+  if (needsExplicitModel(provider)) return "boss 必须指定模型，或在这里设为默认";
   const { model, modelBy, effort, effortBy } = fallback(provider);
   const modelPart = model ? `${model}（${CHOICE_BY[modelBy]}）` : "CLI 自己选的模型";
   const effortPart = effort ? `档位 ${effort}（${CHOICE_BY[effortBy]}）` : "档位由 CLI 决定";
   return `boss 不指定时用 ${modelPart} · ${effortPart}`;
 }
-const FALLBACK_HINT = "boss 指定的模型和档位优先；没指定时用你在这里设的默认；没设就用 CLI 自己的默认（标着“CLI 默认”）。读不到 CLI 默认时，由 CLI 自己决定。";
+const FALLBACK_HINT = "boss 指定的模型和档位优先；没指定时用你在这里设的默认；没设且允许任意模型时，才用 CLI 自己的默认（标着“CLI 默认”）。限制了模型名单却没设默认时，boss 必须指定模型。读不到 CLI 默认时，由 CLI 自己决定。";
 
 const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
@@ -879,18 +883,25 @@ function renderEffortBar(provider, modelId) {
   const handles = { lo: handle("lo", "最低允许档位"), hi: handle("hi", "最高允许档位"), def: handle("def", "默认思考档位") };
   const text = el("span", { className: "effort-text" });
   const track = el("div", { className: "effort-track" }, fill, ...ticks, handles.lo, handles.hi, handles.def);
-  // A set default goes back to the CLI's own with one click; there is no other place to clear it.
+  // Remove the field that actually supplies the effort. A mode override can fall back
+  // to a shared default; clearing a shared default also affects other inheriting modes.
+  const effortOverride = override && Object.hasOwn(override, "effort");
+  const sharedFallback = effortOverride && Object.hasOwn(shared, "effort");
+  const resetAllowed = !sharedFallback || !efforts.length || efforts.includes(shared.effort);
   const reset = initial.def === null ? null : el("button", {
     type: "button",
     className: "effort-reset",
     dataset: { focusKey: `${provider}/${modelId}/effort-reset` },
-    title: "清除你设的默认档位，boss 不指定时改用 CLI 默认",
+    disabled: !resetAllowed,
+    title: sharedFallback
+      ? resetAllowed ? `取消本场景的默认档位，改用共享档位 ${shared.effort}` : `共享档位 ${shared.effort} 不在当前允许范围内，请先调整范围`
+      : effortOverride ? "清除本场景的默认档位，改用 CLI 默认" : "清除共享默认档位；所有继承共享设置的场景都会改用 CLI 默认",
     onClick: () => {
-      delete (override || currentDoc.clis[provider].models[modelId]).effort;
+      delete (effortOverride ? override : currentDoc.clis[provider].models[modelId]).effort;
       incDocVersion();
       renderCards();
     },
-  }, "改回 CLI 默认");
+  }, sharedFallback ? `改用共享档位 ${shared.effort}` : effortOverride ? "改回 CLI 默认" : "改回 CLI 默认（共享设置）");
   const bar = el("div", { className: "effort-bar" }, track, text, ...(reset ? [reset] : []));
 
   const paint = () => {
@@ -1308,7 +1319,7 @@ function renderCards() {
 
         const defaultLabel = el(
           "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为你的默认：boss 不指定模型时用它，优先于 CLI 默认。再次点击取消，改回跟随 CLI 默认" },
+          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为你的默认：boss 不指定模型时用它，优先于 CLI 默认。再次点击取消；限制了模型名单时，取消后 boss 必须指定模型，否则跟随 CLI 默认" },
           radioInput,
           textNode("设为默认")
         );
@@ -1321,6 +1332,7 @@ function renderCards() {
         if (nativeDefault(provider).model === modelId) {
           tags.push(el("span", { className: "badge", title: defaultModel(provider)
             ? `CLI 自己的默认模型。你已把 ${defaultModel(provider)} 设为默认，所以 boss 不指定时不会用它`
+            : needsExplicitModel(provider) ? "CLI 自己的默认模型；当前限制了模型名单且没设默认，boss 仍必须指定模型"
             : "CLI 自己的默认模型：你没有设默认，boss 不指定时就用它，这一行的档位设置也会生效" }, "CLI 默认"));
         }
 

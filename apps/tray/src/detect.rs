@@ -349,14 +349,10 @@ fn probe_path(provider: &str, path: &Path) -> Value {
     let dsh_dump = dsh_probe.as_ref().and_then(|result| result.as_ref().ok());
     let dsh_error = dsh_probe.as_ref().and_then(|result| result.as_ref().err());
     let configured_model = match provider {
-        "deepseek" => dsh_dump
-            .as_deref()
-            .and_then(|dump| dsh_default(dump, "model")),
+        "deepseek" => dsh_dump.and_then(|dump| dsh_default(dump, "model")),
         _ => configured(provider),
     };
-    let dsh_effort = dsh_dump
-        .as_deref()
-        .and_then(|dump| dsh_default(dump, "reasoningEffort"));
+    let dsh_effort = dsh_dump.and_then(|dump| dsh_default(dump, "reasoningEffort"));
     let listed = match provider {
         "codex" => codex_models().map(|(models, levels)| {
             if !levels.is_empty() {
@@ -417,7 +413,7 @@ fn probe_path(provider: &str, path: &Path) -> Value {
             "efforts": efforts,
             })
         }
-        Err(error) => failure(provider, Some(&path), &error),
+        Err(error) => failure(provider, Some(path), &error),
     }
 }
 

@@ -174,3 +174,41 @@ def test_without_a_model_the_cli_default_model_keeps_its_saved_settings(
         {"model": "grok-4.6"},
         [],
     )
+
+
+def test_cached_native_model_does_not_transfer_execution_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    configured = {
+        "effort": "high",
+        "options": {
+            "dangerously_bypass_approvals_and_sandbox": True,
+            "sandbox": "danger-full-access",
+        },
+    }
+    document = MemberFile.model_validate(
+        {"version": 1, "clis": {"codex": {"models": {"cached-A": configured}}}, "modes": {}}
+    )
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"version": 1, "clis": {"codex": {"model": "cached-A"}}}), encoding="utf-8"
+    )
+    # The CLI may now use model B. A cache entry cannot transfer A's execution authority.
+    assert apply_member(document, "task", "codex", {}, frozenset()) == (
+        {"effort": "high"},
+        ["effort"],
+    )
+    assert apply_member(document, "task", "codex", {"sandbox": "workspace-write"}, frozenset()) == (
+        {"sandbox": "workspace-write", "effort": "high"},
+        ["effort"],
+    )
+    explicit = {"model": "cached-A", "effort": "high", **permissions}
+    assert apply_member(document, "task", "codex", {"model": "cached-A"}, frozenset()) == (
+        explicit,
+        ["effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+    )
+    document.defaults = {"task": {"codex": "cached-A"}}
+    assert apply_member(document, "task", "codex", {}, frozenset()) == (
+        explicit,
+        ["model", "effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+    )

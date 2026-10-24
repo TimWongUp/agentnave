@@ -8,7 +8,7 @@ App 中配置了组员时以 `list_members` 为准，超出模式范围会被拒
 { "model": "deepseek-v4-pro", "effort": "high" }
 ```
 
-dsh 没有模型、effort 或权限的命令行参数；Adapter 把显式选项写成系统临时目录中的 `--patch` 覆盖层，调用结束即删除，不改用户的 dsh 配置。`model` 写入 `agent-default-model`，模型路由取 `provider`；省略时按 dsh headless profile 的组合配置补上：`model` 是它的默认模型时沿用默认路由，是某个已配置 provider（如网关）声明的模型时用该 provider，否则为发行版的 `deepseek-official`；`effort`（`off`、`low`、`high`、`max`）与 `provider` 都须同时提供 `model`。
+dsh 没有模型、effort 或权限的命令行参数；Adapter 把显式选项写成系统临时目录中的 `--patch` 覆盖层，调用结束即删除，不改用户的 dsh 配置。`model` 写入 `agent-default-model`，模型路由取 `provider`；省略时按 dsh headless profile 的组合配置补上：`model` 是它的默认模型时沿用默认路由，是某个已配置 provider（如网关）声明的模型时用该 provider，否则为发行版的 `deepseek-official`；`provider` 须同时提供 `model`。`effort`（`off`、`low`、`high`、`max`）可单独设置：Adapter 实时读取 headless profile 的默认模型与路由，仅为满足整行 patch 协议而重述它们，不使用 App 缓存或内置目录猜测；读取失败时要求显式指定模型。
 
 首次使用先调用 `list_members(provider="deepseek")`。其他选项：
 

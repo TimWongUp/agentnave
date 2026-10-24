@@ -1700,7 +1700,10 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
         with pytest.raises(ValueError, match=message):
             adapter.prepare(InvocationRequest("deepseek", "x", tmp_path, None, options))
 
-    monkeypatch.setattr(deepseek_adapter, "profile_routes", lambda _exe: (None, {}))
+    def unavailable(_executable: str) -> tuple[None, dict[str, str]]:
+        return None, {}
+
+    monkeypatch.setattr(deepseek_adapter, "profile_routes", unavailable)
     with pytest.raises(ValueError, match="Unable to read deepseek's default model"):
         adapter.prepare(request(tmp_path, "deepseek", provider_options={"effort": "high"}))
 

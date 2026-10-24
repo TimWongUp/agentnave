@@ -38,7 +38,7 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 ## 稳定合同
 
-请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id` 和 `provider_options`。Provider Options 可由调用方显式给出，或来自用户在 AgentNave App 中配置的组员默认值；均须通过对应 Adapter allowlist。显式参数优先，超出配置范围时拒绝，不替换为其他模型或 effort；未配置的参数继承 Provider 原生设置。默认值在服务入口套用，不下沉到 Adapter。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设置的默认 options 或用户本轮明确要求，boss 不得自行追加；App 中的权限默认值会被套用并在回执注明。
+请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id` 和 `provider_options`。Provider Options 可由调用方显式给出，或来自用户在 AgentNave App 中配置的组员默认值；均须通过对应 Adapter allowlist。显式参数优先，超出配置范围时拒绝，不替换为其他模型或 effort；未配置的参数继承 Provider 原生设置。默认值在服务入口套用，不下沉到 Adapter。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设置的默认 options 或用户本轮明确要求，boss 不得自行追加；App 中的权限默认值在调用明确模型（含 App 默认模型）时套用并在回执注明；仅按 `cli-defaults.json` 缓存回退时不继承权限、仓库检查绕过、工具、agent、mode 或 project 等执行控制，避免 CLI 默认变化后将另一模型的授权带入调用。
 
 同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
 

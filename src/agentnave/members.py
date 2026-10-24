@@ -41,6 +41,23 @@ class CapacityError(ValueError):
 
 DEFAULT_MAX_RUNNING = 8
 
+# Cached native identity is advisory: execution controls saved for one model must not
+# be transferred to a different model if the CLI default changed since the last probe.
+_MODEL_EXECUTION_OPTIONS = frozenset(
+    {
+        "permission_mode",
+        "sandbox",
+        "dangerously_bypass_approvals_and_sandbox",
+        "dangerously_skip_permissions",
+        "skip_git_repo_check",
+        "agent",
+        "tools",
+        "mode",
+        "project",
+        "restricted_tools",
+    }
+)
+
 
 def validate_provider_options(request: InvocationRequest) -> None:
     adapter = get_adapter(request.provider)
@@ -186,6 +203,8 @@ class MemberFile(StrictModel):
                 + ", ".join(config.efforts)
             )
         for key, value in config.options.items():
+            if model is None and key in _MODEL_EXECUTION_OPTIONS:
+                continue
             if restricted and key not in RESTRICTED_EXTRA_OPTIONS.get(provider, set()):
                 continue
             if key not in result:
