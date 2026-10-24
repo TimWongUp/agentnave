@@ -125,17 +125,6 @@ jobs:
           # The retired launcher must be absent; verify_install treats its path as an absence check.
           "$UV_TOOL_DIR/agentnave/bin/python" scripts/verify_install.py \
             "$UV_TOOL_BIN_DIR/agentnave-mcp" "$UV_TOOL_BIN_DIR/agentnave-studio-mcp"
-      - name: Diagnose stale parent listeners (temporary)
-        if: runner.os == 'Windows'
-        run: |
-          $all = Get-CimInstance Win32_Process
-          $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
-          $listen = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
-          "processes: $($all.Count); listening processes: $($listen.Count)"
-          $listen | ForEach-Object { $p = $byId[$_]; $parent = if ($p) { $byId[$p.ParentProcessId] } else { $null }
-            [pscustomobject]@{ Pid = $_; Name = $p.Name; Created = $p.CreationDate; ParentPid = $p.ParentProcessId; Parent = $parent.Name; ParentCreated = $parent.CreationDate
-              Hazard = if (-not $parent) { 'parent gone' } elseif ($parent.CreationDate -gt $p.CreationDate) { 'parent pid reused' } else { '' } } } |
-            Format-Table -AutoSize | Out-String -Width 300
       - name: Verify installed distributions on Windows
         if: runner.os == 'Windows'
         env:
