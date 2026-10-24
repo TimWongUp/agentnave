@@ -282,7 +282,7 @@ class RoundPayload(TypedDict):
 
 
 class WaitPayload(TypedDict):
-    reason: Literal["ready", "wait_elapsed"]
+    reason: Literal["ready", "wait_elapsed", "nothing_pending"]
     updates: list[InvocationPayload]
     rounds: list[RoundPayload]
 
@@ -719,12 +719,15 @@ async def _ready_handles(
 )
 async def wait(
     ids: Annotated[
-        list[str],
+        list[str] | None,
         Field(
-            min_length=1,
-            description="Distinct invocation_ids from start_agent and round_ids from run_round.",
+            description=(
+                "Distinct invocation_ids from start_agent and round_ids from run_round. Omit to "
+                "wait on the inbox: every task and round of this server whose end you have not "
+                "received yet."
+            ),
         ),
-    ],
+    ] = None,
     include_output: Annotated[
         bool,
         Field(description="false omits reply bodies and tails, including answers under review."),
@@ -737,6 +740,15 @@ async def wait(
             description=(
                 "Longest wait in seconds, 300 when omitted; 0 returns at once, with the ready "
                 "handles or a running snapshot of each. Never stops the work."
+            ),
+        ),
+    ] = None,
+    manager_session_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "With ids omitted, only this boss chat's tasks and rounds; same value as "
+                "start_agent and run_round. Ignored with ids."
             ),
         ),
     ] = None,
@@ -753,40 +765,81 @@ async def wait(
     running snapshot of each, with the latest reply tail (at most 1000 characters) and its age.
     Unknown, expired or repeated ids reject the whole call before waiting. This is
     request/response waiting, not a background subscription.
+
+    Omitting ids waits on the inbox instead: the handles above whose final state no wait or
+    cancel has returned. Each end is delivered once; a round under review stays ready until
+    decided. reason=nothing_pending returns at once when nothing is outstanding.
     """
     manager = _manager(ctx)
     conversations = _conversations(ctx)
-    if len(set(ids)) != len(ids):
-        raise ToolError("ids must not repeat. Correct the list and retry.")
     invocation_ids: list[str] = []
     round_ids: list[str] = []
-    for handle in ids:
-        if _known_invocation(manager, handle):
-            invocation_ids.append(handle)
-            continue
+    if ids is None:
         try:
-            conversations.round(handle)
-        except KeyError as exc:
-            raise _unknown_handle(handle) from exc
-        round_ids.append(handle)
-    ready_invocations, ready_rounds = await _ready_handles(
-        manager,
-        conversations,
-        invocation_ids,
-        round_ids,
-        WAIT_SECONDS if wait_seconds is None else wait_seconds,
-    )
+            invocation_ids, round_ids = conversations.inbox(manager_session_id)
+        except ValueError as exc:
+            raise ToolError(f"{exc}. Correct and retry.") from exc
+        if not invocation_ids and not round_ids:
+            return {"reason": "nothing_pending", "updates": [], "rounds": []}
+    else:
+        if not ids:
+            raise ToolError("ids must list at least one handle, or be omitted for the inbox.")
+        if len(set(ids)) != len(ids):
+            raise ToolError("ids must not repeat. Correct the list and retry.")
+        for handle in ids:
+            if _known_invocation(manager, handle):
+                invocation_ids.append(handle)
+                continue
+            try:
+                conversations.round(handle)
+            except KeyError as exc:
+                raise _unknown_handle(handle) from exc
+            round_ids.append(handle)
+    deadline = time.monotonic() + (WAIT_SECONDS if wait_seconds is None else wait_seconds)
+    while True:
+        ready_invocations, ready_rounds = await _ready_handles(
+            manager,
+            conversations,
+            invocation_ids,
+            round_ids,
+            max(0.0, deadline - time.monotonic()),
+        )
+        if ids is not None:
+            break
+        # Another inbox wait may have delivered these ends while this one slept. From here to
+        # the return nothing awaits, so this wait's claim cannot be taken twice.
+        ready_invocations = {
+            handle: update
+            for handle, update in ready_invocations.items()
+            if handle not in conversations.delivered_tasks
+        }
+        ready_rounds = {
+            handle: found
+            for handle, found in ready_rounds.items()
+            if handle not in conversations.delivered_rounds
+        }
+        if ready_invocations or ready_rounds or time.monotonic() >= deadline:
+            break
+        invocation_ids, round_ids = conversations.inbox(manager_session_id)
+        if not invocation_ids and not round_ids:
+            return {"reason": "nothing_pending", "updates": [], "rounds": []}
     elapsed = not ready_invocations and not ready_rounds
-    updates = [
-        update_payload(manager, conversations, handle, ready_invocations.get(handle))
-        for handle in invocation_ids
-        if elapsed or handle in ready_invocations
-    ]
+    updates: list[InvocationPayload] = []
+    for handle in invocation_ids:
+        if not elapsed and handle not in ready_invocations:
+            continue
+        update = ready_invocations.get(handle)
+        if isinstance(update, InvocationResult):
+            conversations.delivered_tasks.add(handle)
+        updates.append(update_payload(manager, conversations, handle, update))
     rounds: list[RoundPayload] = []
     for handle in round_ids:
         if not elapsed and handle not in ready_rounds:
             continue
         round_, reason = ready_rounds.get(handle) or (conversations.round(handle), None)
+        if round_.finished and not elapsed:
+            # One ending just after the window closed is delivered by the next wait as ready.
+            conversations.delivered_rounds.add(handle)
         rounds.append(
             round_payload(
                 round_,
@@ -825,12 +878,15 @@ async def cancel(
     """
     manager = _manager(ctx)
     if _known_invocation(manager, id):
-        return {"invocation": finished_payload(id, await manager.cancel(id))}
+        result = await manager.cancel(id)
+        _conversations(ctx).delivered_tasks.add(id)
+        return {"invocation": finished_payload(id, result)}
     conversations = _conversations(ctx)
     try:
         round_ = await conversations.cancel(id)
     except KeyError as exc:
         raise _unknown_handle(id) from exc
+    conversations.delivered_rounds.add(id)
     return {
         "round": round_payload(
             round_,
@@ -1412,6 +1468,14 @@ async def read_conversation(
             "posted before the first round.",
         ),
     ] = 0,
+    limit: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=500,
+            description="At most this many of the most recent messages or tasks; omitted counts the rest.",
+        ),
+    ] = None,
     include_private: Annotated[
         bool,
         Field(
@@ -1439,7 +1503,7 @@ async def read_conversation(
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
     data = views.timeline(
-        record.state, since_round=since_round, include_private=include_private
+        record.state, since_round=since_round, include_private=include_private, limit=limit
     ) | {"writable": writable}
     urls = conversations.urls(conversation_id)
     if urls is not None:

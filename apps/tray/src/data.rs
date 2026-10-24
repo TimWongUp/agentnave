@@ -833,6 +833,12 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
         if let Some(model) = tail["reported_model"].as_str() {
             target["reported_model"] = json!(model);
         }
+        // What the CLI is doing now and when its reply last grew; absent from older servers.
+        for key in ["doing", "output_at"] {
+            if let Some(value) = tail[key].as_str() {
+                target[key] = json!(value);
+            }
+        }
     }
     let now = updated_at.and_then(crate::stage::timestamp);
     let mut view = saved.clone();
@@ -1229,7 +1235,8 @@ mod tests {
         write(
             &root.join("live/1-tails.json"),
             &json!({"version": 2, "conversations": {
-                "a": {"tasks": {"t-a": {"output": "streamed tail", "reported_model": null}}, "seats": {}},
+                "a": {"tasks": {"t-a": {"output": "streamed tail", "reported_model": null,
+                    "doing": "tool:Read", "output_at": "2026-10-15T02:01:00+00:00"}}, "seats": {}},
                 "c": {"tasks": {"t-c": {"output": "late tail", "reported_model": null}}, "seats": {}},
                 // Tails without saved views beneath them show nothing.
                 "gone": {"tasks": {"t-gone": {"output": "x", "reported_model": null}}, "seats": {}}}}),
@@ -1243,6 +1250,10 @@ mod tests {
         let typing: Vec<_> = messages.iter().filter(|m| m["kind"] == "typing").collect();
         assert_eq!(typing.len(), 1);
         assert_eq!(typing[0]["text"], "streamed tail");
+        assert_eq!(
+            (&typing[0]["doing"], &typing[0]["output_at"]),
+            (&json!("tool:Read"), &json!("2026-10-15T02:01:00+00:00"))
+        );
         // A finished task keeps its saved answer.
         assert!(!messages.iter().any(|m| m["text"] == "late tail"));
         // A heartbeat that only refreshes the mtime keeps the parsed payload.

@@ -211,6 +211,10 @@ class Conversations(Groups):
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
         # Completed replies remain readable, but never participate in group writes again.
         self._completed_rounds: dict[str, Round] = {}
+        # Tasks and rounds whose final state a wait or cancel has returned; the inbox skips
+        # them. Marked only once the reply is built, so a wait cut short delivers nothing.
+        self.delivered_tasks: set[str] = set()
+        self.delivered_rounds: set[str] = set()
         self._unsaved: set[str] = set()
         # While work runs, its reply tails are written here for the tray app, then removed.
         self.live_path = self.root / "live" / f"{os.getpid()}-{uuid4().hex[:8]}.json"
@@ -640,6 +644,41 @@ class Conversations(Groups):
             or record.state.pending_review()
             or any(task.status == "running" for task in record.state.tasks)
         )
+
+    def inbox(self, manager_session_id: str | None) -> tuple[list[str], list[str]]:
+        """This server's task invocations and rounds whose end no caller has received yet.
+
+        With a boss identity (argument or AGENTNAVE_HOST_SESSION_ID) only that boss's
+        conversations count; without one, every handle of this server. Oldest first.
+        """
+        session = self._manager_session(manager_session_id)
+
+        def mine(conversation_id: str) -> bool:
+            if session is None:
+                return True
+            record = self.records.get(conversation_id)
+            return record is not None and record.state.manager_session == session
+
+        known = {listing.invocation_id for listing in self.manager.list_invocations()}
+        self.delivered_tasks &= known
+        tasks = [
+            invocation_id
+            for invocation_id, (conversation_id, _) in self.task_invocations.items()
+            if invocation_id in known
+            and invocation_id not in self.delivered_tasks
+            and mine(conversation_id)
+        ]
+        rounds = {**self._completed_rounds, **self._rounds}
+        self.delivered_rounds &= set(rounds)
+        pending = sorted(
+            (
+                round_
+                for round_id, round_ in rounds.items()
+                if round_id not in self.delivered_rounds and mine(round_.group.id)
+            ),
+            key=lambda round_: round_.started_at,
+        )
+        return tasks, [round_.id for round_ in pending]
 
     def restart_safe(self) -> bool:
         """A held record may still own a review or a result that could not be saved."""
@@ -1162,18 +1201,37 @@ class Conversations(Groups):
                     self._publish(record, home=False)
 
     def _live_tails(self, record: Record) -> dict[str, object]:
-        """What running work adds to the saved views: reply tails and reported models."""
+        """What running work adds to the saved views: reply tails, reported models, what each
+        CLI is doing now and when its reply last grew."""
         tails, _ = self._tails(record)
         state = record.state
         latest = state.rounds[-1].seats if state.rounds else []
+        invocations = dict(self.running_tasks)
+        group = self._groups.get(state.id)
+        if group is not None and group.active is not None:
+            invocations |= {
+                run.seat_id: run.invocation_id
+                for run in group.active.runs
+                if run.status == "running" and run.invocation_id is not None
+            }
+
+        def tail(key: str, reported_model: str | None) -> dict[str, object]:
+            doing, output_at = self.manager.progress(invocations[key])
+            return {
+                "output": tails[key],
+                "reported_model": reported_model,
+                "doing": doing,
+                "output_at": output_at,
+            }
+
         return {
             "tasks": {
-                task.id: {"output": tails[task.id], "reported_model": task.reported_model}
+                task.id: tail(task.id, task.reported_model)
                 for task in state.tasks
                 if task.id in tails
             },
             "seats": {
-                seat.seat_id: {"output": tails[seat.seat_id], "reported_model": seat.reported_model}
+                seat.seat_id: tail(seat.seat_id, seat.reported_model)
                 for seat in latest
                 if seat.seat_id in tails
             },

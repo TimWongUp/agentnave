@@ -12,7 +12,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from agentnave.adapters import ProviderAdapter, get_adapter
@@ -46,6 +46,7 @@ _OUTPUT_LIMIT_ERROR = InvocationError(
 )
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_ENDED_TOOL_STATES = frozenset({"completed", "failed", "error", "errored"})
 
 
 @dataclass(slots=True)
@@ -349,6 +350,27 @@ class InvocationManager:
             else max(0, round((now - record.last_activity_at) * 1000)),
         )
 
+    def progress(self, invocation_id: str) -> tuple[str | None, str | None]:
+        """What the CLI is doing now and when its reply last grew, as labels that change only
+        with the work itself: thinking, tool:<name>, writing or retrying, and a wall time."""
+        record = self._record(invocation_id)
+        activity = record.last_activity
+        doing: str | None = None
+        if activity is not None:
+            if activity.kind == "tool" and activity.state not in _ENDED_TOOL_STATES:
+                doing = f"tool:{activity.tool_name or ''}"
+            elif activity.kind == "lifecycle" and activity.state == "reasoning":
+                doing = "thinking"
+            elif activity.kind == "message":
+                doing = "writing"
+            elif activity.kind == "retry":
+                doing = "retrying"
+        output_at: str | None = None
+        if record.output_at is not None:
+            wall = record.started_wall_at + timedelta(seconds=record.output_at - record.started_at)
+            output_at = wall.replace(microsecond=0).isoformat()
+        return doing, output_at
+
     def recent_output(self, invocation_id: str) -> tuple[str, int | None]:
         record = self._record(invocation_id)
         age = (
@@ -541,7 +563,7 @@ class InvocationManager:
                     terminal,
                     record.request.provider,
                     partial,
-                    parsed.session_id or record.request.session_id,
+                    parsed.session_id or prepared.session_id or record.request.session_id,
                     parsed.usage,
                     _duration_ms(started),
                     error,
@@ -557,7 +579,7 @@ class InvocationManager:
                 parsed.status,
                 record.request.provider,
                 parsed.output if parsed.status is InvocationStatus.SUCCEEDED else partial,
-                parsed.session_id,
+                parsed.session_id or prepared.session_id,
                 parsed.usage,
                 _duration_ms(started),
                 parsed_error,

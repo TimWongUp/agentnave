@@ -63,6 +63,9 @@ class PreparedCommand:
     capture_line: Callable[[bytes], bytes] | None = None
     # Given the head of a line above the capture limit, True drops it instead of failing.
     skip_oversized_line: Callable[[bytes], bool] | None = None
+    # A new native session the provider was told to create, so a run stopped before the
+    # provider reports its id can still be continued.
+    session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

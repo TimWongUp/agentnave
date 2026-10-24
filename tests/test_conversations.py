@@ -320,6 +320,9 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             client, "read_conversation", {"conversation_id": group_id, "since_round": 2}
         )
         assert {m["round"] for m in cast(list[dict[str, object]], later["messages"])} == {2}
+        last = await _call(client, "read_conversation", {"conversation_id": group_id, "limit": 1})
+        assert cast(list[object], last["messages"]) == cast(list[object], view["messages"])[-1:]
+        assert last["omitted"] == len(cast(list[object], view["messages"])) - 1
 
         third = await _run(
             client,
@@ -432,8 +435,27 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
         assert ready["reason"] == "ready" and ready["updates"] == []
         (finished,) = cast(list[dict[str, object]], ready["rounds"])
         assert finished["round_id"] == round_["round_id"] and finished["status"] == "finished"
+        # The inbox skips the round already delivered and keeps the running task.
+        inbox = await _call(client, "wait", {"wait_seconds": 0})
+        assert inbox["reason"] == "wait_elapsed" and inbox["rounds"] == []
+        updates = cast(list[dict[str, object]], inbox["updates"])
+        assert [update["invocation_id"] for update in updates] == [sleeping["invocation_id"]]
+        other = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path), "manager_session_id": "b"},
+        )
+        # Two inbox waits at once: the end reaches exactly one of them.
+        both = await asyncio.gather(
+            *(_call(client, "wait", {"manager_session_id": "b"}) for _ in range(2))
+        )
+        assert sorted(str(item["reason"]) for item in both) == ["nothing_pending", "ready"]
+        theirs = next(item for item in both if item["reason"] == "ready")
+        updates = cast(list[dict[str, object]], theirs["updates"])
+        assert [update["invocation_id"] for update in updates] == [other["invocation_id"]]
         cancelled = await _cancel(client, sleeping["invocation_id"])
         assert cancelled["status"] == "cancelled"
+        assert (await _call(client, "wait", {}))["reason"] == "nothing_pending"
 
 
 @pytest.mark.asyncio
@@ -670,6 +692,13 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
             "one",
             "two",
         ]
+        latest = await _call(
+            client, "read_conversation", {"conversation_id": conversation_id, "limit": 1}
+        )
+        assert latest["omitted"] == 1
+        assert [task["prompt"] for task in cast(list[dict[str, object]], latest["tasks"])] == [
+            "two"
+        ]
         tasks = cast(list[dict[str, object]], _state(data_root, conversation_id)["tasks"])
         assert [task["status"] for task in tasks] == ["succeeded", "succeeded"]
         assert [task["manager_model"] for task in tasks] == ["gpt-6", "claude-opus-5"]
@@ -705,7 +734,14 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
         saved_tasks = _views(data_root, conversation_id)["director"]["tasks"]
         running_id = next(task["id"] for task in saved_tasks if task["status"] == "running")
         assert live_views[str(conversation_id)] == {
-            "tasks": {running_id: {"output": "", "reported_model": None}},
+            "tasks": {
+                running_id: {
+                    "output": "",
+                    "reported_model": None,
+                    "doing": None,
+                    "output_at": None,
+                }
+            },
             "seats": {},
         }
         # Unchanged content is not rewritten; only its modification time moves.

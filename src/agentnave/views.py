@@ -248,12 +248,17 @@ def _director(
 
 
 def timeline(
-    state: Conversation, *, since_round: int = 0, include_private: bool = False
+    state: Conversation,
+    *,
+    since_round: int = 0,
+    include_private: bool = False,
+    limit: int | None = None,
 ) -> dict[str, object]:
     """A conversation as the manager reads it back: final messages in order, like the App.
 
     Shows list committed entries plus answers awaiting review; include_private adds each
     seat's private instructions and the answers kept private. Tasks list prompt and reply.
+    limit keeps only the most recent messages or tasks and counts the rest in omitted.
     """
     data: dict[str, object] = {
         "conversation_id": state.id,
@@ -263,7 +268,7 @@ def timeline(
         "created": state.created,
     }
     if state.kind == "task":
-        data["tasks"] = [
+        tasks = [
             _compact(
                 {
                     "message_id": f"{state.id}:t:{task.id}",
@@ -282,6 +287,7 @@ def timeline(
             )
             for task in state.tasks
         ]
+        data["tasks"] = _latest(data, tasks, limit)
         return data
     data["cwd"] = state.cwd
     data["review"] = state.review
@@ -351,8 +357,17 @@ def timeline(
         position = {seat_id: index for index, seat_id in enumerate(order)}
         answers.sort(key=lambda message: position.get(str(message.get("seat")), len(order)))
         messages.extend([*head, *before, *answers, *tail])
-    data["messages"] = messages
+    data["messages"] = _latest(data, messages, limit)
     return data
+
+
+def _latest(
+    data: dict[str, object], items: list[dict[str, object]], limit: int | None
+) -> list[dict[str, object]]:
+    if limit is None or len(items) <= limit:
+        return items
+    data["omitted"] = len(items) - limit
+    return items[-limit:]
 
 
 def _message(conversation_id: str, index: int, entry: EntryRecord) -> dict[str, object]:
