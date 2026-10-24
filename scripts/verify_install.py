@@ -26,10 +26,13 @@ TOOLS = [
 ]
 
 
+# Windows reuses PIDs and never updates ParentProcessId, so a process older than the
+# one now holding its parent's PID is unrelated and must not count as a descendant.
 _WINDOWS_LISTENERS = """
 $ids = @({pid}); $all = Get-CimInstance Win32_Process
+$created = @{{}}; foreach ($p in $all) {{ $created[$p.ProcessId] = $p.CreationDate }}
 do {{
-  $new = @($all | Where-Object {{ $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId }} | ForEach-Object {{ $_.ProcessId }})
+  $new = @($all | Where-Object {{ $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId -and $_.CreationDate -ge $created[$_.ParentProcessId] }} | ForEach-Object {{ $_.ProcessId }})
   $ids += $new
 }} while ($new.Count)
 @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {{ $ids -contains $_.OwningProcess -and $_.OwningProcess -ne {pid} }}).Count
