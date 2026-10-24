@@ -570,11 +570,12 @@ separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it
 
 ### Upgrading from v0.35.0 to v0.36.0
 
-The MCP tools and Skill are unchanged, so hosts need no reconnect. Saved seat runs gain an optional
-`finished` time; older servers read such records and drop the field when they rewrite them. The
-App now flags a reload only for MCP entry or tool interface changes, so Skill updates no longer ask
-for a restart. It ignores reload records from earlier versions, so a previous manual "I have
-reloaded" confirmation lapses without raising a new prompt.
+The MCP tools and Skill are unchanged, so this upgrade needs no manual reconnect; relays switch to
+the new runtime when idle. Saved seat runs gain an optional `finished` time; older servers read
+such records and drop the field when they rewrite them. The App now flags a reload only for MCP
+entry or tool interface changes, or a connection still on the old runtime ten minutes after an
+install, so Skill updates no longer ask for a restart. It ignores reload records from earlier
+versions, so a previous manual "I have reloaded" confirmation lapses without raising a new prompt.
 
 ### Upgrading from v0.34.0 to v0.35.0
 
