@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Format of the stored reload records; older records hashed whole Skill trees.
-const RELOAD_FORMAT: u64 = 3;
+/// Format of the stored reload records; older records also hashed the Skill.
+const RELOAD_FORMAT: u64 = 4;
 /// Matches the relay's own report that an update has waited too long.
 const STALE_RUNTIME_SECONDS: u64 = 600;
 /// A receipt this old with no refresh belongs to a relay that exited without removing it.
@@ -622,7 +622,7 @@ impl Hosts {
             .unwrap_or_else(|| json!({"state":"manual","path":null,"version":null}));
         let reload = if !has_entry || !installed {
             json!({"state":"not_connected"})
-        } else if let Some(token) = self.reload_token(host, &skill) {
+        } else if let Some(token) = self.reload_token(host) {
             self.reload_state(host, &token)
         } else {
             json!({"state":"unknown"})
@@ -632,8 +632,9 @@ impl Hosts {
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
             "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
-    /// Only actual configuration/Skill content matters; release numbers do not.
-    fn reload_token(&self, host: &Host, _skill: &Value) -> Option<String> {
+    /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
+    /// and release numbers do not change what a connection runs.
+    fn reload_token(&self, host: &Host) -> Option<String> {
         let mut entries = Vec::new();
         for path in &host.user_layers {
             let document = host.read_at(path).ok()?;
@@ -647,30 +648,12 @@ impl Hosts {
         if entries.is_empty() {
             return None;
         }
-        let contents = self.skill_contents(host); // Unreadable/external Skills are not MCP proof.
         Some(skill::hash(
-            &serde_json::to_vec(&json!({"entries":entries,"skill":contents})).ok()?,
+            &serde_json::to_vec(&json!({"entries":entries})).ok()?,
         ))
     }
-    /// What a host loads from the Skill when a session starts: the SKILL.md front matter. The
-    /// body and references are read on use, so changing only them needs no reload.
-    fn skill_contents(&self, host: &Host) -> Option<Value> {
-        let Some(path) = &host.skill else {
-            return Some(Value::Null);
-        };
-        safe_path(path, &self.context.home).ok()?;
-        let file = path.join("SKILL.md");
-        if !path.exists() || !file.exists() {
-            return Some(Value::Null);
-        }
-        if file.is_symlink() || !file.is_file() {
-            return None;
-        }
-        let text = fs::read_to_string(file).ok()?;
-        Some(json!(skill::hash(skill::front_matter(&text).as_bytes())))
-    }
     fn reload_state(&self, host: &Host, token: &str) -> Value {
-        // Records from before the front-matter-only token (v3) describe another token format.
+        // Records from before the MCP-only token (v4) describe another token format.
         let record = |name: &str| {
             let value = &self.settings[host.id][name];
             if value["v"] == RELOAD_FORMAT {
@@ -735,7 +718,7 @@ impl Hosts {
             v.as_str()
                 .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
         };
-        // Without a live connection nothing holds the old interface or Skill front matter: the
+        // Without a live connection nothing holds the old entry or interface: the
         // next connection starts after the change, which already counts as a reload (ADR-0022).
         let idle = connections.is_empty() && !lingering;
         let mut state = if idle {
@@ -773,9 +756,8 @@ impl Hosts {
                             .iter()
                             .all(|c| c["started_ms"].as_u64().is_some_and(|start| start > at))
                     });
-                // Every live connection started after the change. Taken as a reload: a new relay
-                // usually means a restarted host or new session, though a bare MCP reconnect in an
-                // old chat keeps that chat's earlier Skill front matter (ADR-0022).
+                // Every live connection started after the change, so each relay runs the current
+                // entry (ADR-0022).
                 if !pending || newly_connected {
                     reason = "connection";
                     // Current relays read the version from every 2026-07-28 result; released ones
@@ -835,7 +817,7 @@ impl Hosts {
             .then_some(root)
     }
     fn note_reload_change(&self, host: &Host, before: &Value, settings: &mut Value) {
-        let current = self.reload_token(host, &Value::Null);
+        let current = self.reload_token(host);
         if let Some(token) = current {
             let observed = &self.settings[host.id]["reload_observed"];
             let changed = if observed["v"] == RELOAD_FORMAT && observed["token"].is_string() {
@@ -1031,6 +1013,13 @@ impl Hosts {
             if self.settings_error.is_some() {
                 return Err("请先修复 hosts.json".into());
             }
+            // Compare against the entry before the move, so an equivalent root records no change.
+            let before = self
+                .registry()
+                .into_iter()
+                .find(|h| h.id == id)
+                .and_then(|h| self.reload_token(&h))
+                .map_or(Value::Null, Value::from);
             let mut settings = self.settings.clone();
             if !settings[id].is_object() {
                 settings[id] = json!({});
@@ -1051,7 +1040,7 @@ impl Hosts {
             self.record(id, Ok(()), "已更新配置根目录");
             let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
             let mut settings = self.settings.clone();
-            self.note_reload_change(&host, &Value::Null, &mut settings);
+            self.note_reload_change(&host, &before, &mut settings);
             if settings != self.settings {
                 roots::save(&self.context, &settings)?;
                 self.settings = settings;

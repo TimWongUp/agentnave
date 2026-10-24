@@ -682,7 +682,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
         &h.skill.as_ref().unwrap().join("SKILL.md"),
         "externally changed",
     );
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
 }
 
 #[test]
@@ -802,7 +802,8 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
 
-    // Hosts read the Skill body and references on use; only the front matter needs a reload.
+    // Agents read the Skill from disk on use; no part of it, front matter included, needs a
+    // reload.
     let skill = h.skill.as_ref().unwrap().join("SKILL.md");
     let text = fs::read_to_string(&skill).unwrap();
     save(&skill, &format!("{text}\nchanged instructions\n"));
@@ -813,9 +814,9 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
         &text.replacen("description:", "description: changed", 1),
     );
     hosts.refresh_probed();
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
-    // The session from before the change still counts as stale after a config change; a new
-    // one started after both clears the reload without a manual confirmation.
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    // The session from before a config change is stale; a new one started after it clears the
+    // reload without a manual confirmation.
     let before = h.read().unwrap();
     let mut entry = before.entry.clone().unwrap();
     entry["args"] = json!(["changed"]);
@@ -1512,4 +1513,28 @@ fn duplicate_json_target_keys_and_truncated_strings_are_rejected() {
     ] {
         assert!(Document::parse(raw, Format::Json, "mcpServers").is_err());
     }
+}
+
+#[test]
+fn an_equivalent_root_after_upgrade_records_no_reload() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    // Only records from before the MCP-only token, and a session that was already running.
+    hosts.settings["codex"] = json!({
+        "reload_observed":{"v":3,"token":"old"},
+        "reload_changed":{"v":3,"token":"old","at_ms":0},
+    });
+    save(
+        &hosts.context.home.join(".agentnave/connections/old.json"),
+        &json!({"version":1,"host":"codex","started_ms":1}).to_string(),
+    );
+    hosts
+        .action("root", &json!({"id":"codex","path":null}))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
 }
