@@ -113,7 +113,6 @@ let probing = false; // A CLI re-probe is running; it never blocks saving.
 let probedAt = 0;
 let documentError = null;
 let docVersion = 0; // Monotonic counter for save race detection
-let expandedModel = null; // { provider: string, model: string } | null
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let appStatus = null;
 let installedService = null;
@@ -544,6 +543,10 @@ function setTab(tab) {
 // The running limit lives in settings.json, read by the service before each start.
 let limitDoc = null;
 async function loadLimit() {
+  if (!$("max-running").options.length) {
+    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, String(n)));
+    $("max-running").value = "8";
+  }
   try {
     const response = await fetch("/app/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(`读取失败（${response.status}）`);
@@ -775,10 +778,34 @@ function nativeDefault(provider) {
   const native = detected[provider]?.native || {};
   return { model: native.model || null, effort: native.effort || null };
 }
-function nativeText(provider) {
-  const { model, effort } = nativeDefault(provider);
-  return `跟随 CLI 默认${model ? ` ${model}` : ""}${effort ? ` · ${effort}` : ""}`;
+// What a call that names no model or effort runs, and whose choice each part is: the default
+// set here wins, else the CLI's own default, else the CLI decides without telling us.
+function fallback(provider) {
+  const native = nativeDefault(provider);
+  const chosen = defaultModel(provider);
+  const model = chosen || native.model;
+  const shared = currentDoc.clis?.[provider]?.models?.[model] || {};
+  const override = currentDoc.modes?.[currentMode]?.[provider]?.overrides?.[model];
+  const effort = override && Object.hasOwn(override, "effort") ? override.effort : shared.effort;
+  return {
+    model,
+    modelBy: chosen ? "app" : native.model ? "cli" : null,
+    effort: effort || native.effort,
+    effortBy: effort ? "app" : native.effort ? "cli" : null,
+  };
 }
+const CHOICE_BY = { app: "你设的默认", cli: "CLI 默认" };
+function needsExplicitModel(provider) {
+  return isModeRestricted() && currentDoc.modes[currentMode]?.[provider]?.models?.length > 0 && !defaultModel(provider);
+}
+function fallbackText(provider) {
+  if (needsExplicitModel(provider)) return "boss 必须指定模型，或在这里设为默认";
+  const { model, modelBy, effort, effortBy } = fallback(provider);
+  const modelPart = model ? `${model}（${CHOICE_BY[modelBy]}）` : "CLI 自己选的模型";
+  const effortPart = effort ? `档位 ${effort}（${CHOICE_BY[effortBy]}）` : "档位由 CLI 决定";
+  return `boss 不指定时用 ${modelPart} · ${effortPart}`;
+}
+const FALLBACK_HINT = "boss 指定的模型和档位优先；没指定时用你在这里设的默认；没设且允许任意模型时，才用 CLI 自己的默认（标着“CLI 默认”）。限制了模型名单却没设默认时，boss 必须指定模型。读不到 CLI 默认时，由 CLI 自己决定。";
 
 const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
@@ -856,7 +883,26 @@ function renderEffortBar(provider, modelId) {
   const handles = { lo: handle("lo", "最低允许档位"), hi: handle("hi", "最高允许档位"), def: handle("def", "默认思考档位") };
   const text = el("span", { className: "effort-text" });
   const track = el("div", { className: "effort-track" }, fill, ...ticks, handles.lo, handles.hi, handles.def);
-  const bar = el("div", { className: "effort-bar" }, track, text);
+  // Remove the field that actually supplies the effort. A mode override can fall back
+  // to a shared default; clearing a shared default also affects other inheriting modes.
+  const effortOverride = override && Object.hasOwn(override, "effort");
+  const sharedFallback = effortOverride && Object.hasOwn(shared, "effort");
+  const resetAllowed = !sharedFallback || !efforts.length || efforts.includes(shared.effort);
+  const reset = initial.def === null ? null : el("button", {
+    type: "button",
+    className: "effort-reset",
+    dataset: { focusKey: `${provider}/${modelId}/effort-reset` },
+    disabled: !resetAllowed,
+    title: sharedFallback
+      ? resetAllowed ? `取消本场景的默认档位，改用共享档位 ${shared.effort}` : `共享档位 ${shared.effort} 不在当前允许范围内，请先调整范围`
+      : effortOverride ? "清除本场景的默认档位，改用 CLI 默认" : "清除共享默认档位；所有继承共享设置的场景都会改用 CLI 默认",
+    onClick: () => {
+      delete (effortOverride ? override : currentDoc.clis[provider].models[modelId]).effort;
+      incDocVersion();
+      renderCards();
+    },
+  }, sharedFallback ? `改用共享档位 ${shared.effort}` : effortOverride ? "改回 CLI 默认" : "改回 CLI 默认（共享设置）");
+  const bar = el("div", { className: "effort-bar" }, track, text, ...(reset ? [reset] : []));
 
   const paint = () => {
     const def = preset();
@@ -877,10 +923,10 @@ function renderEffortBar(provider, modelId) {
     const range = state.lo === 0 && state.hi === last
       ? "全部档位"
       : state.lo === state.hi ? levels[state.lo] : `${levels[state.lo]}–${levels[state.hi]}`;
-    text.textContent = `${range} · ${state.def === null ? `跟随 CLI${nativeEffort ? ` ${nativeEffort}` : ""}` : `默认 ${levels[def]}`}`;
+    text.textContent = `${range} · ${state.def === null ? (nativeEffort ? `CLI 默认 ${nativeEffort}` : "档位由 CLI 决定") : `默认 ${levels[def]}`}`;
     bar.title = state.def === null
-      ? "没有设置默认思考档位：boss 未指定时用 CLI 自己的默认档位。拖动或点选后，按所示档位保存为默认值。"
-      : "两端是允许 boss 使用的档位范围，圆点是 boss 未指定时使用的默认档位。";
+      ? `你没有设默认档位：boss 不指定时${nativeEffort ? `用 CLI 默认 ${nativeEffort}` : "由 CLI 自己决定"}。点选或拖动圆点即设为你的默认。两端是允许 boss 使用的档位范围。`
+      : "两端是允许 boss 使用的档位范围，实心圆点是你设的默认档位：boss 不指定时用它。";
   };
   const move = (kind, index) => {
     index = Math.max(0, Math.min(last, index));
@@ -1068,369 +1114,8 @@ function isModelOverridden(provider, modelId) {
   return Object.hasOwn(currentDoc.modes[currentMode]?.[provider]?.overrides || {}, modelId);
 }
 
-function toggleModelOverride(provider, modelId, override) {
-  if (!isModeRestricted()) return;
-  const provConf = currentDoc.modes[currentMode]?.[provider];
-  if (!provConf) return;
-  ensureCliModel(provider, modelId);
-  if (!provConf.overrides) provConf.overrides = {};
 
-  if (override) {
-    if (!Object.hasOwn(provConf.overrides, modelId)) {
-      // Create empty override (all fields default to inherit)
-      Object.defineProperty(provConf.overrides, modelId, {
-        value: {}, enumerable: true, configurable: true, writable: true,
-      });
-    }
-  } else {
-    delete provConf.overrides[modelId];
-  }
-  incDocVersion();
-  renderCards();
-}
 
-function addCustomModel(provider, modelId) {
-  const trimmed = modelId.trim();
-  if (!trimmed) return;
-  ensureCliModel(provider, trimmed);
-
-  if (isModeRestricted()) {
-    const provConf = currentDoc.modes[currentMode]?.[provider];
-    if (provConf && Array.isArray(provConf.models) && provConf.models.length > 0) {
-      if (!provConf.models.includes(trimmed)) {
-        provConf.models.push(trimmed);
-      }
-    }
-  }
-  expandedModel = { provider, model: trimmed };
-  incDocVersion();
-  renderCards();
-}
-
-function renderOptionsField(targetConfig, sharedConfig, overridden, refreshModelErrors) {
-  const inherited = overridden && !Object.hasOwn(targetConfig, "options");
-  const rows = optionRows(inherited ? sharedConfig : targetConfig);
-  if (!inherited) optionDrafts.set(targetConfig, rows);
-  const list = el("div", { className: `options-list${inherited ? " field-inherited-area" : ""}` });
-  const sync = () => {
-    const result = parseOptionRows(rows);
-    if (!result.errors.length) targetConfig.options = result.options;
-    incDocVersion();
-    refreshModelErrors();
-  };
-  const renderRow = (draft) => {
-    const key = el("input", { type: "text", value: draft.key, placeholder: "参数键", disabled: inherited });
-    const type = el("select", { disabled: inherited },
-      ...[["string", "字符串"], ["number", "数字"], ["boolean", "布尔"]].map(([value, label]) => el("option", { value }, label)));
-    type.value = draft.type;
-    const valueBox = el("span", { className: "option-value" });
-    const warning = el("div", { className: "option-permission-warning" },
-      "权限类参数：保存后会对该组员在此范围内的每次调用生效，boss 不会再逐次征求你的同意。");
-    const markPermission = () => {
-      warning.hidden = !grantsPermission(draft.key, draft.type === "boolean" ? draft.raw === "true" : draft.raw);
-    };
-    markPermission();
-    const renderValue = () => {
-      const value = draft.type === "boolean"
-        ? el("select", { disabled: inherited }, el("option", { value: "true" }, "true"), el("option", { value: "false" }, "false"))
-        : el("input", { type: "text", value: draft.raw, placeholder: "参数值", disabled: inherited });
-      value.value = draft.raw;
-      value.dataset.optionVal = "";
-      const markInvalid = () => value.classList.toggle("input-error",
-        draft.type === "number" && (!draft.raw.trim() || !Number.isFinite(Number(draft.raw))));
-      markInvalid();
-      const updateValue = () => {
-        draft.raw = value.value; // Strings retain intentional whitespace.
-        markInvalid();
-        markPermission();
-        sync();
-      };
-      value.addEventListener("input", updateValue);
-      value.addEventListener("change", updateValue);
-      valueBox.replaceChildren(value);
-    };
-    renderValue();
-    type.addEventListener("change", () => {
-      draft.type = type.value;
-      if (draft.type === "boolean") draft.raw = "true";
-      renderValue();
-      markPermission();
-      sync();
-    });
-    key.addEventListener("input", () => {
-      draft.key = key.value;
-      markPermission();
-      sync();
-    });
-    const row = el("div", { className: "option-row" }, key, type, valueBox,
-      el("button", { type: "button", className: "btn-remove-option", disabled: inherited, onClick: () => {
-        rows.splice(rows.indexOf(draft), 1);
-        row.remove();
-        sync();
-      } }, "移除"), warning);
-    return row;
-  };
-  for (const row of rows) list.appendChild(renderRow(row));
-  const heading = el("div", { className: "options-heading" }, el("h4", {}, "高级参数（可选）"));
-  if (overridden) {
-    heading.appendChild(el("label", { className: "field-inherit-label" }, el("input", {
-      type: "checkbox", checked: inherited, onChange: (e) => {
-        optionDrafts.delete(targetConfig);
-        if (e.target.checked) delete targetConfig.options;
-        else targetConfig.options = { ...sharedConfig.options };
-        incDocVersion();
-        renderCards();
-      },
-    }), textNode(" 继承共享设置")));
-  }
-  heading.appendChild(el("button", { type: "button", disabled: inherited, onClick: () => {
-    const draft = { key: "", type: "string", raw: "" };
-    rows.push(draft);
-    list.appendChild(renderRow(draft));
-    sync();
-  } }, "＋ 添加参数"));
-  return el("div", { className: "detail-field" }, heading,
-    el("p", { className: "field-hint" }, "高级设置，不确定时留空。参数名和取值须符合该工具的要求；字符串是文字，数字用于数值，布尔表示 true（是）或 false（否）。参数名不能重复，模型和思考档位请在对应选项中设置。"), list);
-}
-
-// Render model detail form with tri-state inheritance
-function renderModelDetail(provider, modelId) {
-  ensureCliModel(provider, modelId);
-  const overridden = isModelOverridden(provider, modelId);
-  const provConf = currentDoc.modes?.[currentMode]?.[provider];
-  const sharedConfig = currentDoc.clis[provider]?.models?.[modelId] || {};
-  const overrideConfig = overridden ? provConf.overrides[modelId] : null;
-
-  const detailBox = el("div", { className: "model-detail" });
-  const validationMessage = el("p", { className: "field-error", role: "status", hidden: true });
-  const refreshModelErrors = () => {
-    const errors = configurationErrors().filter((error) => error.provider === provider && error.model === modelId);
-    validationMessage.textContent = errors.map((error) => error.message).join("；");
-    validationMessage.hidden = errors.length === 0;
-  };
-  refreshModelErrors();
-  detailBox.appendChild(validationMessage);
-
-  // Mode override switch (only active in restricted mode)
-  if (isModeRestricted()) {
-    const overrideCheckbox = el("input", {
-      type: "checkbox",
-      role: "switch",
-      className: "switch-input",
-      checked: overridden,
-      onChange: (e) => toggleModelOverride(provider, modelId, e.target.checked),
-    });
-    const overrideToggle = el(
-      "div",
-      { className: "detail-override-toggle" },
-      el("label", {}, overrideCheckbox, textNode(" 仅在当前场景使用不同设置")),
-      el(
-        "p",
-        { className: "field-hint" },
-        overridden
-          ? "下方修改只用于当前场景。勾选“继承共享设置”的项目仍跟随共享值；关闭本开关会清除此模型的场景专用设置。"
-          : "当前编辑的是共享设置，私聊和会议都会使用。开启后可只为当前场景设置不同的值。"
-      )
-    );
-    detailBox.appendChild(overrideToggle);
-  }
-  if (!isModeRestricted()) detailBox.appendChild(el("p", { className: "field-hint" },
-    "当前编辑的是共享设置，私聊和会议都会使用。需要分别设置时，请先开启“自选可用工具和模型”。"));
-
-  // Target object to edit
-  const targetConfig = overridden ? overrideConfig : sharedConfig;
-
-  // 1. Efforts Field (checklist)
-  const candidateEfforts = effortLevels(provider, modelId);
-
-  const effortsInherited = overridden && !("efforts" in overrideConfig);
-  {
-    const activeEfforts = effortsInherited
-      ? (Array.isArray(sharedConfig.efforts) ? sharedConfig.efforts : [])
-      : (Array.isArray(targetConfig.efforts) ? targetConfig.efforts : []);
-
-    const checklist = el("div", {
-      className: `efforts-checklist${effortsInherited ? " field-inherited-area" : ""}`,
-    });
-
-    for (const eff of candidateEfforts) {
-      const effBox = el("input", {
-        type: "checkbox",
-        checked: activeEfforts.includes(eff),
-        disabled: effortsInherited,
-        onChange: (e) => {
-          let list = Array.isArray(targetConfig.efforts) ? [...targetConfig.efforts] : [];
-          if (e.target.checked) {
-            if (!list.includes(eff)) list.push(eff);
-          } else {
-            list = list.filter((item) => item !== eff);
-          }
-          // An empty list means unlimited, so a default effort stays valid; other conflicts
-          // stay visible until the user resolves them, including defaults inherited by a mode.
-          targetConfig.efforts = list;
-          incDocVersion();
-          renderCards();
-        },
-      });
-      checklist.appendChild(el("label", { className: "effort-item" }, effBox, textNode(eff)));
-    }
-
-    const headingKids = [el("h4", {}, "允许使用的思考档位")];
-    if (overridden) {
-      const inheritEffortsCheckbox = el("input", {
-        type: "checkbox",
-        checked: effortsInherited,
-        onChange: (e) => {
-          if (e.target.checked) {
-            delete overrideConfig.efforts;
-          } else {
-            overrideConfig.efforts = Array.isArray(sharedConfig.efforts) ? [...sharedConfig.efforts] : [];
-          }
-          incDocVersion();
-          renderCards();
-        },
-      });
-      headingKids.push(
-        el("label", { className: "field-inherit-label" }, inheritEffortsCheckbox, textNode(" 继承共享设置"))
-      );
-    }
-
-    const effortsField = el(
-      "div",
-      { className: "detail-field" },
-      el("div", { className: "field-heading-with-inherit" }, ...headingKids),
-      checklist,
-      el("p", { className: "field-hint" }, "全部不勾选表示不限制；勾选后只允许 boss 使用这些档位。low 为较低、medium 为中等、high 为较高，xhigh / max / ultra 是更高档位；通常思考更多也更慢，实际支持情况由工具决定。")
-    );
-    detailBox.appendChild(effortsField);
-  }
-
-  // 2. Default Effort Field
-  const effortInherited = overridden && !("effort" in overrideConfig);
-  const activeEffortVal = effortInherited ? sharedConfig.effort : targetConfig.effort;
-
-  const currentConfiguredEfforts = effortsInherited
-    ? sharedConfig.efforts
-    : targetConfig.efforts;
-
-  // Option candidate list for default effort
-  const effortDropdownChoices =
-    Array.isArray(currentConfiguredEfforts) && currentConfiguredEfforts.length > 0
-      ? currentConfiguredEfforts
-      : (candidateEfforts.length > 0 ? candidateEfforts : ["minimal", "low", "medium", "high", "xhigh"]);
-
-  const effortSelect = el("select", {
-    "aria-label": "默认思考档位",
-    disabled: effortInherited,
-    onChange: (e) => {
-      const val = e.target.value;
-      if (!val) {
-        delete targetConfig.effort;
-      } else {
-        targetConfig.effort = val;
-      }
-      incDocVersion();
-      renderCards();
-    },
-  });
-
-  // If not in override, or if in override setting specific value, populate options
-  if (!overridden || (effortInherited && activeEffortVal === undefined)) {
-    effortSelect.appendChild(el("option", { value: "" }, "不设置（继承原生默认）"));
-  }
-
-  const unavailableEffort = activeEffortVal !== undefined && !effortDropdownChoices.includes(activeEffortVal);
-  if (unavailableEffort) {
-    effortSelect.appendChild(el("option", { value: "__unavailable_effort__", disabled: true, selected: true },
-      `当前值：${activeEffortVal || "空值"}（不在允许档位中）`));
-  }
-
-  for (const eff of effortDropdownChoices) {
-    const opt = el("option", { value: eff }, eff);
-    if (activeEffortVal === eff) opt.selected = true;
-    effortSelect.appendChild(opt);
-  }
-  effortSelect.value = unavailableEffort ? "__unavailable_effort__" : (activeEffortVal ?? "");
-
-  const effortHeadingKids = [el("h4", {}, "默认思考档位")];
-  if (overridden) {
-    const inheritEffortCheckbox = el("input", {
-      type: "checkbox",
-      checked: effortInherited,
-      onChange: (e) => {
-        if (e.target.checked) {
-          delete overrideConfig.effort;
-        } else {
-          // In override, effort must be a concrete choice, not empty
-          overrideConfig.effort = effortDropdownChoices.includes(sharedConfig.effort)
-            ? sharedConfig.effort : effortDropdownChoices[0];
-        }
-        incDocVersion();
-        renderCards();
-      },
-    });
-    effortHeadingKids.push(
-      el("label", { className: "field-inherit-label" }, inheritEffortCheckbox, textNode(" 继承共享设置"))
-    );
-  }
-
-  const defaultEffortField = el(
-    "div",
-    { className: "detail-field" },
-    el("div", { className: "field-heading-with-inherit" }, ...effortHeadingKids),
-    el("div", { className: effortInherited ? "field-inherited-area" : "" }, effortSelect),
-    el("p", { className: "field-hint" }, "boss 没有指定思考档位时使用此值；“不设置”表示交给工具自行决定。默认值须在上方允许的档位内。")
-  );
-  detailBox.appendChild(defaultEffortField);
-
-  // 3. Other Options Field
-  detailBox.appendChild(renderOptionsField(targetConfig, sharedConfig, overridden, refreshModelErrors));
-
-  // 4. Notes Field
-  const notesInherited = overridden && !("notes" in overrideConfig);
-  const activeNotes = notesInherited ? (sharedConfig.notes || "") : (targetConfig.notes || "");
-
-  const notesText = el("textarea", {
-    placeholder: "填写适用任务或选择理由…",
-    disabled: notesInherited,
-    onInput: (e) => {
-      targetConfig.notes = e.target.value;
-      incDocVersion();
-    },
-  });
-  notesText.value = activeNotes;
-
-  const notesHeadingKids = [el("h4", {}, "适合做什么")];
-  if (overridden) {
-    const inheritNotesCheckbox = el("input", {
-      type: "checkbox",
-      checked: notesInherited,
-      onChange: (e) => {
-        if (e.target.checked) {
-          delete overrideConfig.notes;
-        } else {
-          overrideConfig.notes = sharedConfig.notes || "";
-        }
-        incDocVersion();
-        renderCards();
-      },
-    });
-    notesHeadingKids.push(
-      el("label", { className: "field-inherit-label" }, inheritNotesCheckbox, textNode(" 继承共享设置"))
-    );
-  }
-
-  const notesField = el(
-    "div",
-    { className: "detail-field" },
-    el("div", { className: "field-heading-with-inherit" }, ...notesHeadingKids),
-    el("div", { className: notesInherited ? "field-inherited-area" : "" }, notesText),
-    el("p", { className: "field-hint" }, "写给 boss 的选择参考，例如“适合快速问答”或“适合多文件修改”。可以留空，它不会直接作为模型的任务指令。")
-  );
-  detailBox.appendChild(notesField);
-
-  return detailBox;
-}
 
 // Render 6 CLI cards
 // One line that says what a folded card allows, so the list can stay closed.
@@ -1438,13 +1123,13 @@ function cardSummary(provider, isEnabled, modeRestricted, info) {
   if (!modeRestricted) {
     const detectedCount = info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
     const kept = defaultModel(provider);
-    return [detectedCount, kept ? `默认 ${kept}` : nativeText(provider)].filter(Boolean).join(" · ");
+    return [detectedCount, fallbackText(provider)].filter(Boolean).join(" · ");
   }
   if (!isEnabled) return "当前场景未启用";
   const conf = currentDoc.modes[currentMode]?.[provider] || {};
   const models = Array.isArray(conf.models) ? conf.models : [];
   const scope = models.length === 0 ? "不限模型" : `${models.length} 个模型`;
-  return `${scope} · ${conf.default ? `默认 ${conf.default}` : nativeText(provider)}`;
+  return `${scope} · ${fallbackText(provider)}`;
 }
 
 function renderCards() {
@@ -1516,7 +1201,7 @@ function renderCards() {
       },
       el("span", { className: "cli-chevron", "aria-hidden": "true" }),
       el("span", { className: "cli-name" }, PROVIDER_NAMES[provider] || provider),
-      el("span", { className: "cli-summary" }, cardSummary(provider, isEnabled, modeRestricted, info))
+      el("span", { className: "cli-summary", title: FALLBACK_HINT }, cardSummary(provider, isEnabled, modeRestricted, info))
     );
     const header = el(
       "div",
@@ -1598,10 +1283,6 @@ function renderCards() {
         const isAllowed = isModelAllowed(provider, modelId);
         const isDefault = defaultModel(provider) === modelId;
         const hasOverride = isModelOverridden(provider, modelId);
-        const isExpanded =
-          expandedModel &&
-          expandedModel.provider === provider &&
-          expandedModel.model === modelId;
 
         const isLastChecked =
           modeRestricted &&
@@ -1638,9 +1319,9 @@ function renderCards() {
 
         const defaultLabel = el(
           "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "boss 未指定模型时使用；再次点击可取消默认" },
+          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为你的默认：boss 不指定模型时用它，优先于 CLI 默认。再次点击取消；限制了模型名单时，取消后 boss 必须指定模型，否则跟随 CLI 默认" },
           radioInput,
-          textNode("默认")
+          textNode("设为默认")
         );
 
         // Tags
@@ -1648,24 +1329,13 @@ function renderCards() {
         if (isStale) {
           tags.push(el("span", { className: "badge badge-warning" }, "已不在列表"));
         }
-        if (hasOverride) {
-          tags.push(el("span", { className: "badge badge-accent" }, "本场景已覆盖"));
-        }
         if (nativeDefault(provider).model === modelId) {
-          tags.push(el("span", { className: "badge", title: "CLI 自己设置的默认模型；没有选“默认”时 boss 未指定模型就用它" }, "CLI 默认"));
+          tags.push(el("span", { className: "badge", title: defaultModel(provider)
+            ? `CLI 自己的默认模型。你已把 ${defaultModel(provider)} 设为默认，所以 boss 不指定时不会用它`
+            : needsExplicitModel(provider) ? "CLI 自己的默认模型；当前限制了模型名单且没设默认，boss 仍必须指定模型"
+            : "CLI 自己的默认模型：你没有设默认，boss 不指定时就用它，这一行的档位设置也会生效" }, "CLI 默认"));
         }
 
-        // Detail toggle button
-        const detailBtn = el("button", {
-          type: "button",
-          className: `btn-detail${isExpanded ? " active" : ""}`,
-          dataset: { focusKey: `${provider}/${modelId}/detail` },
-          "aria-expanded": String(Boolean(isExpanded)),
-          onClick: () => {
-            expandedModel = isExpanded ? null : { provider, model: modelId };
-            renderCards();
-          },
-        }, isExpanded ? "收起" : "配置");
 
         const controlsKids = [];
         if (modeRestricted) {
@@ -1700,49 +1370,15 @@ function renderCards() {
         const row = el(
           "div",
           { className: "model-row" },
-          el("div", { className: "model-controls" }, ...controlsKids),
-          el("div", { className: "model-actions" }, detailBtn)
+          el("div", { className: "model-controls" }, ...controlsKids)
         );
         modelItem.appendChild(row);
-
-        if (isExpanded) {
-          modelItem.appendChild(renderModelDetail(provider, modelId));
-        }
 
         modelList.appendChild(modelItem);
       }
 
       body.appendChild(modelList);
 
-      // Add model input
-      const addInput = el("input", {
-        type: "text",
-        className: "add-model-input",
-        dataset: { focusKey: `${provider}/add-input` },
-        "aria-label": `${PROVIDER_NAMES[provider]} 的模型 ID`,
-        placeholder: detectedModels.length
-          ? `手动添加模型 ID，如 ${info.native?.model || detectedModels[0].id}…`
-          : "手动添加模型 ID…",
-      });
-      const submitModel = () => {
-        if (!addInput.value.trim()) return;
-        addCustomModel(provider, addInput.value);
-      };
-      const addBtn = el("button", {
-        type: "button",
-        className: "add-model-btn",
-        dataset: { focusKey: `${provider}/add-button` },
-        onClick: submitModel,
-      }, "添加模型");
-      addInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          submitModel();
-        }
-      });
-
-      const addRow = el("div", { className: "add-model-row" }, addInput, addBtn);
-      body.appendChild(addRow);
     }
 
     card.appendChild(body);
@@ -1750,16 +1386,6 @@ function renderCards() {
   }
 
   container.replaceChildren(cards);
-  // Field headings give controls stable identities even when inheritance controls appear.
-  for (const item of container.querySelectorAll(".model-item")) {
-    const prefix = `${item.closest(".cli-card").dataset.provider}/${item.dataset.model}`;
-    for (const field of item.querySelectorAll(".detail-field, .detail-override-toggle")) {
-      const name = field.querySelector("h4")?.textContent || "override";
-      field.querySelectorAll("input, select, textarea, button").forEach((control, index) => {
-        control.dataset.focusKey = `${prefix}/${name}/${index}`;
-      });
-    }
-  }
   updateControls();
   if (focusKey) {
     const replacement = [...container.querySelectorAll("[data-focus-key]")]

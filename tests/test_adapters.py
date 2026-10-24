@@ -1631,6 +1631,17 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
     # The default model and gateway models keep their route; the official route restores the
     # app's saved keys unless the caller says otherwise.
     assert '    provider: "gw"\n    model: "gw/flash"\n' in patch_of({"model": "gw/flash"})
+    # App defaults can supply effort without pinning a model in the request. dsh's
+    # patch still needs the live native identity because its config is replaced whole.
+    assert (
+        adapter.option_args(request(tmp_path, "deepseek", provider_options={"effort": "high"}))
+        == ()
+    )
+    native_effort = patch_of({"effort": "high"})
+    assert (
+        '    provider: "gw"\n    model: "gw/flash"\n    reasoningEffort: "high"\n' in native_effort
+    )
+    assert "credentials" not in native_effort
     gateway = patch_of({"model": "gw/pro"})
     assert '    provider: "gw2"\n' in gateway and "credentials" not in gateway
     official = patch_of({"model": "deepseek-flash"})
@@ -1680,7 +1691,7 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
             path.unlink()
 
     invalid: list[tuple[dict[str, ProviderOption], str]] = [
-        ({"effort": "high"}, "require model"),
+        ({"provider": "gw"}, "requires model"),
         ({"permission_mode": "yolo"}, "permission_mode must be"),
         ({"stored_credentials": "yes"}, "must be a boolean"),
         ({"agent": "x"}, "unsupported deepseek options: agent"),
@@ -1688,6 +1699,13 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
     for options, message in invalid:
         with pytest.raises(ValueError, match=message):
             adapter.prepare(InvocationRequest("deepseek", "x", tmp_path, None, options))
+
+    def unavailable(_executable: str) -> tuple[None, dict[str, str]]:
+        return None, {}
+
+    monkeypatch.setattr(deepseek_adapter, "profile_routes", unavailable)
+    with pytest.raises(ValueError, match="Unable to read deepseek's default model"):
+        adapter.prepare(request(tmp_path, "deepseek", provider_options={"effort": "high"}))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX fake executable")
@@ -1735,6 +1753,19 @@ def test_deepseek_profile_routes_read_the_composed_entries(tmp_path: Path) -> No
         {"opencode-go/v4.1": "gw", "codex/sol": "gw", "grok/4": "gw2"},
     )
     assert deepseek_adapter.profile_routes(str(tmp_path / "missing")) == (None, {})
+    # A failed dump must not supply defaults even if it printed a partial config.
+    dump.write_text(dump.read_text() + "exit 3\n")
+    assert deepseek_adapter.profile_routes(str(dump)) == (None, {})
+    dump.write_text(
+        "#!/bin/sh\n/bin/cat <<'CONFIG'\n- id: agent-default-model\n  config:\n"
+        "    provider: !!js String('deepseek-official')\n"
+        "    model: !!js String('deepseek-flash')\nCONFIG\n"
+    )
+    assert deepseek_adapter.profile_routes(str(dump)) == (None, {})
+    adapter = DeepSeekAdapter()
+    adapter.executable = lambda: str(dump)
+    with pytest.raises(ValueError, match="Unable to read deepseek's default model"):
+        adapter.prepare(request(tmp_path, "deepseek", provider_options={"effort": "high"}))
 
 
 def test_deepseek_parse_maps_turn_end_and_keeps_only_terminal_events(tmp_path: Path) -> None:

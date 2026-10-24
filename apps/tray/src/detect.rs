@@ -88,8 +88,48 @@ pub fn detected(refresh: bool) -> Value {
         all.insert(provider.to_owned(), result);
     }
     let all = Value::Object(all);
+    publish_native(&crate::data::data_root(), &all);
     *cache() = Some(all.clone());
     all
+}
+
+/// Where the service reads each CLI's own default, so a call that names no model (and has no
+/// App default) still gets the settings saved for the model that CLI will run (ADR-0028).
+pub const NATIVE_FILE: &str = "cli-defaults.json";
+
+/// The published defaults for one probe: a CLI whose probe failed keeps its last known entry,
+/// one that is not installed or names no default drops out.
+fn native_document(all: &Value, previous: &Value) -> Value {
+    let mut clis = Map::new();
+    for provider in PROVIDERS {
+        let result = &all[provider];
+        let entry = if result["installed"] == true && result["error"].is_null() {
+            json!({"model": result["native"]["model"], "effort": result["native"]["effort"]})
+        } else if result["installed"] == true {
+            previous["clis"][provider].clone()
+        } else {
+            Value::Null
+        };
+        if entry["model"].is_string() {
+            clis.insert((*provider).to_owned(), entry);
+        }
+    }
+    json!({"version": 1, "clis": clis})
+}
+
+/// Write the defaults only when they changed, and never create the data root for them.
+fn publish_native(root: &Path, all: &Value) {
+    if !root.is_dir() {
+        return;
+    }
+    let previous: Value = std::fs::read_to_string(root.join(NATIVE_FILE))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(Value::Null);
+    let document = native_document(all, &previous);
+    if document != previous {
+        let _ = crate::members::write_atomic(root, NATIVE_FILE, &document);
+    }
 }
 
 /// The CLI's own default model from the last probe, without probing: the office names a desk
@@ -245,6 +285,9 @@ fn dsh_scalar(raw: &str) -> Option<String> {
         serde_json::from_str::<String>(raw).ok()
     } else if raw.len() > 1 && raw.starts_with('\'') && raw.ends_with('\'') {
         Some(raw[1..raw.len() - 1].replace("''", "'"))
+    } else if raw.starts_with(['!', '&', '*', '[', '{', '|', '>', '\'']) {
+        // A tagged/dynamic value, alias or compound scalar is not a known identity.
+        None
     } else {
         Some(raw.to_owned())
     };
@@ -299,19 +342,20 @@ fn probe(provider: &str) -> Value {
     let Some(path) = find(binary) else {
         return failure(provider, None, "");
     };
+    probe_path(provider, &path)
+}
+
+fn probe_path(provider: &str, path: &Path) -> Value {
     let mut efforts = efforts(provider);
-    let dsh_dump = (provider == "deepseek")
-        .then(|| run(&path, &["--profile", "headless", "--dump-config"]).ok())
-        .flatten();
+    let dsh_probe =
+        (provider == "deepseek").then(|| run(path, &["--profile", "headless", "--dump-config"]));
+    let dsh_dump = dsh_probe.as_ref().and_then(|result| result.as_ref().ok());
+    let dsh_error = dsh_probe.as_ref().and_then(|result| result.as_ref().err());
     let configured_model = match provider {
-        "deepseek" => dsh_dump
-            .as_deref()
-            .and_then(|dump| dsh_default(dump, "model")),
+        "deepseek" => dsh_dump.and_then(|dump| dsh_default(dump, "model")),
         _ => configured(provider),
     };
-    let dsh_effort = dsh_dump
-        .as_deref()
-        .and_then(|dump| dsh_default(dump, "reasoningEffort"));
+    let dsh_effort = dsh_dump.and_then(|dump| dsh_default(dump, "reasoningEffort"));
     let listed = match provider {
         "codex" => codex_models().map(|(models, levels)| {
             if !levels.is_empty() {
@@ -330,7 +374,7 @@ fn probe(provider: &str) -> Value {
             // The composed profile's default first, then the official models and the ones
             // its configured providers (a gateway, say) declare.
             let mut ids: Vec<String> = Vec::new();
-            let declared = dsh_dump.as_deref().map(dsh_provider_models);
+            let declared = dsh_dump.map(|dump| dsh_provider_models(dump));
             for id in configured_model
                 .iter()
                 .cloned()
@@ -343,7 +387,7 @@ fn probe(provider: &str) -> Value {
             }
             let models = ids
                 .iter()
-                .map(|id| model(id, id, id == DEEPSEEK_CATALOG[0]))
+                .map(|id| model(id, id, configured_model.as_ref() == Some(id)))
                 .collect();
             let source = if dsh_dump.is_some() {
                 "config"
@@ -352,10 +396,10 @@ fn probe(provider: &str) -> Value {
             };
             Ok((source, models))
         }
-        "grok" => run(&path, &["models"]).map(|out| ("command", grok_models(&out))),
-        "antigravity" => run(&path, &["models"]).map(|out| ("command", agy_models(&out))),
-        "pi" => run(&path, &["--list-models"]).map(|out| ("command", pi_models(&out))),
-        "codebuddy" => run(&path, &["--help"]).map(|out| ("help", codebuddy_models(&out))),
+        "grok" => run(path, &["models"]).map(|out| ("command", grok_models(&out))),
+        "antigravity" => run(path, &["models"]).map(|out| ("command", agy_models(&out))),
+        "pi" => run(path, &["--list-models"]).map(|out| ("command", pi_models(&out))),
+        "codebuddy" => run(path, &["--help"]).map(|out| ("help", codebuddy_models(&out))),
         _ => Err("未知 CLI".to_owned()),
     };
     match listed {
@@ -366,13 +410,13 @@ fn probe(provider: &str) -> Value {
             "installed": true,
             "path": path.display().to_string(),
             "source": source,
-            "error": Value::Null,
+            "error": dsh_error,
             "native": {"model": native, "effort": effort},
             "models": models,
             "efforts": efforts,
             })
         }
-        Err(error) => failure(provider, Some(&path), &error),
+        Err(error) => failure(provider, Some(path), &error),
     }
 }
 
@@ -745,6 +789,18 @@ mod tests {
         assert_eq!(dsh_default(dump, "model").as_deref(), Some("gw/v4's"));
         assert_eq!(dsh_default(dump, "reasoningEffort"), None);
         assert_eq!(dsh_default("- id: jobs\n", "model"), None);
+        assert_eq!(
+            dsh_default(
+                "- id: agent-default-model\n  config:\n    model: !!js String('deepseek-flash')\n",
+                "model"
+            ),
+            None
+        );
+        assert_eq!(dsh_scalar("*default-model"), None);
+        assert_eq!(
+            dsh_scalar("'!!js literal'").as_deref(),
+            Some("!!js literal")
+        );
         let providers = "- id: llm-pi-ai\n  config:\n    providers:\n      gw:\n        models:\n\
             \x20         - id: opencode-go/v4.1\n            reasoningEfforts:\n\
             \x20         - id: \"codex/sol\"\n      gw2:\n        models:\n\
@@ -836,6 +892,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn published_defaults_keep_a_failed_probe_and_drop_what_is_gone() {
+        let previous = json!({"version": 1, "clis": {
+            "grok": {"model": "grok-4.6", "effort": "high"},
+            "pi": {"model": "old/pi", "effort": null}}});
+        let all = json!({
+            "codex": {"installed": true, "error": null,
+                      "native": {"model": "gpt-6.1-sol", "effort": "medium"}},
+            "claude": {"installed": true, "error": null, "native": {"model": null, "effort": null}},
+            "grok": {"installed": true, "error": "超时", "native": {"model": null, "effort": null}},
+            "pi": {"installed": false, "error": null, "native": {"model": null, "effort": null}}});
+        assert_eq!(
+            native_document(&all, &previous),
+            json!({"version": 1, "clis": {
+                "codex": {"model": "gpt-6.1-sol", "effort": "medium"},
+                "grok": {"model": "grok-4.6", "effort": "high"}}})
+        );
+        let root = tempfile::tempdir().unwrap();
+        publish_native(root.path(), &all);
+        let written = std::fs::read_to_string(root.path().join(NATIVE_FILE)).unwrap();
+        let modified = std::fs::metadata(root.path().join(NATIVE_FILE))
+            .unwrap()
+            .modified()
+            .unwrap();
+        publish_native(root.path(), &all);
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(NATIVE_FILE)).unwrap(),
+            written
+        );
+        assert_eq!(
+            std::fs::metadata(root.path().join(NATIVE_FILE))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            modified
+        );
+        publish_native(&root.path().join("missing"), &all);
+        assert!(!root.path().join("missing").exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn listing_commands_get_empty_stdin_a_completed_path_and_a_failure_reason() {
@@ -868,6 +964,27 @@ mod tests {
             assert_eq!(path[1], first);
         }
         assert_eq!(run(&script, &["fail"]).unwrap_err(), "boom");
+
+        // A failed DeepSeek dump still offers the catalog, but never invents a native
+        // default or overwrites the last successfully detected model's settings.
+        let dsh = directory.path().join("dsh");
+        std::fs::write(&dsh, "#!/bin/sh\necho unavailable >&2\nexit 3\n").unwrap();
+        std::fs::set_permissions(&dsh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let failed = probe_path("deepseek", &dsh);
+        assert_eq!(failed["error"], "unavailable");
+        assert!(failed["native"]["model"].is_null());
+        assert_eq!(ids(failed["models"].as_array().unwrap()), DEEPSEEK_CATALOG);
+        let previous = json!({"clis": {"deepseek": {"model": "gateway/pro"}}});
+        let all = json!({"deepseek": failed});
+        assert_eq!(
+            native_document(&all, &previous)["clis"]["deepseek"]["model"],
+            "gateway/pro"
+        );
+
+        std::fs::write(&dsh, "#!/bin/sh\necho '# no default model'\n").unwrap();
+        let unknown = probe_path("deepseek", &dsh);
+        assert!(unknown["error"].is_null());
+        assert!(unknown["native"]["model"].is_null());
 
         // A grandchild keeping the pipe open after the CLI exited is stopped with its group.
         let lingering = directory.path().join("lingering");

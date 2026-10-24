@@ -144,4 +144,3 @@ button.ghost-danger:hover:enabled { border-color: var(--bad); }
 .hc-facts dd .sub.block { display: block; margin: 2px 0 0; }
 
 .root-editor { display: grid; gap: 8px; padding-block: 10px; }
-.root-input { width: 100%; min-width: 0; padding: 8px; font: 12px ui-monospace, monospace; }

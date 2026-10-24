@@ -41,6 +41,24 @@ class CapacityError(ValueError):
 
 DEFAULT_MAX_RUNNING = 8
 
+# Cached native identity is advisory: execution controls saved for one model must not
+# be transferred to a different model if the CLI default changed since the last probe.
+_MODEL_EXECUTION_OPTIONS = frozenset(
+    {
+        "permission_mode",
+        "sandbox",
+        "dangerously_bypass_approvals_and_sandbox",
+        "dangerously_skip_permissions",
+        "skip_git_repo_check",
+        "agent",
+        "tools",
+        "mode",
+        "project",
+        "restricted_tools",
+        "disable_slash_commands",
+    }
+)
+
 
 def validate_provider_options(request: InvocationRequest) -> None:
     adapter = get_adapter(request.provider)
@@ -171,7 +189,12 @@ class MemberFile(StrictModel):
                 f"Model {result['model']!r} is not allowed in {mode}.{provider}; "
                 f"allowed models: {', '.join(selection.models)}"
             )
-        config = self.effective(mode, provider, str(result.get("model", "")))
+        # Without a model the CLI runs its own default; the settings saved for that model
+        # still apply, and the model is left for the CLI to choose (ADR-0028).
+        model = result.get("model")
+        config = self.effective(
+            mode, provider, str(model) if model is not None else cli_default_model(provider) or ""
+        )
         if "effort" not in result and "effort" in config.model_fields_set:
             result["effort"] = config.effort
             applied.append("effort")
@@ -181,6 +204,8 @@ class MemberFile(StrictModel):
                 + ", ".join(config.efforts)
             )
         for key, value in config.options.items():
+            if model is None and key in _MODEL_EXECUTION_OPTIONS:
+                continue
             if restricted and key not in RESTRICTED_EXTRA_OPTIONS.get(provider, set()):
                 continue
             if key not in result:
@@ -215,6 +240,21 @@ def read_max_running() -> int:
             "Repair it in the AgentNave App."
         )
     return value
+
+
+def cli_default_model(provider: str) -> str | None:
+    """The default model the App last detected for one CLI, if it published one."""
+    root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+    try:
+        document = json.loads((root / "cli-defaults.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    def field(value: object, key: str) -> object:
+        return cast(dict[str, object], value).get(key) if isinstance(value, dict) else None
+
+    model = field(field(field(document, "clis"), provider), "model")
+    return model if isinstance(model, str) and model else None
 
 
 def read_members() -> MemberFile | None:

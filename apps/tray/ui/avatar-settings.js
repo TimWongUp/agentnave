@@ -37,13 +37,28 @@
     const row = editor("model", provider, model, `${provider} / ${model}`);
     customRows.set(key, row); models.append(row);
   }
+  // Models come from what each CLI lists and what Settings already configures, never typed in.
   const provider = h("select", { "aria-label": "执行者 CLI" });
-  for (const id of ["antigravity", "claude", "codebuddy", "codex", "deepseek", "gemini", "grok", "hermes", "opencode", "pi", "workbuddy"]) provider.append(h("option", { value: id }, id));
-  const model = h("input", { type: "text", placeholder: "模型 ID，例如 gpt-6", "aria-label": "模型 ID", required: true, maxlength: 500 });
+  const model = h("select", { "aria-label": "模型" });
   const submit = h("button", { type: "submit" }, "设置此模型头像");
   const form = h("form.avatar-add", {}, provider, model, submit);
-  form.addEventListener("submit", (event) => { event.preventDefault(); if (!busy && model.value.trim()) { add(provider.value, model.value.trim()); model.value = ""; } });
-  window.addEventListener("agentnave:avatars", () => { submit.disabled = busy; });
+  const choices = new Map();
+  function fillModels() {
+    model.replaceChildren(...(choices.get(provider.value) || []).map((id) => h("option", { value: id }, id)));
+  }
+  provider.addEventListener("change", fillModels);
+  form.addEventListener("submit", (event) => { event.preventDefault(); if (!busy && model.value) add(provider.value, model.value); });
+  window.addEventListener("agentnave:avatars", () => { submit.disabled = busy || !model.value; });
+  fetch("/settings/members", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((data) => {
+    for (const [id, info] of Object.entries(data?.detected || {})) {
+      const ids = [...(info.models || []).map((m) => m.id), ...Object.keys(data.document?.clis?.[id]?.models || {})];
+      if (ids.length) choices.set(id, [...new Set(ids)]);
+    }
+    for (const id of choices.keys()) provider.append(h("option", { value: id }, id));
+    fillModels();
+    form.hidden = choices.size === 0;
+    window.dispatchEvent(new Event("agentnave:avatars"));
+  }).catch(() => { form.hidden = true; });
   root.append(form, models);
   Avatars.load().then(async () => {
     const response = await fetch("/avatar-settings", {cache:"no-store"});

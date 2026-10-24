@@ -61,7 +61,7 @@
     <div class="settings-guide">
       <h2>选择 AI 助手和默认设置</h2>
       <p>执行者是本机已安装的 AI 命令行工具（CLI），每个工具可以使用不同模型。先选择使用场景，再展开工具查看模型。</p>
-      <p>boss 是派发任务的 AI。它明确指定的模型和思考档位优先；未指定时才使用这里的默认值。参数能否使用，会在 boss 读取配置时检查。</p>
+      <p>boss 是派发任务的 AI。它指定的模型和思考档位优先；没指定时用你在这里设的默认；没设且允许任意模型时，才用每个 CLI 自己的默认（标着“CLI 默认”）。限制了模型名单却没设默认时，boss 必须指定模型。</p>
       <p>这里的修改需要点击底部“保存设置”，才会用于之后发起或继续的任务。</p>
     </div>
     <div class="members-toolbar">
@@ -115,8 +115,8 @@
         <p class="guidance">每个宿主连接最多同时运行几个 CLI（私聊任务与会议席位合计），超出时新的派发会被拒绝，由主控等待后再派。办公室也最多画这么多个工位，其余空闲工位归入「已优化」。</p>
         <div class="limit-row">
           <label for="max-running">上限</label>
-          <input id="max-running" type="number" min="1" max="32" step="1" value="8" inputmode="numeric">
-          <span class="guidance">1–32，默认 8</span>
+          <select id="max-running"></select>
+          <span class="guidance">默认 8</span>
           <button id="save-limit" type="button">保存</button>
         </div>
       </div>

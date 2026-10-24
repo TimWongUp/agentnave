@@ -66,6 +66,10 @@ def _scalar(raw: str) -> str:
         return value if isinstance(value, str) else ""
     if raw.startswith("'") and raw.endswith("'") and len(raw) > 1:
         return raw[1:-1].replace("''", "'")
+    # Tags (including !!js), aliases, anchors, collections and block scalars need YAML
+    # evaluation. They are not a static model identity and must never become literal IDs.
+    if not raw or raw[0] in "!&*[{|>'":
+        return ""
     return raw
 
 
@@ -76,16 +80,19 @@ def profile_routes(executable: str) -> tuple[tuple[str, str] | None, dict[str, s
     dsh replaces that entry's config as a whole, so a model override must restate a route.
     """
     try:
-        dump = subprocess.run(
+        result = subprocess.run(
             [executable, "--profile", "headless", "--dump-config"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
-        ).stdout
+        )
     except (OSError, subprocess.SubprocessError):
         return None, {}
+    if result.returncode != 0:
+        return None, {}
+    dump = result.stdout
     found: dict[str, str] = {}
     routes: dict[str, str] = {}
     inside = providers = False
@@ -159,8 +166,10 @@ class DeepSeekAdapter:
                     else ""
                 )
             )
-        elif "effort" in options or "provider" in options:
-            raise ValueError("deepseek effort and provider require model")
+        elif "provider" in options:
+            raise ValueError("deepseek provider requires model")
+        # An effort without a model is valid: prepare copies the live profile's identity
+        # into dsh's whole-row patch. Validation does not choose a model or run a probe.
         if "permission_mode" in options:
             mode = options["permission_mode"]
             if mode not in _PERMISSION_MODES:
@@ -185,6 +194,8 @@ class DeepSeekAdapter:
         request, discussion = restricted_options(request)
         options = dict(request.provider_options)
         route = options.get("provider")
+        if "model" not in options and route is not None:
+            raise ValueError("deepseek provider requires model")
         if route is None:
             # The profile's default model keeps its own route (a gateway, say), a model a
             # configured provider declares takes that provider's route, and any other bare
@@ -193,6 +204,14 @@ class DeepSeekAdapter:
             model = options.get("model")
             if model is None:
                 route = default[0] if default is not None else None
+                if "effort" in options:
+                    if default is None:
+                        raise ValueError(
+                            "Unable to read deepseek's default model for effort; specify model explicitly"
+                        )
+                    # dsh replaces the complete row, so an effort patch must restate the
+                    # actual native model and route, never a catalog or cached guess.
+                    options["provider"], options["model"] = default
             else:
                 route = (
                     default[0]

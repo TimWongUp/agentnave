@@ -22,7 +22,6 @@ const S = {
   busy: new Map(), // host id -> "connect" | "remove"
   confirm: null, // host id whose removal is being confirmed
   adv: new Set(), // host ids whose 高级 panel is open
-  roots: new Map(),
   localErr: new Map(), // host id -> message when a request itself failed
   newIds: new Set(),
   seen: new Set(),
@@ -464,18 +463,12 @@ function entryNode(host) {
 function advPanel(host) {
   const id = host.id;
   const busy = S.busy.has(id);
-  const rootInput = h("input.root-input", { id: `root-${id}`, type: "text", value: S.roots.get(id) ?? host.root.path, disabled: busy || null, "aria-label": `${host.label} 的配置根目录`, placeholder: "绝对路径" });
-  const saveButton = button("保存根目录", "", "root-save", () => saveRoot(rootInput.value.trim()), busy || rootInput.value.trim() === host.root.path);
-  rootInput.addEventListener("input", () => {
-    S.roots.set(id, rootInput.value);
-    saveButton.disabled = busy || rootInput.value.trim() === host.root.path;
-  });
-  const saveRoot = (path) => run(id, "root", () => post("/app/hosts/root", { id, path })).then((r) => { if (r?.ok) { S.roots.delete(id); renderAll(); } });
+  // The root is detected; a path typed in an earlier version can only be dropped again.
+  const saveRoot = (path) => run(id, "root", () => post("/app/hosts/root", { id, path })).then((r) => { if (r?.ok) renderAll(); });
   const rootEditor = h("div.root-editor", {},
-    h("label", { for: `root-${id}` }, "配置根目录"), rootInput,
-    h("p.fine", {}, "通常保持自动即可。只有把这个应用的用户配置放在其他位置时才需要修改；填写绝对路径，保存后立即生效。“恢复自动”会重新使用检测到的目录。"),
-    h("span.fine", {}, `来源：${({ user: "App 中的覆盖", env: "App 环境变量", shell: "登录 shell", default: "默认目录" })[host.root.source] || host.root.source}`),
-    h("div.adv-actions", {}, saveButton, button("恢复自动", "", "root-auto", () => saveRoot(null), busy || host.root.source !== "user")));
+    h("span", {}, "配置根目录"), pathRow(host.root.path),
+    h("span.fine", {}, `来源：${({ user: "之前手动指定", env: "App 环境变量", shell: "登录 shell", default: "默认目录" })[host.root.source] || host.root.source}`),
+    host.root.source === "user" && h("div.adv-actions", {}, button("恢复自动", "", "root-auto", () => saveRoot(null), busy)));
   const kv = [
     [
       "命令",

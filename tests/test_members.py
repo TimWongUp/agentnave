@@ -147,3 +147,83 @@ def test_member_file_errors_are_typed(tmp_path: Path, monkeypatch: pytest.Monkey
     path.mkdir()
     with pytest.raises(MemberFileError, match="Unable to read members.json"):
         read_members()
+
+
+def test_without_a_model_the_cli_default_model_keeps_its_saved_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {"grok": {"models": {"grok-4.7": {"effort": "low", "options": {"x": 1}}}}},
+            "modes": {},
+        }
+    )
+    assert apply_member(document, "task", "grok", {}, frozenset()) == ({}, [])
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"version": 1, "clis": {"grok": {"model": "grok-4.7", "effort": "high"}}}),
+        encoding="utf-8",
+    )
+    # The model stays the CLI's choice; only the settings saved for it are applied.
+    assert apply_member(document, "task", "grok", {}, frozenset()) == (
+        {"effort": "low", "x": 1},
+        ["effort", "x"],
+    )
+    assert apply_member(document, "task", "grok", {"model": "grok-4.6"}, frozenset()) == (
+        {"model": "grok-4.6"},
+        [],
+    )
+
+
+def test_cached_native_model_does_not_transfer_execution_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    permissions = {
+        "dangerously_bypass_approvals_and_sandbox": True,
+        "sandbox": "danger-full-access",
+    }
+    configured = {"effort": "high", "options": permissions}
+    document = MemberFile.model_validate(
+        {"version": 1, "clis": {"codex": {"models": {"cached-A": configured}}}, "modes": {}}
+    )
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"version": 1, "clis": {"codex": {"model": "cached-A"}}}), encoding="utf-8"
+    )
+    # The CLI may now use model B. A cache entry cannot transfer A's execution authority.
+    assert apply_member(document, "task", "codex", {}, frozenset()) == (
+        {"effort": "high"},
+        ["effort"],
+    )
+    assert apply_member(document, "task", "codex", {"sandbox": "workspace-write"}, frozenset()) == (
+        {"sandbox": "workspace-write", "effort": "high"},
+        ["effort"],
+    )
+    explicit = {"model": "cached-A", "effort": "high", **permissions}
+    assert apply_member(document, "task", "codex", {"model": "cached-A"}, frozenset()) == (
+        explicit,
+        ["effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+    )
+    document.defaults = {"task": {"codex": "cached-A"}}
+    assert apply_member(document, "task", "codex", {}, frozenset()) == (
+        explicit,
+        ["model", "effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+    )
+
+    # false can enable slash commands; it is execution control, not a harmless default.
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {
+                "antigravity": {
+                    "models": {"cached-A": {"options": {"disable_slash_commands": False}}}
+                }
+            },
+            "modes": {},
+        }
+    )
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"clis": {"antigravity": {"model": "cached-A"}}}), encoding="utf-8"
+    )
+    assert apply_member(document, "task", "antigravity", {}, frozenset()) == ({}, [])
