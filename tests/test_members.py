@@ -180,13 +180,11 @@ def test_cached_native_model_does_not_transfer_execution_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
-    configured = {
-        "effort": "high",
-        "options": {
-            "dangerously_bypass_approvals_and_sandbox": True,
-            "sandbox": "danger-full-access",
-        },
+    permissions = {
+        "dangerously_bypass_approvals_and_sandbox": True,
+        "sandbox": "danger-full-access",
     }
+    configured = {"effort": "high", "options": permissions}
     document = MemberFile.model_validate(
         {"version": 1, "clis": {"codex": {"models": {"cached-A": configured}}}, "modes": {}}
     )
