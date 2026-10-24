@@ -339,10 +339,15 @@ fn probe(provider: &str) -> Value {
     let Some(path) = find(binary) else {
         return failure(provider, None, "");
     };
+    probe_path(provider, &path)
+}
+
+fn probe_path(provider: &str, path: &Path) -> Value {
     let mut efforts = efforts(provider);
-    let dsh_dump = (provider == "deepseek")
-        .then(|| run(&path, &["--profile", "headless", "--dump-config"]).ok())
-        .flatten();
+    let dsh_probe =
+        (provider == "deepseek").then(|| run(path, &["--profile", "headless", "--dump-config"]));
+    let dsh_dump = dsh_probe.as_ref().and_then(|result| result.as_ref().ok());
+    let dsh_error = dsh_probe.as_ref().and_then(|result| result.as_ref().err());
     let configured_model = match provider {
         "deepseek" => dsh_dump
             .as_deref()
@@ -370,7 +375,7 @@ fn probe(provider: &str) -> Value {
             // The composed profile's default first, then the official models and the ones
             // its configured providers (a gateway, say) declare.
             let mut ids: Vec<String> = Vec::new();
-            let declared = dsh_dump.as_deref().map(dsh_provider_models);
+            let declared = dsh_dump.map(|dump| dsh_provider_models(dump));
             for id in configured_model
                 .iter()
                 .cloned()
@@ -383,7 +388,7 @@ fn probe(provider: &str) -> Value {
             }
             let models = ids
                 .iter()
-                .map(|id| model(id, id, id == DEEPSEEK_CATALOG[0]))
+                .map(|id| model(id, id, configured_model.as_ref() == Some(id)))
                 .collect();
             let source = if dsh_dump.is_some() {
                 "config"
@@ -392,10 +397,10 @@ fn probe(provider: &str) -> Value {
             };
             Ok((source, models))
         }
-        "grok" => run(&path, &["models"]).map(|out| ("command", grok_models(&out))),
-        "antigravity" => run(&path, &["models"]).map(|out| ("command", agy_models(&out))),
-        "pi" => run(&path, &["--list-models"]).map(|out| ("command", pi_models(&out))),
-        "codebuddy" => run(&path, &["--help"]).map(|out| ("help", codebuddy_models(&out))),
+        "grok" => run(path, &["models"]).map(|out| ("command", grok_models(&out))),
+        "antigravity" => run(path, &["models"]).map(|out| ("command", agy_models(&out))),
+        "pi" => run(path, &["--list-models"]).map(|out| ("command", pi_models(&out))),
+        "codebuddy" => run(path, &["--help"]).map(|out| ("help", codebuddy_models(&out))),
         _ => Err("未知 CLI".to_owned()),
     };
     match listed {
@@ -406,7 +411,7 @@ fn probe(provider: &str) -> Value {
             "installed": true,
             "path": path.display().to_string(),
             "source": source,
-            "error": Value::Null,
+            "error": dsh_error,
             "native": {"model": native, "effort": effort},
             "models": models,
             "efforts": efforts,
@@ -948,6 +953,27 @@ mod tests {
             assert_eq!(path[1], first);
         }
         assert_eq!(run(&script, &["fail"]).unwrap_err(), "boom");
+
+        // A failed DeepSeek dump still offers the catalog, but never invents a native
+        // default or overwrites the last successfully detected model's settings.
+        let dsh = directory.path().join("dsh");
+        std::fs::write(&dsh, "#!/bin/sh\necho unavailable >&2\nexit 3\n").unwrap();
+        std::fs::set_permissions(&dsh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let failed = probe_path("deepseek", &dsh);
+        assert_eq!(failed["error"], "unavailable");
+        assert!(failed["native"]["model"].is_null());
+        assert_eq!(ids(failed["models"].as_array().unwrap()), DEEPSEEK_CATALOG);
+        let previous = json!({"clis": {"deepseek": {"model": "gateway/pro"}}});
+        let all = json!({"deepseek": failed});
+        assert_eq!(
+            native_document(&all, &previous)["clis"]["deepseek"]["model"],
+            "gateway/pro"
+        );
+
+        std::fs::write(&dsh, "#!/bin/sh\necho '# no default model'\n").unwrap();
+        let unknown = probe_path("deepseek", &dsh);
+        assert!(unknown["error"].is_null());
+        assert!(unknown["native"]["model"].is_null());
 
         // A grandchild keeping the pipe open after the CLI exited is stopped with its group.
         let lingering = directory.path().join("lingering");
