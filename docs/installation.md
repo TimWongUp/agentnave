@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.39.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.40.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.39.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.40.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -567,6 +567,17 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.39.0 to v0.40.0
+
+Update the App and runtime together with "Update all"; MCP tools and history need no migration.
+Settings now uses choices and range controls instead of free-text fields. Existing model options,
+notes, mode overrides and host-root overrides are preserved. The App publishes the detected CLI
+default model so calls without a model can use its saved effort and ordinary options. This cached
+fallback skips permissions and execution controls because the CLI default may have changed; name
+a model explicitly or set an App default model to apply those defaults. DeepSeek resolves an
+omitted model from its live headless profile when an effort patch needs it, and failed probes no
+longer invent a native default. See [v0.40.0 release notes](releases/v0.40.0.md).
 
 ### Upgrading from v0.38.0 to v0.39.0
 
