@@ -88,8 +88,48 @@ pub fn detected(refresh: bool) -> Value {
         all.insert(provider.to_owned(), result);
     }
     let all = Value::Object(all);
+    publish_native(&crate::data::data_root(), &all);
     *cache() = Some(all.clone());
     all
+}
+
+/// Where the service reads each CLI's own default, so a call that names no model (and has no
+/// App default) still gets the settings saved for the model that CLI will run (ADR-0028).
+pub const NATIVE_FILE: &str = "cli-defaults.json";
+
+/// The published defaults for one probe: a CLI whose probe failed keeps its last known entry,
+/// one that is not installed or names no default drops out.
+fn native_document(all: &Value, previous: &Value) -> Value {
+    let mut clis = Map::new();
+    for provider in PROVIDERS {
+        let result = &all[provider];
+        let entry = if result["installed"] == true && result["error"].is_null() {
+            json!({"model": result["native"]["model"], "effort": result["native"]["effort"]})
+        } else if result["installed"] == true {
+            previous["clis"][provider].clone()
+        } else {
+            Value::Null
+        };
+        if entry["model"].is_string() {
+            clis.insert((*provider).to_owned(), entry);
+        }
+    }
+    json!({"version": 1, "clis": clis})
+}
+
+/// Write the defaults only when they changed, and never create the data root for them.
+fn publish_native(root: &Path, all: &Value) {
+    if !root.is_dir() {
+        return;
+    }
+    let previous: Value = std::fs::read_to_string(root.join(NATIVE_FILE))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(Value::Null);
+    let document = native_document(all, &previous);
+    if document != previous {
+        let _ = crate::members::write_atomic(root, NATIVE_FILE, &document);
+    }
 }
 
 /// The CLI's own default model from the last probe, without probing: the office names a desk
@@ -834,6 +874,46 @@ mod tests {
             native_model(&[], Some("unlisted")).as_deref(),
             Some("unlisted")
         );
+    }
+
+    #[test]
+    fn published_defaults_keep_a_failed_probe_and_drop_what_is_gone() {
+        let previous = json!({"version": 1, "clis": {
+            "grok": {"model": "grok-4.6", "effort": "high"},
+            "pi": {"model": "old/pi", "effort": null}}});
+        let all = json!({
+            "codex": {"installed": true, "error": null,
+                      "native": {"model": "gpt-6.1-sol", "effort": "medium"}},
+            "claude": {"installed": true, "error": null, "native": {"model": null, "effort": null}},
+            "grok": {"installed": true, "error": "超时", "native": {"model": null, "effort": null}},
+            "pi": {"installed": false, "error": null, "native": {"model": null, "effort": null}}});
+        assert_eq!(
+            native_document(&all, &previous),
+            json!({"version": 1, "clis": {
+                "codex": {"model": "gpt-6.1-sol", "effort": "medium"},
+                "grok": {"model": "grok-4.6", "effort": "high"}}})
+        );
+        let root = tempfile::tempdir().unwrap();
+        publish_native(root.path(), &all);
+        let written = std::fs::read_to_string(root.path().join(NATIVE_FILE)).unwrap();
+        let modified = std::fs::metadata(root.path().join(NATIVE_FILE))
+            .unwrap()
+            .modified()
+            .unwrap();
+        publish_native(root.path(), &all);
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(NATIVE_FILE)).unwrap(),
+            written
+        );
+        assert_eq!(
+            std::fs::metadata(root.path().join(NATIVE_FILE))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            modified
+        );
+        publish_native(&root.path().join("missing"), &all);
+        assert!(!root.path().join("missing").exists());
     }
 
     #[cfg(unix)]

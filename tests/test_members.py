@@ -147,3 +147,30 @@ def test_member_file_errors_are_typed(tmp_path: Path, monkeypatch: pytest.Monkey
     path.mkdir()
     with pytest.raises(MemberFileError, match="Unable to read members.json"):
         read_members()
+
+
+def test_without_a_model_the_cli_default_model_keeps_its_saved_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {"grok": {"models": {"grok-4.7": {"effort": "low", "options": {"x": 1}}}}},
+            "modes": {},
+        }
+    )
+    assert apply_member(document, "task", "grok", {}, frozenset()) == ({}, [])
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"version": 1, "clis": {"grok": {"model": "grok-4.7", "effort": "high"}}}),
+        encoding="utf-8",
+    )
+    # The model stays the CLI's choice; only the settings saved for it are applied.
+    assert apply_member(document, "task", "grok", {}, frozenset()) == (
+        {"effort": "low", "x": 1},
+        ["effort", "x"],
+    )
+    assert apply_member(document, "task", "grok", {"model": "grok-4.6"}, frozenset()) == (
+        {"model": "grok-4.6"},
+        [],
+    )

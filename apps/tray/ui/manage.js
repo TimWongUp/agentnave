@@ -227,9 +227,7 @@ $("select-all").addEventListener("change", () => {
 });
 $("delete").addEventListener("click", () => ask(items.filter((item) => selected.has(item.id) && item.deletable), "删除所选"));
 $("cleanup").addEventListener("click", () => {
-  if (!$("days").reportValidity()) return;
   const days = Number($("days").value);
-  if (!Number.isInteger(days) || days < 1) { notice("请填写有效的天数", true); return; }
   const cutoff = Date.now() - days * day;
   ask(items.filter((item) => item.deletable && updated(item) < cutoff), `清理 ${days} 天前的会话（全部会话）`);
 });
