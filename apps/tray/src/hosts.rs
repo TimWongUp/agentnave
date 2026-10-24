@@ -1013,6 +1013,13 @@ impl Hosts {
             if self.settings_error.is_some() {
                 return Err("请先修复 hosts.json".into());
             }
+            // Compare against the entry before the move, so an equivalent root records no change.
+            let before = self
+                .registry()
+                .into_iter()
+                .find(|h| h.id == id)
+                .and_then(|h| self.reload_token(&h))
+                .map_or(Value::Null, Value::from);
             let mut settings = self.settings.clone();
             if !settings[id].is_object() {
                 settings[id] = json!({});
@@ -1033,7 +1040,7 @@ impl Hosts {
             self.record(id, Ok(()), "已更新配置根目录");
             let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
             let mut settings = self.settings.clone();
-            self.note_reload_change(&host, &Value::Null, &mut settings);
+            self.note_reload_change(&host, &before, &mut settings);
             if settings != self.settings {
                 roots::save(&self.context, &settings)?;
                 self.settings = settings;

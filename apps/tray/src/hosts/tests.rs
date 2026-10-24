@@ -1514,3 +1514,27 @@ fn duplicate_json_target_keys_and_truncated_strings_are_rejected() {
         assert!(Document::parse(raw, Format::Json, "mcpServers").is_err());
     }
 }
+
+#[test]
+fn an_equivalent_root_after_upgrade_records_no_reload() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    // Only records from before the MCP-only token, and a session that was already running.
+    hosts.settings["codex"] = json!({
+        "reload_observed":{"v":3,"token":"old"},
+        "reload_changed":{"v":3,"token":"old","at_ms":0},
+    });
+    save(
+        &hosts.context.home.join(".agentnave/connections/old.json"),
+        &json!({"version":1,"host":"codex","started_ms":1}).to_string(),
+    );
+    hosts
+        .action("root", &json!({"id":"codex","path":null}))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+}

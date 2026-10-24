@@ -731,9 +731,10 @@ Then update the Skill from that same tag through its installer or deployment man
 copy, stage the new Skill outside the discovered directory, preserve user-authored additions, and
 replace only the existing `agentnave-manager` tree, including `references/`; do not merge new files
 over old files and leave stale references behind. A managed symlink is updated through its source
-registration, without deleting the source directory. Restart the MCP connection and start a fresh
-Skill context, then repeat step 5. From v0.18.0 the launcher relays switch to a reinstalled
-runtime on their own when idle; restart to pick up new tools or Skill text. Updating the runtime alone does not update the Skill.
+registration, without deleting the source directory, then repeat step 5. Agents read the updated
+Skill from disk on use, so a Skill update needs no restart. From v0.18.0 the launcher relays switch
+to a reinstalled runtime on their own when idle; reconnect MCP only when the tool interface changed.
+Updating the runtime alone does not update the Skill.
 
 Use this paired procedure for repair and rollback too. If rolling back to a runtime-only tag such
 as v0.5.0, explicitly choose MCP-only or retain the labelled development Skill; it is not a matched
