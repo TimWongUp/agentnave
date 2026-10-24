@@ -1135,8 +1135,8 @@ mod tests {
         assert_eq!(legacy["host"], Value::Null);
         assert_eq!(legacy["label"], "未记录 boss");
         assert_eq!(legacy["members"][0]["key"], "codex/");
-        assert_eq!(legacy["desks"][0]["label"], "默认模型 · Codex");
-        assert_eq!(legacy["desks"][0]["handle"], "@默认模型·Codex");
+        assert_eq!(legacy["desks"][0]["label"], "CLI 默认模型 · Codex");
+        assert_eq!(legacy["desks"][0]["handle"], "@CLI 默认模型·Codex");
         assert_eq!(legacy["desks"][0]["model_source"], "unknown");
         assert_eq!(legacy["project"], Value::Null);
         assert_eq!(legacy["members"][0]["line"], "结果");
@@ -2194,7 +2194,7 @@ mod tests {
             prompt["answering"],
             json!([
                 "@claude-opus-5-5·Claude Code·reviewer",
-                "@默认模型·Claude Code·reviewer"
+                "@CLI 默认模型·Claude Code·reviewer"
             ])
         );
         let instruction = messages

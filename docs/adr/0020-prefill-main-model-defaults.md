@@ -1,6 +1,6 @@
 # ADR-0020：首次预填各 CLI 的主力模型
 
-- 状态：已接受
+- 状态：已被 [ADR-0028](0028-follow-cli-default-model.md) 取代
 - 日期：2026-10-20
 
 部分修改 [ADR-0013](0013-members-defaults-and-host-identity.md) 中「无配置文件时保持原生行为」。

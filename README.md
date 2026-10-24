@@ -171,7 +171,9 @@ for continuation; on macOS AgentNave prefers the `dsh` bundled in `DeepSeek Harn
 model, effort, or permission flags, so explicit `model`, `effort`, `provider`, `permission_mode`,
 and `stored_credentials` options become a temporary `--patch` overlay that is deleted after the
 call; dsh's own configuration is not changed. Headless ignores the app's saved sign-in and reads
-`DEEPSEEK_API_KEY` unless `{"stored_credentials": true}` is passed.
+`DEEPSEEK_API_KEY`; AgentNave restores the saved sign-in for the official `deepseek-official` route
+unless `stored_credentials` is passed explicitly. A model declared by a provider in your dsh
+configuration (a gateway, say) keeps that provider's route.
 
 ### Choosing a model and reasoning effort
 

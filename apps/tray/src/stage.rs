@@ -232,7 +232,7 @@ fn cli_label(provider: &str) -> &str {
 fn desk_label(model: &str, provider: &str, role: Option<&str>) -> String {
     let mut parts = vec![
         if model.is_empty() {
-            "默认模型".to_owned()
+            "CLI 默认模型".to_owned()
         } else {
             model.to_owned()
         },
@@ -253,7 +253,7 @@ fn handle(model: &str, provider: &str, role: Option<&str>) -> String {
             chars[chars.len() - 9..].iter().collect::<String>()
         )
     } else if model.is_empty() {
-        "默认模型".to_owned()
+        "CLI 默认模型".to_owned()
     } else {
         model.to_owned()
     };
@@ -343,7 +343,7 @@ impl Desk {
 
     fn base(&self) -> (String, String, Option<String>) {
         (
-            self.display_model().to_owned(),
+            self.display_model(),
             self.provider.clone(),
             self.role.clone(),
         )
@@ -391,11 +391,26 @@ impl Desk {
         }
     }
 
-    fn display_model(&self) -> &str {
+    /// The requested model, else the one the CLI reported, else the CLI's own default.
+    fn display_model(&self) -> String {
         if !self.model.is_empty() {
-            &self.model
+            self.model.clone()
+        } else if let Some((_, model)) = &self.reported {
+            model.clone()
         } else {
-            self.reported.as_ref().map_or("", |(_, model)| model)
+            crate::detect::cached_native(&self.provider).unwrap_or_default()
+        }
+    }
+
+    fn model_source(&self) -> &'static str {
+        if !self.model.is_empty() {
+            "requested"
+        } else if self.reported.is_some() {
+            "native"
+        } else if crate::detect::cached_native(&self.provider).is_some() {
+            "cli_default"
+        } else {
+            "unknown"
         }
     }
 
@@ -409,7 +424,7 @@ impl Desk {
 
     fn handle(&self) -> String {
         self.numbered(handle(
-            self.display_model(),
+            &self.display_model(),
             &self.provider,
             self.role.as_deref(),
         ))
@@ -446,9 +461,9 @@ impl Desk {
             "model": self.model,
             "role": self.role,
             "access": self.access.as_ref().map(|(_, access)| access),
-            "label": self.numbered(desk_label(self.display_model(), &self.provider, self.role.as_deref())),
+            "label": self.numbered(desk_label(&self.display_model(), &self.provider, self.role.as_deref())),
             "display_model": self.display_model(),
-            "model_source": if !self.model.is_empty() { "requested" } else if self.reported.is_some() { "native" } else { "unknown" },
+            "model_source": self.model_source(),
             "handle": self.handle(), "activities": self.activities.iter().rev().collect::<Vec<_>>(),
             "first_seen": iso(self.first.unwrap_or_default()),
             "last_active": iso(self.last.unwrap_or_default()),
@@ -1607,10 +1622,10 @@ impl Group {
                         &item.updated,
                     )
                 } else {
-                    event_time(
-                        committed.map_or("", |entry| text(entry, "time")),
-                        &item.updated,
-                    )
+                    // An answer keeps the time it finished, before and after the round publishes it.
+                    let finished =
+                        committed.map_or(text(run, "finished"), |entry| text(entry, "time"));
+                    event_time(finished, &item.updated)
                 };
                 self.member(
                     snapshot,
@@ -1696,6 +1711,7 @@ impl Group {
                 "id": item.id,
                 "title": item.title,
                 "status": conversation_status(snapshot),
+                "last_active": item.updated,
                 "seats": room_seats,
                 "pending_review": array(&view["round"], "seats").filter(|run| run["review"] == "pending").count(),
                 "round": view["round"].as_object().map(|r| json!({"number": r.get("number"), "order": r.get("order"), "status": r.get("status")})),

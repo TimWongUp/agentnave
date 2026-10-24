@@ -181,6 +181,9 @@
   // A missing optional frame marks the figure .no-<state> so CSS falls back.
   function figure(name, size = "s") {
     const fig = h("span.fig", { "data-char": name, "aria-hidden": "true" });
+    // Each figure keeps its own rhythm, so a row of desks never blinks or breathes in step.
+    const r = Math.random;
+    fig.style.cssText = `--phase:${(-7 * r()).toFixed(2)}s;--cycle:${(6 + 3 * r()).toFixed(2)}s;--breath:${(2.8 + r()).toFixed(2)}s`;
     const imgs = [...STATES, ...EXTRA].map((s) => {
       const path = `${size}/${name}/${s}.webp`;
       if (missing.has(path)) { fig.classList.add(`no-${s}`); return null; }
@@ -207,7 +210,7 @@
     const family = HOST_FAMILY[host];
     return family && window.Avatars ? Avatars.create("family", family) : h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
   }
-  const deskName = (d) => d.display_model || d.model || "默认模型";
+  const deskName = (d) => d.display_model || d.model || "CLI 默认模型";
   // Cut long labels to n characters (by code point) with an ellipsis.
   const clip = (text, n) => { const chars = [...text]; return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text; };
   // A desk's live activities: private chats and meeting seats can run at the same time.

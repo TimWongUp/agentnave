@@ -53,7 +53,7 @@ const roomRound = (r) => {
   if (r.pending_review) return "有回答待审核";
   const n = r.round;
   if (!n) return pick(GROUP, r.status)[0];
-  if (r.status === "running") return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次发言" : "同时作答"}`;
+  if (r.status === "running") return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次回复" : "同时回复"}`;
   return `第 ${n.number} 轮 · ${pick(GROUP, r.status)[0]}`;
 };
 const BOARD = () => {

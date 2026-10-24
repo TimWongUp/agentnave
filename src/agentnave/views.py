@@ -134,6 +134,7 @@ def _round(round_: RoundRecord, tails: dict[str, str]) -> dict[str, object]:
                 "review": seat.review,
                 "error": seat.error,
                 "reported_model": seat.reported_model,
+                "finished": seat.finished,
             }
             for seat in round_.seats
         ],

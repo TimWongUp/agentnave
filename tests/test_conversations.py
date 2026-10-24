@@ -340,6 +340,9 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
     # A private answer shows when it finished, not when its round began.
     assert all(seat["finished"] for seat in saved["rounds"][0]["seats"])
     assert private_time == saved["rounds"][0]["seats"][1]["finished"]
+    # A published answer keeps the time it finished, not when its round published it.
+    answer = next(e for e in saved["entries"] if e["kind"] == "answer" and e["round"] == 1)
+    assert answer["time"] == saved["rounds"][0]["seats"][0]["finished"]
 
     # Simulate a crash: one answer waiting for review, one seat still running.
     last = saved["rounds"][-1]

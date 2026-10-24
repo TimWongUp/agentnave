@@ -124,12 +124,13 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
         "restricted_tools (boolean; native read/tool restrictions)"
     ),
     "deepseek": (
-        "provider (model route; requires model; omitted, dsh's own default model keeps its "
-        "configured route and any other model uses deepseek-official), "
+        "provider (model route; requires model; omitted, dsh's default model and models its "
+        "configured providers declare keep their route, any other uses deepseek-official), "
         "effort requires model, "
         "permission_mode (read-only, workspace-write or danger-full-access), "
-        "stored_credentials (boolean; true reuses the sign-in and keys saved by the "
-        "DeepSeek Harness app; otherwise headless reads DEEPSEEK_API_KEY), "
+        "stored_credentials (boolean; reuses the sign-in and keys saved by the DeepSeek "
+        "Harness app; defaults to true on deepseek-official, else headless reads "
+        "DEEPSEEK_API_KEY), "
         "restricted_tools (boolean; disables tool plugins, read-only sandbox)"
     ),
     "grok": "permission_mode, agent, max_turns, sandbox, restricted_tools (boolean; denies tool execution)",
