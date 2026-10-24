@@ -58,7 +58,7 @@ const EFFORT_ORDER: [&str; 8] = [
     "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ];
 const CLAUDE_ALIASES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
-/// dsh has no listing command; its bundled DeepSeek catalog, shipped default first.
+/// dsh has no listing command; its bundled official models, shipped default first.
 const DEEPSEEK_CATALOG: [&str; 2] = ["deepseek-flash", "deepseek-v4-pro"];
 
 static CACHE: Mutex<Option<Value>> = Mutex::new(None);
@@ -92,6 +92,15 @@ pub fn detected(refresh: bool) -> Value {
     all
 }
 
+/// The CLI's own default model from the last probe, without probing: the office names a desk
+/// that requested no model by it until the CLI reports the model it used.
+pub fn cached_native(provider: &str) -> Option<String> {
+    let cache = CACHE.lock().unwrap_or_else(|poison| poison.into_inner());
+    cache.as_ref()?[provider]["native"]["model"]
+        .as_str()
+        .map(str::to_owned)
+}
+
 fn efforts(provider: &str) -> Vec<String> {
     EFFORTS
         .iter()
@@ -111,36 +120,28 @@ fn failure(provider: &str, path: Option<&Path>, error: &str) -> Value {
         "source": "none",
         "error": (!error.is_empty()).then_some(error),
         "models": [],
-        "primary": Value::Null,
+        "native": {"model": Value::Null, "effort": Value::Null},
         "efforts": efforts(provider),
     })
 }
 
-/// The model the App pre-fills as a CLI's default: the listed model the CLI's own settings name
-/// (`configured`, matched by id or label), else Codex's first-priority GPT model, Claude's
-/// `opus` or the CLI's marked default, else the first listed model.
-pub fn primary(provider: &str, models: &[Value], configured: Option<&str>) -> Option<String> {
+/// The CLI's own default model: the one its settings name (matched to a listed id by id or label),
+/// else the one its listing marks as default. Never a guess: `None` when the CLI names none.
+fn native_model(models: &[Value], configured: Option<&str>) -> Option<String> {
     let id = |model: &Value| model["id"].as_str().map(str::to_owned);
-    let named = configured.and_then(|name| {
-        models
-            .iter()
-            .find(|model| model["id"] == name || model["label"] == name)
-    });
-    let preferred = match provider {
-        "codex" => models
-            .iter()
-            .filter_map(id)
-            .find(|model| model.starts_with("gpt-")),
-        "claude" => models.iter().filter_map(id).find(|model| model == "opus"),
-        _ => models
+    match configured {
+        Some(name) => Some(
+            models
+                .iter()
+                .find(|model| model["id"] == name || model["label"] == name)
+                .and_then(id)
+                .unwrap_or_else(|| name.to_owned()),
+        ),
+        None => models
             .iter()
             .find(|model| model["default"] == true)
             .and_then(id),
-    };
-    named
-        .and_then(id)
-        .or(preferred)
-        .or_else(|| models.first().and_then(id))
+    }
 }
 
 /// The default model a CLI's own settings file names, if any: Codex `config.toml` `model`,
@@ -180,33 +181,113 @@ fn configured(provider: &str) -> Option<String> {
             }
         }
         "antigravity" => json(home.join(".gemini/antigravity-cli/settings.json"), "model"),
+        "codebuddy" => json(home.join(".codebuddy/settings.json"), "model"),
         _ => None,
     }?;
     let name = name.trim();
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-/// The model of the `agent-default-model` entry in `dsh --dump-config` output: the composed
-/// headless profile, so a user layer that routes dsh through another provider wins.
-fn dsh_default_model(dump: &str) -> Option<String> {
+/// The default thinking level a CLI's own settings name, if any: Codex `config.toml`
+/// `model_reasoning_effort`, Claude `settings.json` `effortLevel` (per model first), Pi `defaultThinkingLevel`,
+/// and the level Grok's model cache marks as default for its default model (dsh's comes from
+/// its dump; Antigravity's is part of the model).
+fn configured_effort(provider: &str, model: Option<&str>) -> Option<String> {
+    let home = dirs::home_dir()?;
+    let dir = |variable: &str, fallback: &str| match std::env::var_os(variable) {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => home.join(fallback),
+    };
+    let effort = match provider {
+        "codex" => {
+            let text = std::fs::read_to_string(dir("CODEX_HOME", ".codex").join("config.toml"));
+            let table: toml::Table = text.ok()?.parse().ok()?;
+            table.get("model_reasoning_effort")?.as_str()?.to_owned()
+        }
+        "claude" => {
+            let path = dir("CLAUDE_CONFIG_DIR", ".claude").join("settings.json");
+            let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+            let per_model = model.map(|model| &value["modelSettings"][model]["effortLevel"]);
+            per_model
+                .and_then(Value::as_str)
+                .or_else(|| value["effortLevel"].as_str())?
+                .to_owned()
+        }
+        "pi" => {
+            let path = dir("PI_CODING_AGENT_DIR", ".pi/agent").join("settings.json");
+            let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+            value["defaultThinkingLevel"].as_str()?.to_owned()
+        }
+        "grok" => {
+            let cache = std::fs::read_to_string(home.join(".grok/models_cache.json")).ok()?;
+            grok_default_effort(&serde_json::from_str(&cache).ok()?, model?)?
+        }
+        _ => return None,
+    };
+    let effort = effort.trim();
+    (!effort.is_empty()).then(|| effort.to_owned())
+}
+
+/// The reasoning effort Grok's model cache marks as default for one model.
+fn grok_default_effort(cache: &Value, model: &str) -> Option<String> {
+    cache["models"][model]["info"]["reasoning_efforts"]
+        .as_array()?
+        .iter()
+        .find(|effort| effort["default"] == true)?["value"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// One plain, single- or double-quoted YAML scalar from `dsh --dump-config`.
+fn dsh_scalar(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    let value = if raw.starts_with('"') {
+        serde_json::from_str::<String>(raw).ok()
+    } else if raw.len() > 1 && raw.starts_with('\'') && raw.ends_with('\'') {
+        Some(raw[1..raw.len() - 1].replace("''", "'"))
+    } else {
+        Some(raw.to_owned())
+    };
+    value.filter(|value| !value.is_empty())
+}
+
+/// A key (`model`, `reasoningEffort`) of the `agent-default-model` entry in `dsh --dump-config`
+/// output: the composed headless profile, so a user layer that routes dsh elsewhere wins.
+fn dsh_default(dump: &str, key: &str) -> Option<String> {
+    let prefix = format!("    {key}:");
     let mut inside = false;
     let mut found = None;
     for line in dump.lines() {
         if line.starts_with("- ") || line.starts_with('#') {
             inside = line.trim() == "- id: agent-default-model";
-        } else if inside && let Some(raw) = line.strip_prefix("    model:") {
-            let raw = raw.trim();
-            let value = if raw.starts_with('"') {
-                serde_json::from_str::<String>(raw).ok()
-            } else if raw.len() > 1 && raw.starts_with('\'') && raw.ends_with('\'') {
-                Some(raw[1..raw.len() - 1].replace("''", "'"))
-            } else {
-                Some(raw.to_owned())
-            };
-            found = value.filter(|value| !value.is_empty());
+            if inside {
+                found = None;
+            }
+        } else if inside && let Some(raw) = line.strip_prefix(&prefix) {
+            found = dsh_scalar(raw);
         }
     }
     found
+}
+
+/// The models the configured providers declare (`config.providers.<route>.models[].id`), in
+/// order: what a model override may name besides the bundled official models.
+fn dsh_provider_models(dump: &str) -> Vec<String> {
+    let mut providers = false;
+    let mut models = Vec::new();
+    for line in dump.lines() {
+        if line.starts_with("- ") || line.starts_with('#') {
+            providers = false;
+        } else if line.starts_with("    ") && !line.starts_with("     ") {
+            providers = line.trim_end() == "    providers:";
+        } else if providers
+            && let Some(id) = line.strip_prefix("          - id:").and_then(dsh_scalar)
+            && !models.contains(&id)
+        {
+            models.push(id);
+        }
+    }
+    models
 }
 
 fn probe(provider: &str) -> Value {
@@ -219,12 +300,18 @@ fn probe(provider: &str) -> Value {
         return failure(provider, None, "");
     };
     let mut efforts = efforts(provider);
+    let dsh_dump = (provider == "deepseek")
+        .then(|| run(&path, &["--profile", "headless", "--dump-config"]).ok())
+        .flatten();
     let configured_model = match provider {
-        "deepseek" => run(&path, &["--profile", "headless", "--dump-config"])
-            .ok()
-            .and_then(|dump| dsh_default_model(&dump)),
+        "deepseek" => dsh_dump
+            .as_deref()
+            .and_then(|dump| dsh_default(dump, "model")),
         _ => configured(provider),
     };
+    let dsh_effort = dsh_dump
+        .as_deref()
+        .and_then(|dump| dsh_default(dump, "reasoningEffort"));
     let listed = match provider {
         "codex" => codex_models().map(|(models, levels)| {
             if !levels.is_empty() {
@@ -240,18 +327,30 @@ fn probe(provider: &str) -> Value {
                 .collect(),
         )),
         "deepseek" => {
-            let mut models: Vec<Value> = DEEPSEEK_CATALOG
+            // The composed profile's default first, then the official models and the ones
+            // its configured providers (a gateway, say) declare.
+            let mut ids: Vec<String> = Vec::new();
+            let declared = dsh_dump.as_deref().map(dsh_provider_models);
+            for id in configured_model
                 .iter()
-                .enumerate()
-                .map(|(index, id)| model(id, id, index == 0))
-                .collect();
-            // A profile routed elsewhere (a gateway, say) names a model outside the catalog.
-            if let Some(own) = &configured_model
-                && !DEEPSEEK_CATALOG.contains(&own.as_str())
+                .cloned()
+                .chain(DEEPSEEK_CATALOG.iter().map(|id| (*id).to_owned()))
+                .chain(declared.into_iter().flatten())
             {
-                models.insert(0, model(own, own, false));
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
             }
-            Ok(("catalog", models))
+            let models = ids
+                .iter()
+                .map(|id| model(id, id, id == DEEPSEEK_CATALOG[0]))
+                .collect();
+            let source = if dsh_dump.is_some() {
+                "config"
+            } else {
+                "catalog"
+            };
+            Ok((source, models))
         }
         "grok" => run(&path, &["models"]).map(|out| ("command", grok_models(&out))),
         "antigravity" => run(&path, &["models"]).map(|out| ("command", agy_models(&out))),
@@ -260,15 +359,19 @@ fn probe(provider: &str) -> Value {
         _ => Err("未知 CLI".to_owned()),
     };
     match listed {
-        Ok((source, models)) => json!({
+        Ok((source, models)) => {
+            let native = native_model(&models, configured_model.as_deref());
+            let effort = dsh_effort.or_else(|| configured_effort(provider, native.as_deref()));
+            json!({
             "installed": true,
             "path": path.display().to_string(),
             "source": source,
             "error": Value::Null,
-            "primary": primary(provider, &models, configured_model.as_deref()),
+            "native": {"model": native, "effort": effort},
             "models": models,
             "efforts": efforts,
-        }),
+            })
+        }
         Err(error) => failure(provider, Some(&path), &error),
     }
 }
@@ -600,7 +703,9 @@ fn codebuddy_models(text: &str) -> Vec<Value> {
         .split(',')
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .map(|id| model(id, id, false))
+        .enumerate()
+        // The first supported model is the one CodeBuddy runs without `--model`.
+        .map(|(index, id)| model(id, id, index == 0))
         .collect()
 }
 
@@ -637,8 +742,18 @@ mod tests {
         let dump = "# == base\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n\
             \x20   model: deepseek-flash\n# == user\n- id: agent-default-model\n  config:\n\
             \x20   provider: magpie\n    model: 'gw/v4''s'\n- id: jobs\n  config:\n    model: other\n";
-        assert_eq!(dsh_default_model(dump).as_deref(), Some("gw/v4's"));
-        assert_eq!(dsh_default_model("- id: jobs\n"), None);
+        assert_eq!(dsh_default(dump, "model").as_deref(), Some("gw/v4's"));
+        assert_eq!(dsh_default(dump, "reasoningEffort"), None);
+        assert_eq!(dsh_default("- id: jobs\n", "model"), None);
+        let providers = "- id: llm-pi-ai\n  config:\n    providers:\n      gw:\n        models:\n\
+            \x20         - id: opencode-go/v4.1\n            reasoningEfforts:\n\
+            \x20         - id: \"codex/sol\"\n      gw2:\n        models:\n\
+            \x20         - id: codex/sol\n          - id: grok/4\n    other:\n\
+            \x20         - id: skipped\n- id: jobs\n";
+        assert_eq!(
+            dsh_provider_models(providers),
+            ["opencode-go/v4.1", "codex/sol", "grok/4"]
+        );
     }
 
     #[test]
@@ -682,49 +797,43 @@ mod tests {
             supported: (hy4-preview,\n      glm-5.3)\n";
         assert_eq!(ids(&codebuddy_models(wrapped)), ["hy4-preview", "glm-5.3"]);
 
-        // The pre-filled default: the model the CLI's settings name, else its main model, else
-        // the first listed one.
+        // The CLI's own default: what its settings name (by id or label), else what its listing
+        // marks; never a guess from the list.
         let listed =
             |ids: &[&str]| -> Vec<Value> { ids.iter().map(|id| model(id, id, false)).collect() };
         let codex = listed(&["opencode-go/glm-5.3-flash", "gpt-6.1-sol", "gpt-6-luna"]);
+        assert_eq!(native_model(&codex, None), None);
         assert_eq!(
-            primary("codex", &codex, None).as_deref(),
-            Some("gpt-6.1-sol")
-        );
-        assert_eq!(
-            primary("codex", &codex, Some("gpt-6-luna")).as_deref(),
+            native_model(&codex, Some("gpt-6-luna")).as_deref(),
             Some("gpt-6-luna")
         );
-        let claude = listed(&CLAUDE_ALIASES);
-        assert_eq!(primary("claude", &claude, None).as_deref(), Some("opus"));
+        assert_eq!(native_model(&listed(&CLAUDE_ALIASES), None), None);
         assert_eq!(
-            primary("grok", &grok_models(grok), None).as_deref(),
+            native_model(&grok_models(grok), None).as_deref(),
             Some("grok-4.7")
         );
-        let agy = agy_models(agy);
         assert_eq!(
-            primary("antigravity", &agy, None).as_deref(),
-            Some("gemini-3.8-flash-high")
-        );
-        let label = agy[1]["label"].as_str().unwrap();
-        assert_eq!(
-            primary("antigravity", &agy, Some(label)),
-            agy[1]["id"].as_str().map(str::to_owned)
-        );
-        let pi = pi_models(pi);
-        assert_eq!(
-            primary("pi", &pi, None),
-            pi[0]["id"].as_str().map(str::to_owned)
-        );
-        assert_eq!(
-            primary("codebuddy", &codebuddy_models(codebuddy), Some("unlisted")).as_deref(),
+            native_model(&codebuddy_models(codebuddy), None).as_deref(),
             Some("hy4-preview")
         );
+        let cache = json!({"models": {"grok-4.7": {"info": {"reasoning_efforts": [
+            {"value": "xhigh", "default": false}, {"value": "high", "default": true}]}}}});
         assert_eq!(
-            primary("codex", &listed(&["grok/grok-4.7"]), None).as_deref(),
-            Some("grok/grok-4.7")
+            grok_default_effort(&cache, "grok-4.7").as_deref(),
+            Some("high")
         );
-        assert_eq!(primary("pi", &[], Some("anything")), None);
+        assert_eq!(grok_default_effort(&cache, "grok-4.6"), None);
+        let agy = agy_models(agy);
+        assert_eq!(native_model(&agy, None), None);
+        let label = agy[1]["label"].as_str().unwrap();
+        assert_eq!(
+            native_model(&agy, Some(label)),
+            agy[1]["id"].as_str().map(str::to_owned)
+        );
+        assert_eq!(
+            native_model(&[], Some("unlisted")).as_deref(),
+            Some("unlisted")
+        );
     }
 
     #[cfg(unix)]

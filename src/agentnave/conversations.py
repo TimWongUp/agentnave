@@ -966,13 +966,24 @@ class Conversations(Groups):
         """Write the whole live group, so a save after a failed one restores every round."""
         record = self.records[group.id]
         state = record.state
+        # An answer keeps the time it finished, not the time a parallel round published it.
+        finished: dict[tuple[int, str | None], str] = {
+            (round_.number, seat.seat_id): seat.finished
+            for round_ in state.rounds
+            for seat in round_.seats
+            if seat.finished is not None
+        }
         state.entries.extend(
             EntryRecord(
                 round=item.round,
                 kind=item.kind,
                 seat=item.seat_id,
                 text=item.text,
-                time=now(),
+                time=(
+                    finished.get((item.round, item.seat_id)) or now()
+                    if item.kind in ("answer", "absent")
+                    else now()
+                ),
                 manager_model=item.manager_model,
                 manager_reported_model=item.manager_reported_model,
                 reported_model=item.reported_model,

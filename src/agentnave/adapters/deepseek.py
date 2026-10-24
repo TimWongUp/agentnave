@@ -52,6 +52,7 @@ _TOOL_ROWS = (
     "plan-mode",
 )
 _BLOCKED_CODES = {"MISSING_CREDENTIAL", "INVALID_CREDENTIAL", "AUTH"}
+_OFFICIAL_ROUTE = "deepseek-official"
 
 
 def _scalar(raw: str) -> str:
@@ -68,8 +69,9 @@ def _scalar(raw: str) -> str:
     return raw
 
 
-def profile_default_model(executable: str) -> tuple[str, str] | None:
-    """The (route, model) the headless profile composes for agent-default-model, if readable.
+def profile_routes(executable: str) -> tuple[tuple[str, str] | None, dict[str, str]]:
+    """The headless profile's composed agent-default-model (route, model), if readable, and
+    the route of each model its configured providers declare (first declaration wins).
 
     dsh replaces that entry's config as a whole, so a model override must restate a route.
     """
@@ -83,20 +85,34 @@ def profile_default_model(executable: str) -> tuple[str, str] | None:
             check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return None
+        return None, {}
     found: dict[str, str] = {}
-    inside = False
+    routes: dict[str, str] = {}
+    inside = providers = False
+    route = ""
     for line in dump.splitlines():
         if line.startswith("- ") or line.startswith("#"):
             inside = line.strip() == "- id: agent-default-model"
             if inside:
                 found = {}
-        elif inside and line.startswith("    ") and not line.startswith("     "):
+            providers = False
+        elif line.startswith("    ") and not line.startswith("     "):
             key, _, value = line.strip().partition(":")
-            if key in ("provider", "model"):
+            providers, route = key == "providers", ""
+            if inside and key in ("provider", "model"):
                 found[key] = _scalar(value)
-    route, model = found.get("provider"), found.get("model")
-    return (route, model) if route and model else None
+        elif not providers:
+            continue
+        elif line.startswith("      ") and not line.startswith("       "):
+            key = line.strip()
+            route = _scalar(key[:-1]) if key.endswith(":") else ""
+        elif route and line.startswith("          - id:"):
+            model = _scalar(line.removeprefix("          - id:"))
+            if model:
+                routes.setdefault(model, route)
+    default_route, default_model = found.get("provider"), found.get("model")
+    default = (default_route, default_model) if default_route and default_model else None
+    return default, routes
 
 
 def _quote(value: object) -> str:
@@ -135,7 +151,7 @@ class DeepSeekAdapter:
         if "model" in options:
             rows.append(
                 "- id: agent-default-model\n  config:\n"
-                f"    provider: {_quote(options.get('provider', 'deepseek-official'))}\n"
+                f"    provider: {_quote(options.get('provider', _OFFICIAL_ROUTE))}\n"
                 f"    model: {_quote(options['model'])}\n"
                 + (
                     f"    reasoningEffort: {_quote(options['effort'])}\n"
@@ -167,13 +183,28 @@ class DeepSeekAdapter:
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
-        options = request.provider_options
-        if "model" in options and "provider" not in options:
-            # The profile's own default model keeps its own route (a gateway, say);
-            # any other bare model is one of dsh's bundled official models.
-            configured = profile_default_model(self.executable())
-            if configured is not None and configured[1] == options["model"]:
-                request = replace(request, provider_options={**options, "provider": configured[0]})
+        options = dict(request.provider_options)
+        route = options.get("provider")
+        if route is None:
+            # The profile's default model keeps its own route (a gateway, say), a model a
+            # configured provider declares takes that provider's route, and any other bare
+            # model is one of dsh's bundled official models.
+            default, routes = profile_routes(self.executable())
+            model = options.get("model")
+            if model is None:
+                route = default[0] if default is not None else None
+            else:
+                route = (
+                    default[0]
+                    if default is not None and default[1] == model
+                    else routes.get(str(model), _OFFICIAL_ROUTE)
+                )
+                options["provider"] = route
+        if route == _OFFICIAL_ROUTE and "stored_credentials" not in options:
+            # Headless leaves the app's saved keys off; the official route needs them unless
+            # the caller decides otherwise (ADR-0027).
+            options["stored_credentials"] = True
+        request = replace(request, provider_options=options)
         rows = list(self.option_args(request))
         if discussion:
             rows.extend(f"- id: {row}\n  disabled: true\n" for row in _TOOL_ROWS)

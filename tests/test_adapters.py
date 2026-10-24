@@ -1604,6 +1604,11 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     adapter = DeepSeekAdapter()
+
+    def configured(_executable: str) -> tuple[tuple[str, str], dict[str, str]]:
+        return ("gw", "gw/flash"), {"gw/flash": "gw", "gw/pro": "gw2"}
+
+    monkeypatch.setattr(deepseek_adapter, "profile_routes", configured)
     plain = adapter.prepare(request(tmp_path, "deepseek", session_id="session-1"))
     # argv[0] may be the desktop bundle on this machine; resolution is covered elsewhere.
     assert plain.argv[1:] == (
@@ -1615,16 +1620,36 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
     )
     assert plain.stdin == b"do the task" and plain.cleanup_paths == ()
 
-    def configured(_executable: str) -> tuple[str, str]:
-        return ("gw", "gw/flash")
+    def patch_of(options: dict[str, ProviderOption]) -> str:
+        command = adapter.prepare(request(tmp_path, "deepseek", provider_options=options))
+        try:
+            return Path(command.argv[command.argv.index("--patch") + 1]).read_text()
+        finally:
+            for path in command.cleanup_paths:
+                path.unlink()
 
-    monkeypatch.setattr(deepseek_adapter, "profile_default_model", configured)
-    routed = adapter.prepare(request(tmp_path, "deepseek", provider_options={"model": "gw/flash"}))
+    # The default model and gateway models keep their route; the official route restores the
+    # app's saved keys unless the caller says otherwise.
+    assert '    provider: "gw"\n    model: "gw/flash"\n' in patch_of({"model": "gw/flash"})
+    gateway = patch_of({"model": "gw/pro"})
+    assert '    provider: "gw2"\n' in gateway and "credentials" not in gateway
+    official = patch_of({"model": "deepseek-flash"})
+    assert '    provider: "deepseek-official"\n' in official
+    assert "- id: credentials\n  disabled: false\n" in official
+    assert "credentials" not in patch_of({"model": "deepseek-flash", "stored_credentials": False})
+
+    def official_default(_executable: str) -> tuple[tuple[str, str], dict[str, str]]:
+        return ("deepseek-official", "deepseek-flash"), {}
+
+    monkeypatch.setattr(deepseek_adapter, "profile_routes", official_default)
+    bare = adapter.prepare(request(tmp_path, "deepseek"))
     try:
-        patch = Path(routed.argv[routed.argv.index("--patch") + 1]).read_text()
-        assert '    provider: "gw"\n    model: "gw/flash"\n' in patch
+        assert (
+            "- id: credentials\n  disabled: false\n"
+            in Path(bare.argv[bare.argv.index("--patch") + 1]).read_text()
+        )
     finally:
-        for path in routed.cleanup_paths:
+        for path in bare.cleanup_paths:
             path.unlink()
 
     command = adapter.prepare(
@@ -1666,7 +1691,7 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX fake executable")
-def test_deepseek_profile_default_model_reads_the_composed_entry(tmp_path: Path) -> None:
+def test_deepseek_profile_routes_read_the_composed_entries(tmp_path: Path) -> None:
     dump = tmp_path / "dsh"
     lines = (
         "# == @deepseek-ai/dsh-base",
@@ -1684,12 +1709,32 @@ def test_deepseek_profile_default_model_reads_the_composed_entry(tmp_path: Path)
         "- id: jobs",
         "  config:",
         "    model: other",
+        "- id: llm-pi-ai",
+        "  config:",
+        "    providers:",
+        "      gw:",
+        "        baseURL: x",
+        "        models:",
+        "          - id: opencode-go/v4.1",
+        "            reasoningEfforts:",
+        "              high: high",
+        "          - id: codex/sol",
+        "      gw2:",
+        "        models:",
+        "          - id: codex/sol",
+        "          - id: grok/4",
+        "    other:",
+        "      skip:",
+        "          - id: not-a-model",
     )
     # printf is a shell builtin; these tests run without a PATH.
     dump.write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(f'"{line}"' for line in lines) + "\n")
     dump.chmod(0o755)
-    assert deepseek_adapter.profile_default_model(str(dump)) == ("mag'pie", "opencode-go/v4.1")
-    assert deepseek_adapter.profile_default_model(str(tmp_path / "missing")) is None
+    assert deepseek_adapter.profile_routes(str(dump)) == (
+        ("mag'pie", "opencode-go/v4.1"),
+        {"opencode-go/v4.1": "gw", "codex/sol": "gw", "grok/4": "gw2"},
+    )
+    assert deepseek_adapter.profile_routes(str(tmp_path / "missing")) == (None, {})
 
 
 def test_deepseek_parse_maps_turn_end_and_keeps_only_terminal_events(tmp_path: Path) -> None:

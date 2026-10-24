@@ -188,7 +188,7 @@ class Conversation(BaseModel):
                         seat=seat.seat_id,
                         text=seat.status,
                         reported_model=seat.reported_model,
-                        time=now(),
+                        time=seat.finished or now(),
                     )
                 )
             elif seat.review != "private":
@@ -199,7 +199,7 @@ class Conversation(BaseModel):
                         seat=seat.seat_id,
                         text=seat.output,
                         reported_model=seat.reported_model,
-                        time=now(),
+                        time=seat.finished or now(),
                     )
                 )
         self.entries.extend(added)

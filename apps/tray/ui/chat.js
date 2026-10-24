@@ -45,10 +45,19 @@ const MAX_FLIGHTS = 8; // more new messages than this between two polls are not 
 const SLEEP_AFTER = 20 * 60e3; // an idle boss dozes off after this long
 const FIG = 88; // character size at desks and meeting seats, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
+const WALK_MS = 1600; // a figure's walk between its desk and a meeting seat
+const HOLD_MS = 10e3; // an ended room stays empty this long after its seats are back
+const FOLD_MS = 500; // then the desks below push it shut
+const LEAVE_MS = WALK_MS + HOLD_MS + FOLD_MS;
 
 // Tags stay short; the full text is in the tooltip.
 const ROLE_CHARS = 6;
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
+// How a desk that requested no model got the name it shows.
+const MODEL_NOTE = {
+  cli_default: "\n调用时没有指定模型，这里显示 CLI 自己设置的默认模型，以 CLI 回报为准",
+  unknown: "\n调用时没有指定模型，CLI 也没有回报，用的是它自己的默认模型",
+};
 const handleOf = (d) =>
   d.handle ||
   `@${deskName(d)}·${cliName(d.provider)}${d.role ? `·${d.role}` : ""}`;
@@ -100,6 +109,7 @@ const state = {
   roomRecs: new Map(),
   seatRecs: new Map(),
   away: new Map(), // desk key -> "room|seat" it currently sits in, for walking animations
+  closing: new Map(), // room id -> when the ended room leaves the floor
   known: new Set(),
   pending: 0,
   tickId: null,
@@ -294,9 +304,9 @@ function counts(c) {
 // Mood picks the character frame; word is the plain status shown under the desk.
 function deskMood(d, ctx) {
   const acts = activities(d);
-  const meeting = acts.find(
-    (a) => a.kind === "meeting" && ctx.fullRooms.has(a.room),
-  );
+  const meeting =
+    acts.find((a) => a.kind === "meeting" && ctx.fullRooms.has(a.room)) ||
+    seatedIn(d, ctx);
   const privateRun = acts.some(
     (a) => a.kind === "private" && a.status === "running",
   );
@@ -328,6 +338,12 @@ function deskMood(d, ctx) {
         away: null,
       }
     : { mood: "idle", say: "", word: "空闲", away: null };
+}
+// A seat that has answered stays at the table until its round ends, so it is never drawn twice.
+function seatedIn(d, ctx) {
+  if (!d.room || !ctx.fullRooms.has(d.room)) return null;
+  const seat = ctx.rooms.get(d.room)?.seats.find((s) => s.desk === d.key);
+  return seat ? { room: d.room, seat: seat.seat } : null;
 }
 function setSay(node, say) {
   const key = String(say);
@@ -515,7 +531,7 @@ function sideItems(c, ctx) {
       };
     });
   const meets = [...c.rooms]
-    .sort((a, b) => Number(fullRoom(b)) - Number(fullRoom(a)))
+    .sort((a, b) => Number(fullRoom(b)) - Number(fullRoom(a)) || recent(a, b))
     .map((r) => ({
       scope: { kind: "room", id: r.id },
       heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
@@ -524,7 +540,7 @@ function sideItems(c, ctx) {
         ? `${r.pending_review} 条回答待审核`
         : `${roundText(r)} · ${r.seats.length} 位参会`,
       tone: r.pending_review ? "review" : r.status === "running" ? "run" : r.status === "failed" ? "bad" : "",
-      time: "",
+      time: r.last_active ? relTime(r.last_active) : "",
     }));
   return { chats, meets };
 }
@@ -638,7 +654,7 @@ function updateDesk(rec, d, ctx) {
   setAttr(
     rec.el,
     "title",
-    `${handleOf(d)}\n首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}${d.model_source === "unknown" || (!d.model && !d.display_model) ? "\n调用时没有指定模型，CLI 也没有回报，用的是它的默认模型" : ""}`,
+    `${handleOf(d)}\n首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}${MODEL_NOTE[d.model_source] || (!d.model && !d.display_model ? MODEL_NOTE.unknown : "")}`,
   );
   setAttr(
     rec.el,
@@ -653,7 +669,7 @@ const fullRoom = (r) => urgent(r.status);
 function roundText(r) {
   const n = r.round;
   if (!n) return pick(GROUP, r.status)[0];
-  const order = n.order === "serial" ? "依次发言" : "同时作答";
+  const order = n.order === "serial" ? "依次回复" : "同时回复";
   return `第 ${n.number} 轮 · ${r.status === "review" ? "待审核" : r.status === "running" ? order : pick(GROUP, r.status)[0]}`;
 }
 function createRoom(r) {
@@ -719,7 +735,7 @@ function updateRoom(rec, r, ctx) {
   const [, tone] = pick(GROUP, r.status);
   setClass(
     rec.el,
-    `zone room${state.drawer.kind === "room" && state.drawer.id === r.id ? " sel" : ""}`,
+    `zone room${state.closing.has(r.id) ? " closing" : ""}${state.drawer.kind === "room" && state.drawer.id === r.id ? " sel" : ""}`,
   );
   setText(rec.title, r.title);
   setText(rec.state, roundText(r));
@@ -787,6 +803,7 @@ function renderOffice(c, ctx, n, newGroup) {
       state.roomRecs,
       state.seatRecs,
       state.away,
+      state.closing,
       state.known,
     ])
       map.clear();
@@ -798,12 +815,34 @@ function renderOffice(c, ctx, n, newGroup) {
   if (!state.bossRec) state.bossRec = createBoss();
   updateBoss(state.bossRec, c, n);
 
+  // A room that ends leaves the floor with its seats: remember where each away figure sat
+  // so its walk back to the desk starts there.
+  const sat = new Map();
+  for (const id of state.away.values()) {
+    const fig = state.seatRecs.get(id)?.fig;
+    if (fig?.isConnected) sat.set(id, fig.getBoundingClientRect());
+  }
   // rooms first: desks need to know which rooms are drawn in full
   for (const id of state.roomRecs.keys())
     if (!ctx.rooms.has(id)) state.roomRecs.delete(id);
   const live = new Set();
-  // only rooms in session sit on the floor; finished ones are listed beside the boss
-  const rooms = c.rooms.filter(fullRoom);
+  // only rooms in session sit on the floor; finished ones are listed beside the boss. A room
+  // that has just ended stays while its seats walk back to their desks, then fades out.
+  const now = Date.now();
+  for (const r of c.rooms) {
+    const rec = state.roomRecs.get(r.id);
+    if (fullRoom(r)) {
+      state.closing.delete(r.id);
+      rec?.fold?.cancel();
+    } else if (!state.closing.has(r.id) && rec?.el.isConnected && !newGroup && canAnimate()) {
+      state.closing.set(r.id, now + LEAVE_MS);
+      rec.fold = foldRoom(rec.el);
+      setTimeout(() => state.chat && renderAll(state.chat), LEAVE_MS + 50);
+    }
+  }
+  for (const [id, until] of state.closing)
+    if (until <= now || !ctx.rooms.has(id)) state.closing.delete(id);
+  const rooms = c.rooms.filter((r) => fullRoom(r) || state.closing.has(r.id));
   const roomNodes = rooms.map((r) => {
     let rec = state.roomRecs.get(r.id);
     if (!rec) state.roomRecs.set(r.id, (rec = createRoom(r)));
@@ -836,7 +875,36 @@ function renderOffice(c, ctx, n, newGroup) {
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
   renderSides(state.bossRec, c, ctx);
   layoutRooms();
-  walk(!newGroup && state.ready);
+  walk(!newGroup && state.ready, sat);
+}
+
+// After its seats walk back and a pause, an ended room shrinks to nothing with its own gap, so
+// the desks below slide up into its place and nothing jumps when it leaves the page.
+function foldRoom(node) {
+  const style = getComputedStyle(node);
+  return node.animate(
+    [
+      {
+        height: `${node.offsetHeight}px`,
+        marginTop: style.marginTop,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom,
+        borderTopWidth: style.borderTopWidth,
+        borderBottomWidth: style.borderBottomWidth,
+        opacity: 1,
+      },
+      {
+        height: "0px",
+        marginTop: "0px",
+        paddingTop: "0px",
+        paddingBottom: "0px",
+        borderTopWidth: "0px",
+        borderBottomWidth: "0px",
+        opacity: 0,
+      },
+    ],
+    { duration: FOLD_MS, delay: WALK_MS + HOLD_MS, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
+  );
 }
 
 // Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
@@ -890,7 +958,7 @@ function optimizedNode(opt, ctx) {
 
 // A desk that leaves for a meeting walks to its seat (and back): a copy of its figure travels
 // between the two places while the real ones fade. Purely decorative.
-function walk(animate) {
+function walk(animate, sat) {
   for (const [key, rec] of state.deskRecs) {
     const to = rec.mood?.away || null;
     const from = state.away.get(key) ?? null;
@@ -899,15 +967,18 @@ function walk(animate) {
     else state.away.delete(key);
     if (!animate || !canAnimate()) continue;
     const seatOf = (id) => state.seatRecs.get(id)?.fig;
-    const start = from ? seatOf(from) : rec.fig;
+    const left = from && seatOf(from);
+    const start = from ? (left?.isConnected ? left : sat.get(from)) : rec.fig;
     const end = to ? seatOf(to) : rec.fig;
     travel(start, end, rec.char);
   }
 }
+// start is a figure, or the last place of one that has already left the page.
 function travel(start, end, name) {
-  if (!start?.isConnected || !end?.isConnected) return;
+  if (!start || !end?.isConnected) return;
+  if (start instanceof Element && !start.isConnected) return;
   const base = el.fx.getBoundingClientRect();
-  const a = start.getBoundingClientRect(),
+  const a = start instanceof Element ? start.getBoundingClientRect() : start,
     b = end.getBoundingClientRect();
   if (!a.width || !b.width) return;
   const walker = ART.figure(name);
@@ -937,7 +1008,7 @@ function travel(start, end, name) {
       },
     ],
     walks
-      ? { duration: 1600, easing: "linear" }
+      ? { duration: WALK_MS, easing: "linear" }
       : { duration: 900, easing: "ease-in-out" },
   );
   // The figure at the destination waits until the walker arrives, so the desk is never shown twice.
@@ -1142,24 +1213,27 @@ function chip(t) {
     t.d?.role ? ` · ${t.d.role}` : "",
   );
 }
-// "boss 对 @all 提问", "glm-5.3-flash 的回答 · 等 boss 审核" ...
+// Like an office chat: what boss sends carries a kind tag (任务, 议题, 私下交代, 转发) and its
+// recipients; a reply sits under it with no verb, plus a badge only when it needs attention.
+// Returns [tag, recipients, note, badge].
 function verbOf(m, ctx) {
   const t = m.thread;
-  const room = t?.kind === "room";
-  if (m.kind === "typing") return ["正在作答", []];
-  if (m.kind === "instruction")
-    return ["只对", targets(m, ctx), "说", "🔒 仅此席"];
-  if (m.kind === "forward") return ["转发给", targets(m, ctx)];
-  if (isBoss(m))
-    return room ? ["对", targets(m, ctx), "提问"] : ["派给", targets(m, ctx)];
+  const room = t?.kind === "room" ? ctx.rooms.get(t.id) : null;
+  if (m.kind === "typing") return ["", [], "正在输入…", ""];
+  if (m.kind === "instruction") return ["私下交代", targets(m, ctx), "", "仅 TA 可见"];
+  if (m.kind === "forward") return ["转发", targets(m, ctx)];
+  if (isBoss(m)) {
+    if (t?.kind !== "room") return ["任务", targets(m, ctx)];
+    const round = m.round != null ? `第 ${m.round} 轮` : "";
+    const where = state.drawer.kind === "room" || !room ? round : `「${room.title}」${round}`;
+    return ["议题", targets(m, ctx), where];
+  }
   // Kept from the other seats in review: a reply only boss sees, never deleted.
-  if (m.kept_private) return ["回复", [{ kind: "boss" }], "", "🔒 未公开"];
-  if (m.status === "review") return ["的回答", [{ kind: "boss" }], "等审核"];
-  if (room)
-    return m.visibility === "public"
-      ? ["发言", []]
-      : ["回复", [{ kind: "boss" }], "", "🔒 未公开"];
-  return ["回复", [{ kind: "boss" }]];
+  if (m.kept_private) return ["", [], "", "未公开 · 仅你可见"];
+  if (m.status === "review") return ["", [], "", "待你审核"];
+  // A parallel round shows the answers to the other seats once every seat has answered.
+  if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", "本轮结束后公开"];
+  return ["", []];
 }
 function metaOf(m, ctx) {
   if (Array.isArray(m.answering) && m.answering.length)
@@ -1183,20 +1257,20 @@ function eventText(m, ctx) {
     .join("、");
   const text =
     m.kind === "instruction"
-      ? `boss 私下提醒 ${to}`
+      ? `boss 私下交代 ${to}`
       : m.kind === "forward"
         ? `boss 转发了一条消息${room ? `到「${room.title}」` : ""}`
         : isBoss(m)
           ? room
-            ? `boss 在「${room.title}」提问`
-            : `boss 给 ${to || "工位"} 派了任务`
+            ? `boss 在「${room.title}」提出议题`
+            : `boss 给 ${to || "工位"} 布置了任务`
           : m.kind === "notice"
             ? `${who} ${m.text}`
             : m.status === "review"
-              ? `${who} 交了回答，放到 boss 桌上等审核`
-              : room && m.visibility === "public"
-                ? `${who} 在「${room.title}」发言`
-                : `${who} 交回了结果`;
+              ? `${who} 提交了回答，等你审核`
+              : room
+                ? `${who} 在「${room.title}」回复了议题`
+                : `${who} 回复了任务`;
   return { who, text };
 }
 
@@ -1280,14 +1354,21 @@ function setFace(rec, m, ctx) {
 // A long run's tail can sit unchanged for minutes: say what the CLI is doing and how long the
 // reply has been quiet, so a thinking CLI does not look stuck.
 const STALE_TAIL_MS = 60_000;
+// Codex names its built-in tools by item type; other CLIs report readable tool names.
+const TOOL_WORDS = {
+  command_execution: "正在运行命令",
+  file_change: "正在修改文件",
+  web_search: "正在搜索网页",
+};
 function typingStatus(m) {
   const d = m.doing || "";
+  const tool = d.slice(5);
   const doing = d === "thinking"
     ? "思考中"
     : d === "retrying"
       ? "重试中"
       : d.startsWith("tool:")
-        ? `正在使用 ${d.slice(5) || "工具"}`
+        ? TOOL_WORDS[tool] || `正在使用 ${tool || "工具"}`
         : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   return [doing, quiet ? `上次输出 ${relTime(m.output_at)}` : ""].filter(Boolean).join(" · ");
@@ -1312,6 +1393,7 @@ function updateMessage(rec, m, ctx, id) {
     return;
   }
   const [verb, to, verb2 = "", lock = ""] = verbOf(m, ctx);
+  setClass(rec.verb, verb ? "m-verb m-tag" : "m-verb");
   const priv =
     m.kind === "instruction" ||
     (m.thread?.kind === "room" && m.visibility !== "public" && !isBoss(m));
@@ -1421,7 +1503,7 @@ function scopeHead(c, ctx, shown) {
         ico: () => ART.head(deskChar(desk)),
         title: deskName(desk),
         sub: `${cliName(desk.provider)}${desk.role ? ` · ${desk.role}` : ""} · ${real} 条消息`,
-        note: "私聊只有 boss 和这个工位能看到；它在会议里的发言也列在这里。",
+        note: "boss 布置给 TA 的任务和 TA 的回复只有你们俩看得到；TA 在会议里的回复也列在这里。",
       };
   }
   if (d.kind === "room") {
@@ -1432,7 +1514,7 @@ function scopeHead(c, ctx, shown) {
         ico: () => h("span", {}, "会"),
         title: room.title,
         sub: `会议室 · ${room.seats.length} 位 · ${roundText(room)}`,
-        note: "会议室里的发言所有参会者都能看到；带锁的话只给某一位；待审核的回答要等 boss 公开后别人才看得到。",
+        note: "议题和回复所有参会者都能看到；私下交代只给某一位；待审核的回答要 boss 公开后别人才看得到。",
       };
   }
   return {
@@ -1442,6 +1524,21 @@ function scopeHead(c, ctx, shown) {
     sub: `${c.label} · 全部消息 ${real} 条`,
     note: "",
   };
+}
+// Like threads in an office chat: each reply sits under the task or agenda item it answers, so
+// a meeting's answers never land under an unrelated task. Parents keep their time order; a reply
+// whose parent is not listed stays in time order on its own.
+function threaded(list) {
+  const listed = new Set(list.map((m) => m.id));
+  const replies = new Map();
+  const top = [];
+  for (const m of list) {
+    if (m.reply_to && !isBoss(m) && listed.has(m.reply_to)) {
+      if (!replies.has(m.reply_to)) replies.set(m.reply_to, []);
+      replies.get(m.reply_to).push(m);
+    } else top.push(m);
+  }
+  return top.flatMap((m) => [m, ...(replies.get(m.id) || [])]);
 }
 function renderConv(c, ctx) {
   el.drawer.hidden = overlay.matches && !state.convOpen;
@@ -1467,7 +1564,7 @@ function renderConv(c, ctx) {
     el.inner.replaceChildren();
     el.tl.scrollTop = 0;
   }
-  const shown = c.messages.filter((m) => inScope(m, ctx));
+  const shown = threaded(c.messages.filter((m) => inScope(m, ctx)));
   const head = scopeHead(c, ctx, shown);
   if (el.drIco.dataset.key !== head.key) {
     el.drIco.dataset.key = head.key;
@@ -1499,7 +1596,9 @@ function renderConv(c, ctx) {
   let fresh = 0;
   for (const m of shown) {
     const date = new Date(AN.at(m.time)).toDateString();
-    if (date !== day) {
+    // a thread stays together: only messages that start one open a new day
+    const inThread = m.reply_to && !isBoss(m) && order.includes(m.reply_to);
+    if (date !== day && !inThread) {
       day = date;
       round = null;
       separator(`day:${m.id}`, dayLabel(m.time));

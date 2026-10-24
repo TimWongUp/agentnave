@@ -70,6 +70,7 @@ const SOURCE_LABELS = {
   help: "帮助信息",
   aliases: "别名配置",
   catalog: "内置目录",
+  config: "dsh 配置",
   none: "未检测到",
 };
 
@@ -661,7 +662,7 @@ function renderModeToolbar() {
   if (toggle) toggle.checked = restricted;
   if (hint) {
     hint.textContent = restricted
-      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会保留各 CLI 的默认模型，清除本场景的名单和专用设置。"
+      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会保留已设置的默认模型，清除本场景的名单和专用设置。"
       : "已关闭：不额外限制可用工具和模型，仍可为本场景设置各 CLI 的默认模型。开启后可逐项选择可用名单。";
   }
   const confirm = $("restrict-confirm");
@@ -669,7 +670,7 @@ function renderModeToolbar() {
     confirm.hidden = !pendingRestrictOff;
     const scene = currentMode === "task" ? "私聊" : "会议";
     confirm.replaceChildren(...(pendingRestrictOff ? [
-      el("p", {}, `关闭后${scene}不再限制工具和模型：保留各 CLI 的默认模型和共享设置，清除可用名单和${scene}专用设置。重新开启不会恢复名单和专用设置，默认模型沿用保留值，没有的按检测结果补主力模型；点击“保存设置”后才生效。`),
+      el("p", {}, `关闭后${scene}不再限制工具和模型：保留已设置的默认模型和共享设置，清除可用名单和${scene}专用设置。重新开启不会恢复名单和专用设置，默认模型沿用保留值，没设置的继续跟随 CLI 默认；点击“保存设置”后才生效。`),
       el("div", { className: "btn-group" },
         el("button", { type: "button", onClick: () => { pendingRestrictOff = false; renderModeToolbar(); $("mode-restrict-toggle").focus({ preventScroll: true }); } }, "保留开启"),
         el("button", { type: "button", className: "danger", onClick: () => toggleModeRestricted(false, true) }, "确认关闭")),
@@ -698,7 +699,7 @@ function toggleModeRestricted(restricted, confirmed = false) {
       if (detected[p]?.installed) {
         const conf = { models: [], overrides: {} };
         if (kept[p]) conf.default = kept[p];
-        currentDoc.modes[currentMode][p] = kept[p] ? conf : withPrimary(p, conf);
+        currentDoc.modes[currentMode][p] = conf;
       }
     }
     setKeptDefaults({});
@@ -740,10 +741,7 @@ function toggleProviderInMode(provider, enabled, confirmed = false) {
   if (!isModeRestricted()) return;
   if (enabled) {
     if (!currentDoc.modes[currentMode][provider]) {
-      currentDoc.modes[currentMode][provider] = withPrimary(provider, {
-        models: [],
-        overrides: {},
-      });
+      currentDoc.modes[currentMode][provider] = { models: [], overrides: {} };
     }
   } else {
     const previous = currentDoc.modes[currentMode][provider];
@@ -760,27 +758,26 @@ function toggleProviderInMode(provider, enabled, confirmed = false) {
   renderCards();
 }
 
-// A newly enabled CLI defaults to its main model when detection names one (ADR-0020).
-function withPrimary(provider, provConf) {
-  const primary = detected[provider]?.primary;
-  if (primary) {
-    ensureCliModel(provider, primary);
-    provConf.default = primary;
-  }
-  return provConf;
-}
-
-// A model the App starts configuring gets the middle of its effort levels as the default effort.
+// A model the App starts configuring keeps the CLI's own default effort until one is chosen (ADR-0028).
 function ensureCliModel(provider, modelId) {
   if (!currentDoc.clis) currentDoc.clis = {};
   if (!currentDoc.clis[provider]) currentDoc.clis[provider] = { models: {} };
   if (!currentDoc.clis[provider].models) currentDoc.clis[provider].models = {};
   if (!Object.hasOwn(currentDoc.clis[provider].models, modelId)) {
-    const middle = middleEffort(effortLevels(provider, modelId));
     Object.defineProperty(currentDoc.clis[provider].models, modelId, {
-      value: middle ? { effort: middle } : {}, enumerable: true, configurable: true, writable: true,
+      value: {}, enumerable: true, configurable: true, writable: true,
     });
   }
+}
+
+// What the CLI itself uses when the App sets nothing: its own default model and effort, if known.
+function nativeDefault(provider) {
+  const native = detected[provider]?.native || {};
+  return { model: native.model || null, effort: native.effort || null };
+}
+function nativeText(provider) {
+  const { model, effort } = nativeDefault(provider);
+  return `跟随 CLI 默认${model ? ` ${model}` : ""}${effort ? ` · ${effort}` : ""}`;
 }
 
 const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -839,7 +836,11 @@ function renderEffortBar(provider, modelId) {
   };
   const nearest = (index) => choices().reduce((best, choice) =>
     (Math.abs(choice - index) < Math.abs(best - index) ? choice : best));
-  const preset = () => state.def ?? middleEffort(choices());
+  // Without a default the hollow knob shows the CLI's own effort, else the middle level.
+  const nativeEffort = nativeDefault(provider).effort;
+  const preset = () => state.def ?? (choices().includes(levels.indexOf(nativeEffort))
+    ? levels.indexOf(nativeEffort)
+    : middleEffort(choices()));
 
   const fill = el("span", { className: "effort-fill" });
   const ticks = levels.map((level) => el("span", { className: "effort-tick", title: level }));
@@ -876,9 +877,9 @@ function renderEffortBar(provider, modelId) {
     const range = state.lo === 0 && state.hi === last
       ? "全部档位"
       : state.lo === state.hi ? levels[state.lo] : `${levels[state.lo]}–${levels[state.hi]}`;
-    text.textContent = `${range} · ${state.def === null ? "预选" : "默认"} ${levels[def]}`;
+    text.textContent = `${range} · ${state.def === null ? `跟随 CLI${nativeEffort ? ` ${nativeEffort}` : ""}` : `默认 ${levels[def]}`}`;
     bar.title = state.def === null
-      ? "还没有默认思考档位：boss 未指定时由工具自行决定。拖动或点选后，按所示档位保存为默认值。"
+      ? "没有设置默认思考档位：boss 未指定时用 CLI 自己的默认档位。拖动或点选后，按所示档位保存为默认值。"
       : "两端是允许 boss 使用的档位范围，圆点是 boss 未指定时使用的默认档位。";
   };
   const move = (kind, index) => {
@@ -1437,13 +1438,13 @@ function cardSummary(provider, isEnabled, modeRestricted, info) {
   if (!modeRestricted) {
     const detectedCount = info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
     const kept = defaultModel(provider);
-    return kept ? [detectedCount, `默认 ${kept}`].filter(Boolean).join(" · ") : detectedCount;
+    return [detectedCount, kept ? `默认 ${kept}` : nativeText(provider)].filter(Boolean).join(" · ");
   }
   if (!isEnabled) return "当前场景未启用";
   const conf = currentDoc.modes[currentMode]?.[provider] || {};
   const models = Array.isArray(conf.models) ? conf.models : [];
   const scope = models.length === 0 ? "不限模型" : `${models.length} 个模型`;
-  return conf.default ? `${scope} · 默认 ${conf.default}` : scope;
+  return `${scope} · ${conf.default ? `默认 ${conf.default}` : nativeText(provider)}`;
 }
 
 function renderCards() {
@@ -1650,6 +1651,9 @@ function renderCards() {
         if (hasOverride) {
           tags.push(el("span", { className: "badge badge-accent" }, "本场景已覆盖"));
         }
+        if (nativeDefault(provider).model === modelId) {
+          tags.push(el("span", { className: "badge", title: "CLI 自己设置的默认模型；没有选“默认”时 boss 未指定模型就用它" }, "CLI 默认"));
+        }
 
         // Detail toggle button
         const detailBtn = el("button", {
@@ -1717,7 +1721,7 @@ function renderCards() {
         dataset: { focusKey: `${provider}/add-input` },
         "aria-label": `${PROVIDER_NAMES[provider]} 的模型 ID`,
         placeholder: detectedModels.length
-          ? `手动添加模型 ID，如 ${info.primary || detectedModels[0].id}…`
+          ? `手动添加模型 ID，如 ${info.native?.model || detectedModels[0].id}…`
           : "手动添加模型 ID…",
       });
       const submitModel = () => {

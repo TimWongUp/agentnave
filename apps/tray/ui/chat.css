@@ -102,7 +102,9 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .back { display: none; flex: none; padding: 4px 2px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .office { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 /* one column: boss office, meetings in session, open desks. --fig is the character size everywhere */
-.floor { --fig: 88px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 12px; padding: 10px 20px 20px; }
+.floor { --fig: 88px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 10px 20px 20px; }
+/* Zones space themselves, so an ended room can fold its own gap away as it closes. */
+.floor .zone:not(.boss-zone) { margin-top: 12px; }
 .rooms { display: contents; }
 .zone { position: relative; min-width: 0; border-radius: 16px; background: color-mix(in srgb, var(--surface) 84%, transparent); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .desks-zone { cursor: default; }
@@ -164,14 +166,14 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood]:not([data-mood="idle"], [data-mood="failed"]) .fig .s-idle, [data-mood]:not([data-mood="idle"], [data-mood="failed"]) .fig .s-blink { display: none; }
 [data-mood="working"] .fig .s-working, [data-mood="speaking"] .fig .s-speaking, [data-mood="review"] .fig .s-review,
 [data-mood="done"] .fig .s-done, [data-mood="sleep"] .fig .s-sleep { display: block; }
-.fig .s-blink { display: block; opacity: 0; animation: fig-show 7s step-end infinite; }
-.fig .s-idle { animation: fig-hide 7s step-end infinite; }
-.fig-a { animation: fig-squash 7s ease-out infinite; }
+.fig .s-blink { display: block; opacity: 0; animation: fig-show var(--cycle, 7s) step-end var(--phase, 0s) infinite; }
+.fig .s-idle { animation: fig-hide var(--cycle, 7s) step-end var(--phase, 0s) infinite; }
+.fig-a { animation: fig-squash var(--cycle, 7s) ease-out var(--phase, 0s) infinite; }
 [data-mood]:not([data-mood="idle"]) .fig-a { animation: none; }
-.fig-b { animation: fig-breathe 3.2s ease-in-out infinite; }
-[data-mood="working"] .fig-b { animation: fig-type 0.5s steps(2, jump-none) infinite; }
-[data-mood="speaking"] .fig-b { animation: fig-bob 0.9s ease-in-out infinite; }
-[data-mood="review"] .fig-b { animation: fig-sway 2.6s ease-in-out infinite; }
+.fig-b { animation: fig-breathe var(--breath, 3.2s) ease-in-out var(--phase, 0s) infinite; }
+[data-mood="working"] .fig-b { animation: fig-type 0.5s steps(2, jump-none) var(--phase, 0s) infinite; }
+[data-mood="speaking"] .fig-b { animation: fig-bob 0.9s ease-in-out var(--phase, 0s) infinite; }
+[data-mood="review"] .fig-b { animation: fig-sway 2.6s ease-in-out var(--phase, 0s) infinite; }
 [data-mood="done"] .fig-b { animation: fig-hop 0.7s ease-out 2; }
 /* failed shows the sad frame; a character without one keeps its idle frame, greyed */
 [data-mood="failed"] .fig:not(.no-sad) .s-idle, [data-mood="failed"] .fig:not(.no-sad) .s-blink { display: none; }
@@ -244,6 +246,9 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .seat .l-chair { left: 0; width: 100%; }
 .seat > .fig { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 1; z-index: 1; transition: opacity 0.3s; }
 .seat.empty > .fig { opacity: 0; }
+/* An ended room: its seats walk back, it waits empty, then the desks below push it shut. */
+.room.closing { overflow: hidden; }
+.room.closing .seat > .fig { opacity: 0; transition: none; }
 /* centred on the table's front panel (0.835–1.096 of the seat size), clear of the table top */
 .plate { position: absolute; z-index: 3; left: 50%; top: calc(var(--S) * 0.955); transform: translate(-50%, -50%); max-width: 94%; overflow: hidden; text-overflow: ellipsis; }
 .plate[hidden] { display: none; }
@@ -305,6 +310,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .m-who { font-size: 11px; color: var(--faint); white-space: nowrap; }
 .m-who:empty { display: none; }
 .m-verb { white-space: nowrap; }
+.m-verb:empty { display: none; }
+.m-tag { padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; font-weight: 650; color: var(--ink); background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .m-to { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .m-to:empty { display: none; }
 .m-lock { font-size: 11px; color: var(--show); }
