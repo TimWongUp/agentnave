@@ -22,6 +22,7 @@ from agentnave.adapters import get_adapter
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
+from agentnave.db import Database
 from agentnave.group import (
     Entry,
     Forwarded,
@@ -49,7 +50,6 @@ from agentnave.store import (
     Unavailable,
     lock_file,
     now,
-    scan,
     write_file,
 )
 
@@ -169,7 +169,7 @@ _MANAGER_STARTED_AT = os.environ.get("AGENTNAVE_MANAGER_STARTED_AT") or now()
 
 
 def _project(record: Record) -> bytes:
-    return _json(views.snapshot(record.state, str(record.directory)))
+    return _json(views.snapshot(record.state, str(record.db.path)))
 
 
 def _json(data: object) -> bytes:
@@ -192,6 +192,8 @@ class Conversations(Groups):
         self.connection_id = _CONNECTION_ID
         self.manager_started_at = _MANAGER_STARTED_AT
         self.root = root.resolve()  # created only by the first saved conversation
+        self.db = Database(self.root)
+        self.locks = self.root / "locks"
         self.records: dict[str, Record] = {}
         self.unavailable: list[Unavailable] = []
         self.invocations: dict[str, set[str]] = {}
@@ -218,22 +220,24 @@ class Conversations(Groups):
 
     def scan(self) -> dict[str, bool]:
         """Load every saved conversation and report which ones this server may write."""
-        found, self.unavailable = scan(self.root)
+        found = self.db.revisions()
+        self.unavailable = []
         for conversation_id in set(self.records) - set(found):
             if self.records[conversation_id].lock is None:
-                self._forget(conversation_id)  # deleted by another server
+                self._forget(conversation_id)  # deleted by another server or the App
         previous_error = self.refresh_error
         writable: dict[str, bool] = {}
         read_error: str | None = None
-        for conversation_id, directory in found.items():
+        for conversation_id in found:
             record = self.records.get(conversation_id)
             try:
                 if record is None:
-                    record = Record.read(directory)
-                    if record.state.id != conversation_id:
-                        raise ValueError("record id does not match its directory")
+                    record = Record.read(self.db, self.locks, conversation_id)
                     self.records[conversation_id] = record
                 writable[conversation_id] = record.refresh()
+            except FileNotFoundError:
+                if record is None or record.lock is None:
+                    self._forget(conversation_id)  # deleted since the listing
             except (OSError, ValueError) as exc:
                 if isinstance(exc, OSError) and record is not None:
                     # Keep the last readable state and its URLs through transient I/O failures.
@@ -241,7 +245,9 @@ class Conversations(Groups):
                     writable[conversation_id] = False
                 else:
                     self._forget(conversation_id)
-                self.unavailable.append(Unavailable(path=str(directory), reason=str(exc)))
+                self.unavailable.append(
+                    Unavailable(path=f"{self.db.path}#{conversation_id}", reason=str(exc))
+                )
         self.refresh_error = read_error
         for record in list(self.records.values()):
             # Re-project only what changed: a reload replaces the state object.
@@ -341,19 +347,18 @@ class Conversations(Groups):
     def _manager_model(self, session: str | None) -> str | None:
         return session_model(self.host, self._native_manager_sessions.get(session or ""))
 
-    def _create(
-        self, state: Conversation, directory: Path, manager_session: str | None = None
-    ) -> Record:
+    def _create(self, state: Conversation, manager_session: str | None = None) -> Record:
         state.host = self.host.name
         state.host_source = self.host.source
         state.manager_session = manager_session
-        record = Record.create(directory, state)
+        record = Record.create(self.db, self.locks, state)
         self.records[state.id] = record
         self._publish(record)
         return record
 
-    def _directory(self, conversation_id: str) -> Path:
-        return self.root / "conversations" / conversation_id
+    def _seats_directory(self, conversation_id: str) -> Path:
+        """Where an isolated show keeps its seats' own working directories."""
+        return self.root / "seats" / conversation_id
 
     def open_show(
         self,
@@ -371,7 +376,7 @@ class Conversations(Groups):
             for seat in seats
         ]
         conversation_id = uuid4().hex
-        directory = self._directory(conversation_id)
+        directory = self._seats_directory(conversation_id)
         if isolated:
             # Own seat directories make restricted profiles possible and keep seats apart.
             cwd = directory
@@ -380,7 +385,7 @@ class Conversations(Groups):
                     seat.id,
                     seat.provider,
                     {**seat.provider_options, "restricted_tools": True},
-                    directory / "seats" / seat.id,
+                    directory / seat.id,
                     seat.role,
                     seat.access,
                 )
@@ -416,12 +421,13 @@ class Conversations(Groups):
                 ],
                 sessions={seat_id: SessionRecord() for seat_id in group.seats},
             )
-            record = self._create(state, directory, manager_session)
+            record = self._create(state, manager_session)
             self._release_idle(record)
             return record
         except BaseException:
             self._groups.pop(conversation_id, None)
-            shutil.rmtree(directory, ignore_errors=True)
+            if isolated:
+                shutil.rmtree(directory, ignore_errors=True)
             raise
 
     def _group(self, group_id: str) -> Group:
@@ -833,7 +839,6 @@ class Conversations(Groups):
                         title=title or f"{request.provider} 任务",
                         kind="task",
                     ),
-                    self._directory(conversation_id),
                     manager_session,
                 )
             if record.state.kind != "task":
@@ -1099,7 +1104,7 @@ class Conversations(Groups):
                 state,
                 public_url=self.dashboard.url(public) if state.kind == "show" else "",
                 home_url=self.dashboard.url(self.home_token),
-                storage=str(record.directory),
+                storage=str(self.db.path),
                 tails=tails,
                 elapsed=elapsed,
                 refresh_error=self.refresh_error,
@@ -1177,7 +1182,7 @@ class Conversations(Groups):
     async def _write_live(self) -> None:
         """Keep live_path current while work runs; remove it once nothing runs.
 
-        The file carries only what views.json lacks. Unchanged content is not rewritten; its
+        The file carries only what the saved views lack. Unchanged content is not rewritten; its
         modification time alone shows the tray that this server is still running the work.
         """
         written: bytes | None = None
@@ -1256,6 +1261,7 @@ class Conversations(Groups):
                 self.dashboard.close()
             for record in self.records.values():
                 record.release()
+            self.db.close()
 
 
 def _find(state: Conversation, round_id: str) -> RoundRecord | None:

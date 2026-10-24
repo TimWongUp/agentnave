@@ -186,6 +186,29 @@ fn configured(provider: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
+/// The model of the `agent-default-model` entry in `dsh --dump-config` output: the composed
+/// headless profile, so a user layer that routes dsh through another provider wins.
+fn dsh_default_model(dump: &str) -> Option<String> {
+    let mut inside = false;
+    let mut found = None;
+    for line in dump.lines() {
+        if line.starts_with("- ") || line.starts_with('#') {
+            inside = line.trim() == "- id: agent-default-model";
+        } else if inside && let Some(raw) = line.strip_prefix("    model:") {
+            let raw = raw.trim();
+            let value = if raw.starts_with('"') {
+                serde_json::from_str::<String>(raw).ok()
+            } else if raw.len() > 1 && raw.starts_with('\'') && raw.ends_with('\'') {
+                Some(raw[1..raw.len() - 1].replace("''", "'"))
+            } else {
+                Some(raw.to_owned())
+            };
+            found = value.filter(|value| !value.is_empty());
+        }
+    }
+    found
+}
+
 fn probe(provider: &str) -> Value {
     let binary = match provider {
         "antigravity" => "agy",
@@ -196,6 +219,12 @@ fn probe(provider: &str) -> Value {
         return failure(provider, None, "");
     };
     let mut efforts = efforts(provider);
+    let configured_model = match provider {
+        "deepseek" => run(&path, &["--profile", "headless", "--dump-config"])
+            .ok()
+            .and_then(|dump| dsh_default_model(&dump)),
+        _ => configured(provider),
+    };
     let listed = match provider {
         "codex" => codex_models().map(|(models, levels)| {
             if !levels.is_empty() {
@@ -210,14 +239,20 @@ fn probe(provider: &str) -> Value {
                 .map(|alias| model(alias, alias, false))
                 .collect(),
         )),
-        "deepseek" => Ok((
-            "catalog",
-            DEEPSEEK_CATALOG
+        "deepseek" => {
+            let mut models: Vec<Value> = DEEPSEEK_CATALOG
                 .iter()
                 .enumerate()
                 .map(|(index, id)| model(id, id, index == 0))
-                .collect(),
-        )),
+                .collect();
+            // A profile routed elsewhere (a gateway, say) names a model outside the catalog.
+            if let Some(own) = &configured_model
+                && !DEEPSEEK_CATALOG.contains(&own.as_str())
+            {
+                models.insert(0, model(own, own, false));
+            }
+            Ok(("catalog", models))
+        }
         "grok" => run(&path, &["models"]).map(|out| ("command", grok_models(&out))),
         "antigravity" => run(&path, &["models"]).map(|out| ("command", agy_models(&out))),
         "pi" => run(&path, &["--list-models"]).map(|out| ("command", pi_models(&out))),
@@ -230,7 +265,7 @@ fn probe(provider: &str) -> Value {
             "path": path.display().to_string(),
             "source": source,
             "error": Value::Null,
-            "primary": primary(provider, &models, configured(provider).as_deref()),
+            "primary": primary(provider, &models, configured_model.as_deref()),
             "models": models,
             "efforts": efforts,
         }),
@@ -595,6 +630,15 @@ mod tests {
         assert_eq!(efforts, ["low", "medium", "max", "ultra"]);
         assert!(parse_codex_cache("{").is_err());
         assert!(parse_codex_cache("{}").is_err());
+    }
+
+    #[test]
+    fn dsh_dump_names_the_composed_default_model() {
+        let dump = "# == base\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n\
+            \x20   model: deepseek-flash\n# == user\n- id: agent-default-model\n  config:\n\
+            \x20   provider: magpie\n    model: 'gw/v4''s'\n- id: jobs\n  config:\n    model: other\n";
+        assert_eq!(dsh_default_model(dump).as_deref(), Some("gw/v4's"));
+        assert_eq!(dsh_default_model("- id: jobs\n"), None);
     }
 
     #[test]

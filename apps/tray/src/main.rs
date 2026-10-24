@@ -3,6 +3,7 @@
 
 mod avatars;
 mod data;
+mod db;
 mod detect;
 mod hosts;
 mod manage;

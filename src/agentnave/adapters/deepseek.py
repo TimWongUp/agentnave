@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from agentnave.adapters.base import (
@@ -52,6 +54,51 @@ _TOOL_ROWS = (
 _BLOCKED_CODES = {"MISSING_CREDENTIAL", "INVALID_CREDENTIAL", "AUTH"}
 
 
+def _scalar(raw: str) -> str:
+    """Unquote one plain, single- or double-quoted YAML scalar from --dump-config."""
+    raw = raw.strip()
+    if raw.startswith('"'):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return ""
+        return value if isinstance(value, str) else ""
+    if raw.startswith("'") and raw.endswith("'") and len(raw) > 1:
+        return raw[1:-1].replace("''", "'")
+    return raw
+
+
+def profile_default_model(executable: str) -> tuple[str, str] | None:
+    """The (route, model) the headless profile composes for agent-default-model, if readable.
+
+    dsh replaces that entry's config as a whole, so a model override must restate a route.
+    """
+    try:
+        dump = subprocess.run(
+            [executable, "--profile", "headless", "--dump-config"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found: dict[str, str] = {}
+    inside = False
+    for line in dump.splitlines():
+        if line.startswith("- ") or line.startswith("#"):
+            inside = line.strip() == "- id: agent-default-model"
+            if inside:
+                found = {}
+        elif inside and line.startswith("    ") and not line.startswith("     "):
+            key, _, value = line.strip().partition(":")
+            if key in ("provider", "model"):
+                found[key] = _scalar(value)
+    route, model = found.get("provider"), found.get("model")
+    return (route, model) if route and model else None
+
+
 def _quote(value: object) -> str:
     # A JSON string is a valid YAML double-quoted scalar.
     return json.dumps(str(value), ensure_ascii=False)
@@ -74,6 +121,9 @@ def _capture_line(line: bytes) -> bytes:
 class DeepSeekAdapter:
     name = "deepseek"
     _options = ("model", "effort", "provider", "permission_mode", "stored_credentials")
+
+    def executable(self) -> str:
+        return resolve_executable("dsh", _DESKTOP_DSH_PATHS if sys.platform == "darwin" else ())
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         """Return the --patch overlay rows; dsh exposes these settings only as profile rows."""
@@ -117,6 +167,13 @@ class DeepSeekAdapter:
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request)
+        options = request.provider_options
+        if "model" in options and "provider" not in options:
+            # The profile's own default model keeps its own route (a gateway, say);
+            # any other bare model is one of dsh's bundled official models.
+            configured = profile_default_model(self.executable())
+            if configured is not None and configured[1] == options["model"]:
+                request = replace(request, provider_options={**options, "provider": configured[0]})
         rows = list(self.option_args(request))
         if discussion:
             rows.extend(f"- id: {row}\n  disabled: true\n" for row in _TOOL_ROWS)
@@ -125,7 +182,7 @@ class DeepSeekAdapter:
                 "    mode: read-only\n    workspaceRoot: !!js process.cwd()\n"
             )
         argv = [
-            resolve_executable("dsh", _DESKTOP_DSH_PATHS if sys.platform == "darwin" else ()),
+            self.executable(),
             "--profile",
             "headless",
         ]

@@ -38,7 +38,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。
-- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，不拒绝调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。
+- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，不拒绝调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。未声明 `read` 而同一 `cwd` 已有其他运行中的 CLI 时，回执带 `warnings`：并行写入要换独立 worktree，只读就补声明 `read`。
 
 ## 选择调用方式
 
@@ -51,6 +51,13 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | 多轮各自答 | 连续 `parallel`，第二轮起收到上一轮全部答案 |
 | 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
 | 先各自答再讨论、分歧收敛 | 先 `parallel`，再一轮或多轮 `serial`；轮数用户未指定时由 boss 定，汇报结论与保留的异议 |
+
+常用组合只说明怎么调用；选谁、几轮、何时收手按用户的全局规则或由 boss 定：
+
+- **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就写明不改文件）；写代码的交接先由 boss 建好 worktree 作 `cwd`。
+- **顾问**：`access=read`，prompt 写明只分析、不改文件、给出建议与理由；追问用同一 `session_id` 续接。
+- **委员会**：`run_round` 先 `parallel` 各自给根因与方案，再 `serial` 互相回应；汇报共识、分歧及如何收敛。
+- **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
 会议室每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，续接自己的原生会话；席位只共享已提交条目，私密指令只给对应席位。同组同时一轮；`run_round` 立即返回，用 `wait` 等。可单独 `cancel` 某席的 `invocation_id`，记缺席后串联轮继续。不自动重试，不设每席截止时间。并联写代码的席位各用独立 worktree。会议室保存为会话，可跨服务重启继续；运行中的进程和句柄不恢复。审核、主持人、隔离和看板见[会话与审核](references/studio.md)。
 
@@ -95,7 +102,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 ## 等待、验收与取消
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
-2. `wait(ids)` 每次最多等 5 分钟，任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
+2. `wait(ids)` 每次最多等 5 分钟（`wait_seconds` 可缩短，`0` 只看一眼不阻塞），任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；普通工具失败、重试、沉默不证明任务失败。
 4. 运行中 `output` 只是最新公开正文尾部（最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。
 5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；`succeeded` 不证明用户目标完成，须核对命令、产物或检查。

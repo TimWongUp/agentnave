@@ -11,19 +11,14 @@ pub fn state(hosts: &Hosts, root: &Path) -> Value {
         .unwrap_or(0);
     let members =
         root.join("members.json").is_file() || root.join("profiles.json.migrated").is_file();
-    let tried = fs::read_dir(root.join("conversations"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| {
-            if entry.path().is_symlink() {
-                return false;
-            }
-            fs::read(entry.path().join("state.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-                .is_some_and(|v| v["manager_session"].as_str().is_some_and(|s| !s.is_empty()))
-        });
+    let tried = crate::db::read(root).ok().flatten().is_some_and(|db| {
+        db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session != '')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false)
+    });
     json!({"steps":[
         {"id":"service","done":service,"detail":if service{"AgentNave 本机服务已安装"}else{"请安装或更新 AgentNave 本机服务"}},
         {"id":"host","done":connected>0,"detail":if connected>0{format!("已接入 {connected} 个宿主")}else{"在设置中接入一个宿主".into()}},

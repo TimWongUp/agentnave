@@ -124,7 +124,8 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
         "restricted_tools (boolean; native read/tool restrictions)"
     ),
     "deepseek": (
-        "provider (model route; requires model; omitted with model uses deepseek-official), "
+        "provider (model route; requires model; omitted, dsh's own default model keeps its "
+        "configured route and any other model uses deepseek-official), "
         "effort requires model, "
         "permission_mode (read-only, workspace-write or danger-full-access), "
         "stored_credentials (boolean; true reuses the sign-in and keys saved by the "
@@ -184,6 +185,7 @@ class InvocationPayload(TypedDict):
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: str | None  # the tier this call declared; recorded only, never enforced
+    warnings: NotRequired[list[str]]
 
 
 class InvocationListItem(TypedDict):
@@ -196,6 +198,7 @@ class InvocationListItem(TypedDict):
     phase: NotRequired[Literal["preparing", "running", "stopping"]]
     session_id: NotRequired[str]
     result_read: NotRequired[bool]
+    error: NotRequired[InvocationErrorPayload]
 
 
 class InvocationListPayload(TypedDict):
@@ -592,6 +595,14 @@ async def start_agent(
     what forward injects. No runtime deadline: cancel stops work explicitly. Active
     invocations do not accept messages.
     """
+    manager = _manager(ctx)
+    if session_id is not None and (
+        _known_invocation(manager, session_id) or _known_round(ctx, session_id)
+    ):
+        raise ToolError(
+            "session_id is an AgentNave handle, not a native session. Use the session_id from "
+            "the finished wait result or read_conversation."
+        )
     try:
         options, defaults_applied = apply_member(
             read_members(), "task", provider, provider_options or {}, EXCLUDED_PROVIDERS
@@ -620,11 +631,33 @@ async def start_agent(
         raise invocation_request_error(provider, exc) from exc
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
-    return {
+    payload: TaskStartPayload = {
         **started_payload(started.invocation_id, request, defaults_applied),
         "conversation_id": started.conversation_id,
         "access": started.access,
     }
+    if access != "read":
+        sharing = [
+            listing.invocation_id
+            for listing in manager.list_invocations()
+            if listing.status is None
+            and listing.cwd == request.cwd
+            and listing.invocation_id != started.invocation_id
+        ]
+        if sharing:
+            payload["warnings"] = [
+                f"{len(sharing)} other CLI run(s) active in this cwd ({', '.join(sharing)}); "
+                "parallel writers need separate worktrees. Declare access=read for read-only work."
+            ]
+    return payload
+
+
+def _known_round(ctx: Context[Runtime], handle: str) -> bool:
+    try:
+        _conversations(ctx).round(handle)
+    except KeyError:
+        return False
+    return True
 
 
 def _known_invocation(manager: InvocationManager, handle: str) -> bool:
@@ -640,6 +673,7 @@ async def _ready_handles(
     conversations: Conversations,
     invocation_ids: list[str],
     round_ids: list[str],
+    timeout_seconds: float,
 ) -> tuple[dict[str, InvocationResult | InvocationError], dict[str, tuple[Round, str | None]]]:
     """Wait until any handle is ready, then collect every handle ready at that moment."""
 
@@ -648,9 +682,9 @@ async def _ready_handles(
 
     invocations: asyncio.Task[dict[str, InvocationResult | InvocationError]] | None = None
     if invocation_ids:
-        invocations = asyncio.create_task(manager.wait_for_any(invocation_ids, WAIT_SECONDS))
+        invocations = asyncio.create_task(manager.wait_for_any(invocation_ids, timeout_seconds))
     rounds = {
-        item: asyncio.create_task(conversations.wait(item, WAIT_SECONDS)) for item in round_ids
+        item: asyncio.create_task(conversations.wait(item, timeout_seconds)) for item in round_ids
     }
     waiters: list[asyncio.Task[Any]] = [
         task for task in (invocations, *rounds.values()) if task is not None
@@ -695,10 +729,21 @@ async def wait(
         bool,
         Field(description="false omits reply bodies and tails, including answers under review."),
     ] = True,
+    wait_seconds: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            le=300,
+            description=(
+                "Longest wait in seconds, 300 when omitted; 0 returns at once, with the ready "
+                "handles or a running snapshot of each. Never stops the work."
+            ),
+        ),
+    ] = None,
     *,
     ctx: Context[Runtime],
 ) -> WaitPayload:
-    """Wait up to five minutes for the first listed task or round to become ready.
+    """Wait up to wait_seconds (five minutes) for the first listed task or round to be ready.
 
     A task is ready when it finished or reports a CLI execution blocker (it keeps running;
     each blocker category wakes once). A round is ready when it finished, a seat reports a
@@ -725,7 +770,11 @@ async def wait(
             raise _unknown_handle(handle) from exc
         round_ids.append(handle)
     ready_invocations, ready_rounds = await _ready_handles(
-        manager, conversations, invocation_ids, round_ids
+        manager,
+        conversations,
+        invocation_ids,
+        round_ids,
+        WAIT_SECONDS if wait_seconds is None else wait_seconds,
     )
     elapsed = not ready_invocations and not ready_rounds
     updates = [
@@ -810,6 +859,10 @@ def _invocation_items(manager: InvocationManager) -> list[InvocationListItem]:
             item["result_read"] = listing.result_read
         if listing.session_id:
             item["session_id"] = listing.session_id
+        if listing.error is not None:
+            item["error"] = InvocationErrorPayload(
+                code=listing.error.code, message=listing.error.message
+            )
         items.append(item)
     return items
 
@@ -846,7 +899,7 @@ async def list_all(
     """List this server's invocation handles and saved conversations, most recent first.
 
     Invocations carry metadata only: no prompt, reply or tool data; finished ones tell with
-    result_read whether a wait or cancel returned the final result. total counts every
+    result_read whether a wait or cancel returned the final result, and failures their error. total counts every
     matching conversation. writable=false means another AgentNave server holds it: read it
     here, continue it there or once it becomes idle. unavailable lists unreadable or legacy
     records. Also starts the local read-only dashboard and returns its link. Private: never

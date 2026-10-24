@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agentnave.adapters import base, codex, get_adapter
+from agentnave.adapters import deepseek as deepseek_adapter
 from agentnave.adapters.antigravity import (
     AntigravityAdapter,
     session_model,
@@ -1590,7 +1591,9 @@ def test_restricted_pi_keeps_only_its_model_backend(tmp_path: Path) -> None:
         get_adapter("codex").prepare(InvocationRequest("codex", "speak", tmp_path, None, options))
 
 
-def test_deepseek_options_become_a_temporary_patch_overlay(tmp_path: Path) -> None:
+def test_deepseek_options_become_a_temporary_patch_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     adapter = DeepSeekAdapter()
     plain = adapter.prepare(request(tmp_path, "deepseek", session_id="session-1"))
     # argv[0] may be the desktop bundle on this machine; resolution is covered elsewhere.
@@ -1602,6 +1605,18 @@ def test_deepseek_options_become_a_temporary_patch_overlay(tmp_path: Path) -> No
         "session-1",
     )
     assert plain.stdin == b"do the task" and plain.cleanup_paths == ()
+
+    def configured(_executable: str) -> tuple[str, str]:
+        return ("gw", "gw/flash")
+
+    monkeypatch.setattr(deepseek_adapter, "profile_default_model", configured)
+    routed = adapter.prepare(request(tmp_path, "deepseek", provider_options={"model": "gw/flash"}))
+    try:
+        patch = Path(routed.argv[routed.argv.index("--patch") + 1]).read_text()
+        assert '    provider: "gw"\n    model: "gw/flash"\n' in patch
+    finally:
+        for path in routed.cleanup_paths:
+            path.unlink()
 
     command = adapter.prepare(
         request(
@@ -1639,6 +1654,33 @@ def test_deepseek_options_become_a_temporary_patch_overlay(tmp_path: Path) -> No
     for options, message in invalid:
         with pytest.raises(ValueError, match=message):
             adapter.prepare(InvocationRequest("deepseek", "x", tmp_path, None, options))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fake executable")
+def test_deepseek_profile_default_model_reads_the_composed_entry(tmp_path: Path) -> None:
+    dump = tmp_path / "dsh"
+    lines = (
+        "# == @deepseek-ai/dsh-base",
+        "- id: agent-default-model",
+        "  name: x",
+        "  config:",
+        "    provider: deepseek-official",
+        "    model: deepseek-flash",
+        "# == user",
+        "- id: agent-default-model",
+        "  config:",
+        "    provider: 'mag''pie'",
+        '    model: \\"opencode-go/v4.1\\"',
+        "    reasoningEffort: high",
+        "- id: jobs",
+        "  config:",
+        "    model: other",
+    )
+    # printf is a shell builtin; these tests run without a PATH.
+    dump.write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(f'"{line}"' for line in lines) + "\n")
+    dump.chmod(0o755)
+    assert deepseek_adapter.profile_default_model(str(dump)) == ("mag'pie", "opencode-go/v4.1")
+    assert deepseek_adapter.profile_default_model(str(tmp_path / "missing")) is None
 
 
 def test_deepseek_parse_maps_turn_end_and_keeps_only_terminal_events(tmp_path: Path) -> None:

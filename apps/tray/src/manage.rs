@@ -1,11 +1,13 @@
-//! Tray-only cleanup and renaming. Keep the lock inode and never walk into seat directories.
+//! Tray-only cleanup and renaming in the conversation database (ADR-0012, ADR-0026). Every
+//! change happens under the conversation's OS lock, the same one its writing server holds.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Value, json};
 
 use crate::data::Overview;
@@ -13,79 +15,66 @@ use crate::data::Overview;
 const RETRY: Duration = Duration::from_millis(100);
 const ATTEMPTS: usize = 11;
 
+/// What cleanup needs to know about one saved conversation.
 struct State {
-    value: Value,
+    title: String,
+    kind: String,
+    /// Any round still holds an answer waiting for review (RoundRecord.pending_review()).
     pending: bool,
+    /// The status the last saved view showed; "running" left by a crashed writer included.
     status: String,
+    /// When that view was written, in milliseconds since the epoch.
+    written_ms: Option<i64>,
 }
 
-fn read_state(directory: &Path, id: &str) -> Result<State, String> {
-    let path = directory.join("state.json");
-    if !fs::symlink_metadata(&path)
-        .map_err(|e| e.to_string())?
-        .is_file()
-    {
-        return Err("会话状态不是普通文件".to_owned());
-    }
-    let value: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+fn read_state(connection: &Connection, id: &str) -> Result<Option<State>, String> {
+    let row = connection
+        .query_row(
+            "SELECT title, kind, \
+             EXISTS (SELECT 1 FROM rounds, json_each(rounds.body, '$.seats') AS seat \
+                     WHERE rounds.conversation_id = conversations.id \
+                     AND json_extract(seat.value, '$.review') = 'pending'), \
+             (SELECT body FROM views WHERE conversation_id = conversations.id), \
+             (SELECT written_ms FROM views WHERE conversation_id = conversations.id) \
+             FROM conversations WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                ))
+            },
+        )
+        .optional()
         .map_err(|e| e.to_string())?;
-    if value["version"] != 2
-        || value["id"] != id
-        || !matches!(value["kind"].as_str(), Some("show" | "task"))
-        || !value["title"].is_string()
-    {
-        return Err("会话状态无法识别或版本不受支持".to_owned());
-    }
-    // Missing collections have the same empty defaults as Conversation in store.py.
-    for key in ["rounds", "tasks"] {
-        if value.get(key).is_some_and(|v| !v.is_array()) {
-            return Err("会话记录格式错误".to_owned());
-        }
-    }
-    let mut pending = false;
-    for round in value["rounds"].as_array().into_iter().flatten() {
-        let Some(seats) = round["seats"].as_array() else {
-            return Err("轮次缺少席位记录".to_owned());
-        };
-        // Exactly RoundRecord.pending_review(), including earlier rounds.
-        pending |= seats.iter().any(|seat| seat["review"] == "pending");
-    }
-    let rounds = value["rounds"].as_array();
-    let tasks = value["tasks"].as_array();
-    let status = if pending {
-        "review"
-    } else if let Some(round) = rounds.and_then(|r| r.last()) {
-        round["status"].as_str().unwrap_or("idle")
-    } else if tasks.is_some_and(|tasks| tasks.iter().any(|t| t["status"] == "running")) {
-        "running"
-    } else if let Some(task) = tasks.and_then(|t| t.last()) {
-        task["status"].as_str().unwrap_or("idle")
-    } else {
-        "idle"
-    }
-    .to_owned();
-    Ok(State {
-        value,
+    let Some((title, kind, pending, view, written_ms)) = row else {
+        return Ok(None);
+    };
+    let status = view
+        .and_then(|body| serde_json::from_str::<Value>(&body).ok())
+        .and_then(|view| view["summary"]["status"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| "idle".to_owned());
+    Ok(Some(State {
+        title,
+        kind,
         pending,
         status,
-    })
+        written_ms,
+    }))
 }
 
-/// Reject path aliases before opening the shared lock or reading state.
-fn directory(root: &Path, id: &str) -> io::Result<PathBuf> {
-    let path = root.join("conversations").join(id);
-    if !fs::symlink_metadata(&path)?.is_dir() {
-        return Err(io::Error::other("会话目录不是普通目录"));
-    }
-    Ok(path)
-}
-
-fn lock_file(directory: &Path) -> io::Result<File> {
-    let path = directory.join(".lock");
+fn lock_file(root: &Path, id: &str) -> io::Result<File> {
+    let path = crate::db::lock_path(root, id);
     match fs::symlink_metadata(&path) {
         Ok(meta) if !meta.is_file() => return Err(io::Error::other("锁不是普通文件")),
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
         _ => {}
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
     OpenOptions::new()
         .read(true)
@@ -99,16 +88,21 @@ fn result(id: &str, status: &str, message: &str) -> Value {
     json!({"id": id, "status": status, "message": message})
 }
 
-/// The conversation directory with its lock held, or the result to report instead.
-fn locked(root: &Path, id: &str) -> Result<(PathBuf, File), Value> {
-    let directory = match directory(root, id) {
-        Ok(path) => path,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(result(id, "missing", "会话已不存在"));
-        }
-        Err(e) => return Err(result(id, "error", &e.to_string())),
+/// A writing connection and the conversation's lock, with its state read under that lock;
+/// or the result to report instead.
+fn locked(root: &Path, id: &str) -> Result<(Connection, File, State), Value> {
+    let connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return Err(result(id, "missing", "会话已不存在")),
+        Err(e) => return Err(result(id, "error", &e)),
     };
-    let lock = lock_file(&directory).map_err(|e| result(id, "error", &e.to_string()))?;
+    // Unknown ids never create a lock file.
+    match read_state(&connection, id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(result(id, "missing", "会话已不存在")),
+        Err(e) => return Err(result(id, "error", &e)),
+    }
+    let lock = lock_file(root, id).map_err(|e| result(id, "error", &e.to_string()))?;
     // Probe locks are short-lived. Retry for at most one second before reporting contention.
     for attempt in 0..ATTEMPTS {
         match lock.try_lock() {
@@ -121,117 +115,100 @@ fn locked(root: &Path, id: &str) -> Result<(PathBuf, File), Value> {
         }
     }
     // Re-read only after acquiring the lock. A saved running status now means a crashed writer.
-    if !directory.join("state.json").exists() {
-        return Err(result(id, "missing", "会话已不存在"));
+    match read_state(&connection, id) {
+        Ok(Some(state)) => Ok((connection, lock, state)),
+        Ok(None) => Err(result(id, "missing", "会话已不存在")),
+        Err(e) => Err(result(id, "error", &e)),
     }
-    Ok((directory, lock))
 }
 
-/// Replace a file the way the server does: readers see the old or the new bytes.
-fn replace(path: &Path, value: &Value) -> io::Result<()> {
-    let temporary = path.with_file_name(format!(".rename-{}.json", std::process::id()));
-    let result = serde_json::to_vec(value)
-        .map_err(io::Error::other)
-        .and_then(|bytes| fs::write(&temporary, bytes))
-        .and_then(|()| fs::rename(&temporary, path));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// Rename an idle conversation; servers reload state.json the next time they read it.
+/// Rename an idle conversation; servers reload it once its revision changes.
 pub fn rename(root: &Path, id: &str, title: &str) -> Value {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > 200 || title.chars().any(char::is_control) {
         return result(id, "error", "标题需为 1–200 个字符，且不含换行或控制字符");
     }
-    let (directory, _lock) = match locked(root, id) {
+    let (mut connection, _lock, _state) = match locked(root, id) {
         Ok(found) => found,
         Err(report) => return report,
     };
-    let mut state = match read_state(&directory, id) {
-        Ok(state) => state.value,
-        Err(e) => return result(id, "error", &e),
-    };
-    state["title"] = json!(title);
-    if let Err(e) = replace(&directory.join("state.json"), &state) {
-        return result(id, "error", &format!("保存标题失败：{e}"));
-    }
-    // The derived view follows at once so the office shows the new title before any server
-    // rewrites it; a missing or unreadable view is left for the next server to project.
-    let views = directory.join("views.json");
-    if let Ok(mut view) = fs::read(&views)
-        .map_err(|e| e.to_string())
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string()))
-    {
-        for key in ["summary", "director", "public"] {
-            if view[key].is_object() {
-                view[key]["title"] = json!(title);
+    let renamed = (|| -> rusqlite::Result<()> {
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "UPDATE conversations SET title = ?1, rev = rev + 1 WHERE id = ?2",
+            rusqlite::params![title, id],
+        )?;
+        // The derived view follows at once so the office shows the new title before any server
+        // projects it again; an unreadable view is left for the next server to replace.
+        let view: Option<String> = transaction
+            .query_row(
+                "SELECT body FROM views WHERE conversation_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(mut view) = view.and_then(|body| serde_json::from_str::<Value>(&body).ok()) {
+            for key in ["summary", "director", "public"] {
+                if view[key].is_object() {
+                    view[key]["title"] = json!(title);
+                }
             }
+            transaction.execute(
+                "UPDATE views SET body = ?1, rev = rev + 1, written_ms = ?2 \
+                 WHERE conversation_id = ?3",
+                rusqlite::params![view.to_string(), now_ms(), id],
+            )?;
         }
-        let _ = replace(&views, &view);
+        transaction.commit()
+    })();
+    match renamed {
+        Ok(()) => json!({"id": id, "status": "renamed", "title": title, "message": "已改名"}),
+        Err(e) => result(id, "error", &format!("保存标题失败：{e}")),
     }
-    json!({"id": id, "status": "renamed", "title": title, "message": "已改名"})
 }
 
 pub fn delete(root: &Path, id: &str) -> Value {
-    let (directory, _lock) = match locked(root, id) {
+    let (connection, _lock, state) = match locked(root, id) {
         Ok(found) => found,
         Err(report) => return report,
-    };
-    let state = match read_state(&directory, id) {
-        Ok(state) => state,
-        Err(e) => return result(id, "error", &e),
     };
     if state.pending {
         return result(id, "pending_review", "有待审回答，请先由 boss 处理");
     }
-    // Delete the derived view first: on failure the authoritative state is still retryable.
-    for name in ["views.json", "state.json"] {
-        if let Err(e) = fs::remove_file(directory.join(name))
-            && !(name == "views.json" && e.kind() == io::ErrorKind::NotFound)
-        {
-            return result(id, "error", &format!("删除 {name} 失败：{e}"));
-        }
+    // Entries, rounds, tasks and the view go with it; the lock file and seat files stay.
+    match connection.execute("DELETE FROM conversations WHERE id = ?1", [id]) {
+        Ok(_) => result(id, "deleted", "已删除会话记录；席位文件保留"),
+        Err(e) => result(id, "error", &format!("删除失败：{e}")),
     }
-    result(id, "deleted", "已删除会话记录；席位文件保留")
     // Closing the File releases the lock without removing its inode.
 }
 
 pub fn list(root: &Path, overview: Overview) -> Value {
-    let mut items = Vec::new();
-    let mut unavailable = Vec::new();
-    let entries = match fs::read_dir(root.join("conversations")) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return json!({"items": [], "unavailable": [], "missing": true});
-        }
+    let connection = match crate::db::read(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return json!({"items": [], "unavailable": [], "missing": true}),
+        Err(e) => return json!({"error": e}),
+    };
+    let ids: Result<Vec<String>, _> = connection
+        .prepare("SELECT id FROM conversations")
+        .and_then(|mut statement| statement.query_map([], |row| row.get(0))?.collect());
+    let ids = match ids {
+        Ok(ids) => ids,
         Err(e) => return json!({"error": e.to_string()}),
     };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                unavailable.push(json!({"id": "", "reason": e.to_string()}));
-                continue;
-            }
-        };
-        let id = entry.file_name().to_string_lossy().into_owned();
+    let mut items = Vec::new();
+    let mut unavailable = Vec::new();
+    for id in ids {
         if !crate::data::valid_id(&id) {
             continue;
         }
-        let path = match directory(root, &id) {
-            Ok(path) => path,
-            Err(e) => {
-                unavailable.push(json!({"id": id, "reason": e.to_string()}));
-                continue;
-            }
-        };
-        if !path.join("state.json").exists() {
-            continue;
-        }
-        let lock = lock_file(&path);
+        let lock = lock_file(root, &id);
         let probe = lock.as_ref().map(|file| file.try_lock());
         let (held, error) = match probe {
             Ok(Ok(())) => (true, None),
@@ -239,18 +216,19 @@ pub fn list(root: &Path, overview: Overview) -> Value {
             Ok(Err(e)) => (false, Some(e.to_string())),
             Err(e) => (false, Some(e.to_string())),
         };
-        let state = match read_state(&path, &id) {
-            Ok(state) => state,
+        let state = match read_state(&connection, &id) {
+            Ok(Some(state)) => state,
+            Ok(None) => continue, // deleted since the listing
             Err(e) => {
-                if path.join("state.json").exists() {
-                    unavailable.push(json!({"id": id, "reason": e}));
-                }
+                unavailable.push(json!({"id": id, "reason": e}));
                 continue;
             }
         };
         let snapshot = overview.items.iter().find(|item| item.id == id);
         let status = if held && state.status == "running" {
             "interrupted"
+        } else if state.pending {
+            "review"
         } else {
             &state.status
         };
@@ -266,14 +244,9 @@ pub fn list(root: &Path, overview: Overview) -> Value {
         let updated = snapshot
             .map(|item| item.updated.as_str())
             .unwrap_or_default();
-        let updated_ms = fs::metadata(path.join("state.json"))
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis());
         items.push(json!({
-            "id": id, "title": state.value["title"], "mode": state.value["kind"],
-            "status": status, "updated": updated, "updated_ms": updated_ms,
+            "id": id, "title": state.title, "mode": state.kind,
+            "status": status, "updated": updated, "updated_ms": state.written_ms,
             "deletable": reason.is_empty(), "reason": reason,
             "group": snapshot.and_then(crate::stage::chat_group),
         }));
@@ -287,80 +260,48 @@ mod tests {
     use super::*;
     use crate::data::Reader;
 
-    fn fixture(root: &Path, id: &str) -> PathBuf {
-        let path = root.join("conversations").join(id);
-        fs::create_dir_all(path.join("seats/a")).unwrap();
-        fs::write(path.join("state.json"), json!({"version":2,"id":id,"title":"测试", "kind":"task", "tasks":[{"status":"running"}]}).to_string()).unwrap();
-        fs::write(path.join("views.json"), "{}").unwrap();
-        fs::write(path.join("seats/a/output.txt"), "keep").unwrap();
-        fs::write(path.join("other.json"), "keep").unwrap();
-        fs::write(path.join(".lock"), "0").unwrap();
-        path
-    }
-
-    #[test]
-    fn cleanup_keeps_lock_inode_and_all_other_files() {
-        let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "idle");
-        let mut state: Value =
-            serde_json::from_slice(&fs::read(path.join("state.json")).unwrap()).unwrap();
-        state["tasks"] = json!([]);
-        fs::write(path.join("state.json"), state.to_string()).unwrap();
-        let lock = lock_file(&path).unwrap();
-        assert_eq!(delete(root.path(), "idle")["status"], "deleted");
-        assert!(!path.join("state.json").exists());
-        assert!(!path.join("views.json").exists());
-        for name in [".lock", "other.json", "seats/a/output.txt"] {
-            assert!(path.join(name).is_file());
-        }
-        // A handle opened before cleanup still excludes a handle opened afterward. A process
-        // another test spawns meanwhile briefly inherits cleanup's descriptor until its exec
-        // closes it, so allow the same short retry as cleanup itself.
-        let mut locked = lock.try_lock();
-        for _ in 1..ATTEMPTS {
-            if !matches!(locked, Err(TryLockError::WouldBlock)) {
-                break;
-            }
-            thread::sleep(RETRY);
-            locked = lock.try_lock();
-        }
-        locked.unwrap();
-        assert!(matches!(
-            lock_file(&path).unwrap().try_lock(),
-            Err(TryLockError::WouldBlock)
-        ));
-        drop(lock);
-        assert_eq!(delete(root.path(), "idle")["status"], "missing");
-    }
-
-    #[test]
-    fn rename_rewrites_state_and_views_under_the_lock() {
-        let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "named");
-        fs::write(
-            path.join("views.json"),
-            json!({"summary": {"title": "测试"}, "director": {"title": "测试"}, "public": null})
-                .to_string(),
-        )
-        .unwrap();
-        assert_eq!(
-            rename(root.path(), "named", " 新标题 ")["status"],
-            "renamed"
+    /// A saved conversation with a running task, its view, and an isolated seat's files.
+    fn fixture(root: &Path, id: &str) {
+        crate::db::put(
+            root,
+            id,
+            &json!({"kind": "task", "title": "测试", "tasks": [{"status": "running"}]}),
+            &json!({"version": 1, "summary": {"id": id, "title": "测试", "status": "running"},
+                "director": {"title": "测试"}, "public": null}),
         );
-        let read = |name: &str| -> Value {
-            serde_json::from_slice(&fs::read(path.join(name)).unwrap()).unwrap()
+        let seat = root.join("seats").join(id).join("a");
+        fs::create_dir_all(&seat).unwrap();
+        fs::write(seat.join("output.txt"), "keep").unwrap();
+    }
+
+    fn set(root: &Path, sql: &str, id: &str) {
+        crate::db::write(root)
+            .unwrap()
+            .unwrap()
+            .execute(sql, [id])
+            .unwrap();
+    }
+
+    fn count(root: &Path, table: &str, id: &str) -> i64 {
+        let column = if table == "conversations" {
+            "id"
+        } else {
+            "conversation_id"
         };
-        let state = read("state.json");
-        assert_eq!(state["title"], "新标题");
-        assert_eq!(state["tasks"][0]["status"], "running"); // everything else kept
-        let views = read("views.json");
-        assert_eq!(views["summary"]["title"], "新标题");
-        assert_eq!(views["director"]["title"], "新标题");
-        assert!(views["public"].is_null());
-        assert_eq!(rename(root.path(), "named", "a\nb")["status"], "error");
-        assert_eq!(rename(root.path(), "named", " ")["status"], "error");
-        // As above, a process another test spawns may briefly hold rename's descriptor.
-        let lock = lock_file(&path).unwrap();
+        crate::db::read(root)
+            .unwrap()
+            .unwrap()
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    /// A process another test spawns may briefly inherit the tray's descriptor until its
+    /// exec closes it, so allow the same short retry as cleanup itself.
+    fn take(lock: &File) {
         let mut held = lock.try_lock();
         for _ in 1..ATTEMPTS {
             if !matches!(held, Err(TryLockError::WouldBlock)) {
@@ -370,33 +311,97 @@ mod tests {
             held = lock.try_lock();
         }
         held.unwrap();
+    }
+
+    #[test]
+    fn cleanup_cascades_rows_and_keeps_lock_inode_and_seat_files() {
+        let root = tempfile::tempdir().unwrap();
+        fixture(root.path(), "idle");
+        set(
+            root.path(),
+            "DELETE FROM tasks WHERE conversation_id = ?1",
+            "idle",
+        );
+        let lock = lock_file(root.path(), "idle").unwrap();
+        assert_eq!(delete(root.path(), "idle")["status"], "deleted");
+        for table in ["conversations", "tasks", "views"] {
+            assert_eq!(count(root.path(), table, "idle"), 0);
+        }
+        assert!(root.path().join("seats/idle/a/output.txt").is_file());
+        // A handle opened before cleanup still excludes a handle opened afterward.
+        take(&lock);
+        assert!(matches!(
+            lock_file(root.path(), "idle").unwrap().try_lock(),
+            Err(TryLockError::WouldBlock)
+        ));
+        drop(lock);
+        assert_eq!(delete(root.path(), "idle")["status"], "missing");
+        assert_eq!(delete(root.path(), "never")["status"], "missing");
+        assert!(!crate::db::lock_path(root.path(), "never").exists());
+    }
+
+    #[test]
+    fn rename_rewrites_conversation_and_view_under_the_lock() {
+        let root = tempfile::tempdir().unwrap();
+        fixture(root.path(), "named");
+        assert_eq!(
+            rename(root.path(), "named", " 新标题 ")["status"],
+            "renamed"
+        );
+        let connection = crate::db::read(root.path()).unwrap().unwrap();
+        let (title, rev): (String, i64) = connection
+            .query_row(
+                "SELECT title, rev FROM conversations WHERE id = 'named'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((title.as_str(), rev), ("新标题", 2)); // servers reload the new revision
+        assert_eq!(count(root.path(), "tasks", "named"), 1); // everything else kept
+        let view: String = connection
+            .query_row(
+                "SELECT body FROM views WHERE conversation_id = 'named'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let view: Value = serde_json::from_str(&view).unwrap();
+        assert_eq!(view["summary"]["title"], "新标题");
+        assert_eq!(view["director"]["title"], "新标题");
+        assert!(view["public"].is_null());
+        assert_eq!(rename(root.path(), "named", "a\nb")["status"], "error");
+        assert_eq!(rename(root.path(), "named", " ")["status"], "error");
+        let lock = lock_file(root.path(), "named").unwrap();
+        take(&lock);
         assert_eq!(rename(root.path(), "named", "被占用")["status"], "in_use");
         drop(lock);
-        assert_eq!(read("state.json")["title"], "新标题");
         assert_eq!(rename(root.path(), "gone", "x")["status"], "missing");
     }
 
     #[test]
     fn locked_and_pending_records_are_preserved() {
         let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "busy");
-        let lock = lock_file(&path).unwrap();
+        fixture(root.path(), "busy");
+        let lock = lock_file(root.path(), "busy").unwrap();
         lock.try_lock().unwrap();
         assert_eq!(delete(root.path(), "busy")["status"], "in_use");
         drop(lock);
-        let mut state: Value =
-            serde_json::from_slice(&fs::read(path.join("state.json")).unwrap()).unwrap();
-        state["rounds"] = json!([{"status":"finished","seats":[{"review":"pending"}]},{"status":"running","seats":[]}]);
-        fs::write(path.join("state.json"), state.to_string()).unwrap();
+        crate::db::put(
+            root.path(),
+            "busy",
+            &json!({"kind": "show", "rounds": [
+                {"status": "finished", "seats": [{"review": "pending"}]},
+                {"status": "running", "seats": []}]}),
+            &json!({"version": 1, "summary": {"id": "busy", "status": "running"}}),
+        );
         assert_eq!(delete(root.path(), "busy")["status"], "pending_review");
-        assert!(path.join("state.json").exists());
-        assert!(path.join("views.json").exists());
+        assert_eq!(count(root.path(), "conversations", "busy"), 1);
     }
 
     #[test]
     fn protocol_requires_post_action_and_valid_batch() {
         let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "a1");
+        fixture(root.path(), "a1");
         let reader = Reader::new(root.path().to_owned());
         let route = "/app/conversations/delete";
         for method in ["GET", "PUT", "DELETE", "OPTIONS"] {
@@ -421,7 +426,7 @@ mod tests {
         ] {
             assert_eq!(reader.request("POST", route, Some("1"), body).status, 400);
         }
-        assert!(path.join("state.json").exists());
+        assert_eq!(count(root.path(), "conversations", "a1"), 1);
         let response = reader.request("POST", route, Some("1"), br#"{"ids":["a1","gone"]}"#);
         let body: Value = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body["results"][0]["status"], "deleted");
@@ -435,12 +440,11 @@ mod tests {
     }
 
     #[test]
-    fn management_lists_state_without_snapshots_and_probes_locks() {
+    fn management_lists_conversations_and_probes_locks() {
         let root = tempfile::tempdir().unwrap();
-        let stale = fixture(root.path(), "stale");
-        fs::remove_file(stale.join("views.json")).unwrap();
-        let busy = fixture(root.path(), "busy");
-        let lock = lock_file(&busy).unwrap();
+        fixture(root.path(), "stale");
+        fixture(root.path(), "busy");
+        let lock = lock_file(root.path(), "busy").unwrap();
         lock.try_lock().unwrap();
         let reader = Reader::new(root.path().to_owned());
         let response = reader.respond("/manage/state");
@@ -449,42 +453,49 @@ mod tests {
         let stale = items.iter().find(|v| v["id"] == "stale").unwrap();
         assert_eq!(stale["status"], "interrupted");
         assert_eq!(stale["deletable"], true);
+        assert!(stale["updated_ms"].as_i64().is_some());
         let busy = items.iter().find(|v| v["id"] == "busy").unwrap();
         assert_eq!(busy["status"], "running");
         assert_eq!(busy["deletable"], false);
-        // Crash residue is deletable even without a derived snapshot.
+        // A crashed writer's running record is deletable.
         assert_eq!(delete(root.path(), "stale")["status"], "deleted");
         let after = list(root.path(), reader.overview());
         assert_eq!(after["items"].as_array().unwrap().len(), 1);
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(list(empty.path(), Overview::default())["missing"], true);
     }
 
     #[test]
-    fn unreadable_state_and_failed_removal_keep_authoritative_history() {
+    fn unreadable_rounds_keep_the_conversation() {
         let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "broken");
-        fs::write(path.join("state.json"), "{broken").unwrap();
+        fixture(root.path(), "broken");
+        crate::db::write(root.path())
+            .unwrap()
+            .unwrap()
+            .execute(
+                "INSERT INTO rounds (id, conversation_id, number, body) \
+                 VALUES ('r', 'broken', 1, '{broken')",
+                [],
+            )
+            .unwrap();
         assert_eq!(delete(root.path(), "broken")["status"], "error");
-        assert!(path.join("views.json").exists());
-        let path = fixture(root.path(), "no_view");
-        fs::remove_file(path.join("views.json")).unwrap();
-        fs::create_dir(path.join("views.json")).unwrap();
-        assert_eq!(delete(root.path(), "no_view")["status"], "error");
-        assert!(path.join("state.json").exists());
+        assert_eq!(count(root.path(), "conversations", "broken"), 1);
     }
 
     #[cfg(unix)]
     #[test]
-    fn symlinked_conversation_or_lock_cannot_redirect_cleanup() {
+    fn symlinked_lock_cannot_redirect_cleanup() {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "original");
-        symlink(&path, root.path().join("conversations/alias")).unwrap();
-        assert_eq!(delete(root.path(), "alias")["status"], "error");
-        fs::remove_file(path.join(".lock")).unwrap();
-        symlink(path.join("other.json"), path.join(".lock")).unwrap();
+        fixture(root.path(), "original");
+        let target = root.path().join("other.json");
+        fs::write(&target, "keep").unwrap();
+        let lock = crate::db::lock_path(root.path(), "original");
+        fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        symlink(&target, &lock).unwrap();
         assert_eq!(delete(root.path(), "original")["status"], "error");
-        assert!(path.join("state.json").exists());
-        assert_eq!(fs::read_to_string(path.join("other.json")).unwrap(), "keep");
+        assert_eq!(count(root.path(), "conversations", "original"), 1);
+        assert_eq!(fs::read_to_string(target).unwrap(), "keep");
     }
 
     #[cfg(unix)]
@@ -493,28 +504,30 @@ mod tests {
         use std::io::{BufRead, BufReader, Write};
         use std::process::{Command, Stdio};
         let root = tempfile::tempdir().unwrap();
-        let path = fixture(root.path(), "python");
-        // Any Python 3 works: only the standard library's fcntl is used, as store.py does.
+        fixture(root.path(), "python");
+        // Any Python 3 works: only the standard library's fcntl and sqlite3 are used, as the
+        // servers do.
         let mut child = Command::new("python3")
             .arg("-c")
             .arg(
                 r#"
-import fcntl, json, pathlib, sys
-path = pathlib.Path(sys.argv[1])
-with (path / '.lock').open('a+b') as lock:
+import fcntl, json, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+with (root / 'locks' / 'python.lock').open('a+b') as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     print('locked', flush=True)
     sys.stdin.readline()
-    state = json.loads((path / 'state.json').read_text())
-    state['rounds'] = [{'seats': [{'review': 'pending'}]}]
-    (path / 'state.json').write_text(json.dumps(state))
+    with sqlite3.connect(root / 'agentnave.db') as db:
+        db.execute("INSERT INTO rounds (id, conversation_id, number, body) VALUES "
+                   "('r', 'python', 1, ?)", (json.dumps({'seats': [{'review': 'pending'}]}),))
 "#,
             )
-            .arg(&path)
+            .arg(root.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
+        fs::create_dir_all(root.path().join("locks")).unwrap();
         let mut ready = String::new();
         BufReader::new(child.stdout.take().unwrap())
             .read_line(&mut ready)
@@ -529,6 +542,6 @@ with (path / '.lock').open('a+b') as lock:
             deleting.join().unwrap()
         });
         assert_eq!(result["status"], "pending_review");
-        assert!(path.join("state.json").exists());
+        assert_eq!(count(root.path(), "conversations", "python"), 1);
     }
 }

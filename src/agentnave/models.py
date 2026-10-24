@@ -121,6 +121,7 @@ class InvocationListing:
     status: InvocationStatus | None = None
     session_id: str | None = None
     result_read: bool = False
+    error: InvocationError | None = None
 
 
 @dataclass(frozen=True, slots=True)
