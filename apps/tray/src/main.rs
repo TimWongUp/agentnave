@@ -128,7 +128,6 @@ fn main() {
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
                 .icon_as_template(true)
                 .tooltip(headline(&overview))
-                .title(title(&overview).unwrap_or_default())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -200,18 +199,10 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
             continue;
         }
         if let Some(tray) = app.tray_by_id(TRAY) {
-            let _ = tray.set_title(title(&overview));
             let _ = tray.set_tooltip(Some(headline(&overview)));
         }
         shown = overview;
     }
-}
-
-/// Text beside the menu bar icon, only while something needs attention.
-fn title(overview: &Overview) -> Option<String> {
-    let review = overview.count("review");
-    let running = overview.count("running");
-    (review + running > 0).then(|| format!("待审 {review} · 运行 {running}"))
 }
 
 fn headline(overview: &Overview) -> String {
@@ -446,20 +437,6 @@ fn browse(target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tray_title_counts_calls_review_first() {
-        let mut overview = Overview {
-            running: 3,
-            review: 2,
-            ..Overview::default()
-        };
-        assert_eq!(title(&overview).as_deref(), Some("待审 2 · 运行 3"));
-        overview.review = 0;
-        assert_eq!(title(&overview).as_deref(), Some("待审 0 · 运行 3"));
-        overview.running = 0;
-        assert_eq!(title(&overview), None);
-    }
 
     #[test]
     fn windows_stay_on_tray_routes() {
