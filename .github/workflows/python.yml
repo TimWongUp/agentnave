@@ -130,12 +130,12 @@ jobs:
         run: |
           $all = Get-CimInstance Win32_Process
           $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
-          $stale = @($all | Where-Object { $parent = $byId[$_.ParentProcessId]; $parent -and $parent.CreationDate -gt $_.CreationDate })
-          "processes: $($all.Count); children older than the process now holding their ParentProcessId: $($stale.Count)"
-          $stale | Select-Object ProcessId, Name, CreationDate, ParentProcessId, @{n='ParentNow';e={$byId[$_.ParentProcessId].Name}}, @{n='ParentNowCreated';e={$byId[$_.ParentProcessId].CreationDate}} | Format-Table -AutoSize | Out-String -Width 300
           $listen = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
-          "listening processes with a stale ParentProcessId:"
-          $stale | Where-Object { $listen -contains $_.ProcessId } | Select-Object ProcessId, Name, ParentProcessId | Format-Table -AutoSize | Out-String -Width 300
+          "processes: $($all.Count); listening processes: $($listen.Count)"
+          $listen | ForEach-Object { $p = $byId[$_]; $parent = if ($p) { $byId[$p.ParentProcessId] } else { $null }
+            [pscustomobject]@{ Pid = $_; Name = $p.Name; Created = $p.CreationDate; ParentPid = $p.ParentProcessId; Parent = $parent.Name; ParentCreated = $parent.CreationDate
+              Hazard = if (-not $parent) { 'parent gone' } elseif ($parent.CreationDate -gt $p.CreationDate) { 'parent pid reused' } else { '' } } } |
+            Format-Table -AutoSize | Out-String -Width 300
       - name: Verify installed distributions on Windows
         if: runner.os == 'Windows'
         env:
