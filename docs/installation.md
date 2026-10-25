@@ -700,7 +700,7 @@ This release changes the Studio MCP contract: `update_conversation` requires a t
 renames a conversation; its `archived` parameter and the `delete_conversation` tool are removed.
 Studio exposes 16 tools (core remains 11). Conversations no longer have an ended state; existing
 `archived` fields are ignored. Clean up idle conversations without pending review in the App's
-“管理会话” page. Saved history is retained, with no bulk migration.
+office (right-click a workspace or meeting). Saved history is retained, with no bulk migration.
 
 Update the App, runtime and complete Skill together, then reconnect MCP on every host to refresh
 the tool schemas and replace already-running relays. New relays retry failed upgrades with capped

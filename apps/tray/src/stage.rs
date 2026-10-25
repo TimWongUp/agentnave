@@ -690,6 +690,11 @@ struct Group {
     updated: String,
     at: i64,
     title: String,
+    /// The earliest conversation's creation time, title and id; its title names the workspace,
+    /// so renaming the workspace renames that conversation.
+    first_title: Option<(i64, String, String)>,
+    /// The earliest conversation of all, renamed when no title names the workspace yet.
+    first_id: Option<(i64, String)>,
     project_name: Option<String>,
     live: bool,
     status: &'static str,
@@ -715,6 +720,8 @@ impl Group {
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
+            first_title: None,
+            first_id: None,
             project_name: None,
             live: false,
             status: "idle",
@@ -740,6 +747,8 @@ impl Group {
     fn header(&self) -> Value {
         json!({"group": self.id, "host": self.host, "label": self.manager_label(),
             "project": self.project_name, "title": self.title,
+            "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
+                .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
     }
 
@@ -1000,8 +1009,27 @@ impl Group {
             if let Some(name) = cwd.as_deref().and_then(project_name) {
                 self.project_name = Some(name);
             }
-            self.title = self.project_name.clone().unwrap_or_default();
         }
+        // The first dispatch names the whole chat and never changes; later titles name only
+        // their own chat or meeting.
+        let created = timestamp(text(&snapshot.view["director"], "created")).unwrap_or(at);
+        if self.first_id.as_ref().is_none_or(|(c, _)| created < *c) {
+            self.first_id = Some((created, item.id.clone()));
+        }
+        if meaningful_title(&item.title)
+            && self
+                .first_title
+                .as_ref()
+                .is_none_or(|(c, _, _)| created < *c)
+        {
+            self.first_title = Some((created, item.title.clone(), item.id.clone()));
+        }
+        self.title = self
+            .first_title
+            .as_ref()
+            .map(|(_, t, _)| t.clone())
+            .or_else(|| self.project_name.clone())
+            .unwrap_or_default();
         self.live |= snapshot.live;
         let status = conversation_status(snapshot);
         if urgency(status) > urgency(self.status) {
@@ -1939,6 +1967,16 @@ pub(crate) fn respond(
     }
 }
 
+/// Whether a conversation title was written by the boss, not the `<provider> 任务` default.
+fn meaningful_title(title: &str) -> bool {
+    let title = title.trim();
+    !title.is_empty()
+        && !matches!(
+            title.strip_suffix(" 任务"),
+            Some("antigravity" | "claude" | "codebuddy" | "codex" | "deepseek" | "grok" | "pi")
+        )
+}
+
 /// The project a working directory belongs to: its folder name, or the repository's name for an
 /// agent worktree such as `<repo>/.claude/worktrees/<name>`.
 fn project_name(cwd: &str) -> Option<String> {
@@ -1952,6 +1990,13 @@ fn project_name(cwd: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn custom_titles_are_not_confused_with_provider_defaults() {
+        assert!(super::meaningful_title("review 任务"));
+        assert!(!super::meaningful_title("codex 任务"));
+        assert!(!super::meaningful_title(" "));
+    }
+
     #[test]
     fn project_name_skips_agent_worktrees() {
         assert_eq!(

@@ -6,7 +6,7 @@
 
 AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agentnave/`，由服务启动环境 `AGENTNAVE_DATA_DIR` 指定），只保存任务元信息、原生会话绑定、条目和最终回复，不保存思考或原始工具事件。记录跨重启保留，进程和句柄不恢复；中断后由 boss 检查再决定，不自动重试。
 
-- `start_agent` 的 `title` 是新任务会话名，在第一次派发时给出；之后改名由用户在 App 的“管理会话”里做，boss 不改。`conversation_id` 把新线程归入已有任务会话；续用原生 `session_id` 会归入对应会话。同一原生会话不可同时执行两个任务。
+- `start_agent` 的 `title` 是新任务会话名，在第一次派发时给出，最多 48 列（中文算 2 列）；本聊天的第一个会话标题同时是工作区名，见 SKILL 主文件；之后改名由用户在 App 办公室里右键进行，boss 不改。`conversation_id` 把新线程归入已有任务会话；续用原生 `session_id` 会归入对应会话。同一原生会话不可同时执行两个任务。
 - `list` 按最近活动列出会话（`kind`、`limit` 过滤，`total` 是总数），并启动只读看板、返回首页链接；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等会话空闲，不另开会话拆散历史。
 - `read_conversation` 默认返回会话信息和最终消息：任务、已公开回答、缺席、转发、主持人发言和待审回答（`pending_answer`）；`include_private=true` 另含各席私密指令（`instruction`）和不公开的回答（`private_answer`）；`since_round` 只取某轮之后；`limit` 只取最近若干条，略去的条数在 `omitted`。私聊会话返回每个任务的 prompt、最终回复和原生 `session_id`。结果只给 boss。
 - 会话不需要结束，boss 也不删除会话；清理由用户在 App 中进行。

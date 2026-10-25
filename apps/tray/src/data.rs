@@ -33,9 +33,9 @@ macro_rules! asset {
 const PANEL_HTML: &[u8] = include_bytes!("../ui/panel.html");
 const PANEL_JS: &[u8] = include_bytes!("../ui/panel.js");
 const PANEL_CSS: &[u8] = include_bytes!("../ui/panel.css");
-const MANAGE_HTML: &[u8] = include_bytes!("../ui/manage.html");
-const MANAGE_JS: &[u8] = include_bytes!("../ui/manage.js");
 const MANAGE_CSS: &[u8] = include_bytes!("../ui/manage.css");
+const TO_OFFICE: &[u8] =
+    br#"<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/chat/">"#;
 const SETTINGS_HTML: &[u8] = include_bytes!("../ui/settings.html");
 const SETTINGS_JS: &[u8] = include_bytes!("../ui/settings.js");
 const SETTINGS_CSS: &[u8] = include_bytes!("../ui/settings.css");
@@ -326,10 +326,26 @@ impl Reader {
             }) else {
                 return Response::error(400, "ids 必须为非空的有效会话 ID 数组");
             };
-            let results: Vec<Value> = ids
-                .iter()
-                .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
-                .collect();
+            let cutoff = match payload.get("updated_before") {
+                None => None,
+                Some(value) => match value.as_i64().filter(|cutoff| *cutoff > 0) {
+                    Some(cutoff) => Some(cutoff),
+                    None => return Response::error(400, "updated_before 必须是有效的毫秒时间"),
+                },
+            };
+            let results: Vec<Value> = match cutoff {
+                Some(cutoff) => crate::manage::cleanup(
+                    &self.root,
+                    &ids.iter()
+                        .map(|id| id.as_str().unwrap().to_owned())
+                        .collect::<Vec<_>>(),
+                    cutoff,
+                ),
+                None => ids
+                    .iter()
+                    .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
+                    .collect(),
+            };
             return Response::json(&json!({"results": results}));
         }
         if method != "GET" {
@@ -587,6 +603,10 @@ impl Reader {
         if let ["chat", resource] = parts.as_slice() {
             return match *resource {
                 "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
+                "actions.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/actions.js").to_vec(),
+                ),
                 "chat.css" => Response::ok("text/css; charset=utf-8", CHAT_CSS.to_vec()),
                 "onboarding.css" => {
                     Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec())
@@ -620,8 +640,8 @@ impl Reader {
         }
         if let ["manage", resource] = parts.as_slice() {
             return match *resource {
-                "" => Response::ok("text/html; charset=utf-8", MANAGE_HTML.to_vec()),
-                "manage.js" => Response::ok("text/javascript; charset=utf-8", MANAGE_JS.to_vec()),
+                // Conversations are managed in the office now; old links lead there.
+                "" => Response::ok("text/html; charset=utf-8", TO_OFFICE.to_vec()),
                 "manage.css" => Response::ok("text/css; charset=utf-8", MANAGE_CSS.to_vec()),
                 "state" => Response::json(&crate::manage::list(&self.root, self.overview())),
                 _ => Response::not_found(),
@@ -644,11 +664,7 @@ impl Reader {
             // Host avatars, shared with the browser view.
             ["avatars.png"] => Response::ok("image/png", asset!("avatars.png").to_vec()),
             // The old workbench address now leads to the chat page.
-            [""] => Response::ok(
-                "text/html; charset=utf-8",
-                br#"<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/chat/">"#
-                    .to_vec(),
-            ),
+            [""] => Response::ok("text/html; charset=utf-8", TO_OFFICE.to_vec()),
             _ => Response::not_found(),
         }
     }
@@ -1030,7 +1046,6 @@ mod tests {
         assert_eq!(reader.respond("/panel/").status, 200);
         for path in [
             "/manage/",
-            "/manage/manage.js",
             "/manage/manage.css",
             "/settings/",
             "/settings/settings.js",
@@ -1038,6 +1053,7 @@ mod tests {
             "/chat/",
             "/chat/missing-group",
             "/chat/chat.js",
+            "/chat/actions.js",
             "/chat/chat.css",
             "/chat/common.js",
             "/chat/mock.js",
@@ -1068,6 +1084,7 @@ mod tests {
             "/x/a1/state",
             "/panel/state",
             "/manage/unknown",
+            "/manage/manage.js",
             "/chat/not-a-file.js",
             "/chat/group/extra",
         ] {
@@ -1132,10 +1149,10 @@ mod tests {
     fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        save(
-            root,
-            &task_snapshot("z", "succeeded", "2026-10-15T02:00:01.000001Z"),
-        );
+        // The earliest conversation names the chat unless it kept the default task title.
+        let mut first = task_snapshot("z", "succeeded", "2026-10-15T02:00:01.000001Z");
+        first["summary"]["title"] = json!("codex 任务");
+        save(root, &first);
         // A different offset still denotes a newer activity than z, even within the same millisecond.
         let mut newer = task_snapshot("b", "blocked", "2026-10-15T10:00:01.000002+08:00");
         newer["director"]["cwd"] = json!("/work/newer-project");
@@ -1152,7 +1169,8 @@ mod tests {
         assert_eq!(groups["groups"].as_array().unwrap().len(), 2);
         assert_eq!(groups["groups"][0]["group"], MANAGER);
         assert_eq!(groups["groups"][0]["conversations"], 2);
-        assert_eq!(groups["groups"][0]["title"], "newer-project");
+        assert_eq!(groups["groups"][0]["title"], "任务 b");
+        assert_eq!(groups["groups"][0]["title_id"], "b");
         assert_eq!(groups["groups"][0]["project"], "newer-project");
         assert_eq!(groups["groups"][0]["label"], "Claude Code");
         let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -2214,7 +2232,7 @@ mod tests {
         let path = format!("/app/chats/{MANAGER}");
         let chat = state(&reader, &path);
         assert_eq!(chat["project"], "project-name");
-        assert_eq!(chat["title"], "project-name");
+        assert_eq!(chat["title"], "房间 show");
         let messages = chat["messages"].as_array().unwrap();
         let prompt = messages.iter().find(|m| m["kind"] == "prompt").unwrap();
         assert_eq!(prompt["speaker"]["handle"], "@boss");
