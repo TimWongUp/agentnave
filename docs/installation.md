@@ -20,6 +20,18 @@ CLI reference files. Install both components from this tag. The older `v0.5.0` c
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
 
+## Subagent orchestration guidance
+
+The runtime prepends a fixed instruction to every dispatched task and meeting-seat prompt,
+including native-session continuations: complete the assigned task, report back to the calling
+manager, and do not call AgentNave tools or delegate through AgentNave. Blockers go back to the
+manager. This is an instruction for the model, not a tool-permission boundary. The server does
+not inspect process ancestry to disable tools; host identification remains best-effort.
+
+After installing this change over an older runtime, reconnect any MCP connection already stuck
+with an empty tool list, or restart its host. That older zero-tool server cannot satisfy the
+relay's idle probe and therefore cannot switch itself to the updated installation.
+
 ## 1. Check and reuse the runtime
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set

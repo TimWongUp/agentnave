@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from mcp_types import CallToolResult, TextContent
 
 from agentnave import __version__, mcp_server
 from agentnave.mcp_server import mcp
+from agentnave.processes import spawn_process, terminate_process_tree
 
 EXPECTED_TOOLS = [
     "start_agent",
@@ -37,14 +39,11 @@ def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
 
 
-def _server_args(module: str, status: str) -> list[str]:
-    # Model the host context explicitly: the test runner itself may be a dispatched CLI.
+def _server_args(module: str) -> list[str]:
     return [
         "-c",
         "import os; os.environ.setdefault('AGENTNAVE_HOST', 'gemini'); "
         f"import {module} as server; "
-        "from agentnave.nesting import NestingResult; "
-        f"server.detect_nesting = lambda: NestingResult({status!r}, 'test context'); "
         "server.main()",
     ]
 
@@ -55,6 +54,9 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
+        "assert prompt.startswith('You are a subagent dispatched by AgentNave.')\n"
+        "assert 'Do not call AgentNave tools' in prompt\n"
+        "prompt = prompt.split('\\n\\nAssigned task:\\n', 1)[1]\n"
         "if prompt == 'finish':\n"
         "    for _ in range(8):\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'working '}}}), flush=True)\n"
@@ -550,7 +552,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
     home.mkdir()
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=_server_args("agentnave.mcp_server", "not_nested"),
+        args=_server_args("agentnave.mcp_server"),
         env={"HOME": str(home), "USERPROFILE": str(home)},
         cwd=tmp_path,
     )
@@ -580,7 +582,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
     fake_codex.chmod(0o755)
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=_server_args("agentnave.mcp_server", "not_nested"),
+        args=_server_args("agentnave.mcp_server"),
         env={
             "PATH": os.environ["PATH"],
             "AGENTNAVE_EXCLUDED_PROVIDERS": excluded,
@@ -640,27 +642,44 @@ def test_stdio_rejects_unknown_exclusion_configuration() -> None:
 
 
 @pytest.mark.asyncio
-async def test_entrypoint_disables_all_tools_without_side_effects(
+async def test_dispatched_entrypoint_keeps_tools_with_unreadable_host_ancestry(
     tmp_path: Path,
 ) -> None:
-    for status in ("nested", "unavailable"):
-        parameters = StdioServerParameters(
-            command=sys.executable,
-            args=_server_args("agentnave.mcp_server", status),
-            env={
-                "HOME": str(tmp_path),
-                "USERPROFILE": str(tmp_path),
-                "AGENTNAVE_DATA_DIR": str(tmp_path / "data"),
-            },
-            cwd=tmp_path,
-        )
-        async with Client(parameters) as client:
-            assert (await client.list_tools()).tools == []
-            assert client.instructions is not None
-            assert "已禁用编排工具" in client.instructions
-            assert "test context" in client.instructions
-            assert ("无法确认" in client.instructions) == (status == "unavailable")
-        assert not list(tmp_path.iterdir())
+    bootstrap = """
+import os
+from agentnave import host
+os.environ.pop('AGENTNAVE_HOST', None)
+def denied(_pid):
+    raise PermissionError('ancestor identity denied')
+host.read_process_parent = denied
+host.read_process_argv = denied
+from agentnave.mcp_server import main
+main()
+"""
+    probe = f"""
+import asyncio, json, os, sys
+from mcp import Client, StdioServerParameters
+async def main():
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=['-c', {bootstrap!r}],
+        env={{'AGENTNAVE_SUPERVISOR': str(os.getppid()),
+              'AGENTNAVE_DATA_DIR': {str(tmp_path / "data")!r}}},
+    )
+    async with Client(parameters) as client:
+        print(json.dumps([tool.name for tool in (await client.list_tools()).tools]))
+asyncio.run(main())
+"""
+    supervised = await spawn_process((sys.executable, "-c", probe), tmp_path)
+    try:
+        async with asyncio.timeout(15):
+            completion = await supervised.completion
+            assert completion.returncode == 0
+            assert supervised.process.stdout is not None
+            assert json.loads(await supervised.process.stdout.readline()) == EXPECTED_TOOLS
+    finally:
+        await terminate_process_tree(supervised.process, grace_seconds=0.01)
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.asyncio

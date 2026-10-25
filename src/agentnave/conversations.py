@@ -18,7 +18,6 @@ from typing import Literal, NamedTuple
 from uuid import uuid4
 
 from agentnave import views
-from agentnave.adapters import get_adapter
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
@@ -804,7 +803,7 @@ class Conversations(Groups):
             self.record(conversation_id)  # Reject missing history before creating startup metadata.
         if forwarded:
             request = replace(request, prompt=forwarded_prompt(forwarded, prompt))
-        prepared = get_adapter(request.provider).prepare(request)
+        prepared = self.manager.prepare(request)
         native_lock = None
         started = False
         record = None

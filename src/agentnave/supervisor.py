@@ -46,7 +46,6 @@ def main() -> int:
     provider_argv = sys.argv[2:]
     signal.signal(signal.SIGTERM, _hold_sigterm)
     parent = os.getppid()
-    os.environ["AGENTNAVE_SUPERVISOR"] = str(os.getpid())
     try:
         provider = subprocess.Popen(provider_argv, preexec_fn=_restore_sigterm)
     except OSError as exc:

@@ -174,7 +174,7 @@ def _tools_hash(result: Message | None) -> str | None:
         return None  # Partial/paginated lists cannot prove that the full interface was delivered.
     tools = result.get("tools")
     if not isinstance(tools, list) or not tools:
-        return None  # In particular, the nested zero-tool service has no runtime side effects.
+        return None  # Empty lists do not establish a usable runtime interface.
     entries = [_object(t) for t in cast(list[Any], tools)]
     if any(t is None for t in entries):
         return None

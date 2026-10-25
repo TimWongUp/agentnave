@@ -260,7 +260,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         result = host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
         assert result["capabilities"]["tools"]["listChanged"] is True
         host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        assert not data.exists()  # Handshakes alone, including nested servers, do not create data.
+        assert not data.exists()  # A handshake alone does not initialize history.
         # A relay that died left its file; a live one keeps touching its own.
         (data / "connections").mkdir(parents=True)
         dead, alive = data / "connections" / "dead.json", data / "connections" / "alive.json"
@@ -408,9 +408,7 @@ def test_real_server_keeps_pending_review_and_unsaved_results_during_upgrade(
 from pathlib import Path
 import sys
 from agentnave import mcp_server
-from agentnave.nesting import NestingResult
 from agentnave.store import Record
-mcp_server.detect_nesting = lambda: NestingResult('not_nested', 'relay regression')
 original_save = Record.save
 def save(record):
     if Path(sys.argv[1] + '.write_failed').exists() and any(
