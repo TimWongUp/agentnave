@@ -32,6 +32,8 @@ p { margin: 0; }
 .mark { display: grid; place-items: center; width: 23px; height: 25px; border-radius: 6px 6px 9px 3px; background: var(--accent); color: var(--bg); font: italic 700 17px Georgia, serif; }
 /* One viewport-wide header for chat, management and settings. */
 .bar { position: sticky; top: 0; z-index: 200; flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
+/* The Mac App's window buttons sit at the left of the bar. */
+.titlebar .bar { padding-left: 88px; -webkit-user-select: none; user-select: none; }
 .bar a { white-space: nowrap; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .nav { display: flex; gap: 2px; }
 .nav a { padding: 5px 12px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 550; }

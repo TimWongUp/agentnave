@@ -56,6 +56,10 @@ only then resumed so descendants cannot start outside the owned process tree.
 Install the MCP runtime and companion [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)
 as a pair. The runtime exposes the tools; the Skill teaches the calling Agent how to use other
 CLIs. Planning, scheduling, review, retry decisions, and synthesis remain with the calling Agent.
+The optional [agentnave-review Skill](skills/agentnave-review/SKILL.md) gives the calling Agent a
+risk-graded review gate for PRs and merges that dispatches read-only reviewer CLIs through
+AgentNave. The tray App lists it on its Skills page, installs it per host when you switch it on, and
+lets you pick the CLI and model for each reviewer role.
 
 Follow the [installation guide](docs/installation.md) to:
 

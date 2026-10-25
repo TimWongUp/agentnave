@@ -205,8 +205,32 @@ impl Reader {
         {
             return self.host_request(method, path, action, body);
         }
+        if path == "/app/skills" {
+            if method != "GET" {
+                return Response::error(405, "此路由只接受 GET");
+            }
+            return Response::json(&crate::hosts::skill_catalog());
+        }
         if path == "/app/avatars" {
             return crate::avatars::request(&self.root, method, action, body);
+        }
+        if path == "/app/review" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::members::validate_review(&payload) {
+                return Response::error(400, &error);
+            }
+            return match crate::members::save_review(&self.root, &payload) {
+                Ok(()) => Response::json(&json!({"saved": true})),
+                Err(error) => Response::error(500, &error),
+            };
         }
         if path == "/app/members" {
             if method != "POST" {
@@ -360,6 +384,7 @@ impl Reader {
                 | "/app/hosts/remove"
                 | "/app/hosts/root"
                 | "/app/hosts/confirm-reload"
+                | "/app/hosts/skill"
                 | "/app/hosts/reveal-backups"
                 | "/app/onboarding/dismiss"
                 | "/app/onboarding/reopen"
@@ -586,6 +611,10 @@ impl Reader {
                 "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
                 "hosts.js" => Response::ok("text/javascript; charset=utf-8", HOSTS_JS.to_vec()),
                 "hosts.css" => Response::ok("text/css; charset=utf-8", HOSTS_CSS.to_vec()),
+                "skills.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/skills.js").to_vec(),
+                ),
                 _ => Response::not_found(),
             };
         }

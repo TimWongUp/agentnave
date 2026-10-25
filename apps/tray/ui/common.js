@@ -162,6 +162,16 @@
   addEventListener("storage", (e) => e.key === THEME_KEY && applyTheme());
   applyTheme();
   document.querySelector("header.bar")?.append(h("div.bar-end", {}, themeSwitch()));
+  // On macOS the window has no title bar of its own (only the agentnave: scheme is the Mac App):
+  // the top bar leaves room for the window buttons, drags the window, and zooms on double-click.
+  const bar = document.querySelector("header.bar");
+  if (bar && location.protocol === "agentnave:") {
+    document.documentElement.classList.add("titlebar");
+    const blank = (e) => e.button === 0 && !e.target.closest("a, button, input, select, label, textarea");
+    const act = (path) => fetch(path, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
+    bar.addEventListener("mousedown", (e) => { if (blank(e) && e.detail === 1) act("/app/window/drag"); });
+    bar.addEventListener("dblclick", (e) => { if (blank(e)) act("/app/window/zoom"); });
+  }
   // Painted art pauses with the window: a hidden window runs no animation at all.
   const syncPaused = () => document.documentElement.classList.toggle("paused", document.hidden);
   document.addEventListener("visibilitychange", syncPaused);

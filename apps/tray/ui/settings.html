@@ -14,6 +14,7 @@
 <script src="./avatar-settings.js" defer></script>
 <script src="./settings.js" defer></script>
 <script src="./hosts.js" defer></script>
+<script src="./skills.js" defer></script>
 </head>
 <body class="settings-page">
 <header class="bar">
@@ -22,6 +23,7 @@
       <a draggable="false" href="/chat/">办公室</a>
       <a draggable="false" href="/manage/">会话</a>
       <a draggable="false" id="nav-members" href="/settings/#members">执行者<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
+      <a draggable="false" id="nav-skills" href="/settings/#skills">技能</a>
       <a draggable="false" id="nav-hosts" href="/settings/#hosts">接入<span id="hosts-badge" class="badge-dot" hidden></span><span id="update-badge" class="badge-dot" hidden></span></a>
       <a draggable="false" id="nav-avatars" href="/settings/#avatars">头像</a>
       <a draggable="false" id="nav-orchestration" href="/settings/#orchestration">编排</a>
@@ -75,6 +77,7 @@
     <!-- 6 个 Provider 卡片容器 -->
     <div id="cli-cards" class="cli-cards"></div>
 
+
     <!-- 底部固定保存条 -->
     <aside class="sticky-save-bar">
       <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" hidden></div>
@@ -90,6 +93,11 @@
         </div>
       </div>
     </aside>
+  </section>
+
+  <section id="pane-skills" class="tab-pane" hidden aria-labelledby="nav-skills">
+    <p class="guidance">这里是 AgentNave 推荐的协作写法，做成 Skill 供你选用：装到哪个宿主由你决定，装上后那里的 AI 会按它工作；不装不影响其他功能。点“查看写法”可以先看完整内容。</p>
+    <div id="skill-list" class="skill-list" aria-live="polite"></div>
   </section>
 
   <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">

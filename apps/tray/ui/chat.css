@@ -49,7 +49,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .side-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 18px 8px; }
 .side-head h1 { font-size: 16px; letter-spacing: -0.01em; font-weight: 650; }
 .side-count { color: var(--faint); font-size: 12px; }
-.gl { flex: 1; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
+.gl { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
 .gl-sec { padding: 12px 10px 5px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--faint); }
 .gl-empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
 .gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); }
@@ -61,7 +61,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi-ava .presence, .gh-ava .presence { inset: 0; }
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 11.5px; color: var(--muted); }
-.gi-label { font-size: 12.5px; font-weight: 650; color: color-mix(in srgb, var(--mc) 70%, var(--ink)); white-space: nowrap; }
+.gi-label { min-width: 0; font-size: 12.5px; font-weight: 650; color: color-mix(in srgb, var(--mc) 70%, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gi-meta { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gi-top time { margin-left: auto; flex: none; font-size: 11px; color: var(--faint); }
 .gi-title { font-size: 13px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

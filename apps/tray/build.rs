@@ -1,16 +1,23 @@
 fn main() {
-    // Embed the entire matching Skill, including references, without a runtime checkout.
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
-        .join("../../skills/agentnave-manager");
-    println!("cargo:rerun-if-changed={}", root.display());
-    let mut files = Vec::new();
-    collect(&root, &root, &mut files);
-    files.sort();
-    let mut source = String::from("pub const FILES: &[(&str, &[u8])] = &[\n");
-    for (name, path) in files {
-        source.push_str(&format!("({name:?}, include_bytes!({path:?})),\n"));
+    // Embed the entire matching Skills, including references, without a runtime checkout.
+    let skills = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("../../skills");
+    let mut source = String::new();
+    for (constant, name) in [
+        ("FILES", "agentnave-manager"),
+        ("REVIEW_FILES", "agentnave-review"),
+    ] {
+        let root = skills.join(name);
+        println!("cargo:rerun-if-changed={}", root.display());
+        let mut files = Vec::new();
+        collect(&root, &root, &mut files);
+        files.sort();
+        source.push_str(&format!("pub const {constant}: &[(&str, &[u8])] = &[\n"));
+        for (name, path) in files {
+            source.push_str(&format!("({name:?}, include_bytes!({path:?})),\n"));
+        }
+        source.push_str("];\n");
     }
-    source.push_str("];\n");
     std::fs::write(
         std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("manager_skill.rs"),
         source,

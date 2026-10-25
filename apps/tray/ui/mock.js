@@ -632,7 +632,8 @@ All checks passed!
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
       first_seen: "2026-10-17T00:00:00Z", reload_hint: reload, attention: null, last_action: null,
-      skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null } };
+      skill: { state: connected ? "external" : "missing", path: `${root}/skills/agentnave-manager`, version: null },
+      skills: { "agentnave-review": { state: "missing", path: `${root}/skills/agentnave-review`, version: null, enabled: false } } };
   });
   if (hostScene === "typical") {
     const warning = hostRows.find((host) => host.id === "workbuddy");
@@ -657,6 +658,7 @@ All checks passed!
     { id: "try", done: triedReady, detail: "在宿主里派一次任务" }] });
   async function p3Fetch(path) {
     if (path === "/app/hosts") return structuredClone(hostView());
+    if (path === "/app/skills") return { skills: [{ name: "agentnave-review", title: "AgentNave 评审门控", description: "代码评审门控：创建或更新 PR、用户要求评审代码或合并到主分支前使用。", content: "---\nname: agentnave-review\n---\n\n# AgentNave 评审门控\n\n（预览）完整写法在 App 中读取内嵌的 SKILL.md。" }] };
     if (path === "/app/onboarding") return onboarding();
     if (path === "/app/status" && installedState) return { ...status(), service: installedState };
     return mockFetch(path);
@@ -683,6 +685,12 @@ All checks passed!
       if (body.token !== `${host.id}:${host.root.path}` || host.status !== "connected") throw new Error("接入配置已变化，请刷新后再确认");
       confirmedReloads.set(host.id, body.token);
       return { ok: true, message: "预览：已记录你已重启或重连" };
+    }
+    if (path.endsWith("/skill")) {
+      const installed = body.enabled && host.status === "connected";
+      host.skills[body.skill] = { ...host.skills[body.skill], enabled: body.enabled, state: installed ? "app" : "missing", version: installed ? status().version : null };
+      host.last_action = { ok: true, message: body.enabled ? (installed ? "已安装" : "已启用；接入此宿主时自动安装") : "已停用并移除", at: new Date().toISOString() };
+      return { host: structuredClone(host), ok: true, message: host.last_action.message };
     }
     if (path.endsWith("/root")) host.root = { path: body.path || `/preview/${host.id}`, source: body.path ? "user" : "default" };
     else if (path.endsWith("/remove")) { confirmedReloads.delete(host.id); host.status = "available"; host.entry = host.command = host.command_state = null; host.layers.forEach((l) => l.has_entry = false); }

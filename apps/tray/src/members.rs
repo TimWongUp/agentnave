@@ -19,7 +19,19 @@ pub const PROVIDERS: [&str; 7] = [
     "pi",
 ];
 const MODES: [&str; 2] = ["task", "discussion"];
+/// The agentnave-review roles whose CLI and model the user may pick.
+pub const REVIEW_ROLES: [&str; 8] = [
+    "correctness-reviewer",
+    "architecture-reviewer",
+    "security-reviewer",
+    "performance-reviewer",
+    "test-reliability-reviewer",
+    "simplicity-reviewer",
+    "specialist-reviewer",
+    "adversarial-verifier",
+];
 const FILE: &str = "members.json";
+const REVIEW_FILE: &str = "review.json";
 const LEGACY: &str = "profiles.json";
 /// Permission-type option keys (case-insensitive substrings) never carried over from profiles.
 const PERMISSION_KEYS: [&str; 6] = [
@@ -252,6 +264,67 @@ pub fn save(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, FILE, document)
 }
 
+/// review.json: `{"version": 1, "seats": {role: {provider, model, effort?}}}`. Kept out of
+/// members.json so a server that predates review seats still reads its members.
+/// Seats stay structural only: a seat whose model was removed later is reported by the server
+/// and replaced when the review Skill dispatches.
+pub fn validate_review(document: &Value) -> Result<(), String> {
+    let top = object(document, REVIEW_FILE)?;
+    only(top, &["version", "seats"], REVIEW_FILE)?;
+    if document["version"].as_u64() != Some(1) {
+        return Err(format!("{REVIEW_FILE} 的 version 必须为 1"));
+    }
+    for (role, seat) in object(&document["seats"], "seats")? {
+        if !REVIEW_ROLES.contains(&role.as_str()) {
+            return Err(format!("未知评审角色：{role}"));
+        }
+        let what = format!("seats.{role}");
+        let fields = object(seat, &what)?;
+        only(fields, &["provider", "model", "effort"], &what)?;
+        if !fields
+            .get("provider")
+            .and_then(Value::as_str)
+            .is_some_and(|provider| PROVIDERS.contains(&provider))
+        {
+            return Err(format!("{what} 的 CLI 不受支持"));
+        }
+        if !fields
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|model| !model.trim().is_empty())
+        {
+            return Err(format!("{what} 缺少模型"));
+        }
+        if fields
+            .get("effort")
+            .is_some_and(|effort| !effort.is_string())
+        {
+            return Err(format!("{what} 的 effort 必须为字符串"));
+        }
+    }
+    Ok(())
+}
+
+/// The saved review seats, or an empty file when none was written yet.
+pub fn read_review(root: &Path) -> Result<Value, String> {
+    let content = match fs::read(root.join(REVIEW_FILE)) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(json!({"version": 1, "seats": {}}));
+        }
+        Err(error) => return Err(format!("无法读取 {REVIEW_FILE}：{error}")),
+    };
+    let document =
+        serde_json::from_slice(&content).map_err(|error| format!("{REVIEW_FILE} 损坏：{error}"))?;
+    validate_review(&document).map_err(|error| format!("{REVIEW_FILE} 格式错误：{error}"))?;
+    Ok(document)
+}
+
+pub fn save_review(root: &Path, document: &Value) -> Result<(), String> {
+    validate_review(document)?;
+    write_atomic(root, REVIEW_FILE, document)
+}
+
 /// Turn each legacy orchestration profile into a shared model configuration. Modes stay absent,
 /// so every mode remains unrestricted. Profiles without a model, profiles repeating a CLI + model
 /// pair, and permission-type options are skipped and reported.
@@ -363,9 +436,15 @@ fn document_state(root: &Path) -> (Value, Value, bool, Vec<String>) {
 pub fn state(root: &Path, refresh: bool) -> Value {
     let detected = crate::detect::detected(refresh);
     let (document, error, migrated, skipped) = document_state(root);
+    let (review, review_error) = match read_review(root) {
+        Ok(review) => (review, Value::Null),
+        Err(error) => (Value::Null, json!(error)),
+    };
     json!({
         "document": document,
         "error": error,
+        "review": review,
+        "review_error": review_error,
         "migrated": migrated,
         "migration_skipped": skipped,
         "detected": detected,
@@ -409,6 +488,26 @@ mod tests {
         deepseek["clis"]["deepseek"] = json!({"models": {"deepseek-flash": {"effort": "max"}}});
         deepseek["modes"]["task"]["deepseek"] = json!({"models": ["deepseek-flash"]});
         validate(&deepseek).unwrap();
+        // Review seats live in review.json and may name models no longer configured.
+        let mut members_with_review = document();
+        members_with_review["review"] = json!({});
+        assert!(validate(&members_with_review).is_err());
+        let mut review = json!({"version": 1, "seats": {
+            "correctness-reviewer": {"provider": "deepseek", "model": "gone", "effort": "max"},
+            "security-reviewer": {"provider": "codex", "model": "gpt-6.1-sol"}
+        }});
+        validate_review(&review).unwrap();
+        for seat in [
+            json!({"other-reviewer": {"provider": "codex", "model": "m"}}),
+            json!({"security-reviewer": {"provider": "other", "model": "m"}}),
+            json!({"security-reviewer": {"provider": "codex"}}),
+            json!({"security-reviewer": {"provider": "codex", "model": " "}}),
+            json!({"security-reviewer": {"provider": "codex", "model": "m", "effort": 1}}),
+            json!({"security-reviewer": {"provider": "codex", "model": "m", "extra": 1}}),
+        ] {
+            review["seats"] = seat.clone();
+            assert!(validate_review(&review).is_err(), "{seat}");
+        }
         for key in ["version", "clis", "modes"] {
             let mut missing = empty();
             missing.as_object_mut().unwrap().remove(key);
@@ -529,6 +628,33 @@ mod tests {
         assert!(save(&root, &document()).is_err());
         assert!(root.join(FILE).is_dir());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn review_seats_save_to_their_own_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("data");
+        let reader = Reader::new(root.clone());
+        assert_eq!(read_review(&root).unwrap()["seats"], json!({}));
+        let seats = json!({"version": 1, "seats": {
+            "correctness-reviewer": {"provider": "codex", "model": "gpt-6.1-sol"}
+        }});
+        let post = |body: &Value| {
+            reader
+                .request(
+                    "POST",
+                    "/app/review",
+                    Some("1"),
+                    &serde_json::to_vec(body).unwrap(),
+                )
+                .status
+        };
+        assert_eq!(post(&json!({"version": 1, "seats": {"x": {}}})), 400);
+        assert_eq!(post(&seats), 200);
+        assert_eq!(read_review(&root).unwrap(), seats);
+        assert!(!root.join(FILE).exists());
+        fs::write(root.join(REVIEW_FILE), b"{").unwrap();
+        assert!(read_review(&root).is_err());
     }
 
     #[test]
