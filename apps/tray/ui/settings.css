@@ -2,7 +2,7 @@
 /* Adheres to warm neutral palette and native typography from manage.css */
 
 /* Navigation */
-.badge-dot { display: inline-block; width: 6px; height: 6px; background: var(--bad); border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+.badge-dot { display: inline-block; width: 6px; height: 6px; background: var(--warn); border-radius: 50%; margin-left: 6px; vertical-align: middle; }
 
 /* Banners */
 .banner { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 14px 18px; border-radius: 9px; margin-bottom: 20px; font-size: 12.5px; }
@@ -213,7 +213,6 @@
   .cli-header { grid-template-columns: minmax(0, 1fr) 150px; gap: 10px; }
   .cli-toggle { flex-wrap: wrap; }
   .cli-title-area { gap: 6px; }
-  .settings-page .tab-btn { flex: 1 1 auto; padding-inline: 10px; }
 }
 @media (max-width: 500px) {
   .cli-header { grid-template-columns: minmax(0, 1fr); }

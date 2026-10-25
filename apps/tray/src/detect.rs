@@ -350,10 +350,15 @@ fn probe(provider: &str) -> Value {
     result
 }
 
-/// The first version-looking word of `--version` output: `codex-cli 0.161.0`,
-/// `2.1.308 (Claude Code)`, `grok 1.0.46 (2765805b)` all give the number.
+/// The first version-looking word on the first line of `--version` output: `codex-cli 0.161.0`,
+/// `2.1.308 (Claude Code)`, `grok 1.0.46 (2765805b)` all give the number; later lines (a
+/// runtime's own version, say) are never read.
 fn version_of(output: &str) -> Option<String> {
-    output.split_whitespace().find_map(|word| {
+    let first = output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    first.split_whitespace().find_map(|word| {
         let word = word.trim_start_matches('v');
         let end = word
             .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
@@ -792,6 +797,10 @@ mod tests {
         );
         assert_eq!(version_of("v1.4.7").as_deref(), Some("1.4.7"));
         assert_eq!(version_of("usage: tool [options]"), None);
+        assert_eq!(
+            version_of("\nmytool 3.2.0\nNode v22.14.0").as_deref(),
+            Some("3.2.0")
+        );
     }
 
     fn ids(models: &[Value]) -> Vec<&str> {

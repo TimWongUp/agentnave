@@ -621,7 +621,7 @@ function buildCard(host) {
   ];
   const details = h(
     "button.adv-btn",
-    { type: "button", "data-act": "adv", "aria-expanded": String(open), "aria-controls": `adv-${id}` },
+    { type: "button", "data-act": "adv", "aria-expanded": String(open), "aria-controls": `details-${id}` },
     h("i.chev", { "aria-hidden": "true" }),
     "详情",
   );
@@ -667,14 +667,15 @@ function buildCard(host) {
     ));
   }
   if (S.confirm === id && !busy) main.push(confirmBlock(host));
-  if (open) {
-    main.push(h("dl.hc-facts", {},
-      h("div", {}, h("dt", {}, "入口"), h("dd", {}, entryNode(host))),
-      h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
-      h("div.wide", {}, h("dt", {}, host.status === "available" ? "配置文件（接入时写入）" : "配置文件"), h("dd", {}, pathRow(host.config_path))),
-    ));
-    if (!orphan) main.push(advPanel(host));
-  }
+  // The 详情 button controls this wrapper, which every status renders (an orphan has no advanced part).
+  if (open)
+    main.push(h("div.hc-details", { id: `details-${id}` },
+      h("dl.hc-facts", {},
+        h("div", {}, h("dt", {}, "入口"), h("dd", {}, entryNode(host))),
+        h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
+        h("div.wide", {}, h("dt", {}, host.status === "available" ? "配置文件（接入时写入）" : "配置文件"), h("dd", {}, pathRow(host.config_path))),
+      ),
+      !orphan && advPanel(host)));
   card.append(h("div.hc-main", {}, ...main));
   return card;
 }
