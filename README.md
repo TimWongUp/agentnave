@@ -58,8 +58,8 @@ Follow the [installation guide](docs/installation.md) to:
 4. Verify both MCP tools and Skill discovery; restart connections or sessions after changes.
 
 **The paired release is `v0.43.0`.** Install the runtime and complete Skill directory from that
-tag. Hosts under the same OS user share one runtime installation, but each MCP connection runs its
-own STDIO service process. Provider CLIs must be installed and authenticated separately; `uv`
+tag. Hosts under the same OS user and `uv` tool directories share one runtime installation, but
+each MCP connection runs its own STDIO service process. Provider CLIs must be installed and authenticated separately; `uv`
 manages only the runtime and does not install the Skill or change provider configuration.
 
 Tasks and groups save history under `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`). Provider
