@@ -161,7 +161,7 @@
   lightQuery.addEventListener("change", applyTheme);
   addEventListener("storage", (e) => e.key === THEME_KEY && applyTheme());
   applyTheme();
-  document.querySelector("header.bar")?.append(themeSwitch());
+  document.querySelector("header.bar")?.append(h("div.bar-end", {}, themeSwitch()));
   // Painted art pauses with the window: a hidden window runs no animation at all.
   const syncPaused = () => document.documentElement.classList.toggle("paused", document.hidden);
   document.addEventListener("visibilitychange", syncPaused);
@@ -517,4 +517,46 @@
   }
 
   Object.assign(AN, { post, installService, onboarding });
+})();
+
+// The window header's update button: shown only when the App or the local service can be updated;
+// one click runs the same one-click update as the settings page.
+(function () {
+  const { h, load, post } = AN;
+  const end = document.querySelector("header.bar .bar-end");
+  if (!end) return;
+  const button = h("button.bar-update", { type: "button", hidden: true });
+  end.prepend(button);
+  let status = null;
+  let pending = false;
+  function render() {
+    const update = status?.update?.state;
+    const service = status?.service?.state;
+    const busy = pending || update === "installing" || ["upgrading", "installing"].includes(service);
+    const found = update === "available" || service === "outdated";
+    button.hidden = !busy && !found;
+    button.disabled = busy;
+    button.textContent = busy ? "正在更新…" : update === "available" ? `↑ 更新到 v${status.update.version}` : "↑ 升级本机服务";
+    button.title = update === "available"
+      ? "更新 App 后自动重启，本机服务随后自动跟上"
+      : "本机服务比 App 旧，升级约需一分钟，正在运行的任务不受影响";
+  }
+  async function refresh() {
+    if (document.hidden) return;
+    try { status = await load("/app/status"); } catch { return; }
+    render();
+  }
+  button.addEventListener("click", async () => {
+    pending = true;
+    render();
+    try { status = await post("/app/update/apply"); } catch { /* the next refresh shows the state */ }
+    pending = false;
+    render();
+  });
+  // The settings page reads the status itself; reuse what it got.
+  addEventListener("agentnave:status", ({ detail }) => { status = detail; render(); });
+  document.addEventListener("visibilitychange", refresh);
+  setInterval(refresh, 60000);
+  // After every deferred script, so the preview's mock backend is in place too.
+  addEventListener("DOMContentLoaded", refresh);
 })();

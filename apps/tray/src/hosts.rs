@@ -629,7 +629,7 @@ impl Hosts {
         };
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
             "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,

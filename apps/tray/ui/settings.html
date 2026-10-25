@@ -20,24 +20,14 @@
     <a draggable="false" class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
     <nav class="nav" aria-label="主导航">
       <a draggable="false" href="/chat/">办公室</a>
-      <a draggable="false" href="/manage/">管理会话</a>
-      <a draggable="false" href="/settings/" aria-current="page">设置</a>
+      <a draggable="false" href="/manage/">会话</a>
+      <a draggable="false" id="nav-members" href="/settings/#members">执行者<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
+      <a draggable="false" id="nav-hosts" href="/settings/#hosts">接入<span id="hosts-badge" class="badge-dot" hidden></span><span id="update-badge" class="badge-dot" hidden></span></a>
+      <a draggable="false" id="nav-avatars" href="/settings/#avatars">头像</a>
+      <a draggable="false" id="nav-orchestration" href="/settings/#orchestration">编排</a>
     </nav>
 </header>
 <main>
-
-  <section class="intro">
-    <div>
-      <p class="eyebrow">本机偏好 · 托盘管理</p>
-      <h1>设置</h1>
-    </div>
-  </section>
-    <div class="tabs" role="tablist" aria-label="设置分区">
-      <button id="tab-members" class="tab-btn active" role="tab" aria-selected="true" type="button">执行者与模型<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></button>
-      <button id="tab-avatars" class="tab-btn" role="tab" aria-selected="false" type="button">头像</button>
-      <button id="tab-orchestration" class="tab-btn" role="tab" aria-selected="false" type="button">编排偏好</button>
-      <button id="tab-hosts" class="tab-btn" role="tab" aria-selected="false" type="button">接入与更新<span id="hosts-badge" class="badge-dot" hidden></span><span id="update-badge" class="badge-dot" hidden></span></button>
-    </div>
 
   <div id="notice" role="status" aria-live="polite">正在读取设置…</div>
 
@@ -49,7 +39,7 @@
   </div>
 
   <!-- 分区 1：执行者与模型 -->
-  <section id="pane-members" class="tab-pane active" role="tabpanel" aria-labelledby="tab-members">
+  <section id="pane-members" class="tab-pane active" aria-labelledby="nav-members">
     <div id="migration-banner" class="banner migration" hidden>
       <div class="banner-content">
         <strong id="migration-title">已将原编排档案的模型与说明迁移；两种场景当前未限制，如需限制再开启</strong>
@@ -102,12 +92,12 @@
     </aside>
   </section>
 
-  <section id="pane-avatars" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-avatars">
+  <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">
     <p class="guidance">这里调整办公室中的头像，上传或恢复后立即保存。默认使用模型家族图标；也可为某个工具下的指定模型单独设置。支持 PNG、JPEG 或 WebP（最大 5 MB、1600 万像素），图片居中裁剪，仅保存在本机，私聊与会议共用。</p>
     <div id="avatar-settings" aria-live="polite"></div>
   </section>
 
-  <section id="pane-orchestration" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-orchestration">
+  <section id="pane-orchestration" class="tab-pane" hidden aria-labelledby="nav-orchestration">
     <p class="guidance">AgentNave 只提供调用方式，不规定主控怎么分工。想让主控按固定方式编排时，把偏好写进宿主的全局规则文件，例如何时开会、谁做评审、分歧讨论几轮。AgentNave 不会替你写入这些文件。</p>
     <div class="updates-panel">
       <div class="updates-card">
@@ -143,7 +133,7 @@
     </div>
   </section>
 
-  <section id="pane-hosts" class="tab-pane" hidden role="tabpanel" aria-labelledby="tab-hosts">
+  <section id="pane-hosts" class="tab-pane" hidden aria-labelledby="nav-hosts">
     <div class="updates-panel">
       <div class="updates-card">
         <h2>版本与更新</h2>
@@ -198,8 +188,7 @@
 
     <div class="settings-guide">
       <h2>宿主接入与生效</h2>
-      <p>“宿主”是派发任务的 AI 应用。“已接入”表示配置已写好。连接会自动检测，只有运行中的会话还在用旧配置或旧接口时，卡片才提示重新加载；没有提示就无需操作。</p>
-      <p>接入操作会立即保存，并在写入前备份原配置。已有手写连接会补齐宿主标识，必要时更新本机服务入口，其余字段保留。</p>
+      <p>“宿主”是派发任务的 AI 应用。App 自动找到本机装了哪些，由你决定在哪些里接入 AgentNave；接入前会备份原配置，其他条目不动。需要重新加载时行内会提示，没有提示就无需操作。</p>
     </div>
 
     <div id="new-callout" class="callout" hidden></div>

@@ -1,6 +1,6 @@
 /* App group chat. Variables and fonts come from manage.css; this file adds the few it lacks. */
 :root {
-  --solid: #15171b;
+  --solid: #1e1e1e;
   --card: #ffffff0b;
   --card-hover: #ffffff12;
   --line-strong: #ffffff2e;
@@ -8,13 +8,13 @@
   --review: #f0b45a;
   --done: #7fca90;
   --idle: #7a808a;
-  --accent-ink: #1d1609;
+  --accent-ink: #1d1d1f;
   --m0: #6ea8ff; --m1: #a88bff; --m2: #e873d6; --m3: #ff7fa2;
   --m4: #ff9a4d; --m5: #b5d94e; --m6: #3fd08a; --m7: #42c7e6;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 :root[data-theme="light"] {
-  --solid: #fbfaf8;
+  --solid: #fbfbfd;
   --card: #0000000a;
   --card-hover: #00000010;
   --line-strong: #0000002e;
