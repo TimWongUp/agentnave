@@ -114,8 +114,15 @@ class ReviewSeat(StrictModel):
     """The CLI and model the user picked in the App for one agentnave-review role."""
 
     provider: ProviderName
-    model: str = Field(min_length=1)
+    model: str = Field(pattern=r"\S")
     effort: str = ""
+
+
+class ReviewFile(StrictModel):
+    """review.json, apart from members.json so older servers keep reading their members."""
+
+    version: int = Field(ge=1, le=1)
+    seats: dict[ReviewRole, ReviewSeat] = {}
 
 
 class MemberFile(StrictModel):
@@ -124,9 +131,6 @@ class MemberFile(StrictModel):
     modes: dict[Mode, dict[ProviderName, ModeCLI]]
     # Default models for unrestricted modes, kept when the user turns the allow-list off.
     defaults: dict[Mode, dict[ProviderName, str]] = {}
-    # Review seats are not checked against clis: a removed model is reported by list_members,
-    # and the review Skill picks a replacement at dispatch time.
-    review: dict[ReviewRole, ReviewSeat] = {}
 
     def effective(self, mode: Mode, provider: ProviderName, model: str) -> MemberConfig:
         cli = self.clis.get(provider)
@@ -278,8 +282,12 @@ def cli_default_model(provider: str) -> str | None:
     return model if isinstance(model, str) and model else None
 
 
+def _data_root() -> Path:
+    return Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+
+
 def read_members() -> MemberFile | None:
-    root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+    root = _data_root()
     try:
         content = (root / "members.json").read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -346,6 +354,7 @@ class MemberList(StrictModel):
     host_source: HostSource
     modes: dict[Mode, ModeStatus]
     review: dict[ReviewRole, ReviewSeatStatus] = {}
+    review_error: str | None = None
 
 
 def list_members(excluded: frozenset[str], host: Host) -> MemberList:
@@ -421,28 +430,44 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         modes[mode] = ModeStatus(
             restricted=document is not None and mode in document.modes, members=items
         )
+    # Review seats are not checked against clis: a removed model is reported here, and the
+    # review Skill picks a replacement at dispatch time. A broken review.json leaves members alone.
+    review: dict[ReviewRole, ReviewSeatStatus] = {}
+    review_error = None
+    try:
+        content = (_data_root() / "review.json").read_text(encoding="utf-8")
+        review = _review_status(
+            ReviewFile.model_validate_json(content).seats, modes["task"], excluded
+        )
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        review_error = f"Invalid review.json: {exc}. Repair it in the AgentNave App."
     return MemberList(
         configured=document is not None,
         host=host.name,
         host_source=host.source,
         modes=modes,
-        review=_review_status(document, modes["task"].members) if document else {},
+        review=review,
+        review_error=review_error,
     )
 
 
 def _review_status(
-    document: MemberFile, task: list[MemberStatus]
+    review: dict[ReviewRole, ReviewSeat], mode: ModeStatus, excluded: frozenset[str]
 ) -> dict[ReviewRole, ReviewSeatStatus]:
+    task = mode.members
     seats: dict[ReviewRole, ReviewSeatStatus] = {}
-    for role, seat in document.review.items():
+    for role, seat in review.items():
         member = next(
             (m for m in task if m.provider == seat.provider and m.model in (seat.model, "*")),
             None,
         )
-        if member is None:
-            reason = "model is not among this CLI's task members"
-        elif not member.permitted:
+        if seat.provider in excluded:
             reason = "CLI is excluded by this host"
+        elif member is None:
+            # An unrestricted task mode accepts any model.
+            reason = "model is not among this CLI's task members" if mode.restricted else None
         elif not member.valid:
             reason = member.error
         elif seat.effort and member.efforts and seat.effort not in member.efforts:

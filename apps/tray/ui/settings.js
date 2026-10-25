@@ -112,6 +112,8 @@ let busy = false;
 let probing = false; // A CLI re-probe is running; it never blocks saving.
 let probedAt = 0;
 let documentError = null;
+let reviewSeats = {}; // review.json seats; saved on their own, apart from members.json.
+let reviewError = null;
 let docVersion = 0; // Monotonic counter for save race detection
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let missingOpen = false; // The folded list of CLIs not installed here
@@ -136,6 +138,7 @@ const isMock =
 // 3. Override tri-state example.
 // 4. migration_skipped with migrated=false.
 const mockMembersData = {
+  review: { version: 1, seats: {} },
   document: {
     version: 1,
     clis: {
@@ -269,6 +272,25 @@ async function apiGetMembers(refresh = false) {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`获取成员配置失败（${res.status}）`);
   return res.json();
+}
+
+async function apiPostReview(doc) {
+  if (isMock) {
+    mockMembersData.review = JSON.parse(JSON.stringify(doc));
+    return;
+  }
+  const res = await fetch("/app/review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+    body: JSON.stringify(doc),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+}
+
+function takeReview(data) {
+  reviewSeats = data.review?.seats || {};
+  reviewError = data.review_error || null;
 }
 
 async function apiPostMembers(doc) {
@@ -1446,34 +1468,46 @@ const REVIEW_ROLES = [
   ["adversarial-verifier", "反证", "高风险改动修完后尝试推翻结论"],
 ];
 
-// Seats save on their own, onto the last saved document, so unsaved 执行者 edits stay unsaved.
-// A picked model is also added to that CLI's configured models, where the server looks for it.
+// Seats save on their own to review.json, so unsaved 执行者 edits stay unsaved. A picked model
+// missing from that CLI's configured models is also added to the last saved members.json,
+// where the server looks for it.
 async function setReviewSeat(role, seat) {
-  if (documentError) return showNotice("配置文件有错误，请先在“执行者”里修复", true);
-  const review = { ...(currentDoc.review || {}) };
-  if (seat) review[role] = seat;
-  else delete review[role];
-  const apply = (doc) => {
-    if (seat) {
-      doc.clis ||= {};
-      doc.clis[seat.provider] ||= { models: {} };
-      doc.clis[seat.provider].models ||= {};
-      if (!Object.hasOwn(doc.clis[seat.provider].models, seat.model)) doc.clis[seat.provider].models[seat.model] = {};
-    }
-    if (Object.keys(review).length) doc.review = review;
-    else delete doc.review;
+  if (reviewError) return showNotice(`${reviewError}；请先修复或删除这个文件`, true);
+  // One write at a time: a write built on a stale saved document would undo the other one.
+  if (busy) {
+    showNotice("正在保存，请稍后再选", true);
+    return renderReviewSeats();
+  }
+  const seats = { ...reviewSeats };
+  if (seat) seats[role] = seat;
+  else delete seats[role];
+  const add = (doc) => {
+    doc.clis ||= {};
+    doc.clis[seat.provider] ||= { models: {} };
+    doc.clis[seat.provider].models ||= {};
+    doc.clis[seat.provider].models[seat.model] ||= {};
     return doc;
   };
-  const saved = apply(JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} })));
+  const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
+  const missing = seat && !Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model);
+  busy = true;
+  updateControls();
   try {
-    await apiPostMembers(saved);
-    savedSnapshot = JSON.stringify(saved);
-    apply(currentDoc);
-    refreshDirty();
-    updateControls();
+    if (missing) {
+      if (documentError) throw new Error("配置文件有错误，请先在“执行者”里修复");
+      await apiPostMembers(add(saved));
+      savedSnapshot = JSON.stringify(saved);
+      add(currentDoc);
+      refreshDirty();
+    }
+    await apiPostReview({ version: 1, seats });
+    reviewSeats = seats;
     showNotice("评审工位已保存");
   } catch (err) {
     showNotice(`评审工位保存失败: ${err.message}`, true);
+  } finally {
+    busy = false;
+    updateControls();
   }
   renderReviewSeats();
 }
@@ -1491,7 +1525,7 @@ function renderReviewSeats() {
   if (!box) return;
   const focusKey = document.activeElement?.dataset?.focusKey;
   const rows = REVIEW_ROLES.map(([role, name, hint]) => {
-    const seat = currentDoc.review?.[role];
+    const seat = reviewSeats[role];
     const provider = seat?.provider || "";
     const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
       .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : "（没有可选模型）"), !getAllModelIds(p).length && p !== provider]);
@@ -1625,6 +1659,7 @@ async function refreshDetection(quiet = false) {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
+    if (!busy) takeReview(data);
     // Without unsaved edits, or a save while probing, take the file as read too.
     // An unchanged file keeps the current objects, which the rendered cards still edit.
     const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
@@ -1666,6 +1701,7 @@ async function loadMembers() {
     currentDoc = data.document || { version: 1, clis: {}, modes: {} };
     markSaved();
     documentError = data.error || null;
+    takeReview(data);
     lastMigrationData = data;
 
     renderMigrationBanner(data);

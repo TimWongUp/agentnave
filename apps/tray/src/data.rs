@@ -214,6 +214,24 @@ impl Reader {
         if path == "/app/avatars" {
             return crate::avatars::request(&self.root, method, action, body);
         }
+        if path == "/app/review" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::members::validate_review(&payload) {
+                return Response::error(400, &error);
+            }
+            return match crate::members::save_review(&self.root, &payload) {
+                Ok(()) => Response::json(&json!({"saved": true})),
+                Err(error) => Response::error(500, &error),
+            };
+        }
         if path == "/app/members" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");

@@ -1015,7 +1015,8 @@ async def list_members(
 
     valid checks Adapter options, not installation, authentication or model availability.
     Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
-    review holds the CLI and model the user picked in the App for each agentnave-review role.
+    review holds the CLI and model the user picked in the App for each agentnave-review role,
+    from review.json; review_error reports a broken review.json without affecting members.
     """
     try:
         members = read_member_list(EXCLUDED_PROVIDERS, HOST)

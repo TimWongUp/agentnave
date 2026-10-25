@@ -1205,6 +1205,48 @@ fn optional_skill_switch_installs_only_when_on_and_leaves_external_copies() {
 }
 
 #[test]
+fn optional_skill_off_keeps_a_copy_another_host_shares_and_wants() {
+    let (temp, mut hosts) = fixture();
+    let shared = temp.path().canonicalize().unwrap().join("buddy");
+    hosts
+        .context
+        .env
+        .insert("CODEBUDDY_CONFIG_DIR".into(), shared.display().to_string());
+    let path = host(&hosts, "codebuddy")
+        .optional("agentnave-review")
+        .unwrap();
+    assert_eq!(
+        host(&hosts, "workbuddy").optional("agentnave-review"),
+        Some(path.clone())
+    );
+    let switch =
+        |id: &str, enabled: bool| json!({"id":id,"skill":"agentnave-review","enabled":enabled});
+    hosts.action("skill", &switch("codebuddy", true)).unwrap();
+    hosts.action("skill", &switch("workbuddy", true)).unwrap();
+    let embedded = skill::OPTIONAL[0].1;
+    skill::install(
+        &path,
+        &hosts.context.app,
+        "codebuddy",
+        &hosts.context.home,
+        embedded,
+    )
+    .unwrap();
+
+    let off = hosts.action("skill", &switch("workbuddy", false)).unwrap();
+    assert!(off["message"].as_str().unwrap().contains("共用"));
+    assert_eq!(
+        skill::state(&path, &hosts.context.home, embedded)["state"],
+        "app"
+    );
+    hosts.action("skill", &switch("codebuddy", false)).unwrap();
+    assert_eq!(
+        skill::state(&path, &hosts.context.home, embedded)["state"],
+        "missing"
+    );
+}
+
+#[test]
 fn refresh_installs_missing_skill_only_for_managed_host_entry() {
     let (_temp, mut hosts) = fixture();
     let h = host(&hosts, "pi");

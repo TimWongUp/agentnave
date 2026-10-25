@@ -8,7 +8,7 @@
 
 - 评审流程写成独立 Skill `agentnave-review`，与 `agentnave-manager` 分开维护，调用方式仍以后者为准。流程由调用方 Agent 执行，运行时、MCP 工具和 `agentnave-manager` 不承担评审判断。
 - App 构建时同时内嵌两个 Skill。可选 Skill 在 App「技能」页集中展示说明和完整写法，供用户决定是否使用；`agentnave-review` 是第一个，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；安装、更新、备份和所有权校验沿用 `agentnave-manager` 的 App 副本规则，外部管理的副本不改动，开关置灰。
-- 评审工位存于 `members.json` 的 `review`：按八个固定角色记录 `provider`、`model` 与可选 `effort`。App 只做结构校验，允许引用已不在组员里的模型；`list_members` 返回每个工位的可用性、原因和提供同一模型 ID 的其他可用 CLI。
+- 评审工位存于独立的 `review.json`：按八个固定角色记录 `provider`、`model` 与可选 `effort`。不放进 `members.json`，因为旧版服务按严格结构整份解析组员文件，App 先更新、服务尚未换新进程时会整份拒绝；`review.json` 损坏只影响评审工位，`list_members` 以 `review_error` 报告。App 只做结构校验，允许引用已不在组员里的模型；`list_members` 返回每个工位的可用性、原因和提供同一模型 ID 的其他可用 CLI。
 - Skill 选工位的顺序：当前对话里用户点名 > App 评审工位 > 按组员自动选。App 工位在当前宿主不可用时，同类 CLI 被排除改用宿主自带子代理，模型不在组员里改找提供同一模型的 CLI，并在评审记录里注明。
 
 ## 取舍

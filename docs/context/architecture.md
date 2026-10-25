@@ -162,7 +162,7 @@ App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 
 十个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份（拆分前的旧备份按配置计）。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回各用户、覆盖与项目层；移除遍历全部用户层并逐个备份，项目层不写，多层独立替换不构成原子整体。
 
-构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「技能」页列出说明与完整写法，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；开启时已接入则立即安装，否则下次接入时安装，关闭只移除 App 副本，移除宿主条目时两者一并移除。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
+构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「技能」页列出说明与完整写法，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；开启时已接入则立即安装，否则下次接入时安装，关闭只移除 App 副本（共用同一目录的宿主仍有一方开启时保留），移除宿主条目时两者一并移除。评审工位存于独立的 `review.json`，经 `POST /app/review` 保存，不进入 `members.json`。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
 GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root|confirm-reload 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
 

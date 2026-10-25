@@ -1331,6 +1331,24 @@ impl Hosts {
             return Err("请先修复 hosts.json".into());
         }
         let path = host.optional(name).ok_or("此宿主不支持安装 Skill")?;
+        let external = skill::state(&path, &self.context.home, embedded)["state"] == "external";
+        // Hosts can share one folder (CODEBUDDY_CONFIG_DIR); the copy stays while another wants it.
+        let shared = !enabled
+            && self.registry().iter().any(|other| {
+                other.id != host.id
+                    && other.optional(name).as_deref() == Some(path.as_path())
+                    && self.skill_wanted(other.id, name)
+            });
+        // Off removes before recording, so a failed removal leaves the switch on.
+        if !enabled && !external && !shared {
+            skill::remove(
+                &path,
+                &self.context.app,
+                host.id,
+                &self.context.home,
+                embedded,
+            )?;
+        }
         let mut settings = self.settings.clone();
         if !settings[host.id].is_object() {
             settings[host.id] = json!({});
@@ -1341,18 +1359,13 @@ impl Hosts {
         settings[host.id]["skills"][name] = json!(enabled);
         roots::save(&self.context, &settings)?;
         self.settings = settings;
-        let state = skill::state(&path, &self.context.home, embedded);
-        if state["state"] == "external" {
+        if external {
             return Ok("已记录；外部管理的副本保留，App 不改动".into());
         }
+        if shared {
+            return Ok("已停用；另一宿主共用此目录且仍启用，副本保留".into());
+        }
         if !enabled {
-            skill::remove(
-                &path,
-                &self.context.app,
-                host.id,
-                &self.context.home,
-                embedded,
-            )?;
             return Ok("已停用并移除".into());
         }
         if !self.has_managed_entry(host)? {

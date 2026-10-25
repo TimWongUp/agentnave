@@ -709,16 +709,21 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         clis["antigravity"]["models"]["bad-restricted"] = {
             "options": {"restricted_tools": True, "sandbox": True}
         }
-        document["review"] = {
+        seats = {
             "correctness-reviewer": {"provider": "grok", "model": "chosen", "effort": "high"},
             "security-reviewer": {"provider": "codex", "model": "chosen"},
             "performance-reviewer": {"provider": "grok", "model": "gone"},
         }
+        (root / "review.json").write_text("{", encoding="utf-8")
         content = json.dumps(document, ensure_ascii=False)
         path = root / "members.json"
         path.write_text(content, encoding="utf-8")
         listed = await client.call_tool("list_members", {})
         assert not listed.is_error
+        broken = _payload(listed.structured_content)
+        assert broken["review"] == {} and "review.json" in cast(str, broken["review_error"])
+        (root / "review.json").write_text(json.dumps({"version": 1, "seats": seats}))
+        listed = await client.call_tool("list_members", {})
         review = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["review"])
         assert review["correctness-reviewer"]["available"] is True
         assert review["correctness-reviewer"]["effort"] == "high"
@@ -730,7 +735,8 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             "antigravity",
             "pi",
         ]
-        assert review["performance-reviewer"]["available"] is False
+        # An unrestricted task mode accepts any model.
+        assert review["performance-reviewer"]["available"] is True
         assert review["performance-reviewer"]["alternatives"] == []
         modes = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["modes"])
         items = cast(list[dict[str, object]], modes["task"]["members"])
@@ -748,7 +754,7 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             ("codex", "chosen")
         ]
         assert path.read_text(encoding="utf-8") == content
-        assert list(root.iterdir()) == [path]
+        assert sorted(root.iterdir()) == [path, root / "review.json"]
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
         fresh = _payload((await client.call_tool("list_members", {})).structured_content)
         assert fresh["configured"] is True
