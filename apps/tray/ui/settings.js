@@ -114,6 +114,7 @@ let probedAt = 0;
 let documentError = null;
 let reviewSeats = {}; // review.json seats; saved on their own, apart from members.json.
 let reviewError = null;
+let reviewSaves = 0; // Seats saved so far; a probe answered before a save carries old seats.
 let docVersion = 0; // Monotonic counter for save race detection
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let missingOpen = false; // The folded list of CLIs not installed here
@@ -1502,6 +1503,7 @@ async function setReviewSeat(role, seat) {
     }
     await apiPostReview({ version: 1, seats });
     reviewSeats = seats;
+    reviewSaves += 1;
     showNotice("评审工位已保存");
   } catch (err) {
     showNotice(`评审工位保存失败: ${err.message}`, true);
@@ -1653,13 +1655,14 @@ async function refreshDetection(quiet = false) {
   probing = true;
   probedAt = Date.now();
   const before = savedSnapshot;
+  const seatsBefore = reviewSaves;
   updateControls();
   if (!quiet) showNotice("正在重新检测 CLI 与模型…");
   try {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
-    if (!busy) takeReview(data);
+    if (!busy && reviewSaves === seatsBefore) takeReview(data);
     // Without unsaved edits, or a save while probing, take the file as read too.
     // An unchanged file keeps the current objects, which the rendered cards still edit.
     const fileDoc = data.document || { version: 1, clis: {}, modes: {} };

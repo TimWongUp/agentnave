@@ -1235,6 +1235,7 @@ fn optional_skill_off_keeps_a_copy_another_host_shares_and_wants() {
 
     let off = hosts.action("skill", &switch("workbuddy", false)).unwrap();
     assert!(off["message"].as_str().unwrap().contains("共用"));
+    hosts.action("remove", &json!({"id":"workbuddy"})).unwrap();
     assert_eq!(
         skill::state(&path, &hosts.context.home, embedded)["state"],
         "app"

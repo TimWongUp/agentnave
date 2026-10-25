@@ -1146,7 +1146,9 @@ impl Hosts {
                     )?;
                 }
                 for (name, embedded) in skill::OPTIONAL {
-                    if let Some(path) = host.optional(name) {
+                    if let Some(path) = host.optional(name)
+                        && !self.shared_wanted(&host, name, &path)
+                    {
                         skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
                     }
                 }
@@ -1315,6 +1317,14 @@ impl Hosts {
     fn skill_wanted(&self, id: &str, name: &str) -> bool {
         self.settings[id]["skills"][name] == true
     }
+    /// Hosts can share one folder (CODEBUDDY_CONFIG_DIR); the copy stays while another wants it.
+    fn shared_wanted(&self, host: &Host, name: &str, path: &Path) -> bool {
+        self.registry().iter().any(|other| {
+            other.id != host.id
+                && other.optional(name).as_deref() == Some(path)
+                && self.skill_wanted(other.id, name)
+        })
+    }
     /// Switches one optional Skill: on installs it now if the host is connected (otherwise on the
     /// next connect), off removes only the App's own copy.
     fn set_optional_skill(
@@ -1332,13 +1342,7 @@ impl Hosts {
         }
         let path = host.optional(name).ok_or("此宿主不支持安装 Skill")?;
         let external = skill::state(&path, &self.context.home, embedded)["state"] == "external";
-        // Hosts can share one folder (CODEBUDDY_CONFIG_DIR); the copy stays while another wants it.
-        let shared = !enabled
-            && self.registry().iter().any(|other| {
-                other.id != host.id
-                    && other.optional(name).as_deref() == Some(path.as_path())
-                    && self.skill_wanted(other.id, name)
-            });
+        let shared = !enabled && self.shared_wanted(host, name, &path);
         // Off removes before recording, so a failed removal leaves the switch on.
         if !enabled && !external && !shared {
             skill::remove(
