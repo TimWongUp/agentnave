@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.40.1` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.41.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
 the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
 native Windows support.
@@ -24,7 +24,7 @@ native Windows support.
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.40.1`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.41.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -567,6 +567,15 @@ Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools o
 migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
 and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
 separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
+
+### Upgrading from v0.40.1 to v0.41.0
+
+Update the App, runtime and Skill together with "Update all"; MCP tools, history and
+`members.json` need no migration. The App's sections now sit in one row at the top of the window
+(办公室 · 会话 · 执行者 · 接入 · 头像 · 编排) and an update button appears at the top right when
+an update is available; old `/settings/#hosts` and `#updates` links still open the right section.
+The App uses macOS's black-and-white palette, lists hosts and CLIs as rows, and shows each
+installed CLI's version from its `--version`. See [v0.41.0 release notes](releases/v0.41.0.md).
 
 ### Upgrading from v0.40.0 to v0.40.1
 
