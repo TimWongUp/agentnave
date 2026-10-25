@@ -13,7 +13,7 @@ from typing import Literal, get_args
 from uuid import UUID
 
 from agentnave.adapters.base import model_from_event, object_dict, parse_json_object
-from agentnave.nesting import read_process_argv, read_process_parent
+from agentnave.process_info import read_process_argv, read_process_parent
 
 type HostName = Literal[
     "codex",

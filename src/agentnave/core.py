@@ -199,6 +199,13 @@ def _output_limit_error(
     return replace(_OUTPUT_LIMIT_ERROR, details="\n\n".join(details)[:_MAX_ERROR_DETAILS])
 
 
+SUBAGENT_INSTRUCTIONS = (
+    "You are a subagent dispatched by AgentNave. Complete the assigned task and report back "
+    "to the calling manager. Do not call AgentNave tools or use AgentNave to delegate further "
+    "work. If blocked, report the blocker to the manager."
+)
+
+
 class InvocationManager:
     """Own active child processes only for this Python process lifetime."""
 
@@ -206,10 +213,16 @@ class InvocationManager:
         self._records: dict[str, _InvocationRecord] = {}
         self._closed = False
 
+    def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        """Apply the shared subagent instruction before provider-specific encoding."""
+        return get_adapter(request.provider).prepare(
+            replace(request, prompt=f"{SUBAGENT_INSTRUCTIONS}\n\nAssigned task:\n{request.prompt}")
+        )
+
     def start(self, request: InvocationRequest, *, prepared: PreparedCommand | None = None) -> str:
         self.check_start(request)
         adapter = get_adapter(request.provider)
-        prepared = prepared if prepared is not None else adapter.prepare(request)
+        prepared = prepared if prepared is not None else self.prepare(request)
         invocation_id = str(uuid.uuid4())
         record = _InvocationRecord(request)
         self._records[invocation_id] = record
