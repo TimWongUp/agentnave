@@ -18,6 +18,7 @@ from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
+    SUBAGENT_INSTRUCTIONS,
     InvocationManager,
     _read_limited,  # pyright: ignore[reportPrivateUsage]
 )
@@ -87,6 +88,10 @@ class FakeAdapter(ClaudeAdapter):
     name = "claude"
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
+        request = replace(
+            request,
+            prompt=request.prompt.removeprefix(f"{SUBAGENT_INSTRUCTIONS}\n\nAssigned task:\n"),
+        )
         seconds = "30" if request.prompt == "sleep" else "0"
         if request.prompt == "child_holds_pipes":
             marker = request.cwd / "descendant-survived"

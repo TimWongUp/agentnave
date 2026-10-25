@@ -52,6 +52,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "#!/usr/bin/env python3\n"
         "import json, os, sys, time, uuid\n"
         "prompt = sys.stdin.buffer.read().decode('utf-8')\n"
+        "assert prompt.startswith('You are a subagent dispatched by AgentNave.')\n"
+        "assert 'Do not call AgentNave tools' in prompt.split('\\n\\nAssigned task:\\n', 1)[0]\n"
         "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
         "session = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--resume=')),\n"

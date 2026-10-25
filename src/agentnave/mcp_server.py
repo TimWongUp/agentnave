@@ -47,7 +47,6 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
-from agentnave.nesting import detect_nesting
 from agentnave.store import Review, Unavailable
 
 type ManagerModel = Annotated[
@@ -410,6 +409,8 @@ mcp = _Server(
         "or keeps it private before other seats see it. History survives restart; running "
         "processes do not. Invocation handles expire seven days after completion. "
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
+        "Every dispatched prompt includes an instruction to complete the assigned task, "
+        "report back to the manager, and not call AgentNave tools or delegate through AgentNave. "
         + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
@@ -1553,13 +1554,7 @@ async def read_conversation(
 
 
 def main() -> None:
-    nesting = detect_nesting()
-    if nesting.status != "not_nested":
-        MCPServer("AgentNave", version=__version__, instructions=nesting.instructions).run(
-            transport="stdio"
-        )
-    else:
-        mcp.run(transport="stdio")
+    mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":

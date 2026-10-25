@@ -22,11 +22,9 @@ AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树
 
 ## 单向编排
 
-AgentNave 派出的 Provider CLI 及其原生子代理不能再通过 AgentNave 编排其他 CLI。服务入口在启动运行时前检测：确认嵌套或检测不可用时，只启动带原因说明的零工具 MCP 服务，不挂载业务 lifespan、不建数据目录、不监听端口、不写文件。宿主直接启动且确认非嵌套的服务保持完整能力；中继只转发，不参与判定。取舍见 [ADR-0011](../adr/0011-disable-nested-orchestration.md)。
+单向编排由派发指令约束。统一核心在每次实际派发、Adapter 编码之前，为私聊和会议席位的 prompt 添加固定指令：只完成分配任务、回报 Manager、不再调用 AgentNave，遇阻交回 Manager；原生会话续接同样带此指令。转发和会议上下文先组装，再统一添加派发指令；历史仍保存调用方的原始任务文本。
 
-POSIX 与 Windows supervisor 在自己的环境中设置 `AGENTNAVE_SUPERVISOR=<自身 PID>`，由 Provider 继承，不改变父服务环境。服务验证标记进程仍存活，POSIX 还验证其确为 AgentNave supervisor；过期标记忽略。macOS／Linux 同时沿同用户祖先链检查 supervisor，以覆盖 CLI 过滤自定义环境变量的情况；只识别 Python 脚本位置参数，不在整条命令行或 prompt 中搜索路径。同用户祖先无法读取或链未能在层数上限内确认时禁用工具，其他用户祖先不要求读取参数。
-
-Windows 第一版只依赖环境标记及其 PID 存活检查，标记被过滤时无法检测；借助树外守护进程启动 MCP 也会失去祖先链信号。此边界不抵御同用户恶意绕过，不扩大 AgentNave 的沙箱承诺。
+服务不根据环境标记或祖先进程判断嵌套，也不因身份无法读取而禁用工具。此约定依赖模型遵守指令，不是工具权限或安全隔离；Provider 原生权限仍是安全边界。取舍见 [ADR-0031](../adr/0031-prompt-only-orchestration.md)。
 
 ## 安装与激活边界
 
@@ -54,7 +52,7 @@ MCP 初始元数据仅保留简短 Provider 目录和通用调用合同。Manage
 
 服务在每次 `start_agent` 或新开节目的 `run_round` 时现读配置，不缓存、不写入、不创建目录。先检查模式允许的 CLI，再对 task 检查宿主排除集合，然后按默认模型（不受限模式取 `defaults`）、默认 effort、其他 options 的顺序补齐未传字段，最后保留 Adapter 原有校验；显式传入的 model／effort 超出范围时拒绝；模式模型列表非空、未设 default 且调用方未传 model 时，也拒绝并列出允许模型，禁止退回原生模型绕过白名单。`session_id` 非空的续接同样现读配置并套用默认值。组席位在创建时冻结套用后的参数，后续轮次沿用，不自动更换模型。文件缺失时保留原生行为（App 首次预填后文件即存在，见下文）；读取或格式错误用专用异常保留 App 修复原文，直接返回 Tool error，不引导修改调用参数；被排除错误保留完整允许／排除清单。只有 Adapter 选项校验异常才追加支持参数提示，不根据错误文本猜测。只读 `list_members` 替代 `list_profiles`，分别列出两个模式的生效配置、默认标志、`permitted` 与 Adapter `option_args` 的 `valid`／`error`；不准备命令、不探测安装、认证或模型可用性。无配置时两个模式不受限且名单为空；受限模式中 CLI 的空模型列表除枚举已知组员外，另列 `model="*"`、default=false、effort=null、efforts=[]、options={}、notes=“不限模型”的通配条目。服务不再读取 `profiles.json`，旧档案迁移由 App 负责。见 [ADR-0013](../adr/0013-members-defaults-and-host-identity.md)。
 
-宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，未知值使启动失败；否则 macOS／Linux 复用嵌套检测的平台读取能力，沿祖先进程最多检查 32 层，匹配可执行文件名、应用包路径或原生 Claude 的 `claude/versions/<版本号>` 路径；已知解释器／包装层（node、bun、deno、python／python3／python3.x、uv、uvx、npx、env、sh、bash、zsh、fish、dash）还按第一个非选项参数识别脚本，去掉 .js／.mjs／.cjs／.py 后缀后匹配。AgentNave 自身的 Python 中继脚本跳过；某层 argv 不可读时继续读父进程，父进程不可读或遇到未匹配宿主的非包装进程则停止，避免误认更外层 GUI。Windows 只读取环境变量。无法识别则 `host=null`、`host_source=unknown`；来源另可为 `env` 或 `parent`。WorkBuddy 映射 codebuddy，gemini／opencode／hermes 无对应 Provider，其余同名。排除集合为宿主 Provider 与 `AGENTNAVE_EXCLUDED_PROVIDERS` 的并集；旧环境变量的校验与行为保留。MCP instructions 按此并集公开允许项与排除项，只约束单任务 task，不作用于 discussion 的协作组；组员配置的 discussion 限制仍生效。允许项不代表已安装或认证。与宿主同类的 CLI 进入会议只为方便参与讨论；需要同类 CLI 执行任务时，boss 优先使用宿主自带的子代理能力，而不是通过 AgentNave 私聊，App 对这类工位标为「仅会议」。
+宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，未知值使启动失败；否则 macOS／Linux 通过只读进程信息接口，沿祖先进程最多检查 32 层，匹配可执行文件名、应用包路径或原生 Claude 的 `claude/versions/<版本号>` 路径；已知解释器／包装层（node、bun、deno、python／python3／python3.x、uv、uvx、npx、env、sh、bash、zsh、fish、dash）还按第一个非选项参数识别脚本，去掉 .js／.mjs／.cjs／.py 后缀后匹配。AgentNave 自身的 Python 中继脚本跳过；某层 argv 不可读时继续读父进程，父进程不可读或遇到未匹配宿主的非包装进程则停止，避免误认更外层 GUI。Windows 只读取环境变量。无法识别则 `host=null`、`host_source=unknown`；来源另可为 `env` 或 `parent`。WorkBuddy 映射 codebuddy，gemini／opencode／hermes 无对应 Provider，其余同名。排除集合为宿主 Provider 与 `AGENTNAVE_EXCLUDED_PROVIDERS` 的并集；旧环境变量的校验与行为保留。MCP instructions 按此并集公开允许项与排除项，只约束单任务 task，不作用于 discussion 的协作组；组员配置的 discussion 限制仍生效。允许项不代表已安装或认证。与宿主同类的 CLI 进入会议只为方便参与讨论；需要同类 CLI 执行任务时，boss 优先使用宿主自带的子代理能力，而不是通过 AgentNave 私聊，App 对这类工位标为「仅会议」。
 
 Codex 在非 Git 目录运行时，调用方可显式传入布尔选项 `skip_git_repo_check`；Adapter 默认不绕过 Provider 的仓库检查。Codex 的 `sandbox`（`read-only`／`workspace-write`／`danger-full-access`）以 `--config sandbox_mode=…` 传入，因为 `exec resume` 不接受 `--sandbox`；它是权限类参数。
 
@@ -150,7 +148,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 设置各分区（执行者、接入、头像、编排）与办公室、会话并列在窗口顶部同一排导航，右上角在有更新时显示一键更新按钮；“接入”分区在同页展示版本操作与宿主列表，保留旧 `#updates` 链接。重启判断只比较实际用户级 MCP 接入条目与连接观测，不比较 App／服务版本或 Skill 的任何部分（Agent 使用时从磁盘读取 Skill，更新后无需重开）。App 偏好记录带 `v:4` 的内容观察、变更与手动确认；更早格式的记录（含 Skill 摘要）一律忽略。已知接入配置变化且有变化前建立的活跃连接时才提示重新加载；一百五十秒内都没有刷新的观测时为 idle，不提示（下次连接即在变化之后；切换服务时心跳最长暂停约 105 秒，不算断连，暂停中的连接也不让提醒自动消除）；旧中继缺少有效观测时为未知。卡片只显示需要重新加载的状态，同步、空闲、等待切换与未知都不显示说明。手动确认不能盖过仍使用旧接口的活跃连接。
 
-中继只在宿主成功获取非空完整 `tools/list` 后，于有效数据根的 `connections/` 原子写入私有观测：宿主、连接起始时间、运行服务版本、运行工具定义摘要与已向宿主成功转发的工具定义摘要。每五秒刷新，连接关闭删除；中继首次写入时清除一小时以上未刷新的观测，这些通常是已退出中继的遗留；仍在运行但长时间暂停的中继若被误删，下次刷新会重建；不保存原始工具定义、提示词、环境或凭据。零工具的嵌套服务不创建观测或数据目录。切换后内部探测新工具列表，仅版本变化且接口一致时不要求重启；接口不同且协商旧版有状态协议时，中继声明并发送工具变更通知。2026-07-28 及后续协议需要订阅，当前中继不合成订阅或向未订阅客户端主动通知。
+中继只在宿主成功获取非空完整 `tools/list` 后，于有效数据根的 `connections/` 原子写入私有观测：宿主、连接起始时间、运行服务版本、运行工具定义摘要与已向宿主成功转发的工具定义摘要。每五秒刷新，连接关闭删除；中继首次写入时清除一小时以上未刷新的观测，这些通常是已退出中继的遗留；仍在运行但长时间暂停的中继若被误删，下次刷新会重建；不保存原始工具定义、提示词、环境或凭据。空或不完整的工具列表不创建连接观测。切换后内部探测新工具列表，仅版本变化且接口一致时不要求重启；接口不同且协商旧版有状态协议时，中继声明并发送工具变更通知。2026-07-28 及后续协议需要订阅，当前中继不合成订阅或向未订阅客户端主动通知。
 
 App 只读有效数据根中新鲜、大小受限、非符号链接的观测，按宿主聚合全部可见连接。新接口已向所有可见连接提供且运行版本已是安装版本时为 current；接口一致但运行版本仍旧时等待空闲更新；安装超过十分钟仍未切换（一直有任务、结果未读或无法换新）时提示重连；中继从初始化、`server/discover` 及任何带 `serverInfo` 元数据的 2026-07-28 协议结果读取运行版本。观测仍缺运行版本的多为旧中继，App 只作启发式判断：连接起始时间可解析且早于本次安装、安装超过十分钟仍无版本时，视为未能切换（通常是 v0.31.0 之前的中继认不出该协议的宿主），同样提示重连；其余缺版本的连接显示未知；先判断滞留连接，再判断未知连接；接口不同时提示重连。旧中继连接不在观测范围内，需重连一次纳入检测，不能据此声称所有实际进程均已同步。全部可见连接都在变更之后建立时，视为宿主会话已重新加载（连接时间来自中继启动，属推断而非加载证据；只重连 MCP 的旧聊天仍是旧 Skill 简介），自动消除接入配置的变更提醒，无需手动确认。结果仅证明工具列表已成功转发，不证明模型上下文已采用。页面可见时只读轮询状态，编辑或确认操作中保留控件状态。
 

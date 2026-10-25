@@ -1,6 +1,6 @@
 # ADR-0011：被派出的 CLI 只能使用零工具 AgentNave 服务
 
-- 状态：已接受
+- 状态：已由 [ADR-0031](0031-prompt-only-orchestration.md) 取代
 - 日期：2026-10-16
 
 Provider CLI 可能继承宿主的 MCP 配置，再次连接 AgentNave；提示词约定无法保证单向编排，而有些 CLI 会过滤自定义环境变量。因此选择在核心与工作室的真正服务入口统一判定，嵌套或无法判定时启动零工具 MCP 服务，通过 instructions 解释原因；不挂载业务 lifespan，不产生目录、文件或端口，中继保持转发职责。
