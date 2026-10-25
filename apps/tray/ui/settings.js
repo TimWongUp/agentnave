@@ -114,6 +114,7 @@ let probedAt = 0;
 let documentError = null;
 let docVersion = 0; // Monotonic counter for save race detection
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
+let missingOpen = false; // The folded list of CLIs not installed here
 let appStatus = null;
 let installedService = null;
 let statusPollTimer = null;
@@ -194,6 +195,7 @@ const mockMembersData = {
     codex: {
       installed: true,
       path: "/opt/homebrew/bin/codex",
+      version: "0.161.0",
       source: "codex-cache",
       error: null,
       models: [
@@ -210,6 +212,7 @@ const mockMembersData = {
     claude: {
       installed: true,
       path: "/usr/local/bin/claude",
+      version: "2.1.308",
       source: "command",
       error: null,
       models: [
@@ -529,9 +532,8 @@ function setTab(tab) {
   if (currentTab !== tab) showNotice("");
   currentTab = tab;
   for (const id of ["members", "avatars", "orchestration", "hosts"]) {
-    $("tab-" + id).classList.toggle("active", tab === id);
-    $("tab-" + id).setAttribute("aria-selected", String(tab === id));
-    $("tab-" + id).setAttribute("aria-controls", "pane-" + id);
+    if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
+    else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
   if (tab === "hosts") loadStatus().then(checkIfStale);
@@ -1144,6 +1146,8 @@ function renderCards() {
   const cards = document.createDocumentFragment();
 
   const modeRestricted = isModeRestricted();
+  // Not installed and not on this scene's list: only named in the folded list at the end.
+  const missing = [];
 
   for (const provider of PROVIDERS) {
     const info = detected[provider] || {
@@ -1155,15 +1159,22 @@ function renderCards() {
       efforts: [],
     };
     const isEnabled = isProviderEnabledInMode(provider);
+    if (!info.installed && !(modeRestricted && isEnabled)) {
+      missing.push(provider);
+      continue;
+    }
     const card = el("div", {
       className: `cli-card${info.installed ? "" : " uninstalled"}`,
       dataset: { provider },
     });
 
     // Header
-    const statusBadge = info.installed
-      ? el("span", { className: "badge badge-run" }, "已安装")
-      : el("span", { className: "badge badge-bad" }, "未安装");
+    // An installed CLI shows its version beside the name instead of a badge.
+    const statusBadge = !info.installed
+      ? el("span", { className: "badge badge-bad" }, "未安装")
+      : info.version
+        ? null
+        : el("span", { className: "badge badge-run" }, "已安装");
 
     const sourceLabel = SOURCE_LABELS[info.source] || info.source;
     const sourceBadge = el("span", { className: "badge badge-muted" }, `来源: ${sourceLabel}`);
@@ -1201,7 +1212,9 @@ function renderCards() {
         },
       },
       el("span", { className: "cli-chevron", "aria-hidden": "true" }),
+      el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, PROVIDER_NAMES[provider])),
       el("span", { className: "cli-name" }, PROVIDER_NAMES[provider] || provider),
+      info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
       el("span", { className: "cli-summary", title: FALLBACK_HINT }, cardSummary(provider, isEnabled, modeRestricted, info))
     );
     const header = el(
@@ -1384,6 +1397,21 @@ function renderCards() {
 
     card.appendChild(body);
     cards.appendChild(card);
+  }
+
+  if (missing.length) {
+    const names = missing.map((p) => PROVIDER_NAMES[p] || p);
+    const box = el("div", { className: "cli-missing" },
+      el("button", {
+        type: "button",
+        className: "cli-missing-toggle",
+        dataset: { focusKey: "missing/toggle" },
+        "aria-expanded": String(missingOpen),
+        onClick: () => { missingOpen = !missingOpen; renderCards(); },
+      }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(`未安装的 CLI（${missing.length}）`)));
+    if (missingOpen) box.appendChild(el("p", { className: "cli-missing-list" },
+      textNode(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以开始使用。`)));
+    cards.appendChild(box);
   }
 
   container.replaceChildren(cards);
@@ -1821,7 +1849,6 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
   operatedControl = e.target.closest("[data-focus-key]");
   queueMicrotask(() => { operatedControl = null; });
 }, true);
-for (const tab of ["members", "avatars", "orchestration", "hosts"]) $("tab-" + tab).addEventListener("click", () => { setTab(tab); history.replaceState(null, "", "#" + tab); });
 $("copy-orchestration").addEventListener("click", copyOrchestration);
 $("save-limit").addEventListener("click", saveLimit);
 const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
@@ -1874,7 +1901,8 @@ function renderLeaveConfirm() {
 }
 document.querySelector("header.bar").addEventListener("click", (e) => {
   const link = e.target.closest("a[href]");
-  if (!link || !(dirty || busy) || link.getAttribute("href") === "/settings/") return;
+  // Moving between this page's sections keeps the edits; only leaving the page loses them.
+  if (!link || !(dirty || busy) || link.getAttribute("href").startsWith("/settings/")) return;
   e.preventDefault();
   leaveTarget = link.href;
   if (currentTab !== "members") {

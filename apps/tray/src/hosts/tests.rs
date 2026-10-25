@@ -523,6 +523,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 "codex",
                 "claude",
                 "codebuddy",
+                "workbuddy",
                 "grok",
                 "antigravity",
                 "pi",

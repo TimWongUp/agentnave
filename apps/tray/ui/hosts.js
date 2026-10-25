@@ -551,115 +551,47 @@ function confirmBlock(host) {
   );
 }
 
-function actionsRow(host) {
+// The row's own buttons: what can be done to this host now.
+function actionButtons(host) {
   const id = host.id;
   const busy = S.busy.get(id);
   const svcOk = S.data.service.installed;
-  const left = [];
-  if (host.status !== "orphaned") {
-    const open = S.adv.has(id);
-    const adv = h(
-      "button.adv-btn",
-      {
-        type: "button",
-        "data-act": "adv",
-        "aria-expanded": String(open),
-        "aria-controls": `adv-${id}`,
-      },
-      h("i.chev", { "aria-hidden": "true" }),
-      "高级",
-    );
-    adv.addEventListener("click", () => {
-      if (open) S.adv.delete(id);
-      else S.adv.add(id);
-      S.focus = { id, act: "adv" };
-      renderAll();
-    });
-    left.push(adv);
-  }
-  const right = [];
   const dis = !!busy;
+  const askRemove = (label) =>
+    busy === "remove"
+      ? spinBtn("移除中…")
+      : button(label, ".danger", "remove", () => {
+          S.confirm = id;
+          S.focus = { id, act: "cancel" };
+          renderAll();
+        }, dis);
+  const out = [];
   if (host.status === "available") {
-    if (!svcOk)
-      right.push(
-        h(
-          "span.fine",
-          {},
-          S.install.busy ? "正在安装本机服务…" : "需先安装本机服务",
-        ),
-      );
-    right.push(
-      busy === "connect"
-        ? spinBtn("接入中…", ".primary")
-        : button(
-            "接入",
-            ".primary",
-            "connect",
-            () => connect(host),
-            dis || !svcOk || S.batch,
-          ),
-    );
+    if (!svcOk) out.push(h("span.fine", {}, S.install.busy ? "正在安装本机服务…" : "需先安装本机服务"));
+    out.push(busy === "connect"
+      ? spinBtn("接入中…", ".primary")
+      : button("接入", ".primary", "connect", () => connect(host), dis || !svcOk || S.batch));
   } else if (host.status === "needs_attention") {
-    right.push(
-      busy === "remove"
-        ? spinBtn("移除中…")
-        : button(
-            "移除",
-            ".danger",
-            "remove",
-            () => {
-              S.confirm = id;
-              S.focus = { id, act: "cancel" };
-              renderAll();
-            },
-            dis,
-          ),
-    );
-    right.push(
-      busy === "connect"
-        ? spinBtn("重试中…", ".primary")
-        : button(
-            "重试接入",
-            ".primary",
-            "connect",
-            () => connect(host),
-            dis || !svcOk,
-          ),
-    );
-  } else if (host.status === "connected") {
-    right.push(
-      busy === "remove"
-        ? spinBtn("移除中…")
-        : button(
-            "移除",
-            ".danger",
-            "remove",
-            () => {
-              S.confirm = id;
-              S.focus = { id, act: "cancel" };
-              renderAll();
-            },
-            dis,
-          ),
-    );
+    out.push(askRemove("移除"));
+    out.push(busy === "connect"
+      ? spinBtn("重试中…", ".primary")
+      : button("重试接入", ".primary", "connect", () => connect(host), dis || !svcOk));
   } else {
-    right.push(
-      busy === "remove"
-        ? spinBtn("移除中…")
-        : button(
-            "移除条目",
-            ".danger",
-            "remove",
-            () => {
-              S.confirm = id;
-              S.focus = { id, act: "cancel" };
-              renderAll();
-            },
-            dis,
-          ),
-    );
+    out.push(askRemove(host.status === "connected" ? "移除" : "移除条目"));
   }
-  return h("footer.hc-foot", {}, ...left, h("span.spacer"), ...right);
+  return out;
+}
+
+// One line under the name: the state, then what matters most about it.
+function subLine(host, word) {
+  const bits = [h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word)];
+  if (host.status === "connected" || host.status === "needs_attention") {
+    const skill = host.skill.state === "app" ? "Skill 由 App 管理" : host.skill.state === "external" ? "Skill 由其他方式管理" : "Skill 未安装";
+    bits.push(h("span.hc-fact", {}, skill));
+  } else if (host.status === "available") {
+    bits.push(h("span.hc-fact", {}, "本机已安装，还没有接入 AgentNave"));
+  }
+  return h("p.hc-sub", {}, ...bits);
 }
 
 function buildCard(host) {
@@ -668,16 +600,10 @@ function buildCard(host) {
   const busy = S.busy.get(id);
   const orphan = host.status === "orphaned";
   const isNew = !S.firstRun && S.newIds.has(id);
+  const open = S.adv.has(id);
   const card = h(
-    "article.hc.tone-" +
-      tone +
-      (busy ? ".is-busy" : "") +
-      (orphan ? ".is-orphan" : ""),
-    {
-      "data-host": id,
-      "aria-labelledby": `name-${id}`,
-      "aria-busy": busy ? "true" : null,
-    },
+    "article.hc.tone-" + tone + (busy ? ".is-busy" : "") + (orphan ? ".is-orphan" : ""),
+    { "data-host": id, "aria-labelledby": `name-${id}`, "aria-busy": busy ? "true" : null },
   );
   card.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && S.confirm === id) {
@@ -686,99 +612,52 @@ function buildCard(host) {
       renderAll();
     }
   });
+  // Only a host not yet connected can be untested: once its entry works it has been tried.
   const badges = [
     host.reload?.state === "required" && h("span.badge.badge-warning", {}, "需要重新加载"),
-    !host.tested &&
-      h(
-        "span.badge.badge-muted",
-        {
-          title:
-            "还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。",
-        },
-        "未实测",
-      ),
+    !host.tested && host.status === "available" &&
+      h("span.badge.badge-muted", { title: "还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。" }, "未实测"),
     isNew && h("span.badge.badge-accent", {}, "新检测到"),
   ];
+  const details = h(
+    "button.adv-btn",
+    { type: "button", "data-act": "adv", "aria-expanded": String(open), "aria-controls": `details-${id}` },
+    h("i.chev", { "aria-hidden": "true" }),
+    "详情",
+  );
+  details.addEventListener("click", () => {
+    if (open) S.adv.delete(id);
+    else S.adv.add(id);
+    S.focus = { id, act: "adv" };
+    renderAll();
+  });
   const main = [
     h(
       "div.hc-line",
       {},
-      h(
-        "div.hc-id",
-        {},
-        h("h3.hc-name", { id: `name-${id}` }, host.label),
-        ...badges,
-      ),
-      h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word),
+      h("span.hc-icon", { "aria-hidden": "true" }, AN.hostTile(id, host.label)),
+      h("div.hc-id", {},
+        h("div.hc-title", {}, h("h3.hc-name", { id: `name-${id}` }, host.label), ...badges),
+        subLine(host, word)),
+      h("div.hc-acts", {}, ...(S.confirm === id && !busy ? [] : actionButtons(host)), details),
     ),
   ];
   if (orphan)
-    main.push(
-      h(
-        "p.hc-orphan",
-        {},
-        `本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`,
-      ),
-    );
-  main.push(
-    h(
-      "dl.hc-facts",
-      {},
-      h("div", {}, h("dt", {}, "入口"), h("dd", {}, entryNode(host))),
-      h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
-      h(
-        "div.wide",
-        {},
-        h(
-          "dt",
-          {},
-          host.status === "available" ? "配置文件（接入时写入）" : "配置文件",
-        ),
-        h("dd", {}, pathRow(host.config_path)),
-      ),
-    ),
-  );
+    main.push(h("p.hc-orphan", {}, `本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`));
   if (host.shadowed_by)
-    main.push(
-      h(
-        "div.hc-note.info",
-        {},
-        "项目级配置 ",
-        h("code", {}, shortPath(host.shadowed_by)),
-        " 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。",
-      ),
-    );
+    main.push(h("div.hc-note.info", {}, "项目级配置 ", h("code", {}, shortPath(host.shadowed_by)), " 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。"));
   const local = S.localErr.get(id);
   const last = host.last_action;
   if (local) main.push(h("div.hc-note.error", { role: "alert" }, local));
   else if (last && !last.ok)
-    main.push(
-      h(
-        "div.hc-note.error",
-        { role: "alert" },
-        last.message,
-        h(
-          "small",
-          {},
-          `${relTime(last.at)}${host.status === "needs_attention" ? " · 修好后点“重试接入”，或在下方“高级”里换个入口" : ""}`,
-        ),
-      ),
-    );
+    main.push(h("div.hc-note.error", { role: "alert" }, last.message,
+      h("small", {}, `${relTime(last.at)}${host.status === "needs_attention" ? " · 修好后点“重试接入”，或在“详情”里换个入口" : ""}`)));
   else if (host.attention) main.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
-  else if (last)
-    main.push(
-      h(
-        "p.hc-last",
-        {},
-        h("span.tick", { "aria-hidden": "true" }, "✓"),
-        `${last.message} · ${relTime(last.at)}`,
-      ),
-    );
+  else if (last && open)
+    main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
   // Only a needed reload is shown; synced, idle or undetectable connections need nothing.
   if (host.reload?.state === "required") {
-    const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(
-      host.reload_hint || "重启宿主应用",
-    );
+    const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || "重启宿主应用");
     const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
       h("div", {}, h("strong", {}, title), h("p", {}, detail)),
@@ -787,9 +666,16 @@ function buildCard(host) {
         Boolean(busy) || S.updating || host.status !== "connected"),
     ));
   }
-  main.push(S.confirm === id && !busy ? confirmBlock(host) : actionsRow(host));
-  // Keep the disclosure button above its content so it stays under the pointer.
-  if (S.adv.has(id) && host.status !== "orphaned") main.push(advPanel(host));
+  if (S.confirm === id && !busy) main.push(confirmBlock(host));
+  // The 详情 button controls this wrapper, which every status renders (an orphan has no advanced part).
+  if (open)
+    main.push(h("div.hc-details", { id: `details-${id}` },
+      h("dl.hc-facts", {},
+        h("div", {}, h("dt", {}, "入口"), h("dd", {}, entryNode(host))),
+        h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
+        h("div.wide", {}, h("dt", {}, host.status === "available" ? "配置文件（接入时写入）" : "配置文件"), h("dd", {}, pathRow(host.config_path))),
+      ),
+      !orphan && advPanel(host)));
   card.append(h("div.hc-main", {}, ...main));
   return card;
 }

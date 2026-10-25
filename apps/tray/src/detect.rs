@@ -342,7 +342,31 @@ fn probe(provider: &str) -> Value {
     let Some(path) = find(binary) else {
         return failure(provider, None, "");
     };
-    probe_path(provider, &path)
+    let mut result = probe_path(provider, &path);
+    result["version"] = run(&path, &["--version"])
+        .ok()
+        .and_then(|out| version_of(&out))
+        .map_or(Value::Null, Value::from);
+    result
+}
+
+/// The first version-looking word on the first line of `--version` output: `codex-cli 0.161.0`,
+/// `2.1.308 (Claude Code)`, `grok 1.0.46 (2765805b)` all give the number; later lines (a
+/// runtime's own version, say) are never read.
+fn version_of(output: &str) -> Option<String> {
+    let first = output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    first.split_whitespace().find_map(|word| {
+        let word = word.trim_start_matches('v');
+        let end = word
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
+            .unwrap_or(word.len());
+        let version = &word[..end];
+        (version.starts_with(|c: char| c.is_ascii_digit()) && version.contains('.'))
+            .then(|| version.to_owned())
+    })
 }
 
 fn probe_path(provider: &str, path: &Path) -> Value {
@@ -756,6 +780,28 @@ fn codebuddy_models(text: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_version_from_each_clis_own_format() {
+        assert_eq!(
+            version_of("codex-cli 0.161.0\n").as_deref(),
+            Some("0.161.0")
+        );
+        assert_eq!(
+            version_of("2.1.308 (Claude Code)").as_deref(),
+            Some("2.1.308")
+        );
+        assert_eq!(
+            version_of("grok 1.0.46 (2765805b9442)").as_deref(),
+            Some("1.0.46")
+        );
+        assert_eq!(version_of("v1.4.7").as_deref(), Some("1.4.7"));
+        assert_eq!(version_of("usage: tool [options]"), None);
+        assert_eq!(
+            version_of("\nmytool 3.2.0\nNode v22.14.0").as_deref(),
+            Some("3.2.0")
+        );
+    }
 
     fn ids(models: &[Value]) -> Vec<&str> {
         models.iter().map(|m| m["id"].as_str().unwrap()).collect()
