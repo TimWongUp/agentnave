@@ -56,6 +56,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 - **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就写明不改文件）；写代码的交接先由 boss 建好 worktree 作 `cwd`。
 - **顾问**：`access=read`，prompt 写明只分析、不改文件、给出建议与理由；追问用同一 `session_id` 续接。
+- **先计划后实现**：先 `access=read`，prompt 写明只出计划（改动范围、步骤、风险与验证方式）、不改文件；boss 按已有授权核对计划，需用户决定的转达用户，确认后用同一 `session_id` 续接、`access=write`，写明按已确认计划实现及调整内容。
 - **委员会**：`run_round` 先 `parallel` 各自给根因与方案，再 `serial` 互相回应；汇报共识、分歧及如何收敛。
 - **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
@@ -103,8 +104,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
 2. `wait(ids)` 每次最多等 5 分钟（`wait_seconds` 可缩短，`0` 只看一眼不阻塞），任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
-3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；普通工具失败、重试、沉默不证明任务失败。
+3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。
 4. 运行中 `output` 只是最新公开正文尾部（最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。
 5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；`succeeded` 不证明用户目标完成，须核对命令、产物或检查。
 
-正文有待确认问题时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。`cancel` 返回终态，不撤销已发生的副作用；活跃调用不能追加消息，要补充就取消后续接。换 CLI 或开新线程时重新交接，不假定旧历史可见。
+正文有待确认问题时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。`cancel` 返回终态，不撤销已发生的副作用；活跃调用不能追加消息，要纠偏或补充就 `cancel`，回执带 `session_id` 时用它续接（没有就重新交接），prompt 写明：上一轮已被打断；已执行的命令和改动不要重跑，先核对现状；先交出已有结论和进展，再按新要求继续。换 CLI 或开新线程时重新交接，不假定旧历史可见。
