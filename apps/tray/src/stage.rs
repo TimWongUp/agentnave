@@ -1678,8 +1678,7 @@ impl Group {
                                 status,
                                 "failed" | "blocked" | "cancelled" | "interrupted" | "succeeded"
                             )
-                            // Records before v0.35 call an answer kept private "discard".
-                            && !matches!(run["review"].as_str(), Some("private" | "discard"))))
+                            && run["review"].as_str() != Some("private")))
                 {
                     let body = if matches!(status, "review" | "succeeded") {
                         text(run, "output").to_owned()

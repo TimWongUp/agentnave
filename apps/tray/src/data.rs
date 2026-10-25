@@ -19,17 +19,6 @@ const LIVE_TAILS: u64 = 2;
 const ROUTE_REUSE: Duration = Duration::from_secs(30);
 include!(concat!(env!("OUT_DIR"), "/office_art.rs"));
 
-/// The dashboard front end has one source, shared with the browser view.
-macro_rules! asset {
-    ($name:literal) => {
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../src/agentnave/dashboard_assets/",
-            $name
-        ))
-    };
-}
-
 const PANEL_HTML: &[u8] = include_bytes!("../ui/panel.html");
 const PANEL_JS: &[u8] = include_bytes!("../ui/panel.js");
 const PANEL_CSS: &[u8] = include_bytes!("../ui/panel.css");
@@ -661,8 +650,6 @@ impl Reader {
             };
         }
         match parts.as_slice() {
-            // Host avatars, shared with the browser view.
-            ["avatars.png"] => Response::ok("image/png", asset!("avatars.png").to_vec()),
             // The old workbench address now leads to the chat page.
             [""] => Response::ok("text/html; charset=utf-8", TO_OFFICE.to_vec()),
             _ => Response::not_found(),
@@ -1042,7 +1029,6 @@ mod tests {
         let reader = Reader::new(root.to_path_buf());
 
         assert!(String::from_utf8_lossy(&reader.respond("/").body).contains("url=/chat/"));
-        assert_eq!(reader.respond("/avatars.png").status, 200);
         assert_eq!(reader.respond("/panel/").status, 200);
         for path in [
             "/manage/",
@@ -1418,7 +1404,7 @@ mod tests {
                 {"round": 1, "seat_id": "a", "reported_model": "m-old", "text": "旧轮私信", "time": "2026-10-15T00:00:00Z"},
                 {"round": 2, "seat_id": "a", "reported_model": "m-native", "text": "本轮私信", "time": "2026-10-15T00:00:01Z"}],
             "round": {"number": 2, "seats": [
-                {"seat_id": "a", "status": "succeeded", "reported_model": "m-native", "review": "discard", "output": "本轮私信"}]}});
+                {"seat_id": "a", "status": "succeeded", "reported_model": "m-native", "review": "private", "output": "本轮私信"}]}});
         save(dir.path(), &show);
         let reader = Reader::new(dir.path().to_path_buf());
         let path = format!("/app/chats/{MANAGER}");

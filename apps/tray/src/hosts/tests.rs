@@ -343,7 +343,6 @@ fn service_installer_passes_cached_shell_directories_to_uv_and_version_checks() 
     let dirs = hosts.tool_dirs().unwrap();
     let site = tools.join("agentnave/lib/python3.12/site-packages");
     fs::create_dir_all(site.join("agentnave-0.1.0.dist-info")).unwrap();
-    fs::create_dir_all(tools.join("agentnave-studio")).unwrap();
     assert_eq!(
         crate::update::service(&Some(dirs.tools.clone()))["version"],
         "0.1.0"
@@ -372,16 +371,12 @@ fi
         .replace("@VERSION@", VERSION),
     );
     crate::update::install_service(&uv, &dirs).unwrap();
-    let expected = ["tool uninstall", "tool install"]
-        .map(|operation| {
-            format!(
-                "{}\n{}\n{}\n{operation}\n",
-                tools.display(),
-                bin.display(),
-                hosts.context.home.display()
-            )
-        })
-        .concat();
+    let expected = format!(
+        "{}\n{}\n{}\ntool install\n",
+        tools.display(),
+        bin.display(),
+        hosts.context.home.display()
+    );
     assert_eq!(
         fs::read_to_string(uv.with_extension("calls")).unwrap(),
         expected
@@ -433,10 +428,9 @@ fn multilayer_migration_and_removal_leave_project_configuration_untouched() {
         &hosts.context.search[0].join("opencode"),
         "#!/bin/sh\nexit 99\n",
     );
-    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
-    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
+    let missing = hosts.context.home.join("old-bin/agentnave-mcp");
     for path in [&global, &custom, &env_file, &user_file] {
-        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[legacy,"--keep"],"environment":{},"enabled":false}}}).to_string());
+        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[missing,"--keep"],"environment":{},"enabled":false}}}).to_string());
     }
     let project = hosts.context.project.join("opencode.json");
     save(&project, r#"{"mcp":{"agentnave":{"command":["project"]}}}"#);
@@ -867,7 +861,7 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
 }
 
 #[test]
-fn legacy_commands_migrate_across_formats_without_changing_host_policy() {
+fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
     for id in IDS {
         let (_temp, mut hosts) = fixture();
         let h = host(&hosts, id);
@@ -880,78 +874,37 @@ fn legacy_commands_migrate_across_formats_without_changing_host_policy() {
             hosts.action("connect", &json!({"id":id})).unwrap()["ok"],
             true
         );
-        for name in ["agentnave-mcp", "agentnave-studio-mcp"] {
-            let before = h.read().unwrap();
-            let mut legacy = before.entry.clone().unwrap();
-            let old = hosts.context.home.join("old-bin").join(name);
-            // A healthy retired Studio executable must migrate too; a missing core path is repaired.
-            if name == "agentnave-studio-mcp" {
-                executable_file(&old, "#!/bin/sh\nexit 99\n");
-            }
-            h.set_command(&mut legacy, &old);
-            if id == "opencode" {
-                legacy["command"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(json!("--keep"));
-            } else {
-                legacy["args"] = json!(["--keep"]);
-            }
-            legacy[h.env_key()]["CUSTOM"] = json!("preserve");
-            legacy["disabled"] = json!(true);
-            legacy["allowedTools"] = json!(["wait_agent"]);
-            save(&h.config, &before.render(Some(&legacy)).unwrap());
-            let mut expected = legacy;
-            h.set_command(&mut expected, &hosts.launcher().unwrap());
-            hosts.refresh();
-            let after = h.read().unwrap();
-            assert_eq!(after.entry, Some(expected), "{id}: {name}");
-            assert_eq!(after.rest, before.rest, "{id}: {name}");
-            let bytes = fs::read(&h.config).unwrap();
-            let backups = backup_paths(&hosts.context.app, CONFIG_BACKUP).len();
-            hosts.refresh();
-            assert_eq!(fs::read(&h.config).unwrap(), bytes);
-            assert_eq!(
-                backup_paths(&hosts.context.app, CONFIG_BACKUP).len(),
-                backups
-            );
+        let before = h.read().unwrap();
+        let mut entry = before.entry.clone().unwrap();
+        let old = hosts.context.home.join("old-bin/agentnave-mcp");
+        h.set_command(&mut entry, &old);
+        if id == "opencode" {
+            entry["command"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("--keep"));
+        } else {
+            entry["args"] = json!(["--keep"]);
         }
-    }
-}
-
-#[test]
-fn legacy_command_waits_until_the_unified_runtime_is_installed() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "workbuddy");
-    executable_file(
-        &hosts.context.search[0].join(h.binary),
-        "#!/bin/sh\nexit 99\n",
-    );
-    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
-    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
-    save(&h.config, &json!({"mcpServers":{"agentnave":{"command":legacy,"env":{"AGENTNAVE_HOST":"workbuddy"},"disabled":true}}}).to_string());
-    let metadata =
-        hosts.tool_dirs().unwrap().tools.join(
-            "agentnave/lib/python3.12/site-packages/agentnave-0.22.0.dist-info/entry_points.txt",
+        entry[h.env_key()]["CUSTOM"] = json!("preserve");
+        entry["disabled"] = json!(true);
+        entry["allowedTools"] = json!(["wait_agent"]);
+        save(&h.config, &before.render(Some(&entry)).unwrap());
+        let mut expected = entry;
+        h.set_command(&mut expected, &hosts.launcher().unwrap());
+        hosts.refresh();
+        let after = h.read().unwrap();
+        assert_eq!(after.entry, Some(expected), "{id}");
+        assert_eq!(after.rest, before.rest, "{id}");
+        let bytes = fs::read(&h.config).unwrap();
+        let backups = backup_paths(&hosts.context.app, CONFIG_BACKUP).len();
+        hosts.refresh();
+        assert_eq!(fs::read(&h.config).unwrap(), bytes);
+        assert_eq!(
+            backup_paths(&hosts.context.app, CONFIG_BACKUP).len(),
+            backups
         );
-    save(
-        &metadata,
-        "[console_scripts]\nagentnave-mcp = agentnave.relay:core\nagentnave-studio-mcp = agentnave_studio.relay:main\n",
-    );
-    let bytes = fs::read(&h.config).unwrap();
-    hosts.refresh();
-    assert_eq!(hosts.service()["installed"], false);
-    assert_eq!(fs::read(&h.config).unwrap(), bytes);
-    save(
-        &metadata,
-        "[console_scripts]\nagentnave-mcp = agentnave.relay:main\n",
-    );
-    hosts.refresh();
-    assert_eq!(hosts.service()["installed"], true);
-    assert_eq!(
-        h.read().unwrap().entry.unwrap()["command"],
-        json!(hosts.launcher().unwrap())
-    );
+    }
 }
 
 #[test]
@@ -1056,34 +1009,6 @@ fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() 
         hosts
             .action("root", &json!({"id":"pi","path":"relative"}))
             .is_err()
-    );
-}
-
-#[test]
-fn legacy_entry_migrates_without_installing_a_skill() {
-    let (_temp, mut hosts) = fixture();
-    let h = host(&hosts, "pi");
-    let path = h.skill.as_ref().unwrap();
-    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
-    let legacy = hosts.context.home.join("old-bin/agentnave-studio-mcp");
-    executable_file(&legacy, "#!/bin/sh\nexit 99\n");
-    save(
-        &h.config,
-        &json!({"mcpServers":{"agentnave":{
-            "command":legacy,
-            "env":{"AGENTNAVE_HOST":"pi"}
-        }}})
-        .to_string(),
-    );
-
-    hosts.refresh();
-    assert_eq!(
-        h.read().unwrap().entry.unwrap()["command"],
-        json!(hosts.launcher())
-    );
-    assert_eq!(
-        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
-        "missing"
     );
 }
 

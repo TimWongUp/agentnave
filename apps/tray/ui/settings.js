@@ -47,12 +47,6 @@ function textNode(content) {
   return document.createTextNode(String(content == null ? "" : content));
 }
 
-// Ensure manage.css loads properly when previewed via file:// protocol
-if (location.protocol === "file:") {
-  const link = el("link", { rel: "stylesheet", href: "./manage.css" });
-  document.head.appendChild(link);
-}
-
 // 7 supported CLI providers
 const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek"];
 const PROVIDER_NAMES = {
@@ -121,7 +115,6 @@ let missingOpen = false; // The folded list of CLIs not installed here
 let appStatus = null;
 let installedService = null;
 let statusPollTimer = null;
-let lastMigrationData = { migrated: false, migration_skipped: [] };
 // Keep unfinished option edits across drawer/mode changes without writing invalid values.
 const optionDrafts = new WeakMap();
 let operatedControl = null;
@@ -129,15 +122,12 @@ let pendingDisable = null;
 let pendingRestrictOff = false; // Turning a mode's selection off waits for confirmation.
 
 // Determine mock mode
-const isMock =
-  new URLSearchParams(location.search).has("mock") ||
-  location.protocol === "file:";
+const isMock = new URLSearchParams(location.search).has("mock");
 
 // Mock data covering:
 // 1. Task mode restricted, discussion mode unrestricted (omitted key).
 // 2. Codex in task mode has models: [] (unlimited models) with default set.
 // 3. Override tri-state example.
-// 4. migration_skipped with migrated=false.
 const mockMembersData = {
   review: { version: 1, seats: {} },
   document: {
@@ -190,11 +180,6 @@ const mockMembersData = {
     },
   },
   error: null,
-  migrated: false,
-  migration_skipped: [
-    "档案“旧脚本测试”未指定模型，已跳过迁移",
-    "档案“危险跳过项”包含权限类参数 sandbox_bypass，已跳过迁移",
-  ],
   detected: {
     codex: {
       installed: true,
@@ -1593,49 +1578,6 @@ async function saveMembers() {
   }
 }
 
-// Render migration banner & skipped reasons
-function renderMigrationBanner(data) {
-  const banner = $("migration-banner");
-  const title = $("migration-title");
-  const container = $("migration-skipped-container");
-  if (!banner || !container) return;
-
-  container.replaceChildren();
-
-  const hasSkipped = Array.isArray(data.migration_skipped) && data.migration_skipped.length > 0;
-
-  if (data.migrated) {
-    banner.hidden = false;
-    banner.className = "banner migration";
-    if (title) {
-      title.textContent = "已将原编排档案的模型与说明迁移；两种场景当前未限制，如需限制再开启";
-    }
-  } else if (hasSkipped) {
-    banner.hidden = false;
-    banner.className = "banner error";
-    if (title) {
-      title.textContent = "旧档案未迁移，保存后将不再自动迁移";
-    }
-  } else {
-    banner.hidden = true;
-    return;
-  }
-
-  if (hasSkipped) {
-    const details = el(
-      "details",
-      { className: "migration-skipped-details", open: !data.migrated },
-      el("summary", {}, `未能迁移的档案（${data.migration_skipped.length} 条）`),
-      el(
-        "ul",
-        { className: "migration-skipped-list" },
-        ...data.migration_skipped.map((reason) => el("li", {}, reason))
-      )
-    );
-    container.appendChild(details);
-  }
-}
-
 function renderErrorBanner() {
   const errBanner = $("error-banner");
   const errDesc = $("error-desc");
@@ -1674,8 +1616,6 @@ async function refreshDetection(quiet = false) {
     }
     if (fresh) {
       documentError = data.error || null;
-      lastMigrationData = data;
-      renderMigrationBanner(data);
       renderErrorBanner();
       renderModeToolbar();
     }
@@ -1705,9 +1645,6 @@ async function loadMembers() {
     markSaved();
     documentError = data.error || null;
     takeReview(data);
-    lastMigrationData = data;
-
-    renderMigrationBanner(data);
     renderErrorBanner();
     renderModeToolbar();
 
@@ -2007,10 +1944,6 @@ $("btn-retry-update").addEventListener("click", () => {
   } else {
     triggerCheckUpdate();
   }
-});
-
-$("dismiss-migration").addEventListener("click", () => {
-  $("migration-banner").hidden = true;
 });
 
 // The app's web view does not show beforeunload prompts, so hold back in-app navigation.

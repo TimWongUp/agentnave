@@ -112,7 +112,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 节目即保存的 Group，会话 ID 就是 `group_id`；重启后首次写入时按保存的条目、席位会话与游标恢复。保存席位、条目（含时间；回答与缺席条目取该席完成时间，而非并联轮统一提交的时间，条目顺序仍按名单）、各席会话与游标、每轮名单／顺序／私密指令／各席状态、最终输出与完成时间（旧记录没有）、审核状态；不保存工具事件或推理；运行尾部只在运行期间写入数据根的运行文件（见下文“托盘数据”），结束即删除。重启时运行中的席位标为 interrupted 并清空其会话与游标，轮次标为 interrupted，未启动的串联席位标为 not_started，不续跑；待审回答保留，此后 `decide_answers` 直接写入条目，未决期间拒绝新轮次。
 
-审核：并联轮全员终态后成功回答一起待审，全部决定后按名单提交；串联轮逐席待审，决定后才启动下一席。`decide_answers` 整批校验后保存再生效；同一决定幂等，改变决定被拒。回执返回轮次 `status` 和可选 `error`；全轮已无待执行／运行席位及待审回答时，等待本地提交收尾再返回终态，`finished` 可直接进入下一轮。部分审核和仍有串联席位时保持非阻塞，由 `wait` 继续观察。决定只有 `publish` 与 `private`；旧记录的 `discard` 读作 `private`。不公开的回答不写条目，其他席位看不到，席位自己的原生会话仍记得它；该席下一次续接时，若它上一轮成功回答未公开，prompt 会附一句说明，避免它误以为别人已看到。私有视图另投影各轮已保存的不公开正文，App 以 boss 私聊回复「🔒 未公开」展示；公开视图与席位输入仍只使用共享条目。旧记录缺少回答时间时按该轮任务时间定位，不推断实际完成时间。主持人发言只能在无进行中轮次、无待审回答时追加为 `host` 条目。
+审核：并联轮全员终态后成功回答一起待审，全部决定后按名单提交；串联轮逐席待审，决定后才启动下一席。`decide_answers` 整批校验后保存再生效；同一决定幂等，改变决定被拒。回执返回轮次 `status` 和可选 `error`；全轮已无待执行／运行席位及待审回答时，等待本地提交收尾再返回终态，`finished` 可直接进入下一轮。部分审核和仍有串联席位时保持非阻塞，由 `wait` 继续观察。决定只有 `publish` 与 `private`。不公开的回答不写条目，其他席位看不到，席位自己的原生会话仍记得它；该席下一次续接时，若它上一轮成功回答未公开，prompt 会附一句说明，避免它误以为别人已看到。私有视图另投影各轮已保存的不公开正文，App 以 boss 私聊回复「🔒 未公开」展示；公开视图与席位输入仍只使用共享条目。旧记录缺少回答时间时按该轮任务时间定位，不推断实际完成时间。主持人发言只能在无进行中轮次、无待审回答时追加为 `host` 条目。
 
 `read_conversation` 按 App 的方式返回最终消息时间线，而非原始状态：任务给出每次 prompt、最终回复、状态与原生 session_id；节目给出席位、最新一轮与按序的 `task`、`answer`、`absent`、`forward`、`host` 及待审的 `pending_answer`，可用 `since_round` 只读后续轮次。`limit`（1–500）只保留最近若干条消息或任务，被略去的条数记在 `omitted`。`include_private=true` 另列私密指令与不公开回答，结果只给 Manager。投影来自 `views.py`，空字段省略。
 
@@ -156,13 +156,13 @@ App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 
 根目录按 App 用户覆盖、GUI 环境、登录 shell、默认值解析，返回 root.path/source。hosts.json 保存宿主根目录覆盖、first_seen 及按宿主记录的重启确认。shell 使用固定白名单脚本、三秒超时，结果缓存至下一次刷新；失败不自动接管并提示 root_unconfirmed，显式操作仍可选默认或用户目录。MCP 配置读写前检查全部祖先符号链接（家目录本身除外）；遇到链接返回 symlink_path，不写。外部 Skill（包括符号链接）仅标 external，跳过其写入，不影响宿主状态或 MCP 操作；仅实际写入 App 管理的 Skill 时检查该路径。服务定位、安装、升级与版本检查共用缓存的有效 UV_TOOL_DIR / XDG_DATA_HOME；同一变量优先 GUI 环境、再取 shell 结果。命令链接目录按 UV_TOOL_BIN_DIR、XDG_BIN_HOME、XDG_DATA_HOME 的同级 bin、默认目录解析，并与 UV_TOOL_DIR 一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。
 
-启动、POST /app/hosts/refresh 和服务安装成功后接管已有用户级条目。先解析全部用户层，复用备份、并发重读、原子替换及写后校验；确认安装元数据只声明 `agentnave-mcp = agentnave.relay:main` 且 launcher 可执行后，才将已识别的旧 `agentnave-studio-mcp`（含 `.exe`）迁到统一命令，并修复已缺失的 `agentnave-mcp` 路径。服务尚未就绪时不改命令，自定义命令不自动替换；保留参数、环境、启停、工具过滤、未知字段与注释，补齐宿主标识。失败抑制签名包含宿主、各用户层路径及目标条目；无关字段变化不重试。项目层只提示、不改写。旧连接须重连，旧工作室中继仍指向已移除模块，旧核心的内存组不能迁移。
+启动、POST /app/hosts/refresh 和服务安装成功后接管已有用户级条目。先解析全部用户层，复用备份、并发重读、原子替换及写后校验；确认安装元数据只声明 `agentnave-mcp = agentnave.relay:main` 且 launcher 可执行后，才修复已缺失的 `agentnave-mcp` 路径。服务尚未就绪时不改命令，自定义命令不自动替换；保留参数、环境、启停、工具过滤、未知字段与注释，补齐宿主标识。失败抑制签名包含宿主、各用户层路径及目标条目；无关字段变化不重试。项目层只提示、不改写。
 
 十个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份（拆分前的旧备份按配置计）。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回各用户、覆盖与项目层；移除遍历全部用户层并逐个备份，项目层不写，多层独立替换不构成原子整体。
 
 构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「技能」页列出说明与完整写法，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；开启时已接入则立即安装，否则下次接入时安装，关闭只移除 App 副本（共用同一目录的宿主仍有一方开启时保留），移除宿主条目时两者一并移除。评审工位存于独立的 `review.json`，经 `POST /app/review` 保存，不进入 `members.json`。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
-GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root|confirm-reload 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
+GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root|confirm-reload 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
 
 ### boss 模型与头像
 

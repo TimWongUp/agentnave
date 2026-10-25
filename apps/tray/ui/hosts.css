@@ -5,9 +5,6 @@
 
 /* avatars: official model icons and local overrides. */
 .avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
-.av-host { background-position: 0 0; } .av-claude { background-position: 50% 0; } .av-gpt { background-position: 100% 0; }
-.av-gemini { background-position: 0 100%; } .av-grok { background-position: 50% 100%; } .av-deepseek { background-position: 100% 100%; }
-.av-plain { background-image: none; background-color: hsl(var(--hue, 200) 38% 42%); }
 
 /* ---- page chrome ---- */
 .hosts-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 6px 0 2px; flex-wrap: wrap; }
@@ -105,7 +102,6 @@ button.pending:disabled { opacity: .85; }
 @keyframes spin { to { transform: rotate(360deg); } }
 button.danger-solid { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
 button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness(1.08); }
-button.ghost-danger:hover:enabled { border-color: var(--bad); }
 
 .hc-confirm { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 14px; border-radius: 8px; background: color-mix(in srgb, var(--bad) 8%, var(--bg)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 32%, transparent); }
 .hc-confirm .msg { flex: 1 1 340px; min-width: 0; font-size: 12.5px; line-height: 1.55; color: var(--soft); }
@@ -114,7 +110,6 @@ button.ghost-danger:hover:enabled { border-color: var(--bad); }
 
 .hc-adv { display: flex; flex-direction: column; gap: 13px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .hc-adv h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--soft); }
-.opt-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .opt { display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: var(--surface); }
 .opt:hover { border-color: var(--muted); }
 .opt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
@@ -135,7 +130,6 @@ button.ghost-danger:hover:enabled { border-color: var(--bad); }
 @media (max-width: 760px) {
   .hc-facts { grid-template-columns: 1fr 1fr; }
   .hc-facts .wide { grid-column: 1 / -1; }
-  .opt-group { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
   .hc { grid-template-columns: 1fr; padding: 14px; }

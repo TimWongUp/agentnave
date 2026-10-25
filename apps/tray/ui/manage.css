@@ -27,7 +27,6 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 a { color: inherit; text-decoration: none; }
 a:hover { color: var(--accent); }
 p { margin: 0; }
-.intro, .tools, .selection { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .brand { display: flex; gap: 9px; align-items: center; font-size: 14px; font-weight: 650; }
 .mark { display: grid; place-items: center; width: 23px; height: 25px; border-radius: 6px 6px 9px 3px; background: var(--accent); color: var(--bg); font: italic 700 17px Georgia, serif; }
 /* One viewport-wide header for chat, management and settings. */
@@ -45,33 +44,13 @@ p { margin: 0; }
 .theme button { width: 26px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; line-height: 1; }
 .theme button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
 .nav a[aria-current] { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
-.intro { margin: 48px 0 26px; align-items: flex-end; }
-.eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .12em; margin-bottom: 10px; }
 h1 { font-size: 30px; line-height: 1.2; font-weight: 620; letter-spacing: -.04em; margin: 0; }
-#total { font: 400 23px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--muted); margin-left: 16px; letter-spacing: -.04em; }
 .guidance { color: var(--muted); font-size: 12px; line-height: 1.65; margin-bottom: 14px; max-width: 860px; }
 .scope { color: var(--muted); text-align: right; font-size: 12px; }
 #notice { min-height: 26px; color: var(--muted); margin-bottom: 14px; }
 #notice.error { color: var(--bad); }
-.tools { border-top: 1px solid var(--line); padding: 18px 0; flex-wrap: wrap; gap: 14px; }
-.filters, .cleanup { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 label { color: var(--soft); display: inline-flex; gap: 8px; align-items: center; }
 label:has(input[type="checkbox"]), label:has(input[type="radio"]) { user-select: none; -webkit-user-select: none; cursor: pointer; }
-.cleanup #cleanup { min-width: 112px; }
-.selection #delete { min-width: 150px; }
-.cleanup input { width: 76px; text-align: right; }
-.records { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
-.selection { padding: 14px 18px; border-bottom: 1px solid var(--line); }
-.selection label { gap: 0; }
-.table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; text-align: left; }
-th { color: var(--muted); font-size: 11px; font-weight: 500; padding: 10px 14px; white-space: nowrap; }
-td { padding: 16px 14px; border-top: 1px solid var(--line); vertical-align: middle; }
-th.check, td.check { width: 40px; padding-left: 18px; padding-right: 0; }
-tr:hover td { background: var(--hover); }
-.title { display: block; font-size: 14px; font-weight: 550; max-width: 360px; overflow-wrap: anywhere; }
-button.edit { margin-top: 6px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
-input.rename { width: min(360px, 100%); margin-right: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .kind { font-size: 11px; color: var(--task); margin-top: 4px; display: block; }
 .kind.show { color: var(--show); }
 .status { white-space: nowrap; color: var(--soft); }
@@ -81,19 +60,11 @@ input.rename { width: min(360px, 100%); margin-right: 6px; padding: 5px 8px; bor
 .status.failed, .status.blocked, .status.interrupted { color: var(--bad); }
 .status.running::before, .status.review::before, .status.failed::before, .status.blocked::before, .status.interrupted::before { background: currentColor; }
 time { white-space: nowrap; font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--soft); }
-.reason { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; max-width: 250px; overflow-wrap: anywhere; }
-.hint { color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); padding: 12px 18px; }
 .empty { padding: 50px 20px; text-align: center; color: var(--muted); }
-.confirmation { border: 1px solid var(--bad); border-radius: 10px; padding: 20px; margin: 0 0 20px; background: var(--surface); }
 h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
-.confirmation p { color: var(--soft); }
-.confirmation ul { max-height: 160px; overflow-y: auto; padding-left: 20px; color: var(--muted); overflow-wrap: anywhere; }
-.confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
-.results, details { margin-top: 24px; }
-.results ul, details ul { list-style: none; padding: 0; margin: 12px 0 0; }
-.results li, details li { padding: 8px 0; border-top: 1px solid var(--line); color: var(--muted); overflow-wrap: anywhere; }
-.results strong { font-weight: 500; color: var(--ink); }
-.results .failure { color: var(--bad); }
+details { margin-top: 24px; }
+details ul { list-style: none; padding: 0; margin: 12px 0 0; }
+details li { padding: 8px 0; border-top: 1px solid var(--line); color: var(--muted); overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 760px) {
   .bar { padding: 0 12px; }
@@ -101,11 +72,6 @@ h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
 }
 @media (max-width: 700px) {
   main { padding: 18px 16px 30px; }
-  .intro { margin-top: 32px; align-items: flex-start; flex-direction: column; gap: 14px; }
   .guidance { color: var(--muted); font-size: 12px; line-height: 1.65; margin-bottom: 14px; max-width: 860px; }
 .scope { text-align: left; }
-  .selection { padding: 12px; gap: 10px; }
-  .selection label { font-size: 11px; }
-  td, th { padding-left: 10px; padding-right: 10px; }
-  .title { min-width: 150px; }
 }

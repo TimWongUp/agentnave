@@ -962,9 +962,8 @@ impl Hosts {
                                 .ok_or("takeover_failed:env 必须为对象")?
                                 .insert("AGENTNAVE_HOST".into(), json!(host.id));
                             if let Some(command) = layer.command(desired)
-                                && (entry_kind(command) == "legacy"
-                                    || (entry_kind(command) == "agentnave"
-                                        && self.command_state(&layer, desired) == "missing"))
+                                && entry_kind(command) == "agentnave"
+                                && self.command_state(&layer, desired) == "missing"
                                 && let Some(path) = self.launcher()
                             {
                                 layer.set_command(desired, &path);
@@ -973,8 +972,7 @@ impl Hosts {
                         },
                     )?;
                 }
-                // Require a new-format entry both before and after the transaction. The preflight
-                // check keeps legacy migration from installing a Skill in the same refresh; the
+                // Require an AgentNave entry both before and after the transaction; the
                 // post-transaction check prevents a concurrently removed entry from being revived.
                 Ok((changed, managed_before && self.has_managed_entry(&host)?))
             })();
@@ -1501,7 +1499,6 @@ fn entry_kind(command: &str) -> &'static str {
         .unwrap_or("")
         .trim_end_matches(".exe");
     match name {
-        "agentnave-studio-mcp" => "legacy",
         "agentnave-mcp" => "agentnave",
         _ => "other",
     }

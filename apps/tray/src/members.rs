@@ -5,7 +5,6 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
-use std::sync::Mutex;
 
 use serde_json::{Map, Value, json};
 
@@ -32,18 +31,6 @@ pub const REVIEW_ROLES: [&str; 8] = [
 ];
 const FILE: &str = "members.json";
 const REVIEW_FILE: &str = "review.json";
-const LEGACY: &str = "profiles.json";
-/// Permission-type option keys (case-insensitive substrings) never carried over from profiles.
-const PERMISSION_KEYS: [&str; 6] = [
-    "dangerously",
-    "permission",
-    "sandbox",
-    "yolo",
-    "skip_permissions",
-    "bypass",
-];
-/// Serializes the read-then-migrate step of concurrent `GET /settings/members` requests.
-static MIGRATION: Mutex<()> = Mutex::new(());
 
 pub fn empty() -> Value {
     json!({"version": 1, "clis": {}, "modes": {}})
@@ -325,117 +312,25 @@ pub fn save_review(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, REVIEW_FILE, document)
 }
 
-/// Turn each legacy orchestration profile into a shared model configuration. Modes stay absent,
-/// so every mode remains unrestricted. Profiles without a model, profiles repeating a CLI + model
-/// pair, and permission-type options are skipped and reported.
-fn convert(legacy: &Value) -> (Value, Vec<String>) {
-    let mut document = empty();
-    let mut skipped = Vec::new();
-    let mut enabled: Vec<(String, String)> = Vec::new();
-    let profiles = legacy["profiles"].as_array().cloned().unwrap_or_default();
-    for profile in &profiles {
-        let label = profile["name"]
-            .as_str()
-            .or(profile["id"].as_str())
-            .unwrap_or("未命名档案");
-        let provider = profile["provider"].as_str().unwrap_or_default();
-        if !PROVIDERS.contains(&provider) {
-            skipped.push(format!("{label}：不支持的 CLI"));
-            continue;
-        }
-        let mut options = profile["provider_options"]
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        let Some(model) = options
-            .remove("model")
-            .and_then(|model| model.as_str().map(str::to_owned))
-            .filter(|model| !model.trim().is_empty())
-        else {
-            skipped.push(format!("{label}：未指定模型"));
-            continue;
-        };
-        if enabled.contains(&(provider.to_owned(), model.clone())) {
-            skipped.push(format!("{label}：与前面的档案重复（{provider} / {model}）"));
-            continue;
-        }
-        let mut shared = Map::new();
-        if let Some(effort) = options.remove("effort")
-            && let Some(effort) = effort.as_str().filter(|s| !s.trim().is_empty())
-        {
-            shared.insert("effort".into(), json!(effort));
-        }
-        options.retain(|key, value| {
-            let lowered = key.to_lowercase();
-            if PERMISSION_KEYS.iter().any(|word| lowered.contains(word)) {
-                skipped.push(format!("{label}：未迁移权限类参数 {key}"));
-                return false;
-            }
-            value.is_string() || value.is_number() || value.is_boolean()
-        });
-        if !options.is_empty() {
-            shared.insert("options".into(), Value::Object(options));
-        }
-        if let Some(notes) = profile["notes"].as_str().filter(|s| !s.is_empty()) {
-            shared.insert("notes".into(), json!(notes));
-        }
-        document["clis"][provider]["models"][&model] = Value::Object(shared);
-        enabled.push((provider.to_owned(), model));
-    }
-    (document, skipped)
-}
-
-/// First read without `members.json`: migrate `profiles.json`, then rename it out of the way.
-/// Returns the new document and the skipped profiles, or `None` when there is nothing to migrate.
-pub fn migrate(root: &Path) -> Option<(Value, Vec<String>)> {
-    let content = fs::read(root.join(LEGACY)).ok()?;
-    let legacy: Value = match serde_json::from_slice(&content) {
-        Ok(legacy) => legacy,
-        Err(error) => return Some((empty(), vec![format!("{LEGACY} 无法读取，未迁移：{error}")])),
-    };
-    let (document, skipped) = convert(&legacy);
-    if let Err(error) = validate(&document).and_then(|()| write_atomic(root, FILE, &document)) {
-        return Some((empty(), vec![format!("迁移 {LEGACY} 失败：{error}")]));
-    }
-    if let Err(error) = fs::rename(root.join(LEGACY), root.join(format!("{LEGACY}.migrated"))) {
-        let mut skipped = skipped;
-        skipped.push(format!("已迁移，但无法改名 {LEGACY}：{error}"));
-        return Some((document, skipped));
-    }
-    Some((document, skipped))
-}
-
-/// Run at App start: migrate a legacy file, and probe the CLIs once so the office can name
-/// each CLI's own default model before Settings is ever opened.
-pub fn prepare(root: &Path) {
-    document_state(root);
+/// Run at App start: probe the CLIs once so the office can name each CLI's own default model
+/// before Settings is ever opened.
+pub fn prepare() {
     crate::detect::detected(false);
 }
 
-/// The editable document, why it cannot be saved, and the outcome of a first-read migration.
-/// Without either file nothing is written: every CLI keeps its own default model and effort.
-fn document_state(root: &Path) -> (Value, Value, bool, Vec<String>) {
-    let _migrating = MIGRATION
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+/// The editable document and why it cannot be saved. Without the file nothing is written:
+/// every CLI keeps its own default model and effort.
+fn document_state(root: &Path) -> (Value, Value) {
     match read(root) {
-        Ok(Some(document)) => (document, Value::Null, false, Vec::new()),
-        Err(error) => (empty(), json!(error), false, Vec::new()),
-        Ok(None) => match migrate(root) {
-            // A legacy file that could not be migrated stays for the user to fix or remove.
-            Some((document, skipped)) => {
-                let migrated = root.join(FILE).exists();
-                (document, Value::Null, migrated, skipped)
-            }
-            None => (empty(), Value::Null, false, Vec::new()),
-        },
+        Ok(document) => (document.unwrap_or_else(empty), Value::Null),
+        Err(error) => (empty(), json!(error)),
     }
 }
 
 /// `GET /settings/members`: the document, why it cannot be edited, and the detected CLIs.
 pub fn state(root: &Path, refresh: bool) -> Value {
     let detected = crate::detect::detected(refresh);
-    let (document, error, migrated, skipped) = document_state(root);
+    let (document, error) = document_state(root);
     let (review, review_error) = match read_review(root) {
         Ok(review) => (review, Value::Null),
         Err(error) => (Value::Null, json!(error)),
@@ -445,8 +340,6 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "error": error,
         "review": review,
         "review_error": review_error,
-        "migrated": migrated,
-        "migration_skipped": skipped,
         "detected": detected,
     })
 }
@@ -661,70 +554,19 @@ mod tests {
     fn broken_file_is_reported_and_left_untouched() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        assert_eq!(document_state(root), (empty(), Value::Null, false, vec![]));
+        assert_eq!(document_state(root), (empty(), Value::Null));
         fs::write(root.join(FILE), b"{").unwrap();
-        fs::write(root.join(LEGACY), br#"{"version":1,"profiles":[]}"#).unwrap();
-        let (document, error, migrated, _) = document_state(root);
+        let (document, error) = document_state(root);
         assert_eq!(document, empty());
-        assert!(error.as_str().unwrap().contains("损坏") && !migrated);
+        assert!(error.as_str().unwrap().contains("损坏"));
         assert_eq!(fs::read(root.join(FILE)).unwrap(), b"{");
-        assert!(root.join(LEGACY).exists());
     }
 
     #[test]
     fn a_missing_document_stays_missing_so_every_cli_keeps_its_own_default() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        assert_eq!(document_state(root), (empty(), Value::Null, false, vec![]));
+        assert_eq!(document_state(root), (empty(), Value::Null));
         assert!(!root.join(FILE).exists());
-    }
-
-    #[test]
-    fn migrates_profiles_once_and_reports_skipped_entries() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path();
-        assert!(migrate(root).is_none());
-        let legacy = json!({"version": 1, "profiles": [
-            {"id": "a", "name": "核验", "provider": "codex",
-             "provider_options": {"model": "gpt-6.1-sol", "effort": "high", "skip_git_repo_check": true,
-                                  "Dangerously_Bypass_Approvals_And_Sandbox": true, "permission_mode": "plan"},
-             "notes": "只读核验"},
-            {"id": "b", "name": "无模型", "provider": "grok", "provider_options": {"effort": "high"}, "notes": ""},
-            {"id": "c", "name": "重复", "provider": "codex", "provider_options": {"model": "gpt-6.1-sol"}, "notes": ""},
-            {"id": "d", "name": "讨论", "provider": "pi", "provider_options": {"model": "magpie/x"}, "notes": ""}
-        ]});
-        fs::write(root.join(LEGACY), legacy.to_string()).unwrap();
-
-        let (document, _, migrated, skipped) = document_state(root);
-        assert!(migrated);
-        assert_eq!(
-            document["clis"]["codex"]["models"]["gpt-6.1-sol"],
-            json!({"effort": "high", "options": {"skip_git_repo_check": true}, "notes": "只读核验"})
-        );
-        assert_eq!(document["clis"]["pi"]["models"]["magpie/x"], json!({}));
-        // Migration never restricts a mode: behavior stays as before.
-        assert_eq!(document["modes"], json!({}));
-        assert_eq!(skipped.len(), 4);
-        assert!(skipped[0].contains("Dangerously_Bypass_Approvals_And_Sandbox"));
-        assert!(skipped[1].contains("permission_mode"));
-        assert!(skipped[2].starts_with("无模型") && skipped[3].starts_with("重复"));
-        assert_eq!(read(root).unwrap(), Some(document));
-        assert!(!root.join(LEGACY).exists());
-        assert!(root.join("profiles.json.migrated").exists());
-        assert!(migrate(root).is_none());
-    }
-
-    #[test]
-    fn migration_without_any_model_keeps_modes_unrestricted() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path();
-        let legacy = json!({"version": 1, "profiles": [
-            {"id": "b", "name": "无模型", "provider": "grok", "provider_options": {}, "notes": ""}
-        ]});
-        fs::write(root.join(LEGACY), legacy.to_string()).unwrap();
-        let (document, skipped) = migrate(root).unwrap();
-        assert_eq!(document, empty());
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(read(root).unwrap(), Some(empty()));
     }
 }
