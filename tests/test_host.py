@@ -168,8 +168,9 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
     assert _detect_parent(80, denied_parent, argv) == Host()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS proc_pidinfo flavors")
 def test_macos_info_reads_privileged_ancestors() -> None:
+    if sys.platform != "darwin":
+        pytest.skip("macOS proc_pidinfo flavors")
     # Root-owned processes (launchd, a Terminal `login`) deny full BSD info to us. Their ppid
     # must still be readable for best-effort host identification.
     assert process_info._macos_info(1).uid == 0  # pyright: ignore[reportPrivateUsage]
