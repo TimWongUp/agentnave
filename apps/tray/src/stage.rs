@@ -1971,11 +1971,10 @@ pub(crate) fn respond(
 fn meaningful_title(title: &str) -> bool {
     let title = title.trim();
     !title.is_empty()
-        && !title.strip_suffix(" 任务").is_some_and(|p| {
-            !p.is_empty()
-                && p.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        })
+        && !matches!(
+            title.strip_suffix(" 任务"),
+            Some("antigravity" | "claude" | "codebuddy" | "codex" | "deepseek" | "grok" | "pi")
+        )
 }
 
 /// The project a working directory belongs to: its folder name, or the repository's name for an
@@ -1991,6 +1990,13 @@ fn project_name(cwd: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn custom_titles_are_not_confused_with_provider_defaults() {
+        assert!(super::meaningful_title("review 任务"));
+        assert!(!super::meaningful_title("codex 任务"));
+        assert!(!super::meaningful_title(" "));
+    }
+
     #[test]
     fn project_name_skips_agent_worktrees() {
         assert_eq!(

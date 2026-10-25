@@ -4,6 +4,7 @@
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
 use std::path::Path;
+use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -130,27 +131,25 @@ fn now_ms() -> i64 {
 
 /// The widest title in columns; the server holds a boss's titles to the same width.
 const TITLE_WIDTH: usize = 48;
+// Unicode 15.0 W/F intervals, shared with the MCP title validator.
+static TITLE_WIDE_RANGES: LazyLock<Vec<[u32; 2]>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../src/agentnave/title-width.json"))
+        .expect("valid bundled title widths")
+});
 
 /// Columns a title takes: East Asian wide and fullwidth characters count two, others one.
 fn title_width(title: &str) -> usize {
     title
         .chars()
-        .map(|c| match c as u32 {
-            0x1100..=0x115F
-            | 0x2E80..=0x303E
-            | 0x3041..=0x33FF
-            | 0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0xA000..=0xA4CF
-            | 0xAC00..=0xD7A3
-            | 0xF900..=0xFAFF
-            | 0xFE30..=0xFE4F
-            | 0xFF00..=0xFF60
-            | 0xFFE0..=0xFFE6
-            | 0x1F300..=0x1F64F
-            | 0x1F900..=0x1F9FF
-            | 0x20000..=0x3FFFD => 2,
-            _ => 1,
+        .map(|c| {
+            if TITLE_WIDE_RANGES
+                .iter()
+                .any(|[low, high]| *low <= c as u32 && c as u32 <= *high)
+            {
+                2
+            } else {
+                1
+            }
         })
         .sum()
 }
@@ -212,12 +211,112 @@ pub fn delete(root: &Path, id: &str) -> Value {
     if state.pending {
         return result(id, "pending_review", "有待审回答，请先由 boss 处理");
     }
-    // Entries, rounds, tasks and the view go with it; the lock file and seat files stay.
     match connection.execute("DELETE FROM conversations WHERE id = ?1", [id]) {
         Ok(_) => result(id, "deleted", "已删除会话记录；席位文件保留"),
         Err(e) => result(id, "error", &format!("删除失败：{e}")),
     }
-    // Closing the File releases the lock without removing its inode.
+}
+
+/// Current members of the anchor's workspace; legacy identities remain individual records.
+fn workspace_ids(connection: &Connection, anchor: &str) -> Result<Vec<String>, String> {
+    let session: Option<Option<String>> = connection
+        .query_row(
+            "SELECT manager_session FROM conversations WHERE id = ?1",
+            [anchor],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(session) = session else {
+        return Ok(Vec::new());
+    };
+    let session = session.filter(|s| {
+        s.strip_prefix("s-")
+            .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
+    });
+    let Some(session) = session else {
+        return Ok(vec![anchor.to_owned()]);
+    };
+    connection
+        .prepare("SELECT id FROM conversations WHERE manager_session = ?1 ORDER BY id")
+        .and_then(|mut query| query.query_map([session], |row| row.get(0))?.collect())
+        .map_err(|e| e.to_string())
+}
+
+/// Remove one quiet workspace only if the confirmed members and their activity are unchanged.
+pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
+    let report =
+        |status: &str, message: &str| ids.iter().map(|id| result(id, status, message)).collect();
+    let mut expected = ids.to_vec();
+    expected.sort();
+    expected.dedup();
+    let Some(anchor) = expected.first() else {
+        return Vec::new();
+    };
+    let mut connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return report("missing", "会话已不存在"),
+        Err(e) => return report("error", &e),
+    };
+    match workspace_ids(&connection, anchor) {
+        Ok(current) if current == expected => {}
+        Ok(_) => return report("changed", "工作区的会话已变化，已保留；请刷新后重试"),
+        Err(e) => return report("error", &e),
+    }
+    // Acquire OS locks before the DB write transaction so a writer can finish without deadlock.
+    let mut locks = Vec::new();
+    for id in &expected {
+        match locked(root, id) {
+            Ok((_, lock, state)) if !state.pending => locks.push(lock),
+            Ok(_) => return report("pending_review", "工作区有待审回答，已整组保留"),
+            Err(error) => {
+                return report(
+                    error["status"].as_str().unwrap_or("error"),
+                    error["message"].as_str().unwrap_or("工作区暂时不能清理"),
+                );
+            }
+        }
+    }
+    let removed = (|| -> Result<bool, String> {
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        if workspace_ids(&transaction, anchor)? != expected {
+            return Ok(false);
+        }
+        for id in &expected {
+            let (created, body): (String, Option<String>) = transaction.query_row(
+                "SELECT created, views.body FROM conversations LEFT JOIN views ON views.conversation_id = conversations.id WHERE conversations.id = ?1",
+                [id], |row| Ok((row.get(0)?, row.get(1)?))
+            ).map_err(|e| e.to_string())?;
+            let created = crate::stage::timestamp(&created);
+            let updated = body
+                .and_then(|body| serde_json::from_str::<Value>(&body).ok())
+                .and_then(|view| {
+                    view["summary"]["updated"]
+                        .as_str()
+                        .and_then(crate::stage::timestamp)
+                });
+            let Some((created, updated)) = created.zip(updated) else {
+                return Ok(false);
+            };
+            if created.max(updated) / 1_000 >= cutoff {
+                return Ok(false);
+            }
+        }
+        for id in &expected {
+            transaction
+                .execute("DELETE FROM conversations WHERE id = ?1", [id])
+                .map_err(|e| e.to_string())?;
+        }
+        transaction.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    })();
+    match removed {
+        Ok(true) => report("deleted", "已清理工作区历史；席位文件保留"),
+        Ok(false) => report("changed", "工作区已有新活动或时间无法确认，已整组保留"),
+        Err(e) => report("error", &format!("清理失败：{e}")),
+    }
 }
 
 pub fn list(root: &Path, overview: Overview) -> Value {
@@ -290,6 +389,65 @@ pub fn list(root: &Path, overview: Overview) -> Value {
 mod tests {
     use super::*;
     use crate::data::Reader;
+
+    #[test]
+    fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["old", "newly-finished"] {
+            fixture(root.path(), id);
+            set(
+                root.path(),
+                "UPDATE conversations SET created = '2020-01-01T00:00:00Z', manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+                id,
+            );
+            set(
+                root.path(),
+                "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+                id,
+            );
+        }
+        let ids = vec!["old".to_owned(), "newly-finished".to_owned()];
+        let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+        // A conversation created since the preview preserves the whole workspace.
+        assert!(
+            cleanup(root.path(), &ids[..1], cutoff)
+                .iter()
+                .all(|r| r["status"] == "changed")
+        );
+        set(
+            root.path(),
+            "UPDATE views SET body = json_set(body, '$.summary.updated', '2026-10-25T00:00:00Z') WHERE conversation_id = ?1",
+            "newly-finished",
+        );
+        assert!(
+            cleanup(root.path(), &ids, cutoff)
+                .iter()
+                .all(|r| r["status"] == "changed")
+        );
+        assert_eq!(count(root.path(), "conversations", "old"), 1);
+        assert_eq!(count(root.path(), "conversations", "newly-finished"), 1);
+        set(
+            root.path(),
+            "DELETE FROM views WHERE conversation_id = ?1",
+            "newly-finished",
+        );
+        assert!(
+            cleanup(root.path(), &ids, cutoff)
+                .iter()
+                .all(|r| r["status"] == "changed")
+        );
+        set(
+            root.path(),
+            "UPDATE conversations SET manager_session = NULL WHERE id = ?1",
+            "newly-finished",
+        );
+        assert!(
+            cleanup(root.path(), &ids[..1], cutoff)
+                .iter()
+                .all(|r| r["status"] == "deleted")
+        );
+        assert_eq!(delete(root.path(), "newly-finished")["status"], "deleted");
+    }
 
     /// A saved conversation with a running task, its view, and an isolated seat's files.
     fn fixture(root: &Path, id: &str) {
@@ -406,6 +564,10 @@ mod tests {
             rename(root.path(), "named", &"汉".repeat(25))["status"],
             "error"
         );
+        assert_eq!(
+            rename(root.path(), "named", &"🚀".repeat(25))["status"],
+            "error"
+        );
         let lock = lock_file(root.path(), "named").unwrap();
         take(&lock);
         assert_eq!(rename(root.path(), "named", "被占用")["status"], "in_use");
@@ -458,6 +620,7 @@ mod tests {
             b"{}",
             b"invalid",
             br#"{"ids":[]}"#,
+            br#"{"ids":["a1"],"updated_before":"yesterday"}"#,
         ] {
             assert_eq!(reader.request("POST", route, Some("1"), body).status, 400);
         }

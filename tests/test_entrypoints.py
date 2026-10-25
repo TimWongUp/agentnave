@@ -394,13 +394,14 @@ async def test_mcp_running_result_can_be_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_mcp_rejects_titles_wider_than_one_short_line(tmp_path: Path) -> None:
+@pytest.mark.parametrize("title", ["汉" * 25, "🚀" * 25, "a" * 49])
+async def test_mcp_rejects_titles_wider_than_one_short_line(tmp_path: Path, title: str) -> None:
     async with Client(mcp) as client:
         task = await client.call_tool(
             "start_agent",
-            {"provider": "codex", "prompt": "x", "cwd": str(tmp_path), "title": "汉" * 25},
+            {"provider": "codex", "prompt": "x", "cwd": str(tmp_path), "title": title},
         )
-        show = await client.call_tool("run_round", {"prompt": "x", "title": "a" * 49})
+        show = await client.call_tool("run_round", {"prompt": "x", "title": title})
 
     for result in (task, show):
         assert result.is_error is True

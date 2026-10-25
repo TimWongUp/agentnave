@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import time
-import unicodedata
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,13 +64,18 @@ type ManagerModel = Annotated[
 ]
 
 TITLE_WIDTH = 48
+_TITLE_WIDE_RANGES = cast(
+    list[list[int]], json.loads(Path(__file__).with_name("title-width.json").read_text())
+)
 
 
 def _short_title(title: str | None) -> str | None:
     """Keep titles to one short line: wide (CJK) characters take two columns, others one."""
     if title is None:
         return None
-    width = sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in title)
+    width = sum(
+        2 if any(low <= ord(c) <= high for low, high in _TITLE_WIDE_RANGES) else 1 for c in title
+    )
     if width > TITLE_WIDTH:
         raise ValueError(
             f"title is {width} columns wide; keep it within {TITLE_WIDTH} "

@@ -6,7 +6,7 @@
 // Loaded before chat.js, which calls it; it reaches chat.js's globals (state, go, refresh,
 // renderList, openScope) only from event handlers, once both scripts have run.
 const Actions = (() => {
-  const { h, $, load, chatName, urgent } = AN;
+  const { h, $, load, chatName } = AN;
   const picked = new Set(); // workspace ids picked for a batch action
   let anchor = null; // the last workspace clicked, where a Shift range starts
   const DAYS = [7, 30, 90, 180];
@@ -170,7 +170,7 @@ const Actions = (() => {
 
   // ---- delete -----------------------------------------------------------------------------
   // Deletes the given conversations after confirming; `names` describe what the reader picked.
-  async function remove(names, items, what) {
+  async function remove(names, items, what, cutoff = null) {
     const free = items.filter((i) => i.deletable);
     const kept = items.filter((i) => !i.deletable);
     if (!free.length) {
@@ -192,7 +192,22 @@ const Actions = (() => {
     });
     if (!answer) return;
     try {
-      const data = await AN.post("/app/conversations/delete", { ids: free.map((i) => i.id) });
+      let data;
+      if (cutoff === null) {
+        data = await AN.post("/app/conversations/delete", { ids: free.map((i) => i.id) });
+      } else {
+        const groups = new Map();
+        for (const item of free) {
+          const group = item.group || `c-${item.id}`;
+          if (!groups.has(group)) groups.set(group, []);
+          groups.get(group).push(item.id);
+        }
+        data = { results: [] };
+        for (const ids of groups.values()) {
+          const outcome = await AN.post("/app/conversations/delete", { ids, updated_before: cutoff });
+          data.results.push(...(outcome.results || []));
+        }
+      }
       const failed = (data.results || []).filter((r) => !["deleted", "missing"].includes(r.status));
       if (failed.length) say(`${failed.length} 个会话未删除：${failed[0].message}`, true);
       else say(`已删除 ${free.length} 个会话`);
@@ -222,7 +237,23 @@ const Actions = (() => {
   async function cleanup() {
     let days = 30;
     const now = Date.now();
-    const quiet = () => state.groupsData.filter((g) => !urgent(g.status) && !g.live && now - AN.at(g.updated) > days * 864e5);
+    let all;
+    try { all = await conversations(); } catch (error) { say(`无法读取会话：${error.message}`, true); return; }
+    // The office list is capped at 200 workspaces; cleanup uses the complete history listing.
+    const groups = (items) => {
+      const result = new Map();
+      for (const item of items) {
+        const id = item.group || `c-${item.id}`;
+        if (!result.has(id)) result.set(id, []);
+        result.get(id).push(item);
+      }
+      return result;
+    };
+    const quiet = (items) => [...groups(items)].filter(([, records]) => records.every((i) => {
+      const updated = AN.at(i.updated);
+      return i.deletable && Number.isFinite(updated) && updated > 0 && now - updated > days * 864e5;
+    }));
+    const ungrouped = all.filter((i) => !i.group);
     const count = h("p.act-note");
     const choices = h("div.act-days", { role: "radiogroup", "aria-label": "多久没有动静" }, DAYS.map((d) => {
       const b = h("button", { type: "button", role: "radio" }, `${d} 天`);
@@ -231,19 +262,52 @@ const Actions = (() => {
     }));
     const paint = () => {
       for (const b of choices.children) b.setAttribute("aria-checked", String(b.textContent === `${days} 天`));
-      const n = quiet().length;
+      const n = quiet(all).length;
       count.textContent = n ? `有 ${n} 个工作区超过 ${days} 天没有动静。` : `没有超过 ${days} 天没有动静的工作区。`;
     };
     paint();
     const answer = await ask({
       title: "清理没有动静的工作区",
       body: [h("p.act-note", {}, "删除超过所选天数没有动静的工作区。进行中和待审核的不会删除。"), choices, count],
-      buttons: [{ label: "取消" }, { label: "下一步", primary: true, value: "next" }],
+      buttons: [
+        { label: "取消" },
+        ...(ungrouped.length ? [{ label: `其他记录（${ungrouped.length}）…`, value: "ungrouped" }] : []),
+        { label: "下一步", primary: true, value: "next" },
+      ],
     });
     if (!answer) return;
-    const ids = quiet().map((g) => g.group);
-    if (!ids.length) { say("没有需要清理的工作区"); return; }
-    await removeGroups(ids);
+    if (answer.value === "ungrouped") {
+      const selected = new Set();
+      const choices = h("ul.act-list", {}, ungrouped.map((item) => {
+        const checkbox = h("input", { type: "checkbox" });
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) selected.add(item.id); else selected.delete(item.id);
+        });
+        return h("li", {}, h("label", {}, checkbox, ` ${item.title || item.id}`));
+      }));
+      const chosen = await ask({
+        title: "无法归组的记录",
+        body: [h("p.act-note", {}, "这些记录不参与按天数自动清理。请选择要清理的记录，下一步会再次确认。"), choices],
+        buttons: [{ label: "取消" }, { label: "下一步", primary: true, value: "next", check: () => selected.size ? "" : "请先选择记录" }],
+      });
+      if (chosen) {
+        const records = ungrouped.filter((i) => selected.has(i.id));
+        await remove(records.map((i) => i.title || i.id), records, "这些无法归组的记录");
+      }
+      return;
+    }
+    const selected = new Set(quiet(all).map(([id]) => id));
+    let fresh;
+    try { fresh = await conversations(); } catch (error) { say(`无法重新核对会话：${error.message}`, true); return; }
+    const eligible = quiet(fresh).filter(([id]) => selected.has(id));
+    if (!eligible.length) { say("没有需要清理的工作区，或工作区已有新活动"); return; }
+    const confirmedIds = new Set(all.map((i) => i.id));
+    await remove(
+      eligible.map(([id, records]) => state.groupsData.some((g) => g.group === id) ? groupName(id) : records[0].title || id),
+      eligible.flatMap(([, records]) => records.filter((i) => confirmedIds.has(i.id))),
+      `这 ${eligible.length} 个工作区`,
+      now - days * 864e5,
+    );
   }
 
   // ---- menus ------------------------------------------------------------------------------

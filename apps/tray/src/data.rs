@@ -326,10 +326,26 @@ impl Reader {
             }) else {
                 return Response::error(400, "ids 必须为非空的有效会话 ID 数组");
             };
-            let results: Vec<Value> = ids
-                .iter()
-                .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
-                .collect();
+            let cutoff = match payload.get("updated_before") {
+                None => None,
+                Some(value) => match value.as_i64().filter(|cutoff| *cutoff > 0) {
+                    Some(cutoff) => Some(cutoff),
+                    None => return Response::error(400, "updated_before 必须是有效的毫秒时间"),
+                },
+            };
+            let results: Vec<Value> = match cutoff {
+                Some(cutoff) => crate::manage::cleanup(
+                    &self.root,
+                    &ids.iter()
+                        .map(|id| id.as_str().unwrap().to_owned())
+                        .collect::<Vec<_>>(),
+                    cutoff,
+                ),
+                None => ids
+                    .iter()
+                    .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
+                    .collect(),
+            };
             return Response::json(&json!({"results": results}));
         }
         if method != "GET" {
