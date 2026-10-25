@@ -253,7 +253,7 @@ const Actions = (() => {
       const updated = AN.at(i.updated);
       return i.deletable && Number.isFinite(updated) && updated > 0 && now - updated > days * 864e5;
     }));
-    const ungrouped = all.filter((i) => !i.group);
+    const ungrouped = all.filter((i) => !i.group || !Number.isFinite(AN.at(i.updated)) || AN.at(i.updated) <= 0);
     const count = h("p.act-note");
     const choices = h("div.act-days", { role: "radiogroup", "aria-label": "多久没有动静" }, DAYS.map((d) => {
       const b = h("button", { type: "button", role: "radio" }, `${d} 天`);
@@ -286,13 +286,13 @@ const Actions = (() => {
         return h("li", {}, h("label", {}, checkbox, ` ${item.title || item.id}`));
       }));
       const chosen = await ask({
-        title: "无法归组的记录",
+        title: "无法归组或时间不明的记录",
         body: [h("p.act-note", {}, "这些记录不参与按天数自动清理。请选择要清理的记录，下一步会再次确认。"), choices],
         buttons: [{ label: "取消" }, { label: "下一步", primary: true, value: "next", check: () => selected.size ? "" : "请先选择记录" }],
       });
       if (chosen) {
         const records = ungrouped.filter((i) => selected.has(i.id));
-        await remove(records.map((i) => i.title || i.id), records, "这些无法归组的记录");
+        await remove(records.map((i) => i.title || i.id), records, "这些记录");
       }
       return;
     }
