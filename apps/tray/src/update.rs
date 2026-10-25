@@ -185,7 +185,8 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
         Ok(None) => updates.set(Phase::Latest, None),
         Err(error) if manual => updates.set(Phase::Failed(brief(&error.to_string())), None),
         Err(_) => updates.set(
-            if matches!(before, Phase::Failed(_)) {
+            // A found update was dropped by `begin`, so it cannot be kept.
+            if matches!(before, Phase::Failed(_) | Phase::Latest) {
                 before
             } else {
                 Phase::Idle
@@ -205,10 +206,11 @@ pub fn check(app: &AppHandle, manual: bool) {
 }
 
 /// `POST /app/update/check`: check now and answer with the result. The service version is
-/// read again by every status.
-pub fn check_now(app: &AppHandle) -> Value {
+/// read again by every status. `manual=false` (`?quiet=1`, the settings page opening) fails
+/// silently like the automatic checks.
+pub fn check_now(app: &AppHandle, manual: bool) -> Value {
     match app.state::<Updates>().begin() {
-        Some(before) => tauri::async_runtime::block_on(finish_check(app.clone(), true, before)),
+        Some(before) => tauri::async_runtime::block_on(finish_check(app.clone(), manual, before)),
         None => {
             let started = Instant::now();
             while app.state::<Updates>().phase() == Phase::Checking

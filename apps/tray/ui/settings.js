@@ -298,11 +298,12 @@ async function apiGetStatus() {
   return res.json();
 }
 
-async function apiCheckUpdate() {
+async function apiCheckUpdate(quiet = false) {
   if (isMock) {
     return window.AgentNaveMock.post("/app/update/check");
   }
-  const res = await fetch("/app/update/check", {
+  // quiet: a failed check keeps the previous state instead of reporting a failure.
+  const res = await fetch(quiet ? "/app/update/check?quiet=1" : "/app/update/check", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -2074,10 +2075,10 @@ function renderUpdates() {
   $("update-badge").hidden = !hasUpdate && updateInfo?.state !== "installing";
   btnCheck.disabled = isUpdating;
   btnCheck.textContent = hasUpdate ? "重新检查" : "立即检查";
-  btnApply.hidden = !hasUpdate;
-  btnApply.disabled = isUpdating;
+  // While anything runs the progress line says what; a disabled action would only contradict it.
+  btnApply.hidden = !hasUpdate || isUpdating;
   btnApply.textContent = hasAppUpdate ? `全部更新到 v${updateInfo.version}` : "升级本机服务";
-  updateHint.hidden = !hasUpdate;
+  updateHint.hidden = !hasUpdate || (isUpdating && !installWarning);
 
   if (hasUpdate) {
     if (installWarning) {
@@ -2141,12 +2142,13 @@ async function loadStatus() {
   }
 }
 
-// Opening this tab checks again when the automatic daily check is over an hour old.
+// Opening this tab checks again when the automatic daily check is over an hour old. A found
+// update or a failure the user has not retried is left as it is.
 const AUTO_CHECK_AFTER = 60 * 60 * 1000;
 function checkIfStale() {
   const update = appStatus?.update?.state;
   const service = appStatus?.service?.state;
-  if (!appStatus || ["checking", "installing"].includes(update) || ["upgrading", "installing"].includes(service)) return;
+  if (!appStatus || ["checking", "installing", "available", "failed"].includes(update) || ["upgrading", "installing"].includes(service)) return;
   const checked = Date.parse(appStatus.last_checked || "");
   if (Number.isNaN(checked) || Date.now() - checked > AUTO_CHECK_AFTER) triggerCheckUpdate(true);
 }
@@ -2154,16 +2156,22 @@ function checkIfStale() {
 async function triggerCheckUpdate(quiet = false) {
   const btnCheck = $("btn-check-update");
   btnCheck.disabled = true;
+  const previous = appStatus;
   try {
+    // The server refuses updates while it checks; show that instead of a live button.
+    appStatus = { ...appStatus, update: { state: "checking", version: null, error: null } };
+    renderUpdates();
     if (!quiet) showNotice("正在检查更新…");
-    appStatus = await apiCheckUpdate();
+    appStatus = await apiCheckUpdate(quiet);
     const state = appStatus?.update?.state;
     if (!quiet || state === "available") showNotice(
       state === "failed" ? "检查更新失败" : state === "available" ? `发现新版 v${appStatus.update.version}` : state === "none" ? "已是最新版本" : "检查更新完成",
       state === "failed",
     );
   } catch (err) {
-    showNotice(`检查更新失败: ${err.message}`, true);
+    appStatus = previous;
+    if (quiet) await loadStatus();
+    else showNotice(`检查更新失败: ${err.message}`, true);
   } finally {
     renderUpdates();
   }

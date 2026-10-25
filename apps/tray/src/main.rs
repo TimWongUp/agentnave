@@ -55,10 +55,14 @@ fn main() {
             let reader = served.clone();
             let app = ctx.app_handle().clone();
             let path = request.uri().path().to_owned();
-            let refresh = request
-                .uri()
-                .query()
-                .is_some_and(|query| query.split('&').any(|pair| pair == "refresh=1"));
+            let flag = |name: &str| {
+                request
+                    .uri()
+                    .query()
+                    .is_some_and(|query| query.split('&').any(|pair| pair == name))
+            };
+            let refresh = flag("refresh=1");
+            let quiet = flag("quiet=1");
             thread::spawn(move || {
                 let method = request.method().as_str();
                 let action = request
@@ -83,7 +87,9 @@ fn main() {
                     (_, "/app/update/check" | "/app/update/apply") if action != Some("1") => {
                         data::Response::error(403, "缺少操作请求头")
                     }
-                    (_, "/app/update/check") => data::Response::json(&update::check_now(&app)),
+                    (_, "/app/update/check") => {
+                        data::Response::json(&update::check_now(&app, !quiet))
+                    }
                     (_, "/app/update/apply") => data::Response::json(&update::apply(&app)),
                     _ => reader.request(method, &path, action, request.body()),
                 };
