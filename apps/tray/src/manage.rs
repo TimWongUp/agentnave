@@ -128,11 +128,42 @@ fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
+/// The widest title in columns; the server holds a boss's titles to the same width.
+const TITLE_WIDTH: usize = 48;
+
+/// Columns a title takes: East Asian wide and fullwidth characters count two, others one.
+fn title_width(title: &str) -> usize {
+    title
+        .chars()
+        .map(|c| match c as u32 {
+            0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1F64F
+            | 0x1F900..=0x1F9FF
+            | 0x20000..=0x3FFFD => 2,
+            _ => 1,
+        })
+        .sum()
+}
+
 /// Rename an idle conversation; servers reload it once its revision changes.
 pub fn rename(root: &Path, id: &str, title: &str) -> Value {
     let title = title.trim();
-    if title.is_empty() || title.chars().count() > 200 || title.chars().any(char::is_control) {
-        return result(id, "error", "标题需为 1–200 个字符，且不含换行或控制字符");
+    if title.is_empty() || title_width(title) > TITLE_WIDTH || title.chars().any(char::is_control) {
+        return result(
+            id,
+            "error",
+            "标题不能为空、不含换行，最多 24 个汉字或 48 个英文字符",
+        );
     }
     let (mut connection, _lock, _state) = match locked(root, id) {
         Ok(found) => found,
@@ -371,6 +402,10 @@ mod tests {
         assert!(view["public"].is_null());
         assert_eq!(rename(root.path(), "named", "a\nb")["status"], "error");
         assert_eq!(rename(root.path(), "named", " ")["status"], "error");
+        assert_eq!(
+            rename(root.path(), "named", &"汉".repeat(25))["status"],
+            "error"
+        );
         let lock = lock_file(root.path(), "named").unwrap();
         take(&lock);
         assert_eq!(rename(root.path(), "named", "被占用")["status"], "in_use");

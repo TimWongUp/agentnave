@@ -143,7 +143,6 @@ fn main() {
                 handle,
                 &[
                     &MenuItem::with_id(handle, "open", "打开 AgentNave", true, None::<&str>)?,
-                    &MenuItem::with_id(handle, "manage", "管理会话…", true, None::<&str>)?,
                     &MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?,
                     &check,
                     &MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?,
@@ -158,7 +157,6 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => restore(app),
-                    "manage" => open(app, "main", "/manage/"),
                     "settings" => open(app, "main", "/settings/"),
                     "update" => update::act(app),
                     "quit" => app.exit(0),

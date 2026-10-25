@@ -11,6 +11,7 @@
 <script src="/avatars.js" defer></script>
 <script src="/chat/common.js" defer></script>
 <script src="/chat/mock.js" defer></script>
+<script src="/chat/actions.js" defer></script>
 <script src="/chat/chat.js" defer></script>
 </head>
 <body class="chat-page">
@@ -18,7 +19,6 @@
   <a draggable="false" class="brand" href="/chat/"><span class="mark">N</span>AgentNave</a>
   <nav class="nav" aria-label="主导航">
     <a draggable="false" href="/chat/" aria-current="page">办公室</a>
-    <a draggable="false" href="/manage/">会话</a>
     <a draggable="false" id="nav-members" href="/settings/#members">执行者</a>
     <a draggable="false" id="nav-skills" href="/settings/#skills">技能</a>
     <a draggable="false" id="nav-hosts" href="/settings/#hosts">接入</a>
@@ -29,8 +29,10 @@
 <div id="banner" class="banner" role="status" hidden>读取中断，正在重试…</div>
 <div id="app" class="app" data-view="list">
   <aside class="side" aria-label="工作区列表">
-    <div class="side-head"><h1>工作区</h1><span id="side-count" class="side-count"></span></div>
+    <div class="side-head"><h1>工作区</h1><span id="side-count" class="side-count"></span><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的工作区">清理…</button></div>
+    <p class="side-tip">右键改名或删除 · ⌘/Shift 点选多个</p>
     <div class="gl-wrap"><div id="onboard-side" class="ob-slot"></div><div id="list" class="gl"></div></div>
+    <div class="split split-side" data-split="side" role="separator" aria-orientation="vertical" aria-label="调整工作区列表宽度" tabindex="0"></div>
   </aside>
   <main id="pane" class="floor-wrap">
     <header id="head" class="floor-head" hidden></header>
@@ -46,9 +48,11 @@
       </div>
     </div>
     <div id="blank" class="blank" hidden></div>
+    <button id="conv-toggle" class="conv-toggle" type="button" aria-controls="drawer" hidden></button>
     <footer id="ticker" class="ticker" hidden><span class="lbl">动态</span><span id="tick" class="tick"></span></footer>
   </main>
   <aside id="drawer" class="conv" aria-label="对话" hidden>
+    <div class="split split-conv" data-split="conv" role="separator" aria-orientation="vertical" aria-label="调整对话栏宽度" tabindex="0"></div>
     <header class="conv-head">
       <span id="dr-ico" class="dr-ico" aria-hidden="true"></span>
       <div class="dr-id"><b id="dr-title" class="dr-title"></b><span id="dr-sub" class="dr-sub"></span></div>

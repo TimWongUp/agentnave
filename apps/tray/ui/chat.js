@@ -31,6 +31,8 @@ const {
   cliName,
   hostTile,
   deskName,
+  chatName,
+  chatPlace,
   activities,
   clip,
 } = AN;
@@ -43,6 +45,16 @@ const FOLD_PX = 260; // a bubble taller than this is folded behind "展开全文
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
 const SLEEP_AFTER = 20 * 60e3; // an idle boss dozes off after this long
+const COLLAPSED_KEY = "agentnave.office.convCollapsed";
+// Layout preferences survive restarts; storage may be unavailable, which only loses them.
+function stored(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function store(key, value) {
+  try {
+    if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value);
+  } catch { /* storage may be unavailable */ }
+}
 const FIG = 88; // character size at desks and meeting seats, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 const WALK_MS = 1600; // a figure's walk between its desk and a meeting seat
@@ -78,6 +90,7 @@ const el = {
   ticker: $("ticker"),
   tick: $("tick"),
   drawer: $("drawer"),
+  convToggle: $("conv-toggle"),
   drIco: $("dr-ico"),
   drTitle: $("dr-title"),
   drSub: $("dr-sub"),
@@ -116,6 +129,7 @@ const state = {
   // conversation: {kind:"all"} | {kind:"desk", key} | {kind:"room", id}
   drawer: { kind: "all" },
   convOpen: false, // only matters while the conversation is an overlay
+  convCollapsed: stored(COLLAPSED_KEY) === "1", // the reader folded the conversation column away
   opener: null,
   scopeKey: "",
   nodes: new Map(),
@@ -228,24 +242,25 @@ function createItem(g) {
     ),
   );
   rec.el.addEventListener("click", (e) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    if (e.button) return;
     e.preventDefault();
-    go(`/chat/${rec.id}`);
+    if (!Actions.pick(rec.id, e)) go(`/chat/${rec.id}`);
   });
+  rec.el.addEventListener("contextmenu", (e) => Actions.workspaceMenu(rec.id, e));
   return rec;
 }
 function updateItem(rec, g) {
   const [word, tone] = pick(GROUP, g.status);
   const on = g.group === state.selected;
-  const name = g.project || g.label;
+  const name = chatName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
   setAttr(rec.el, "aria-label", `${name}，boss 在 ${g.label}，${word}`);
-  setAttr(rec.el, "title", `${name} · ${g.label}`);
+  setAttr(rec.el, "title", `${name} · ${chatPlace(g)}`);
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
   if (rec.tileKey !== tileKey) {
     rec.tileKey = tileKey;
@@ -256,7 +271,7 @@ function updateItem(rec, g) {
   setText(rec.label, name);
   setText(
     rec.meta,
-    `${g.project ? `${g.label} · ` : ""}${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
+    `${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
   );
   setText(rec.time, relTime(g.updated));
   setText(rec.prev, g.preview);
@@ -410,8 +425,8 @@ function renderHead(c, n) {
     );
   }
   const t = state.head;
-  setText(t.title, c.project || c.label);
-  setText(t.sub, `boss 在 ${c.label} 里`);
+  setText(t.title, chatName(c));
+  setText(t.sub, `boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
   t.run.hidden = !n.running;
   setText(t.run, `${n.running} 个在工作`);
   t.review.hidden = !n.review;
@@ -561,6 +576,7 @@ function sideList(node, title, items, empty) {
       e.stopPropagation();
       openScope(item.scope, row);
     });
+    if (item.scope.kind === "room") row.addEventListener("contextmenu", (e) => Actions.roomMenu(item.scope.id, e));
     rows.push(row);
   }
   if (!items.length) rows.push(h("div.td-more", {}, empty));
@@ -696,6 +712,7 @@ function createRoom(r) {
   );
   const open = () => openScope({ kind: "room", id: r.id }, rec.el);
   rec.el.addEventListener("click", open);
+  rec.el.addEventListener("contextmenu", (e) => Actions.roomMenu(r.id, e));
   rec.el.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -1464,6 +1481,7 @@ function openScope(scope, opener) {
   if (opener) state.opener = opener;
   state.drawer = scope;
   state.convOpen = true;
+  setCollapsed(false); // picking a desk or room is asking to read it
   if (state.chat) renderAll(state.chat);
   if (overlay.matches) el.tl.focus({ preventScroll: true });
 }
@@ -1478,6 +1496,74 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && overlay.matches && state.convOpen) closeConv();
 });
 $("dr-close").addEventListener("click", closeConv);
+function setCollapsed(on) {
+  if (state.convCollapsed === on) return;
+  state.convCollapsed = on;
+  store(COLLAPSED_KEY, on ? "1" : null);
+}
+el.convToggle.addEventListener("click", () => {
+  setCollapsed(!state.convCollapsed);
+  if (state.chat) renderAll(state.chat);
+});
+
+// Drag the borders between the three columns. Each width is a share of the window, kept between
+// a minimum and a maximum so the office in the middle never gets squeezed out.
+const SPLITS = {
+  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 200, css: "--side-w" },
+  conv: { key: "agentnave.office.conv", min: 0.22, max: 0.42, floor: 300, css: "--conv-w" },
+};
+function applySplit(name, share) {
+  const s = SPLITS[name];
+  const handle = el.app.querySelector(`[data-split="${name}"]`);
+  if (share == null) {
+    el.app.style.removeProperty(s.css);
+    handle.removeAttribute("aria-valuenow");
+    return;
+  }
+  const clamped = Math.min(s.max, Math.max(s.min, share));
+  el.app.style.setProperty(s.css, `max(${s.floor}px, ${(clamped * 100).toFixed(2)}%)`);
+  handle.setAttribute("aria-valuenow", String(Math.round(clamped * 100)));
+  return clamped;
+}
+for (const [name, s] of Object.entries(SPLITS)) {
+  const handle = el.app.querySelector(`[data-split="${name}"]`);
+  handle.setAttribute("aria-valuemin", String(s.min * 100));
+  handle.setAttribute("aria-valuemax", String(s.max * 100));
+  const saved = Number(stored(s.key));
+  if (saved) applySplit(name, saved);
+  const shareAt = (x) => {
+    const r = el.app.getBoundingClientRect();
+    return (name === "side" ? x - r.left : r.right - x) / r.width;
+  };
+  const current = () => {
+    const col = name === "side" ? handle.parentElement : el.drawer;
+    return col.getBoundingClientRect().width / el.app.getBoundingClientRect().width;
+  };
+  const save = (share) => store(s.key, share == null ? null : share.toFixed(4));
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    el.app.classList.add("resizing");
+    let last = null;
+    const move = (ev) => { last = applySplit(name, shareAt(ev.clientX)); };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      el.app.classList.remove("resizing");
+      if (last != null) save(last);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("lostpointercapture", end, { once: true });
+  });
+  // Double-click returns to the default width.
+  handle.addEventListener("dblclick", () => { applySplit(name, null); save(null); });
+  handle.addEventListener("keydown", (e) => {
+    const step = { ArrowLeft: -0.01, ArrowRight: 0.01 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    save(applySplit(name, current() + (name === "side" ? step : -step)));
+  });
+}
 el.drAll.addEventListener("click", () => openScope({ kind: "all" }));
 
 // Messages of the open scope. A desk's conversation is its own messages (private and meeting) plus
@@ -1541,7 +1627,14 @@ function threaded(list) {
   return top.flatMap((m) => [m, ...(replies.get(m.id) || [])]);
 }
 function renderConv(c, ctx) {
-  el.drawer.hidden = overlay.matches && !state.convOpen;
+  el.drawer.hidden = overlay.matches ? !state.convOpen : state.convCollapsed;
+  // The fold button lives on the floor's right edge; the overlay has its own close button.
+  el.convToggle.hidden = overlay.matches;
+  const shut = state.convCollapsed;
+  setText(el.convToggle, shut ? "‹" : "›");
+  setAttr(el.convToggle, "aria-expanded", shut ? "false" : "true");
+  setAttr(el.convToggle, "aria-label", shut ? "展开对话栏" : "收起对话栏");
+  setAttr(el.convToggle, "title", shut ? "展开对话栏" : "收起对话栏");
   if (el.drawer.hidden) {
     state.scopeKey = "";
     return;
@@ -1691,7 +1784,7 @@ function jumpToMessage(mid) {
   }
   if (target) flash(target);
 }
-// Scroll to the latest stretch of one conversation (links from 管理会话 use #conv:<id>).
+// Scroll to the latest stretch of one conversation (links to it use #conv:<id>).
 function focusConversation(id) {
   const target = [...el.inner.querySelectorAll("[data-conv]")]
     .filter((n) => n.dataset.conv === id)
@@ -1721,6 +1814,7 @@ function showBlank(kind) {
   if (none) return;
   el.head.hidden = true;
   el.drawer.hidden = true;
+  el.convToggle.hidden = true;
   el.ticker.hidden = true;
   state.headKey = "";
   state.loaded = null;

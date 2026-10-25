@@ -394,6 +394,20 @@ async def test_mcp_running_result_can_be_cancelled(
 
 
 @pytest.mark.asyncio
+async def test_mcp_rejects_titles_wider_than_one_short_line(tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        task = await client.call_tool(
+            "start_agent",
+            {"provider": "codex", "prompt": "x", "cwd": str(tmp_path), "title": "汉" * 25},
+        )
+        show = await client.call_tool("run_round", {"prompt": "x", "title": "a" * 49})
+
+    for result in (task, show):
+        assert result.is_error is True
+        assert "within 48" in str(result.content)
+
+
+@pytest.mark.asyncio
 async def test_mcp_schema_rejects_invalid_provider_with_actionable_error(tmp_path: Path) -> None:
     async with Client(mcp) as client:
         result = await client.call_tool(

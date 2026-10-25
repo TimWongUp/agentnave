@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import time
+import unicodedata
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,7 +16,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, InputRequiredResult, TextContent, ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from agentnave import __version__, views
 from agentnave.conversations import (
@@ -62,6 +63,22 @@ type ManagerModel = Annotated[
         ),
     ),
 ]
+
+TITLE_WIDTH = 48
+
+
+def _short_title(title: str | None) -> str | None:
+    """Keep titles to one short line: wide (CJK) characters take two columns, others one."""
+    if title is None:
+        return None
+    width = sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in title)
+    if width > TITLE_WIDTH:
+        raise ValueError(
+            f"title is {width} columns wide; keep it within {TITLE_WIDTH} "
+            "(about 24 CJK characters or 48 Latin letters)"
+        )
+    return title
+
 
 type ManagerSessionId = Annotated[
     str | None,
@@ -555,7 +572,15 @@ async def start_agent(
         str | None, Field(description="Task conversation to add this task to.")
     ] = None,
     title: Annotated[
-        str | None, Field(max_length=200, description="Title for a new task conversation.")
+        str | None,
+        Field(
+            description=(
+                "Short title for a new task conversation, at most 48 columns (CJK characters "
+                "count 2). The first conversation of a manager chat also names its workspace "
+                "for good, so give that one the chat's purpose; later private tasks may omit it."
+            )
+        ),
+        AfterValidator(_short_title),
     ] = None,
     role: Annotated[
         str | None,
@@ -1254,7 +1279,14 @@ async def run_round(
         ),
     ] = None,
     title: Annotated[
-        str | None, Field(max_length=200, description="New show only: its title.")
+        str | None,
+        Field(
+            description=(
+                "New show only: its short title, at most 48 columns (CJK characters count 2). "
+                "If it is the manager chat's first conversation, it also names the workspace."
+            )
+        ),
+        AfterValidator(_short_title),
     ] = None,
     members: Annotated[
         list[GroupSeatSpec] | None,

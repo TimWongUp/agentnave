@@ -221,6 +221,9 @@
     return family && window.Avatars ? Avatars.create("family", family) : h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
   }
   const deskName = (d) => d.display_model || d.model || "CLI 默认模型";
+  // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
+  const chatName = (g) => g.title || g.project || g.label;
+  const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
   // Cut long labels to n characters (by code point) with an ellipsis.
   const clip = (text, n) => { const chars = [...text]; return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text; };
   // A desk's live activities: private chats and meeting seats can run at the same time.
@@ -240,7 +243,7 @@
 
   const art = { url: artUrl, character, figure, head, lid, STATES };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, activities, dozing, clip };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, clip };
 })();
 
 (function () {

@@ -5,7 +5,7 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, activities, dozing, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
@@ -148,7 +148,7 @@ function updateBlock(rec, m) {
   const desks = m.desks || [], rooms = m.rooms || [];
   const n = tally(m);
   const [word] = pick(GROUP, m.status);
-  const name = m.project || m.label;
+  const name = chatName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n.running ? " run" : ""}`);
   tile(rec, m);
   setClass(rec.presence, m.live ? "presence on" : "presence");
@@ -157,7 +157,7 @@ function updateBlock(rec, m) {
   setAttr(rec.boss, "title", `${m.label} 里的 boss${m.project ? ` · ${m.project}` : ""}`);
   setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
   setText(rec.project, name);
-  setText(rec.host, m.project ? m.label : "");
+  setText(rec.host, name === m.label ? "" : chatPlace(m));
   const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
@@ -216,9 +216,9 @@ function updateQuiet(rec, m) {
   const desks = m.desks || [];
   tile(rec, m);
   setAttr(rec.el, "href", href(`/chat/${m.group}`));
-  setAttr(rec.el, "title", `${m.project || m.label} · ${m.label} · ${pick(GROUP, m.status)[0]}`);
-  const name = m.project || m.label;
-  const small = `${m.project ? `${m.label} · ` : ""}${desks.length} 工位${m.rooms?.length ? ` · ${m.rooms.length} 会议室` : ""}`;
+  const name = chatName(m);
+  setAttr(rec.el, "title", `${name} · ${chatPlace(m)} · ${pick(GROUP, m.status)[0]}`);
+  const small = `${chatPlace(m)} · ${desks.length} 工位${m.rooms?.length ? ` · ${m.rooms.length} 会议室` : ""}`;
   if (rec.name.dataset.key !== name + small) {
     rec.name.dataset.key = name + small;
     rec.name.replaceChildren(name, h("small", {}, small));
@@ -238,7 +238,7 @@ function announce(m, d, s) {
   const was = state.seen.get(id);
   const busy = s.mood === "working";
   state.seen.set(id, busy);
-  if (state.ready && was && !busy) spoken.push(`${m.project || m.label}：${deskName(d)} ${s.mood === "review" ? "交了回答，等待审核" : pick(MEMBER, d.status === "idle" ? "succeeded" : d.status)[0]}`);
+  if (state.ready && was && !busy) spoken.push(`${chatName(m)}：${deskName(d)} ${s.mood === "review" ? "交了回答，等待审核" : pick(MEMBER, d.status === "idle" ? "succeeded" : d.status)[0]}`);
 }
 
 // ---------------------------------------------------------------- header, ask strip, body states
@@ -263,7 +263,7 @@ function renderAsk(managers) {
   ask.hidden = !total;
   if (!total) return;
   const { m, r } = waiting[0];
-  const where = `${m.project || m.label} · ${r.title}${waiting.length > 1 ? ` 等 ${waiting.length} 处` : ""}`;
+  const where = `${chatName(m)} · ${r.title}${waiting.length > 1 ? ` 等 ${waiting.length} 处` : ""}`;
   const key = `${total}|${where}|${m.group}|${r.id}`;
   if (ask.dataset.key === key) return;
   ask.dataset.key = key;
@@ -379,7 +379,7 @@ function render(data) {
       let rec = state.blocks.get(id);
       if (!rec) {
         state.blocks.set(id, (rec = createBlock(m)));
-        if (state.ready) spoken.push(`${m.project || m.label} 的 boss 开始工作`);
+        if (state.ready) spoken.push(`${chatName(m)} 的 boss 开始工作`);
       }
       updateBlock(rec, m);
       full.push(rec.el);
