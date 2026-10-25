@@ -147,7 +147,7 @@
     <div class="updates-panel">
       <div class="updates-card">
         <h2>版本与更新</h2>
-        <p class="guidance">“检查更新”只查询版本；“全部更新”会更新 AgentNave 与本机服务，AgentNave 更新后自动重启。</p>
+        <p class="guidance">AgentNave 启动时和之后每天自动检查新版本，打开这一页时距上次检查超过一小时也会再查一次。发现新版本后，一个按钮同时更新 App 和本机服务。</p>
         <div id="reload-notice" class="banner reload-notice" role="note" hidden>
           <div class="banner-content">
             <strong>有宿主需要重新加载</strong>
@@ -171,17 +171,17 @@
             <p id="service-msg" class="status-desc" hidden></p>
           </div>
           <div class="status-item full-width">
-            <span class="status-label">上次检查时间</span>
+            <span class="status-label">上次检查</span>
             <span id="last-checked" class="status-value status-time">—</span>
           </div>
         </div>
 
         <div id="update-action-area" class="update-action-area">
           <div class="btn-group">
-            <button id="btn-check-update" class="primary" type="button">检查更新</button>
-            <button id="btn-apply-update" class="accent-btn" type="button" hidden>全部更新</button>
+            <button id="btn-apply-update" class="primary" type="button" hidden>全部更新</button>
+            <button id="btn-check-update" type="button">立即检查</button>
           </div>
-          <p id="update-hint" class="field-hint" hidden>会先更新 App 并自动重启，重启后自动升级本机服务。</p>
+          <p id="update-hint" class="field-hint" hidden></p>
           <div id="update-progress-box" class="progress-box" hidden>
             <span class="spinner-dot"></span>
             <span id="update-progress-text">正在检查更新…</span>

@@ -103,7 +103,7 @@ def no_installed_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
                     ]
                 },
             },
-            "permission_denied",
+            None,  # the CLI recovers with another tool, so a denied call does not wake the boss
         ),
         ("codex", {"type": "turn.failed", "error": {"message": "secret"}}, "provider_failed"),
         (

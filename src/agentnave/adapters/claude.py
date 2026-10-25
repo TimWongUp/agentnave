@@ -160,31 +160,13 @@ class ClaudeAdapter:
                         )
                     if block_type == "tool_result":
                         state = "failed" if block.get("is_error") is True else "completed"
-                        content = block.get("content")
-                        texts = (
-                            [content]
-                            if isinstance(content, str)
-                            else [
-                                text
-                                for part in cast(list[object], content)
-                                if isinstance((text := object_dict(part).get("text")), str)
-                                and object_dict(part).get("type") == "text"
-                            ]
-                            if isinstance(content, list)
-                            else []
-                        )
-                        denied = any(
-                            text.startswith("Error: Permission to use ")
-                            and "permission prompts are not available in non-interactive mode"
-                            in text
-                            for text in texts
-                        )
+                        # A tool denied in non-interactive mode only fails that call; the
+                        # CLI usually recovers with another tool, so it never wakes the boss.
                         return ProviderActivity(
                             "tool",
                             "user.tool_result",
                             state,
                             tool_call_id=brief(block.get("tool_use_id")),
-                            blocking_error="permission_denied" if denied else None,
                         )
                     if block_type == "text" and event_type == "assistant":
                         return ProviderActivity(
@@ -194,7 +176,7 @@ class ClaudeAdapter:
                             public_output=brief(block.get("text"), 1000),
                         )
         if event_type == "result":
-            # Denied tool calls were already reported as they happened; only a failed run blocks.
+            # Denied or failed tool calls do not block; only a failed run does.
             failed = event.get("is_error") is True or (
                 isinstance(event.get("subtype"), str) and str(event["subtype"]).startswith("error")
             )

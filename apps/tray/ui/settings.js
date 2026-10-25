@@ -534,7 +534,7 @@ function setTab(tab) {
     $("tab-" + id).setAttribute("aria-controls", "pane-" + id);
     $("pane-" + id).hidden = tab !== id;
   }
-  if (tab === "hosts") loadStatus();
+  if (tab === "hosts") loadStatus().then(checkIfStale);
   if (tab === "orchestration") {
     loadRuleFiles();
     loadLimit();
@@ -1984,12 +1984,10 @@ function renderUpdates() {
     appBadge.hidden = false;
     appBadge.className = "tag available";
     appBadge.textContent = `发现新版 v${updateInfo.version}`;
-    $("update-badge").hidden = false;
   } else if (updateInfo?.state === "installing") {
     appBadge.hidden = false;
     appBadge.className = "tag installing";
     appBadge.textContent = "正在下载更新…";
-    $("update-badge").hidden = false;
   } else if (updateInfo?.state === "failed") {
     appBadge.hidden = false;
     appBadge.className = "tag failed";
@@ -1998,10 +1996,8 @@ function renderUpdates() {
     appBadge.hidden = false;
     appBadge.className = "tag done";
     appBadge.textContent = "已是最新版本";
-    $("update-badge").hidden = true;
   } else {
     appBadge.hidden = true;
-    $("update-badge").hidden = true;
   }
 
   // Service status
@@ -2037,11 +2033,8 @@ function renderUpdates() {
     } else if (isServiceOutdated) {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag outdated";
-      serviceBadge.textContent = "比托盘旧（建议升级）";
-      serviceMsg.hidden = false;
-      serviceMsg.textContent = installWarning
-        ? "重启后请手动升级本机服务"
-        : "升级后将自动检测各宿主连接，仅在接口未同步或配置有变化时提示重新加载。";
+      serviceBadge.textContent = "比 App 旧，需要升级";
+      serviceMsg.hidden = true;
     } else if (serviceInfo.state === "done") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag done";
@@ -2077,18 +2070,24 @@ function renderUpdates() {
   const errorBox = $("update-error-box");
   const errorText = $("update-error-text");
 
+  // One action at a time: with an update found, "全部更新" leads and checking again stays secondary.
+  $("update-badge").hidden = !hasUpdate && updateInfo?.state !== "installing";
   btnCheck.disabled = isUpdating;
+  btnCheck.textContent = hasUpdate ? "重新检查" : "立即检查";
   btnApply.hidden = !hasUpdate;
   btnApply.disabled = isUpdating;
+  btnApply.textContent = hasAppUpdate ? `全部更新到 v${updateInfo.version}` : "升级本机服务";
   updateHint.hidden = !hasUpdate;
 
   if (hasUpdate) {
     if (installWarning) {
       updateHint.textContent = "重启后请手动升级本机服务";
     } else if (hasAppUpdate) {
-      updateHint.textContent = "会先更新 App 并自动重启，再自动升级本机服务；需要重新加载的宿主会在下方单独提示。";
+      updateHint.textContent = isServiceOutdated
+        ? "先更新 App 并自动重启，重启后自动升级本机服务，不用分两次操作。"
+        : "更新 App 后自动重启，本机服务随后自动跟上。";
     } else {
-      updateHint.textContent = "将升级本机服务，空闲后自动切换；若工具接口仍未同步，下方会提示重新连接。";
+      updateHint.textContent = "本机服务比 App 旧。升级约需一分钟，空闲后自动切换，正在运行的任务不受影响。";
     }
   }
 
@@ -2142,14 +2141,24 @@ async function loadStatus() {
   }
 }
 
-async function triggerCheckUpdate() {
+// Opening this tab checks again when the automatic daily check is over an hour old.
+const AUTO_CHECK_AFTER = 60 * 60 * 1000;
+function checkIfStale() {
+  const update = appStatus?.update?.state;
+  const service = appStatus?.service?.state;
+  if (!appStatus || ["checking", "installing"].includes(update) || ["upgrading", "installing"].includes(service)) return;
+  const checked = Date.parse(appStatus.last_checked || "");
+  if (Number.isNaN(checked) || Date.now() - checked > AUTO_CHECK_AFTER) triggerCheckUpdate(true);
+}
+
+async function triggerCheckUpdate(quiet = false) {
   const btnCheck = $("btn-check-update");
   btnCheck.disabled = true;
   try {
-    showNotice("正在检查更新…");
+    if (!quiet) showNotice("正在检查更新…");
     appStatus = await apiCheckUpdate();
     const state = appStatus?.update?.state;
-    showNotice(
+    if (!quiet || state === "available") showNotice(
       state === "failed" ? "检查更新失败" : state === "available" ? `发现新版 v${appStatus.update.version}` : state === "none" ? "已是最新版本" : "检查更新完成",
       state === "failed",
     );
@@ -2198,7 +2207,7 @@ window.addEventListener("focus", probeWhenStale);
 document.addEventListener("visibilitychange", probeWhenStale);
 $("save-btn").addEventListener("click", saveMembers);
 
-$("btn-check-update").addEventListener("click", triggerCheckUpdate);
+$("btn-check-update").addEventListener("click", () => triggerCheckUpdate());
 $("btn-apply-update").addEventListener("click", triggerApplyUpdate);
 $("btn-retry-update").addEventListener("click", () => {
   if (appStatus?.service?.state === "failed") {
