@@ -17,6 +17,16 @@ from agentnave.models import InvocationRequest, ProviderOption
 
 type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi"]
 type Mode = Literal["task", "discussion"]
+type ReviewRole = Literal[
+    "correctness-reviewer",
+    "architecture-reviewer",
+    "security-reviewer",
+    "performance-reviewer",
+    "test-reliability-reviewer",
+    "simplicity-reviewer",
+    "specialist-reviewer",
+    "adversarial-verifier",
+]
 
 
 class MemberFileError(ValueError):
@@ -100,12 +110,23 @@ class ModeCLI(StrictModel):
     overrides: dict[str, MemberConfig] = Field(default_factory=dict)
 
 
+class ReviewSeat(StrictModel):
+    """The CLI and model the user picked in the App for one agentnave-review role."""
+
+    provider: ProviderName
+    model: str = Field(min_length=1)
+    effort: str = ""
+
+
 class MemberFile(StrictModel):
     version: int = Field(ge=1, le=1)
     clis: dict[ProviderName, CLIConfig]
     modes: dict[Mode, dict[ProviderName, ModeCLI]]
     # Default models for unrestricted modes, kept when the user turns the allow-list off.
     defaults: dict[Mode, dict[ProviderName, str]] = {}
+    # Review seats are not checked against clis: a removed model is reported by list_members,
+    # and the review Skill picks a replacement at dispatch time.
+    review: dict[ReviewRole, ReviewSeat] = {}
 
     def effective(self, mode: Mode, provider: ProviderName, model: str) -> MemberConfig:
         cli = self.clis.get(provider)
@@ -308,12 +329,23 @@ class ModeStatus(StrictModel):
     members: list[MemberStatus]
 
 
+class ReviewSeatStatus(StrictModel):
+    provider: ProviderName
+    model: str
+    effort: str | None
+    available: bool
+    reason: str | None
+    # Other permitted task CLIs listing the same model ID.
+    alternatives: list[ProviderName]
+
+
 class MemberList(StrictModel):
     configured: bool
     error: str | None = None
     host: HostName | None
     host_source: HostSource
     modes: dict[Mode, ModeStatus]
+    review: dict[ReviewRole, ReviewSeatStatus] = {}
 
 
 def list_members(excluded: frozenset[str], host: Host) -> MemberList:
@@ -390,5 +422,44 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
             restricted=document is not None and mode in document.modes, members=items
         )
     return MemberList(
-        configured=document is not None, host=host.name, host_source=host.source, modes=modes
+        configured=document is not None,
+        host=host.name,
+        host_source=host.source,
+        modes=modes,
+        review=_review_status(document, modes["task"].members) if document else {},
     )
+
+
+def _review_status(
+    document: MemberFile, task: list[MemberStatus]
+) -> dict[ReviewRole, ReviewSeatStatus]:
+    seats: dict[ReviewRole, ReviewSeatStatus] = {}
+    for role, seat in document.review.items():
+        member = next(
+            (m for m in task if m.provider == seat.provider and m.model in (seat.model, "*")),
+            None,
+        )
+        if member is None:
+            reason = "model is not among this CLI's task members"
+        elif not member.permitted:
+            reason = "CLI is excluded by this host"
+        elif not member.valid:
+            reason = member.error
+        elif seat.effort and member.efforts and seat.effort not in member.efforts:
+            reason = f"effort {seat.effort!r} is not allowed for this model"
+        else:
+            reason = None
+        alternatives: list[ProviderName] = [
+            m.provider
+            for m in task
+            if m.provider != seat.provider and m.model == seat.model and m.permitted and m.valid
+        ]
+        seats[role] = ReviewSeatStatus(
+            provider=seat.provider,
+            model=seat.model,
+            effort=seat.effort or None,
+            available=reason is None,
+            reason=reason,
+            alternatives=list(dict.fromkeys(alternatives)),
+        )
+    return seats

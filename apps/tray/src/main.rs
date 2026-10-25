@@ -55,6 +55,7 @@ fn main() {
             let reader = served.clone();
             let app = ctx.app_handle().clone();
             let path = request.uri().path().to_owned();
+            let label = ctx.webview_label().to_owned();
             let flag = |name: &str| {
                 request
                     .uri()
@@ -71,6 +72,24 @@ fn main() {
                     .and_then(|v| v.to_str().ok());
                 let reply = match (method, path.as_str()) {
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
+                    // The top bar moves and zooms its window, as a native title bar would.
+                    ("POST", "/app/window/drag" | "/app/window/zoom") if action == Some("1") => {
+                        match app.get_webview_window(&label) {
+                            Some(window) if path.ends_with("drag") => {
+                                let _ = window.start_dragging();
+                                data::Response::json(&serde_json::json!({"ok": true}))
+                            }
+                            Some(window) => {
+                                let _ = if window.is_maximized().unwrap_or(false) {
+                                    window.unmaximize()
+                                } else {
+                                    window.maximize()
+                                };
+                                data::Response::json(&serde_json::json!({"ok": true}))
+                            }
+                            None => data::Response::error(404, "找不到窗口"),
+                        }
+                    }
                     ("GET", "/settings/members") => reader.members(refresh),
                     (_, "/app/service/install") if method != "POST" => {
                         data::Response::error(405, "此操作只接受 POST")
@@ -403,10 +422,17 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         let _ = window.set_focus();
         return;
     }
-    let built = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
         .title("AgentNave")
         .inner_size(1180.0, 800.0)
-        .min_inner_size(420.0, 480.0)
+        .min_inner_size(420.0, 480.0);
+    // The page's own top bar is the title bar: the window buttons sit in it and follow its theme.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+    let built = builder
         .on_navigation(allowed)
         .on_new_window(move |target, _| {
             if !ours(&target) && matches!(target.scheme(), "http" | "https") {

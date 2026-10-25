@@ -19,6 +19,17 @@ pub const PROVIDERS: [&str; 7] = [
     "pi",
 ];
 const MODES: [&str; 2] = ["task", "discussion"];
+/// The agentnave-review roles whose CLI and model the user may pick.
+pub const REVIEW_ROLES: [&str; 8] = [
+    "correctness-reviewer",
+    "architecture-reviewer",
+    "security-reviewer",
+    "performance-reviewer",
+    "test-reliability-reviewer",
+    "simplicity-reviewer",
+    "specialist-reviewer",
+    "adversarial-verifier",
+];
 const FILE: &str = "members.json";
 const LEGACY: &str = "profiles.json";
 /// Permission-type option keys (case-insensitive substrings) never carried over from profiles.
@@ -107,7 +118,7 @@ pub fn validate(document: &Value) -> Result<(), String> {
     let top = object(document, "members.json")?;
     only(
         top,
-        &["version", "clis", "modes", "defaults"],
+        &["version", "clis", "modes", "defaults", "review"],
         "members.json",
     )?;
     if document["version"].as_u64() != Some(1) {
@@ -214,6 +225,38 @@ pub fn validate(document: &Value) -> Result<(), String> {
                 if !known.contains_key(model) {
                     return Err(format!("{what} 引用了未配置的模型 {model}"));
                 }
+            }
+        }
+    }
+    // Review seats stay structural only: a seat whose model was removed later is reported by the
+    // server and replaced when the review Skill dispatches.
+    if let Some(review) = top.get("review") {
+        for (role, seat) in object(review, "review")? {
+            if !REVIEW_ROLES.contains(&role.as_str()) {
+                return Err(format!("未知评审角色：{role}"));
+            }
+            let what = format!("review.{role}");
+            let fields = object(seat, &what)?;
+            only(fields, &["provider", "model", "effort"], &what)?;
+            if !fields
+                .get("provider")
+                .and_then(Value::as_str)
+                .is_some_and(|provider| PROVIDERS.contains(&provider))
+            {
+                return Err(format!("{what} 的 CLI 不受支持"));
+            }
+            if !fields
+                .get("model")
+                .and_then(Value::as_str)
+                .is_some_and(|model| !model.trim().is_empty())
+            {
+                return Err(format!("{what} 缺少模型"));
+            }
+            if fields
+                .get("effort")
+                .is_some_and(|effort| !effort.is_string())
+            {
+                return Err(format!("{what} 的 effort 必须为字符串"));
             }
         }
     }
@@ -409,6 +452,24 @@ mod tests {
         deepseek["clis"]["deepseek"] = json!({"models": {"deepseek-flash": {"effort": "max"}}});
         deepseek["modes"]["task"]["deepseek"] = json!({"models": ["deepseek-flash"]});
         validate(&deepseek).unwrap();
+        // Review seats may name models no longer configured; the server reports those.
+        let mut review = document();
+        review["review"] = json!({
+            "correctness-reviewer": {"provider": "deepseek", "model": "gone", "effort": "max"},
+            "security-reviewer": {"provider": "codex", "model": "gpt-6.1-sol"}
+        });
+        validate(&review).unwrap();
+        for seat in [
+            json!({"other-reviewer": {"provider": "codex", "model": "m"}}),
+            json!({"security-reviewer": {"provider": "other", "model": "m"}}),
+            json!({"security-reviewer": {"provider": "codex"}}),
+            json!({"security-reviewer": {"provider": "codex", "model": " "}}),
+            json!({"security-reviewer": {"provider": "codex", "model": "m", "effort": 1}}),
+            json!({"security-reviewer": {"provider": "codex", "model": "m", "extra": 1}}),
+        ] {
+            review["review"] = seat.clone();
+            assert!(validate(&review).is_err(), "{seat}");
+        }
         for key in ["version", "clis", "modes"] {
             let mut missing = empty();
             missing.as_object_mut().unwrap().remove(key);

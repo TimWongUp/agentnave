@@ -30,7 +30,7 @@ Windows 第一版只依赖环境标记及其 PID 存活检查，标记被过滤�
 
 ## 安装与激活边界
 
-运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，App 维护按模式生效的组员默认值，Skill 按说明选择组员；CLI 参考文件仅提供补充指引。MCP instructions 与 Tool 描述只保留轻量调用合同，`list_members(provider)` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 可由 App 安装内嵌副本，或由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。
+运行时由 Python Tool Manager 安装，并在 MCP Host 注册稳定入口。配套 `agentnave-manager` Skill 承担 CLI 调用的主要触发、模型选择、传参、等待、取消与续接说明，App 维护按模式生效的组员默认值，Skill 按说明选择组员；CLI 参考文件仅提供补充指引。MCP instructions 与 Tool 描述只保留轻量调用合同，`list_members(provider)` 按需返回允许状态与支持参数；没有 Skill 时仍可显式调用 MCP。Skill 可由 App 安装内嵌副本，或由宿主的技能安装机制或已有部署管理器单独安装与更新，MCP 与 Skill 都只提供 CLI 调用能力与用法，不制定调用方的任务规划、调度、审核、重试或综合策略。可选的 `agentnave-review` Skill 是独立配套：为调用方提供 PR／合并的评审门控，由调用方 Agent 自行执行并经 AgentNave 派只读评审工位，不进入运行时、MCP 或 `agentnave-manager`（[ADR-0030](../adr/0030-optional-review-gate-skill.md)）。
 
 Python Tool Manager 拥有运行时的安装、升级与卸载，并提供稳定的 `agentnave-mcp` launcher。launcher 先启动只用标准库的中继，由它把服务作为子进程运行并转发 STDIO；安装指纹变化后，中继在两侧无在途请求、无运行中或未读结果的 Invocation，且会话没有持锁或未落盘回写时，重放宿主握手换用新子进程，宿主不断线。2026-07-28 起的宿主没有握手，中继改用其请求信封探测与启动新子进程；`subscriptions/listen` 订阅流不算在途请求，切换时转交新子进程（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。源码 checkout 只用于贡献、调试和未发布版本验证，不作为 MCP Host 的长期启动路径。
 
@@ -162,7 +162,7 @@ App 内置十个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 
 十个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份（拆分前的旧备份按配置计）。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回各用户、覆盖与项目层；移除遍历全部用户层并逐个备份，项目层不写，多层独立替换不构成原子整体。
 
-构建时嵌入完整同版本 agentnave-manager。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
+构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「技能」页列出说明与完整写法，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；开启时已接入则立即安装，否则下次接入时安装，关闭只移除 App 副本，移除宿主条目时两者一并移除。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
 GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root|confirm-reload 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存或迁移的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
 

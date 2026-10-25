@@ -103,7 +103,7 @@ let currentDoc = {
 };
 let detected = {};
 let currentMode = "task"; // "task" | "discussion"
-let currentTab = "members"; // "members" | "avatars" | "hosts"
+let currentTab = "members"; // "members" | "skills" | "avatars" | "orchestration" | "hosts"
 let dirty = false;
 let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
 let savedVersion = 0;
@@ -531,12 +531,13 @@ function setTab(tab) {
   // Status lines belong to the tab that produced them.
   if (currentTab !== tab) showNotice("");
   currentTab = tab;
-  for (const id of ["members", "avatars", "orchestration", "hosts"]) {
+  for (const id of ["members", "skills", "avatars", "orchestration", "hosts"]) {
     if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
     else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
   if (tab === "hosts") loadStatus().then(checkIfStale);
+  if (tab === "skills") window.AgentNaveSkills?.load();
   if (tab === "orchestration") {
     loadRuleFiles();
     loadLimit();
@@ -1429,9 +1430,100 @@ function renderCards() {
       }
     }
   }
+  renderReviewSeats();
 }
 
 // Save members.json with race version checking
+// agentnave-review roles, in the order the Skill grades them; saved in members.json `review`.
+const REVIEW_ROLES = [
+  ["correctness-reviewer", "正确性", "每次评审必派：行为、回归、边界"],
+  ["architecture-reviewer", "架构", "职责、耦合、公开接口"],
+  ["security-reviewer", "安全", "信任边界、授权、数据流"],
+  ["performance-reviewer", "性能", "热路径、规模、资源"],
+  ["test-reliability-reviewer", "测试可靠性", "测试能否护住行为"],
+  ["simplicity-reviewer", "简化", "多余的复杂度"],
+  ["specialist-reviewer", "专项", "其他明确的专业领域"],
+  ["adversarial-verifier", "反证", "高风险改动修完后尝试推翻结论"],
+];
+
+// Seats save on their own, onto the last saved document, so unsaved 执行者 edits stay unsaved.
+// A picked model is also added to that CLI's configured models, where the server looks for it.
+async function setReviewSeat(role, seat) {
+  if (documentError) return showNotice("配置文件有错误，请先在“执行者”里修复", true);
+  const review = { ...(currentDoc.review || {}) };
+  if (seat) review[role] = seat;
+  else delete review[role];
+  const apply = (doc) => {
+    if (seat) {
+      doc.clis ||= {};
+      doc.clis[seat.provider] ||= { models: {} };
+      doc.clis[seat.provider].models ||= {};
+      if (!Object.hasOwn(doc.clis[seat.provider].models, seat.model)) doc.clis[seat.provider].models[seat.model] = {};
+    }
+    if (Object.keys(review).length) doc.review = review;
+    else delete doc.review;
+    return doc;
+  };
+  const saved = apply(JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} })));
+  try {
+    await apiPostMembers(saved);
+    savedSnapshot = JSON.stringify(saved);
+    apply(currentDoc);
+    refreshDirty();
+    updateControls();
+    showNotice("评审工位已保存");
+  } catch (err) {
+    showNotice(`评审工位保存失败: ${err.message}`, true);
+  }
+  renderReviewSeats();
+}
+
+function reviewSelect(key, label, value, options, onPick, disabled = false) {
+  return el("select", {
+    dataset: { focusKey: key }, "aria-label": label, disabled,
+    onChange: (e) => onPick(e.target.value),
+  }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
+}
+
+// One row per role: CLI, then one of that CLI's models, then an effort or the member's default.
+function renderReviewSeats() {
+  const box = $("review-seats");
+  if (!box) return;
+  const focusKey = document.activeElement?.dataset?.focusKey;
+  const rows = REVIEW_ROLES.map(([role, name, hint]) => {
+    const seat = currentDoc.review?.[role];
+    const provider = seat?.provider || "";
+    const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
+      .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : "（没有可选模型）"), !getAllModelIds(p).length && p !== provider]);
+    const models = provider ? getAllModelIds(provider) : [];
+    if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
+    const levels = seat?.model ? effortLevels(provider, seat.model) : [];
+    if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
+    const pickCli = (next) => {
+      if (!next) return setReviewSeat(role, null);
+      const ids = getAllModelIds(next);
+      const model = ids.includes(fallback(next).model) ? fallback(next).model : ids[0];
+      setReviewSeat(role, { provider: next, model });
+    };
+    const pickModel = (model) => setReviewSeat(role, { provider, model });
+    const pickEffort = (effort) => setReviewSeat(role, effort ? { ...seat, effort } : { provider, model: seat.model });
+    // A restricted private-task list that leaves this seat out makes the server report it unavailable.
+    const task = currentDoc.modes?.task;
+    const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
+    return el("div", { className: "review-row" },
+      el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
+        !listed && el("small", { className: "review-warn" }, "私聊名单没有选中这个模型，评审时会改找其他 CLI")),
+      reviewSelect(`${role}/cli`, `${name}评审的 CLI`, provider, [["", "自动"], ...clis], pickCli),
+      reviewSelect(`${role}/model`, `${name}评审的模型`, seat?.model || "",
+        seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
+      reviewSelect(`${role}/effort`, `${name}评审的思考档位`, seat?.effort || "",
+        seat ? [["", "组员默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
+    );
+  });
+  box.replaceChildren(...rows);
+  if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+}
+
 async function saveMembers() {
   if (busy || !dirty || documentError || hasEmptyRestrictedMode()) return;
   const errors = configurationErrors();
@@ -1851,7 +1943,7 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
 }, true);
 $("copy-orchestration").addEventListener("click", copyOrchestration);
 $("save-limit").addEventListener("click", saveLimit);
-const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
+const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["skills", "avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 

@@ -6,6 +6,41 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 include!(concat!(env!("OUT_DIR"), "/manager_skill.rs"));
+/// One embedded Skill tree: the always-installed manager or the optional review gate.
+pub(super) type Files = &'static [(&'static str, &'static [u8])];
+pub(super) const MANAGER: Files = FILES;
+/// Skills the user installs per host from the 技能 page; add a tree here and in build.rs.
+pub(super) const OPTIONAL: &[(&str, Files)] = &[("agentnave-review", REVIEW_FILES)];
+
+/// `GET /app/skills`: each optional Skill's name, its SKILL.md title and description, and the
+/// full SKILL.md so the page can show how it works before the user installs it.
+pub fn catalog() -> Value {
+    let items: Vec<Value> = OPTIONAL
+        .iter()
+        .map(|(name, embedded)| {
+            let text = embedded
+                .iter()
+                .find(|(file, _)| *file == "SKILL.md")
+                .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+                .unwrap_or_default();
+            // Front matter is the block between the first two `---` lines.
+            let description = text
+                .lines()
+                .skip(1)
+                .take_while(|line| line.trim() != "---")
+                .find_map(|line| line.strip_prefix("description:"))
+                .unwrap_or("")
+                .trim();
+            let title = text
+                .lines()
+                .find_map(|line| line.strip_prefix("# "))
+                .unwrap_or(name)
+                .trim();
+            json!({"name": name, "title": title, "description": description, "content": text})
+        })
+        .collect();
+    json!({"skills": items})
+}
 const MARKER: &str = ".agentnave-app";
 const MANIFEST: &str = ".agentnave-app-manifest.json";
 
@@ -44,7 +79,7 @@ pub(super) fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, Strin
     files(path, path, &mut found)?;
     Ok(found)
 }
-pub(super) fn state(path: &Path, home: &Path) -> Value {
+pub(super) fn state(path: &Path, home: &Path, embedded: Files) -> Value {
     if super::transaction::safe_path(path, home).is_err() {
         return json!({"state":"external", "path":path, "version":null});
     }
@@ -54,14 +89,17 @@ pub(super) fn state(path: &Path, home: &Path) -> Value {
         .and_then(|_| fs::read_to_string(marker).ok());
     let state = if !path.exists() {
         "missing"
-    } else if path.is_dir() && version.is_some() && owned(path, version.as_deref().unwrap()) {
+    } else if path.is_dir()
+        && version.is_some()
+        && owned(path, version.as_deref().unwrap(), embedded)
+    {
         "app"
     } else {
         "external"
     };
     json!({"state": state, "path": path, "version": version.map(|v| v.trim().to_owned())})
 }
-fn owned(path: &Path, version: &str) -> bool {
+fn owned(path: &Path, version: &str, embedded: Files) -> bool {
     let Ok(found) = fingerprint(path) else {
         return false;
     };
@@ -85,7 +123,7 @@ fn owned(path: &Path, version: &str) -> bool {
     // Current-version copies also have to match this binary's embedded contents.
     version.trim() != VERSION
         || found
-            == FILES
+            == embedded
                 .iter()
                 .map(|(name, bytes)| (name.to_string(), hash(bytes)))
                 .collect()
@@ -99,8 +137,14 @@ fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), Str
     }
     Ok(())
 }
-pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
-    let current = state(path, home);
+pub(super) fn install(
+    path: &Path,
+    app: &Path,
+    id: &str,
+    home: &Path,
+    embedded: Files,
+) -> Result<(), String> {
+    let current = state(path, home, embedded);
     if current["state"] == "external"
         || (current["state"] == "app" && current["version"] == VERSION)
     {
@@ -114,7 +158,7 @@ pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<
     let next = stage.path().join("next");
     fs::create_dir(&next).map_err(|_| "无法暂存 Skill")?;
     let mut manifest = BTreeMap::new();
-    for (name, bytes) in FILES {
+    for (name, bytes) in embedded {
         let target = next.join(name);
         fs::create_dir_all(target.parent().unwrap()).map_err(|_| "无法创建 Skill 子目录")?;
         super::atomic(&target, bytes)?;
@@ -125,18 +169,18 @@ pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<
         &next.join(MANIFEST),
         &serde_json::to_vec(&json!({"version": VERSION, "files": manifest})).unwrap(),
     )?;
-    if state(&next, home)["state"] != "app" {
+    if state(&next, home, embedded)["state"] != "app" {
         return Err("Skill 写后校验失败".into());
     }
     let previous = stage.path().join("previous");
     if path.exists() {
-        if state(path, home)["state"] != "app" {
+        if state(path, home, embedded)["state"] != "app" {
             return Err("Skill 已被外部修改".into());
         }
         super::transaction::safe_path(path, home)?;
         backup_tree(path, app, id, home)?;
         super::transaction::safe_path(path, home)?;
-        if state(path, home)["state"] != "app" {
+        if state(path, home, embedded)["state"] != "app" {
             return Err("conflict:Skill 在备份期间被其他方式修改，已保留".into());
         }
         fs::rename(path, &previous).map_err(|_| "无法暂存旧 Skill")?;
@@ -150,15 +194,21 @@ pub(super) fn install(path: &Path, app: &Path, id: &str, home: &Path) -> Result<
     }
     Ok(())
 }
-pub(super) fn remove(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
-    if state(path, home)["state"] != "app" {
+pub(super) fn remove(
+    path: &Path,
+    app: &Path,
+    id: &str,
+    home: &Path,
+    embedded: Files,
+) -> Result<(), String> {
+    if state(path, home, embedded)["state"] != "app" {
         return Ok(());
     }
     super::transaction::safe_path(path, home)?;
     super::transaction::safe_path(&app.join("backups"), home)?;
     backup_tree(path, app, id, home)?;
     super::transaction::safe_path(path, home)?;
-    if state(path, home)["state"] != "app" {
+    if state(path, home, embedded)["state"] != "app" {
         return Err("conflict:Skill 在备份期间被其他方式修改，未移除".into());
     }
     // A rename makes the managed directory disappear as one operation.

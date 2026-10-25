@@ -90,6 +90,15 @@ _Avoid_: 房间、工作台
 节目的可选审核：成功回答先停在待审，由 Manager 用 `decide_answers` 公开（`publish`）后才成为 Entry，或不公开（`private`）留在 boss 与该席之间。并联轮全员结束后一起待审，串联轮逐席待审；不公开的回答不进入任何其他席位的输入，该席下一轮会被告知。取消或退出时未决回答按不公开处理。旧记录中的 `discard` 即不公开。
 _Avoid_: 丢弃
 
+## 评审门控（Review Gate）
+
+可选 Skill `agentnave-review` 规定的代码评审流程：在创建或更新 PR、用户要求评审、合并到主分支前，由 boss 按失败风险定 R0–R3 级、派只读评审工位、裁决 findings 并留存记录。流程由调用方 Agent 执行，不进入运行时；用户在 App「技能」页按宿主开关安装该 Skill，默认关闭。
+_Avoid_: Review（专指节目答案的审核）
+
+## 评审工位（Review Seat）
+
+用户在 App 中为评审门控某个角色（如正确性、安全）选定的 CLI、模型与可选档位，存于 `members.json` 的 `review`，`list_members` 回执附可用性、原因和提供同一模型的其他 CLI。未设置的角色由 boss 自动选组员；当前对话的点名优先于它。
+
 ## Isolated Seat
 
 隔离节目中的席位：每席使用会话目录下的独立空目录并启用 `restricted_tools`，只接受模型与 effort（Pi 另可选模型后端）。它限制工具，不是操作系统沙箱。

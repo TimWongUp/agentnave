@@ -144,6 +144,11 @@ impl Context {
     }
 }
 
+/// The optional Skills the 技能 page offers, with each SKILL.md.
+pub fn skill_catalog() -> Value {
+    skill::catalog()
+}
+
 #[derive(Clone)]
 struct Host {
     home: PathBuf,
@@ -158,6 +163,10 @@ struct Host {
     user_layers: Vec<PathBuf>,
 }
 impl Host {
+    /// Optional Skills sit beside the manager Skill in the same skills folder.
+    fn optional(&self, name: &str) -> Option<PathBuf> {
+        Some(self.skill.as_ref()?.parent()?.join(name))
+    }
     fn read(&self) -> Result<Document, String> {
         self.read_at(&self.config)
     }
@@ -618,8 +627,17 @@ impl Hosts {
         let skill = host
             .skill
             .as_ref()
-            .map(|p| skill::state(p, &self.context.home))
+            .map(|p| skill::state(p, &self.context.home, skill::MANAGER))
             .unwrap_or_else(|| json!({"state":"manual","path":null,"version":null}));
+        let mut skills = serde_json::Map::new();
+        for (name, embedded) in skill::OPTIONAL {
+            let mut state = host
+                .optional(name)
+                .map(|p| skill::state(&p, &self.context.home, embedded))
+                .unwrap_or_else(|| json!({"state":"manual","path":null,"version":null}));
+            state["enabled"] = json!(self.skill_wanted(host.id, name));
+            skills.insert((*name).into(), state);
+        }
         let reload = if !has_entry || !installed {
             json!({"state":"not_connected"})
         } else if let Some(token) = self.reload_token(host) {
@@ -629,7 +647,7 @@ impl Hosts {
         };
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"reload":reload,
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
             "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
@@ -1049,6 +1067,17 @@ impl Hosts {
             return Ok(json!({"host":self.state(&host),"ok":true,"message":"已更新配置根目录"}));
         }
         let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
+        if operation == "skill" {
+            let name = payload["skill"].as_str().ok_or("缺少 skill")?;
+            let enabled = payload["enabled"].as_bool().ok_or("缺少 enabled")?;
+            let result = self.set_optional_skill(&host, name, enabled);
+            let ok = result.is_ok();
+            let text = result.unwrap_or_else(|e| message(&e).into());
+            self.actions
+                .insert(id.into(), json!({"ok":ok,"message":text,"at":timestamp()}));
+            self.cached = self.snapshot();
+            return Ok(json!({"host":self.state(&host),"ok":ok,"message":text}));
+        }
         if operation == "confirm-reload" {
             if self.settings_error.is_some() {
                 return Err("请先修复 hosts.json".into());
@@ -1108,7 +1137,18 @@ impl Hosts {
                     }
                 }
                 if let Some(path) = &host.skill {
-                    skill::remove(path, &self.context.app, id, &self.context.home)?;
+                    skill::remove(
+                        path,
+                        &self.context.app,
+                        id,
+                        &self.context.home,
+                        skill::MANAGER,
+                    )?;
+                }
+                for (name, embedded) in skill::OPTIONAL {
+                    if let Some(path) = host.optional(name) {
+                        skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                    }
                 }
                 return Ok(if removed.is_empty() {
                     "没有用户级条目需要移除".into()
@@ -1154,7 +1194,7 @@ impl Hosts {
             let state = host
                 .skill
                 .as_ref()
-                .map(|path| skill::state(path, &self.context.home));
+                .map(|path| skill::state(path, &self.context.home, skill::MANAGER));
             let done = if skill_changed {
                 "已接入并自动安装或更新 Skill"
             } else if state
@@ -1234,19 +1274,92 @@ impl Hosts {
             },
         )
     }
+    /// Installs the manager Skill, and each optional Skill the user switched on; App copies of
+    /// all of them are updated to this release.
     fn ensure_skill(&self, host: &Host, install_missing: bool) -> Result<bool, String> {
         let Some(path) = &host.skill else {
             return Ok(false);
         };
-        let state = skill::state(path, &self.context.home);
+        let mut changed = self.ensure_one(host, path, skill::MANAGER, install_missing)?;
+        for (name, embedded) in skill::OPTIONAL {
+            if let Some(path) = host.optional(name) {
+                let wanted = install_missing && self.skill_wanted(host.id, name);
+                changed |= self.ensure_one(host, &path, embedded, wanted)?;
+            }
+        }
+        Ok(changed)
+    }
+    fn ensure_one(
+        &self,
+        host: &Host,
+        path: &Path,
+        embedded: skill::Files,
+        install_missing: bool,
+    ) -> Result<bool, String> {
+        let state = skill::state(path, &self.context.home, embedded);
         let missing = state["state"] == "missing";
         let outdated = state["state"] == "app" && state["version"] != VERSION;
         if (missing && install_missing) || outdated {
-            skill::install(path, &self.context.app, host.id, &self.context.home)?;
+            skill::install(
+                path,
+                &self.context.app,
+                host.id,
+                &self.context.home,
+                embedded,
+            )?;
             Ok(true)
         } else {
             Ok(false)
         }
+    }
+    fn skill_wanted(&self, id: &str, name: &str) -> bool {
+        self.settings[id]["skills"][name] == true
+    }
+    /// Switches one optional Skill: on installs it now if the host is connected (otherwise on the
+    /// next connect), off removes only the App's own copy.
+    fn set_optional_skill(
+        &mut self,
+        host: &Host,
+        name: &str,
+        enabled: bool,
+    ) -> Result<String, String> {
+        let (name, embedded) = *skill::OPTIONAL
+            .iter()
+            .find(|(known, _)| *known == name)
+            .ok_or("未知 Skill")?;
+        if self.settings_error.is_some() {
+            return Err("请先修复 hosts.json".into());
+        }
+        let path = host.optional(name).ok_or("此宿主不支持安装 Skill")?;
+        let mut settings = self.settings.clone();
+        if !settings[host.id].is_object() {
+            settings[host.id] = json!({});
+        }
+        if !settings[host.id]["skills"].is_object() {
+            settings[host.id]["skills"] = json!({});
+        }
+        settings[host.id]["skills"][name] = json!(enabled);
+        roots::save(&self.context, &settings)?;
+        self.settings = settings;
+        let state = skill::state(&path, &self.context.home, embedded);
+        if state["state"] == "external" {
+            return Ok("已记录；外部管理的副本保留，App 不改动".into());
+        }
+        if !enabled {
+            skill::remove(
+                &path,
+                &self.context.app,
+                host.id,
+                &self.context.home,
+                embedded,
+            )?;
+            return Ok("已停用并移除".into());
+        }
+        if !self.has_managed_entry(host)? {
+            return Ok("已启用；接入此宿主时自动安装".into());
+        }
+        self.ensure_one(host, &path, embedded, true)?;
+        Ok("已安装".into())
     }
     fn has_managed_entry(&self, host: &Host) -> Result<bool, String> {
         for path in &host.user_layers {

@@ -205,6 +205,12 @@ impl Reader {
         {
             return self.host_request(method, path, action, body);
         }
+        if path == "/app/skills" {
+            if method != "GET" {
+                return Response::error(405, "此路由只接受 GET");
+            }
+            return Response::json(&crate::hosts::skill_catalog());
+        }
         if path == "/app/avatars" {
             return crate::avatars::request(&self.root, method, action, body);
         }
@@ -360,6 +366,7 @@ impl Reader {
                 | "/app/hosts/remove"
                 | "/app/hosts/root"
                 | "/app/hosts/confirm-reload"
+                | "/app/hosts/skill"
                 | "/app/hosts/reveal-backups"
                 | "/app/onboarding/dismiss"
                 | "/app/onboarding/reopen"
@@ -586,6 +593,10 @@ impl Reader {
                 "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
                 "hosts.js" => Response::ok("text/javascript; charset=utf-8", HOSTS_JS.to_vec()),
                 "hosts.css" => Response::ok("text/css; charset=utf-8", HOSTS_CSS.to_vec()),
+                "skills.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/skills.js").to_vec(),
+                ),
                 _ => Response::not_found(),
             };
         }

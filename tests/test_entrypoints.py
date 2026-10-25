@@ -709,11 +709,29 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         clis["antigravity"]["models"]["bad-restricted"] = {
             "options": {"restricted_tools": True, "sandbox": True}
         }
+        document["review"] = {
+            "correctness-reviewer": {"provider": "grok", "model": "chosen", "effort": "high"},
+            "security-reviewer": {"provider": "codex", "model": "chosen"},
+            "performance-reviewer": {"provider": "grok", "model": "gone"},
+        }
         content = json.dumps(document, ensure_ascii=False)
         path = root / "members.json"
         path.write_text(content, encoding="utf-8")
         listed = await client.call_tool("list_members", {})
         assert not listed.is_error
+        review = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["review"])
+        assert review["correctness-reviewer"]["available"] is True
+        assert review["correctness-reviewer"]["effort"] == "high"
+        assert review["security-reviewer"]["reason"] == "CLI is excluded by this host"
+        assert review["security-reviewer"]["alternatives"] == [
+            "claude",
+            "codebuddy",
+            "grok",
+            "antigravity",
+            "pi",
+        ]
+        assert review["performance-reviewer"]["available"] is False
+        assert review["performance-reviewer"]["alternatives"] == []
         modes = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["modes"])
         items = cast(list[dict[str, object]], modes["task"]["members"])
         valid = [item for item in items if item["model"] == "chosen"]

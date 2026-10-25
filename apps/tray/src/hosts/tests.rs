@@ -1081,7 +1081,10 @@ fn legacy_entry_migrates_without_installing_a_skill() {
         h.read().unwrap().entry.unwrap()["command"],
         json!(hosts.launcher())
     );
-    assert_eq!(skill::state(path, &hosts.context.home)["state"], "missing");
+    assert_eq!(
+        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
+        "missing"
+    );
 }
 
 #[test]
@@ -1151,6 +1154,57 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
 }
 
 #[test]
+fn optional_skill_switch_installs_only_when_on_and_leaves_external_copies() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let review = h.optional("agentnave-review").unwrap();
+    let state = |hosts: &Hosts| skill::state(&review, &hosts.context.home, skill::OPTIONAL[0].1);
+    let switch = |enabled: bool| json!({"id":"pi","skill":"agentnave-review","enabled":enabled});
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{
+            "command":hosts.launcher(),
+            "env":{"AGENTNAVE_HOST":"pi"}
+        }}})
+        .to_string(),
+    );
+    hosts.refresh();
+    assert_eq!(state(&hosts)["state"], "missing");
+    assert_eq!(
+        hosts.state(&h)["skills"]["agentnave-review"]["enabled"],
+        false
+    );
+
+    let on = hosts.action("skill", &switch(true)).unwrap();
+    assert_eq!(on["ok"], true);
+    assert_eq!(state(&hosts)["state"], "app");
+    assert_eq!(on["host"]["skills"]["agentnave-review"]["enabled"], true);
+    assert!(review.join("references/reviewers.md").is_file());
+
+    hosts.action("skill", &switch(false)).unwrap();
+    assert_eq!(state(&hosts)["state"], "missing");
+
+    save(&review.join("SKILL.md"), "mine");
+    let kept = hosts.action("skill", &switch(false)).unwrap();
+    assert!(kept["message"].as_str().unwrap().contains("外部"));
+    assert_eq!(fs::read_to_string(review.join("SKILL.md")).unwrap(), "mine");
+    let unknown = hosts
+        .action("skill", &json!({"id":"pi","skill":"nope","enabled":true}))
+        .unwrap();
+    assert_eq!(unknown["ok"], false);
+
+    let catalog = skill_catalog();
+    assert_eq!(catalog["skills"][0]["name"], "agentnave-review");
+    assert!(
+        catalog["skills"][0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("评审")
+    );
+}
+
+#[test]
 fn refresh_installs_missing_skill_only_for_managed_host_entry() {
     let (_temp, mut hosts) = fixture();
     let h = host(&hosts, "pi");
@@ -1158,7 +1212,10 @@ fn refresh_installs_missing_skill_only_for_managed_host_entry() {
     executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
 
     hosts.refresh();
-    assert_eq!(skill::state(path, &hosts.context.home)["state"], "missing");
+    assert_eq!(
+        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
+        "missing"
+    );
 
     save(
         &h.config,
@@ -1169,8 +1226,14 @@ fn refresh_installs_missing_skill_only_for_managed_host_entry() {
         .to_string(),
     );
     hosts.refresh();
-    assert_eq!(skill::state(path, &hosts.context.home)["state"], "app");
-    assert_eq!(skill::state(path, &hosts.context.home)["version"], VERSION);
+    assert_eq!(
+        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
+        "app"
+    );
+    assert_eq!(
+        skill::state(path, &hosts.context.home, skill::MANAGER)["version"],
+        VERSION
+    );
     assert_eq!(hosts.state(&h)["status"], "connected");
 }
 
@@ -1194,7 +1257,7 @@ fn connect_skill_failure_keeps_manual_root_for_refresh_retry() {
     hosts.refresh_probed();
     let state = hosts.state(&h);
     assert_eq!(
-        skill::state(path, &hosts.context.home)["state"],
+        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
         "app",
         "{state}"
     );
@@ -1217,11 +1280,17 @@ fn skill_ownership_links_and_refresh_version_update_preserve_external_content() 
         value["version"] = json!("old");
         save(&manifest, &value.to_string());
         hosts.refresh();
-        assert_eq!(skill::state(path, &hosts.context.home)["version"], VERSION);
+        assert_eq!(
+            skill::state(path, &hosts.context.home, skill::MANAGER)["version"],
+            VERSION
+        );
         assert_eq!(h.config.exists(), keep_entry);
     }
     save(&path.join("SKILL.md"), "external");
-    assert_eq!(skill::state(path, &hosts.context.home)["state"], "external");
+    assert_eq!(
+        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
+        "external"
+    );
     hosts.action("remove", &json!({"id":"pi"})).unwrap();
     assert_eq!(
         fs::read_to_string(path.join("SKILL.md")).unwrap(),
@@ -1233,10 +1302,24 @@ fn skill_ownership_links_and_refresh_version_update_preserve_external_content() 
         let link = other.skill.unwrap();
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(path, &link).unwrap();
-        skill::install(&link, &hosts.context.app, "claude", &hosts.context.home).unwrap();
-        skill::remove(&link, &hosts.context.app, "claude", &hosts.context.home).unwrap();
+        skill::install(
+            &link,
+            &hosts.context.app,
+            "claude",
+            &hosts.context.home,
+            skill::MANAGER,
+        )
+        .unwrap();
+        skill::remove(
+            &link,
+            &hosts.context.app,
+            "claude",
+            &hosts.context.home,
+            skill::MANAGER,
+        )
+        .unwrap();
         assert_eq!(
-            skill::state(&link, &hosts.context.home)["state"],
+            skill::state(&link, &hosts.context.home, skill::MANAGER)["state"],
             "external"
         );
         assert!(link.is_symlink());
