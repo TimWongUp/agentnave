@@ -88,7 +88,6 @@ class Dashboard:
             "": ("text/html; charset=utf-8", (assets / "index.html").read_bytes()),
             "app.js": ("text/javascript; charset=utf-8", (assets / "app.js").read_bytes()),
             "style.css": ("text/css; charset=utf-8", (assets / "style.css").read_bytes()),
-            "avatars.png": ("image/png", (assets / "avatars.png").read_bytes()),
         }
         self.assets["avatars.js"] = (
             "text/javascript; charset=utf-8",

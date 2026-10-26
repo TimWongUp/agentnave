@@ -10,6 +10,8 @@ App 中配置了组员时以 `list_members` 为准，超出模式范围会被拒
 
 对应 `agy` CLI。原生 `print_timeout` 由 CLI 执行，与 AgentNave 的单次等待时长是不同参数；仅在用户明确要求时设置。
 
+`"dangerously_skip_permissions": true` 开启原生 YOLO（`--dangerously-skip-permissions`），本次调用自动批准全部原生工具权限请求，CLI 已存配置不变；仅在用户授权绕过权限时使用。无 App 默认值时省略即不加该参数、继承原生设置；传 `false` 会显式传入 `--dangerously-skip-permissions=false`。`mode` 与 `sandbox` 是独立选项，不代表 YOLO。
+
 ## 显式受限工具
 
 `restricted_tools=true` 要求专用 `cwd` 事先含 `.agents/agents/agentnave-discussion.md`，内容须与下列定义一致；缺失或不符时 Adapter 返回错误，不代写角色文件。Studio 的隔离席位会自动准备；单任务由调用方在专用目录中准备，保持现有项目目录不变。

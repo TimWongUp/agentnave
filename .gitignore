@@ -8,6 +8,4 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-macos/AgentNaveStatus/.build/
-macos/AgentNaveStatus/.swiftpm/
 *.xcresult/

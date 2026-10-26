@@ -185,7 +185,7 @@ fn main() {
                 });
                 update::resume(&resumer);
             });
-            thread::spawn(|| members::prepare(&data::data_root()));
+            thread::spawn(members::prepare);
             thread::spawn(move || poll(handle, reader, overview));
             thread::spawn(move || {
                 loop {

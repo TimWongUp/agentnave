@@ -14,7 +14,7 @@ const STATUS = {
   needs_attention: ["需要处理", "warn"],
   orphaned: ["已卸载但仍有条目", "idle"],
 };
-const ENTRY = { agentnave: "AgentNave", legacy: "旧版命令（待迁移）", other: "自定义命令" };
+const ENTRY = { agentnave: "AgentNave", other: "自定义命令" };
 
 const S = {
   data: null,

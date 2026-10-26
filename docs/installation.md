@@ -16,9 +16,7 @@ sets the calling Agent's planning, review, or retry workflow. Hosts without Skil
 use MCP alone, but must supply their own calling guidance.
 
 **Paired release:** `v0.43.0` contains the runtime source, `agentnave-manager` Skill and all seven
-CLI reference files. Install both components from this tag. The older `v0.5.0` contains only
-the runtime; it is not a complete paired installation. `v0.10.0` is the first paired release with
-native Windows support.
+CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
 
@@ -27,10 +25,6 @@ including native-session continuations: complete the assigned task, report back 
 manager, and do not call AgentNave tools or delegate through AgentNave. Blockers go back to the
 manager. This is an instruction for the model, not a tool-permission boundary. The server does
 not inspect process ancestry to disable tools; host identification remains best-effort.
-
-After installing this change over an older runtime, reconnect any MCP connection already stuck
-with an empty tool list, or restart its host. That older zero-tool server cannot satisfy the
-relay's idle probe and therefore cannot switch itself to the updated installation.
 
 ## 1. Check and reuse the runtime
 
@@ -224,9 +218,9 @@ format; register it with the official CLI command below instead of copying this 
 
 登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存或迁移的组员设置、带 manager_session 的记录计算。
 
-启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后迁移旧工作室命令、修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，均标为已实测；Gemini、OpenCode 仍标“未实测”，且只在尚未接入时显示该标记。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
+启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，均标为已实测；Gemini、OpenCode 仍标“未实测”，且只在尚未接入时显示该标记。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
 
-十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管与旧命令迁移只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
+十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
 
 MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。外部 Skill（包括符号链接）仅显示 external，跳过写入，不影响宿主接入状态或 MCP 接入、移除；只有实际写入 App 管理的 Skill 时才检查该路径。App 只更新版本标记与内容清单匹配的 Skill 副本；外部内容不覆盖，目录未知返回 manual。接入时自动安装缺失的 App Skill；启动和刷新检测还会为已有 `agentnave` 用户级入口的宿主自动补装，并更新 App 管理的旧版副本。安装失败会在下次刷新检测时继续自动重试。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
 
@@ -450,32 +444,13 @@ Use a local checkout containing this Skill as `AGENTNAVE_SOURCE`, then run the c
 or register that directory with the existing deployment manager. A managed symlink may point at
 `skills/agentnave-manager/` in the development checkout, but must not point at a temporary directory.
 The target must remain present when switching branches. Record this as a development Skill,
-not as part of v0.5.0. Keep the installed runtime's stable launcher registration.
-
-### Upgrading from v0.5.0
-
-The v0.6.0 Skill explicitly requests 120-second waits, also supported by v0.5.0.
-In v0.6.0 the runtime wait default itself is 120 seconds. Total `start_agent.timeout_seconds`
-is now optional: omitted/null means no AgentNave deadline, replacing the former 1,800-second
-cutoff. To retain a deadline, pass an explicit positive total limit; expiry terminates the
-invocation. Provider-native limits remain independent. A wait expiry only returns running,
-and completion returns early. Respect any shorter host timeout/responsiveness limits.
-
-The v0.6.0 runtime removes `defaults` and `guidance` from `describe_provider`; update callers
-that consume those fields. The tool now reports permitted status and supported option names;
-the complete Skill and its five references supply model/effort guidance. Running snapshots
-add recent native activity, its age, and remaining explicit budget; unknown values are null.
-They describe observations rather than all concurrent work or evidence of a stall.
-
-Updating the runtime alone does not install or update the Skill. Update the pair through the
-procedure below, restart MCP connections to refresh schemas, and start a fresh Skill context.
-A development Skill used with v0.5.0 does not change that older runtime's behavior.
+not as part of a release. Keep the installed runtime's stable launcher registration.
 
 ## 5. Verify MCP and Skill discovery
 
 boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `list_members(provider=...)` 核对该 CLI 的允许状态与参数。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。服务不读取旧 `profiles.json`，迁移由 App 负责；工具为 8 个。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 8 个。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
@@ -513,310 +488,6 @@ references, matching the source-tag installation route. The workflow also instal
 through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
 
-### Upgrading from v0.6.0 to v0.7.0
-
-The v0.7.0 runtime changes wait default/maximum to 600 seconds and replaces the lifecycle
-responses with a flat `status`/`reason`/`elapsed_ms` template. Running replies include at most
-1,000 characters from the latest public reply; recognized blockers return early without stopping
-the CLI. Completed replies retain full final output within the existing capture limit. Usage/cost
-and raw event details are omitted. This is a breaking MCP response change from v0.6.0.
-Update runtime and Skill together and restart the connection; a source-linked Skill alone does
-not upgrade an installed v0.6.0 runtime. The Skill checks the connected schema for older response shapes. A host yielding a background
-call handle requires resuming that call through its own wait mechanism.
-
-### Upgrading from v0.7.0 to v0.8.0
-
-The v0.8.0 runtime removes `start_agent.timeout_seconds`, the corresponding runtime cutoff,
-and the `timed_out` result status. Remove this argument from callers. AgentNave no longer stops
-an invocation based on elapsed runtime. Wait expiry only returns a running response; continue
-waiting or use `cancel_agent` to stop work explicitly. Provider-native limits still apply.
-
-Update the runtime and complete Skill together, then restart MCP connections to refresh the
-tool schemas. Updating the Skill alone does not remove the older runtime's deadline parameter.
-Rolling back to v0.7.0 restores that parameter and its explicit-deadline behavior.
-
-### Upgrading from v0.8.0 to v0.9.0
-
-`wait_agent` now accepts only `invocation_id` and waits for a fixed 300-second window.
-Remove `wait_timeout_seconds` from callers and refresh the MCP connection after upgrading
-the runtime. Completion and recognized blockers still return early; wait expiry leaves the
-CLI running. Update the runtime and Skill together; editing a source-linked Skill does not
-upgrade an installed runtime. On older schemas that still expose the wait argument, the Skill
-uses 300 seconds. In Codex, resume `Script running with cell ID ...` with `functions.wait`
-and the returned `cell_id` until the original call completes.
-
-### Upgrading from v0.10.3 to v0.11.0
-
-Ordinary `start_agent` calls now save private task metadata, native session bindings and final output
-under `~/.agentnave/` by default. `AGENTNAVE_DATA_DIR` selects another fixed directory. This is a
-new persistence behavior; uninstalling or downgrading does not remove those records. Task grouping
-does not share context or change provider permissions. Active invocation handles do not survive restart.
-
-Update runtime and Skill together, reconnect MCP, then use `open_workbench`. Discussion rooms are
-explicitly created; use `blind` for independent answers. Only published dialogue is shared between
-seats. Ordinary host exclusions remain in force; explicit discussion rooms permit every registered
-provider, including the host CLI. The Dashboard stays local and read-only. See the
-[studio guide](studio.md) for native restriction limits and recovery behavior.
-
-### Upgrading from v0.11.0 to v0.12.0
-
-Reconnect MCP after upgrading to discover `delete_conversation(room_id)`. This explicit, destructive
-tool requires an archived conversation with no unresolved work. After user authorization it removes
-AgentNave history and finished invocation handles, while preserving native CLI files and external
-root directories. Archiving still preserves history. There is no automatic deletion or migration.
-
-### Upgrading from v0.12.0 to v0.13.0
-
-No new tools or history migration. Hosts sharing one data directory no longer lock every saved
-conversation at startup: each indexes history read-only and locks a record only on its first write.
-`list_conversations` adds `writable`; `false` means another running service holds that record.
-Update runtime and Skill together and reconnect MCP on every host so all services use the new
-locking behavior. The paired Skill now defaults Codex to `gpt-6.1-sol` / `high`.
-
-### Upgrading from v0.13.0 to v0.14.0
-
-Adds the `pi` provider (Pi Coding Agent) and its Skill reference; no new tools or history
-migration. Update runtime and Skill together and reconnect MCP so `start_agent`, discussion seats
-and `describe_provider` accept `pi`. Hosts that want Pi available must install and log in to it
-separately; review `AGENTNAVE_EXCLUDED_PROVIDERS` if a host should not launch it.
-
-### Upgrading from v0.42.0 to v0.43.0
-
-Update the App, runtime and full Skill directory together. Subagent orchestration is now an
-instruction in each dispatched prompt; the runtime no longer disables tools based on process
-ancestry. Reconnect any old MCP connection already returning an empty tool list, or restart its
-host: the old zero-tool server cannot satisfy the relay's idle probe to switch itself.
-
-The office now owns conversation management, with right-click actions, multi-selection and
-age-based cleanup. Cleanup rechecks the whole workspace under locks and a transaction; new
-activity or unknown timestamps preserve it. Records missing a group or usable timestamp can be
-selected explicitly under Other records. Existing history and configuration need no migration;
-old long titles remain, while new and renamed titles share a 48-column limit. See
-[v0.43.0 release notes](releases/v0.43.0.md).
-
-### Upgrading from v0.41.0 to v0.42.0
-
-Update the App, runtime and Skill together with "Update all"; MCP tools, history and
-`members.json` need no migration. The App adds a 技能 page listing optional Skills: the first,
-`agentnave-review`, is a risk-graded review gate for PRs and merges, off by default and switched on
-per host. Its eight reviewer seats are set on the same page and saved to a separate `review.json`,
-which older services ignore; `list_members` reports them under `review`. Hosts whose copy of the
-Skill is managed elsewhere show it greyed out and keep that copy. On macOS the window buttons share
-the top bar with the navigation. See [v0.42.0 release notes](releases/v0.42.0.md).
-
-### Upgrading from v0.40.1 to v0.41.0
-
-Update the App, runtime and Skill together with "Update all"; MCP tools, history and
-`members.json` need no migration. The App's sections now sit in one row at the top of the window
-(办公室 · 会话 · 执行者 · 接入 · 头像 · 编排) and an update button appears at the top right when
-an update is available; old `/settings/#hosts` and `#updates` links still open the right section.
-The App uses macOS's black-and-white palette, lists hosts and CLIs as rows, and shows each
-installed CLI's version from its `--version`. See [v0.41.0 release notes](releases/v0.41.0.md).
-
-### Upgrading from v0.40.0 to v0.40.1
-
-Update the App, runtime and Skill together with "Update all"; MCP tools and history need no
-migration. A Claude Code or CodeBuddy tool call denied in non-interactive mode no longer wakes
-`wait` early; API-level permission or authentication errors still do, and a failed run with denied
-tools still ends `blocked`. See [v0.40.1 release notes](releases/v0.40.1.md).
-
-### Upgrading from v0.39.0 to v0.40.0
-
-"Update all" updates the App, runtime and App-managed Skills. For a manual upgrade, install the
-v0.40.0 App and runtime and replace any externally managed `agentnave-manager` Skill with its
-complete v0.40.0 directory, including `references/`; `uv tool install` updates only the runtime.
-MCP tools and history need no migration. Settings now uses choices and range controls instead of free-text fields. Existing model options,
-notes, mode overrides and host-root overrides are preserved. The App publishes the detected CLI
-default model so calls without a model can use its saved effort and ordinary options. This cached
-fallback skips permissions and execution controls because the CLI default may have changed; name
-a model explicitly or set an App default model to apply those defaults. DeepSeek resolves an
-omitted model from its live headless profile when an effort patch needs it, and failed probes no
-longer invent a native default. See [v0.40.0 release notes](releases/v0.40.0.md).
-
-### Upgrading from v0.38.0 to v0.39.0
-
-Update the App and the runtime together with "Update all"; no MCP tool or history migration. The
-App no longer writes default models or efforts for you: with nothing set, each CLI runs its own
-default, and Settings shows the detected CLI default model and effort (ADR-0028). Defaults an
-earlier App pre-filled into `members.json` stay in effect until you clear them in Settings.
-DeepSeek resolves a bare model to the route its dsh config declares, and the official route turns
-on `stored_credentials` unless the caller sets it (ADR-0027). Meeting answers keep the time each
-seat finished.
-
-### Upgrading from v0.37.0 to v0.38.0
-
-Reconnect MCP on every host: `wait` now accepts no `ids` to wait on the inbox (every task and
-round of this server whose end was not returned yet, optionally only one boss's via
-`manager_session_id`), and `read_conversation` gains `limit`. Saved history is unchanged. Update
-the App and the runtime together with "Update all": running work now publishes what each CLI is
-doing and when its reply last grew, and the App shows this under the running bubble; an older
-App ignores these fields. Grok tasks started by this runtime name their session up front, so a
-cancelled Grok task can be continued with its `session_id`.
-
-### Upgrading from v0.36.0 to v0.37.0
-
-Saved history moves into a single SQLite database, `agentnave.db`, in the data root (ADR-0026).
-History saved by earlier versions under `~/.agentnave/conversations/` is not migrated or read;
-delete that directory once it is no longer needed. Update the App and the runtime together with
-"Update all": the new App reads only the database and an older App cannot read it. Then reconnect
-MCP on every host, because `wait` gains `wait_seconds` and task starts and `list` report new
-fields. A server from an earlier version that is still running keeps writing the old directories,
-which the new App and runtime do not show.
-
-### Upgrading from v0.35.0 to v0.36.0
-
-The MCP tools and Skill are unchanged, so this upgrade needs no manual reconnect; relays switch to
-the new runtime when idle. Saved seat runs gain an optional `finished` time; older servers read
-such records and drop the field when they rewrite them. The App now flags a reload only for MCP
-entry or tool interface changes, or a connection still on the old runtime ten minutes after an
-install, so Skill updates no longer ask for a restart. It ignores reload records from earlier
-versions, so a previous manual "I have reloaded" confirmation lapses without raising a new prompt.
-
-### Upgrading from v0.34.0 to v0.35.0
-
-The MCP surface is consolidated into eight tools: `start_agent`, `wait`, `cancel`, `list`,
-`list_members`, `run_round`, `decide_answers` and `read_conversation` (see ADR-0024). `wait` and
-`cancel` take task `invocation_id`s and round `round_id`s; `run_round` also opens shows and posts
-host remarks; `list_members(provider=...)` replaces `describe_provider`; `update_conversation` is
-removed and conversations are renamed in the App. Review decisions are `publish` or `private`
-(saved `discard` reads as `private`), and `access` is recorded only. `list` returns the 20 most
-recent conversations by default (`limit` up to 200, `total` counts all matches).
-`read_conversation` no longer wraps its result in a `conversation` object: task conversations
-return top-level `tasks`, shows return `messages` (plus `latest_round` once a round exists), and
-private entries are omitted unless `include_private=true`.
-
-Each native thread is now one desk and `continue_desk` is removed: continue a thread by passing its
-`session_id` (see ADR-0025). Callers that still pass `continue_desk=true` silently get a new
-thread. CLI runs active at once (tasks plus seats) in one AgentNave server process are limited by
-the App setting, 8 by default, stored in the data root's `settings.json`; a call beyond it is
-rejected. Each host connection counts separately, so the machine total can exceed the setting.
-
-Update the runtime and the complete `v0.35.0` Skill together (step 4; App-managed Skill copies
-follow the App update), then reconnect MCP on every host so the new tool list and Skill load; an
-old Skill keeps calling removed tools. Saved history and member configuration are unchanged.
-
-### Upgrading from v0.33.0 to v0.34.0
-
-`start_agent` no longer continues a desk's most recent private thread by default: every call
-starts a new native thread unless it passes `session_id`, or `continue_desk=true` to continue that
-desk's latest thread in the same `cwd` (see ADR-0023). `new_thread` is removed; callers that still
-pass `new_thread=true` keep getting a new thread. Callers that relied on the old implicit
-continuation must add `continue_desk=true`. Codex accepts a `sandbox` option, and Claude Code or
-CodeBuddy runs the CLI reports as successful stay `succeeded` even when a tool call was denied.
-
-Update the runtime and complete Skill together, then reconnect MCP on every host so the new
-`start_agent` schema and Skill description load. Saved history and member configuration are
-unchanged.
-
-### Upgrading from v0.21.0 to v0.22.0
-
-This release changes the Studio MCP contract: `update_conversation` requires a title and only
-renames a conversation; its `archived` parameter and the `delete_conversation` tool are removed.
-Studio exposes 16 tools (core remains 11). Conversations no longer have an ended state; existing
-`archived` fields are ignored. Clean up idle conversations without pending review in the App's
-office (right-click a workspace or meeting). Saved history is retained, with no bulk migration.
-
-Update the App, runtime and complete Skill together, then reconnect MCP on every host to refresh
-the tool schemas and replace already-running relays. New relays retry failed upgrades with capped
-backoff and retain the manager session across child-process swaps. When old versions saved the
-same native session in multiple task conversations, automatic continuation selects the most recent
-binding and keeps that conversation's creator attribution.
-
-The App now has a macOS Dock icon and opens group chat on launch; closing the window keeps it
-running. Management links can load older conversations beyond the recent 300-message window,
-and failed or blocked tasks retain their saved output beside the failure notice. Settings cards
-start collapsed. The App installs and updates its managed Skill copies; externally managed
-directories and symlinks are preserved. After connecting or taking over WorkBuddy, trust the MCP
-entry in “自定义连接器 › MCP 服务管理” if WorkBuddy has disabled it.
-
-### Upgrading from v0.20.0 to v0.21.0
-
-No history migration and no tool changes (core 11 tools, studio 17). Update the menu bar app
-in the app, then let "全部更新" upgrade the runtime, or reinstall the runtime and Skill from the
-tag. The app's settings page gains "宿主接入": ticking a detected host writes its `agentnave` MCP
-entry (with `AGENTNAVE_HOST`) and installs the Skill. Existing hand-written entries are taken over
-automatically when the app starts or refreshes detection: only `AGENTNAVE_HOST` is added (and a
-missing command is repointed to the uv tool entry); everything else, including text formatting,
-is kept, and each write is backed up first (latest 30 kept). Skill copies managed elsewhere, such
-as symlinks, are shown but never changed. The chat page and panel show a "开始使用" card driven
-by real state. When an invocation exceeds the output limit, the error now names the stream and
-includes a redacted tail.
-
-### Upgrading from v0.19.0 to v0.20.0
-
-No history migration. Update the menu bar app and the runtime together: the app now owns
-`members.json` (per-mode members, default models, efforts, options and notes) and migrates an
-existing `profiles.json` on first open, while the runtime replaces `list_profiles` with
-`list_members` (core 11 tools, studio 17) and applies the App defaults it reports in
-`defaults_applied`. A v0.19.0 app updates itself to v0.20.0 in the app; then use the panel's
-upgrade action, or reinstall the runtime from the tag, and update the Skill. From v0.20.0 the
-app's "全部更新" installs a newer app first and upgrades the runtime after the restart.
-Reconnect MCP on each host to see `list_members` and the updated Skill text. Provider CLIs are
-now located automatically, and Codex/Antigravity tool output no longer counts toward the 1 MiB
-retained-output limit.
-
-### Upgrading from v0.18.0 to v0.19.0
-
-No history migration. Reinstall the runtime and Skill from the tag; each relay switches to the new
-server on its own once idle. Reconnect MCP on a host to refresh the tool schemas (core 11
-tools, studio 17) and the updated Skill text. A server started inside a provider launched by
-AgentNave now exposes no tools, so a CLI that registers AgentNave globally can no longer nest
-orchestration. Studio conversations release their lock once idle, so another host can continue
-them without restarting the first. The menu bar app gains conversation cleanup and a settings page
-that originally wrote `profiles.json` in the data root. Current member settings use `members.json`,
-and `list_members` replaces the former profile tool; the App handles migration.
-
-### Upgrading from v0.17.0 to v0.18.0
-
-No tool or history migration. Reinstall the runtime and Skill from the tag, then restart MCP on
-every host once more: v0.18.0 is the first release whose launchers start a small relay that runs
-the server as a child. After that, a later reinstall is picked up by each relay on its own once
-its connection is idle (no request in flight, no running invocation or unread result, and, for
-the core launcher, no group opened), without reconnecting. Hosts still see new tools and Skill
-text only after they reconnect. `list_invocations` adds `result_read` to finished entries.
-Studio task history now also saves the prompt the host sent.
-
-### Upgrading from v0.16.x to v0.17.0
-
-The studio is no longer a separate `agentnave-studio` package: `agentnave` installs both
-`agentnave-mcp` and `agentnave-studio-mcp`. Tools, history and launcher names are unchanged, so
-host registrations keep working. Replace the two installations with one, then reconnect MCP on
-every host:
-
-```bash
-uv tool uninstall agentnave-studio  # if installed
-uv tool install --force --python 3.12 \
-  "git+https://github.com/TimWongUp/agentnave.git@${AGENTNAVE_RELEASE}"
-```
-
-### Upgrading from v0.14.0 to v0.15.0
-
-Breaking release. The package splits in two:
-
-- `agentnave` (core) keeps `describe_provider`, `start_agent`, `wait_agent`, `cancel_agent` and adds
-  in-memory group rounds: `open_group`, `run_round`, `wait_round`, `cancel_round`. It no longer
-  saves history, starts a dashboard or accepts `start_agent` `title`/`conversation_id`.
-  `describe_provider` no longer returns `discussion_permitted`.
-- `agentnave-studio` adds saved shows and tasks, review, host messages, isolated seats and the
-  dashboard; see the [studio guide](studio.md). The thirteen discussion and workbench tools are
-  removed from the core; the studio keeps the conversation tools and its `start_agent` keeps
-  `title`/`conversation_id`.
-- The `discussion_mode` provider option is renamed `restricted_tools`. Antigravity's restricted
-  mode now requires a dedicated cwd that already contains its profile; the studio's isolated
-  seats prepare it.
-
-History saved by earlier versions in `~/.agentnave/` is not migrated; the studio lists it as
-unavailable. Delete it once no longer needed. Update the runtime (choose core or studio) and Skill
-together, then reconnect MCP on every host.
-
-## 从 v0.22.0 双入口升级到 v0.23.0 统一核心
-
-只安装 `agentnave-mcp`，移除 `agentnave-studio-mcp` 和 `agentnave_studio` 包。原核心无历史承诺撤销：普通任务也保存任务原文、最终回答、模型与原生会话绑定；`open_group` 要求 `title` 并保存协作记录。工具统一为 16 个，Provider 权限和原生会话所有权不变。
-
-先让旧连接的任务结束或显式取消，再升级 App 与本机服务。App 确认新版入口元数据后，在启动、刷新检测或安装成功时，把各用户层已识别的旧工作室命令迁到 `agentnave-mcp`；保留其他字段，写入前备份。新版服务未就绪时不改命令。项目级配置和自定义 wrapper 手动核对。更早的独立 `agentnave-studio` uv 工具仍按原流程卸载；历史目录不会删除或迁移。
-
-随后重连各宿主 MCP，确认完整 16 个工具及同版本 Skill。仅更新 Skill 或子服务不足以替换旧中继：旧工作室中继的模块目标已移除，旧核心的内存组也无法跨重连恢复。已有保存会话的 ID、格式和数据根保持不变；新核心可继续这些会话，不恢复运行中的 Provider 进程。App 配置备份可恢复旧命令；回退运行时也须重连，新产生的历史默认保留。
-
 ## Upgrade, repair, and rollback
 
 This section replaces an existing installation; it is not part of merely registering another
@@ -836,30 +507,27 @@ copy, stage the new Skill outside the discovered directory, preserve user-author
 replace only the existing `agentnave-manager` tree, including `references/`; do not merge new files
 over old files and leave stale references behind. A managed symlink is updated through its source
 registration, without deleting the source directory, then repeat step 5. Agents read the updated
-Skill from disk on use, so a Skill update needs no restart. From v0.18.0 the launcher relays switch
-to a reinstalled runtime on their own when idle; reconnect MCP only when the tool interface changed.
+Skill from disk on use, so a Skill update needs no restart. The launcher relays switch to a
+reinstalled runtime on their own when idle; reconnect MCP only when the tool interface changed.
 Updating the runtime alone does not update the Skill.
 
-Use this paired procedure for repair and rollback too. If rolling back to a runtime-only tag such
-as v0.5.0, explicitly choose MCP-only or retain the labelled development Skill; it is not a matched
-release pair. Restoring `v0.3.0`
-loses exclusion enforcement and MCP model guidance, so it is not an equivalent policy rollback.
-Host registrations retain the stable launcher path. Recheck configuration and restart after changes.
-There is no cross-host transaction or automatic host configuration update.
+Use this paired procedure for repair and rollback too. Host registrations retain the stable
+launcher path. Recheck configuration and restart after changes. There is no cross-host
+transaction or automatic host configuration update.
 
-When upgrading from v0.3.0, updating the runtime alone leaves the old host registrations without
-exclusions. Before restarting, explicitly update each existing registration's environment using
-the host's supported configuration interface and the values in sections 2 and 3: for example,
-`AGENTNAVE_EXCLUDED_PROVIDERS=codex` for Codex and `=claude` for Claude Code. Preserve other server
-settings and sibling registrations. Verify the effective entry in the actual project/session;
-a same-name project registration may override the user-level entry. After restart, confirm the
-exclusions in tool metadata and test rejection as described above. These restrictions apply to
-that configured server process, not to a replacement registration with a different environment.
+### Upgrading from v0.42.0 to v0.43.0
 
-When migrating from a legacy Skill installation, replace its `agentnave-manager` with the
-companion from the selected release, or use the development checkout option above. Check user and project copies, preserving user-authored additions. Update
-the deployment manager's source so it does not reinstall legacy model-selection instructions.
-A managed symlink should be unlinked without deleting its target.
+Update the App, runtime and full Skill directory together. Subagent orchestration is now an
+instruction in each dispatched prompt; the runtime no longer disables tools based on process
+ancestry. Reconnect any old MCP connection already returning an empty tool list, or restart its
+host: the old zero-tool server cannot satisfy the relay's idle probe to switch itself.
+
+The office now owns conversation management, with right-click actions, multi-selection and
+age-based cleanup. Cleanup rechecks the whole workspace under locks and a transaction; new
+activity or unknown timestamps preserve it. Records missing a group or usable timestamp can be
+selected explicitly under Other records. Existing history and configuration need no migration;
+old long titles remain, while new and renamed titles share a 48-column limit. See
+[v0.43.0 release notes](releases/v0.43.0.md).
 
 ## Uninstall
 
@@ -873,7 +541,6 @@ codex mcp remove agentnave
 claude mcp remove --scope user agentnave
 gemini mcp remove agentnave --scope user
 uv tool uninstall agentnave
-uv tool uninstall agentnave-studio  # releases before the single package
 ```
 
 For OpenCode, remove only `mcp.agentnave`; for other hosts, use their documented removal interface.

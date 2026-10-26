@@ -75,7 +75,8 @@ HOME="$preview_home" python3 -m http.server 8765 --bind 127.0.0.1 --directory "$
 
 Prepare a release in a pull request: increase the stable `MAJOR.MINOR.PATCH` version in
 `pyproject.toml` and `src/agentnave/__init__.py`, refresh `uv.lock` with `uv lock`, update the install
-examples, and add `docs/releases/v<version>.md` with user-facing changes and migration instructions.
+examples, replace the single upgrade note in `docs/installation.md` with this version's, and add
+`docs/releases/v<version>.md` with user-facing changes and migration instructions.
 The CI metadata check rejects inconsistent versions, decreases, and missing release notes.
 
 After the version change is merged into `origin/main`, the existing Python workflow waits for

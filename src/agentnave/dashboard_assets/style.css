@@ -799,28 +799,6 @@ h2 {
   border-radius: 7px;
   font-size: 10px;
 }
-.av-host {
-  background-position: 0 0;
-}
-.av-claude {
-  background-position: 50% 0;
-}
-.av-gpt {
-  background-position: 100% 0;
-}
-.av-gemini {
-  background-position: 0 100%;
-}
-.av-grok {
-  background-position: 50% 100%;
-}
-.av-deepseek {
-  background-position: 100% 100%;
-}
-.av-plain {
-  background-image: none;
-  background-color: hsl(var(--hue, 200) 38% 42%);
-}
 .ring::after {
   content: "";
   position: absolute;

@@ -125,15 +125,6 @@ def write_restricted_profile(directory: Path) -> None:
         stream.write(_DISCUSSION_AGENT)
 
 
-def remove_restricted_profile(directory: Path) -> None:
-    """Remove a profile written by write_restricted_profile, never following symlinks."""
-    profile = _restricted_profile(directory)
-    if any(path.is_symlink() for path in (profile.parent.parent, profile.parent, profile)):
-        return
-    if profile.is_file() and profile.read_text(encoding="utf-8") == _DISCUSSION_AGENT:
-        profile.unlink()
-
-
 class AntigravityAdapter:
     name = "antigravity"
     _options = {

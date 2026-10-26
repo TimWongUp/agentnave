@@ -359,26 +359,12 @@ pub(crate) fn rfc3339(at: SystemTime) -> String {
     let seconds = at
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
-    let (days, rest) = (seconds / 86_400, seconds % 86_400);
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rest / 3_600,
-        rest % 3_600 / 60,
-        rest % 60
-    )
+    // The shared formatter, without its microseconds.
+    let iso = crate::stage::iso(seconds as i64 * 1_000_000);
+    format!("{}Z", &iso[..19])
 }
 
-/// Install this release's service with uv, replacing the legacy studio tool if present.
+/// Install this release's service with uv.
 pub fn upgrade_service(app: &AppHandle) {
     if app.state::<Updates>().claim_upgrade() {
         finish_upgrade(app);
@@ -400,9 +386,6 @@ fn finish_upgrade(app: &AppHandle) {
 }
 
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
-    if dirs.tools.join("agentnave-studio").is_dir() {
-        run(uv, &["tool", "uninstall", "agentnave-studio"], dirs)?;
-    }
     let source = format!("git+{REPOSITORY}@v{VERSION}");
     run(
         uv,
@@ -510,14 +493,7 @@ pub(crate) fn service(tools: &Option<PathBuf>) -> Value {
     if parse(&installed) >= parse(VERSION) {
         return Value::Null;
     }
-    // Releases before the single package installed the studio as its own tool.
-    let legacy = tools.join("agentnave-studio").is_dir();
-    let install = format!("uv tool install --force --python 3.12 \"git+{REPOSITORY}@v{VERSION}\"");
-    let command = if legacy {
-        format!("uv tool uninstall agentnave-studio && {install}")
-    } else {
-        install
-    };
+    let command = format!("uv tool install --force --python 3.12 \"git+{REPOSITORY}@v{VERSION}\"");
     json!({"state": "outdated", "version": installed, "error": null, "command": command})
 }
 
@@ -605,7 +581,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn notes_an_older_service_and_the_legacy_studio_tool() {
+    fn notes_an_older_service() {
         let tools = tempfile::tempdir().unwrap();
         let site = tools.path().join("agentnave/lib/python3.12/site-packages");
         std::fs::create_dir_all(site.join("agentnave-0.1.0.dist-info")).unwrap();
@@ -614,12 +590,12 @@ mod tests {
 
         let note = service(&tools);
         assert_eq!(note["version"], "0.1.0");
-        assert!(!note["command"].as_str().unwrap().contains("uninstall"));
-
-        std::fs::create_dir(tools.as_ref().unwrap().join("agentnave-studio")).unwrap();
-        let command = service(&tools)["command"].as_str().unwrap().to_owned();
-        assert!(command.starts_with("uv tool uninstall agentnave-studio && "));
-        assert!(command.ends_with(&format!("@v{VERSION}\"")));
+        assert!(
+            note["command"]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!("@v{VERSION}\""))
+        );
 
         std::fs::rename(
             site.join("agentnave-0.1.0.dist-info"),
