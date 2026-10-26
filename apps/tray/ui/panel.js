@@ -185,6 +185,8 @@ function updateBlock(rec, m) {
     announce(m, d, s);
     return cell.el;
   }));
+  // a desk that falls asleep right after its run still gets its finish read out
+  for (const d of desks) if (!awake.includes(d)) announce(m, d, brief(d, desks));
   const optimized = m.optimized?.count || 0;
   setText(rec.count, `· ${desks.length} 工位${desks.length > awake.length ? ` · ${desks.length - awake.length} 个休息中` : ""}${optimized ? ` · 已优化 ${optimized}` : ""}${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
   rec.fold.hidden = awake.length < FOLD_AT;

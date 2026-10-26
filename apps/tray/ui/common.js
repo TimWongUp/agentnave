@@ -209,7 +209,7 @@
   const CLI_MARK = { claude: "", codex: "", codebuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono" };
   function cliMark(provider) {
     if (provider && window.Avatars?.custom("host", provider, "")) return Avatars.create("host", provider, "");
-    if (!(provider in CLI_MARK)) return null;
+    if (!Object.hasOwn(CLI_MARK, provider)) return null;
     return h(`span.avatar.cli-mark${CLI_MARK[provider] ? ".mono" : ""}`, { "aria-hidden": "true" },
       h("img", { src: artUrl(`cli/${provider}.svg`), alt: "", draggable: "false" }));
   }
