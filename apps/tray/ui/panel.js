@@ -199,7 +199,8 @@ function updateBlock(rec, m) {
   const seatDesks = new Map([...byKey, ...(m.optimized?.desks || []).map((d) => [d.key, d])]);
   for (const id of rec.roomRecs.keys()) if (!roomById.has(id)) rec.roomRecs.delete(id);
   // rooms in session, plus the most recently finished one; older ones are in the office
-  const shown = [...rooms.filter((r) => urgent(r.status)), ...rooms.filter((r) => !urgent(r.status)).slice(0, 1)];
+  const ended = rooms.filter((r) => !urgent(r.status)).sort((a, b) => AN.at(b.last_active) - AN.at(a.last_active));
+  const shown = [...rooms.filter((r) => urgent(r.status)), ...ended.slice(0, 1)];
   reconcile(rec.rooms, shown.map((r) => {
     let row = rec.roomRecs.get(r.id);
     if (!row) rec.roomRecs.set(r.id, (row = createRoom()));
