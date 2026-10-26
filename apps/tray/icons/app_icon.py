@@ -22,11 +22,13 @@ LIGHT, DARK = "#f5f5f7", "#1c1c1e"
 
 # 1024 canvas; the 44-unit mark spans about 52% of the square. The flat icon's square is the
 # 824 body on Apple's icon grid (scale 14.5); Icon Composer's square is the whole canvas (scale 18).
+# The letter grows but keeps the earlier weight: stroke and dot stay at 10.3% and 6.3% of the
+# square, so in mark units they are thinner than tray.svg's 6.5 and 4.
 MARK = """<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   {back}
   <g transform="{place}">
-    <path d="M10 35V10L32 35V20" fill="none" stroke="{ink}" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="32" cy="10" r="4" fill="{ink}"/>
+    <path d="M10 35V10L32 35V20" fill="none" stroke="{ink}" stroke-width="5.83" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="10" r="3.59" fill="{ink}"/>
   </g>
 </svg>
 """
@@ -89,27 +91,59 @@ def main() -> None:
             (t / "glyph.svg", catalog / "Assets" / "N.png"),
             (t / "glyph-dark.svg", catalog / "Assets" / "N-dark.png"),
         ]
-        subprocess.run(["swift", str(t / "render.swift"), *(str(p) for pair in drawings for p in pair)], check=True)
+        subprocess.run(
+            ["swift", str(t / "render.swift"), *(str(p) for pair in drawings for p in pair)],
+            check=True,
+        )
 
         big = Image.open(t / "flat.png")
         big.save(HERE / "source.png")
-        for name, size in (("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256), ("icon.png", 512)):
+        for name, size in (
+            ("32x32.png", 32),
+            ("128x128.png", 128),
+            ("128x128@2x.png", 256),
+            ("icon.png", 512),
+        ):
             big.resize((size, size), Image.LANCZOS).save(HERE / name)
         big.save(HERE / "icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 256)])
         iconset = t / "icon.iconset"
         iconset.mkdir()
         for size in (16, 32, 128, 256, 512):
             big.resize((size, size), Image.LANCZOS).save(iconset / f"icon_{size}x{size}.png")
-            big.resize((size * 2, size * 2), Image.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
-        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(HERE / "icon.icns")], check=True)
+            big.resize((size * 2, size * 2), Image.LANCZOS).save(
+                iconset / f"icon_{size}x{size}@2x.png"
+            )
+        subprocess.run(
+            ["iconutil", "-c", "icns", str(iconset), "-o", str(HERE / "icon.icns")], check=True
+        )
 
         out = t / "car"
         out.mkdir()
         subprocess.run(
-            ["xcrun", "actool", str(catalog), "--compile", str(out), "--output-format", "human-readable-text",
-             "--output-partial-info-plist", str(out / "partial.plist"), "--app-icon", "AppIcon",
-             "--include-all-app-icons", "--enable-on-demand-resources", "NO", "--development-region", "en",
-             "--target-device", "mac", "--minimum-deployment-target", "11.0", "--platform", "macosx"],
+            [
+                "xcrun",
+                "actool",
+                str(catalog),
+                "--compile",
+                str(out),
+                "--output-format",
+                "human-readable-text",
+                "--output-partial-info-plist",
+                str(out / "partial.plist"),
+                "--app-icon",
+                "AppIcon",
+                "--include-all-app-icons",
+                "--enable-on-demand-resources",
+                "NO",
+                "--development-region",
+                "en",
+                "--target-device",
+                "mac",
+                "--minimum-deployment-target",
+                "11.0",
+                "--platform",
+                "macosx",
+            ],
             check=True,
             stdout=subprocess.DEVNULL,
         )
