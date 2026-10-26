@@ -493,8 +493,9 @@ class Conversations(Groups):
         with self._writing(group_id):
             group = self._group(group_id)
             state = self.records[group_id].state
+            # The identity may come from the argument or the injected environment alike.
             session = self._manager_session(manager_session_id)
-            if manager_session_id is not None and session != state.manager_session:
+            if session is not None and session != state.manager_session:
                 raise ValueError("Group belongs to a different manager session")
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
@@ -542,10 +543,9 @@ class Conversations(Groups):
         with self._writing(conversation_id):
             group = self._group(conversation_id)
             state = self.records[conversation_id].state
-            if manager_session_id is not None:
-                session = self._manager_session(manager_session_id)
-                if session != state.manager_session:
-                    raise ValueError("Group belongs to a different manager session")
+            session = self._manager_session(manager_session_id)
+            if session is not None and session != state.manager_session:
+                raise ValueError("Group belongs to a different manager session")
             if group.active is not None or state.pending_review():
                 raise ValueError("post only between rounds, with no answers pending review")
             group.entries.append(

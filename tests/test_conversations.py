@@ -1869,9 +1869,20 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
         # A per-call identity must not become shared mutable state on the MCP connection.
         explicit = await start(client, "chat-b")
         assert saved(explicit)["manager_session"] == saved(other)["manager_session"]
+        # An injected identity is checked like an explicit one: chat-b cannot post to chat-a's show.
+        monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "chat-b")
+        crossed = await client.call_tool(
+            "run_round", {"group_id": show["group_id"], "prompt": "host remark"}
+        )
+        assert crossed.is_error and "different manager session" in str(crossed.content)
         monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
         unknown_again = await client.call_tool(
-            "run_round", {"title": "No chat", "members": [{"id": "a", "provider": "claude"}]}
+            "run_round",
+            {
+                "title": "No chat",
+                "cwd": str(tmp_path),
+                "members": [{"id": "a", "provider": "claude"}],
+            },
         )
         assert unknown_again.is_error and "needs manager_session_id" in str(unknown_again.content)
 
@@ -2478,7 +2489,7 @@ async def test_forward_rejects_pending_discarded_and_absent_entries(
                 "provider": "claude",
                 "prompt": "blocked",
                 "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "forward": [message_id],
             },
         )
@@ -2492,7 +2503,7 @@ async def test_forward_rejects_pending_discarded_and_absent_entries(
                 "title": "Review",
                 "cwd": str(tmp_path),
                 "review": True,
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
             },
         )
@@ -2541,7 +2552,7 @@ async def test_run_round_commits_forward_entries_and_seats_receive_them(
             {
                 "title": "Room",
                 "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
             },
         )
@@ -2572,7 +2583,7 @@ async def test_run_round_commits_forward_entries_and_seats_receive_them(
                 "seats": ["a"],
                 "order": "parallel",
                 "prompt": "second",
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "forward": [
                     answer_id,
                     posted_entry["message_id"],
@@ -2624,7 +2635,7 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
                 "provider": "claude",
                 "prompt": "one",
                 "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
             },
         )
         ended = await _wait_task(client, task["invocation_id"])
@@ -2634,7 +2645,7 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
             {
                 "title": "Room",
                 "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
             },
         )
@@ -2658,7 +2669,7 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
                 "provider": "claude",
                 "prompt": "two",
                 "cwd": str(tmp_path),
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "role": "reviewer",
                 "forward": [task_id, answer_id],
             },
@@ -2675,7 +2686,7 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
                 "seats": ["a"],
                 "order": "parallel",
                 "prompt": "second",
-                "manager_session_id": "chat-a",
+                "manager_session_id": "test-chat",
                 "forward": [answer_id],
             },
         )
