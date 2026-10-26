@@ -6,7 +6,8 @@
 - `m/<角色>/<状态>.webp`：中尺寸立绘（320px），原用于对话栏，现已不显示，保留备用。
 - `h/<角色>/<状态>.webp`：菜单栏圆形头像，按同一方框裁出头部（96px）。
 - `office/laptop-closed.webp`：非工作状态桌上合上的笔记本，按 `office/laptop.webp` 的配色和描边用脚本绘制，与其共用锚点；`office/desk.webp`、`office/boss-desk.webp` 的前挡板已镂空，露出桌下的腿和脚，并补画了两条后桌腿，前桌腿底部重画为直腿；`office/chair.webp` 补画了气杆、五星脚和轮子，桌下不再悬空。
-- `logo-default.svg`：没有专属标志的模型或 CLI 在笔记本盖子上使用的默认终端标志。
+- `logo-default.svg`：没有专属标志的 CLI 在笔记本盖子上使用的默认终端标志。
+- `cli/<provider>.svg`：各 CLI 的标志，用在笔记本盖子、boss 工位和 CLI 徽章上，取自 LobeHub 开源图标库 `@lobehub/icons-static-svg@1.100.0`（MIT，商标归各自所有者），未改动：claude ← `claudecode-color.svg`、codex ← `codex-color.svg`、codebuddy ← `codebuddy-color.svg`、antigravity ← `antigravity-color.svg`、grok ← `grok.svg`、pi ← `pi.svg`、deepseek ← `deepseek-color.svg`（库里没有 Grok CLI 与 DeepSeek Harness 专属标志，用厂商标志）。小人形象与模型头像按模型家族对应，不用 CLI 标志。
 
 角色按模型家族区分：claude、codex（GPT）、deepseek、gemini、glm、grok；没有专属形象的模型使用 `default`（「新同事」）。状态共 7 个：idle、blink、working、speaking、review、done、sleep。另有 3 个可选帧：`sad`（上次失败）、`walk-1`、`walk-2`（去会议室时的正面走路两帧，鞋底与坐姿对齐），只放 `s/` 与 `m/`；缺少时失败显示灰度 idle，走路改为坐姿滑行。7 个角色都已画了可选帧；idle、blink、sleep 也一并重画为看不到手（揣进口袋或缩进袖口），桌上只放合上的笔记本。
 

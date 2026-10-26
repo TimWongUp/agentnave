@@ -205,21 +205,21 @@
     return fig;
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${artUrl(`h/${name}/${state}.webp`)}")` });
-  // The laptop lid shows the model family's logo, or the default terminal mark.
-  function lid(provider, model) {
-    const known = window.Avatars && (Avatars.family(provider, model) || Avatars.custom("model", provider, model));
-    return known ? Avatars.create("model", provider, model) : h("img", { src: artUrl("logo-default.svg"), alt: "" });
+  // A CLI's own mark (LobeHub icons, art/cli); models never borrow it. Mono marks sit on a dark tile.
+  const CLI_MARK = { claude: "", codex: "", codebuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono" };
+  function cliMark(provider) {
+    if (provider && window.Avatars?.custom("host", provider, "")) return Avatars.create("host", provider, "");
+    if (!Object.hasOwn(CLI_MARK, provider)) return null;
+    return h(`span.avatar.cli-mark${CLI_MARK[provider] ? ".mono" : ""}`, { "aria-hidden": "true" },
+      h("img", { src: artUrl(`cli/${provider}.svg`), alt: "", draggable: "false" }));
   }
+  // The laptop lid shows the CLI the desk runs in; the figure at it is the model.
+  const lid = (provider) => cliMark(provider) || h("img", { src: artUrl("logo-default.svg"), alt: "" });
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
   const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness" };
   const cliName = (provider) => CLI[provider] || provider || "";
-  // A CLI's own brand mark, for the boss tile and CLI badges only; models never inherit it.
-  const HOST_FAMILY = { claude: "claude", codex: "gpt", grok: "grok", antigravity: "gemini", gemini: "gemini", deepseek: "deepseek" };
-  function hostTile(host, label) {
-    if (host && window.Avatars?.custom("host", host, "")) return Avatars.create("host", host, "");
-    const family = HOST_FAMILY[host];
-    return family && window.Avatars ? Avatars.create("family", family) : h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
-  }
+  // The boss tile and CLI badges show the CLI's mark, or its initial.
+  const hostTile = (host, label) => cliMark(host) || h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
   const deskName = (d) => d.display_model || d.model || "CLI 默认模型";
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
@@ -536,7 +536,7 @@
 // one click runs the same one-click update as the settings page.
 (function () {
   const { h, load, post } = AN;
-  const end = document.querySelector("header.bar .bar-end");
+  const end = document.querySelector("header.bar .bar-end, header.top .top-end");
   if (!end) return;
   const button = h("button.bar-update", { type: "button", hidden: true });
   end.prepend(button);
@@ -549,7 +549,9 @@
     const found = update === "available" || service === "outdated";
     button.hidden = !busy && !found;
     button.disabled = busy;
-    button.textContent = busy ? "正在更新…" : update === "available" ? `↑ 更新到 v${status.update.version}` : "↑ 升级本机服务";
+    // The menu bar panel's header is narrow: the same button, shorter words.
+    const short = end.matches(".top-end");
+    button.textContent = busy ? (short ? "更新中…" : "正在更新…") : update === "available" ? `↑ ${short ? "" : "更新到 "}v${status.update.version}` : short ? "↑ 升级服务" : "↑ 升级本机服务";
     button.title = update === "available"
       ? "更新 App 后自动重启，本机服务随后自动跟上"
       : "本机服务比 App 旧，升级约需一分钟，正在运行的任务不受影响";
@@ -573,3 +575,14 @@
   // After every deferred script, so the preview's mock backend is in place too.
   addEventListener("DOMContentLoaded", refresh);
 })();
+
+// The brand's N lets its dot drip when the pointer comes over it, as the menu bar icon does on a
+// click; once started it plays to the end.
+for (const brand of document.querySelectorAll(".brand")) {
+  brand.addEventListener("mouseenter", () => {
+    const mark = brand.querySelector(".mark");
+    if (!mark || mark.classList.contains("drip") || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    mark.classList.add("drip");
+    mark.querySelector(".drop").addEventListener("animationend", () => mark.classList.remove("drip"), { once: true });
+  });
+}

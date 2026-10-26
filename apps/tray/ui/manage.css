@@ -28,7 +28,32 @@ a { color: inherit; text-decoration: none; }
 a:hover { color: var(--accent); }
 p { margin: 0; }
 .brand { display: flex; gap: 9px; align-items: center; font-size: 14px; font-weight: 650; }
-.mark { display: grid; place-items: center; width: 23px; height: 25px; border-radius: 6px 6px 9px 3px; background: var(--accent); color: var(--bg); font: italic 700 17px Georgia, serif; }
+.mark { display: grid; place-items: center; width: 22px; height: 22px; color: var(--ink); }
+/* The N mark: its dot drips like the menu bar icon's when the pointer comes over (common.js). */
+.mark svg { width: 20px; height: 20px; overflow: visible; }
+.mark .stem { fill: none; stroke: currentColor; stroke-width: 6.5; stroke-linecap: round; stroke-linejoin: round; }
+.mark .drop { fill: currentColor; transform-box: view-box; transform-origin: 32px 10px; }
+.mark.drip .drop { animation: drip .6s linear; }
+@keyframes drip {
+  0% { transform: none; }
+  5.88% { transform: translateY(0.6px) scale(0.975, 1.05); }
+  11.76% { transform: translateY(1.6px) scale(0.95, 1.125); }
+  17.65% { transform: translateY(3.0px) scale(0.9, 1.2); }
+  23.53% { transform: translateY(4.8px) scale(0.875, 1.25); }
+  29.41% { transform: translateY(6.4px) scale(1.1, 0.9); }
+  35.29% { transform: translateY(7.0px) scale(1.25, 0.75); }
+  41.18% { transform: translateY(6.4px) scale(1.15, 0.85); }
+  47.06% { transform: translateY(4.6px) scale(0.925, 1.15); }
+  52.94% { transform: translateY(2.2px) scale(0.9, 1.2); }
+  58.82% { transform: translateY(0.0px) scale(0.925, 1.125); }
+  64.71% { transform: translateY(-1.6px) scale(0.975, 1.05); }
+  70.59% { transform: translateY(-2.4px) scale(1.0, 1.0); }
+  76.47% { transform: translateY(-2.1px) scale(1.0, 1.0); }
+  82.35% { transform: translateY(-1.1px) scale(0.975, 1.025); }
+  88.24% { transform: translateY(0.2px) scale(1.05, 0.95); }
+  94.12% { transform: translateY(0.1px) scale(1.025, 0.975); }
+  100% { transform: none; }
+}
 /* One viewport-wide header for chat, management and settings. */
 .bar { position: sticky; top: 0; z-index: 200; flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
 /* The Mac App's window buttons sit at the left of the bar. */
@@ -75,3 +100,9 @@ details li { padding: 8px 0; border-top: 1px solid var(--line); color: var(--mut
   .guidance { color: var(--muted); font-size: 12px; line-height: 1.65; margin-bottom: 14px; max-width: 860px; }
 .scope { text-align: left; }
 }
+
+/* A CLI's mark (art/cli): colour marks as they are, mono ones white on a dark tile. */
+.cli-mark { display: inline-grid; place-items: center; }
+.cli-mark > img { width: 80%; height: 80%; }
+.cli-mark.mono { background: #111 !important; }
+.cli-mark.mono > img { filter: invert(1); }

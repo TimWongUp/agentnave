@@ -12,7 +12,7 @@ const FOLD_AT = 8; // an office with this many desks or more folds its extra cel
 const SHOWN = 6; //   ... down to this many
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
-document.querySelector("header.top").append(AN.themeSwitch());
+document.querySelector("header.top .top-end").append(AN.themeSwitch());
 
 const ob = AN.onboarding({ variant: "full", onChange: () => syncOb() });
 function syncOb() {
@@ -46,7 +46,7 @@ function brief(d, desks) {
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
   if (d.status === "failed") return { mood: "failed", word: "上次失败" };
   if (d.status === "pending") return { mood: "idle", word: "等待中" };
-  return dozing(d, desks) ? { mood: "sleep", word: `空闲 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
+  return dozing(d, desks) ? { mood: "sleep", word: `休息中 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
 }
 const HEAD = { working: "working", review: "review", sleep: "sleep" };
 const roomRound = (r) => {
@@ -161,18 +161,17 @@ function updateBlock(rec, m) {
   const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
-  const optimized = m.optimized?.count || 0;
-  setText(rec.count, `· ${desks.length} 工位${optimized ? ` · 已优化 ${optimized}` : ""}${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
   setText(rec.time, relTime(m.updated));
   setAttr(rec.time, "title", fullTime(m.updated));
 
   // desks in the office's own order, newest first; folded beyond SHOWN when there are FOLD_AT or more,
   // with busy desks moved up so the fold never hides what is going on
   const byKey = new Map(desks.map((d) => [d.key, d]));
+  const awake = desks.filter((d) => brief(d, desks).mood !== "sleep");
   const busy = (d) => ["working", "review", "meeting"].includes(brief(d, desks).mood);
-  const ordered = desks.length >= FOLD_AT ? [...desks.filter(busy), ...desks.filter((d) => !busy(d))] : desks;
-  for (const key of rec.cellRecs.keys()) if (!byKey.has(key)) rec.cellRecs.delete(key);
-  const folded = desks.length >= FOLD_AT && !state.expanded.has(m.group);
+  const ordered = awake.length >= FOLD_AT ? [...awake.filter(busy), ...awake.filter((d) => !busy(d))] : awake;
+  for (const key of rec.cellRecs.keys()) if (!ordered.some((d) => d.key === key)) rec.cellRecs.delete(key);
+  const folded = awake.length >= FOLD_AT && !state.expanded.has(m.group);
   let hiddenCount = 0, hiddenBusy = 0;
   reconcile(rec.cells, ordered.map((d, i) => {
     let cell = rec.cellRecs.get(d.key);
@@ -186,7 +185,11 @@ function updateBlock(rec, m) {
     announce(m, d, s);
     return cell.el;
   }));
-  rec.fold.hidden = desks.length < FOLD_AT;
+  // a desk that falls asleep right after its run still gets its finish read out
+  for (const d of desks) if (!awake.includes(d)) announce(m, d, brief(d, desks));
+  const optimized = m.optimized?.count || 0;
+  setText(rec.count, `· ${desks.length} 工位${desks.length > awake.length ? ` · ${desks.length - awake.length} 个休息中` : ""}${optimized ? ` · 已优化 ${optimized}` : ""}${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
+  rec.fold.hidden = awake.length < FOLD_AT;
   if (!rec.fold.hidden) {
     setText(rec.foldText, folded ? `另外 ${hiddenCount} 个工位${hiddenBusy ? ` · ${hiddenBusy} 个在忙` : ""}` : "收起");
     setAttr(rec.fold, "aria-expanded", folded ? "false" : "true");
@@ -306,17 +309,9 @@ function notice(title, detail, action, target, secondary) {
 }
 function notices(status, offline) {
   const out = [];
-  const update = status?.update;
-  const service = status?.service;
-  if (update?.state === "available") out.push(notice(`AgentNave v${update.version} 可用`, service?.state === "outdated" ? `当前 v${status.version}，更新后自动重启并升级本机服务` : `当前 v${status.version}，更新后自动重启`, "更新并重启", "/app/update"));
-  else if (update?.state === "installing") out.push(notice("正在下载更新", "完成后自动重启"));
-  else if (update?.state === "failed") out.push(notice("更新失败", "检查网络后重试", "重试", "/app/update"));
-  // The app update also upgrades an older service after its restart: one notice, one button.
-  const appPending = ["available", "installing"].includes(update?.state);
-  if (service?.state === "upgrading") out.push(notice("正在升级本机服务", `从 GitHub 安装 v${status.version}，约需一分钟`));
-  else if (service?.state === "done") out.push(notice(`本机服务已升级到 v${service.version}`, "版本变化本身无需重启宿主；需要重新加载时设置页会单独提示", "查看连接状态", "/settings/#hosts"));
-  else if (service?.state === "failed") out.push(notice("升级本机服务失败", service.error, "重试", "/app/upgrade-service", ["复制命令", "/app/copy-service-command"]));
-  else if (service && !appPending) out.push(notice(`本机服务 v${service.version} 比托盘 v${status.version} 旧`, "升级后在空闲时自动切换；若接口未同步，再提示对应宿主重连", "一键升级", "/app/upgrade-service"));
+  // Only what needs the user: a found update or its progress is the header's update button.
+  if (status?.update?.state === "failed") out.push(notice("更新失败", "检查网络后重试", "重试", "/app/update"));
+  if (status?.service?.state === "failed") out.push(notice("升级本机服务失败", status.service.error, "重试", "/app/upgrade-service", ["复制命令", "/app/copy-service-command"]));
   if (offline) out.push(notice("读取中断，正在重试", "下方显示的是最近一次成功读取的内容"));
   return out;
 }
