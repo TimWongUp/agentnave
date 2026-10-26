@@ -1,15 +1,17 @@
 "use strict";
-// Menu bar panel: one row per boss (the host CLI session) wired to a thumbnail of its office. Things
-// waiting on the user come first; offices with nothing going on fold into one line each at the end.
+// Menu bar panel: one card per boss (the host CLI session), headed by the boss with its office below.
+// Offices with work going on or a failure are cards; the rest fold into one line each at the end, and
+// when nothing is going on the most recent office still shows as a card.
 // Every node is created once and then patched in place (keyed by group id / desk key / room id).
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, chatPlace, activities, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
 const SHOWN = 6; //   ... down to this many
+const DOZE = 30 * 60e3; // an idle desk this long without work rests: counted, not drawn
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
@@ -37,24 +39,25 @@ const state = {
 
 // ---------------------------------------------------------------- what a desk is doing
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
-function brief(d, desks) {
+// A reviewed answer waits only briefly on the boss, so it reads as an answer given, not a state of its own.
+function brief(d) {
   const acts = activities(d);
   const run = acts.filter((a) => a.status === "running");
   if (run.some((a) => a.kind === "private")) return { mood: "working", word: run.length > 1 ? "私聊中 · 也在开会" : "私聊中" };
   if (run.length) return { mood: "working", word: "会议里作答中" };
-  if (acts.some((a) => a.status === "review")) return { mood: "review", word: "交卷 · 待审核" };
+  if (acts.some((a) => a.status === "review")) return { mood: "meeting", word: "会议里已作答" };
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
   if (d.status === "failed") return { mood: "failed", word: "上次失败" };
   if (d.status === "pending") return { mood: "idle", word: "等待中" };
-  return dozing(d, desks) ? { mood: "sleep", word: `休息中 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
+  return Date.now() - AN.at(d.last_active) > DOZE ? { mood: "sleep", word: `休息中 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
 }
-const HEAD = { working: "working", review: "review", sleep: "sleep" };
+const HEAD = { working: "working", sleep: "sleep" };
+const live = (status) => (status === "review" ? "running" : status);
 const roomRound = (r) => {
-  if (r.pending_review) return "有回答待审核";
   const n = r.round;
-  if (!n) return pick(GROUP, r.status)[0];
-  if (r.status === "running") return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次回复" : "同时回复"}`;
-  return `第 ${n.number} 轮 · ${pick(GROUP, r.status)[0]}`;
+  if (!n) return pick(GROUP, live(r.status))[0];
+  if (urgent(r.status)) return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次回复" : "同时回复"}`;
+  return `第 ${n.number} 轮 · ${pick(GROUP, live(r.status))[0]}`;
 };
 const BOARD = () => {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -66,45 +69,40 @@ const BOARD = () => {
 
 // ---------------------------------------------------------------- desk cell
 function createCell() {
-  const rec = { face: h("span.face"), cli: h("span.cli"), name: h("b"), role: h("em"), word: h("span.w"), faceKey: "", cliKey: "" };
-  rec.el = h("a.cell", {}, h("span.face-wrap", {}, rec.face, rec.cli), h("span.nm", {}, h("span.nm-top", {}, rec.name, rec.role), rec.word));
+  const rec = { face: h("span.face"), cli: h("span.cli"), name: h("b"), role: h("em"), word: h("span.w"), faceKey: "" };
+  rec.el = h("a.cell", {}, rec.face, h("span.nm", {}, h("span.nm-top", {}, rec.name, rec.cli), h("span.nm-sub", {}, rec.role, rec.word)));
   return rec;
 }
-function updateCell(rec, group, d, desks) {
-  const s = brief(d, desks);
+function updateCell(rec, group, d) {
+  const s = brief(d);
   const faceKey = `${deskChar(d)}|${HEAD[s.mood] || "idle"}`;
   if (rec.faceKey !== faceKey) {
     rec.faceKey = faceKey;
     rec.face.replaceChildren(ART.head(deskChar(d), HEAD[s.mood] || "idle"));
   }
-  if (rec.cliKey !== d.provider) {
-    rec.cliKey = d.provider;
-    rec.cli.replaceChildren(hostTile(d.provider));
-  }
+  setText(rec.cli, cliName(d.provider));
   setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
   setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 仅开会" : ""}\n最近 ${fullTime(d.last_active)}`);
   setText(rec.name, deskName(d));
-  setText(rec.role, d.role ? ` · ${clip(d.role, 6)}` : "");
+  setText(rec.role, d.role ? `${clip(d.role, 6)} · ` : "");
   setText(rec.word, s.word);
   return s;
 }
 
 // ---------------------------------------------------------------- meeting room row
 function createRoom() {
-  const rec = { title: h("b"), round: h("span"), seats: h("span.seats"), review: h("span.tag.tag-review"), seatKey: "" };
-  rec.el = h("a.room", {}, h("span.wb", {}, BOARD()), h("span.rt", {}, rec.title, rec.round), rec.seats, rec.review);
+  const rec = { title: h("b"), round: h("span"), seats: h("span.seats"), seatKey: "" };
+  rec.el = h("a.room", {}, h("span.wb", {}, BOARD()), h("span.rt", {}, rec.title, rec.round), rec.seats);
   return rec;
 }
 function updateRoom(rec, group, r, desks) {
-  const [word, tone] = pick(GROUP, r.status);
+  const [word, tone] = pick(GROUP, live(r.status));
   setClass(rec.el, `room tone-${tone}`);
   setAttr(rec.el, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
-  setAttr(rec.el, "title", `会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条${r.pending_review ? ` · ${r.pending_review} 条待审核` : ""}`);
+  setAttr(rec.el, "title", `会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条`);
   setText(rec.title, r.title);
   setText(rec.round, roomRound(r));
-  rec.review.hidden = !r.pending_review;
-  setText(rec.review, `${r.pending_review} 待审`);
   const seated = r.seats.map((s) => desks.get(s.desk)).filter(Boolean);
   const key = seated.map(deskChar).join();
   if (rec.seatKey !== key) {
@@ -114,16 +112,16 @@ function updateRoom(rec, group, r, desks) {
 }
 
 // ---------------------------------------------------------------- one boss and its office
+// One card: the boss heads it, its desks and meeting rooms sit below.
 function createBlock(m) {
   const rec = {
-    id: m.group, data: m, tile: h("span.tile"), presence: h("i.presence"), project: h("b"), host: h("small"), bs: h("span.bs"),
-    count: h("span.count"), time: h("time"), cells: h("div.desks"), rooms: h("div.rooms"),
+    id: m.group, data: m, tile: h("span.tile"), presence: h("i.presence"), project: h("b"), meta: h("small"), bs: h("span.bs"),
+    time: h("time"), cells: h("div.desks"), rooms: h("div.rooms"),
     foldText: h("span"), cellRecs: new Map(), roomRecs: new Map(), tileKey: "",
   };
-  rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile, rec.presence), rec.project, rec.host, rec.bs);
-  rec.head = h("a.o-head", {}, h("b", {}, "办公室"), rec.count, rec.time);
+  rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile, rec.presence), h("span.who", {}, rec.project, rec.meta), h("span.when", {}, rec.bs, rec.time));
   rec.fold = h("button.fold", { type: "button" }, h("i.chev"), rec.foldText);
-  rec.el = h("section.blk", {}, rec.boss, h("div.office", {}, rec.head, rec.cells, rec.fold, rec.rooms));
+  rec.el = h("section.blk", {}, rec.boss, rec.cells, rec.fold, rec.rooms);
   rec.fold.addEventListener("click", () => {
     if (state.expanded.has(rec.id)) state.expanded.delete(rec.id);
     else state.expanded.add(rec.id);
@@ -137,58 +135,59 @@ function tile(rec, m) {
   rec.tileKey = key;
   rec.tile.replaceChildren(hostTile(m.host, m.label));
 }
-function tally(m) {
-  let running = 0;
-  for (const d of m.desks || []) running += activities(d).filter((a) => a.status === "running").length;
-  const review = (m.rooms || []).reduce((n, r) => n + (r.pending_review || 0), 0);
-  return { running, review };
+function running(m) {
+  let n = 0;
+  for (const d of m.desks || []) n += activities(d).filter((a) => a.status === "running").length;
+  return n;
 }
 function updateBlock(rec, m) {
   rec.data = m;
   const desks = m.desks || [], rooms = m.rooms || [];
-  const n = tally(m);
-  const [word] = pick(GROUP, m.status);
+  const n = running(m);
+  const [word] = pick(GROUP, live(m.status));
   const name = chatName(m);
-  setClass(rec.el, `blk ${colorClass(m.color)}${n.running ? " run" : ""}`);
+  setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
   tile(rec, m);
   setClass(rec.presence, m.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", m.live ? "有任务在运行" : "没有运行中的任务");
-  for (const a of [rec.boss, rec.head]) setAttr(a, "href", href(`/chat/${m.group}`));
+  setAttr(rec.boss, "href", href(`/chat/${m.group}`));
   setAttr(rec.boss, "title", `${m.label} 里的 boss${m.project ? ` · ${m.project}` : ""}`);
   setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
   setText(rec.project, name);
-  setText(rec.host, name === m.label ? "" : chatPlace(m));
-  const [bsTone, bsText] = n.review ? ["review", `${n.review} 份待审核`] : n.running ? ["run", `${n.running} 个在工作`] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
+  const [bsTone, bsText] = n ? ["run", `${n} 个在工作`] : urgent(m.status) ? ["run", "会议进行中"] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
   setText(rec.time, relTime(m.updated));
   setAttr(rec.time, "title", fullTime(m.updated));
 
-  // desks in the office's own order, newest first; folded beyond SHOWN when there are FOLD_AT or more,
-  // with busy desks moved up so the fold never hides what is going on
+  // busy desks first, then idle ones; resting desks are only counted. Folded beyond SHOWN when
+  // there are FOLD_AT or more, and the busy ones lead so the fold never hides what is going on.
   const byKey = new Map(desks.map((d) => [d.key, d]));
-  const awake = desks.filter((d) => brief(d, desks).mood !== "sleep");
-  const busy = (d) => ["working", "review", "meeting"].includes(brief(d, desks).mood);
-  const ordered = awake.length >= FOLD_AT ? [...awake.filter(busy), ...awake.filter((d) => !busy(d))] : awake;
+  const awake = desks.filter((d) => brief(d).mood !== "sleep");
+  const busy = (d) => ["working", "meeting", "failed"].includes(brief(d).mood);
+  const ordered = [...awake.filter(busy), ...awake.filter((d) => !busy(d))];
   for (const key of rec.cellRecs.keys()) if (!ordered.some((d) => d.key === key)) rec.cellRecs.delete(key);
   const folded = awake.length >= FOLD_AT && !state.expanded.has(m.group);
   let hiddenCount = 0, hiddenBusy = 0;
   reconcile(rec.cells, ordered.map((d, i) => {
     let cell = rec.cellRecs.get(d.key);
     if (!cell) rec.cellRecs.set(d.key, (cell = createCell()));
-    const s = updateCell(cell, m.group, d, desks);
+    const s = updateCell(cell, m.group, d);
     cell.el.hidden = folded && i >= SHOWN;
     if (cell.el.hidden) {
       hiddenCount++;
-      if (s.mood === "working" || s.mood === "review") hiddenBusy++;
+      if (s.mood === "working") hiddenBusy++;
     }
     announce(m, d, s);
     return cell.el;
   }));
   // a desk that falls asleep right after its run still gets its finish read out
-  for (const d of desks) if (!awake.includes(d)) announce(m, d, brief(d, desks));
+  for (const d of desks) if (!awake.includes(d)) announce(m, d, brief(d));
   const optimized = m.optimized?.count || 0;
-  setText(rec.count, `· ${desks.length} 工位${desks.length > awake.length ? ` · ${desks.length - awake.length} 个休息中` : ""}${optimized ? ` · 已优化 ${optimized}` : ""}${rooms.length ? ` · ${rooms.length} 会议室` : ""}`);
+  const resting = desks.length - awake.length;
+  const meta = [name === m.label ? "" : chatPlace(m), `${desks.length} 工位`, resting && `${resting} 个休息中`, optimized && `已优化 ${optimized}`, rooms.length && `${rooms.length} 会议室`].filter(Boolean).join(" · ");
+  setText(rec.meta, meta);
+  rec.cells.hidden = !ordered.length;
   rec.fold.hidden = awake.length < FOLD_AT;
   if (!rec.fold.hidden) {
     setText(rec.foldText, folded ? `另外 ${hiddenCount} 个工位${hiddenBusy ? ` · ${hiddenBusy} 个在忙` : ""}` : "收起");
@@ -199,8 +198,8 @@ function updateBlock(rec, m) {
   // a seat's desk may be folded into "已优化"; the payload still lists it for the seat
   const seatDesks = new Map([...byKey, ...(m.optimized?.desks || []).map((d) => [d.key, d])]);
   for (const id of rec.roomRecs.keys()) if (!roomById.has(id)) rec.roomRecs.delete(id);
-  // rooms in session first; at most three finished ones stay listed
-  const shown = [...rooms.filter((r) => urgent(r.status)), ...rooms.filter((r) => !urgent(r.status)).slice(0, Math.max(0, 3 - rooms.filter((r) => urgent(r.status)).length))];
+  // rooms in session, plus the most recently finished one; older ones are in the office
+  const shown = [...rooms.filter((r) => urgent(r.status)), ...rooms.filter((r) => !urgent(r.status)).slice(0, 1)];
   reconcile(rec.rooms, shown.map((r) => {
     let row = rec.roomRecs.get(r.id);
     if (!row) rec.roomRecs.set(r.id, (row = createRoom()));
@@ -241,43 +240,20 @@ function announce(m, d, s) {
   const was = state.seen.get(id);
   const busy = s.mood === "working";
   state.seen.set(id, busy);
-  if (state.ready && was && !busy) spoken.push(`${chatName(m)}：${deskName(d)} ${s.mood === "review" ? "交了回答，等待审核" : pick(MEMBER, d.status === "idle" ? "succeeded" : d.status)[0]}`);
+  if (state.ready && was && !busy) spoken.push(`${chatName(m)}：${deskName(d)} ${pick(MEMBER, ["idle", "review"].includes(d.status) ? "succeeded" : d.status)[0]}`);
 }
 
 // ---------------------------------------------------------------- header, ask strip, body states
 let lastState = "";
 function renderState(data) {
-  const { running, review } = data.counts;
+  const { running } = data.counts;
   const failed = data.managers.some((m) => m.status === "failed");
-  const pills = [];
-  if (running) pills.push(["run", `${running} 个在工作`]);
-  if (review) pills.push(["review", `${review} 待审核`]);
-  if (!pills.length) pills.push(failed ? ["bad", "有失败"] : ["idle", "空闲"]);
+  const pills = [running ? ["run", `${running} 个在工作`] : failed ? ["bad", "有失败"] : ["idle", "空闲"]];
   const key = JSON.stringify(pills);
   if (key === lastState) return;
   lastState = key;
   $("state").replaceChildren(...pills.map(([tone, text]) => h(`span.state.tone-${tone}`, {}, h("i.dot"), text)));
 }
-// Answers waiting for review are the one thing that waits on the user: they head the panel.
-function renderAsk(managers) {
-  const ask = $("ask");
-  const waiting = managers.flatMap((m) => (m.rooms || []).filter((r) => r.pending_review).map((r) => ({ m, r })));
-  const total = waiting.reduce((n, { r }) => n + r.pending_review, 0);
-  ask.hidden = !total;
-  if (!total) return;
-  const { m, r } = waiting[0];
-  const where = `${chatName(m)} · ${r.title}${waiting.length > 1 ? ` 等 ${waiting.length} 处` : ""}`;
-  const key = `${total}|${where}|${m.group}|${r.id}`;
-  if (ask.dataset.key === key) return;
-  ask.dataset.key = key;
-  setAttr(ask, "href", href(`/chat/${m.group}#conv:${encodeURIComponent(r.id)}`));
-  ask.replaceChildren(
-    h("span.ask-ico", { "aria-hidden": "true" }, String(total)),
-    h("span.t", {}, `${total} 份回答等 boss 审核`, h("small", {}, `${where} · 在 boss 里公开或丢弃`)),
-    h("span.go", {}, "查看 →"),
-  );
-}
-
 function showBody(kind, retry) {
   const showStage = kind === "stage";
   stage.hidden = !showStage;
@@ -288,7 +264,7 @@ function showBody(kind, retry) {
   const copy = {
     loading: ["正在读取…", "", null],
     no_data: ["还没有办公室", "在 boss 里派出任务或开始会议后，它的工位和会议室会自动出现在这里。", ["打开 AgentNave", "/chat/"]],
-    quiet: ["最近两小时没有动静", "以前的办公室仍可在 AgentNave 里查看。", ["打开 AgentNave", "/chat/"]],
+    quiet: ["没有办公室记录", "历史已清理。在 boss 里派出任务或开始会议后，办公室会出现在这里。", ["打开 AgentNave", "/chat/"]],
     error: ["无法读取办公室数据", "数据目录可能还不存在，或本机服务没有响应。", ["重试", null]],
   }[kind];
   const action = copy[2] && (copy[2][1] ? h("a.calm-link", { href: href(copy[2][1]) }, copy[2][0]) : h("button.calm-link", { type: "button" }, copy[2][0]));
@@ -348,12 +324,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------- refresh
-// A boss with work going on or recent activity gets a full row; the rest fold to the end.
-const RECENT = 30 * 60e3;
-const active = (m) => urgent(m.status) || m.live || Date.now() - AN.at(m.updated) < RECENT;
+// A boss with work going on or a failure gets a card; the rest fold to the end. With none of those,
+// the most recent office (the service lists them most relevant first) stays a card.
+const busy = (m) => urgent(m.status) || m.live || m.status === "failed";
 function render(data) {
   renderState(data);
-  renderAsk(data.managers);
+  const lead = data.managers.some(busy) ? null : data.managers[0]?.group;
+  const active = (m) => busy(m) || m.group === lead;
   if (!data.managers.length) {
     showBody(data.empty === "no_data" ? "no_data" : "quiet");
     state.blocks.clear();
@@ -374,7 +351,7 @@ function render(data) {
       let rec = state.blocks.get(id);
       if (!rec) {
         state.blocks.set(id, (rec = createBlock(m)));
-        if (state.ready) spoken.push(`${chatName(m)} 的 boss 开始工作`);
+        if (state.ready && busy(m)) spoken.push(`${chatName(m)} 的 boss 开始工作`);
       }
       updateBlock(rec, m);
       full.push(rec.el);

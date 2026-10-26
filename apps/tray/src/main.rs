@@ -277,11 +277,7 @@ fn headline(overview: &Overview) -> String {
     if overview.missing {
         return "AgentNave · 尚未找到工作室数据".to_owned();
     }
-    format!(
-        "AgentNave · 运行中 {} · 待审核 {}",
-        overview.count("running"),
-        overview.count("review")
-    )
+    format!("AgentNave · 运行中 {}", overview.count("running"))
 }
 
 /// Shown beside the menu bar icon: how many subagents are running, nothing when idle.

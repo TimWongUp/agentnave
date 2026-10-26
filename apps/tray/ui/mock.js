@@ -391,12 +391,13 @@ All checks passed!
   // ---- the three endpoints --------------------------------------------------------------
   function stage() {
     const w = world();
-    const WINDOW = 2 * 3600e3;
+    // Same order as the service: work going on, then failures, then the most recent; at most five.
+    const TIER = { running: 0, review: 0, failed: 1 };
     const managers = w.groups
       .map((g) => ({ g, ...summaryOf(g, w) }))
-      .filter(({ members, status, updated }) => members.length && (["running", "review"].includes(status) || Date.now() - Date.parse(updated) < WINDOW))
-      .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated))
-      .slice(0, 6)
+      .filter(({ members }) => members.length)
+      .sort((a, b) => (TIER[a.status] ?? 2) - (TIER[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated))
+      .slice(0, 5)
       .map(({ g, members, status, updated }) => ({
         group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status, updated, members,
         ...limited(desksOf(g, w), true), rooms: roomsOf(g, w),
