@@ -897,7 +897,7 @@ function foldRoom(node) {
 // Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
 function optimizedNode(opt, ctx) {
   const listed = opt.desks || [];
-  const key = JSON.stringify([state.optimizedOpen, opt.count, listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
+  const key = JSON.stringify([state.optimizedOpen, opt.count, ART.version(), listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
   let node = state.optimizedEl;
   if (node && node.dataset.key === key) return node;
   const toggle = h(
