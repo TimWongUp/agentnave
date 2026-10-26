@@ -23,7 +23,6 @@ type HostName = Literal[
     "grok",
     "antigravity",
     "pi",
-    "gemini",
     "opencode",
     "hermes",
 ]
@@ -39,7 +38,7 @@ class Host:
     def provider(self) -> str | None:
         if self.name == "workbuddy":
             return "codebuddy"
-        if self.name in {"gemini", "opencode", "hermes"}:
+        if self.name in {"opencode", "hermes"}:
             return None
         return self.name
 

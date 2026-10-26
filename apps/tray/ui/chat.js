@@ -717,7 +717,7 @@ function seatMood(r, seat, d) {
   if (act?.status === "running")
     return { mood: "speaking", say: ["作答中"], word: "作答中" };
   if (act?.status === "review")
-    return { mood: "idle", say: "", word: "已作答" };
+    return { mood: "idle", say: "已作答", word: "已作答" };
   return { mood: "idle", say: "", word: d || seat.desk ? "" : "缺席" };
 }
 function updateRoom(rec, r, ctx) {
