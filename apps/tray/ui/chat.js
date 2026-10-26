@@ -1216,8 +1216,8 @@ function verbOf(m, ctx) {
     return ["议题", targets(m, ctx), where];
   }
   // Kept from the other seats in review: a reply only boss sees, never deleted.
-  if (m.kept_private) return ["", [], "", "未公开 · 仅你可见"];
-  if (m.status === "review") return ["", [], "", "待你审核"];
+  if (m.kept_private) return ["", [], "", "未公开 · 仅 boss 可见"];
+  if (m.status === "review") return ["", [], "", "待 boss 审核"];
   // A parallel round shows the answers to the other seats once every seat has answered.
   if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", "本轮结束后公开"];
   return ["", []];
@@ -1254,7 +1254,7 @@ function eventText(m, ctx) {
           : m.kind === "notice"
             ? `${who} ${m.text}`
             : m.status === "review"
-              ? `${who} 提交了回答，等你审核`
+              ? `${who} 提交了回答，等 boss 审核`
               : room
                 ? `${who} 在「${room.title}」回复了议题`
                 : `${who} 回复了任务`;
