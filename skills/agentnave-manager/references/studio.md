@@ -13,7 +13,7 @@ AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agent
 
 ## 开会议室
 
-`run_round(title, members, cwd, review?, isolated?)` 新建会议室，返回的 `group_id` 也是会话 ID；同一次调用可带 `seats` 和 `prompt` 直接开第一轮，不带 `prompt` 只建会议室。之后用 `run_round(group_id, seats, order, prompt)` 继续，重启后仍可用同一 ID，各席续接自己的原生会话。
+`run_round(title, members, cwd, review?, isolated?)` 新建会议室，返回的 `group_id` 也是会话 ID；同一次调用可带 `seats` 和 `prompt` 直接开第一轮，不带 `prompt` 只建会议室。之后用 `run_round(group_id, seats, order, prompt)` 继续，重启后仍可用同一 ID，各席续接自己的原生会话；只能继续本聊天 `manager_session_id` 建的会议室，无归属的旧会议室只读，需新建。
 
 - **审核**（`review=true`）：成功回答先待审，`wait` 以 `reason=review_needed` 提前返回，席位状态为 `pending_review`。读取正文后用 `decide_answers(round_id, {seat_id: "publish"|"private"})` 决定；并联轮全部决定后一次提交，串联轮决定后才轮到下一席。`private` 的回答只在 boss 与该席之间：其他席位看不到，原文保留，App 显示为该席对 boss 的未公开回复；该席下一轮会被告知它的回答没有公开。有待审回答时不能开新轮次或发主持人发言；`cancel` 或服务退出时未决回答按不公开处理。只能公开或不公开原文，不改写答案；需要重答就不公开后再开一轮。
 - **隔离**（`isolated=true`）：仅在用户明确要求工具层面限制访问，并同时要求服务准备独立席位目录时启用。每席使用服务准备的独立空目录并启用 `restricted_tools`，只能指定 `model`、`effort`（Pi 另可 `provider`）；调用方 `cwd` 被忽略。会议室（隔离与否）都可加入宿主被排除的 CLI；排除项只约束 `start_agent`。需要读代码或改文件的协作不要隔离。

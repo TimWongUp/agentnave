@@ -74,11 +74,11 @@
 
 ## 保存与恢复
 
-数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`run_round` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时读取仅限逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则各记录独立。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
+数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`run_round` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时读取仅限逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则拒绝调用。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
 
-每次写入前取锁并在锁内重读数据库状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；未知身份的旧调用仍可续接旧记录。
+每次写入前取锁并在锁内重读数据库状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；无归属的旧记录仍可读取，用原生 `session_id` 续接时创建当前 boss 的新记录。
 
-重启后节目按保存的条目、席位会话与游标继续；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
+重启后节目按保存的条目、席位会话与游标继续；续轮与主持人发言须与创建归属一致（身份来自参数或逐聊天注入），无归属的旧节目只读，需新建节目；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
 
 会话没有“结束”状态，boss 也不删除会话；清理由用户在托盘 App 的办公室里右键进行。旧版本写入的 `archived` 字段读取时忽略。
 

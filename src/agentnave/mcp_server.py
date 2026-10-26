@@ -93,7 +93,8 @@ type ManagerSessionId = Annotated[
             "Use the host's real session ID when available; otherwise generate one UUID once "
             "for this manager chat and keep reusing it. A different chat needs a different ID. "
             "Never use the CLI name, MCP connection ID, or subagent session_id. "
-            "Omission uses AGENTNAVE_HOST_SESSION_ID if configured, else keeps records separate."
+            "Required by start_agent and run_round unless AGENTNAVE_HOST_SESSION_ID is "
+            "injected for this chat."
         ),
     ),
 ]
@@ -362,6 +363,34 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
 
 # The relay's idle probe: callable by name, never listed to agents.
 _HIDDEN_TOOLS = frozenset({"list_invocations"})
+# Tools that save history under the boss chat; without its identity they would scatter it.
+_CHAT_TOOLS = frozenset({"start_agent", "run_round"})
+
+
+def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any]) -> None:
+    """Reject what the schema does not name instead of silently dropping it."""
+    accepted = schema.get("properties", {})
+    unknown = sorted(set(arguments) - set(accepted))
+    if unknown:
+        hint = (
+            " CLI settings such as model and effort go inside provider_options."
+            if "provider_options" in accepted
+            else ""
+        )
+        raise ToolError(
+            f"Unknown argument(s) for {name}: {', '.join(unknown)}; nothing was started. "
+            f"Accepted: {', '.join(accepted)}.{hint} Correct and retry."
+        )
+    if (
+        name in _CHAT_TOOLS
+        and arguments.get("manager_session_id") is None
+        and not os.environ.get("AGENTNAVE_HOST_SESSION_ID", "").strip()
+    ):
+        raise ToolError(
+            f"{name} needs manager_session_id: pass this manager chat's session ID (or one "
+            "UUID generated once for this chat) on every call so its history stays together. "
+            "Correct and retry."
+        )
 
 
 def _without_nulls(value: object) -> object:
@@ -375,11 +404,21 @@ def _without_nulls(value: object) -> object:
 
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
-        return [tool for tool in await super().list_tools() if tool.name not in _HIDDEN_TOOLS]
+        return [
+            # Published schemas say what call_tool enforces: nothing beyond the listed arguments.
+            tool.model_copy(
+                update={"input_schema": {**tool.input_schema, "additionalProperties": False}}
+            )
+            for tool in await super().list_tools()
+            if tool.name not in _HIDDEN_TOOLS
+        ]
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
+        tool = self._tool_manager.get_tool(name)
+        if tool is not None:
+            _check_arguments(name, arguments, tool.parameters)
         result = await super().call_tool(name, arguments, context)
         if (
             isinstance(result, CallToolResult)

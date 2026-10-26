@@ -40,7 +40,7 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
 
-私聊续接（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)）：`start_agent` 默认开新线程，续接只能显式传 `session_id`；旧参数 `continue_desk` 已移除，服务忽略未知参数，旧调用方会得到新线程。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只显示在工位上，不参与身份，不进入 prompt 或 Provider 参数。可选 `access`（`read`／`write`）只是本次调用的访问等级标签：保存在任务与席位记录、回显在回执，工位按最近一次声明显示；不拒绝调用，不改变 Provider 参数，也不由服务推断。
+私聊续接（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)）：`start_agent` 默认开新线程，续接只能显式传 `session_id`；旧参数 `continue_desk` 已移除，与其他未列出的参数一样会被拒绝，续接改传 `session_id`。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只显示在工位上，不参与身份，不进入 prompt 或 Provider 参数。可选 `access`（`read`／`write`）只是本次调用的访问等级标签：保存在任务与席位记录、回显在回执，工位按最近一次声明显示；不拒绝调用，不改变 Provider 参数，也不由服务推断。
 
 同时运行上限（ADR-0025）：每次 `start_agent` 与带席位的 `run_round` 现读数据根 `settings.json`（版本 1，`max_running` 为 1–32 的整数，缺失时默认 8，忽略未知键；损坏或越界时返回 App 修复错误）。本服务仍在运行的 Invocation（私聊任务与席位合计）加上这次将启动的数量超过上限时拒绝：私聊计 1，并联轮计席位数，串联轮计 1。检查只在接纳时进行：串联轮内后续席位不再检查，切换席位的瞬间其他任务可能占用名额，造成短暂超出一个。上限按服务进程计算，多个宿主连接各自计数。
 
@@ -62,7 +62,7 @@ macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环�
 
 内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result；取消、失败或超限而没有最终回答时，`output` 保留运行中最后的公开回复尾部（最多 1000 字符），不代表完成。CLI 报告成功的运行保持 `succeeded`：Claude／CodeBuddy 途中被拒的工具调用只在运行中作为阻塞提醒，不改写成功终态。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
-STDIO MCP 是任务与协作的唯一控制接口，工具为 `start_agent`、`wait`、`cancel`、`list`、`list_members`、`run_round`、`decide_answers` 与 `read_conversation`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。`wait` 与 `cancel` 同时接受任务 `invocation_id` 与轮次 `round_id`。中继空闲探测使用的 `list_invocations` 仍可调用，但不出现在工具列表中。全部 Tool 都发布输入与输出 JSON Schema；结构化结果另以去掉空值的紧凑 JSON 文本返回，不重复缩进与 null 字段；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 并显式传 `session_id` 完成。
+STDIO MCP 是任务与协作的唯一控制接口，工具为 `start_agent`、`wait`、`cancel`、`list`、`list_members`、`run_round`、`decide_answers` 与 `read_conversation`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。`wait` 与 `cancel` 同时接受任务 `invocation_id` 与轮次 `round_id`。中继空闲探测使用的 `list_invocations` 仍可调用，但不出现在工具列表中。全部 Tool 都发布输入与输出 JSON Schema，输入 Schema 声明 `additionalProperties: false`，未列出的参数整批拒绝、不静默丢弃；结构化结果另以去掉空值的紧凑 JSON 文本返回，不重复缩进与 null 字段；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 并显式传 `session_id` 完成。
 
 启动回复另含 provider、model、effort 与 `defaults_applied`，不重复 prompt。model 与 effort 回显套用默认值后的请求值，仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。新开节目的 `run_round` 每席另返回 model、effort（未传且无默认时省略）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
 
@@ -118,7 +118,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 隔离节目在会话目录下为每席创建独立目录，为 Antigravity 写入受限角色定义，给每席加 `restricted_tools`，忽略调用方 cwd。节目（隔离与否）都可包含 `AGENTNAVE_EXCLUDED_PROVIDERS` 中的 Provider；`provider_details.show_permitted` 现读 `members.json`，按 discussion 是否允许该 Provider 计算；文件缺失或 discussion 未受限时为 true，损坏时返回 App 修复错误。隔离节目只套用 model／effort 默认值（Pi 另可套用 provider），不套用其他默认 options，也不在回执列出被跳过的键；调用方显式非法选项仍拒绝。
 
-新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`（[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。`start_agent`、`run_round` 接受 `manager_session_id`：同一 boss 聊天始终传同一宿主 session ID，不同聊天分开；宿主未公开原生 ID 时，boss 在该聊天首次调用前生成一次 UUID 并沿用。省略时只读取明确按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则保存 null。服务把宿主与原始 ID 的 SHA-256 前 32 位 hex 加 `s-` 前缀作为分组键，不保存原始 ID；CLI 名称和 MCP 连接 UUID 均不充当聊天身份。视图快照与 live 会话摘要保留创建归属；live 顶层的 `connection_id` 仅标识当前服务连接，`manager_started_at` 表示服务开始时间。后续接手不改写创建归属；已知 boss 身份时，任务原生续接只自动关联本 boss 会话的记录，显式指向另一 boss 的任务记录会拒绝。旧记录仍可读取与显式续接，历史内容不迁移。
+新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`（[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。`start_agent`、`run_round` 接受 `manager_session_id`：同一 boss 聊天始终传同一宿主 session ID，不同聊天分开；宿主未公开原生 ID 时，boss 在该聊天首次调用前生成一次 UUID 并沿用。省略时只读取明确按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则拒绝调用；旧记录的 null 归属照常读取。服务把宿主与原始 ID 的 SHA-256 前 32 位 hex 加 `s-` 前缀作为分组键，不保存原始 ID；CLI 名称和 MCP 连接 UUID 均不充当聊天身份。视图快照与 live 会话摘要保留创建归属；live 顶层的 `connection_id` 仅标识当前服务连接，`manager_started_at` 表示服务开始时间。后续接手不改写创建归属；已知 boss 身份时，任务原生续接只自动关联本 boss 会话的记录，显式指向另一 boss 的任务记录会拒绝。旧记录仍可读取；节目续轮与主持人发言按实际身份（参数或注入）匹配创建归属，无归属旧节目不能续轮，私聊可用原生 `session_id` 续接并新建当前 boss 的记录；历史内容不迁移。
 
 任务会话保存普通 `start_agent` 的 Provider、cwd、套用默认值后的模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一 boss 会话内的同一原生会话并入其任务会话；同一归属内存在多个相同 Provider／原生 session 的任务会话时，未显式指定会话的续接选择最近一次绑定该 session 的记录，保留其创建者归属。并发续接同一会话被拒。任务续接先取得 `native-session-locks/<Provider与原生session的SHA-256>.lock`，在启动锁内刷新全部 boss 的活跃绑定并落盘运行记录，再释放启动锁；运行记录继续持有会话锁。锁文件保留以避免 inode 替换竞态；`AGENTNAVE_HOST_SESSION_ID` 从子 CLI 环境移除。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait` 仍能读取结果。会话没有结束状态，MCP 不提供改名与删除；标题由 Manager 创建时给出，改名与删除只在托盘 App 中进行。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
 

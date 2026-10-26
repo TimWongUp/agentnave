@@ -485,6 +485,29 @@ async def test_mcp_rejects_invalid_options_before_starting(
 
 
 @pytest.mark.asyncio
+async def test_mcp_rejects_arguments_outside_the_schema(tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        result = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "pi",
+                "prompt": "finish",
+                "cwd": str(tmp_path),
+                "model": "m",
+                "effort": "max",
+            },
+        )
+        listed = _payload((await client.call_tool("list_invocations", {})).structured_content)
+
+    assert tools["start_agent"].input_schema["additionalProperties"] is False
+    assert result.is_error is True
+    assert "Unknown argument(s) for start_agent: effort, model" in str(result.content)
+    assert "go inside provider_options" in str(result.content)
+    assert listed["invocations"] == []
+
+
+@pytest.mark.asyncio
 async def test_mcp_reports_preparation_io_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -602,6 +625,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
             "PATH": os.environ["PATH"],
             "AGENTNAVE_EXCLUDED_PROVIDERS": excluded,
             "AGENTNAVE_DATA_DIR": str(tmp_path / "data"),
+            "AGENTNAVE_HOST_SESSION_ID": "test-chat",
         },
     )
     async with Client(parameters) as client:
