@@ -42,7 +42,7 @@ def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _server_args(module: str) -> list[str]:
     return [
         "-c",
-        "import os; os.environ.setdefault('AGENTNAVE_HOST', 'gemini'); "
+        "import os; os.environ.setdefault('AGENTNAVE_HOST', 'opencode'); "
         f"import {module} as server; "
         "server.main()",
     ]

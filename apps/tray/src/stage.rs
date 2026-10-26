@@ -2,7 +2,6 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
@@ -26,7 +25,6 @@ fn label(host: Option<&str>) -> &str {
         Some("antigravity") => "Antigravity",
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
-        Some("gemini") => "Gemini CLI",
         Some("opencode") => "OpenCode",
         Some("hermes") => "Hermes",
         _ => "未知 boss",
@@ -128,13 +126,6 @@ pub(crate) fn iso(time: i64) -> String {
         daytime % 60,
         time.rem_euclid(1_000_000)
     )
-}
-
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros() as i64
 }
 
 fn event_time(time: &str, updated: &str) -> String {
@@ -269,7 +260,7 @@ fn handle(model: &str, provider: &str, role: Option<&str>) -> String {
 fn host_provider(host: Option<&str>) -> Option<&str> {
     match host {
         Some("workbuddy") => Some("codebuddy"),
-        Some("gemini") | Some("opencode") | Some("hermes") | None => None,
+        Some("opencode") | Some("hermes") | None => None,
         Some(name) => Some(name),
     }
 }
@@ -1837,16 +1828,16 @@ pub(crate) fn respond(
     for group in &mut groups {
         group.project(&snapshots, false);
     }
+    // Work going on first, then unhandled failures, then the most recent; never empty while history exists.
+    let tier = |status: &str| match status {
+        "running" | "review" => 0,
+        "failed" => 1,
+        _ => 2,
+    };
     groups.sort_by(|a, b| {
-        (!active(a.status), Reverse(a.at), &a.id).cmp(&(!active(b.status), Reverse(b.at), &b.id))
+        (tier(a.status), Reverse(a.at), &a.id).cmp(&(tier(b.status), Reverse(b.at), &b.id))
     });
-    let cutoff = now() - 2 * 3600 * 1_000_000;
-    let stage_ids: Vec<_> = groups
-        .iter()
-        .filter(|g| active(g.status) || g.at >= cutoff)
-        .take(6)
-        .map(|g| g.id.clone())
-        .collect();
+    let stage_ids: Vec<_> = groups.iter().take(5).map(|g| g.id.clone()).collect();
     let mut ids = stage_ids.clone();
     ids.sort();
     let mut used = [false; 8];

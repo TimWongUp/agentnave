@@ -89,7 +89,6 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
     for name, provider in (
         ("codex", "codex"),
         ("workbuddy", "codebuddy"),
-        ("gemini", None),
         ("opencode", None),
         ("hermes", None),
     ):
@@ -122,7 +121,6 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("grok", "grok"),
         ("agy", "antigravity"),
         ("pi", "pi"),
-        ("gemini", "gemini"),
         ("opencode", "opencode"),
         ("hermes", "hermes"),
         ("/Applications/Codex.app/Contents/MacOS/Electron", "codex"),
@@ -137,7 +135,6 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("node", "/pkg/codebuddy.js", "codebuddy"),
         ("bun", "/pkg/pi.mjs", "pi"),
         ("python", "/pkg/hermes.py", "hermes"),
-        ("python3.12", "/pkg/gemini.py", "gemini"),
         ("deno", "/pkg/opencode.cjs", "opencode"),
         ("uvx", "hermes", "hermes"),
         ("npx", "codebuddy", "codebuddy"),

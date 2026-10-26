@@ -124,7 +124,6 @@ const state = {
   away: new Map(), // desk key -> "room|seat" it currently sits in, for walking animations
   closing: new Map(), // room id -> when the ended room leaves the floor
   known: new Set(),
-  pending: 0,
   tickId: null,
   // conversation: {kind:"all"} | {kind:"desk", key} | {kind:"room", id}
   drawer: { kind: "all" },
@@ -250,7 +249,7 @@ function createItem(g) {
   return rec;
 }
 function updateItem(rec, g) {
-  const [word, tone] = pick(GROUP, g.status);
+  const [word, tone] = pick(GROUP, AN.ongoing(g.status));
   const on = g.group === state.selected;
   const name = chatName(g);
   setClass(
@@ -345,7 +344,7 @@ function deskMood(d, ctx) {
     return { mood: "failed", say: "上次失败", word: "上次失败", away: null };
   if (d.status === "pending")
     return { mood: "idle", say: "", word: "等待中", away: null };
-  return AN.dozing(d, ctx.c.desks)
+  return AN.dozing(d)
     ? {
         mood: "sleep",
         say: "zz",
@@ -415,22 +414,19 @@ function renderHead(c, n) {
       title: h("h1"),
       sub: h("span.fh-sub"),
       run: h("span.pill.tone-run"),
-      review: h("span.pill.tone-review"),
     };
     el.head.replaceChildren(
       back,
       state.head.title,
       state.head.sub,
-      h("span.fh-sum", {}, state.head.run, state.head.review),
+      h("span.fh-sum", {}, state.head.run),
     );
   }
   const t = state.head;
   setText(t.title, chatName(c));
   setText(t.sub, `boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
-  t.run.hidden = !n.running;
-  setText(t.run, `${n.running} 个在工作`);
-  t.review.hidden = !n.review;
-  setText(t.review, `${n.review} 条回答待审核`);
+  t.run.hidden = !n.running && !n.review;
+  setText(t.run, n.running ? `${n.running} 个在工作` : "会议进行中");
 }
 
 // ---------------------------------------------------------------- boss office
@@ -449,7 +445,6 @@ function recentlyActive(c) {
 function createBoss() {
   const rec = {
     say: h("span.say"),
-    tray: h("b.tray", { title: "待审核的回答", hidden: true }),
     lid: h("span.lid"),
     scene: null,
     nm: h("div.nm", {}, "boss"),
@@ -461,13 +456,11 @@ function createBoss() {
   rec.scene = h(
     "div.scene",
     {},
-    rec.say,
     img("l-chair", "chair"),
     rec.desk,
     img("l-laptop.l-open", "laptop"),
     img("l-laptop.l-closed", "laptop-closed"),
     rec.lid,
-    rec.tray,
   );
   // boss sits in the middle; recent chats on the left, meetings on the right
   rec.chats = h("div.boss-side");
@@ -478,7 +471,8 @@ function createBoss() {
       "div.boss-row",
       {},
       rec.chats,
-      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
+      // the speech bubble sits above the head, never over it
+      h("div.boss-mid", {}, rec.say, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
       rec.meets,
     ),
   );
@@ -489,34 +483,16 @@ function updateBoss(rec, c, n) {
   const model = bossModel(c);
   dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
   dressLid(rec, c.host);
-  const mood = n.review
-    ? "review"
-    : n.running
-      ? "working"
-      : recentlyActive(c)
-        ? "idle"
-        : "sleep";
+  const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
   setSay(
     rec.say,
     n.running ? [`等 ${n.running} 个回复`] : mood === "sleep" ? "zz" : "",
   );
-  rec.tray.hidden = !n.review;
-  if (n.review !== state.pending && state.ready) {
-    rec.tray.classList.remove("bump");
-    void rec.tray.offsetWidth;
-    rec.tray.classList.add("bump");
-  }
-  state.pending = n.review;
-  setText(rec.tray, String(n.review));
   setText(rec.cli, c.label);
   setText(
     rec.st,
-    n.review
-      ? `桌上 ${n.review} 份回答待审核`
-      : n.running
-        ? `等 ${n.running} 个回复`
-        : "空闲",
+    n.running ? `等 ${n.running} 个回复` : n.review ? "会议进行中" : "空闲",
   );
   setText(rec.state, model ? model : "");
   setAttr(
@@ -551,10 +527,8 @@ function sideItems(c, ctx) {
       scope: { kind: "room", id: r.id },
       heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
       name: r.title,
-      sub: r.pending_review
-        ? `${r.pending_review} 条回答待审核`
-        : `${roundText(r)} · ${r.seats.length} 位参会`,
-      tone: r.pending_review ? "review" : r.status === "running" ? "run" : r.status === "failed" ? "bad" : "",
+      sub: `${roundText(r)} · ${r.seats.length} 位参会`,
+      tone: urgent(r.status) ? "run" : r.status === "failed" ? "bad" : "",
       time: r.last_active ? relTime(r.last_active) : "",
     }));
   return { chats, meets };
@@ -603,7 +577,8 @@ function createDesk(d) {
     lid: h("span.lid"),
     nm: h("div.nm"),
     cliText: h("span"),
-    role: h("span.tag.tag-role", { hidden: true }),
+    role: h("div.role"),
+    status: h("span.tag.tag-st"),
     access: h("span.tag.tag-access", {
       hidden: true,
       title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
@@ -613,13 +588,11 @@ function createDesk(d) {
       { hidden: true, title: "与 boss 的宿主同类，只参加会议，不接受私聊" },
       "仅开会",
     ),
-    st: h("div.st"),
   };
   rec.desk = img("l-desk", "desk");
   rec.scene = h(
     "div.scene",
     {},
-    rec.say,
     img("l-chair", "chair"),
     rec.desk,
     img("l-laptop.l-open", "laptop"),
@@ -629,10 +602,11 @@ function createDesk(d) {
   rec.el = h(
     "button.desk",
     { type: "button" },
-    // role and access sit in the top-left corner so every card keeps the same height
-    h("span.desk-tags", {}, rec.role, rec.access, rec.only),
+    // access and status sit in the top-left corner; the role is the label's last line
+    h("span.desk-tags", {}, rec.access, rec.only, rec.status),
+    rec.say,
     rec.scene,
-    h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.st),
+    h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.role),
   );
   rec.el.addEventListener("click", () =>
     openScope({ kind: "desk", key: d.key }, rec.el),
@@ -657,7 +631,6 @@ function updateDesk(rec, d, ctx) {
   setSay(rec.say, s.say);
   setText(rec.nm, deskName(d));
   setText(rec.cliText, cliName(d.provider));
-  rec.role.hidden = !d.role;
   setText(rec.role, clip(d.role || "", ROLE_CHARS));
   setAttr(rec.role, "title", d.role && clip(d.role, ROLE_CHARS) !== d.role ? d.role : null);
   setText(
@@ -666,7 +639,8 @@ function updateDesk(rec, d, ctx) {
   );
   rec.access.hidden = !d.access;
   rec.only.hidden = d.private_allowed !== false;
-  setText(rec.st, s.word);
+  setText(rec.status, s.word);
+  setAttr(rec.status, "title", s.word);
   setAttr(
     rec.el,
     "title",
@@ -684,16 +658,15 @@ function updateDesk(rec, d, ctx) {
 const fullRoom = (r) => urgent(r.status);
 function roundText(r) {
   const n = r.round;
-  if (!n) return pick(GROUP, r.status)[0];
+  if (!n) return pick(GROUP, AN.ongoing(r.status))[0];
   const order = n.order === "serial" ? "依次回复" : "同时回复";
-  return `第 ${n.number} 轮 · ${r.status === "review" ? "待审核" : r.status === "running" ? order : pick(GROUP, r.status)[0]}`;
+  return `第 ${n.number} 轮 · ${urgent(r.status) ? order : pick(GROUP, r.status)[0]}`;
 }
 function createRoom(r) {
   const rec = {
     id: r.id,
     title: h("span.zone-title"),
     state: h("span.r"),
-    review: h("span.tag.tag-review", { hidden: true }),
     scene: h("div.mscene"),
     full: null,
   };
@@ -705,7 +678,6 @@ function createRoom(r) {
       {},
       h("span", {}, "会议室 · "),
       rec.title,
-      rec.review,
       rec.state,
     ),
     rec.scene,
@@ -745,11 +717,11 @@ function seatMood(r, seat, d) {
   if (act?.status === "running")
     return { mood: "speaking", say: ["作答中"], word: "作答中" };
   if (act?.status === "review")
-    return { mood: "review", say: "交卷 · 待审核", word: "待审核" };
+    return { mood: "idle", say: "已作答", word: "已作答" };
   return { mood: "idle", say: "", word: d || seat.desk ? "" : "缺席" };
 }
 function updateRoom(rec, r, ctx) {
-  const [, tone] = pick(GROUP, r.status);
+  const [, tone] = pick(GROUP, AN.ongoing(r.status));
   setClass(
     rec.el,
     `zone room${state.closing.has(r.id) ? " closing" : ""}${state.drawer.kind === "room" && state.drawer.id === r.id ? " sel" : ""}`,
@@ -757,12 +729,10 @@ function updateRoom(rec, r, ctx) {
   setText(rec.title, r.title);
   setText(rec.state, roundText(r));
   setClass(rec.state, `r ${tone}`);
-  rec.review.hidden = !r.pending_review;
-  setText(rec.review, `${r.pending_review} 待审`);
   setAttr(
     rec.el,
     "aria-label",
-    `会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条${r.pending_review ? `，${r.pending_review} 条待审` : ""}，查看会议`,
+    `会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条，查看会议`,
   );
   const nodes = [];
   for (const seat of r.seats) {
@@ -1179,7 +1149,7 @@ function speakerName(m, ctx) {
   if (s.role === "system") return s.label || "系统";
   if (isBoss(m)) return "boss";
   const d = speakerDesk(m, ctx);
-  return d ? deskName(d) : s.model || cliName(s.provider) || "组员";
+  return d ? deskName(d) : AN.modelName(s.model) || cliName(s.provider) || "组员";
 }
 // CLI and role after the name, so several "默认模型" desks stay apart.
 function speakerSub(m, ctx) {
@@ -1210,7 +1180,7 @@ function targets(m, ctx) {
     const d =
       (key && ctx.desks.get(key)) ||
       (m.thread?.kind === "desk" ? ctx.desks.get(m.desk) : null);
-    return { kind: "desk", d, handle: d ? null : r.model || r.label };
+    return { kind: "desk", d, handle: d ? null : AN.modelName(r.model) || r.label };
   });
   const room = m.thread?.kind === "room" && ctx.rooms.get(m.thread.id);
   if (room && list.length > 1 && list.length === room.seats.length)
@@ -1246,8 +1216,8 @@ function verbOf(m, ctx) {
     return ["议题", targets(m, ctx), where];
   }
   // Kept from the other seats in review: a reply only boss sees, never deleted.
-  if (m.kept_private) return ["", [], "", "未公开 · 仅你可见"];
-  if (m.status === "review") return ["", [], "", "待你审核"];
+  if (m.kept_private) return ["", [], "", "未公开 · 仅 boss 可见"];
+  if (m.status === "review") return ["", [], "", "待 boss 审核"];
   // A parallel round shows the answers to the other seats once every seat has answered.
   if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", "本轮结束后公开"];
   return ["", []];
@@ -1284,7 +1254,7 @@ function eventText(m, ctx) {
           : m.kind === "notice"
             ? `${who} ${m.text}`
             : m.status === "review"
-              ? `${who} 提交了回答，等你审核`
+              ? `${who} 提交了回答，等 boss 审核`
               : room
                 ? `${who} 在「${room.title}」回复了议题`
                 : `${who} 回复了任务`;
@@ -1421,7 +1391,7 @@ function updateMessage(rec, m, ctx, id) {
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
   setText(rec.lock, lock);
-  const toKey = JSON.stringify(to.map((t) => [t.kind, t.d?.key, t.handle]));
+  const toKey = JSON.stringify(to.map((t) => [t.kind, t.d?.key, t.d ? deskName(t.d) : t.handle]));
   if (rec.toKey !== toKey) {
     rec.toKey = toKey;
     rec.to.replaceChildren(...to.map(chip));

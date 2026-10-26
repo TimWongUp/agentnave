@@ -220,7 +220,17 @@
   const cliName = (provider) => CLI[provider] || provider || "";
   // The boss tile and CLI badges show the CLI's mark, or its initial.
   const hostTile = (host, label) => cliMark(host) || h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
-  const deskName = (d) => d.display_model || d.model || "CLI 默认模型";
+  // Model names drop the routing prefix ("opencode-go/deepseek-v4.1-flash" -> "deepseek-v4.1-flash")
+  // unless the user chose full names in Settings; shared by every window through localStorage.
+  const MODEL_NAMES_KEY = "agentnave.model-names";
+  const fullModelNames = () => {
+    try { return localStorage.getItem(MODEL_NAMES_KEY) === "full"; } catch { return false; }
+  };
+  const setFullModelNames = (full) => {
+    try { localStorage.setItem(MODEL_NAMES_KEY, full ? "full" : "short"); } catch { /* storage may be unavailable */ }
+  };
+  const modelName = (model) => (model && !fullModelNames() ? model.split("/").pop() || model : model);
+  const deskName = (d) => modelName(d.display_model || d.model) || "CLI 默认模型";
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
@@ -234,16 +244,14 @@
     if (d.private?.running > 0) out.push({ kind: "private", status: "running" });
     return out;
   }
-  // An idle desk stays awake until the office starts a newer desk after it last worked. Seats of
-  // its own meeting do not count, so a serial round never sends its earlier speakers to sleep.
-  function dozing(d, desks) {
-    const last = at(d.last_active);
-    return desks.some((o) => o.key !== d.key && !(d.room && o.room === d.room) && at(o.first_seen) > last);
-  }
+  // An idle desk rests once it has had no work for half an hour.
+  const dozing = (d) => Date.now() - at(d.last_active) > 30 * 60e3;
+  // A reviewed answer waits only briefly on the boss: it reads as work going on, not a state of its own.
+  const ongoing = (status) => (status === "review" ? "running" : status);
 
   const art = { url: artUrl, character, figure, head, lid, STATES };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, clip };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();
 
 (function () {

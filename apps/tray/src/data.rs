@@ -1439,7 +1439,7 @@ mod tests {
             value["summary"]["manager_session"] = json!(format!("s-{i:032x}"));
             save(dir.path(), &value);
         }
-        // Active groups remain first even when old; idle groups outside two hours disappear.
+        // Active groups remain first even when old; the stage keeps the five most relevant.
         let running = task_snapshot("running", "running", "2020-01-01T00:00:00Z");
         save(dir.path(), &running);
         let mut review = task_snapshot("review", "review", "2020-01-02T00:00:00Z");
@@ -1451,7 +1451,7 @@ mod tests {
         let reader = Reader::new(dir.path().to_path_buf());
         let stage = state(&reader, "/app/stage");
         let managers = stage["managers"].as_array().unwrap();
-        assert_eq!(managers.len(), 6);
+        assert_eq!(managers.len(), 5);
         assert_eq!(managers[0]["group"], "c-review");
         assert_eq!(managers[1]["group"], MANAGER);
         assert_eq!(managers[2]["group"], format!("s-{:032x}", 204));
@@ -1459,7 +1459,7 @@ mod tests {
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 200);
         assert_eq!(groups["groups"][0]["group"], "c-review");
-        // Remove recent groups: no fallback should bring the old idle group into the stage.
+        // Remove recent groups: the old idle group still shows, so the stage is never empty.
         let connection = crate::db::write(dir.path()).unwrap().unwrap();
         for i in 0..205 {
             connection
@@ -1474,7 +1474,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            2
+            3
         );
         assert_eq!(
             state(&reader, "/app/chats")["groups"]
@@ -1818,15 +1818,15 @@ mod tests {
             save(dir.path(), &extra);
         }
         let stage = state(&reader, "/app/stage");
-        assert_eq!(stage["managers"].as_array().unwrap().len(), 6);
-        assert_eq!(stage["counts"], json!({"running": 6, "review": 0}));
+        assert_eq!(stage["managers"].as_array().unwrap().len(), 5);
+        assert_eq!(stage["counts"], json!({"running": 5, "review": 0}));
         let colors: std::collections::HashSet<_> = stage["managers"]
             .as_array()
             .unwrap()
             .iter()
             .map(|m| m["color"].as_u64().unwrap())
             .collect();
-        assert_eq!(colors.len(), 6);
+        assert_eq!(colors.len(), 5);
     }
 
     #[test]
