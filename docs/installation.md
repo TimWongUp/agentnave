@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.44.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.45.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.44.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.45.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -515,16 +515,16 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.43.0 to v0.44.0
+### Upgrading from v0.44.0 to v0.45.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.44.0 directory. MCP tools, history and
-`members.json` need no migration. The App no longer migrates a leftover `profiles.json` or
-rewrites a leftover `agentnave-studio-mcp` host command: an installation still holding only
-`profiles.json` starts with empty member settings, and an old command entry shows as a custom
-command. Set members again in the App; remove an old command entry in the App and connect the host
-again, or point its command at `agentnave-mcp`, then run `uv tool uninstall agentnave-studio` if
-that tool is still installed. See [v0.44.0 release notes](releases/v0.44.0.md).
+`agentnave-manager` Skill with its complete v0.45.0 directory, then reconnect MCP because the
+tool interface changed. History and `members.json` need no migration. Every tool now rejects
+arguments its schema does not list (CLI settings such as `model` and `effort` belong in
+`provider_options`), and `start_agent` and `run_round` reject calls without `manager_session_id`
+unless the host injects `AGENTNAVE_HOST_SESSION_ID` per chat. Saved records without a manager
+chat stay readable; start a new show instead of continuing one. See
+[v0.45.0 release notes](releases/v0.45.0.md).
 
 ## Uninstall
 
