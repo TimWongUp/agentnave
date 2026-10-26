@@ -1,0 +1,38 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.96078,0.96078,0.96863,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.10980,0.10980,0.11765,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "N.png",
+          "image-name-specializations": [
+            {
+              "value": "N.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "N-dark.png"
+            }
+          ],
+          "name": "N",
+          "glass": false
+        }
+      ]
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
