@@ -349,7 +349,7 @@ function deskMood(d, ctx) {
     ? {
         mood: "sleep",
         say: "zz",
-        word: `空闲 · ${relTime(d.last_active)}`,
+        word: `休息中 · ${relTime(d.last_active)}`,
         away: null,
       }
     : { mood: "idle", say: "", word: "空闲", away: null };

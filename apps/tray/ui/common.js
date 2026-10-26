@@ -536,7 +536,7 @@
 // one click runs the same one-click update as the settings page.
 (function () {
   const { h, load, post } = AN;
-  const end = document.querySelector("header.bar .bar-end");
+  const end = document.querySelector("header.bar .bar-end, header.top .top-end");
   if (!end) return;
   const button = h("button.bar-update", { type: "button", hidden: true });
   end.prepend(button);
@@ -549,7 +549,9 @@
     const found = update === "available" || service === "outdated";
     button.hidden = !busy && !found;
     button.disabled = busy;
-    button.textContent = busy ? "正在更新…" : update === "available" ? `↑ 更新到 v${status.update.version}` : "↑ 升级本机服务";
+    // The menu bar panel's header is narrow: the same button, shorter words.
+    const short = end.matches(".top-end");
+    button.textContent = busy ? (short ? "更新中…" : "正在更新…") : update === "available" ? `↑ ${short ? "" : "更新到 "}v${status.update.version}` : short ? "↑ 升级服务" : "↑ 升级本机服务";
     button.title = update === "available"
       ? "更新 App 后自动重启，本机服务随后自动跟上"
       : "本机服务比 App 旧，升级约需一分钟，正在运行的任务不受影响";
