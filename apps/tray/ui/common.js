@@ -186,7 +186,27 @@
   const EXTRA = ["sad", "walk-1", "walk-2"];
   const missing = new Set();
   const artUrl = (path) => href(`/art/${path}`);
-  const character = (provider, model) => FAMILY_ART[window.Avatars?.family(provider, model)] || "default";
+  // A family's replacement set (Settings → 头像) wins over the painted one: "@family@version".
+  let replaced = {};
+  const CHARACTERS_KEY = "agentnave.characters";
+  const loadCharacters = () => fetch(href("/app/characters"), { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : {})).then((data) => { replaced = data || {}; }).catch(() => {});
+  loadCharacters();
+  // The window that saved a set tells the others through storage.
+  window.addEventListener("storage", (e) => { if (e.key === CHARACTERS_KEY) loadCharacters(); });
+  const charactersChanged = () => {
+    try { localStorage.setItem(CHARACTERS_KEY, String(Date.now())); } catch { /* storage may be unavailable */ }
+    return loadCharacters();
+  };
+  const character = (provider, model) => {
+    const family = window.Avatars?.family(provider, model);
+    return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
+  };
+  const frameUrl = (name, size, state) => {
+    if (!name.startsWith("@")) return artUrl(`${size}/${name}/${state}.webp`);
+    const [, family, version] = name.split("@");
+    return href(`/character/${family}/${size}/${state}.webp?v=${version}`);
+  };
   // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
   // A missing optional frame marks the figure .no-<state> so CSS falls back.
   function figure(name, size = "s") {
@@ -195,16 +215,16 @@
     const r = Math.random;
     fig.style.cssText = `--phase:${(-7 * r()).toFixed(2)}s;--cycle:${(6 + 3 * r()).toFixed(2)}s;--breath:${(2.8 + r()).toFixed(2)}s`;
     const imgs = [...STATES, ...EXTRA].map((s) => {
-      const path = `${size}/${name}/${s}.webp`;
+      const path = frameUrl(name, size, s);
       if (missing.has(path)) { fig.classList.add(`no-${s}`); return null; }
-      const img = h(`img.s-${s}`, { src: artUrl(path), alt: "", decoding: "async", draggable: "false" });
+      const img = h(`img.s-${s}`, { src: path, alt: "", decoding: "async", draggable: "false" });
       if (EXTRA.includes(s)) img.addEventListener("error", () => { missing.add(path); fig.classList.add(`no-${s}`); img.remove(); }, { once: true });
       return img;
     });
     fig.append(h("span.fig-a", {}, h("span.fig-b", {}, imgs.filter(Boolean))));
     return fig;
   }
-  const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${artUrl(`h/${name}/${state}.webp`)}")` });
+  const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
   // A CLI's own mark (LobeHub icons, art/cli); models never borrow it. Mono marks sit on a dark tile.
   const CLI_MARK = { claude: "", codex: "", codebuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono" };
   function cliMark(provider) {
@@ -249,7 +269,7 @@
   // A reviewed answer waits only briefly on the boss: it reads as work going on, not a state of its own.
   const ongoing = (status) => (status === "review" ? "running" : status);
 
-  const art = { url: artUrl, character, figure, head, lid, STATES };
+  const art = { url: artUrl, character, figure, head, lid, STATES, EXTRA, charactersChanged };
 
   window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();

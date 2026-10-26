@@ -3,84 +3,15 @@
 from __future__ import annotations
 
 import json
-import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
-_AVATAR_FAMILIES = (
-    "claude",
-    "gpt",
-    "gemini",
-    "grok",
-    "deepseek",
-    "glm",
-    "qwen",
-    "kimi",
-    "minimax",
-)
-
-
-def _avatar_key(*parts: str) -> str:
-    return json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-
-
-def _avatar_family(model: object) -> str | None:
-    name = str(model or "").lower().rsplit("/", 1)[-1]
-    if found := next((family for family in _AVATAR_FAMILIES if family in name), None):
-        return found
-    if re.match(r"^(o[134](?:-|$)|chatgpt|codex)", name):
-        return "gpt"
-    if re.match(r"^(opus|sonnet|haiku)(?:-|$)", name):
-        return "claude"
-    return None
-
-
-def _public_avatar_settings(config: dict[str, object], snapshot: bytes) -> dict[str, object]:
-    """Return only overrides needed by a public view; other capabilities keep the full map."""
-    try:
-        detail: object = json.loads(snapshot)
-    except ValueError:
-        return {}
-    if not isinstance(detail, dict):
-        return {}
-    data = cast(dict[str, object], detail)
-    if data.get("view") != "public":
-        return config
-    required: set[str] = set()
-
-    def need(provider: object, model: object) -> None:
-        if not isinstance(model, str) or not model:
-            return
-        if isinstance(provider, str) and provider:
-            exact = _avatar_key("model", provider, model)
-            if exact in config:
-                required.add(exact)
-                return
-        if family := _avatar_family(model):
-            required.add(_avatar_key("family", family, ""))
-
-    host = data.get("host")
-    messages = data.get("messages")
-    if isinstance(messages, list):
-        for message in cast(list[object], messages):
-            if isinstance(message, dict):
-                item = cast(dict[str, object], message)
-                if item.get("speaker") == "@host":
-                    need(host, item.get("manager_model"))
-    seats = data.get("seats")
-    if isinstance(seats, list):
-        for seat in cast(list[object], seats):
-            if isinstance(seat, dict):
-                item = cast(dict[str, object], seat)
-                need(item.get("provider"), item.get("model"))
-    return {key: value for key, value in config.items() if key in required}
-
 
 class Dashboard:
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self) -> None:
         self.snapshots: dict[str, bytes] = {}
         self.last_access = 0.0
         assets = Path(__file__).with_name("dashboard_assets")
@@ -94,11 +25,8 @@ class Dashboard:
             (assets / "avatars.js").read_bytes(),
         )
         for path in assets.glob("avatar-*"):
-            mime = {".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon"}.get(
-                path.suffix
-            )
-            if mime:
-                self.assets[path.name] = (mime, path.read_bytes())
+            if path.suffix == ".svg":
+                self.assets[path.name] = ("image/svg+xml", path.read_bytes())
         dashboard = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -124,21 +52,8 @@ class Dashboard:
                 resource = parts[2]
                 cache_control = "no-store"
                 if resource == "avatar-settings":
-                    try:
-                        configured: object = (
-                            json.loads((root / "avatars.json").read_text()) if root else {}
-                        )
-                        value = (
-                            _public_avatar_settings(cast(dict[str, object], configured), snapshot)
-                            if isinstance(configured, dict)
-                            else {}
-                        )
-                    except (OSError, ValueError):
-                        value = {}
-                    content_type, body = (
-                        "application/json; charset=utf-8",
-                        json.dumps(value).encode(),
-                    )
+                    # Model logos are fixed; local overrides only replace CLI marks in the App.
+                    content_type, body = "application/json; charset=utf-8", b"{}"
                 elif resource == "state":
                     dashboard.last_access = time.monotonic()
                     content_type, body = (

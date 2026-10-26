@@ -153,8 +153,7 @@
 .avatar-editor .avatar { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; }
 .avatar-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .avatar-editor button { flex: none; font-size: 12px; padding: 6px 9px; }
-.avatar-add { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
-.avatar-add select:last-of-type { flex: 1; min-width: 160px; }
+.char-preview .head { display: block; width: 38px; height: 38px; border-radius: 27%; background: var(--line) no-repeat center / cover; }
 
 /* Fixed control columns, with explanations kept beside the setting they describe. */
 .settings-page { overflow-anchor: none; }
