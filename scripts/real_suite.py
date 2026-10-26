@@ -455,6 +455,7 @@ class Suite:
                 "run_round",
                 {
                     "group_id": self.review_id,
+                    "manager_session_id": MANAGER,
                     "seats": self.providers,
                     "order": "parallel",
                     "prompt": LONG_PROMPT,
