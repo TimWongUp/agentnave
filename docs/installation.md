@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.43.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.44.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.43.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.44.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -515,19 +515,14 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.42.0 to v0.43.0
+### Upgrading from v0.43.0 to v0.44.0
 
-Update the App, runtime and full Skill directory together. Subagent orchestration is now an
-instruction in each dispatched prompt; the runtime no longer disables tools based on process
-ancestry. Reconnect any old MCP connection already returning an empty tool list, or restart its
-host: the old zero-tool server cannot satisfy the relay's idle probe to switch itself.
-
-The office now owns conversation management, with right-click actions, multi-selection and
-age-based cleanup. Cleanup rechecks the whole workspace under locks and a transaction; new
-activity or unknown timestamps preserve it. Records missing a group or usable timestamp can be
-selected explicitly under Other records. Existing history and configuration need no migration;
-old long titles remain, while new and renamed titles share a 48-column limit. See
-[v0.43.0 release notes](releases/v0.43.0.md).
+Update the App, runtime and full Skill directory together with "Update all"; MCP tools, history
+and `members.json` need no migration. The App no longer migrates a leftover `profiles.json` or
+rewrites a leftover `agentnave-studio-mcp` host command: an installation still holding only
+`profiles.json` starts with empty member settings, and an old command entry shows as a custom
+command. Set members again in the App, or reconnect the host to use `agentnave-mcp`. See
+[v0.44.0 release notes](releases/v0.44.0.md).
 
 ## Uninstall
 
