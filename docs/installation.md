@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.43.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.44.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.43.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.44.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -216,7 +216,7 @@ format; register it with the official CLI command below instead of copying this 
 
 更新后宿主卡片只在需要操作时提示“需要重新加载”，没有提示就无需操作：界面更新无需重启宿主，接口不变的服务更新会在空闲时自动切换。接口仍旧时，先重新连接 AgentNave MCP，必要时才完整退出并重新打开宿主。v0.31.0 之前启动的中继在新版宿主协议下不会换用新服务，安装新版本超过十分钟仍未切换的连接也会提示重连（重连会结束该连接上运行中的任务）。Skill 更新不提示重新加载，Agent 使用时会读取最新文件；接入配置变化后，只有变化之前就已在运行的连接会提示，重新打开宿主或新开会话后自动消除；当前没有活跃连接时不提示，下次连接自然使用新配置。不报告接口的旧中继无法自动检测，可在操作后手动确认；手动确认不会覆盖仍未同步的真实连接。
 
-登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存或迁移的组员设置、带 manager_session 的记录计算。
+登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存的组员设置、带 manager_session 的记录计算。
 
 启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，均标为已实测；Gemini、OpenCode 仍标“未实测”，且只在尚未接入时显示该标记。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
 
@@ -515,19 +515,16 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.42.0 to v0.43.0
+### Upgrading from v0.43.0 to v0.44.0
 
-Update the App, runtime and full Skill directory together. Subagent orchestration is now an
-instruction in each dispatched prompt; the runtime no longer disables tools based on process
-ancestry. Reconnect any old MCP connection already returning an empty tool list, or restart its
-host: the old zero-tool server cannot satisfy the relay's idle probe to switch itself.
-
-The office now owns conversation management, with right-click actions, multi-selection and
-age-based cleanup. Cleanup rechecks the whole workspace under locks and a transaction; new
-activity or unknown timestamps preserve it. Records missing a group or usable timestamp can be
-selected explicitly under Other records. Existing history and configuration need no migration;
-old long titles remain, while new and renamed titles share a 48-column limit. See
-[v0.43.0 release notes](releases/v0.43.0.md).
+"Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
+`agentnave-manager` Skill with its complete v0.44.0 directory. MCP tools, history and
+`members.json` need no migration. The App no longer migrates a leftover `profiles.json` or
+rewrites a leftover `agentnave-studio-mcp` host command: an installation still holding only
+`profiles.json` starts with empty member settings, and an old command entry shows as a custom
+command. Set members again in the App; remove an old command entry in the App and connect the host
+again, or point its command at `agentnave-mcp`, then run `uv tool uninstall agentnave-studio` if
+that tool is still installed. See [v0.44.0 release notes](releases/v0.44.0.md).
 
 ## Uninstall
 
