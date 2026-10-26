@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.45.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.46.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.45.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.46.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -504,17 +504,13 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.44.0 to v0.45.0
+### Upgrading from v0.45.0 to v0.46.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.45.0 directory, then reconnect MCP because the
-tool interface changed. History and `members.json` need no migration. Every tool now rejects
-arguments its schema does not list (for `start_agent`, `model` and `effort` belong in
-`provider_options`; for show seats, in `members[].provider_options`), and `start_agent` and
-`run_round` reject calls without `manager_session_id` unless the host injects
-`AGENTNAVE_HOST_SESSION_ID` per chat. Saved records without a manager chat stay readable; a show
-without one takes no further rounds or host remarks, so start a new show. See
-[v0.45.0 release notes](releases/v0.45.0.md).
+`agentnave-manager` Skill with its complete v0.46.0 directory. The tool interface is unchanged,
+so there is no need to reconnect MCP. History, `members.json` and `settings.json` need no
+migration. This release changes only the tray App's panel and office views. See
+[v0.46.0 release notes](releases/v0.46.0.md).
 
 ## Uninstall
 
