@@ -76,7 +76,32 @@ button { font: inherit; color: inherit; cursor: default; }
 /* ---- header ---- */
 .top { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px 8px; flex: none; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 14px; letter-spacing: -0.01em; }
-.mark { display: inline-grid; place-items: center; width: 22px; height: 24px; border-radius: 6px 6px 9px 3px; background: var(--accent); color: var(--accent-ink); font: italic 700 17px/1 Georgia, serif; }
+.mark { display: inline-grid; place-items: center; width: 22px; height: 22px; color: var(--ink); }
+/* The N mark: its dot drips like the menu bar icon's when the pointer comes over (common.js). */
+.mark svg { width: 20px; height: 20px; overflow: visible; }
+.mark .stem { fill: none; stroke: currentColor; stroke-width: 6.5; stroke-linecap: round; stroke-linejoin: round; }
+.mark .drop { fill: currentColor; transform-box: view-box; transform-origin: 32px 10px; }
+.mark.drip .drop { animation: drip .6s linear; }
+@keyframes drip {
+  0% { transform: none; }
+  5.88% { transform: translateY(0.6px) scale(0.975, 1.05); }
+  11.76% { transform: translateY(1.6px) scale(0.95, 1.125); }
+  17.65% { transform: translateY(3.0px) scale(0.9, 1.2); }
+  23.53% { transform: translateY(4.8px) scale(0.875, 1.25); }
+  29.41% { transform: translateY(6.4px) scale(1.1, 0.9); }
+  35.29% { transform: translateY(7.0px) scale(1.25, 0.75); }
+  41.18% { transform: translateY(6.4px) scale(1.15, 0.85); }
+  47.06% { transform: translateY(4.6px) scale(0.925, 1.15); }
+  52.94% { transform: translateY(2.2px) scale(0.9, 1.2); }
+  58.82% { transform: translateY(0.0px) scale(0.925, 1.125); }
+  64.71% { transform: translateY(-1.6px) scale(0.975, 1.05); }
+  70.59% { transform: translateY(-2.4px) scale(1.0, 1.0); }
+  76.47% { transform: translateY(-2.1px) scale(1.0, 1.0); }
+  82.35% { transform: translateY(-1.1px) scale(0.975, 1.025); }
+  88.24% { transform: translateY(0.2px) scale(1.05, 0.95); }
+  94.12% { transform: translateY(0.1px) scale(1.025, 0.975); }
+  100% { transform: none; }
+}
 .state-row { display: inline-flex; gap: 6px; }
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 550; padding: 2px 9px 2px 8px; border-radius: 99px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--idle)) 15%, transparent); }
 .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--tone, var(--idle)); display: inline-block; }
@@ -224,3 +249,9 @@ html.paused *, html.paused ::before, html.paused ::after { animation-play-state:
 .ob-slot .ob-full { max-width: none; }
 .ob-note { color: var(--muted); font-size: 11px; margin: 12px 8px; }
 .ob-slot button, .ob-slot a { cursor: default; }
+
+/* A CLI's mark (art/cli): colour marks as they are, mono ones white on a dark tile. */
+.cli-mark { display: inline-grid; place-items: center; }
+.cli-mark > img { width: 80%; height: 80%; }
+.cli-mark.mono { background: #111 !important; }
+.cli-mark.mono > img { filter: invert(1); }

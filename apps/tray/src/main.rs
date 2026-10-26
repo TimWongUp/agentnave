@@ -15,6 +15,7 @@ mod stage;
 mod update;
 
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ use std::time::{Duration, Instant};
 use tauri::http::{Response, header};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::NewWindowResponse;
 use tauri::{
     AppHandle, LogicalPosition, Manager, Rect, RunEvent, Url, WebviewUrl, WebviewWindow,
@@ -39,6 +40,30 @@ const PANEL_SIZE: (f64, f64) = (480.0, 640.0);
 const POLL: Duration = Duration::from_secs(2);
 /// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
 const REOPEN_GUARD: Duration = Duration::from_millis(300);
+const DRIP_FRAME: Duration = Duration::from_millis(33);
+/// A click lets the icon's dot fall onto the N like a drop and spring back (icons/drip.py
+/// draws the frames; the last one is the rest pose).
+const DRIP: [&[u8]; 18] = [
+    include_bytes!("../icons/drip/00.png"),
+    include_bytes!("../icons/drip/01.png"),
+    include_bytes!("../icons/drip/02.png"),
+    include_bytes!("../icons/drip/03.png"),
+    include_bytes!("../icons/drip/04.png"),
+    include_bytes!("../icons/drip/05.png"),
+    include_bytes!("../icons/drip/06.png"),
+    include_bytes!("../icons/drip/07.png"),
+    include_bytes!("../icons/drip/08.png"),
+    include_bytes!("../icons/drip/09.png"),
+    include_bytes!("../icons/drip/10.png"),
+    include_bytes!("../icons/drip/11.png"),
+    include_bytes!("../icons/drip/12.png"),
+    include_bytes!("../icons/drip/13.png"),
+    include_bytes!("../icons/drip/14.png"),
+    include_bytes!("../icons/drip/15.png"),
+    include_bytes!("../icons/drip/16.png"),
+    include_bytes!("../icons/drip/17.png"),
+];
+static DRIPPING: AtomicBool = AtomicBool::new(false);
 
 struct Tray {
     reader: Arc<Reader>,
@@ -153,6 +178,7 @@ fn main() {
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
                 .icon_as_template(true)
                 .tooltip(headline(&overview))
+                .title(running_badge(&overview))
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -170,6 +196,7 @@ fn main() {
                         ..
                     } = event
                     {
+                        drip(tray);
                         toggle_panel(tray.app_handle(), rect);
                     }
                 })
@@ -215,6 +242,22 @@ fn main() {
     });
 }
 
+fn drip(tray: &TrayIcon) {
+    if DRIPPING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let tray = tray.clone();
+    thread::spawn(move || {
+        for frame in DRIP {
+            if let Ok(image) = Image::from_bytes(frame) {
+                let _ = tray.set_icon_with_as_template(Some(image), true);
+            }
+            thread::sleep(DRIP_FRAME);
+        }
+        DRIPPING.store(false, Ordering::Release);
+    });
+}
+
 fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
     loop {
         thread::sleep(POLL);
@@ -224,6 +267,7 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
         }
         if let Some(tray) = app.tray_by_id(TRAY) {
             let _ = tray.set_tooltip(Some(headline(&overview)));
+            let _ = tray.set_title(Some(running_badge(&overview)));
         }
         shown = overview;
     }
@@ -238,6 +282,14 @@ fn headline(overview: &Overview) -> String {
         overview.count("running"),
         overview.count("review")
     )
+}
+
+/// Shown beside the menu bar icon: how many subagents are running, nothing when idle.
+fn running_badge(overview: &Overview) -> String {
+    match overview.count("running") {
+        0 => String::new(),
+        n => format!("={n}"),
+    }
 }
 
 fn url(path: &str) -> Url {

@@ -389,11 +389,11 @@ function dress(rec, name, slot, before) {
   if (rec.fig.parentNode !== slot || rec.fig.nextSibling !== before)
     slot.insertBefore(rec.fig, before);
 }
-function dressLid(rec, provider, model) {
-  const key = `${provider}|${model}|${!!window.Avatars?.custom("model", provider, model)}`;
+function dressLid(rec, provider) {
+  const key = `${provider}|${!!window.Avatars?.custom("host", provider, "")}`;
   if (rec.lidKey === key) return;
   rec.lidKey = key;
-  rec.lid.replaceChildren(ART.lid(provider, model));
+  rec.lid.replaceChildren(ART.lid(provider));
 }
 
 // ---------------------------------------------------------------- floor head
@@ -488,7 +488,7 @@ function createBoss() {
 function updateBoss(rec, c, n) {
   const model = bossModel(c);
   dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
-  dressLid(rec, c.host, model);
+  dressLid(rec, c.host);
   const mood = n.review
     ? "review"
     : n.running
@@ -648,7 +648,7 @@ function updateDesk(rec, d, ctx) {
     s = { ...s, mood: "done", say: "搞定" };
   rec.mood = s;
   dress(rec, deskChar(d), rec.scene, rec.desk);
-  dressLid(rec, d.provider, d.display_model || d.model);
+  dressLid(rec, d.provider);
   rec.el.dataset.mood = s.mood;
   setClass(
     rec.el,
