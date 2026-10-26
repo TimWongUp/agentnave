@@ -202,7 +202,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 [data-mood="working"] .label .st, [data-mood="speaking"] .label .st { color: var(--run); }
 [data-mood="failed"] .label .st { color: var(--bad); }
 /* a desk's role is its label's last line; the line keeps its height when there is no role */
-.label .role { min-height: 1.5em; margin-top: 2px; font-size: 11px; color: var(--show); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the role shows whole, wrapping to a second line before it is cut */
+.label .role { min-height: 1.5em; margin-top: 2px; font-size: 11px; line-height: 1.35; color: var(--show); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .desk-tags .tag-st { background: var(--card-hover); color: var(--muted); }
 [data-mood="working"] .desk-tags .tag-st { background: color-mix(in srgb, var(--run) 16%, transparent); color: var(--run); }
 [data-mood="failed"] .desk-tags .tag-st { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }

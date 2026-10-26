@@ -209,27 +209,22 @@ function updateBlock(rec, m) {
 
 // ---------------------------------------------------------------- folded office
 function createQuiet() {
-  const rec = { tile: h("span.tile"), name: h("span.t"), faces: h("span.faces"), time: h("time"), tileKey: "", facesKey: "" };
-  rec.el = h("a.more-row", {}, rec.tile, rec.name, rec.faces, rec.time);
+  // Only the title and who sat there; where and when stay in the tooltip.
+  const rec = { name: h("span.t"), faces: h("span.faces"), facesKey: "" };
+  rec.el = h("a.more-row", {}, rec.name, rec.faces);
   return rec;
 }
 function updateQuiet(rec, m) {
   const desks = m.desks || [];
-  tile(rec, m);
   setAttr(rec.el, "href", href(`/chat/${m.group}`));
   const name = chatName(m);
-  setAttr(rec.el, "title", `${name} · ${chatPlace(m)} · ${pick(GROUP, m.status)[0]}`);
-  const small = `${chatPlace(m)} · ${desks.length} 工位${m.rooms?.length ? ` · ${m.rooms.length} 会议室` : ""}`;
-  if (rec.name.dataset.key !== name + small) {
-    rec.name.dataset.key = name + small;
-    rec.name.replaceChildren(name, h("small", {}, small));
-  }
+  setAttr(rec.el, "title", `${name} · ${chatPlace(m)} · ${pick(GROUP, m.status)[0]} · ${relTime(m.updated)}`);
+  setText(rec.name, name);
   const key = desks.slice(0, 5).map(deskChar).join();
   if (rec.facesKey !== key) {
     rec.facesKey = key;
     rec.faces.replaceChildren(...desks.slice(0, 5).map((d) => ART.head(deskChar(d), "sleep")));
   }
-  setText(rec.time, relTime(m.updated));
 }
 
 // Only status *changes* are spoken to assistive tech.

@@ -34,7 +34,6 @@ const {
   chatName,
   chatPlace,
   activities,
-  clip,
 } = AN;
 
 const mockOn = !!(window.AgentNaveMock && window.AgentNaveMock.enabled());
@@ -63,7 +62,6 @@ const FOLD_MS = 500; // then the desks below push it shut
 const LEAVE_MS = WALK_MS + HOLD_MS + FOLD_MS;
 
 // Tags stay short; the full text is in the tooltip.
-const ROLE_CHARS = 6;
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
 // How a desk that requested no model got the name it shows.
 const MODEL_NOTE = {
@@ -631,8 +629,8 @@ function updateDesk(rec, d, ctx) {
   setSay(rec.say, s.say);
   setText(rec.nm, deskName(d));
   setText(rec.cliText, cliName(d.provider));
-  setText(rec.role, clip(d.role || "", ROLE_CHARS));
-  setAttr(rec.role, "title", d.role && clip(d.role, ROLE_CHARS) !== d.role ? d.role : null);
+  setText(rec.role, d.role || "");
+  setAttr(rec.role, "title", d.role || null);
   setText(
     rec.access,
     d.access === "read" ? "只读" : d.access === "write" ? "可写" : "",

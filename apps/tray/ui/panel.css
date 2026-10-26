@@ -192,15 +192,12 @@ button { font: inherit; color: inherit; cursor: default; }
 .seats .head { width: 22px; height: 22px; margin-left: -6px; border-radius: 27%; box-shadow: 0 0 0 2px var(--solid); }
 
 /* quiet offices fold into one line each */
-.quiet { display: flex; flex-direction: column; gap: 2px; }
-.more-row { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 10px; }
-.more-row .tile { flex: none; width: 24px; height: 24px; }
-.more-row .tile > * { border-radius: 27%; font-size: 11px; }
-.more-row .t { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.more-row .t small { margin-left: 6px; font-weight: 400; color: var(--muted); }
-.faces { flex: none; display: flex; padding-left: 5px; }
-.faces .head { width: 20px; height: 20px; margin-left: -5px; border-radius: 27%; box-shadow: 0 0 0 2px var(--solid); filter: grayscale(0.4); }
-.more-row time { flex: none; font-size: 11px; color: var(--faint); }
+.quiet { display: flex; flex-direction: column; gap: 6px; }
+/* as tall as an office card's boss row above, so the two lists line up */
+.more-row { display: flex; align-items: center; gap: 10px; min-height: 57px; padding: 10px 12px; border-radius: 12px; background: var(--card); }
+.more-row .t { flex: 1; min-width: 0; font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.faces { flex: none; display: flex; padding-left: 6px; }
+.faces .head { width: 24px; height: 24px; margin-left: -6px; border-radius: 27%; box-shadow: 0 0 0 2px var(--solid); filter: grayscale(0.4); }
 
 /* ---- empty / error ---- */
 .calm { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 28px 24px; color: var(--muted); font-size: 12px; }
