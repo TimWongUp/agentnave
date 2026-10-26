@@ -235,7 +235,10 @@ class GroupSeatSpec(BaseModel):
     provider: ProviderName
     provider_options: dict[str, ProviderOption] = Field(
         default_factory=lambda: {},
-        description="Options for this seat's CLI; omitted keys use discussion member defaults.",
+        description=(
+            'Options for this seat\'s CLI, e.g. {"model": "gpt-6.1-sol", "effort": "medium"}; '
+            "omitted keys use discussion member defaults."
+        ),
     )
     cwd: str | None = Field(
         default=None,
@@ -368,8 +371,12 @@ _CHAT_TOOLS = frozenset({"start_agent", "run_round"})
 
 
 def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any]) -> None:
-    """Reject what the schema does not name instead of silently dropping it."""
+    """Reject what the schema does not name instead of silently dropping it.
+
+    Every problem is reported at once, so one retry is enough.
+    """
     accepted = schema.get("properties", {})
+    problems: list[str] = []
     unknown = sorted(set(arguments) - set(accepted))
     if unknown:
         hint = (
@@ -377,20 +384,21 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
             if "provider_options" in accepted
             else ""
         )
-        raise ToolError(
-            f"Unknown argument(s) for {name}: {', '.join(unknown)}; nothing was started. "
-            f"Accepted: {', '.join(accepted)}.{hint} Correct and retry."
+        problems.append(
+            f"Unknown argument(s) for {name}: {', '.join(unknown)}. "
+            f"Accepted: {', '.join(accepted)}.{hint}"
         )
     if (
         name in _CHAT_TOOLS
         and arguments.get("manager_session_id") is None
         and not os.environ.get("AGENTNAVE_HOST_SESSION_ID", "").strip()
     ):
-        raise ToolError(
+        problems.append(
             f"{name} needs manager_session_id: pass this manager chat's session ID (or one "
-            "UUID generated once for this chat) on every call so its history stays together. "
-            "Correct and retry."
+            "UUID generated once for this chat) on every call so its history stays together."
         )
+    if problems:
+        raise ToolError(" ".join(problems) + " Nothing was started. Correct and retry.")
 
 
 def _without_nulls(value: object) -> object:
@@ -607,8 +615,10 @@ async def start_agent(
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                "Explicit options for the selected CLI. Call list_members(provider=...) for "
-                "supported keys. Omitted options use configured App defaults, then native CLI settings."
+                'Explicit options for the selected CLI, e.g. {"model": "gpt-6.1-sol", '
+                '"effort": "medium"}; model is this CLI\'s own model ID as list_members shows '
+                "it. Call list_members(provider=...) for supported keys. Omitted options use "
+                "configured App defaults, then native CLI settings."
             )
         ),
     ] = None,

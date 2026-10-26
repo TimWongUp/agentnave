@@ -485,7 +485,10 @@ async def test_mcp_rejects_invalid_options_before_starting(
 
 
 @pytest.mark.asyncio
-async def test_mcp_rejects_arguments_outside_the_schema(tmp_path: Path) -> None:
+async def test_mcp_rejects_arguments_outside_the_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
         result = await client.call_tool(
@@ -504,6 +507,10 @@ async def test_mcp_rejects_arguments_outside_the_schema(tmp_path: Path) -> None:
     assert result.is_error is True
     assert "Unknown argument(s) for start_agent: effort, model" in str(result.content)
     assert "go inside provider_options" in str(result.content)
+    # Both mistakes come back in one reply, so a single retry fixes them.
+    assert "needs manager_session_id" in str(result.content)
+    options = tools["start_agent"].input_schema["properties"]["provider_options"]
+    assert '"model": "gpt-6.1-sol"' in options["description"]
     assert listed["invocations"] == []
 
 
