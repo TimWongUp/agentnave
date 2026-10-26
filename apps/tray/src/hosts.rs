@@ -205,7 +205,7 @@ impl Host {
         }
     }
 }
-const IDS: [&str; 10] = [
+const IDS: [&str; 9] = [
     "codex",
     "claude",
     "codebuddy",
@@ -213,7 +213,6 @@ const IDS: [&str; 10] = [
     "grok",
     "antigravity",
     "pi",
-    "gemini",
     "opencode",
     "hermes",
 ];
@@ -355,16 +354,6 @@ impl Hosts {
                 Some("PI_CODING_AGENT_DIR"),
                 h.join(".pi/agent"),
                 "mcp.json",
-                Format::Json,
-                "mcpServers",
-            ),
-            (
-                "gemini",
-                "Gemini CLI",
-                "gemini",
-                None,
-                h.join(".gemini"),
-                "settings.json",
                 Format::Json,
                 "mcpServers",
             ),
@@ -536,7 +525,6 @@ impl Hosts {
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
                 "grok" => &[".grok/config.toml"],
                 "pi" => &[".pi/mcp.json"],
-                "gemini" => &[".gemini/settings.json"],
                 "opencode" => &[
                     "opencode.json",
                     "opencode.jsonc",
@@ -1411,7 +1399,6 @@ fn reload_hint(id: &str) -> &'static str {
         "grok" => "重启 Grok CLI",
         "antigravity" => "重启 Antigravity",
         "pi" => "重启 Pi",
-        "gemini" => "重启 Gemini CLI",
         "opencode" => "重启 OpenCode",
         "hermes" => "重启 Hermes 网关",
         _ => "重启宿主应用",

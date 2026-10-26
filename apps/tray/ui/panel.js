@@ -6,12 +6,11 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, chatPlace, activities, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
 const SHOWN = 6; //   ... down to this many
-const DOZE = 30 * 60e3; // an idle desk this long without work rests: counted, not drawn
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
@@ -49,15 +48,14 @@ function brief(d) {
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
   if (d.status === "failed") return { mood: "failed", word: "上次失败" };
   if (d.status === "pending") return { mood: "idle", word: "等待中" };
-  return Date.now() - AN.at(d.last_active) > DOZE ? { mood: "sleep", word: `休息中 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
+  return dozing(d) ? { mood: "sleep", word: `休息中 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
 }
 const HEAD = { working: "working", sleep: "sleep" };
-const live = (status) => (status === "review" ? "running" : status);
 const roomRound = (r) => {
   const n = r.round;
-  if (!n) return pick(GROUP, live(r.status))[0];
+  if (!n) return pick(GROUP, ongoing(r.status))[0];
   if (urgent(r.status)) return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次回复" : "同时回复"}`;
-  return `第 ${n.number} 轮 · ${pick(GROUP, live(r.status))[0]}`;
+  return `第 ${n.number} 轮 · ${pick(GROUP, ongoing(r.status))[0]}`;
 };
 const BOARD = () => {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -97,7 +95,7 @@ function createRoom() {
   return rec;
 }
 function updateRoom(rec, group, r, desks) {
-  const [word, tone] = pick(GROUP, live(r.status));
+  const [word, tone] = pick(GROUP, ongoing(r.status));
   setClass(rec.el, `room tone-${tone}`);
   setAttr(rec.el, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
   setAttr(rec.el, "title", `会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条`);
@@ -144,7 +142,7 @@ function updateBlock(rec, m) {
   rec.data = m;
   const desks = m.desks || [], rooms = m.rooms || [];
   const n = running(m);
-  const [word] = pick(GROUP, live(m.status));
+  const [word] = pick(GROUP, ongoing(m.status));
   const name = chatName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
   tile(rec, m);

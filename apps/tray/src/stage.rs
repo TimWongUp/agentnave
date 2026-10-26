@@ -25,7 +25,6 @@ fn label(host: Option<&str>) -> &str {
         Some("antigravity") => "Antigravity",
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
-        Some("gemini") => "Gemini CLI",
         Some("opencode") => "OpenCode",
         Some("hermes") => "Hermes",
         _ => "未知 boss",
@@ -261,7 +260,7 @@ fn handle(model: &str, provider: &str, role: Option<&str>) -> String {
 fn host_provider(host: Option<&str>) -> Option<&str> {
     match host {
         Some("workbuddy") => Some("codebuddy"),
-        Some("gemini") | Some("opencode") | Some("hermes") | None => None,
+        Some("opencode") | Some("hermes") | None => None,
         Some(name) => Some(name),
     }
 }
