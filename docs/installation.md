@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.45.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.46.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.45.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.46.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -136,9 +136,9 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|gemini|opencode|hermes`，未知值使启动失败；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|opencode|hermes`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
-宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
+宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 的旧 Gemini CLI 条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
 | Host product | Exclusion value |
 | --- | --- |
@@ -504,17 +504,29 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.44.0 to v0.45.0
+### Upgrading from v0.45.0 to v0.46.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.45.0 directory, then reconnect MCP because the
-tool interface changed. History and `members.json` need no migration. Every tool now rejects
-arguments its schema does not list (for `start_agent`, `model` and `effort` belong in
-`provider_options`; for show seats, in `members[].provider_options`), and `start_agent` and
-`run_round` reject calls without `manager_session_id` unless the host injects
-`AGENTNAVE_HOST_SESSION_ID` per chat. Saved records without a manager chat stay readable; a show
-without one takes no further rounds or host remarks, so start a new show. See
-[v0.45.0 release notes](releases/v0.45.0.md).
+`agentnave-manager` Skill with its complete v0.46.0 directory. The tool interface is unchanged,
+so other hosts need no MCP reconnect. History, `members.json` and `settings.json` need no
+migration. See [v0.46.0 release notes](releases/v0.46.0.md).
+
+**Gemini CLI is no longer a supported host.** The App no longer lists, connects, takes over or
+removes it, and `gemini` is no longer an accepted `AGENTNAVE_HOST` value. An `agentnave` entry the
+v0.45.0 App wrote to `~/.gemini/settings.json` (under `mcpServers`) carries
+`AGENTNAVE_HOST=gemini`; after the upgrade the service exits at startup with
+`Unknown AGENTNAVE_HOST: 'gemini'` and Gemini CLI loses the connection. The App can no longer
+remove that entry, so handle it by hand:
+
+- To stop using AgentNave from Gemini CLI, delete the `agentnave` entry under `mcpServers` in
+  `~/.gemini/settings.json`. The App also leaves its old Skill copies in `~/.gemini/skills/`
+  (for example `agentnave-manager`) untouched; delete them if you no longer want them. Do not
+  touch `~/.gemini/config/`, which belongs to Antigravity.
+- To keep using it unsupported, remove only `AGENTNAVE_HOST` from that entry's `env`. The service
+  then starts with an unknown host and excludes no provider by itself; set
+  `AGENTNAVE_EXCLUDED_PROVIDERS` there if you want exclusions.
+
+A leftover `gemini` key in the App's `hosts.json` is ignored and needs no cleanup.
 
 ## Uninstall
 
