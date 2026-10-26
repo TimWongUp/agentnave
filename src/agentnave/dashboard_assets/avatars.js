@@ -2,23 +2,15 @@
 // Shared by the tray and capability-scoped browser dashboard. All images stay local.
 (function () {
   const base = new URL(".", document.currentScript.src);
+  // Official LobeHub icons, fixed. Mono marks are dark ink, shown light on a dark tile.
   const families = {
-    claude: ["Claude", "avatar-claude.png"], gpt: ["OpenAI", "avatar-gpt.svg"],
-    gemini: ["Gemini", "avatar-gemini.png"], grok: ["Grok", "avatar-grok.png"],
-    deepseek: ["DeepSeek", "avatar-deepseek.ico"], glm: ["GLM", "avatar-glm.svg"],
-    qwen: ["Qwen", "avatar-qwen.png"], kimi: ["Kimi", "avatar-kimi.png"],
-    minimax: ["MiniMax", "avatar-minimax.ico"],
+    claude: ["Claude", "avatar-claude.svg"], gpt: ["OpenAI", "avatar-gpt.svg", "mono"],
+    gemini: ["Gemini", "avatar-gemini.svg"], grok: ["Grok", "avatar-grok.svg", "mono"],
+    deepseek: ["DeepSeek", "avatar-deepseek.svg"], glm: ["GLM", "avatar-glm.svg", "mono"],
+    qwen: ["Qwen", "avatar-qwen.svg"], kimi: ["Kimi", "avatar-kimi.svg", "mono"],
+    minimax: ["MiniMax", "avatar-minimax.svg"],
   };
-  // Transparent symbol assets: source dimensions and visible bounds. Keep the original
-  // official files intact while giving each symbol the same centered 82% footprint.
-  const symbolBounds = {
-    "avatar-gemini.png": [512, 512, 21, 21, 470, 470],
-    "avatar-qwen.png": [80, 80, 4, 3, 72, 74],
-    "avatar-deepseek.ico": [225, 225, 0, 31, 224, 165],
-  };
-  const maxPixels = 16_000_000;
-  const decodeEdge = 2048;
-  let overrides = {}, loaded = false, revision = 0;
+  let overrides = {}, revision = 0;
   const key = (kind, provider, model = "") => JSON.stringify([kind, provider || "", model || ""]);
   function family(provider, model) {
     // Model identity never inherits the CLI brand, including for managers.
@@ -27,34 +19,28 @@
       (/^(o[134](?:-|$)|chatgpt|codex)/.test(name) ? "gpt" : null) ||
       (/^(opus|sonnet|haiku)(?:-|$)/.test(name) ? "claude" : null);
   }
+  // Only a CLI mark saved by an earlier version can still be replaced; model logos are fixed.
   function source(kind, provider, model) {
     const id = kind === "family" ? provider : family(provider, model);
-    return overrides[key(kind, provider, model)] || overrides[key("family", id)] ||
-      (families[id] ? new URL(families[id][1], base).href : null);
+    if (kind === "host") return overrides[key(kind, provider, model)] || null;
+    return families[id] ? [new URL(families[id][1], base).href, families[id][2]] : null;
   }
   function paint(node) {
     const [kind, provider, model] = JSON.parse(node.dataset.avatar);
-    const src = source(kind, provider, model);
+    const found = source(kind, provider, model);
+    const [src, mono] = Array.isArray(found) ? found : [found];
     node.replaceChildren();
     // A clipped square owns the shape; transparent logos must not acquire a white tile.
     node.style.position = "relative";
     node.style.overflow = "hidden";
-    node.style.background = src ? "transparent" : "hsl(210 18% 38%)";
+    node.style.background = mono ? "#111" : src ? "transparent" : "hsl(210 18% 38%)";
     node.style.boxShadow = "none";
     if (src) {
       const img = document.createElement("img");
       img.alt = "";
       img.src = src;
-      img.style.cssText = "position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;object-position:50% 50%;display:block";
-      const bounds = Object.entries(symbolBounds).find(([file]) => src === new URL(file, base).href)?.[1];
-      if (bounds) {
-        const [width, height, x, y, visibleWidth, visibleHeight] = bounds;
-        const extent = Math.max(visibleWidth, visibleHeight) / 0.82;
-        img.style.width = `${width / extent * 100}%`;
-        img.style.height = `${height / extent * 100}%`;
-        img.style.left = `${50 - (x + visibleWidth / 2) / extent * 100}%`;
-        img.style.top = `${50 - (y + visibleHeight / 2) / extent * 100}%`;
-      }
+      const inset = kind === "host" ? "0" : "12%";
+      img.style.cssText = `position:absolute;inset:${inset};width:calc(100% - 2 * ${inset});height:calc(100% - 2 * ${inset});max-width:none;max-height:none;object-fit:contain;display:block${mono ? ";filter:invert(1)" : ""}`;
       img.onerror = () => { img.remove(); node.textContent = String(model || "?").slice(0, 1).toUpperCase(); };
       node.append(img);
     } else node.textContent = String(model || "?").slice(0, 1).toUpperCase();
@@ -78,90 +64,10 @@
     const data = await response.json();
     if (stamp !== revision) return;
     const changed = JSON.stringify(overrides) !== JSON.stringify(data);
-    overrides = data; loaded = true;
+    overrides = data;
     if (changed) refresh();
   }
-  async function save(kind, provider, model, image) {
-    if (!loaded) await load();
-    ++revision;
-    const response = await fetch(new URL("app/avatars", base), {
-      method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ key: key(kind, provider, model), image }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "保存头像失败");
-    ++revision; overrides = data; refresh();
-  }
-  const u16be = (bytes, at) => (bytes[at] << 8) | bytes[at + 1];
-  const u16le = (bytes, at) => bytes[at] | (bytes[at + 1] << 8);
-  const u24le = (bytes, at) => bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16);
-  function ascii(bytes, at, text) {
-    return [...text].every((ch, index) => bytes[at + index] === ch.charCodeAt(0));
-  }
-  function pngSize(bytes) {
-    if (bytes.length < 24 || bytes[0] !== 0x89 || !ascii(bytes, 1, "PNG\r\n\x1a\n") ||
-        !ascii(bytes, 12, "IHDR")) return null;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    return {width: view.getUint32(16), height: view.getUint32(20)};
-  }
-  function jpegSize(bytes) {
-    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
-    let offset = 2;
-    while (offset + 3 < bytes.length) {
-      if (bytes[offset] !== 0xff) { offset++; continue; }
-      while (bytes[offset] === 0xff) offset++;
-      const marker = bytes[offset++];
-      if (marker === 0x01 || marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7))
-        continue;
-      if (offset + 2 > bytes.length) return null;
-      const length = u16be(bytes, offset);
-      if (length < 2 || offset + length > bytes.length) return null;
-      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-        if (length < 7) return null;
-        return {width: u16be(bytes, offset + 5), height: u16be(bytes, offset + 3)};
-      }
-      offset += length;
-    }
-    return null;
-  }
-  function webpSize(bytes) {
-    if (bytes.length < 30 || !ascii(bytes, 0, "RIFF") || !ascii(bytes, 8, "WEBP")) return null;
-    if (ascii(bytes, 12, "VP8X"))
-      return {width: 1 + u24le(bytes, 24), height: 1 + u24le(bytes, 27)};
-    if (ascii(bytes, 12, "VP8 ") && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a)
-      return {width: u16le(bytes, 26) & 0x3fff, height: u16le(bytes, 28) & 0x3fff};
-    if (ascii(bytes, 12, "VP8L") && bytes[20] === 0x2f)
-      return {
-        width: 1 + (((bytes[22] & 0x3f) << 8) | bytes[21]),
-        height: 1 + (((bytes[24] & 0x0f) << 10) | (bytes[23] << 2) | ((bytes[22] & 0xc0) >> 6)),
-      };
-    return null;
-  }
-  function imageSize(bytes) {
-    return pngSize(bytes) || jpegSize(bytes) || webpSize(bytes);
-  }
-  async function upload(kind, provider, model, file) {
-    if (!file || !["image/png", "image/jpeg", "image/webp"].includes(file.type))
-      throw new Error("请选择 PNG、JPEG 或 WebP 图片");
-    if (file.size > 5 * 1024 * 1024) throw new Error("图片不能超过 5 MB");
-    const size = imageSize(new Uint8Array(await file.arrayBuffer()));
-    if (!size || !size.width || !size.height) throw new Error("无法读取图片尺寸");
-    if (size.width * size.height > maxPixels) throw new Error("图片不能超过 1600 万像素");
-    const scale = Math.min(1, decodeEdge / Math.max(size.width, size.height));
-    const bitmap = await createImageBitmap(file, {
-      resizeWidth: Math.max(1, Math.round(size.width * scale)),
-      resizeHeight: Math.max(1, Math.round(size.height * scale)),
-      resizeQuality: "high",
-    });
-    try {
-      const canvas = document.createElement("canvas");
-      canvas.width = canvas.height = 128;
-      const size = Math.min(bitmap.width, bitmap.height);
-      canvas.getContext("2d").drawImage(bitmap, (bitmap.width-size)/2, (bitmap.height-size)/2, size, size, 0, 0, 128, 128);
-      await save(kind, provider, model, canvas.toDataURL("image/png"));
-    } finally { bitmap.close(); }
-  }
-  window.Avatars = { create, family, families, key, load, save, upload,
+  window.Avatars = { create, family, families, key, load,
     custom: (kind, provider, model) => Boolean(overrides[key(kind, provider, model)]) };
   load().catch(() => {});
   setInterval(() => { if (!document.hidden) load().catch(() => {}); }, 5000);

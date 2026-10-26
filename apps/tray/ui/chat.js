@@ -534,7 +534,7 @@ function sideItems(c, ctx) {
   return { chats, meets };
 }
 function sideList(node, title, items, empty) {
-  const key = JSON.stringify([title, items]);
+  const key = JSON.stringify([title, items, ART.version()]);
   if (node.dataset.key === key) return;
   node.dataset.key = key;
   const rows = [];
@@ -897,7 +897,7 @@ function foldRoom(node) {
 // Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
 function optimizedNode(opt, ctx) {
   const listed = opt.desks || [];
-  const key = JSON.stringify([state.optimizedOpen, opt.count, listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
+  const key = JSON.stringify([state.optimizedOpen, opt.count, ART.version(), listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
   let node = state.optimizedEl;
   if (node && node.dataset.key === key) return node;
   const toggle = h(
@@ -1332,7 +1332,7 @@ function createMessage(m) {
 }
 function setFace(rec, m, ctx) {
   const s = m.speaker || {};
-  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? ctx.c.host : ""}`;
+  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? ctx.c.host : ""}|${ART.version()}`;
   if (rec.avKey === key) return;
   rec.avKey = key;
   const face = speakerFace(m, ctx);
@@ -1391,7 +1391,7 @@ function updateMessage(rec, m, ctx, id) {
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
   setText(rec.lock, lock);
-  const toKey = JSON.stringify(to.map((t) => [t.kind, t.d?.key, t.d ? deskName(t.d) : t.handle]));
+  const toKey = JSON.stringify([ART.version(), ...to.map((t) => [t.kind, t.d?.key, t.d ? deskName(t.d) : t.handle])]);
   if (rec.toKey !== toKey) {
     rec.toKey = toKey;
     rec.to.replaceChildren(...to.map(chip));

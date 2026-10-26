@@ -2235,51 +2235,20 @@ async def test_show_permission_reads_current_discussion_members(data_root: Path)
         assert rejected.is_error and "AgentNave App" in str(rejected.content)
 
 
-def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) -> None:
+def test_dashboard_serves_fixed_model_logos_without_allowing_writes() -> None:
     from urllib.error import HTTPError
     from urllib.request import Request
 
-    dashboard = Dashboard(tmp_path)
-    dashboard.update(
-        "public",
-        json.dumps(
-            {
-                "view": "public",
-                "host": "codex",
-                "seats": [{"id": "a", "provider": "claude", "model": "claude-opus-5"}],
-                "messages": [{"speaker": "@host", "manager_model": "gpt-6"}],
-            }
-        ).encode(),
-    )
-    dashboard.update("director", b'{"view":"director"}')
+    dashboard = Dashboard()
+    dashboard.update("public", b'{"view":"public"}')
     url = dashboard.url("public")
-    director_url = dashboard.url("director")
     try:
         with urlopen(url + "avatar-settings") as response:
             assert json.load(response) == {}
             assert response.headers["Cache-Control"] == "no-store"
-        value = {
-            '["family","claude",""]': "data:image/png;base64,iVBORw0KGgo=",
-            '["family","gpt",""]': "data:image/png;base64,iVBORw0KGgo=",
-            '["family","grok",""]': "data:image/png;base64,iVBORw0KGgo=",
-            '["model","claude","claude-opus-5"]': "data:image/png;base64,iVBORw0KGgo=",
-            '["model","codex","gpt-6"]': "data:image/png;base64,iVBORw0KGgo=",
-            '["model","pi","gpt-6"]': "data:image/png;base64,iVBORw0KGgo=",
-        }
-        (tmp_path / "avatars.json").write_text(json.dumps(value))
-        with urlopen(url + "avatar-settings") as response:
-            assert json.load(response) == {
-                key: value[key]
-                for key in (
-                    '["model","claude","claude-opus-5"]',
-                    '["model","codex","gpt-6"]',
-                )
-            }
-        with urlopen(director_url + "avatar-settings") as response:
-            assert json.load(response) == value
-        with urlopen(url + "avatar-claude.png") as response:
-            assert response.headers["Content-Type"] == "image/png"
-            assert response.read().startswith(b"\x89PNG")
+        with urlopen(url + "avatar-claude.svg") as response:
+            assert response.headers["Content-Type"] == "image/svg+xml"
+            assert response.read().startswith(b"<svg")
         for request, status in [
             (Request(url + "avatar-settings", headers={"Origin": "https://example.com"}), 403),
             (url.replace("/public/", "/missing/") + "avatar-settings", 404),
@@ -2288,32 +2257,6 @@ def test_dashboard_reads_shared_avatars_without_allowing_writes(tmp_path: Path) 
             with pytest.raises(HTTPError) as error:
                 urlopen(request)
             assert error.value.code == status
-        (tmp_path / "avatars.json").write_text("broken")
-        with urlopen(url + "avatar-settings") as response:
-            assert json.load(response) == {}
-    finally:
-        dashboard.close()
-
-
-def test_public_dashboard_uses_family_avatar_when_host_is_unknown(tmp_path: Path) -> None:
-    from urllib.request import urlopen
-
-    dashboard = Dashboard(tmp_path)
-    dashboard.update(
-        "public",
-        json.dumps(
-            {
-                "view": "public",
-                "host": None,
-                "messages": [{"speaker": "@host", "manager_model": "gpt-6"}],
-            }
-        ).encode(),
-    )
-    value = {'["family","gpt",""]': "data:image/png;base64,iVBORw0KGgo="}
-    (tmp_path / "avatars.json").write_text(json.dumps(value))
-    try:
-        with urlopen(dashboard.url("public") + "avatar-settings") as response:
-            assert json.load(response) == value
     finally:
         dashboard.close()
 

@@ -1083,7 +1083,7 @@ class Conversations(Groups):
 
     def open_dashboard(self, *, history_loaded: bool = False) -> str:
         if self.dashboard is None:
-            self.dashboard = Dashboard(self.root)
+            self.dashboard = Dashboard()
             try:
                 if history_loaded:
                     for record in list(self.records.values()):

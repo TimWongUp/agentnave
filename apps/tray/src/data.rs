@@ -92,7 +92,7 @@ pub struct Response {
 }
 
 impl Response {
-    fn ok(content_type: &'static str, body: Vec<u8>) -> Self {
+    pub(crate) fn ok(content_type: &'static str, body: Vec<u8>) -> Self {
         Self {
             cache_control: "no-store",
             status: 200,
@@ -200,8 +200,8 @@ impl Reader {
             }
             return Response::json(&crate::hosts::skill_catalog());
         }
-        if path == "/app/avatars" {
-            return crate::avatars::request(&self.root, method, action, body);
+        if let Some(family) = path.strip_prefix("/app/characters/") {
+            return crate::characters::request(&self.root, family, method, action, body);
         }
         if path == "/app/review" {
             if method != "POST" {
@@ -578,6 +578,12 @@ impl Reader {
         }
         if path == "/app/stage" || path == "/app/chats" || path.starts_with("/app/chats/") {
             return self.route(path);
+        }
+        if path == "/app/characters" {
+            return Response::json(&crate::characters::list(&self.root));
+        }
+        if let Some(name) = path.strip_prefix("/character/") {
+            return crate::characters::frame(&self.root, name).unwrap_or_else(Response::not_found);
         }
         if path == "/avatar-settings" {
             return match crate::avatars::read(&self.root) {
