@@ -1391,7 +1391,7 @@ function updateMessage(rec, m, ctx, id) {
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
   setText(rec.lock, lock);
-  const toKey = JSON.stringify(to.map((t) => [t.kind, t.d?.key, t.handle]));
+  const toKey = JSON.stringify(to.map((t) => [t.kind, t.d?.key, t.d ? deskName(t.d) : t.handle]));
   if (rec.toKey !== toKey) {
     rec.toKey = toKey;
     rec.to.replaceChildren(...to.map(chip));
