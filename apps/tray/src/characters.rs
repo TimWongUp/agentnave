@@ -30,6 +30,10 @@ fn webp_size(b: &[u8]) -> Option<(u32, u32)> {
     if b.len() < 30 || &b[0..4] != b"RIFF" || &b[8..12] != b"WEBP" {
         return None;
     }
+    // The RIFF size must cover the whole file: a cut-off frame is refused, not saved broken.
+    if u32::from_le_bytes([b[4], b[5], b[6], b[7]]) as usize + 8 != b.len() {
+        return None;
+    }
     let u16le = |at: usize| u32::from(b[at]) | u32::from(b[at + 1]) << 8;
     let u24le = |at: usize| u16le(at) | u32::from(b[at + 2]) << 16;
     match &b[12..16] {
@@ -158,17 +162,22 @@ mod tests {
         let mut b = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0".to_vec();
         b.extend_from_slice(&(edge - 1).to_le_bytes()[..3]);
         b.extend_from_slice(&(edge - 1).to_le_bytes()[..3]);
+        let size = (b.len() - 8) as u32;
+        b[4..8].copy_from_slice(&size.to_le_bytes());
         b
     }
 
-    fn set(edge_for: impl Fn(u32) -> u32) -> Vec<u8> {
+    fn join(frames: Vec<Vec<u8>>) -> Vec<u8> {
         let mut body = Vec::new();
-        for (_, _, edge) in frames() {
-            let bytes = webp(edge_for(edge));
+        for bytes in frames {
             body.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
             body.extend_from_slice(&bytes);
         }
         body
+    }
+
+    fn set(edge_for: impl Fn(u32) -> u32) -> Vec<u8> {
+        join(frames().map(|(_, _, edge)| webp(edge_for(edge))).collect())
     }
 
     #[test]
@@ -183,6 +192,12 @@ mod tests {
         );
         let wrong = request(root, "qwen", "POST", Some("1"), &set(|e| e + 1));
         assert_eq!(wrong.status, 400);
+        let mut cut: Vec<Vec<u8>> = frames().map(|(_, _, edge)| webp(edge)).collect();
+        cut.last_mut().unwrap().pop();
+        assert_eq!(
+            request(root, "qwen", "POST", Some("1"), &join(cut)).status,
+            400
+        );
         let mut short = set(|e| e);
         short.truncate(short.len() - 10);
         assert_eq!(request(root, "qwen", "POST", Some("1"), &short).status, 400);

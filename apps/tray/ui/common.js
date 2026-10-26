@@ -187,10 +187,12 @@
   const missing = new Set();
   const artUrl = (path) => href(`/art/${path}`);
   // A family's replacement set (Settings → 头像) wins over the painted one: "@family@version".
-  let replaced = {};
+  let replaced = {}, version = 0;
   const CHARACTERS_KEY = "agentnave.characters";
   const loadCharacters = () => fetch(href("/app/characters"), { cache: "no-store" })
-    .then((r) => (r.ok ? r.json() : {})).then((data) => { replaced = data || {}; }).catch(() => {});
+    .then((r) => (r.ok ? r.json() : {})).then((data) => {
+      if (JSON.stringify(data || {}) !== JSON.stringify(replaced)) { replaced = data || {}; version++; }
+    }).catch(() => {});
   loadCharacters();
   // The window that saved a set tells the others through storage.
   window.addEventListener("storage", (e) => { if (e.key === CHARACTERS_KEY) loadCharacters(); });
@@ -269,7 +271,9 @@
   // A reviewed answer waits only briefly on the boss: it reads as work going on, not a state of its own.
   const ongoing = (status) => (status === "review" ? "running" : status);
 
-  const art = { url: artUrl, character, figure, head, lid, STATES, EXTRA, charactersChanged };
+  const art = { url: artUrl, character, figure, head, lid, STATES, EXTRA, charactersChanged,
+    // Bumped whenever a set is replaced or restored: views fold it into their render caches.
+    version: () => version };
 
   window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();

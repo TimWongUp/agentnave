@@ -23,6 +23,12 @@
       throw new Error(`缺少 ${missing.length} 张图：${missing.slice(0, 4).map((f) => `${f}.webp`).join("、")}${missing.length > 4 ? " 等" : ""}`);
     const chunks = [];
     for (const frame of FRAMES) {
+      // Decode each frame once, so a broken or wrongly sized image never replaces a working set.
+      const edge = { s: 266, m: 320, h: 96 }[frame[0]];
+      const bitmap = await createImageBitmap(found.get(frame)).catch(() => null);
+      const fits = bitmap && bitmap.width === edge && bitmap.height === edge;
+      bitmap?.close();
+      if (!fits) throw new Error(`${frame}.webp 必须是能打开的 ${edge}×${edge} WebP 图片`);
       const bytes = new Uint8Array(await found.get(frame).arrayBuffer());
       const head = new Uint8Array(4);
       new DataView(head.buffer).setUint32(0, bytes.length);
