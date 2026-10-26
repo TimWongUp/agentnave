@@ -38,7 +38,6 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from agentnave.host import Host
 
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
-    monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID", raising=False)
     monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
     monkeypatch.setattr(mcp_server, "HOST", Host())
     monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
@@ -1855,10 +1854,11 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
     async with Client(mcp) as client:
         after_restart = await start(client, "chat-a")
         assert saved(after_restart)["manager_session"] == session
-        unknown = await _call(
-            client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
+        monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+        unknown = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
         )
-        assert saved(unknown)["manager_session"] is None
+        assert unknown.is_error and "needs manager_session_id" in str(unknown.content)
         # The desk's running new thread would reject the default continuation below.
         await _wait_task(client, after_restart["invocation_id"])
         monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "chat-a")
@@ -1870,10 +1870,10 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
         explicit = await start(client, "chat-b")
         assert saved(explicit)["manager_session"] == saved(other)["manager_session"]
         monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
-        unknown_again = await _call(
-            client, "start_agent", {"provider": "claude", "prompt": "check", "cwd": str(tmp_path)}
+        unknown_again = await client.call_tool(
+            "run_round", {"title": "No chat", "members": [{"id": "a", "provider": "claude"}]}
         )
-        assert saved(unknown_again)["manager_session"] is None
+        assert unknown_again.is_error and "needs manager_session_id" in str(unknown_again.content)
 
 
 @pytest.mark.asyncio
@@ -2464,16 +2464,6 @@ async def test_forward_rejects_unusable_task_references(tmp_path: Path, data_roo
         assert "not a succeeded task: cancelled" in await rejected(client, forward=[cancelled_id])
         assert "must be unique" in await rejected(client, forward=[source_id, source_id])
         assert "at most 20" in await rejected(client, forward=[source_id] * 21)
-        unknown = await client.call_tool(
-            "start_agent",
-            {
-                "provider": "claude",
-                "prompt": "blocked",
-                "cwd": str(tmp_path),
-                "forward": [source_id],
-            },
-        )
-        assert unknown.is_error and "known manager session" in str(unknown.content)
         await _cancel(client, sleeping["invocation_id"])
 
 
