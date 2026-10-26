@@ -520,10 +520,11 @@ transaction or automatic host configuration update.
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
 `agentnave-manager` Skill with its complete v0.45.0 directory, then reconnect MCP because the
 tool interface changed. History and `members.json` need no migration. Every tool now rejects
-arguments its schema does not list (CLI settings such as `model` and `effort` belong in
-`provider_options`), and `start_agent` and `run_round` reject calls without `manager_session_id`
-unless the host injects `AGENTNAVE_HOST_SESSION_ID` per chat. Saved records without a manager
-chat stay readable; start a new show instead of continuing one. See
+arguments its schema does not list (for `start_agent`, `model` and `effort` belong in
+`provider_options`; for show seats, in `members[].provider_options`), and `start_agent` and
+`run_round` reject calls without `manager_session_id` unless the host injects
+`AGENTNAVE_HOST_SESSION_ID` per chat. Saved records without a manager chat stay readable; a show
+without one takes no further rounds or host remarks, so start a new show. See
 [v0.45.0 release notes](releases/v0.45.0.md).
 
 ## Uninstall
