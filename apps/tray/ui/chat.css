@@ -201,8 +201,13 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .label .cli { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 3px 5px; font-size: 11px; color: var(--muted); }
 .label .st { margin-top: 2px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 [data-mood="working"] .label .st, [data-mood="speaking"] .label .st { color: var(--run); }
-[data-mood="review"] .label .st { color: var(--review); }
 [data-mood="failed"] .label .st { color: var(--bad); }
+/* a desk's role is its label's last line; the line keeps its height when there is no role */
+.label .role { min-height: 1.5em; margin-top: 2px; font-size: 11px; color: var(--show); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-tags .tag-st { background: var(--card-hover); color: var(--muted); }
+[data-mood="working"] .desk-tags .tag-st { background: color-mix(in srgb, var(--run) 16%, transparent); color: var(--run); }
+[data-mood="failed"] .desk-tags .tag-st { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+[data-mood="sleep"] .desk-tags .tag-st { color: var(--faint); }
 .tag { padding: 0 6px; border-radius: 99px; font-size: 10.5px; font-weight: 600; line-height: 16px; white-space: nowrap; background: var(--card-hover); color: var(--muted); }
 .tag-role { background: color-mix(in srgb, var(--show) 16%, transparent); color: var(--show); }
 /* access is a declared convention: outlined; meeting-only is a hard limit: filled */
@@ -239,7 +244,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .desk.only { opacity: 0.75; }
 .desk-tags { position: absolute; top: 7px; left: 8px; z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 46%; pointer-events: none; }
 .desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.desk .say { max-width: 50%; }
+/* the bubble sits in the card's top-right corner, above the figure like the tags opposite it */
+.desk > .say { top: 7px; right: 8px; max-width: 50%; }
+.boss-mid { position: relative; padding-top: 24px; }
+.boss-mid > .say { top: 0; left: 50%; right: auto; transform: translateX(-50%); max-width: 100%; }
 .desk > .scene { width: calc(var(--fig) * 1.5); }
 
 /* ---- meeting rooms: each seat brings its own stretch of table; layoutRooms() sets --S ---- */

@@ -456,7 +456,6 @@ function createBoss() {
   rec.scene = h(
     "div.scene",
     {},
-    rec.say,
     img("l-chair", "chair"),
     rec.desk,
     img("l-laptop.l-open", "laptop"),
@@ -472,7 +471,8 @@ function createBoss() {
       "div.boss-row",
       {},
       rec.chats,
-      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
+      // the speech bubble sits above the head, never over it
+      h("div.boss-mid", {}, rec.say, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
       rec.meets,
     ),
   );
@@ -577,7 +577,8 @@ function createDesk(d) {
     lid: h("span.lid"),
     nm: h("div.nm"),
     cliText: h("span"),
-    role: h("span.tag.tag-role", { hidden: true }),
+    role: h("div.role"),
+    status: h("span.tag.tag-st"),
     access: h("span.tag.tag-access", {
       hidden: true,
       title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
@@ -587,13 +588,11 @@ function createDesk(d) {
       { hidden: true, title: "与 boss 的宿主同类，只参加会议，不接受私聊" },
       "仅开会",
     ),
-    st: h("div.st"),
   };
   rec.desk = img("l-desk", "desk");
   rec.scene = h(
     "div.scene",
     {},
-    rec.say,
     img("l-chair", "chair"),
     rec.desk,
     img("l-laptop.l-open", "laptop"),
@@ -603,10 +602,11 @@ function createDesk(d) {
   rec.el = h(
     "button.desk",
     { type: "button" },
-    // role and access sit in the top-left corner so every card keeps the same height
-    h("span.desk-tags", {}, rec.role, rec.access, rec.only),
+    // access and status sit in the top-left corner; the role is the label's last line
+    h("span.desk-tags", {}, rec.access, rec.only, rec.status),
+    rec.say,
     rec.scene,
-    h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.st),
+    h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.role),
   );
   rec.el.addEventListener("click", () =>
     openScope({ kind: "desk", key: d.key }, rec.el),
@@ -631,7 +631,6 @@ function updateDesk(rec, d, ctx) {
   setSay(rec.say, s.say);
   setText(rec.nm, deskName(d));
   setText(rec.cliText, cliName(d.provider));
-  rec.role.hidden = !d.role;
   setText(rec.role, clip(d.role || "", ROLE_CHARS));
   setAttr(rec.role, "title", d.role && clip(d.role, ROLE_CHARS) !== d.role ? d.role : null);
   setText(
@@ -640,7 +639,8 @@ function updateDesk(rec, d, ctx) {
   );
   rec.access.hidden = !d.access;
   rec.only.hidden = d.private_allowed !== false;
-  setText(rec.st, s.word);
+  setText(rec.status, s.word);
+  setAttr(rec.status, "title", s.word);
   setAttr(
     rec.el,
     "title",
@@ -1149,7 +1149,7 @@ function speakerName(m, ctx) {
   if (s.role === "system") return s.label || "系统";
   if (isBoss(m)) return "boss";
   const d = speakerDesk(m, ctx);
-  return d ? deskName(d) : s.model || cliName(s.provider) || "组员";
+  return d ? deskName(d) : AN.modelName(s.model) || cliName(s.provider) || "组员";
 }
 // CLI and role after the name, so several "默认模型" desks stay apart.
 function speakerSub(m, ctx) {
@@ -1180,7 +1180,7 @@ function targets(m, ctx) {
     const d =
       (key && ctx.desks.get(key)) ||
       (m.thread?.kind === "desk" ? ctx.desks.get(m.desk) : null);
-    return { kind: "desk", d, handle: d ? null : r.model || r.label };
+    return { kind: "desk", d, handle: d ? null : AN.modelName(r.model) || r.label };
   });
   const room = m.thread?.kind === "room" && ctx.rooms.get(m.thread.id);
   if (room && list.length > 1 && list.length === room.seats.length)

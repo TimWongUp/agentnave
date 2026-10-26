@@ -220,7 +220,17 @@
   const cliName = (provider) => CLI[provider] || provider || "";
   // The boss tile and CLI badges show the CLI's mark, or its initial.
   const hostTile = (host, label) => cliMark(host) || h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
-  const deskName = (d) => d.display_model || d.model || "CLI 默认模型";
+  // Model names drop the routing prefix ("opencode-go/deepseek-v4.1-flash" -> "deepseek-v4.1-flash")
+  // unless the user chose full names in Settings; shared by every window through localStorage.
+  const MODEL_NAMES_KEY = "agentnave.model-names";
+  const fullModelNames = () => {
+    try { return localStorage.getItem(MODEL_NAMES_KEY) === "full"; } catch { return false; }
+  };
+  const setFullModelNames = (full) => {
+    try { localStorage.setItem(MODEL_NAMES_KEY, full ? "full" : "short"); } catch { /* storage may be unavailable */ }
+  };
+  const modelName = (model) => (model && !fullModelNames() ? model.split("/").pop() || model : model);
+  const deskName = (d) => modelName(d.display_model || d.model) || "CLI 默认模型";
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
@@ -241,7 +251,7 @@
 
   const art = { url: artUrl, character, figure, head, lid, STATES };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();
 
 (function () {

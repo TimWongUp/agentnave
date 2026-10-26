@@ -1986,3 +1986,19 @@ window.addEventListener("beforeunload", (e) => {
 // Initialize: show the cached detection at once, then re-probe for newly added models.
 loadMembers().then(() => refreshDetection(true));
 loadStatus();
+
+// Model names: short (without the routing prefix) or full; shared with every window.
+(function () {
+  const buttons = { short: document.getElementById("model-names-short"), full: document.getElementById("model-names-full") };
+  function show() {
+    const full = AN.fullModelNames();
+    for (const [key, button] of Object.entries(buttons)) {
+      const on = (key === "full") === full;
+      button.classList.toggle("active", on);
+      button.setAttribute("aria-checked", on ? "true" : "false");
+    }
+  }
+  for (const [key, button] of Object.entries(buttons))
+    button.addEventListener("click", () => { AN.setFullModelNames(key === "full"); show(); });
+  show();
+})();
