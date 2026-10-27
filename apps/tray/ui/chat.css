@@ -213,9 +213,9 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @keyframes ear-wag { from { transform: rotate(calc(var(--dir) * -0.4 * var(--tilt))); } to { transform: rotate(calc(var(--dir) * var(--tilt))); } }
 /* bat wings sit behind the body and flap about their roots: a flutter while working, a steady
    beat while speaking and fast when done; they keep still while the figure breathes (at rest and
-   asleep) and walking frames have no wing layers */
+   asleep), through a blink too, unlike the idle frame under them; walking frames have no wing layers */
 .fig-b { isolation: isolate; }
-.fig img.part:is(.wing-l, .wing-r) { z-index: -1; }
+.fig img.part:is(.wing-l, .wing-r) { z-index: -1; animation: none; }
 .fig img.wing-l { --dir: 1; }
 .fig img.wing-r { --dir: -1; }
 [data-mood="working"] .fig img.part:is(.wing-l, .wing-r) { --lift: 4deg; animation: wing-flap 0.25s ease-in-out var(--phase, 0s) infinite alternate; }
