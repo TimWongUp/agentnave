@@ -38,11 +38,11 @@ MCP Host 拥有注册格式、作用域和加载行为；托盘 App 可管理用
 
 请求字段为 `provider`、`prompt`、绝对 `cwd`、可选 `session_id` 和 `provider_options`。Provider Options 可由调用方显式给出，或来自用户在 AgentNave App 中配置的组员默认值；均须通过对应 Adapter allowlist。显式参数优先，超出配置范围时拒绝，不替换为其他模型或 effort；未配置的参数继承 Provider 原生设置。默认值在服务入口套用，不下沉到 Adapter。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设置的默认 options 或用户本轮明确要求，boss 不得自行追加；App 中的权限默认值在调用明确模型（含 App 默认模型）时套用并在回执注明；仅按 `cli-defaults.json` 缓存回退时不继承权限、仓库检查绕过、工具、agent、mode 或 project 等执行控制，避免 CLI 默认变化后将另一模型的授权带入调用。
 
-同一 server 进程内，同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝重复活跃调用，单任务与组席位共用此检查。在写入运行历史前检查，拒绝不产生新的任务记录。这不是跨 server 或原生直接调用的全局锁；不同 Provider 的相同标识互不影响。
+同一 Provider 的同一原生 session_id 不得同时续接：共享启动入口在准备命令前拒绝本进程内的重复活跃调用，并取得数据根 `native-session-locks/<Provider与原生session的SHA-256>.lock`，持有到这次运行的进程树结束；单任务与组席位共用此入口，共用数据根的各 server 因此互斥。server 退出或崩溃时锁由 OS 释放，崩溃后 supervisor 结束残留进程树前的数秒内不保证互斥。私聊任务在写入运行历史前取得锁，拒绝不产生新的任务记录。这不约束绕过 AgentNave 的原生直接调用；不同 Provider 的相同标识互不影响。
 
 私聊续接（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)）：`start_agent` 默认开新线程，续接只能显式传 `session_id`；旧参数 `continue_desk` 已移除，与其他未列出的参数一样会被拒绝，续接改传 `session_id`。`role` 是 1–40 个可打印字符的可选标签，空白视为无角色；它只显示在工位上，不参与身份，不进入 prompt 或 Provider 参数。可选 `access`（`read`／`write`）只是本次调用的访问等级标签：保存在任务与席位记录、回显在回执，工位按最近一次声明显示；不拒绝调用，不改变 Provider 参数，也不由服务推断。
 
-同时运行上限（ADR-0025）：每次 `start_agent` 与带席位的 `run_round` 现读数据根 `settings.json`（版本 1，`max_running` 为 1–32 的整数，缺失时默认 8，忽略未知键；损坏或越界时返回 App 修复错误）。本服务仍在运行的 Invocation（私聊任务与席位合计）加上这次将启动的数量超过上限时拒绝：私聊计 1，并联轮计席位数，串联轮计 1。检查只在接纳时进行：串联轮内后续席位不再检查，切换席位的瞬间其他任务可能占用名额，造成短暂超出一个。上限按服务进程计算，多个宿主连接各自计数。
+同时运行上限（ADR-0025）：每次 `start_agent` 与带席位的 `run_round` 现读数据根 `settings.json`（版本 1，`max_running` 为 1–32 的整数，缺失时默认 8，忽略未知键；损坏或越界时返回 App 修复错误）。本服务仍在运行的 Invocation（私聊任务与席位合计）加上这次将启动的数量超过上限时拒绝：私聊计 1，并联轮计席位数，串联轮计 1；还有席位要启动的串联轮在换席或等待审核、没有席位运行时仍计 1。检查只在接纳时进行，串联轮内后续席位启动时不再检查。上限按服务进程计算，多个宿主连接各自计数。
 
 转发：`start_agent` 与 `run_round` 的 `forward` 按序引用消息 ID，只用于本工作区、已完成的消息：成功的私聊任务终态，以及节目中已提交的 `answer`、`host`、`task`、`forward` 条目。运行中、失败或受阻的任务，待审、不公开的回答，`absent` 条目，另一工作区或身份未知的引用，重复引用与超过 20 条均整批拒绝，不部分注入。消息 ID 为不透明的稳定标识，来源于会话 ID 与任务或条目序号，由 `wait` 的任务终态与轮次 `entries`、`run_round` 与 `decide_answers` 的回执以及 `read_conversation` 返回，跨重启不变。私聊中被转发内容前置于 prompt 并声明为数据，会话历史仍只存 boss 原文；会议室中在本轮任务之前提交为独立的 `forward` 条目，注明来源，随条目规则送达席位，不冒充主持人发言。声明只降低误导概率，不是安全边界。
 
@@ -120,7 +120,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`（[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。`start_agent`、`run_round` 接受 `manager_session_id`：同一 boss 聊天始终传同一宿主 session ID，不同聊天分开；宿主未公开原生 ID 时，boss 在该聊天首次调用前生成一次 UUID 并沿用。省略时只读取明确按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则拒绝调用；旧记录的 null 归属照常读取。服务把宿主与原始 ID 的 SHA-256 前 32 位 hex 加 `s-` 前缀作为分组键，不保存原始 ID；CLI 名称和 MCP 连接 UUID 均不充当聊天身份。视图快照与 live 会话摘要保留创建归属；live 顶层的 `connection_id` 仅标识当前服务连接，`manager_started_at` 表示服务开始时间。后续接手不改写创建归属；已知 boss 身份时，任务原生续接只自动关联本 boss 会话的记录，显式指向另一 boss 的任务记录会拒绝。旧记录仍可读取；节目续轮与主持人发言按实际身份（参数或注入）匹配创建归属，无归属旧节目不能续轮，私聊可用原生 `session_id` 续接并新建当前 boss 的记录；历史内容不迁移。
 
-任务会话保存普通 `start_agent` 的 Provider、cwd、套用默认值后的模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一 boss 会话内的同一原生会话并入其任务会话；同一归属内存在多个相同 Provider／原生 session 的任务会话时，未显式指定会话的续接选择最近一次绑定该 session 的记录，保留其创建者归属。并发续接同一会话被拒。任务续接先取得 `native-session-locks/<Provider与原生session的SHA-256>.lock`，在启动锁内刷新全部 boss 的活跃绑定并落盘运行记录，再释放启动锁；运行记录继续持有会话锁。锁文件保留以避免 inode 替换竞态；`AGENTNAVE_HOST_SESSION_ID` 从子 CLI 环境移除。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait` 仍能读取结果。会话没有结束状态，MCP 不提供改名与删除；标题由 Manager 创建时给出，改名与删除只在托盘 App 中进行。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
+任务会话保存普通 `start_agent` 的 Provider、cwd、套用默认值后的模型、状态、最终输出与原生会话：先由 Adapter 准备并校验请求，再写入记录并启动同一 PreparedCommand；同一 boss 会话内的同一原生会话并入其任务会话；同一归属内存在多个相同 Provider／原生 session 的任务会话时，未显式指定会话的续接选择最近一次绑定该 session 的记录，保留其创建者归属。并发续接同一会话被拒。任务续接先取得上述原生会话锁，在锁内刷新全部 boss 的绑定并落盘运行记录；原生会话锁由这次运行持有到结束，运行记录继续持有会话锁。锁文件保留以避免 inode 替换竞态；`AGENTNAVE_HOST_SESSION_ID` 从子 CLI 环境移除。后台采集器在终态保存结果，写盘失败时进程内标记中断，`wait` 仍能读取结果。会话没有结束状态，MCP 不提供改名与删除；标题由 Manager 创建时给出，改名与删除只在托盘 App 中进行。数据根中的旧版记录（`catalog/`、`room.json`）只列为不可用，不迁移。
 
 看板只在 Manager 调用 `list` 时启动并返回首页入口，此后 `read_conversation` 附带该会话的页面入口，随 server 退出；启动时为全部可读会话构建投影，之后由落盘与 1.5 秒的运行刷新更新。只监听 127.0.0.1 随机端口，以随机路径及精确 Host/Origin 检查限制访问，不提供写入或文件映射接口；CSP 禁止外部加载与内联脚本，页面用 textContent 渲染。节目公开页只投影已提交条目的白名单字段，导演页另含私密指令、待审回答与运行尾部，任务页只给 Manager；页面不显示原生会话或调用 ID。用于本机查看与录屏，不作网络托管。
 

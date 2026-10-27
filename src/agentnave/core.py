@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import re
@@ -14,6 +16,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import IO
 
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, model_from_event, parse_json_object
@@ -206,12 +209,36 @@ SUBAGENT_INSTRUCTIONS = (
 )
 
 
+def lock_file(path: Path, busy_message: str) -> IO[bytes]:
+    """Acquire a nonblocking OS lock; close the returned handle to release it."""
+    lock = path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        raise ValueError(busy_message) from None
+    return lock
+
+
 class InvocationManager:
     """Own active child processes only for this Python process lifetime."""
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
         self._closed = False
+        # Lock directory shared by every server on one data root; None claims in-process only.
+        self.session_locks: Path | None = None
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         """Apply the shared subagent instruction before provider-specific encoding."""
@@ -219,24 +246,55 @@ class InvocationManager:
             replace(request, prompt=f"{SUBAGENT_INSTRUCTIONS}\n\nAssigned task:\n{request.prompt}")
         )
 
-    def start(self, request: InvocationRequest, *, prepared: PreparedCommand | None = None) -> str:
-        self.check_start(request)
-        adapter = get_adapter(request.provider)
-        prepared = prepared if prepared is not None else self.prepare(request)
-        invocation_id = str(uuid.uuid4())
-        record = _InvocationRecord(request)
-        self._records[invocation_id] = record
-        record.task = asyncio.create_task(self._execute(record, adapter, prepared))
+    def start(
+        self,
+        request: InvocationRequest,
+        *,
+        prepared: PreparedCommand | None = None,
+        claim: IO[bytes] | None = None,
+    ) -> str:
+        """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
+        call on and releases it once its process tree has ended."""
+        if claim is None:
+            claim = self.reserve(request)
+        try:
+            adapter = get_adapter(request.provider)
+            prepared = prepared if prepared is not None else self.prepare(request)
+            invocation_id = str(uuid.uuid4())
+            record = _InvocationRecord(request)
+            self._records[invocation_id] = record
+            record.task = asyncio.create_task(self._execute(record, adapter, prepared))
+        except BaseException:
+            if claim is not None:
+                claim.close()
+            raise
+        if claim is not None:
+            held = claim
+            record.task.add_done_callback(lambda _: held.close())
         record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
         return invocation_id
 
-    def active_count(self) -> int:
-        """CLI runs of this server still in progress: private tasks and seats alike."""
-        return sum(
-            1
-            for record in self._records.values()
-            if record.task is not None and not record.task.done()
+    def reserve(self, request: InvocationRequest) -> IO[bytes] | None:
+        """Claim the request's native session for one run, across every server sharing the
+        lock directory; closing the handle, or this process ending, releases it."""
+        self.check_start(request)
+        if request.session_id is None or self.session_locks is None:
+            return None
+        identity = json.dumps([request.provider, request.session_id]).encode()
+        self.session_locks.mkdir(parents=True, mode=0o700, exist_ok=True)
+        return lock_file(
+            self.session_locks / (hashlib.sha256(identity).hexdigest() + ".lock"),
+            "This native session already has an active invocation in another AgentNave "
+            "server; wait for it or cancel it there",
         )
+
+    def active_ids(self) -> set[str]:
+        """CLI runs of this server still in progress: private tasks and seats alike."""
+        return {
+            invocation_id
+            for invocation_id, record in self._records.items()
+            if record.task is not None and not record.task.done()
+        }
 
     def check_start(self, request: InvocationRequest) -> None:
         if self._closed:

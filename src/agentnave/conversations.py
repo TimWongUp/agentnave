@@ -47,7 +47,6 @@ from agentnave.store import (
     SessionRecord,
     TaskRecord,
     Unavailable,
-    lock_file,
     now,
     write_file,
 )
@@ -193,6 +192,9 @@ class Conversations(Groups):
         self.root = root.resolve()  # created only by the first saved conversation
         self.db = Database(self.root)
         self.locks = self.root / "locks"
+        # Runs hold their native session's lock here, so servers on one data root exclude
+        # each other's tasks and seats alike.
+        manager.session_locks = self.root / "native-session-locks"
         self.records: dict[str, Record] = {}
         self.unavailable: list[Unavailable] = []
         self.invocations: dict[str, set[str]] = {}
@@ -773,11 +775,23 @@ class Conversations(Groups):
     def _check_capacity(self, needed: int) -> None:
         """Refuse work that would run more CLI processes at once than the App allows."""
         limit = read_max_running()
-        running = self.manager.active_count()
+        active = self.manager.active_ids()
+        # A serial round between seats, or waiting on a review, keeps a slot for its next seat.
+        held = sum(
+            1
+            for round_ in self._rounds.values()
+            if round_.order == "serial"
+            and not round_.finished
+            and not round_.cancelling
+            and any(run.status == "pending" for run in round_.runs)
+            and not any(run.invocation_id in active for run in round_.runs)
+        )
+        running = len(active) + held
         if running + needed > limit:
             raise CapacityError(
-                f"{running} CLI runs are active and this would start {needed}; the AgentNave App "
-                f"limits this server to {limit} at once. Wait for some to finish, then retry"
+                f"{running} CLI runs are active or held by serial rounds for their next seat, and "
+                f"this would start {needed}; the AgentNave App limits this server to {limit} at "
+                "once. Wait for some to finish, then retry"
             )
 
     def start_task(
@@ -808,14 +822,8 @@ class Conversations(Groups):
         started = False
         record = None
         try:
-            if request.session_id:
-                identity = json.dumps([request.provider, request.session_id]).encode()
-                locks = self.root / "native-session-locks"
-                locks.mkdir(parents=True, mode=0o700, exist_ok=True)
-                native_lock = lock_file(
-                    locks / (hashlib.sha256(identity).hexdigest() + ".lock"),
-                    "This native session is being started by another AgentNave server",
-                )
+            # Held by the run until it ends: no other server can resume this session meanwhile.
+            native_lock = self.manager.reserve(request)
             record = self.writable(conversation_id) if conversation_id else None
             if (
                 record is not None
@@ -827,7 +835,7 @@ class Conversations(Groups):
             ):
                 raise ValueError("Task conversation belongs to a different manager session")
             if request.session_id:
-                # Under the native-session start lock, include other chats' active bindings.
+                # Under the native-session lock, include other chats' active bindings.
                 self.scan()
 
                 def resumes(task: TaskRecord) -> bool:
@@ -863,6 +871,8 @@ class Conversations(Groups):
                     if record is not None:
                         # Keep a native session together within this manager chat.
                         record = self.writable(record.state.id)
+                # Older servers hold the session lock only while starting; their saved running
+                # task still marks the session busy.
                 if any(
                     task.status == "running" and resumes(task)
                     for item in self.records.values()
@@ -898,12 +908,13 @@ class Conversations(Groups):
             record.state.tasks.append(task)
             self._persist(record)
             try:
-                invocation_id = self.manager.start(request, prepared=prepared)
+                invocation_id = self.manager.start(request, prepared=prepared, claim=native_lock)
             except Exception:
                 task.status = "failed"
                 task.error = "start_failed"
                 self._persist(record)
                 raise
+            native_lock = None  # the run releases it when it ends
             started = True
             self.invocations.setdefault(record.state.id, set()).add(invocation_id)
             self.running_tasks[task.id] = invocation_id

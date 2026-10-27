@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import urlopen
@@ -21,6 +22,7 @@ from agentnave.dashboard import Dashboard
 from agentnave.db import Database
 from agentnave.group import GroupSeat
 from agentnave.mcp_server import mcp
+from agentnave.members import CapacityError
 from agentnave.models import InvocationRequest
 from agentnave.store import (
     Conversation,
@@ -1196,6 +1198,115 @@ async def test_group_and_task_resumes_share_one_session_guard(
         await studio.close()
 
 
+# Another server: each line on stdin asks it to start, or cancel, a SLEEP task on one session.
+_OTHER_SERVER = """
+import asyncio, sys
+from pathlib import Path
+from agentnave.conversations import Conversations
+from agentnave.core import InvocationManager
+from agentnave.host import Host
+from agentnave.models import InvocationRequest
+
+async def main():
+    root, cwd, session = sys.argv[1:]
+    studio = Conversations(InvocationManager(), Path(root), host=Host())
+    prompt = "Private instruction for you only:\\nSLEEP"
+    started = None
+    while command := (await asyncio.to_thread(sys.stdin.readline)).strip():
+        if command == "cancel":
+            await studio.manager.cancel(started)
+            print("cancelled", flush=True)
+            continue
+        try:
+            started = studio.start_task(
+                InvocationRequest("claude", prompt, Path(cwd), session), None, None
+            ).invocation_id
+        except ValueError as exc:
+            print("rejected:", exc, flush=True)
+        else:
+            print("started", flush=True)
+    await studio.manager.shutdown()
+    await studio.close()
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.asyncio
+async def test_servers_exclude_one_native_session_until_its_run_ends(
+    tmp_path: Path, data_root: Path
+) -> None:
+    studio = Conversations(InvocationManager(), data_root)
+    servers: list[subprocess.Popen[str]] = []
+
+    def other_server(session: str) -> subprocess.Popen[str]:
+        server = subprocess.Popen(
+            [sys.executable, "-c", _OTHER_SERVER, str(data_root), str(tmp_path), session],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        servers.append(server)
+        return server
+
+    async def ask(server: subprocess.Popen[str], command: str) -> str:
+        assert server.stdin is not None and server.stdout is not None
+        server.stdin.write(command + "\n")
+        server.stdin.flush()
+        return await asyncio.wait_for(asyncio.to_thread(server.stdout.readline), 30)
+
+    async def stop(server: subprocess.Popen[str]) -> None:
+        # Closing stdin ends its command loop; kill whatever does not exit in time.
+        assert server.stdin is not None and server.stdout is not None
+        with suppress(OSError):
+            server.stdin.close()
+        try:
+            await asyncio.to_thread(server.wait, 10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            await asyncio.to_thread(server.wait)
+        server.stdout.close()
+
+    try:
+        record = studio.open_show(
+            "Shared session",
+            tmp_path,
+            [GroupSeat("a", "claude", {}, tmp_path)],
+            review=False,
+            isolated=False,
+        )
+        first = studio.run(record.state.id, ["a"], "serial", "one", {})
+        await studio.wait(first.id, 10)
+        session_id = record.state.sessions["a"].session_id
+        assert session_id
+
+        crashed = other_server(session_id)
+        assert await ask(crashed, "start") == "started\n"
+        blocked = studio.run(record.state.id, ["a"], "serial", "two", {})
+        await studio.wait(blocked.id, 10)
+        assert blocked.runs[0].launch_error is not None
+        assert "active invocation" in blocked.runs[0].launch_error.message
+        with pytest.raises(ValueError, match="active invocation"):
+            studio.start_task(InvocationRequest("claude", "two", tmp_path, session_id), None, None)
+        crashed.kill()
+        await asyncio.to_thread(crashed.wait)
+
+        # The crash released the session; now this server's seat holds it.
+        seat = studio.run(record.state.id, ["a"], "serial", "three", {"a": "SLEEP"})
+        assert seat.runs[0].status == "running"
+        other = other_server(session_id)
+        assert (await ask(other, "start")).startswith("rejected: This native session")
+        await studio.cancel(seat.id)
+        assert await ask(other, "start") == "started\n"
+        assert await ask(other, "cancel") == "cancelled\n"
+    finally:
+        for server in servers:
+            await stop(server)
+        await studio.shutdown()
+        await studio.manager.shutdown()
+        await studio.close()
+
+
 @pytest.mark.asyncio
 async def test_task_keeps_its_native_session_when_saving_the_result_fails(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
@@ -1697,7 +1808,9 @@ async def test_task_start_failure_does_not_leave_a_running_record(
 ) -> None:
     studio = Conversations(InvocationManager(), data_root)
 
-    def fail_start(_request: InvocationRequest, *, prepared: object = None) -> str:
+    def fail_start(
+        _request: InvocationRequest, *, prepared: object = None, claim: object = None
+    ) -> str:
         raise RuntimeError("start failed")
 
     monkeypatch.setattr(studio.manager, "start", fail_start)
@@ -1791,6 +1904,19 @@ asyncio.run(main())
         await studio.manager.wait(invocation)
         await asyncio.gather(*studio.collectors)
         assert another_process() == "started"
+        # An older server holds no lock while its task runs; the saved running task still blocks.
+        studio.manager.session_locks = None
+        legacy, _, *_ = studio.start_task(
+            InvocationRequest(
+                "claude", "Private instruction for you only:\nSLEEP", tmp_path, "shared-native"
+            ),
+            None,
+            None,
+            manager_session_id="chat-a",
+        )
+        assert another_process() == "blocked"
+        await studio.manager.cancel(legacy)
+        await asyncio.gather(*studio.collectors)
     finally:
         await studio.manager.shutdown()
         await studio.close()
@@ -2046,6 +2172,67 @@ async def test_app_limit_caps_cli_runs_across_tasks_and_seats(
             assert broken.is_error and "Repair it in the AgentNave App" in str(broken.content)
         await _cancel(client, sleeping["invocation_id"])
         await _cancel(client, second["invocation_id"])
+
+
+@pytest.mark.asyncio
+async def test_serial_rounds_keep_a_slot_for_their_next_seat_through_review(
+    tmp_path: Path, data_root: Path
+) -> None:
+    data_root.mkdir(parents=True, exist_ok=True)
+    (data_root / "settings.json").write_text(json.dumps({"version": 1, "max_running": 2}))
+    studio = Conversations(InvocationManager(), data_root)
+    sleep = InvocationRequest("claude", "Private instruction for you only:\nSLEEP", tmp_path)
+    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
+    started: list[str] = []
+
+    def start() -> None:
+        started.append(studio.start_task(sleep, None, None).invocation_id)
+
+    async def cancel_tasks() -> None:
+        for invocation_id in started:
+            await studio.manager.cancel(invocation_id)
+        started.clear()
+
+    try:
+        first, second, parallel = (
+            studio.open_show(title, tmp_path, seats, review=True, isolated=False).state.id
+            for title in ("One", "Two", "Parallel")
+        )
+        held = studio.run(first, ["a", "b"], "serial", "go", {"b": "SLEEP"})
+        assert (await studio.wait(held.id, 30))[1] == "review_needed"
+        # Nothing runs while a awaits review, yet b needs a slot once a is decided.
+        start()
+        with pytest.raises(CapacityError):
+            studio.run(second, ["a", "b"], "serial", "go", {"b": "SLEEP"})
+        with pytest.raises(CapacityError):
+            start()
+        await cancel_tasks()
+
+        studio.decide(held.id, {"a": "publish"})
+        for _ in range(200):
+            if held.runs[1].status != "pending":
+                break
+            await asyncio.sleep(0.05)
+        assert held.runs[1].status == "running", held.runs[1]
+        start()  # the running b takes one slot, not two
+        with pytest.raises(CapacityError):
+            start()
+        await cancel_tasks()
+        await studio.cancel(held.id)
+
+        reviewed = studio.run(parallel, ["a"], "parallel", "go", {})
+        assert (await studio.wait(reviewed.id, 30))[1] == "review_needed"
+        # A parallel round launches nothing after review, so it keeps no slot.
+        start()
+        start()
+        await cancel_tasks()
+        studio.decide(reviewed.id, {"a": "private"})
+        await studio.wait(reviewed.id, 30)
+    finally:
+        await cancel_tasks()
+        await studio.shutdown()
+        await studio.manager.shutdown()
+        await studio.close()
 
 
 @pytest.mark.asyncio
