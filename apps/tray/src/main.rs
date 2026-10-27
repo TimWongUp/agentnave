@@ -477,10 +477,9 @@ fn saved_size(app: &AppHandle) -> Option<(f64, f64)> {
 
 /// Saved when the window closes or the app quits, and only when the size changed.
 fn save_size(window: &WebviewWindow) {
-    // A minimized, maximized or full-screen window says nothing about the size to reopen at.
+    // A maximized or full-screen window says nothing about the size to reopen at.
     let state = |check: tauri::Result<bool>| check.unwrap_or(false);
-    if state(window.is_minimized()) || state(window.is_maximized()) || state(window.is_fullscreen())
-    {
+    if state(window.is_maximized()) || state(window.is_fullscreen()) {
         return;
     }
     let (Some(path), Ok(size), Ok(scale)) = (
@@ -490,6 +489,10 @@ fn save_size(window: &WebviewWindow) {
     ) else {
         return;
     };
+    // Windows reports a minimized window as 0×0; other systems keep its real size.
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
     let size = size.to_logical::<f64>(scale);
     let text =
         serde_json::json!({"width": size.width.round(), "height": size.height.round()}).to_string();
