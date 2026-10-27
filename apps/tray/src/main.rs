@@ -65,6 +65,14 @@ const DRIP: [&[u8]; 18] = [
     include_bytes!("../icons/drip/17.png"),
 ];
 static DRIPPING: AtomicBool = AtomicBool::new(false);
+/// A preview build (`scripts/preview_tray.sh`) runs beside the installed app on the same data to
+/// show UI changes: it never writes, updates, installs or reconfigures anything.
+pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
+
+/// What a preview build refuses: every request that could change files, except moving its window.
+fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
+    preview && method != "GET" && !matches!(path, "/app/window/drag" | "/app/window/zoom")
+}
 
 struct Tray {
     reader: Arc<Reader>,
@@ -97,6 +105,9 @@ fn main() {
                     .get("X-AgentNave-Action")
                     .and_then(|v| v.to_str().ok());
                 let reply = match (method, path.as_str()) {
+                    _ if preview_refuses(PREVIEW, method, &path) => {
+                        data::Response::error(403, "预览版只读：请在正式版里保存改动")
+                    }
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
                     // The top bar moves and zooms its window, as a native title bar would.
                     ("POST", "/app/window/drag" | "/app/window/zoom") if action == Some("1") => {
@@ -165,15 +176,16 @@ fn main() {
             let overview = reader.overview();
             // Left click opens the panel; right click shows this short menu.
             let check = MenuItem::with_id(handle, "update", "检查更新…", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                handle,
-                &[
-                    &MenuItem::with_id(handle, "open", "打开 AgentNave", true, None::<&str>)?,
-                    &MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?,
-                    &check,
-                    &MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?,
-                ],
-            )?;
+            let open_item =
+                MenuItem::with_id(handle, "open", "打开 AgentNave", true, None::<&str>)?;
+            let settings = MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?;
+            let quit = MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?;
+            // A preview build never updates itself, so it offers no update check.
+            let menu = if PREVIEW {
+                Menu::with_items(handle, &[&open_item, &settings, &quit])?
+            } else {
+                Menu::with_items(handle, &[&open_item, &settings, &check, &quit])?
+            };
             app.manage(Updates::new(check));
             TrayIconBuilder::with_id(TRAY)
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
@@ -185,7 +197,7 @@ fn main() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => restore(app),
                     "settings" => open(app, "main", "/settings/"),
-                    "update" => update::act(app),
+                    "update" if !PREVIEW => update::act(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -211,16 +223,20 @@ fn main() {
                     takeover.configure_hosts(host_context, shell);
                     takeover.refresh_hosts();
                 });
-                update::resume(&resumer);
+                if !PREVIEW {
+                    update::resume(&resumer);
+                }
             });
             thread::spawn(members::prepare);
             thread::spawn(move || poll(handle, reader, overview));
-            thread::spawn(move || {
-                loop {
-                    update::check(&checker, false);
-                    thread::sleep(update::EVERY);
-                }
-            });
+            if !PREVIEW {
+                thread::spawn(move || {
+                    loop {
+                        update::check(&checker, false);
+                        thread::sleep(update::EVERY);
+                    }
+                });
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -281,11 +297,17 @@ fn headline(overview: &Overview) -> String {
     format!("AgentNave · 运行中 {}", overview.count("running"))
 }
 
-/// Shown beside the menu bar icon: how many subagents are running, nothing when idle.
+/// Shown beside the menu bar icon: how many subagents are running, nothing when idle; a preview
+/// build always says so, to tell its icon from the installed app's.
 fn running_badge(overview: &Overview) -> String {
-    match overview.count("running") {
+    let count = match overview.count("running") {
         0 => String::new(),
         n => format!("={n}"),
+    };
+    if PREVIEW {
+        format!("预览{count}")
+    } else {
+        count
     }
 }
 
@@ -330,6 +352,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         let destination = destination(target);
         thread::spawn(move || match path.as_str() {
             // The panel stays open: its notice shows the progress or "已复制".
+            "/app/update" | "/app/upgrade-service" if PREVIEW => {}
             "/app/update" => update::act(&app),
             "/app/upgrade-service" => update::upgrade_service(&app),
             "/app/copy-service-command" => update::copy_service_command(&app),
@@ -517,6 +540,22 @@ fn browse(target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_preview_build_refuses_every_write_but_moving_its_window() {
+        for (method, path) in [
+            ("POST", "/app/members"),
+            ("POST", "/app/characters/gpt"),
+            ("POST", "/app/service/install"),
+            ("POST", "/app/update/apply"),
+            ("DELETE", "/app/chats/x"),
+        ] {
+            assert!(preview_refuses(true, method, path), "{method} {path}");
+            assert!(!preview_refuses(false, method, path), "{method} {path}");
+        }
+        assert!(!preview_refuses(true, "GET", "/settings/members"));
+        assert!(!preview_refuses(true, "POST", "/app/window/drag"));
+    }
 
     #[test]
     fn windows_stay_on_tray_routes() {
