@@ -66,7 +66,8 @@ const DRIP: [&[u8]; 18] = [
 ];
 static DRIPPING: AtomicBool = AtomicBool::new(false);
 /// A preview build (`scripts/preview_tray.sh`) runs beside the installed app on the same data to
-/// show UI changes: it never writes, updates, installs or reconfigures anything.
+/// show UI changes: it never changes AgentNave data, host configs or Skills, and never updates or
+/// installs. Only its own WebView storage (display settings) is kept, under its own identifier.
 pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
 
 /// What a preview build refuses: every request that could change files, except moving its window.
@@ -221,7 +222,10 @@ fn main() {
                 let shell = takeover.probe_tools(&host_context);
                 thread::spawn(move || {
                     takeover.configure_hosts(host_context, shell);
-                    takeover.refresh_hosts();
+                    // Refreshing repairs host configs and reinstalls Skills; that stays with the installed app.
+                    if !PREVIEW {
+                        takeover.refresh_hosts();
+                    }
                 });
                 if !PREVIEW {
                     update::resume(&resumer);
