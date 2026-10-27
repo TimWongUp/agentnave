@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.47.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.48.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.47.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.48.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -504,15 +504,17 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.46.1 to v0.47.0
+### Upgrading from v0.47.0 to v0.48.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.47.0 directory. This release changes only the App:
-new GPT and DeepSeek characters and a reworked office layout. The tool interface is unchanged, so
-no MCP reconnect is needed, and history, `members.json` and `settings.json` need no migration.
-Characters you replaced in the App keep your set. Upgrading from v0.45.0 or earlier also drops
-Gemini CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.47.0 release notes](releases/v0.47.0.md).
+`agentnave-manager` Skill with its complete v0.48.0 directory. This release changes only the App's
+update flow: it now checks again, shows what changed, and on confirmation upgrades the runtime
+before installing the App and restarting. Updating from v0.47.0 still runs v0.47.0's own flow (App
+first, runtime after the restart); the new dialog applies from the next release. The tool interface
+is unchanged, so no MCP reconnect is needed, and history, `members.json` and `settings.json` need
+no migration. Upgrading from v0.45.0 or earlier also drops Gemini CLI as a host, which needs manual
+cleanup of its old entry; see [v0.46.0 release notes](releases/v0.46.0.md). See
+[v0.48.0 release notes](releases/v0.48.0.md).
 
 ## Uninstall
 
