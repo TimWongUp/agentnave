@@ -185,7 +185,9 @@
   // Optional frames: a character without them keeps the older look (grey idle, gliding seat).
   const EXTRA = ["sad", "walk-1", "walk-2"];
   const missing = new Set();
-  const artUrl = (path) => href(`/art/${path}`);
+  // The App supplies its release version; direct mock pages use a stable preview key.
+  const artVersion = typeof AGENTNAVE_ART_VERSION === "undefined" ? "preview" : AGENTNAVE_ART_VERSION;
+  const artUrl = (path) => href(`/art/${path}?v=${encodeURIComponent(artVersion)}`);
   // A family's replacement set (Settings → 头像) wins over the painted one: "@family@version".
   let replaced = {}, version = 0;
   const CHARACTERS_KEY = "agentnave.characters";

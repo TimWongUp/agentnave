@@ -31,7 +31,13 @@ const SETTINGS_CSS: &[u8] = include_bytes!("../ui/settings.css");
 const CHAT_HTML: &[u8] = include_bytes!("../ui/chat.html");
 const CHAT_JS: &[u8] = include_bytes!("../ui/chat.js");
 const CHAT_CSS: &[u8] = include_bytes!("../ui/chat.css");
-const COMMON_JS: &[u8] = include_bytes!("../ui/common.js");
+const COMMON_JS: &[u8] = concat!(
+    "\"use strict\";\nconst AGENTNAVE_ART_VERSION = \"",
+    env!("CARGO_PKG_VERSION"),
+    "\";\n",
+    include_str!("../ui/common.js")
+)
+.as_bytes();
 const HOSTS_JS: &[u8] = include_bytes!("../ui/hosts.js");
 const HOSTS_CSS: &[u8] = include_bytes!("../ui/hosts.css");
 const ONBOARDING_CSS: &[u8] = include_bytes!("../ui/onboarding.css");
@@ -2201,6 +2207,16 @@ mod tests {
             assert_eq!(response.cache_control, "public, max-age=31536000");
             assert!(response.content_type.starts_with("image/"));
         }
+        let script = reader.respond("/chat/common.js");
+        let script = String::from_utf8(script.body).unwrap();
+        assert!(script.contains(&format!(
+            "const AGENTNAVE_ART_VERSION = \"{}\";",
+            env!("CARGO_PKG_VERSION")
+        )));
+        assert!(script.contains("/art/${path}?v=${encodeURIComponent(artVersion)}"));
+        let manifest = reader.respond("/art/parts.json");
+        assert_eq!(manifest.status, 200);
+        assert_eq!(manifest.content_type, "application/json");
     }
 
     #[test]
