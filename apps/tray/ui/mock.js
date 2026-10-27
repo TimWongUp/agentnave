@@ -580,12 +580,15 @@ All checks passed!
   }
 
   let mockVersion = "0.21.0", updateOverride = null;
+  const NOTES = { link: null, items: [
+    { version: "0.21.1", notes: "## 变更\n\n- 更新时先看更新内容，确认后一次完成本机服务和 App 的更新。\n- 修复 `wait` 偶尔漏报的问题。" },
+  ] };
   function status() {
     const update = q.get("update");
     const service = q.get("service");
     return {
       version: mockVersion,
-      update: updateOverride || (update ? { state: update, version: "0.21.1" } : { state: "current" }),
+      update: updateOverride || (update ? { state: update, version: "0.21.1", notes: NOTES, step: update === "installing" ? "service" : null } : { state: "current" }),
       service: service ? { state: service === "older" ? "outdated" : service, version: service === "older" ? "0.19.2" : mockVersion, error: service === "failed" ? "uv tool install 失败：无法连接 github.com" : null } : null,
     };
   }
@@ -667,12 +670,15 @@ All checks passed!
   async function post(path, body = {}) {
     if (path === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply") {
-      updateOverride = { state: "installing", version: "0.21.1" };
+      // Walks the real steps: download, service, then the App (which would restart here).
+      updateOverride = { state: "installing", version: "0.21.1", step: "download" };
+      setTimeout(() => { updateOverride = { ...updateOverride, step: "service" }; }, 1200);
+      setTimeout(() => { updateOverride = { ...updateOverride, step: "app" }; }, 3000);
       setTimeout(() => {
         mockVersion = "0.21.1";
         updateOverride = { state: "none" };
         installedState = { state: "done", version: mockVersion };
-      }, 900);
+      }, 4200);
       return p3Fetch("/app/status");
     }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());

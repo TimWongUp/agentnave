@@ -227,17 +227,30 @@ jobs:
           python3 - "$bundle/macos/AgentNave.app.tar.gz.sig" <<'PY'
           import json
           import os
+          import re
           import sys
           from datetime import datetime, timezone
+          from pathlib import Path
 
           tag, repo = os.environ["RELEASE_TAG"], os.environ["GH_REPO"]
+
+          # The app's update dialog shows what changed in every release since the installed one:
+          # the last ten release notes, without their title and upgrade instructions.
+          def key(path):
+              return tuple(int(part) for part in path.stem.removeprefix("v").split("."))
+
+          notes = []
+          for path in sorted(Path("docs/releases").glob("v*.md"), key=key, reverse=True)[:10]:
+              text = re.sub(r"\A# .*\n", "", path.read_text())
+              text = re.split(r"^## 升级\s*$", text, flags=re.M)[0].strip()
+              notes.append({"version": path.stem.removeprefix("v"), "notes": text})
           entry = {
               "signature": open(sys.argv[1]).read().strip(),
               "url": f"https://github.com/{repo}/releases/download/{tag}/AgentNave_universal.app.tar.gz",
           }
           manifest = {
               "version": tag.removeprefix("v"),
-              "notes": f"https://github.com/{repo}/releases/tag/{tag}",
+              "notes": json.dumps(notes, ensure_ascii=False),
               "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": {"darwin-aarch64": entry, "darwin-x86_64": entry},
           }

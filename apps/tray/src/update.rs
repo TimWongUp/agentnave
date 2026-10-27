@@ -1,6 +1,7 @@
 //! In-app updates of the tray itself, and a one-click upgrade of the local AgentNave service
-//! installed by `uv` when it is older than the tray. "全部更新" covers both with one click
-//! (ADR-0014): the app installs first and upgrades the service after its restart.
+//! installed by `uv` when it is older than the tray. One confirmed click covers both (ADR-0014,
+//! revised): the new app is downloaded, the service is upgraded to its version, and only then is
+//! the app installed and restarted; a failed service upgrade leaves the app as it was.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,8 +22,11 @@ pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 const REPOSITORY: &str = "https://github.com/TimWongUp/agentnave.git";
 /// How long the panel keeps saying the service was upgraded.
 const UPGRADED_NOTE: Duration = Duration::from_secs(10 * 60);
-/// In the app's own data directory, not the AgentNave data root.
+/// In the app's own data directory, not the AgentNave data root. Written only by apps before the
+/// service-first update; a restart into this one still finishes what they promised.
 const UPGRADE_MARKER: &str = "upgrade-service-after-restart";
+/// The version an update installed, read once by its first start to say so.
+const UPDATED_MARKER: &str = "updated-to";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
 const CHECK_WAIT: Duration = Duration::from_secs(60);
 /// Bounds the update check request; downloads keep the updater's own behavior.
@@ -56,8 +60,12 @@ struct State {
     phase: Phase,
     pending: Option<Update>,
     upgrade: Upgrade,
-    /// Why the post-restart service upgrade could not be promised for the current install.
-    marker_error: Option<String>,
+    /// What changed in each release between this app and the one found, newest first.
+    notes: Value,
+    /// Which part of an install runs: "download", "service" or "app".
+    step: Option<&'static str>,
+    /// The version the last restart updated to, and when this app started.
+    updated: Option<(String, Instant)>,
 }
 
 impl State {
@@ -105,8 +113,8 @@ impl Updates {
             Phase::Idle => ("检查更新…".to_owned(), true),
             Phase::Checking => ("正在检查更新…".to_owned(), false),
             Phase::Latest => (format!("已是最新版本 v{VERSION}"), true),
-            Phase::Available(version) => (format!("更新到 v{version} 并重启"), true),
-            Phase::Installing(_) => ("正在下载更新…".to_owned(), false),
+            Phase::Available(version) => (format!("更新到 v{version}…"), true),
+            Phase::Installing(_) => ("正在更新…".to_owned(), false),
             Phase::Failed(_) => ("更新失败，点此重试".to_owned(), true),
         };
         let _ = self.item.set_text(text);
@@ -129,7 +137,7 @@ impl Updates {
         }
         let before = std::mem::replace(&mut state.phase, Phase::Checking);
         state.pending = None;
-        state.marker_error = None;
+        state.notes = Value::Null;
         drop(state);
         self.label(&Phase::Checking);
         Some(before)
@@ -144,7 +152,7 @@ impl Updates {
         }
         if let Some(update) = state.pending.take() {
             state.phase = Phase::Installing(update.version.clone());
-            state.marker_error = None;
+            state.step = Some("download");
             drop(state);
             self.label(&Phase::Installing(update.version.clone()));
             return Claim::Install(Box::new(update));
@@ -181,7 +189,12 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
         *updates.checked.lock().unwrap() = Some(SystemTime::now());
     }
     match found {
-        Ok(Some(update)) => updates.set(Phase::Available(update.version.clone()), Some(update)),
+        Ok(Some(update)) => {
+            let current = app.package_info().version.to_string();
+            let notes = release_notes(update.body.as_deref(), &current, &update.version);
+            updates.set(Phase::Available(update.version.clone()), Some(update));
+            updates.lock().notes = notes;
+        }
         Ok(None) => updates.set(Phase::Latest, None),
         Err(error) if manual => updates.set(Phase::Failed(brief(&error.to_string())), None),
         Err(_) => updates.set(
@@ -223,9 +236,9 @@ pub fn check_now(app: &AppHandle, manual: bool) -> Value {
     status(app)
 }
 
-/// `POST /app/update/apply`: update everything with one click: install a found app update
-/// (see `act`), otherwise upgrade an older service now. While a check, an install or a service
-/// upgrade is running it only reports the status.
+/// `POST /app/update/apply`, sent once the page showed what a fresh check found: install a found
+/// app update with its service (see `install`), otherwise upgrade an older service now. While a
+/// check, an install or a service upgrade is running it only reports the status.
 pub fn apply(app: &AppHandle) -> Value {
     let outdated = service_for_app(app).is_object();
     match app.state::<Updates>().claim(true, outdated) {
@@ -239,9 +252,16 @@ pub fn apply(app: &AppHandle) -> Value {
     status(app)
 }
 
-/// At start: run the service upgrade a one-click update left for after its restart.
+/// At start: note the version an update installed, and run the service upgrade an older app's
+/// one-click update left for after its restart.
 pub fn resume(app: &AppHandle) {
-    if marker_dir(app).is_some_and(|dir| take_marker(&dir)) && service_for_app(app).is_object() {
+    let Some(dir) = marker_dir(app) else {
+        return;
+    };
+    if let Some(version) = take_updated(&dir) {
+        app.state::<Updates>().lock().updated = Some((version, Instant::now()));
+    }
+    if take_marker(&dir) && service_for_app(app).is_object() {
         upgrade_service(app);
     }
 }
@@ -250,6 +270,20 @@ fn marker_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok()
 }
 
+fn write_updated(dir: &Path, version: &str) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    fs::write(dir.join(UPDATED_MARKER), version)
+}
+
+/// The version the last update installed, once.
+fn take_updated(dir: &Path) -> Option<String> {
+    let path = dir.join(UPDATED_MARKER);
+    let version = fs::read_to_string(&path).ok()?;
+    let _ = fs::remove_file(path);
+    Some(version.trim().to_owned()).filter(|version| !version.is_empty())
+}
+
+#[cfg(test)]
 fn write_marker(dir: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     fs::write(dir.join(UPGRADE_MARKER), VERSION)
@@ -264,55 +298,104 @@ fn brief(text: &str) -> String {
     text.chars().take(200).collect()
 }
 
-/// The menu and the panel's "更新并重启": install a found update like "全部更新", otherwise
-/// check. Does nothing while checking, installing or upgrading the service.
-pub fn act(app: &AppHandle) {
-    match app.state::<Updates>().claim(false, false) {
-        Claim::Install(update) => install(app, *update),
-        Claim::Nothing => check(app, true),
-        Claim::Busy | Claim::Upgrade => {}
-    }
-}
-
-/// Record the post-restart service upgrade, then download, install and restart.
+/// Download the new app, upgrade the service to its version, then install and restart. A failed
+/// download or service upgrade changes nothing; the service upgrade is skipped when it is not
+/// uv-installed or already new enough.
 fn install(app: &AppHandle, update: Update) {
-    let updates = app.state::<Updates>();
-    let recorded = marker_dir(app)
-        .ok_or_else(|| "找不到应用数据目录".to_owned())
-        .and_then(|dir| write_marker(&dir).map_err(|error| error.to_string()));
-    updates.lock().marker_error = recorded.err().map(|error| {
-        brief(&format!(
-            "无法记录重启后升级本机服务（{error}），重启后请手动升级"
-        ))
-    });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        match update.download_and_install(|_, _| {}, || {}).await {
-            Ok(()) => app.restart(),
-            Err(error) => {
-                // A later, unrelated restart must not upgrade the service unasked.
+        let updates = app.state::<Updates>();
+        let version = update.version.clone();
+        let outcome = async {
+            let bytes = update
+                .download(|_, _| {}, || {})
+                .await
+                .map_err(|error| format!("下载失败：{}", brief(&error.to_string())))?;
+            updates.lock().step = Some("service");
+            let service = app.clone();
+            let target = version.clone();
+            tauri::async_runtime::spawn_blocking(move || upgrade_service_to(&service, &target))
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| format!("本机服务升级失败，App 未更新：{error}"))?;
+            updates.lock().step = Some("app");
+            update
+                .install(bytes)
+                .map_err(|error| format!("安装失败：{}", brief(&error.to_string())))
+        }
+        .await;
+        match outcome {
+            Ok(()) => {
                 if let Some(dir) = marker_dir(&app) {
-                    take_marker(&dir);
+                    let _ = write_updated(&dir, &version);
                 }
-                let updates = app.state::<Updates>();
-                updates.set(Phase::Failed(brief(&error.to_string())), None);
+                app.restart();
+            }
+            Err(error) => {
+                updates.lock().step = None;
+                updates.set(Phase::Failed(error), None);
             }
         }
     });
+}
+
+/// Bring a uv-installed service up to `version` before the app that needs it is installed.
+fn upgrade_service_to(app: &AppHandle, version: &str) -> Result<(), String> {
+    let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请稍后重试")?;
+    let Some(installed) = installed_version(&dirs.tools.join("agentnave")) else {
+        return Ok(());
+    };
+    if parse(&installed) >= parse(version) {
+        return Ok(());
+    }
+    let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或在终端运行升级命令")?;
+    install_service_version(&uv, &dirs, version)?;
+    app.state::<crate::Tray>().reader.refresh_hosts();
+    Ok(())
+}
+
+/// Each release's notes from the update manifest, newer than `current` up to `target`, newest
+/// first. The manifest carries `[{"version", "notes"}]` as JSON text; an older one only links to
+/// its release page, which is kept as `link`.
+fn release_notes(body: Option<&str>, current: &str, target: &str) -> Value {
+    let body = body.unwrap_or_default().trim();
+    let Ok(Value::Array(entries)) = serde_json::from_str::<Value>(body) else {
+        let link = body.starts_with("https://").then_some(body);
+        return json!({"items": [], "link": link});
+    };
+    let mut items: Vec<Value> = entries
+        .into_iter()
+        .filter(|entry| {
+            entry["version"].as_str().is_some_and(|version| {
+                parse(version) > parse(current) && parse(version) <= parse(target)
+            }) && entry["notes"].is_string()
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        parse(b["version"].as_str().unwrap_or_default())
+            .cmp(&parse(a["version"].as_str().unwrap_or_default()))
+    });
+    json!({"items": items, "link": null})
 }
 
 /// What the panel and settings show about versions: the app update, any outdated local
 /// service, and when the last check succeeded.
 pub fn status(app: &AppHandle) -> Value {
     let updates = app.try_state::<Updates>();
-    let (phase, upgrade, marker_error) = updates
+    let (phase, upgrade, notes, step, updated) = updates
         .as_ref()
         .map(|updates| {
             let state = updates.lock();
             (
                 state.phase.clone(),
                 state.upgrade.clone(),
-                state.marker_error.clone(),
+                state.notes.clone(),
+                state.step,
+                state
+                    .updated
+                    .as_ref()
+                    .filter(|(_, at)| at.elapsed() < UPGRADED_NOTE)
+                    .map(|(version, _)| version.clone()),
             )
         })
         .unwrap_or_default();
@@ -322,10 +405,10 @@ pub fn status(app: &AppHandle) -> Value {
         Phase::Checking => json!({"state": "checking", "version": null, "error": null}),
         Phase::Latest => json!({"state": "none", "version": null, "error": null}),
         Phase::Available(version) => {
-            json!({"state": "available", "version": version, "error": null})
+            json!({"state": "available", "version": version, "error": null, "notes": notes})
         }
         Phase::Installing(version) => {
-            json!({"state": "installing", "version": version, "error": marker_error})
+            json!({"state": "installing", "version": version, "error": null, "step": step})
         }
         Phase::Failed(error) => json!({"state": "failed", "version": null, "error": error}),
     };
@@ -334,6 +417,7 @@ pub fn status(app: &AppHandle) -> Value {
         "update": update,
         "service": service_state(service_for_app(app), upgrade),
         "last_checked": checked.map(rfc3339),
+        "updated": updated,
     })
 }
 
@@ -386,7 +470,11 @@ fn finish_upgrade(app: &AppHandle) {
 }
 
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
-    let source = format!("git+{REPOSITORY}@v{VERSION}");
+    install_service_version(uv, dirs, VERSION)
+}
+
+fn install_service_version(uv: &Path, dirs: &ToolDirs, version: &str) -> Result<(), String> {
+    let source = format!("git+{REPOSITORY}@v{version}");
     run(
         uv,
         &["tool", "install", "--force", "--python", "3.12", &source],
@@ -642,6 +730,45 @@ mod tests {
         assert!(dir.join(UPGRADE_MARKER).is_file());
         assert!(take_marker(&dir));
         assert!(!take_marker(&dir));
+    }
+
+    #[test]
+    fn notes_keep_the_releases_after_this_app_newest_first() {
+        let body = json!([
+            {"version": "0.46.1", "notes": "a"},
+            {"version": "0.48.0", "notes": "c"},
+            {"version": "0.47.0", "notes": "b"},
+            {"version": "0.49.0", "notes": "d"},
+            {"version": "0.47.5"},
+        ])
+        .to_string();
+        let notes = release_notes(Some(&body), "0.46.1", "0.48.0");
+        let versions: Vec<_> = notes["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["version"].as_str().unwrap())
+            .collect();
+        assert_eq!(versions, ["0.48.0", "0.47.0"]);
+        let old = "https://github.com/TimWongUp/agentnave/releases/tag/v0.47.0";
+        assert_eq!(
+            release_notes(Some(old), "0.46.1", "0.47.0"),
+            json!({"items": [], "link": old})
+        );
+        assert_eq!(
+            release_notes(None, "0.46.1", "0.47.0"),
+            json!({"items": [], "link": null})
+        );
+    }
+
+    #[test]
+    fn the_updated_version_is_read_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = directory.path().join("app-data");
+        assert_eq!(take_updated(&dir), None);
+        write_updated(&dir, "0.48.0").unwrap();
+        assert_eq!(take_updated(&dir).as_deref(), Some("0.48.0"));
+        assert_eq!(take_updated(&dir), None);
     }
 
     #[test]
