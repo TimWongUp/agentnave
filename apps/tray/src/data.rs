@@ -567,6 +567,7 @@ impl Reader {
                         Some("webp") => "image/webp",
                         Some("svg") => "image/svg+xml",
                         Some("png") => "image/png",
+                        Some("json") => "application/json",
                         _ => "application/octet-stream",
                     };
                     let mut response = Response::ok(mime, bytes.to_vec());

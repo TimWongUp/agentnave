@@ -204,6 +204,10 @@
     const family = window.Avatars?.family(provider, model);
     return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
   };
+  // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
+  // ahoge (tuft) or cat ears (ear-l, ear-r). parts.json gives each frame's pivot at the part's root,
+  // in percent of the frame.
+  const parts = fetch(artUrl("parts.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   const frameUrl = (name, size, state) => {
     if (!name.startsWith("@")) return artUrl(`${size}/${name}/${state}.webp`);
     const [, family, version] = name.split("@");
@@ -223,7 +227,17 @@
       if (EXTRA.includes(s)) img.addEventListener("error", () => { missing.add(path); fig.classList.add(`no-${s}`); img.remove(); }, { once: true });
       return img;
     });
-    fig.append(h("span.fig-a", {}, h("span.fig-b", {}, imgs.filter(Boolean))));
+    const body = h("span.fig-b", {}, imgs.filter(Boolean));
+    fig.append(h("span.fig-a", {}, body));
+    // Each part carries its frame's s-<state> class, so it shows with that frame.
+    if (!name.startsWith("@")) parts.then((all) => {
+      for (const [part, frames] of Object.entries(all[name] || {})) {
+        for (const [state, [x, y]] of Object.entries(frames)) {
+          body.append(h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
+            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%` }));
+        }
+      }
+    });
     return fig;
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
