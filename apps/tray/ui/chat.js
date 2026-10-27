@@ -54,7 +54,7 @@ function store(key, value) {
     if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value);
   } catch { /* storage may be unavailable */ }
 }
-const FIG = 100; // character size at desks and meeting seats, in px (matches --fig in chat.css)
+const FIG = 100; // character size at meeting seats before any desk is drawn, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 const WALK_MS = 1600; // a figure's walk between its desk and a meeting seat
 const HOLD_MS = 10e3; // an ended room stays empty this long after its seats are back
@@ -755,13 +755,15 @@ function updateRoom(rec, r, ctx) {
 }
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
 function layoutRooms() {
+  // Desks scale with the floor, so seats take the size their figures have at the desks.
+  const fig = el.desks.querySelector(".desk > .scene > .fig")?.offsetWidth || FIG;
   for (const rec of state.roomRecs.values()) {
     const m = rec.scene;
     if (!m.isConnected) continue;
     const avail = rec.el.clientWidth - 26;
     const slots = m.children.length;
     if (avail <= 0 || !slots) continue;
-    const size = Math.min(FIG, avail);
+    const size = Math.min(fig, avail);
     const perRow = Math.min(slots, Math.max(1, Math.floor(avail / size)));
     m.style.setProperty("--S", `${size}px`);
     m.style.width = `${size * perRow}px`;

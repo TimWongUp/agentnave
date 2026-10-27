@@ -180,7 +180,7 @@
   // ---- painted office art (ui/art, served at /art/) -----------------------------------------
   // Characters follow the model family, like the avatars; a model without a character of its own is
   // the default newcomer. The CLI brand is never used to guess a model.
-  const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok" };
+  const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok", qwen: "qwen" };
   const STATES = ["idle", "blink", "working", "speaking", "review", "done", "sleep"];
   // Optional frames: a character without them keeps the older look (grey idle, gliding seat).
   const EXTRA = ["sad", "walk-1", "walk-2"];
@@ -207,7 +207,7 @@
     return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
   };
   // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
-  // ahoge (tuft) or cat ears (ear-l, ear-r). parts.json gives each frame's pivot at the part's root,
+  // ahoge (tuft), cat ears (ear-l, ear-r), bat wings (wing-l, wing-r) or a hairpin pendant. parts.json gives each frame's pivot at the part's root,
   // in percent of the frame.
   const parts = fetch(artUrl("parts.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   const frameUrl = (name, size, state) => {
