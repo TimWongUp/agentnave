@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build the current checkout's tray as "AgentNave 预览" and open it beside the installed app.
-# The preview reads the same data but never writes, updates or installs anything (PREVIEW).
+# The preview reads the same data but never changes it, host configs or Skills, and never
+# updates or installs (PREVIEW); only its own display settings are kept.
 set -eu
 
 [ "$(uname)" = Darwin ] || { echo "预览版目前只支持 macOS" >&2; exit 1; }
