@@ -45,7 +45,7 @@ def test_request_copies_and_freezes_provider_options(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_real_suite_history_uses_created_ids_after_readable_titles(
+async def test_real_suite_reads_its_own_history_and_checks_the_recalled_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import sys
@@ -54,20 +54,24 @@ async def test_real_suite_history_uses_created_ids_after_readable_titles(
     from mcp import Client
 
     monkeypatch.setattr(sys, "path", [str(Path(__file__).parents[1]), *sys.path])
-    from scripts.real_suite import Suite
+    from scripts.real_suite import Suite, ToolFailure
 
     calls: list[tuple[str, dict[str, object]]] = []
+    reply = ""
 
     async def call_tool(name: str, arguments: dict[str, object], **_kwargs: object) -> object:
         calls.append((name, arguments))
         if name == "start_agent":
             content = {"conversation_id": "suite-task", "invocation_id": "invocation"}
+        elif name == "wait":
+            update = {"status": "succeeded", "output": reply, "session_id": "session-1"}
+            content = {"updates": [update]}
         elif name == "list":
             content = {
                 "dashboard_url": "http://localhost/",
                 "conversations": [
                     {"conversation_id": "user-task", "title": "User history"},
-                    {"conversation_id": "suite-task", "title": "连通检查 · pi"},
+                    {"conversation_id": "suite-task", "title": "Suite task"},
                 ],
             }
         elif name == "read_conversation":
@@ -78,11 +82,21 @@ async def test_real_suite_history_uses_created_ids_after_readable_titles(
 
     suite = Suite(cast("Client", SimpleNamespace(call_tool=call_tool)), tmp_path, ["pi"])
     await suite.start("pi", "hello")
-    assert calls[0][1]["title"] == "连通检查 · pi"
     assert calls[0][1]["role"] == "real-suite"
     await suite.history()
-    assert all(
-        arguments["conversation_id"] == "suite-task"
-        for name, arguments in calls
-        if name == "read_conversation"
-    )
+    read = [
+        arguments["conversation_id"] for name, arguments in calls if name == "read_conversation"
+    ]
+    assert read == ["suite-task"]
+
+    # Resume passes the session back without the answer and accepts only the exact token.
+    suite.sessions["pi"] = ("session-1", "PI-1234ABCD")
+    reply = "PI-1234ABCD\n"
+    assert await suite.resume("pi") is None
+    resumed = [arguments for name, arguments in calls if name == "start_agent"][-1]
+    assert resumed["session_id"] == "session-1"
+    assert "PI-1234ABCD" not in str(resumed["prompt"])
+    reply = "PI-1234ABCE"
+    with pytest.raises(ToolFailure, match="did not recall"):
+        await suite.resume("pi")
+    assert "pi" not in suite.sessions  # a failed recall leaves no session to reuse

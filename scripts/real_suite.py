@@ -100,7 +100,8 @@ class Suite:
         self.providers = providers
         self.checks: list[Check] = []
         self.stats = {provider: Stats() for provider in providers}
-        self.sessions: dict[str, str] = {}
+        # Each provider's latest native session and the token it echoed there.
+        self.sessions: dict[str, tuple[str, str]] = {}
         self.message_ids: dict[str, str] = {}
         self.conversation_ids: set[str] = set()
         self.excluded: set[str] = set()  # the host's own CLI; start_agent rejects it
@@ -181,13 +182,15 @@ class Suite:
 
     async def echo(self, provider: str, **extra: Any) -> dict[str, Any]:
         value = token(provider.upper())
+        if "session_id" in extra:
+            self.sessions.pop(provider, None)  # its last token is unknown until this succeeds
         started = await self.start(provider, echo_prompt(value), **extra)
         done = await self.finish(provider, started["invocation_id"])
         if value not in done.get("output", ""):
             raise ToolFailure(f"reply lacks token {value}: {done.get('output', '')[:120]!r}")
         if not done.get("session_id"):
             raise ToolFailure("finished task has no session_id")
-        self.sessions[provider] = done["session_id"]
+        self.sessions[provider] = (done["session_id"], value)
         self.message_ids[provider] = done["message_id"]
         return started | {"token": value}
 
@@ -263,7 +266,7 @@ class Suite:
                 if update["status"] == "succeeded" and value in update.get("output", ""):
                     stats.succeeded += 1
                     stats.latencies.append(time.monotonic() - started)
-                    self.sessions[provider] = update["session_id"]
+                    self.sessions[provider] = (update["session_id"], value)
                     self.message_ids[provider] = update["message_id"]
                     self.record("parallel_task", provider, "pass", started)
                 else:
@@ -280,19 +283,23 @@ class Suite:
         raise ToolFailure("start_agent accepted the host's own CLI")
 
     async def resume(self, provider: str) -> str | None:
-        session_id = self.sessions.get(provider)
-        if session_id is None:
+        binding = self.sessions.pop(provider, None)
+        if binding is None:
             raise ToolFailure("no session from the parallel task")
+        session_id, expected = binding
+        # The token stays out of this prompt: only the session's memory can supply it.
         prompt = (
             "Automated continuation check. Do not use any tools. Reply with only the exact "
             "token you replied with earlier in this conversation."
         )
         started = await self.start(provider, prompt, session_id=session_id)
         done = await self.finish(provider, started["invocation_id"])
+        reply = done.get("output", "").strip()
+        if reply != expected:
+            raise ToolFailure(f"did not recall token {expected}: {reply[:120]!r}")
         if done.get("session_id") != session_id:
             return f"session changed to {done.get('session_id')}"
-        if provider.upper() + "-" not in done.get("output", ""):
-            raise ToolFailure(f"did not recall token: {done.get('output', '')[:120]!r}")
+        self.sessions[provider] = binding
         return None
 
     async def cancel(self, provider: str) -> str | None:
@@ -545,8 +552,8 @@ class Suite:
             await self.guarded("soak_idle", "-", self.idle())
 
     async def _soak_task(self, provider: str, *, resume: bool) -> str | None:
-        session_id = self.sessions.get(provider) if resume else None
-        await self.echo(provider, **({"session_id": session_id} if session_id else {}))
+        binding = self.sessions.get(provider) if resume else None
+        await self.echo(provider, **({"session_id": binding[0]} if binding else {}))
         return None
 
     # Process leaks
