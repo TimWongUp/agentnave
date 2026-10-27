@@ -324,21 +324,6 @@ async function apiCheckUpdate(quiet = false) {
   return res.json();
 }
 
-async function apiApplyUpdate() {
-  if (isMock) {
-    return window.AgentNaveMock.post("/app/update/apply");
-  }
-  const res = await fetch("/app/update/apply", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-AgentNave-Action": "1",
-    },
-  });
-  if (!res.ok) throw new Error(`应用更新失败（${res.status}）`);
-  return res.json();
-}
-
 // Notice display
 function showNotice(msg, isError = false) {
   const notice = $("notice");
@@ -1701,7 +1686,6 @@ function renderUpdates() {
   $("app-version").textContent = appStatus.version ? `v${appStatus.version}` : "—";
   const appBadge = $("app-badge");
   const updateInfo = appStatus.update;
-  const installWarning = updateInfo?.state === "installing" && Boolean(updateInfo.error);
 
   if (updateInfo?.state === "available") {
     appBadge.hidden = false;
@@ -1793,22 +1777,18 @@ function renderUpdates() {
   const errorBox = $("update-error-box");
   const errorText = $("update-error-text");
 
-  // One action at a time: with an update found, "全部更新" leads and checking again stays secondary.
+  // One action at a time: with an update found, "更新" leads and checking again stays secondary.
   $("update-badge").hidden = !hasUpdate && updateInfo?.state !== "installing";
   btnCheck.disabled = isUpdating;
   btnCheck.textContent = hasUpdate ? "重新检查" : "立即检查";
   // While anything runs the progress line says what; a disabled action would only contradict it.
   btnApply.hidden = !hasUpdate || isUpdating;
-  btnApply.textContent = hasAppUpdate ? `全部更新到 v${updateInfo.version}` : "升级本机服务";
-  updateHint.hidden = !hasUpdate || (isUpdating && !installWarning);
+  btnApply.textContent = hasAppUpdate ? `更新到 v${updateInfo.version}…` : "升级本机服务…";
+  updateHint.hidden = !hasUpdate || isUpdating;
 
   if (hasUpdate) {
-    if (installWarning) {
-      updateHint.textContent = "重启后请手动升级本机服务";
-    } else if (hasAppUpdate) {
-      updateHint.textContent = isServiceOutdated
-        ? "先更新 App 并自动重启，重启后自动升级本机服务，不用分两次操作。"
-        : "更新 App 后自动重启，本机服务随后自动跟上。";
+    if (hasAppUpdate) {
+      updateHint.textContent = "先看更新内容，确认后一次完成：升级本机服务，再安装 App 并自动重启。";
     } else {
       updateHint.textContent = "本机服务比 App 旧。升级约需一分钟，空闲后自动切换，正在运行的任务不受影响。";
     }
@@ -1819,7 +1799,10 @@ function renderUpdates() {
     if (updateInfo?.state === "checking") {
       progressText.textContent = "正在检查更新…";
     } else if (updateInfo?.state === "installing") {
-      progressText.textContent = "正在下载 App 更新并准备重启…";
+      progressText.textContent = {
+        service: "正在升级本机服务，约需一分钟…",
+        app: "正在安装 App，随后自动重启…",
+      }[updateInfo.step] || "正在下载新版 App…";
     } else if (["upgrading", "installing"].includes(serviceInfo?.state)) {
       progressText.textContent = "正在安装或升级本机服务，约需一分钟…";
     }
@@ -1828,9 +1811,8 @@ function renderUpdates() {
   }
 
   const hasError = updateInfo?.state === "failed" || serviceInfo?.state === "failed" || Boolean(updateInfo?.error);
-  errorBox.classList.toggle("warning", installWarning);
   $("btn-retry-update").hidden = isUpdating;
-  if (hasError && (!isUpdating || installWarning)) {
+  if (hasError && !isUpdating) {
     errorBox.hidden = false;
     errorText.textContent = updateInfo?.error || serviceInfo?.error || "操作失败，请重试。";
   } else {
@@ -1851,6 +1833,12 @@ window.addEventListener("agentnave:hosts", ({ detail }) => {
   renderUpdates();
 });
 window.addEventListener("agentnave:service-installed", () => loadStatus());
+// The update dialog reports each status it reads; skip the ones this page sent itself.
+window.addEventListener("agentnave:status", ({ detail }) => {
+  if (detail === appStatus) return;
+  appStatus = detail;
+  renderUpdates();
+});
 // A hidden window skips the update poll; catch up as soon as it is shown again.
 document.addEventListener("visibilitychange", () => document.hidden || !statusPollTimer || loadStatus());
 
@@ -1899,19 +1887,6 @@ async function triggerCheckUpdate(quiet = false) {
   }
 }
 
-async function triggerApplyUpdate() {
-  const btnApply = $("btn-apply-update");
-  btnApply.disabled = true;
-  try {
-    showNotice("已触发更新操作…");
-    appStatus = await apiApplyUpdate();
-    renderUpdates();
-  } catch (err) {
-    showNotice(`触发更新失败: ${err.message}`, true);
-    renderUpdates();
-  }
-}
-
 // Bind top-level event listeners
 for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, (e) => {
   operatedControl = e.target.closest("[data-focus-key]");
@@ -1937,14 +1912,9 @@ document.addEventListener("visibilitychange", probeWhenStale);
 $("save-btn").addEventListener("click", saveMembers);
 
 $("btn-check-update").addEventListener("click", () => triggerCheckUpdate());
-$("btn-apply-update").addEventListener("click", triggerApplyUpdate);
-$("btn-retry-update").addEventListener("click", () => {
-  if (appStatus?.service?.state === "failed") {
-    triggerApplyUpdate();
-  } else {
-    triggerCheckUpdate();
-  }
-});
+// Updating goes through the shared dialog: it checks again and shows what changed first.
+$("btn-apply-update").addEventListener("click", () => AN.updateFlow());
+$("btn-retry-update").addEventListener("click", () => AN.updateFlow());
 
 // The app's web view does not show beforeunload prompts, so hold back in-app navigation.
 function renderLeaveConfirm() {

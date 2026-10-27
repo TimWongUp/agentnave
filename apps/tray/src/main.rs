@@ -72,10 +72,19 @@ static DRIPPING: AtomicBool = AtomicBool::new(false);
 /// installs. Only its own WebView storage (display settings) is kept, under its own identifier.
 pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
 
-/// What a preview build refuses: every request that could change files, except moving its window.
+/// What a preview build refuses: every request that could change files, except moving its window
+/// and checking for an update, which only asks the release feed.
 fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
-    preview && method != "GET" && !matches!(path, "/app/window/drag" | "/app/window/zoom")
+    preview
+        && method != "GET"
+        && !matches!(
+            path,
+            "/app/window/drag" | "/app/window/zoom" | "/app/update/check"
+        )
 }
+
+/// The main window with the update dialog: a fresh check, what changed, then a confirmed update.
+const UPDATE_PAGE: &str = "/chat/?check-update";
 
 struct Tray {
     reader: Arc<Reader>,
@@ -200,7 +209,7 @@ fn main() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => restore(app),
                     "settings" => open(app, "main", "/settings/"),
-                    "update" if !PREVIEW => update::act(app),
+                    "update" if !PREVIEW => open(app, "main", UPDATE_PAGE),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -363,8 +372,8 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         let destination = destination(target);
         thread::spawn(move || match path.as_str() {
             // The panel stays open: its notice shows the progress or "已复制".
-            "/app/update" | "/app/upgrade-service" if PREVIEW => {}
-            "/app/update" => update::act(&app),
+            "/app/upgrade-service" if PREVIEW => {}
+            "/app/update" => open(&app, "main", UPDATE_PAGE),
             "/app/upgrade-service" => update::upgrade_service(&app),
             "/app/copy-service-command" => update::copy_service_command(&app),
             _ => {
@@ -633,6 +642,7 @@ mod tests {
         }
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
+        assert!(!preview_refuses(true, "POST", "/app/update/check"));
     }
 
     #[test]

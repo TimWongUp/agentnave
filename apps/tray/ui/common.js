@@ -564,43 +564,191 @@
   Object.assign(AN, { post, installService, onboarding });
 })();
 
-// The window header's update button: shown only when the App or the local service can be updated;
-// one click runs the same one-click update as the settings page.
+// Updating, as one flow everywhere (header button, settings, the menu's "检查更新"): check again,
+// show what changed since this version, and only on "立即更新" upgrade the service, install the
+// App and restart. The release notes are plain text set with textContent, never as HTML.
 (function () {
   const { h, load, post } = AN;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let dialog = null;
+  let running = false;
+
+  // A small subset of the release notes' Markdown: "## " headings, "- " bullets, paragraphs and
+  // `code`.
+  function inline(text) {
+    return text.split(/(`[^`]+`)/).filter(Boolean).map((part) =>
+      part.startsWith("`") && part.endsWith("`") ? h("code", {}, part.slice(1, -1)) : part.replace(/\*\*/g, ""));
+  }
+  function notesNode(text) {
+    const out = [];
+    let list = null;
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (!line) { list = null; continue; }
+      if (line.startsWith("#")) {
+        list = null;
+        out.push(h("h4.upd-h", {}, ...inline(line.replace(/^#+\s*/, ""))));
+      } else if (/^[-*] /.test(line)) {
+        if (!list) out.push((list = h("ul.upd-list")));
+        list.append(h("li", {}, ...inline(line.slice(2))));
+      } else {
+        list = null;
+        out.push(h("p.upd-p", {}, ...inline(line)));
+      }
+    }
+    return out;
+  }
+
+  function show(title, body, buttons) {
+    if (!dialog) {
+      dialog = h("dialog.upd");
+      dialog.addEventListener("cancel", (e) => { if (running) e.preventDefault(); });
+      document.body.append(dialog);
+    }
+    const row = h("div.upd-row", {}, ...buttons.map(([label, run, primary]) => {
+      const b = h(`button${primary ? ".primary" : ""}`, { type: "button" }, label);
+      b.addEventListener("click", run);
+      return b;
+    }));
+    dialog.replaceChildren(h("h2.upd-title", {}, title), h("div.upd-body", {}, ...body), row);
+    if (!dialog.open) dialog.showModal();
+    dialog.querySelector(".primary")?.focus();
+  }
+  const close = () => dialog?.close();
+  const done = (status) => window.dispatchEvent(new CustomEvent("agentnave:status", { detail: status }));
+
+  const STEPS = [["download", "下载新版 App"], ["service", "升级本机服务（约一分钟）"], ["app", "安装 App 并重启"]];
+  function progress(step, version) {
+    const at = STEPS.findIndex(([key]) => key === step);
+    show(`正在更新到 v${version}`, [
+      h("ol.upd-steps", {}, ...STEPS.map(([, label], i) =>
+        h(`li.${i < at ? "done" : i === at ? "now" : "todo"}`, {}, label))),
+      h("p.upd-note", {}, "完成后 App 会自动重启。正在运行的任务不受影响。"),
+    ], []);
+  }
+
+  async function apply(version, serviceOnly) {
+    running = true;
+    try {
+      if (serviceOnly) show("正在升级本机服务", [h("p.upd-p", {}, "约需一分钟，正在运行的任务不受影响。")], []);
+      else progress("download", version);
+      let status = await post("/app/update/apply");
+      // Another check or update holding the lock leaves this one unstarted. A fast end (failed or,
+      // for the service, done) still counts as started; the loop below reports it.
+      const started = serviceOnly
+        ? ["upgrading", "installing", "failed", "done"].includes(status.service?.state)
+        : ["installing", "failed"].includes(status.update?.state);
+      if (!started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
+      for (;;) {
+        done(status);
+        const update = status.update;
+        const service = status.service;
+        if (update?.state === "failed") throw new Error(update.error || "更新失败");
+        if (serviceOnly) {
+          if (service?.state === "failed") throw new Error(service.error || "升级本机服务失败");
+          if (!["upgrading", "installing"].includes(service?.state)) break;
+        } else if (update?.state === "installing") {
+          progress(update.step, version);
+        } else if (update?.state !== "installing" && status.version === version) {
+          break;
+        }
+        await sleep(1000);
+        status = await load("/app/status");
+      }
+      running = false;
+      // The App restarts before this on a real update; only the preview's mock gets here.
+      show(serviceOnly ? "本机服务已升级" : `已更新到 v${version}`, [h("p.upd-p", {}, "已切换到新版本，无需重连。")], [["好", close, true]]);
+    } catch (error) {
+      running = false;
+      show("更新没有完成", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重新检查", () => run(), true]]);
+    }
+  }
+
+  async function run() {
+    if (running) return;
+    show("检查更新", [h("p.upd-p", {}, "正在检查最新版本…")], [["取消", close]]);
+    let status;
+    try {
+      status = await post("/app/update/check");
+    } catch (error) {
+      return show("检查更新失败", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重试", () => run(), true]]);
+    }
+    done(status);
+    const update = status.update;
+    const service = status.service;
+    if (update?.state === "failed")
+      return show("检查更新失败", [h("p.upd-p.upd-error", {}, update.error || "请检查网络后重试")], [["关闭", close], ["重试", () => run(), true]]);
+    if (update?.state === "available") {
+      const items = update.notes?.items || [];
+      const link = update.notes?.link;
+      const notes = [
+        ...(items.length
+          ? items.map((item) => h("section.upd-ver", {}, h("h3.upd-v", {}, `v${item.version}`), ...notesNode(item.notes)))
+          : [h("p.upd-p", {}, "这个版本没有附带更新说明。")]),
+        // With items, the link covers the releases older than those the manifest carries.
+        ...(link ? [h("a.upd-link", { href: link, target: "_blank", rel: "noopener" }, items.length ? "更早版本的更新说明见 GitHub" : "在 GitHub 查看更新说明")] : []),
+      ];
+      return show(`有新版本 v${update.version}`, [
+        h("p.upd-sub", {}, `当前 v${status.version}`),
+        h("div.upd-notes", {}, ...notes),
+        h("p.upd-note", {}, "更新时先升级本机服务，再安装 App 并自动重启；服务升级失败就不装 App。"),
+      ], [["稍后", close], ["立即更新", () => apply(update.version, false), true]]);
+    }
+    if (service?.state === "failed")
+      return show("升级本机服务失败", [h("p.upd-p.upd-error", {}, service.error || "升级本机服务失败")],
+        [["关闭", close], ["重试升级", () => apply(status.version, true), true]]);
+    if (service?.state === "outdated")
+      return show("升级本机服务", [h("p.upd-p", {}, `本机服务 v${service.version} 比 App v${status.version} 旧。升级约需一分钟，正在运行的任务不受影响。`)],
+        [["稍后", close], ["升级", () => apply(status.version, true), true]]);
+    show("已是最新版本", [h("p.upd-p", {}, `App 与本机服务都是 v${status.version}。`)], [["好", close, true]]);
+  }
+  AN.updateFlow = run;
+  // The menu's "检查更新" and the panel open the main window with ?check-update.
+  addEventListener("DOMContentLoaded", () => {
+    const url = new URL(location.href);
+    if (!url.searchParams.has("check-update")) return;
+    url.searchParams.delete("check-update");
+    history.replaceState(null, "", url);
+    run();
+  });
+})();
+
+// The window header's update button: shown only when the App or the local service can be updated,
+// or for a while after an update; a click runs the update flow. The menu bar panel is too narrow
+// for its dialog and opens the main window's instead.
+(function () {
+  const { h, load } = AN;
   const end = document.querySelector("header.bar .bar-end, header.top .top-end");
   if (!end) return;
   const button = h("button.bar-update", { type: "button", hidden: true });
   end.prepend(button);
+  const short = end.matches(".top-end");
   let status = null;
-  let pending = false;
   function render() {
     const update = status?.update?.state;
     const service = status?.service?.state;
-    const busy = pending || update === "installing" || ["upgrading", "installing"].includes(service);
+    const busy = update === "installing" || ["upgrading", "installing"].includes(service);
     const found = update === "available" || service === "outdated";
-    button.hidden = !busy && !found;
+    const updated = !busy && !found && status?.updated;
+    button.hidden = !busy && !found && !updated;
     button.disabled = busy;
-    // The menu bar panel's header is narrow: the same button, shorter words.
-    const short = end.matches(".top-end");
-    button.textContent = busy ? (short ? "更新中…" : "正在更新…") : update === "available" ? `↑ ${short ? "" : "更新到 "}v${status.update.version}` : short ? "↑ 升级服务" : "↑ 升级本机服务";
-    button.title = update === "available"
-      ? "更新 App 后自动重启，本机服务随后自动跟上"
-      : "本机服务比 App 旧，升级约需一分钟，正在运行的任务不受影响";
+    button.classList.toggle("updated", Boolean(updated));
+    button.textContent = busy ? (short ? "更新中…" : "正在更新…")
+      : updated ? `已更新到 v${status.updated}`
+      : update === "available" ? `↑ ${short ? "" : "更新到 "}v${status.update.version}`
+      : short ? "↑ 升级服务" : "↑ 升级本机服务";
+    button.title = updated ? "点此查看是否还有更新" : "先看看更新了什么，确认后再更新";
   }
   async function refresh() {
     if (document.hidden) return;
     try { status = await load("/app/status"); } catch { return; }
     render();
   }
-  button.addEventListener("click", async () => {
-    pending = true;
-    render();
-    try { status = await post("/app/update/apply"); } catch { /* the next refresh shows the state */ }
-    pending = false;
-    render();
+  button.addEventListener("click", () => {
+    if (short) location.href = "/app/update";
+    else AN.updateFlow();
   });
-  // The settings page reads the status itself; reuse what it got.
+  // The settings page and the update flow read the status themselves; reuse what they got.
   addEventListener("agentnave:status", ({ detail }) => { status = detail; render(); });
   document.addEventListener("visibilitychange", refresh);
   setInterval(refresh, 60000);

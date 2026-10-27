@@ -132,7 +132,6 @@
 .spinner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run); display: inline-block; animation: pulse-dot 1.4s infinite ease-in-out; }
 @keyframes pulse-dot { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
 .update-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-radius: 8px; background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 28%, transparent); color: var(--bad); font-size: 12.5px; }
-.update-error.warning { background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--warn); }
 
 /* Responsive adjustments for narrow viewports */
 @media (max-width: 700px) {
