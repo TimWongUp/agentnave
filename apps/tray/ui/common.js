@@ -185,7 +185,9 @@
   // Optional frames: a character without them keeps the older look (grey idle, gliding seat).
   const EXTRA = ["sad", "walk-1", "walk-2"];
   const missing = new Set();
-  const artUrl = (path) => href(`/art/${path}`);
+  // The App supplies its release version; direct mock pages use a stable preview key.
+  const artVersion = typeof AGENTNAVE_ART_VERSION === "undefined" ? "preview" : AGENTNAVE_ART_VERSION;
+  const artUrl = (path) => href(`/art/${path}?v=${encodeURIComponent(artVersion)}`);
   // A family's replacement set (Settings → 头像) wins over the painted one: "@family@version".
   let replaced = {}, version = 0;
   const CHARACTERS_KEY = "agentnave.characters";
@@ -204,6 +206,10 @@
     const family = window.Avatars?.family(provider, model);
     return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
   };
+  // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
+  // ahoge (tuft) or cat ears (ear-l, ear-r). parts.json gives each frame's pivot at the part's root,
+  // in percent of the frame.
+  const parts = fetch(artUrl("parts.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   const frameUrl = (name, size, state) => {
     if (!name.startsWith("@")) return artUrl(`${size}/${name}/${state}.webp`);
     const [, family, version] = name.split("@");
@@ -223,7 +229,17 @@
       if (EXTRA.includes(s)) img.addEventListener("error", () => { missing.add(path); fig.classList.add(`no-${s}`); img.remove(); }, { once: true });
       return img;
     });
-    fig.append(h("span.fig-a", {}, h("span.fig-b", {}, imgs.filter(Boolean))));
+    const body = h("span.fig-b", {}, imgs.filter(Boolean));
+    fig.append(h("span.fig-a", {}, body));
+    // Each part carries its frame's s-<state> class, so it shows with that frame.
+    if (!name.startsWith("@")) parts.then((all) => {
+      for (const [part, frames] of Object.entries(all[name] || {})) {
+        for (const [state, [x, y]] of Object.entries(frames)) {
+          body.append(h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
+            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%` }));
+        }
+      }
+    });
     return fig;
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
