@@ -633,10 +633,11 @@
       if (serviceOnly) show("正在升级本机服务", [h("p.upd-p", {}, "约需一分钟，正在运行的任务不受影响。")], []);
       else progress("download", version);
       let status = await post("/app/update/apply");
-      // Another check or update holding the lock leaves this one unstarted.
+      // Another check or update holding the lock leaves this one unstarted. A fast end (failed or,
+      // for the service, done) still counts as started; the loop below reports it.
       const started = serviceOnly
-        ? ["upgrading", "installing"].includes(status.service?.state)
-        : status.update?.state === "installing";
+        ? ["upgrading", "installing", "failed", "done"].includes(status.service?.state)
+        : ["installing", "failed"].includes(status.update?.state);
       if (!started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
       for (;;) {
         done(status);
