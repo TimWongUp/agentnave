@@ -477,6 +477,12 @@ fn saved_size(app: &AppHandle) -> Option<(f64, f64)> {
 
 /// Saved when the window closes or the app quits, and only when the size changed.
 fn save_size(window: &WebviewWindow) {
+    // A minimized, maximized or full-screen window says nothing about the size to reopen at.
+    let state = |check: tauri::Result<bool>| check.unwrap_or(false);
+    if state(window.is_minimized()) || state(window.is_maximized()) || state(window.is_fullscreen())
+    {
+        return;
+    }
     let (Some(path), Ok(size), Ok(scale)) = (
         size_file(window.app_handle()),
         window.inner_size(),
@@ -509,9 +515,11 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         let _ = window.set_focus();
         return;
     }
-    // The size it was last left at, else large enough to show the boss office and a first row of
-    // desks; never past the screen.
-    let (width, height) = saved_size(app).unwrap_or(MAIN_SIZE);
+    // The size it was last left at, within the screen; else large enough to show the boss office
+    // and a first row of desks, with a margin to the screen's edges.
+    let saved = saved_size(app);
+    let room = if saved.is_some() { 1.0 } else { 0.95 };
+    let (width, height) = saved.unwrap_or(MAIN_SIZE);
     let (max_width, max_height) = app
         .primary_monitor()
         .ok()
@@ -521,7 +529,7 @@ fn open(app: &AppHandle, label: &str, path: &str) {
                 .work_area()
                 .size
                 .to_logical::<f64>(monitor.scale_factor());
-            (area.width * 0.95, area.height * 0.95)
+            (area.width * room, area.height * room)
         })
         .unwrap_or(MAIN_SIZE);
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
@@ -548,18 +556,21 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         })
         .build();
     if let Ok(window) = built {
-        // Like other Mac apps, closing only hides the window; the Dock icon brings it back as it was.
-        #[cfg(target_os = "macos")]
-        {
-            let hidden = window.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
+        let closing = window.clone();
+        window.on_window_event(move |event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                save_size(&closing);
+                // Like other Mac apps, closing only hides the window; the Dock icon brings it back
+                // as it was.
+                #[cfg(target_os = "macos")]
+                {
                     api.prevent_close();
-                    save_size(&hidden);
-                    let _ = hidden.hide();
+                    let _ = closing.hide();
                 }
-            });
-        }
+                #[cfg(not(target_os = "macos"))]
+                let _ = api;
+            }
+        });
         let _ = window.set_focus();
     }
 }

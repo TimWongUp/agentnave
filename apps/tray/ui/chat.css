@@ -286,7 +286,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .token::after { content: ""; position: absolute; left: 1px; right: 1px; top: 1px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 6px solid var(--accent); }
 .token-return::after { border-top-color: var(--run); }
 .token-forward::after { border-top-color: var(--show); }
-.walker { position: absolute; z-index: 7; pointer-events: none; }
+/* scaled from its top-left corner, the corner travel() moves, so desk and seat sizes may differ */
+.walker { position: absolute; z-index: 7; pointer-events: none; transform-origin: 0 0; }
 /* a walker with walking frames steps between them instead of gliding seated */
 .walker.walk img { display: none; animation: none; }
 .walker.walk .s-walk-1, .walker.walk .s-walk-2 { display: block; animation: step-a 0.36s step-end var(--step, 0s) infinite; }
