@@ -20,6 +20,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Automatic checks run at start and then once a day; the menu can check at any time.
 pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 const REPOSITORY: &str = "https://github.com/TimWongUp/agentnave.git";
+/// Where the notes of releases older than those in the manifest are.
+const RELEASES: &str = "https://github.com/TimWongUp/agentnave/releases";
 /// How long the panel keeps saying the service was upgraded.
 const UPGRADED_NOTE: Duration = Duration::from_secs(10 * 60);
 /// In the app's own data directory, not the AgentNave data root. Written only by apps before the
@@ -363,6 +365,13 @@ fn release_notes(body: Option<&str>, current: &str, target: &str) -> Value {
         let link = body.starts_with("https://").then_some(body);
         return json!({"items": [], "link": link});
     };
+    // The manifest carries the last few releases only; an app older than all of them gets a link
+    // for the ones in between.
+    let gap = entries.iter().all(|entry| {
+        entry["version"]
+            .as_str()
+            .is_none_or(|version| parse(version) > parse(current))
+    });
     let mut items: Vec<Value> = entries
         .into_iter()
         .filter(|entry| {
@@ -375,7 +384,7 @@ fn release_notes(body: Option<&str>, current: &str, target: &str) -> Value {
         parse(b["version"].as_str().unwrap_or_default())
             .cmp(&parse(a["version"].as_str().unwrap_or_default()))
     });
-    json!({"items": items, "link": null})
+    json!({"items": items, "link": gap.then_some(RELEASES)})
 }
 
 /// What the panel and settings show about versions: the app update, any outdated local
@@ -750,6 +759,11 @@ mod tests {
             .map(|item| item["version"].as_str().unwrap())
             .collect();
         assert_eq!(versions, ["0.48.0", "0.47.0"]);
+        assert_eq!(notes["link"], Value::Null);
+        assert_eq!(
+            release_notes(Some(&body), "0.40.0", "0.48.0")["link"],
+            RELEASES
+        );
         let old = "https://github.com/TimWongUp/agentnave/releases/tag/v0.47.0";
         assert_eq!(
             release_notes(Some(old), "0.46.1", "0.47.0"),

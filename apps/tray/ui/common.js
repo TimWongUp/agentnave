@@ -633,6 +633,11 @@
       if (serviceOnly) show("正在升级本机服务", [h("p.upd-p", {}, "约需一分钟，正在运行的任务不受影响。")], []);
       else progress("download", version);
       let status = await post("/app/update/apply");
+      // Another check or update holding the lock leaves this one unstarted.
+      const started = serviceOnly
+        ? ["upgrading", "installing"].includes(status.service?.state)
+        : status.update?.state === "installing";
+      if (!started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
       for (;;) {
         done(status);
         const update = status.update;
@@ -674,16 +679,23 @@
       return show("检查更新失败", [h("p.upd-p.upd-error", {}, update.error || "请检查网络后重试")], [["关闭", close], ["重试", () => run(), true]]);
     if (update?.state === "available") {
       const items = update.notes?.items || [];
-      const notes = items.length
-        ? items.map((item) => h("section.upd-ver", {}, h("h3.upd-v", {}, `v${item.version}`), ...notesNode(item.notes)))
-        : [h("p.upd-p", {}, "这个版本没有附带更新说明。"),
-            ...(update.notes?.link ? [h("a.upd-link", { href: update.notes.link, target: "_blank", rel: "noopener" }, "在 GitHub 查看更新说明")] : [])];
+      const link = update.notes?.link;
+      const notes = [
+        ...(items.length
+          ? items.map((item) => h("section.upd-ver", {}, h("h3.upd-v", {}, `v${item.version}`), ...notesNode(item.notes)))
+          : [h("p.upd-p", {}, "这个版本没有附带更新说明。")]),
+        // With items, the link covers the releases older than those the manifest carries.
+        ...(link ? [h("a.upd-link", { href: link, target: "_blank", rel: "noopener" }, items.length ? "更早版本的更新说明见 GitHub" : "在 GitHub 查看更新说明")] : []),
+      ];
       return show(`有新版本 v${update.version}`, [
         h("p.upd-sub", {}, `当前 v${status.version}`),
         h("div.upd-notes", {}, ...notes),
         h("p.upd-note", {}, "更新时先升级本机服务，再安装 App 并自动重启；服务升级失败就不装 App。"),
       ], [["稍后", close], ["立即更新", () => apply(update.version, false), true]]);
     }
+    if (service?.state === "failed")
+      return show("升级本机服务失败", [h("p.upd-p.upd-error", {}, service.error || "升级本机服务失败")],
+        [["关闭", close], ["重试升级", () => apply(status.version, true), true]]);
     if (service?.state === "outdated")
       return show("升级本机服务", [h("p.upd-p", {}, `本机服务 v${service.version} 比 App v${status.version} 旧。升级约需一分钟，正在运行的任务不受影响。`)],
         [["稍后", close], ["升级", () => apply(status.version, true), true]]);

@@ -240,7 +240,8 @@ jobs:
               return tuple(int(part) for part in path.stem.removeprefix("v").split("."))
 
           notes = []
-          for path in sorted(Path("docs/releases").glob("v*.md"), key=key, reverse=True)[:10]:
+          releases = [p for p in Path("docs/releases").glob("v*.md") if re.fullmatch(r"v\d+\.\d+\.\d+", p.stem)]
+          for path in sorted(releases, key=key, reverse=True)[:10]:
               text = re.sub(r"\A# .*\n", "", path.read_text())
               text = re.split(r"^## 升级\s*$", text, flags=re.M)[0].strip()
               notes.append({"version": path.stem.removeprefix("v"), "notes": text})
