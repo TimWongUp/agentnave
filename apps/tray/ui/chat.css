@@ -111,7 +111,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .back { display: none; flex: none; padding: 4px 2px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .office { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 /* one column: boss office, meetings in session, open desks. --fig is the character size everywhere */
-.floor { --fig: 88px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 10px 20px 20px; }
+.floor { --fig: 100px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 10px 20px 20px; }
 /* Zones space themselves, so an ended room can fold its own gap away as it closes. */
 .floor .zone:not(.boss-zone) { margin-top: 12px; }
 .rooms { display: contents; }
@@ -126,13 +126,13 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- painted scene: chair → character → desk → laptop → lid logo, one 1536×1200 stage ---- */
 .scene { position: relative; aspect-ratio: 1536 / 1200; max-width: 250px; margin-inline: auto; }
-.boss-zone .scene { width: 180px; max-width: 100%; margin-top: 2px; }
+.boss-zone .scene { width: 205px; max-width: 100%; }
 /* boss in the middle, recent chats and meetings on either side; narrow floors put the lists below */
 .boss-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; }
 .boss-mid { grid-column: 2; grid-row: 1; }
 .boss-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: default; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
-@container (max-width: 640px) { .boss-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .boss-mid { grid-column: 1 / -1; } .boss-side { grid-row: 2; } }
+@container (max-width: 640px) { .boss-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 4px; } .boss-mid { grid-column: 1 / -1; } .boss-side { grid-row: 2; } }
 @container (max-width: 400px) { .boss-row { grid-template-columns: minmax(0, 1fr); } .boss-side { grid-row: auto; } }
 .l-chair, .l-desk, .l-laptop { position: absolute; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
 .l-chair { left: 16.667%; top: 0; width: 66.667%; z-index: 1; }
@@ -194,7 +194,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
 
 /* ---- boss office ---- */
-.boss-zone .label { margin-top: 2px; text-align: center; }
+.boss-zone .label { text-align: center; }
+.boss-zone { padding-bottom: 6px; }
 .label { text-align: center; margin-top: 4px; min-width: 0; }
 .label .nm { font-size: 12px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .label .cli { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 3px 5px; font-size: 11px; color: var(--muted); }
@@ -204,10 +205,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 /* a desk's role is its label's last line; the line keeps its height when there is no role */
 /* the role shows whole, wrapping to a second line before it is cut */
 .label .role { min-height: 1.5em; margin-top: 2px; font-size: 11px; line-height: 1.35; color: var(--show); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.desk-tags .tag-st { background: var(--card-hover); color: var(--muted); }
-[data-mood="working"] .desk-tags .tag-st { background: color-mix(in srgb, var(--run) 16%, transparent); color: var(--run); }
-[data-mood="failed"] .desk-tags .tag-st { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
-[data-mood="sleep"] .desk-tags .tag-st { color: var(--faint); }
 .tag { padding: 0 6px; border-radius: 99px; font-size: 10.5px; font-weight: 600; line-height: 16px; white-space: nowrap; background: var(--card-hover); color: var(--muted); }
 .tag-role { background: color-mix(in srgb, var(--show) 16%, transparent); color: var(--show); }
 /* access is a declared convention: outlined; meeting-only is a hard limit: filled */
@@ -230,14 +227,18 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .td-more { padding: 2px 6px; font-size: 11px; color: var(--faint); }
 
 /* ---- open desks ---- */
-.desks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
+/* four desks a row, each as wide as the row allows; fewer only when a desk would drop below 170px */
+.desks { --cols: 4; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+@container (max-width: 776px) { .desks { --cols: 3; } }
+@container (max-width: 596px) { .desks { --cols: 2; } }
+@container (max-width: 416px) { .desks { --cols: 1; } }
 /* desks past the running limit: one folded row, a text list when opened */
 .optimized { grid-column: 1 / -1; border-radius: 12px; border: 1.5px dashed var(--line-strong); padding: 4px 6px; }
 .optimized-h { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 4px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
 .optimized-h b { font-weight: 650; color: var(--faint); }
 .optimized-h .r { margin-left: auto; font-weight: 500; color: var(--faint); }
 .optimized-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 6 + 10px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
-.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 26px 8px 9px; text-align: center; cursor: pointer; transition: background 0.2s; }
+.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 32px 8px 3px; text-align: center; cursor: pointer; transition: background 0.2s; }
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .desk.away .scene > .fig { opacity: 0; }
@@ -246,9 +247,12 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* the bubble sits in the card's top-right corner, above the figure like the tags opposite it */
 .desk > .say { top: 7px; right: 8px; max-width: 50%; }
-.boss-mid { position: relative; padding-top: 24px; }
+/* the bubble may overlap the empty air above the boss's head */
+.boss-mid { position: relative; padding-top: 8px; }
 .boss-mid > .say { top: 0; left: 50%; right: auto; transform: translateX(-50%); max-width: 100%; }
-.desk > .scene { width: calc(var(--fig) * 1.5); }
+/* the scene fills its card, so figure and desk grow and shrink together with the row; the 170px
+   minimum card keeps them at least the size of --fig */
+.desk > .scene { width: 100%; max-width: none; }
 
 /* ---- meeting rooms: each seat brings its own stretch of table; layoutRooms() sets --S ---- */
 .mscene { --S: var(--fig); display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: 22px 0; margin: 28px auto 4px; }
@@ -282,7 +286,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .token::after { content: ""; position: absolute; left: 1px; right: 1px; top: 1px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 6px solid var(--accent); }
 .token-return::after { border-top-color: var(--run); }
 .token-forward::after { border-top-color: var(--show); }
-.walker { position: absolute; z-index: 7; pointer-events: none; }
+/* scaled from its top-left corner, the corner travel() moves, so desk and seat sizes may differ */
+.walker { position: absolute; z-index: 7; pointer-events: none; transform-origin: 0 0; }
 /* a walker with walking frames steps between them instead of gliding seated */
 .walker.walk img { display: none; animation: none; }
 .walker.walk .s-walk-1, .walker.walk .s-walk-2 { display: block; animation: step-a 0.36s step-end var(--step, 0s) infinite; }

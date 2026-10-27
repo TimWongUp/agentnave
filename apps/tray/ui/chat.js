@@ -54,7 +54,7 @@ function store(key, value) {
     if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value);
   } catch { /* storage may be unavailable */ }
 }
-const FIG = 88; // character size at desks and meeting seats, in px (matches --fig in chat.css)
+const FIG = 100; // character size at desks and meeting seats, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 const WALK_MS = 1600; // a figure's walk between its desk and a meeting seat
 const HOLD_MS = 10e3; // an ended room stays empty this long after its seats are back
@@ -346,7 +346,7 @@ function deskMood(d, ctx) {
     ? {
         mood: "sleep",
         say: "zz",
-        word: `休息中 · ${relTime(d.last_active)}`,
+        word: "休息中",
         away: null,
       }
     : { mood: "idle", say: "", word: "空闲", away: null };
@@ -576,7 +576,6 @@ function createDesk(d) {
     nm: h("div.nm"),
     cliText: h("span"),
     role: h("div.role"),
-    status: h("span.tag.tag-st"),
     access: h("span.tag.tag-access", {
       hidden: true,
       title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
@@ -601,7 +600,7 @@ function createDesk(d) {
     "button.desk",
     { type: "button" },
     // access and status sit in the top-left corner; the role is the label's last line
-    h("span.desk-tags", {}, rec.access, rec.only, rec.status),
+    h("span.desk-tags", {}, rec.access, rec.only),
     rec.say,
     rec.scene,
     h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.role),
@@ -637,12 +636,10 @@ function updateDesk(rec, d, ctx) {
   );
   rec.access.hidden = !d.access;
   rec.only.hidden = d.private_allowed !== false;
-  setText(rec.status, s.word);
-  setAttr(rec.status, "title", s.word);
   setAttr(
     rec.el,
     "title",
-    `${handleOf(d)}\n首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}${MODEL_NOTE[d.model_source] || (!d.model && !d.display_model ? MODEL_NOTE.unknown : "")}`,
+    `${s.word}\n${handleOf(d)}\n首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}${MODEL_NOTE[d.model_source] || (!d.model && !d.display_model ? MODEL_NOTE.unknown : "")}`,
   );
   setAttr(
     rec.el,
