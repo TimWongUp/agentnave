@@ -38,6 +38,8 @@ const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
 const PANEL_SIZE: (f64, f64) = (480.0, 640.0);
+const MAIN_SIZE: (f64, f64) = (1440.0, 900.0);
+const MAIN_MIN: (f64, f64) = (420.0, 480.0);
 const POLL: Duration = Duration::from_secs(2);
 /// A click on the tray icon first blurs the open panel; this keeps that click from reopening it.
 const REOPEN_GUARD: Duration = Duration::from_millis(300);
@@ -233,6 +235,11 @@ fn main() {
         // Like any regular app, launching it shows the main window. Opening it once the event
         // loop runs keeps its first requests from stalling behind start-up.
         RunEvent::Ready => open(app, "main", "/chat/"),
+        RunEvent::Exit => {
+            if let Some(window) = app.get_webview_window("main") {
+                save_size(&window);
+            }
+        }
         // A click on the Dock icon brings the main window back where it was left.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen {
@@ -456,6 +463,39 @@ fn restore(app: &AppHandle) {
     }
 }
 
+/// Where the main window's last size is kept: this app's own config folder, so the preview build
+/// keeps its own and never touches the installed app's.
+fn size_file(app: &AppHandle) -> Option<std::path::PathBuf> {
+    Some(app.path().app_config_dir().ok()?.join("window-size.json"))
+}
+
+fn saved_size(app: &AppHandle) -> Option<(f64, f64)> {
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(size_file(app)?).ok()?).ok()?;
+    Some((saved["width"].as_f64()?, saved["height"].as_f64()?))
+}
+
+/// Saved when the window closes or the app quits, and only when the size changed.
+fn save_size(window: &WebviewWindow) {
+    let (Some(path), Ok(size), Ok(scale)) = (
+        size_file(window.app_handle()),
+        window.inner_size(),
+        window.scale_factor(),
+    ) else {
+        return;
+    };
+    let size = size.to_logical::<f64>(scale);
+    let text =
+        serde_json::json!({"width": size.width.round(), "height": size.height.round()}).to_string();
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, text);
+}
+
 /// Show `path` in the window `label`, creating it on first use.
 fn open(app: &AppHandle, label: &str, path: &str) {
     let target = url(path);
@@ -469,10 +509,29 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         let _ = window.set_focus();
         return;
     }
+    // The size it was last left at, else large enough to show the boss office and a first row of
+    // desks; never past the screen.
+    let (width, height) = saved_size(app).unwrap_or(MAIN_SIZE);
+    let (max_width, max_height) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let area = monitor
+                .work_area()
+                .size
+                .to_logical::<f64>(monitor.scale_factor());
+            (area.width * 0.95, area.height * 0.95)
+        })
+        .unwrap_or(MAIN_SIZE);
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
         .title("AgentNave")
-        .inner_size(1180.0, 800.0)
-        .min_inner_size(420.0, 480.0);
+        .inner_size(
+            width.min(max_width).max(MAIN_MIN.0),
+            height.min(max_height).max(MAIN_MIN.1),
+        )
+        .min_inner_size(MAIN_MIN.0, MAIN_MIN.1)
+        .center();
     // The page's own top bar is the title bar: the window buttons sit in it and follow its theme.
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -496,6 +555,7 @@ fn open(app: &AppHandle, label: &str, path: &str) {
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    save_size(&hidden);
                     let _ = hidden.hide();
                 }
             });

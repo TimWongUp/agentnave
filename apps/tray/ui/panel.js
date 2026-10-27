@@ -48,7 +48,7 @@ function brief(d) {
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
   if (d.status === "failed") return { mood: "failed", word: "上次失败" };
   if (d.status === "pending") return { mood: "idle", word: "等待中" };
-  return dozing(d) ? { mood: "sleep", word: `休息中 · ${relTime(d.last_active)}` } : { mood: "idle", word: "空闲" };
+  return dozing(d) ? { mood: "sleep", word: "休息中" } : { mood: "idle", word: "空闲" };
 }
 const HEAD = { working: "working", sleep: "sleep" };
 const roomRound = (r) => {
