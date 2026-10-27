@@ -211,6 +211,22 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
   82% { transform: rotate(calc(var(--dir) * -2deg)); } 86% { transform: rotate(calc(var(--dir) * 8deg)); } 91% { transform: none; }
 }
 @keyframes ear-wag { from { transform: rotate(calc(var(--dir) * -0.4 * var(--tilt))); } to { transform: rotate(calc(var(--dir) * var(--tilt))); } }
+/* bat wings sit behind the body and flap about their roots: at rest two beats now and then, a
+   flutter while working, a steady beat while speaking, fast when done and a slow drift asleep;
+   walking frames have no wing layers */
+.fig-b { isolation: isolate; }
+.fig img.part:is(.wing-l, .wing-r) { z-index: -1; animation: wing-beat calc(var(--cycle, 7s) / 2) ease-in-out var(--phase, 0s) infinite; }
+.fig img.wing-l { --dir: 1; }
+.fig img.wing-r { --dir: -1; }
+[data-mood="working"] .fig img.part:is(.wing-l, .wing-r) { --lift: 4deg; animation: wing-flap 0.25s ease-in-out var(--phase, 0s) infinite alternate; }
+[data-mood="speaking"] .fig img.part:is(.wing-l, .wing-r) { --lift: 7deg; animation: wing-flap 0.45s ease-in-out var(--phase, 0s) infinite alternate; }
+[data-mood="done"] .fig img.part:is(.wing-l, .wing-r) { --lift: 11deg; animation: wing-flap 0.2s ease-in-out var(--phase, 0s) infinite alternate; }
+[data-mood="sleep"] .fig img.part:is(.wing-l, .wing-r) { --lift: 3deg; animation: wing-flap 3s ease-in-out var(--phase, 0s) infinite alternate; }
+@keyframes wing-beat {
+  0%, 64%, 100% { transform: none; } 70% { transform: rotate(calc(var(--dir) * 10deg)); } 76% { transform: rotate(calc(var(--dir) * -3deg)); }
+  82% { transform: rotate(calc(var(--dir) * 8deg)); } 88% { transform: rotate(calc(var(--dir) * -2deg)); } 94% { transform: none; }
+}
+@keyframes wing-flap { from { transform: rotate(calc(var(--dir) * -0.3 * var(--lift))); } to { transform: rotate(calc(var(--dir) * var(--lift))); } }
 @keyframes fig-breathe { 50% { transform: scale(1.012, 1.02); } }
 @keyframes fig-squash { 0%, 88% { transform: none; } 90% { transform: scale(1.05, 0.93); } 93%, 98% { transform: none; } 99% { transform: scale(1.03, 0.96); } }
 @keyframes fig-show { 0% { opacity: 0; } 90% { opacity: 1; } 97% { opacity: 0; } }
