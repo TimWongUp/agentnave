@@ -117,9 +117,10 @@ fn native_document(all: &Value, previous: &Value) -> Value {
     json!({"version": 1, "clis": clis})
 }
 
-/// Write the defaults only when they changed, and never create the data root for them.
+/// Write the defaults only when they changed, and never create the data root for them; a preview
+/// build leaves them to the installed app.
 fn publish_native(root: &Path, all: &Value) {
-    if !root.is_dir() {
+    if crate::PREVIEW || !root.is_dir() {
         return;
     }
     let previous: Value = std::fs::read_to_string(root.join(NATIVE_FILE))
