@@ -12,7 +12,7 @@
 | `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |
 | `list`、`read_conversation` | 列出句柄与会话并启动看板；按 App 的方式读回一个会话的最终消息 |
 | `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |
-| `handover` | 只在用户要求时把本聊天的整个工作区交给另一个 boss 聊天：`release=true` 交出（可附交接说明），不带参数列出待接手的工作区，`workspace_id` 认领；认领后老 boss 的写入被拒绝（[ADR-0033](adr/0033-boss-workspace-handover.md)） |
+| `handover` | 只在用户要求时把本聊天的整个工作区交给另一个 boss 聊天：`release=true` 交出（可附交接说明），不带参数列出待接手的工作区，`workspace_id` 认领；认领后老 boss 的 `start_agent`、`run_round` 与 `handover` 被拒绝，交接前的待审答案仍可由它用 `decide_answers` 决定（[ADR-0033](adr/0033-boss-workspace-handover.md)） |
 
 标题在创建时给出，之后只在 App 中改名；MCP 不提供改名工具。中继空闲探测使用的 `list_invocations` 仍可调用，但不在工具列表中（[ADR-0024](adr/0024-consolidated-tools-and-private-review.md)）。
 
