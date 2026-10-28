@@ -8,7 +8,8 @@
     gemini: ["Gemini", "avatar-gemini.svg"], grok: ["Grok", "avatar-grok.svg", "mono"],
     deepseek: ["DeepSeek", "avatar-deepseek.svg"], glm: ["GLM", "avatar-glm.svg", "mono"],
     qwen: ["Qwen", "avatar-qwen.svg"], kimi: ["Kimi", "avatar-kimi.svg", "mono"],
-    minimax: ["MiniMax", "avatar-minimax.svg"],
+    minimax: ["MiniMax", "avatar-minimax.svg"], hunyuan: ["Hunyuan", "avatar-hunyuan.svg"],
+    doubao: ["Doubao", "avatar-doubao.svg"], muse: ["Muse", "avatar-muse.svg"],
   };
   let overrides = {}, revision = 0;
   const key = (kind, provider, model = "") => JSON.stringify([kind, provider || "", model || ""]);
@@ -17,7 +18,8 @@
     const name = String(model || "").toLowerCase().split("/").pop();
     return Object.keys(families).find((id) => name.includes(id)) ||
       (/^(o[134](?:-|$)|chatgpt|codex)/.test(name) ? "gpt" : null) ||
-      (/^(opus|sonnet|haiku)(?:-|$)/.test(name) ? "claude" : null);
+      (/^(opus|sonnet|haiku)(?:-|$)/.test(name) ? "claude" : null) ||
+      (/^hy\d/.test(name) ? "hunyuan" : null) || (/^seed(?:-|$)/.test(name) ? "doubao" : null);
   }
   // Only a CLI mark saved by an earlier version can still be replaced; model logos are fixed.
   function source(kind, provider, model) {

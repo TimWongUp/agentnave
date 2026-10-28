@@ -758,7 +758,10 @@ function updateRoom(rec, r, ctx) {
   reconcile(rec.scene, nodes);
 }
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
+// The boss's scene takes a desk's size too, so it grows and shrinks with the row.
 function layoutRooms() {
+  const deskScene = el.desks.querySelector(".desk > .scene");
+  if (state.bossRec) state.bossRec.scene.style.width = deskScene ? `${deskScene.offsetWidth}px` : "";
   // Desks scale with the floor, so seats take the size their figures have at the desks.
   const fig = el.desks.querySelector(".desk > .scene > .fig")?.offsetWidth || FIG;
   for (const rec of state.roomRecs.values()) {
