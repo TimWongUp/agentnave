@@ -142,7 +142,8 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "codex": (
         "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
         "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
-        "workspace-write sandbox; not with sandbox), "
+        "workspace-write sandbox; not with sandbox or "
+        "dangerously_bypass_approvals_and_sandbox), "
         "sandbox (read-only, workspace-write or danger-full-access), "
         "dangerously_bypass_approvals_and_sandbox "
         "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
