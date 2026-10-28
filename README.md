@@ -59,7 +59,7 @@ Follow the [installation guide](docs/installation.md) to:
    the same release.
 4. Verify both MCP tools and Skill discovery; restart connections or sessions after changes.
 
-**The paired release is `v0.50.1`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.51.0`.** Install the runtime and complete Skill directory from that
 tag. Hosts under the same OS user and `uv` tool directories share one runtime installation, but
 each MCP connection runs its own STDIO service process. Provider CLIs must be installed and authenticated separately; `uv`
 manages only the runtime and does not install the Skill or change provider configuration.
