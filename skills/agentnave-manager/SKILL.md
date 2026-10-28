@@ -7,7 +7,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 本 Skill 只讲调用方式；参数细节以连接中的实时 schema 和工具说明为准。任务选择、规划、分工、审核、综合、重试和 worktree 由主 Agent 决定；用户若有固定的编排偏好，写在宿主的全局规则里，按那里执行。
 
-编排单向：boss 是宿主里的 Agent，由 boss 自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，服务端也对它们禁用编排工具，无例外。
+编排单向：boss 是宿主里的 Agent，由 boss 自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，只靠派发指令约束，服务端不禁用工具。
 
 优先使用当前宿主的 AgentNave MCP，用户指定其他路线时遵从。工具不可用、CLI 被排除或连接里仍是旧版工具（如 `wait_agent`、`open_group`）时，报告具体限制并要求更新服务和重连，不静默换 Provider、调用路线或源码服务，不由 boss 复制答案模拟协作；Skill 更新不等于运行时升级。
 
@@ -27,13 +27,13 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## boss 会话归属
 
-每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并一直沿用，不按任务重新生成。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它（且宿主未按聊天注入 `AGENTNAVE_HOST_SESSION_ID`）时服务拒绝调用。
+每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值，App 靠它读出 boss 模型。本聊天首次调用前在 shell 里取一次宿主会话 ID：Claude Code `$CLAUDE_CODE_SESSION_ID`、Codex `$CODEX_THREAD_ID`、Antigravity `$ANTIGRAVITY_CONVERSATION_ID`、CodeBuddy 与 WorkBuddy `$CODEBUDDY_SESSION_ID`、Grok `$GROK_SESSION_ID`、Pi `$PI_SESSION_ID`、Hermes `$HERMES_SESSION_ID`；其他宿主用上下文明确给出的会话 ID，都没有才生成一次 UUID 并沿用。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它时服务先用按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再用 Claude Code 随 MCP 进程给出的 `CLAUDE_CODE_SESSION_ID`；该值在 `/clear` 等不重启 MCP 的切换后可能是旧聊天的，所以仍要每次显式传入；都没有时服务拒绝调用。
 
 只在用户要求交接或接手时用 `handover`，不在新聊天里主动去查：交出时带 `release=true` 和交接说明（按参数说明写：交接原因、下一步重点、建议加载的 Skill，已有材料只给出处，不含密钥），再请用户在任意宿主开新聊天接手；接手方认领后按回执读交接说明、各会话和老 boss 会话文件尾部，再续用。
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 
-`manager_model` 仅在可信宿主上下文明确给出当前模型时补充，未知就省略，不从 CLI 默认配置或组员模型猜测。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
+可信宿主上下文（如系统提示）写明当前模型 ID 时作为 `manager_model` 传入，未知才省略，不从 CLI 默认配置或组员模型猜测。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
 
 ## 工位、续接与转发
 
@@ -112,6 +112,6 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 2. `wait(ids)` 每次最多等 5 分钟（`wait_seconds` 可缩短，`0` 只看一眼不阻塞），任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。
 4. 运行中 `output` 只是最新公开正文尾部（最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。
-5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；`succeeded` 不证明用户目标完成，须核对命令、产物或检查。
+5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；会议每席全文每轮只给一次，再看用 `read_conversation`。`succeeded` 不证明目标完成，须核对命令、产物或检查。
 
 正文有待确认问题时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。`cancel` 返回终态，不撤销已发生的副作用；活跃调用不能追加消息，要纠偏或补充就 `cancel`，回执带 `session_id` 时用它续接（没有就重新交接），prompt 写明：上一轮已被打断；已执行的命令和改动不要重跑，先核对现状；先交出已有结论和进展，再按新要求继续。换 CLI 或开新线程时重新交接，不假定旧历史可见。

@@ -106,6 +106,7 @@ class SeatRun:
     snapshot: int = 0
     blockers: list[InvocationError] = field(default_factory=lambda: [])
     reported_blockers: int = 0
+    output_returned: bool = False
 
 
 @dataclass(slots=True)

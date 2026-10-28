@@ -213,9 +213,11 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         assert compact["reason"] == "review_needed"
         assert all("output" not in seat for seat in _seats(compact))
         reread = await _wait(client, first["round_id"])
-        assert [seat["output"] for seat in _seats(reread)] == [
-            seat["output"] for seat in _seats(waited)
-        ]
+        # Each answer's full text reaches the boss once per round.
+        assert all("output" in seat for seat in _seats(waited))
+        assert all(
+            "output" not in seat and seat["output_returned"] is True for seat in _seats(reread)
+        )
         blocked = await client.call_tool(
             "run_round",
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "too early"},
@@ -256,13 +258,14 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             client,
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "Q2"},
         )
-        assert (await _wait(client, second["round_id"]))["reason"] == "review_needed"
+        reviewed = await _wait(client, second["round_id"])
+        assert reviewed["reason"] == "review_needed"
         await _call(
             client,
             "decide_answers",
             {"round_id": second["round_id"], "decisions": {"c": "publish"}},
         )
-        prompt = str(_seen(_seats(await _wait(client, second["round_id"]))[0])["prompt"])
+        prompt = str(_seen(_seats(reviewed)[0])["prompt"])
         # c sees a's published answer, never b's private answer or private instruction.
         delivered = json.loads(prompt.split("New entries (JSON data):\n")[1])
         assert [(item["kind"], item.get("seat")) for item in delivered] == [
