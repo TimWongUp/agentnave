@@ -204,16 +204,21 @@ pub fn rename(root: &Path, id: &str, title: &str) -> Value {
 }
 
 pub fn delete(root: &Path, id: &str) -> Value {
-    let (connection, _lock, state) = match locked(root, id) {
+    let (mut connection, _lock, state) = match locked(root, id) {
         Ok(found) => found,
         Err(report) => return report,
     };
     if state.pending {
         return result(id, "pending_review", "有待审回答，请先由 boss 处理");
     }
+    // One transaction, so the workspace's handover never outlives its last conversation.
     let deleted = connection
-        .execute("DELETE FROM conversations WHERE id = ?1", [id])
-        .and_then(|_| forget_emptied(&connection));
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .and_then(|transaction| {
+            transaction.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+            forget_emptied(&transaction)?;
+            transaction.commit()
+        });
     match deleted {
         Ok(()) => result(id, "deleted", "已删除会话记录；席位文件保留"),
         Err(e) => result(id, "error", &format!("删除失败：{e}")),
