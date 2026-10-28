@@ -65,6 +65,18 @@ def host_session_id(host: Host) -> str | None:
     return os.environ.get(name, "").strip() or None
 
 
+def session_file(host: Host, session_id: str | None) -> Path | None:
+    """This native session's own transcript file, when the host keeps one we can find."""
+    native_id = _native_id(session_id)
+    if native_id is None:
+        return None
+    try:
+        found = _transcript(host, native_id)
+    except (OSError, ValueError, RuntimeError):  # as in session_model: an unknown home, a loop
+        return None
+    return None if found is None else found[0]
+
+
 def session_model(
     host: Host, session_id: str | None, *, since: datetime | None = None
 ) -> str | None:
@@ -74,11 +86,8 @@ def session_model(
     try:
         if host.name == "hermes":
             return _hermes_model(session_id)
-        try:
-            native_id = str(UUID(session_id))
-        except ValueError:
-            return None
-        if native_id != session_id.lower():
+        native_id = _native_id(session_id)
+        if native_id is None:
             return None
         if host.name == "antigravity":
             return _antigravity_model(native_id)
@@ -88,7 +97,16 @@ def session_model(
         return None
 
 
-def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str | None:
+def _native_id(session_id: str | None) -> str | None:
+    try:
+        native_id = str(UUID(session_id or ""))
+    except ValueError:
+        return None
+    return native_id if session_id and native_id == session_id.lower() else None
+
+
+def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
+    """The session's transcript and the marker of lines that may name its model."""
     if host.name == "codex":
         root = _home("CODEX_HOME", ".codex") / "sessions"
         pattern, marker = f"*/*/*/rollout-*-{native_id}.jsonl", b'"turn_context"'
@@ -108,13 +126,21 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
         pattern, marker = f"*/{native_id}/chat_history.jsonl", b'"model_id"'
     else:
         return None
-    cutoff = datetime.now(UTC)
     paths = list(root.glob(pattern))
     if len(paths) != 1 or not paths[0].resolve().is_relative_to(root.resolve()):
         return None
+    return paths[0], marker
+
+
+def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str | None:
+    found = _transcript(host, native_id)
+    if found is None:
+        return None
+    path, marker = found
+    cutoff = datetime.now(UTC)
     # Transcripts append in time order and can hold huge lines (generated images), so read
     # from the end and stop at the newest qualifying turn instead of parsing everything.
-    for line in _lines_from_end(paths[0]):
+    for line in _lines_from_end(path):
         if marker not in line:
             continue
         event = parse_json_object(line.decode("utf-8", "replace"))

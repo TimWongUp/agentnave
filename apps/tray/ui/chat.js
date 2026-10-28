@@ -256,7 +256,7 @@ function updateItem(rec, g) {
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
-  setAttr(rec.el, "aria-label", `${name}，boss 在 ${g.label}，${word}`);
+  setAttr(rec.el, "aria-label", `${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`);
   setAttr(rec.el, "title", `${name} · ${chatPlace(g)}`);
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
   if (rec.tileKey !== tileKey) {
@@ -268,13 +268,17 @@ function updateItem(rec, g) {
   setText(rec.label, name);
   setText(
     rec.meta,
-    `${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
+    `${handoverWord(g)}${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
   );
   setText(rec.time, relTime(g.updated));
   setText(rec.prev, g.preview);
   rec.pill.hidden = g.status === "idle";
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
+}
+// A workspace waiting for, or taken over by, another boss (ADR-0033).
+function handoverWord(g) {
+  return { pending: "待接手 · ", changed: "boss 已更换 · " }[g.handover] || "";
 }
 function renderList() {
   const groups = state.groupsData;
@@ -422,7 +426,7 @@ function renderHead(c, n) {
   }
   const t = state.head;
   setText(t.title, chatName(c));
-  setText(t.sub, `boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  setText(t.sub, `${handoverWord(c)}boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
   t.run.hidden = !n.running && !n.review;
   setText(t.run, n.running ? `${n.running} 个在工作` : "会议进行中");
 }

@@ -204,16 +204,82 @@ pub fn rename(root: &Path, id: &str, title: &str) -> Value {
 }
 
 pub fn delete(root: &Path, id: &str) -> Value {
-    let (connection, _lock, state) = match locked(root, id) {
+    let (mut connection, _lock, state) = match locked(root, id) {
         Ok(found) => found,
         Err(report) => return report,
     };
     if state.pending {
         return result(id, "pending_review", "有待审回答，请先由 boss 处理");
     }
-    match connection.execute("DELETE FROM conversations WHERE id = ?1", [id]) {
-        Ok(_) => result(id, "deleted", "已删除会话记录；席位文件保留"),
+    // One transaction, so the workspace's handover never outlives its last conversation.
+    let deleted = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .and_then(|transaction| {
+            transaction.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+            forget_emptied(&transaction)?;
+            transaction.commit()
+        });
+    match deleted {
+        Ok(()) => result(id, "deleted", "已删除会话记录；席位文件保留"),
         Err(e) => result(id, "error", &format!("删除失败：{e}")),
+    }
+}
+
+/// Drop the handover of a workspace whose last conversation is gone, so its bosses are free
+/// again (ADR-0033). A database an older server created may lack the tables.
+fn forget_emptied(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
+    connection.execute_batch(
+        "DELETE FROM workspaces WHERE NOT EXISTS \
+         (SELECT 1 FROM conversations WHERE manager_session = workspaces.id); \
+         DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces);",
+    )
+}
+
+/// A workspace keyed by a boss chat; legacy identities have none.
+fn boss_workspace(id: &str) -> bool {
+    id.strip_prefix("s-")
+        .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Mark a workspace as waiting for another boss (ADR-0033). Its boss keeps it until a new chat
+/// takes it over, so this needs no conversation lock.
+pub fn handover(root: &Path, group: &str) -> Value {
+    if !boss_workspace(group) {
+        return result(group, "error", "这个工作区没有记录 boss 聊天，不能交接");
+    }
+    let connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return result(group, "missing", "工作区已不存在"),
+        Err(e) => return result(group, "error", &e),
+    };
+    let marked = (|| -> rusqlite::Result<bool> {
+        let found: bool = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?1)",
+            [group],
+            |row| row.get(0),
+        )?;
+        if !found {
+            return Ok(false);
+        }
+        // A database an older server created may still lack the table.
+        connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
+        connection.execute(
+            "INSERT INTO workspaces (id, owner, pending, released) \
+             VALUES (?1, ?1, 1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) \
+             ON CONFLICT (id) DO UPDATE SET pending = 1, released = excluded.released",
+            [group],
+        )?;
+        Ok(true)
+    })();
+    match marked {
+        Ok(true) => result(
+            group,
+            "waiting",
+            "已标为待接手。在任意宿主开一个新聊天，请它接手这个工作区",
+        ),
+        Ok(false) => result(group, "missing", "工作区已不存在"),
+        Err(e) => result(group, "error", &format!("交接失败：{e}")),
     }
 }
 
@@ -230,11 +296,7 @@ fn workspace_ids(connection: &Connection, anchor: &str) -> Result<Vec<String>, S
     let Some(session) = session else {
         return Ok(Vec::new());
     };
-    let session = session.filter(|s| {
-        s.strip_prefix("s-")
-            .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
-    });
-    let Some(session) = session else {
+    let Some(session) = session.filter(|s| boss_workspace(s)) else {
         return Ok(vec![anchor.to_owned()]);
     };
     connection
@@ -309,6 +371,7 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
                 .execute("DELETE FROM conversations WHERE id = ?1", [id])
                 .map_err(|e| e.to_string())?;
         }
+        forget_emptied(&transaction).map_err(|e| e.to_string())?;
         transaction.commit().map_err(|e| e.to_string())?;
         Ok(true)
     })();
@@ -441,11 +504,20 @@ mod tests {
             "UPDATE conversations SET manager_session = NULL WHERE id = ?1",
             "newly-finished",
         );
+        let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_eq!(handover(root.path(), workspace)["status"], "waiting");
         assert!(
             cleanup(root.path(), &ids[..1], cutoff)
                 .iter()
                 .all(|r| r["status"] == "deleted")
         );
+        // The emptied workspace's handover goes with its last conversation.
+        let handovers: i64 = crate::db::read(root.path())
+            .unwrap()
+            .unwrap()
+            .query_row("SELECT count(*) FROM workspaces", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(handovers, 0);
         assert_eq!(delete(root.path(), "newly-finished")["status"], "deleted");
     }
 

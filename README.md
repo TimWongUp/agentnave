@@ -79,6 +79,7 @@ authentication, configuration and native sessions remain provider-owned.
 | `list` | List this server's handles and saved conversations, and start the read-only dashboard |
 | `read_conversation` | Read one conversation back as the App shows it |
 | `list_members` | Read the member defaults set in the App, and one provider's options |
+| `handover` | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
 
 A seat in a group is an ordinary subagent with its own native session. In a `parallel` round all
 seats answer independently; in a `serial` round each sees the earlier answers. Seats share only

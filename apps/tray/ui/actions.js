@@ -1,6 +1,6 @@
 "use strict";
 // Managing history from the office: right-click a workspace or a meeting room to rename or delete
-// it; ⌘/Ctrl-click and Shift-click pick several workspaces to delete together; "清理" deletes the
+// it, or a workspace to hand it to another boss; ⌘/Ctrl-click and Shift-click pick several workspaces to delete together; "清理" deletes the
 // workspaces that have been quiet for a chosen number of days. Deleting takes the same locks as the
 // servers, so conversations in use, running or awaiting review are kept and reported.
 // Loaded before chat.js, which calls it; it reaches chat.js's globals (state, go, refresh,
@@ -233,6 +233,27 @@ const Actions = (() => {
     await remove([title], all.filter((i) => i.id === id), `会议“${title}”`);
   }
 
+  // ---- hand over --------------------------------------------------------------------------
+  // For a boss that can no longer call tools: the workspace waits until a new chat takes it over.
+  async function handOver(id) {
+    const answer = await ask({
+      title: `把工作区“${groupName(id)}”交给其他 boss？`,
+      body: [
+        h("p.act-note", {}, "工作区会标为待接手。然后在任意宿主开一个新聊天，请它接手这个工作区：接手后由新 boss 继续派活，原来的 boss 不能再在这里派活；还在跑的任务会跑完，结果留在历史里。"),
+        h("p.act-note", {}, "有新 boss 接手之前，原来的 boss 照常可用。"),
+      ],
+      buttons: [{ label: "取消" }, { label: "交给其他 boss", primary: true, value: "handover" }],
+    });
+    if (!answer) return;
+    try {
+      const data = await AN.post("/app/workspaces/handover", { group: id });
+      say(data.message || "已标为待接手", data.status !== "waiting");
+    } catch (error) {
+      say(`没有交接：${error.message}`, true);
+    }
+    await refresh();
+  }
+
   // ---- clean up quiet workspaces -----------------------------------------------------------
   async function cleanup() {
     let days = 30;
@@ -326,6 +347,7 @@ const Actions = (() => {
     openMenu(e, [
       { label: "打开", run: () => go(`/chat/${id}`) },
       g.title_id && { label: "改名…", run: () => rename(g.title_id, chatName(g), "工作区") },
+      !id.startsWith("c-") && g.handover !== "pending" && { label: "交给其他 boss 接手…", run: () => handOver(id) },
       { label: "删除工作区…", danger: true, run: () => removeGroups([id]) },
     ].filter(Boolean));
   }

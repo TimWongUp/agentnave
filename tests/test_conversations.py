@@ -1604,6 +1604,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
             "list",
             "list_members",
             "decide_answers",
+            "handover",
             "read_conversation",
         }
 
@@ -1957,6 +1958,65 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
 
 
 @pytest.mark.asyncio
+async def test_handover_moves_a_workspace_to_another_boss_chat(
+    data_root: Path, tmp_path: Path
+) -> None:
+    async with Client(mcp) as client:
+        show = await _open(
+            client,
+            {
+                "title": "Handover",
+                "manager_session_id": "chat-a",
+                "cwd": str(tmp_path),
+                "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+            },
+        )
+        group = show["group_id"]
+        await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "one", "manager_session_id": "chat-a"}))["round_id"])  # fmt: skip
+        workspace = _state(data_root, group)["manager_session"]
+        assert (await _call(client, "handover", {}))["waiting"] == []
+        released = await _call(
+            client,
+            "handover",
+            {"release": True, "note": "goal: ship", "manager_session_id": "chat-a"},
+        )
+        assert released["workspace_id"] == workspace
+        waiting = cast(list[dict[str, object]], (await _call(client, "handover", {}))["waiting"])
+        assert [(w["workspace_id"], w["note"], w["conversations"]) for w in waiting] == [
+            (workspace, "goal: ship", 1)
+        ]
+
+        claimed = await _call(
+            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+        )
+        assert claimed["status"] == "claimed" and claimed["note"] == "goal: ship"
+        listed = cast(list[dict[str, object]], claimed["conversations"])
+        assert [item["conversation_id"] for item in listed] == [group]
+        assert (await _call(client, "handover", {}))["waiting"] == []
+        # The new boss continues the show and adds to the same workspace.
+        await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "two", "manager_session_id": "chat-b"}))["round_id"])  # fmt: skip
+        task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        await _wait_task(client, task["invocation_id"])
+        assert _state(data_root, task["conversation_id"])["manager_session"] == workspace
+        refused = await client.call_tool(
+            "run_round", {"group_id": group, "prompt": "remark", "manager_session_id": "chat-a"}
+        )
+        assert refused.is_error and "handed its workspace" in str(refused.content)
+        # A boss that passes on a workspace it took over is refused too, not given a new one.
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
+        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
+        passed = await client.call_tool(
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
+
+
+@pytest.mark.asyncio
 async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
     tmp_path: Path, data_root: Path
 ) -> None:
@@ -2121,7 +2181,7 @@ async def test_app_limit_caps_cli_runs_across_tasks_and_seats(
 async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 8 and "list_profiles" not in tools
+        assert len(tools) == 9 and "list_profiles" not in tools
         annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
         assert (await _call(client, "list_members", {}))["configured"] is False
