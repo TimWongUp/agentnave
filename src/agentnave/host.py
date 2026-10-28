@@ -72,7 +72,7 @@ def session_file(host: Host, session_id: str | None) -> Path | None:
         return None
     try:
         found = _transcript(host, native_id)
-    except OSError:
+    except (OSError, ValueError, RuntimeError):  # as in session_model: an unknown home, a loop
         return None
     return None if found is None else found[0]
 
