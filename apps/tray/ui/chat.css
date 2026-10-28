@@ -184,7 +184,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood="failed"] .fig.no-sad { filter: grayscale(0.6); }
 [data-mood="sleep"] .fig { filter: saturate(0.8); }
 /* the ahoge swings about its root, wide enough to see at desk size: at rest it drifts and now and
-   then springs, it wags while working or speaking, flicks when done and droops asleep. It stays put
+   then springs, it wags while working or speaking, flicks when done and droops asleep. Leaning the
+   curl down onto the head creases it past about 10deg, so that side swings less. It stays put
    through a blink, unlike the idle frame under it; a walking figure steps its two tufts instead */
 .fig img.tuft { animation: tuft-boing calc(var(--cycle, 7s) / 2) ease-in-out var(--phase, 0s) infinite; }
 [data-mood="working"] .fig:not(.walk) img.tuft { --tilt: 16deg; animation: tuft-wag 0.35s ease-in-out var(--phase, 0s) infinite alternate; }
@@ -193,10 +194,10 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood="sleep"] .fig:not(.walk) img.tuft { --tilt: 4deg; animation: tuft-wag 4s ease-in-out var(--phase, 0s) infinite alternate; }
 @keyframes tuft-boing {
   0%, 100% { transform: rotate(-5deg); } 30% { transform: rotate(5deg); } 56% { transform: rotate(-5deg); }
-  62% { transform: rotate(28deg); } 69% { transform: rotate(-20deg); } 76% { transform: rotate(12deg); }
+  62% { transform: rotate(10deg); } 69% { transform: rotate(-20deg); } 76% { transform: rotate(6deg); }
   83% { transform: rotate(-7deg); } 90% { transform: rotate(2deg); }
 }
-@keyframes tuft-wag { from { transform: rotate(calc(-1 * var(--tilt))); } to { transform: rotate(var(--tilt)); } }
+@keyframes tuft-wag { from { transform: rotate(calc(-1 * var(--tilt))); } to { transform: rotate(calc(0.4 * var(--tilt))); } }
 /* cat ears flick outward now and then, the right one a beat after the left; they twitch while
    working and wag while speaking or done; the sleeping frame has no ear layers */
 .fig img.ear-l { --dir: -1; }
@@ -223,6 +224,27 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood="done"] .fig img.part:is(.wing-l, .wing-r) { --lift: 11deg; animation: wing-flap 0.2s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="sleep"] .fig img.part:is(.wing-l, .wing-r) { --lift: 3deg; animation: wing-flap 3s ease-in-out var(--phase, 0s) infinite alternate; }
 @keyframes wing-flap { from { transform: rotate(calc(var(--dir) * -0.3 * var(--lift))); } to { transform: rotate(calc(var(--dir) * var(--lift))); } }
+/* a doll pendant hangs from a hairpin and swings like a pendulum about its hook: a gentle sway at
+   rest, a quick small jiggle while working or speaking, a wide swing when done and almost still asleep */
+.fig img.pendant { --swing: 5deg; animation: pendant-swing 1.6s ease-in-out var(--phase, 0s) infinite alternate; }
+[data-mood="working"] .fig:not(.walk) img.pendant { --swing: 9deg; animation-duration: 0.45s; }
+[data-mood="speaking"] .fig:not(.walk) img.pendant { --swing: 9deg; animation-duration: 0.6s; }
+[data-mood="done"] .fig:not(.walk) img.pendant { --swing: 16deg; animation-duration: 0.3s; }
+[data-mood="sleep"] .fig:not(.walk) img.pendant { --swing: 2deg; animation-duration: 3s; }
+@keyframes pendant-swing { from { transform: rotate(calc(-1 * var(--swing))); } to { transform: rotate(var(--swing)); } }
+/* a starburst halo sits behind the head and turns about its centre, slowly at rest, faster at work
+   and when done, barely asleep. The rays below the shoulders would pass behind the spreading hair
+   and show cut in half, so a fan fixed to the frame keeps them to the upper arc: the mask turns back
+   as fast as the ring turns on. Walking frames have no halo layer */
+@property --spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.fig img.part.halo {
+  z-index: -1; --fan: conic-gradient(from calc(-1 * var(--spin)) at var(--ox) var(--oy), #000 0 92deg, transparent 112deg 248deg, #000 268deg);
+  -webkit-mask-image: var(--fan); mask-image: var(--fan); animation: halo-spin 40s linear var(--phase, 0s) infinite;
+}
+[data-mood="working"] .fig img.part.halo, [data-mood="speaking"] .fig img.part.halo { animation-duration: 12s; }
+[data-mood="done"] .fig img.part.halo { animation-duration: 4s; }
+[data-mood="sleep"] .fig img.part.halo { animation-duration: 120s; }
+@keyframes halo-spin { to { transform: rotate(360deg); --spin: 360deg; } }
 @keyframes fig-breathe { 50% { transform: scale(1.012, 1.02); } }
 @keyframes fig-squash { 0%, 88% { transform: none; } 90% { transform: scale(1.05, 0.93); } 93%, 98% { transform: none; } 99% { transform: scale(1.03, 0.96); } }
 @keyframes fig-show { 0% { opacity: 0; } 90% { opacity: 1; } 97% { opacity: 0; } }
@@ -286,10 +308,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .desk-tags { position: absolute; top: 7px; left: 8px; z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 46%; pointer-events: none; }
 .desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* the bubble sits in the card's top-right corner, above the figure like the tags opposite it */
-.desk > .say { top: 7px; right: 8px; max-width: 50%; }
-/* the bubble may overlap the empty air above the boss's head */
+.desk > .say, .boss-mid > .say { top: 7px; right: 8px; max-width: 50%; }
 .boss-mid { position: relative; padding-top: 8px; }
-.boss-mid > .say { top: 0; left: 50%; right: auto; transform: translateX(-50%); max-width: 100%; }
 /* the scene fills its card, so figure and desk grow and shrink together with the row; the 170px
    minimum card keeps them at least the size of --fig */
 .desk > .scene { width: 100%; max-width: none; }
