@@ -97,6 +97,9 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
     elif host.name == "pi":
         root = _home("PI_CODING_AGENT_DIR", ".pi/agent") / "sessions"
         pattern, marker = f"*/*_{native_id}.jsonl", b'"assistant"'
+    elif host.name == "codebuddy":
+        root = _home("CODEBUDDY_CONFIG_DIR", ".codebuddy") / "projects"
+        pattern, marker = f"*/{native_id}.jsonl", b'"assistant"'
     elif host.name == "grok":
         root = _home("GROK_HOME", ".grok") / "sessions"
         pattern, marker = f"*/{native_id}/chat_history.jsonl", b'"model_id"'
@@ -116,9 +119,14 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
             continue
         # Grok's chat history carries no timestamps; its entries are this session's own turns.
         if host.name != "grok":
+            raw = event.get("timestamp")
             try:
-                stamp = datetime.fromisoformat(str(event.get("timestamp", "")))
-            except ValueError:
+                # CodeBuddy stamps lines in epoch milliseconds, the others in ISO 8601.
+                if isinstance(raw, int) and not isinstance(raw, bool):
+                    stamp = datetime.fromtimestamp(raw / 1000, UTC)
+                else:
+                    stamp = datetime.fromisoformat(str(raw or ""))
+            except (ValueError, OverflowError, OSError):
                 continue
             if stamp.tzinfo is None or stamp > cutoff:
                 continue
@@ -130,6 +138,9 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
                 value = object_dict(event.get("payload")).get("model")
         elif host.name == "claude":
             value = model_from_event("claude", event)
+        elif host.name == "codebuddy":
+            if event.get("role") == "assistant":
+                value = object_dict(event.get("providerData")).get("model")
         elif host.name == "pi":
             value = model_from_event("pi", {"type": "message_end", "message": event.get("message")})
         elif event.get("type") == "assistant":

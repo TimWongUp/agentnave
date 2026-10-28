@@ -104,6 +104,12 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
         )
     )
     assert session_model(Host("pi"), session) == "glm"
+    monkeypatch.setenv("CODEBUDDY_CONFIG_DIR", str(tmp_path / "codebuddy"))
+    buddy = tmp_path / "codebuddy" / "projects" / "project" / f"{session}.jsonl"
+    buddy.parent.mkdir(parents=True)
+    line = {"type": "message", "role": "assistant", "timestamp": 1767225600000}
+    buddy.write_text(json.dumps(line | {"providerData": {"model": "glm-5.3-flash"}}))
+    assert session_model(Host("codebuddy"), session) == "glm-5.3-flash"
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
     grok = tmp_path / "grok" / "sessions" / "%2Fproject" / session / "chat_history.jsonl"
     grok.parent.mkdir(parents=True)
