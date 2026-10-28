@@ -90,6 +90,9 @@ class TaskStart(NamedTuple):
 
 
 _MAX_FORWARD = 20
+# A round end no wait has returned holds off a server swap this long, as long as finished
+# invocation handles last.
+_UNRECEIVED_ROUND_SECONDS = 7 * 24 * 60 * 60
 
 
 class ForwardError(ValueError):
@@ -680,8 +683,19 @@ class Conversations(Groups):
         return tasks, [round_.id for round_ in pending]
 
     def restart_safe(self) -> bool:
-        """A held record may still own a review or a result that could not be saved."""
-        return not self._unsaved and all(record.lock is None for record in self.records.values())
+        """A held record may still own a review or a result that could not be saved, and a new
+        server does not know the id of a round whose end no wait has returned yet."""
+        cutoff = time.monotonic() - _UNRECEIVED_ROUND_SECONDS
+        return (
+            not self._unsaved
+            and all(record.lock is None for record in self.records.values())
+            and not any(
+                round_.finished_at is not None
+                and round_.finished_at > cutoff
+                and round_id not in self.delivered_rounds
+                for round_id, round_ in {**self._completed_rounds, **self._rounds}.items()
+            )
+        )
 
     # Forwards
 
