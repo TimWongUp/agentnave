@@ -9,7 +9,7 @@
 - `logo-default.svg`：没有专属标志的 CLI 在笔记本盖子上使用的默认终端标志。
 - `cli/<provider>.svg`：各 CLI 的标志，用在笔记本盖子、boss 工位和 CLI 徽章上，取自 LobeHub 开源图标库 `@lobehub/icons-static-svg@1.100.0`（MIT，商标归各自所有者），未改动：claude ← `claudecode-color.svg`、codex ← `codex-color.svg`、codebuddy ← `codebuddy-color.svg`、antigravity ← `antigravity-color.svg`、grok ← `grok.svg`、pi ← `pi.svg`、deepseek ← `deepseek-color.svg`（库里没有 Grok CLI 与 DeepSeek Harness 专属标志，用厂商标志）。小人形象与模型头像按模型家族对应，不用 CLI 标志。
 
-角色按模型家族区分：claude、codex（GPT）、deepseek、gemini、glm、grok、qwen、kimi、minimax、hunyuan、doubao、muse；没有专属形象的模型使用 `default`（「新同事」）。状态共 7 个：idle、blink、working、speaking、review、done、sleep。另有 3 个可选帧：`sad`（上次失败）、`walk-1`、`walk-2`（去会议室时的正面走路两帧，鞋底与坐姿对齐），只放 `s/` 与 `m/`；缺少时失败显示灰度 idle，走路改为坐姿滑行。7 个角色都已画了可选帧；idle、blink、sleep 也一并重画为看不到手（揣进口袋或缩进袖口），桌上只放合上的笔记本。
+角色按模型家族区分：claude、codex（GPT）、deepseek、gemini、glm、grok、qwen、kimi、minimax、hunyuan、doubao、muse；没有专属形象的模型使用 `default`（「新同事」）。状态共 7 个：idle、blink、working、speaking、review、done、sleep。另有 3 个可选帧：`sad`（上次失败）、`walk-1`、`walk-2`（去会议室时的正面走路两帧，鞋底与坐姿对齐），只放 `s/` 与 `m/`；缺少时失败显示灰度 idle，走路改为坐姿滑行。12 个角色都已画了可选帧；idle、blink、sleep 也一并重画为看不到手（揣进口袋或缩进袖口），桌上只放合上的笔记本。
 
 Claude、Grok、Gemini 三套立绘于 2026 年 10 月重绘：Claude 是抱着小螃蟹的橙发少女（螃蟹只在待机与眨眼帧出现），Grok 是戴蝙蝠发饰的金发哥特少女（同月再修：双马尾剪到胸口、紫色瞳孔，加两节恶魔尾巴 `devil-tail` 与 `devil-tail-tip`，尾尖带紫），Gemini 是猫娘。它们会动的部位另存为图层，只放 `s/` 与 `m/`：`<部件>-<状态>.webp`，部件为呆毛 `tuft` 或猫耳 `ear-l`、`ear-r`（猫娘的 sleep 帧歪头、一只耳朵下垂，不拆耳朵）。对应状态帧里挖去了这些部位：呆毛整根挖去，部件图层在根部多带几行头发；猫耳只挖去摆动幅度大的耳尖，靠近转轴和头顶的部分留在原帧上，转动时都不露空；blink 帧与 idle 共用 idle 的部件。`parts.json` 按角色、部件、状态记录转轴位置（占画面宽高的百分比），前端把部件叠在同状态帧上，绕转轴摆动。没有部件图层的角色与设置里替换的小人套装照旧显示整张帧。
 
