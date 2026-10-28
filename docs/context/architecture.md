@@ -16,7 +16,7 @@ AgentNave 只拥有：
 - 在 MCP server 生命周期内保存 Invocation 句柄；
 - 在 Manager 显式创建的协作组内，按名单并联或串联运行轮次，只在进程内存中保存各席最终回答与原生会话游标。
 
-发行包只保留 `agentnave`，唯一入口 `agentnave-mcp` 提供 8 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)）。普通任务与协作组均保存历史，包含可选审核、主持人发言、隔离席位和按需只读看板；App 负责安装接入、配置、展示与清理。不再提供无历史模式，数据根和既有会话格式沿用，见 [ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)。
+发行包只保留 `agentnave`，唯一入口 `agentnave-mcp` 提供 9 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)，`handover` 见 ADR-0033）。普通任务与协作组均保存历史，包含可选审核、主持人发言、隔离席位和按需只读看板；App 负责安装接入、配置、展示与清理。不再提供无历史模式，数据根和既有会话格式沿用，见 [ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)。
 
 AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、工作树、保留策略或 TUI；编排偏好属于用户的宿主全局规则，AgentNave 只在 App 中给出模板与文件入口，不写入。托盘应用展示会话数据，并可在原生锁保护下改名与清理会话记录，见 [ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md) 与 [ADR-0012](../adr/0012-tray-conversation-cleanup.md)。
 
@@ -62,7 +62,7 @@ macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环�
 
 内部归一化结果字段为 `status`、`provider`、`output`、`session_id`、`provider_usage`、`duration_ms` 和 `error`；`provider_usage` 只保留 Provider 可用的 `num_turns` 与 `total_cost_usd`，不转发 token、cache 或 model 明细。Provider 正常返回业务失败仍是完整的 Invocation Result；取消、失败或超限而没有最终回答时，`output` 保留运行中最后的公开回复尾部（最多 1000 字符），不代表完成。CLI 报告成功的运行保持 `succeeded`：Claude／CodeBuddy 途中被拒的工具调用只在运行中作为阻塞提醒，不改写成功终态。Provider 缺失、无法启动或平台不受支持也会形成带 `launch_error` 的结构化失败结果，以便 Manager 读取。
 
-STDIO MCP 是任务与协作的唯一控制接口，工具为 `start_agent`、`wait`、`cancel`、`list`、`list_members`、`run_round`、`decide_answers` 与 `read_conversation`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。`wait` 与 `cancel` 同时接受任务 `invocation_id` 与轮次 `round_id`。中继空闲探测使用的 `list_invocations` 仍可调用，但不出现在工具列表中。全部 Tool 都发布输入与输出 JSON Schema，输入 Schema 声明 `additionalProperties: false`，未列出的参数整批拒绝、不静默丢弃；结构化结果另以去掉空值的紧凑 JSON 文本返回，不重复缩进与 null 字段；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 并显式传 `session_id` 完成。
+STDIO MCP 是任务与协作的唯一控制接口，工具为 `start_agent`、`wait`、`cancel`、`list`、`list_members`、`run_round`、`decide_answers`、`handover` 与 `read_conversation`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。`wait` 与 `cancel` 同时接受任务 `invocation_id` 与轮次 `round_id`。中继空闲探测使用的 `list_invocations` 仍可调用，但不出现在工具列表中。全部 Tool 都发布输入与输出 JSON Schema，输入 Schema 声明 `additionalProperties: false`，未列出的参数整批拒绝、不静默丢弃；结构化结果另以去掉空值的紧凑 JSON 文本返回，不重复缩进与 null 字段；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 并显式传 `session_id` 完成。
 
 启动回复另含 provider、model、effort 与 `defaults_applied`，不重复 prompt。model 与 effort 回显套用默认值后的请求值，仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。新开节目的 `run_round` 每席另返回 model、effort（未传且无默认时省略）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
 

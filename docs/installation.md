@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.51.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.52.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.51.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.52.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -441,7 +441,7 @@ not as part of a release. Keep the installed runtime's stable launcher registrat
 
 boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `list_members(provider=...)` 核对该 CLI 的允许状态与参数。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 8 个。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 9 个。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
@@ -450,7 +450,7 @@ After registration or upgrade:
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
    visible (9 total).
    Confirm the host also discovers `agentnave-manager` in the intended
-   scope and can read its five referenced CLI files. Check for older user/project copies that
+   scope and can read its seven referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.
@@ -508,22 +508,22 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.50.1 to v0.51.0
+### Upgrading from v0.51.0 to v0.52.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.51.0 directory. Dispatched CLIs now run with a
-permission tier: "auto" by default (each CLI's own automatic approval reviewer; CodeBuddy and
-DeepSeek, which have none usable unattended, get full access), or "full" when chosen per CLI in the
-App's settings. Tiers live in a new `permissions.json`; no file means every CLI runs "auto", so
-CLIs that used to keep their native permissions now get the tier after upgrading. Permission
-options saved on individual models in `members.json` are replaced by the tier. A caller's explicit
-permission options still take precedence. Codex gains `approve_for_me`, and terminal results gain
-an optional `warnings` field when Claude Code or CodeBuddy report success after denying a tool
-call. Reconnect MCP to see the updated tool descriptions; history and `settings.json` need no
-migration. Upgrading from v0.49.0 or earlier also brings the v0.50.0 changes; see
+`agentnave-manager` Skill with its complete v0.52.0 directory. This release adds a ninth tool,
+`handover`, which hands a boss chat's whole workspace to another boss chat; reconnect MCP to see it
+and the updated tool descriptions. The conversation database gains the `workspaces` and
+`former_bosses` tables on first open (its `user_version` stays 1), so no migration step is needed;
+older servers ignore them and do not recognize handovers. Claude Code bosses that omit
+`manager_session_id` now fall back to `CLAUDE_CODE_SESSION_ID`, and the boss model is read from more
+hosts' native sessions. A shared native session is now locked across servers while it runs, so a
+seat and a private task can no longer resume it at once. Upgrading from v0.50.1 or earlier also
+brings the v0.51.0 permission tiers; see [v0.51.0 release notes](releases/v0.51.0.md). Upgrading
+from v0.49.0 or earlier also brings the v0.50.0 changes; see
 [v0.50.0 release notes](releases/v0.50.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
 CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.51.0 release notes](releases/v0.51.0.md).
+[v0.46.0 release notes](releases/v0.46.0.md). See [v0.52.0 release notes](releases/v0.52.0.md).
 
 ## Uninstall
 
