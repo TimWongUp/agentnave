@@ -7,7 +7,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 本 Skill 只讲调用方式；参数细节以连接中的实时 schema 和工具说明为准。任务选择、规划、分工、审核、综合、重试和 worktree 由主 Agent 决定；用户若有固定的编排偏好，写在宿主的全局规则里，按那里执行。
 
-编排单向：boss 是宿主里的 Agent，由 boss 自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，服务端也对它们禁用编排工具，无例外。
+编排单向：boss 是宿主里的 Agent，由 boss 自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具，只靠派发指令约束，服务端不禁用工具。
 
 优先使用当前宿主的 AgentNave MCP，用户指定其他路线时遵从。工具不可用、CLI 被排除或连接里仍是旧版工具（如 `wait_agent`、`open_group`）时，报告具体限制并要求更新服务和重连，不静默换 Provider、调用路线或源码服务，不由 boss 复制答案模拟协作；Skill 更新不等于运行时升级。
 
@@ -109,6 +109,6 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 2. `wait(ids)` 每次最多等 5 分钟（`wait_seconds` 可缩短，`0` 只看一眼不阻塞），任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。
 4. 运行中 `output` 只是最新公开正文尾部（最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。
-5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；`succeeded` 不证明用户目标完成，须核对命令、产物或检查。
+5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；会议每席全文每轮只给一次，再看用 `read_conversation`。`succeeded` 不证明目标完成，须核对命令、产物或检查。
 
 正文有待确认问题时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。`cancel` 返回终态，不撤销已发生的副作用；活跃调用不能追加消息，要纠偏或补充就 `cancel`，回执带 `session_id` 时用它续接（没有就重新交接），prompt 写明：上一轮已被打断；已执行的命令和改动不要重跑，先核对现状；先交出已有结论和进展，再按新要求继续。换 CLI 或开新线程时重新交接，不假定旧历史可见。

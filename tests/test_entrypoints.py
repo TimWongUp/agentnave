@@ -278,7 +278,8 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
         compact = _first(status_only, "rounds")
         assert all("output" not in seat for seat in cast(list[dict[str, object]], compact["seats"]))
         reread = await client.call_tool("wait", {"ids": [started_payload["round_id"]]})
-        assert _first(reread, "rounds") == payload
+        seats = cast(list[dict[str, object]], _first(reread, "rounds")["seats"])
+        assert all("output" not in seat and seat["output_returned"] is True for seat in seats)
         # The text content is the structured result, compact and without empty fields.
         text = reread.content[0]
         assert isinstance(text, TextContent) and "null" not in text.text and "\n" not in text.text
