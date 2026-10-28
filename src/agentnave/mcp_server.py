@@ -204,10 +204,17 @@ class InvocationPayload(TypedDict):
     message_id: NotRequired[str]  # terminal saved task, referencable by forward
 
 
+class UnreceivedPayload(TypedDict):
+    id: str
+    kind: Literal["task", "round"]
+    status: str  # a task's end status; a round's finished, failed, cancelled or review_needed
+
+
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: str | None  # the tier this call declared; recorded only, never enforced
     warnings: NotRequired[list[str]]
+    unreceived: NotRequired[list[UnreceivedPayload]]
 
 
 class InvocationListItem(TypedDict):
@@ -322,6 +329,7 @@ class ShowRunPayload(TypedDict):
     members: NotRequired[list[GroupSeatPayload]]  # only when this call opened the show
     entries: NotRequired[list[CommittedEntryPayload]]  # a host remark posted without seats
     round: NotRequired[RoundPayload]
+    unreceived: NotRequired[list[UnreceivedPayload]]
 
 
 class ConversationSummary(TypedDict):
@@ -575,6 +583,32 @@ def _unknown_handle(handle: str) -> ToolError:
     )
 
 
+def _unreceived(
+    conversations: Conversations, manager_session_id: str | None
+) -> list[UnreceivedPayload]:
+    """Ended tasks and rounds whose end no wait or cancel has returned yet. A dispatch reply
+    lists them so a boss busy with other work still learns of them; wait receives them."""
+    tasks, rounds = conversations.inbox(manager_session_id)
+    ended = {
+        listing.invocation_id: listing.status.value
+        for listing in conversations.manager.list_invocations()
+        if listing.status is not None
+    }
+    found: list[UnreceivedPayload] = [
+        {"id": handle, "kind": "task", "status": ended[handle]}
+        for handle in tasks
+        if handle in ended
+    ]
+    for handle in rounds:
+        round_ = conversations.round(handle)
+        if "pending" in conversations.reviews.get(handle, {}).values():
+            found.append({"id": handle, "kind": "round", "status": "review_needed"})
+        elif round_.finished:
+            status = "failed" if round_.error else "cancelled" if round_.cancelling else "finished"
+            found.append({"id": handle, "kind": "round", "status": status})
+    return found
+
+
 @mcp.tool(
     title="Run a task with a local AI CLI",
     annotations=ToolAnnotations(
@@ -666,6 +700,10 @@ async def start_agent(
 ) -> TaskStartPayload:
     """Start one private CLI task and return its invocation_id; use wait for the result.
 
+    Ends are never pushed: call wait right after starting and keep one pending until the
+    result arrives, even while doing other work. unreceived lists your tasks and rounds that
+    ended (or await review) but no wait or cancel has returned yet.
+
     The reply reports the requested model/effort, not the CLI's effective settings;
     defaults_applied lists App defaults, other omitted settings inherit the native CLI.
     Each task starts a new native thread unless session_id continues one; a resumed native
@@ -729,6 +767,9 @@ async def start_agent(
                 f"{len(sharing)} other CLI run(s) active in this cwd ({', '.join(sharing)}); "
                 "parallel writers need separate worktrees. Declare access=read for read-only work."
             ]
+    unreceived = _unreceived(_conversations(ctx), manager_session_id)
+    if unreceived:
+        payload["unreceived"] = unreceived
     return payload
 
 
@@ -1376,8 +1417,9 @@ async def run_round(
     native session across rounds and restarts. Shows follow discussion member limits, not
     host exclusions. A started round returns at once: use wait with its round_id. Private
     instructions go only to their seat; with review=true each answer waits for decide_answers.
-    entries lists the round's committed entries with message ids. Isolation restricts tools;
-    it is not an OS sandbox.
+    entries lists the round's committed entries with message ids. unreceived lists your tasks
+    and rounds that ended (or await review) but no wait or cancel has returned yet. Isolation
+    restricts tools; it is not an OS sandbox.
     """
     conversations = _conversations(ctx)
     new = group_id is None
@@ -1457,6 +1499,9 @@ async def run_round(
         reviews=_review_map(conversations, round_),
         entries=conversations.committed_entries(group_id, round_.number),
     )
+    unreceived = _unreceived(conversations, manager_session_id)
+    if unreceived:
+        payload["unreceived"] = unreceived
     return payload
 
 

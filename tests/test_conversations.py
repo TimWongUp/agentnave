@@ -463,6 +463,34 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_dispatch_reply_lists_ends_no_wait_has_received(tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        start = {"provider": "claude", "cwd": str(tmp_path), "manager_session_id": "u"}
+        quick = await _call(client, "start_agent", {**start, "prompt": "hi"})
+        while True:  # let it end without receiving it
+            listed = await _call(client, "list", {})
+            items = cast(list[dict[str, object]], listed["invocations"])
+            if any(
+                item["invocation_id"] == quick["invocation_id"] and item["status"] != "running"
+                for item in items
+            ):
+                break
+            await asyncio.sleep(0.05)
+        sleeping = await _call(
+            client, "start_agent", {**start, "prompt": "Private instruction for you only:\nSLEEP"}
+        )
+        assert sleeping["unreceived"] == [
+            {"id": quick["invocation_id"], "kind": "task", "status": "succeeded"}
+        ]
+        await _call(client, "wait", {"ids": [quick["invocation_id"]]})
+        # Received now; the running task is not listed either.
+        later = await _call(client, "start_agent", {**start, "prompt": "SLEEP"})
+        assert "unreceived" not in later
+        for handle in (sleeping, later):
+            await _cancel(client, handle["invocation_id"])
+
+
+@pytest.mark.asyncio
 async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: Path) -> None:
     async with Client(mcp) as client:
         show = await _open(
