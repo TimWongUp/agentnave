@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.51.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.52.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.51.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.52.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -508,22 +508,22 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.50.1 to v0.51.0
+### Upgrading from v0.51.0 to v0.52.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.51.0 directory. Dispatched CLIs now run with a
-permission tier: "auto" by default (each CLI's own automatic approval reviewer; CodeBuddy and
-DeepSeek, which have none usable unattended, get full access), or "full" when chosen per CLI in the
-App's settings. Tiers live in a new `permissions.json`; no file means every CLI runs "auto", so
-CLIs that used to keep their native permissions now get the tier after upgrading. Permission
-options saved on individual models in `members.json` are replaced by the tier. A caller's explicit
-permission options still take precedence. Codex gains `approve_for_me`, and terminal results gain
-an optional `warnings` field when Claude Code or CodeBuddy report success after denying a tool
-call. Reconnect MCP to see the updated tool descriptions; history and `settings.json` need no
-migration. Upgrading from v0.49.0 or earlier also brings the v0.50.0 changes; see
+`agentnave-manager` Skill with its complete v0.52.0 directory. This release adds a ninth tool,
+`handover`, which hands a boss chat's whole workspace to another boss chat; reconnect MCP to see it
+and the updated tool descriptions. The conversation database gains the `workspaces` and
+`former_bosses` tables on first open (its `user_version` stays 1), so no migration step is needed;
+older servers ignore them and do not recognize handovers. Claude Code bosses that omit
+`manager_session_id` now fall back to `CLAUDE_CODE_SESSION_ID`, and the boss model is read from more
+hosts' native sessions. A shared native session is now locked across servers while it runs, so a
+seat and a private task can no longer resume it at once. Upgrading from v0.50.1 or earlier also
+brings the v0.51.0 permission tiers; see [v0.51.0 release notes](releases/v0.51.0.md). Upgrading
+from v0.49.0 or earlier also brings the v0.50.0 changes; see
 [v0.50.0 release notes](releases/v0.50.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
 CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.51.0 release notes](releases/v0.51.0.md).
+[v0.46.0 release notes](releases/v0.46.0.md). See [v0.52.0 release notes](releases/v0.52.0.md).
 
 ## Uninstall
 
