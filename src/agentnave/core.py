@@ -600,6 +600,7 @@ class InvocationManager:
                 parsed.usage,
                 _duration_ms(started),
                 parsed_error,
+                warnings=parsed.warnings,
             )
         except (OSError, ValueError) as exc:
             return InvocationResult(

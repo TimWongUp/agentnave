@@ -9,8 +9,10 @@
 AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI,
 Grok CLI, Pi Coding Agent, or DeepSeek Harness as subagents, one at a time or as a group answering in parallel or
 serial rounds. Each provider keeps its native authentication,
-configuration, permissions, and session model; AgentNave supplies the adapter and process
-supervision around it.
+configuration, and session model; AgentNave supplies the adapter and process supervision around
+it. Dispatched CLIs cannot ask anyone for approval, so by default AgentNave runs each one with its
+own automatic approval reviewer, or without approvals where a CLI has no such reviewer; the App
+can switch a CLI to full access.
 
 The boundary is intentional. AgentNave does not plan tasks, assign roles, build DAGs, choose
 parallelism, review results, synthesize answers, retry work, or manage worktrees. Those decisions

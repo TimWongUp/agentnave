@@ -79,6 +79,7 @@ class CodexAdapter:
         "model",
         "effort",
         "skip_git_repo_check",
+        "approve_for_me",
         "dangerously_bypass_approvals_and_sandbox",
         "sandbox",
     }
@@ -88,6 +89,15 @@ class CodexAdapter:
         unknown = sorted(set(request.provider_options) - self._options)
         if unknown:
             raise ValueError(f"unsupported codex options: {', '.join(unknown)}")
+        # approve_for_me brings its own approvals and sandbox; mixing would depend on order.
+        if request.provider_options.get("approve_for_me") is True and (
+            "sandbox" in request.provider_options
+            or request.provider_options.get("dangerously_bypass_approvals_and_sandbox") is True
+        ):
+            raise ValueError(
+                "codex approve_for_me cannot be combined with sandbox or "
+                "dangerously_bypass_approvals_and_sandbox"
+            )
 
         argv: list[str] = []
         for key, value in request.provider_options.items():
@@ -102,6 +112,14 @@ class CodexAdapter:
                 argv.extend(("--config", f'sandbox_mode="{value}"'))
             elif not isinstance(value, bool):
                 raise ValueError(f"codex option {key} must be a boolean")
+            elif value and key == "approve_for_me" and request.session_id is not None:
+                # `exec resume` has no --approve-for-me; these are the settings it applies.
+                for setting in (
+                    'approval_policy="on-request"',
+                    'approvals_reviewer="auto_review"',
+                    'sandbox_mode="workspace-write"',
+                ):
+                    argv.extend(("--config", setting))
             elif value:
                 argv.append("--" + key.replace("_", "-"))
 

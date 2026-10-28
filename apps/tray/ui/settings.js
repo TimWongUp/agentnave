@@ -108,7 +108,9 @@ let probedAt = 0;
 let documentError = null;
 let reviewSeats = {}; // review.json seats; saved on their own, apart from members.json.
 let reviewError = null;
-let reviewSaves = 0; // Seats saved so far; a probe answered before a save carries old seats.
+let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "auto".
+let permissionsError = null;
+let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let missingOpen = false; // The folded list of CLIs not installed here
@@ -130,6 +132,7 @@ const isMock = new URLSearchParams(location.search).has("mock");
 // 3. Override tri-state example.
 const mockMembersData = {
   review: { version: 1, seats: {} },
+  permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
   document: {
     version: 1,
     clis: {
@@ -277,6 +280,88 @@ async function apiPostReview(doc) {
 function takeReview(data) {
   reviewSeats = data.review?.seats || {};
   reviewError = data.review_error || null;
+  permissionTiers = data.permissions?.clis || null;
+  permissionsError = data.permissions_error || null;
+}
+
+async function apiPostPermissions(doc) {
+  if (isMock) {
+    mockMembersData.permissions = JSON.parse(JSON.stringify(doc));
+    return;
+  }
+  const res = await fetch("/app/permissions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+    body: JSON.stringify(doc),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+}
+
+// What each tier means for each CLI when a task runs unattended; the server maps the tier to
+// that CLI's own options, "auto" unless the user picked "full". Pi has no approval step.
+const TIERS = [["auto", "自动"], ["full", "完全放开"]];
+const TIER_TEXT = {
+  auto: {
+    any: "CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。",
+    codex: "Codex 自动审核放行命令，读写限在工作目录内。",
+    codebuddy: "CodeBuddy 的自动模式在派发时连查看目录都会拒绝，所以这一档与「完全放开」相同。",
+    deepseek: "DeepSeek 没有自动审核，所以这一档与「完全放开」相同。",
+  },
+  full: {
+    any: "不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。",
+    codex: "不审核也不进沙箱，直接执行任何命令和改动。只在你信任派给它的任务时选。",
+  },
+};
+
+function permissionTier(provider) {
+  return permissionTiers?.[provider] || "auto";
+}
+
+async function setPermissionTier(provider, tier) {
+  if (permissionsError) return showNotice(`${permissionsError}；请先修复或删除这个文件`, true);
+  if (busy) return showNotice("正在保存，请稍后再选", true);
+  const clis = { ...(permissionTiers || {}), [provider]: tier };
+  busy = true;
+  updateControls();
+  try {
+    await apiPostPermissions({ version: 1, clis });
+    permissionTiers = clis;
+    reviewSaves += 1;
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后派发的任务和新开的会议生效`);
+  } catch (err) {
+    showNotice(`权限保存失败: ${err.message}`, true);
+  } finally {
+    busy = false;
+    updateControls();
+  }
+  renderCards();
+}
+
+function renderPermission(provider) {
+  if (provider === "pi") {
+    return el("div", { className: "cli-permission" },
+      el("p", { className: "cli-permission-text" }, "权限：Pi 没有审批步骤，工具总是直接执行，不需要设置。"));
+  }
+  const tier = permissionTier(provider);
+  const name = PROVIDER_NAMES[provider];
+  return el("div", { className: "cli-permission" },
+    el("div", { className: "cli-permission-head" },
+      el("span", { className: "cli-permission-label" }, "派发时的权限"),
+      el("div", { className: "segment-control", role: "radiogroup", "aria-label": `${name} 派发时的权限` },
+        TIERS.map(([value, label]) => el("button", {
+          type: "button",
+          role: "radio",
+          className: `segment-btn${value === tier ? " active" : ""}`,
+          "aria-checked": String(value === tier),
+          dataset: { focusKey: `${provider}/tier/${value}` },
+          disabled: Boolean(permissionsError),
+          onClick: () => value !== tier && setPermissionTier(provider, value),
+        }, label)))),
+    el("p", { className: "cli-permission-text" },
+      permissionsError
+        ? `${permissionsError}。修复或删除这个文件之前，派发会被拒绝。`
+        : `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 私聊和新开的会议都按这一档，选完立即保存。`));
 }
 
 async function apiPostMembers(doc) {
@@ -1120,13 +1205,18 @@ function cardSummary(provider, isEnabled, modeRestricted, info) {
   if (!modeRestricted) {
     const detectedCount = info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
     const kept = defaultModel(provider);
-    return [detectedCount, fallbackText(provider)].filter(Boolean).join(" · ");
+    return [detectedCount, fallbackText(provider), tierSummary(provider)].filter(Boolean).join(" · ");
   }
   if (!isEnabled) return "当前场景未启用";
   const conf = currentDoc.modes[currentMode]?.[provider] || {};
   const models = Array.isArray(conf.models) ? conf.models : [];
   const scope = models.length === 0 ? "不限模型" : `${models.length} 个模型`;
-  return `${scope} · ${fallbackText(provider)}`;
+  return [scope, fallbackText(provider), tierSummary(provider)].filter(Boolean).join(" · ");
+}
+
+function tierSummary(provider) {
+  if (provider === "pi") return "";
+  return `权限：${TIERS.find(([t]) => t === permissionTier(provider))[1]}`;
 }
 
 function renderCards() {
@@ -1241,6 +1331,7 @@ function renderCards() {
       }
       card.appendChild(metaRow);
     }
+    card.appendChild(renderPermission(provider));
 
     // Body
     const body = el("div", {
@@ -1589,7 +1680,9 @@ async function refreshDetection(quiet = false) {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
+    const tiersBefore = JSON.stringify([permissionTiers, permissionsError]);
     if (!busy && reviewSaves === seatsBefore) takeReview(data);
+    const tiersChanged = JSON.stringify([permissionTiers, permissionsError]) !== tiersBefore;
     // Without unsaved edits, or a save while probing, take the file as read too.
     // An unchanged file keeps the current objects, which the rendered cards still edit.
     const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
@@ -1607,7 +1700,7 @@ async function refreshDetection(quiet = false) {
     if (!quiet) showNotice("检测结果已刷新");
     else if (changed && currentTab === "members") showNotice("检测到工具或模型列表有变化，已自动刷新");
     // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
-    if (!quiet || changed || reloaded) renderCards();
+    if (!quiet || changed || reloaded || tiersChanged) renderCards();
   } catch (err) {
     if (!quiet) showNotice(`刷新检测失败: ${err.message}`, true);
   } finally {

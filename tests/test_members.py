@@ -9,9 +9,12 @@ from pydantic import ValidationError
 from agentnave.members import (
     MemberFile,
     MemberFileError,
+    PermissionFile,
+    PermissionFileError,
     ProviderExcludedError,
     apply_member,
     read_members,
+    read_permissions,
 )
 
 
@@ -83,15 +86,16 @@ def test_member_structure_references_and_effective_overrides() -> None:
             MemberFile.model_validate_json(json.dumps(value))
 
 
-def test_missing_members_leave_parameters_native_and_ignore_legacy_profiles(
+def test_missing_members_apply_only_the_default_tier_and_ignore_legacy_profiles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
     assert read_members() is None and not root.exists()
+    # Without any App file only the default "auto" permission tier applies.
     assert apply_member(None, "task", "claude", {"model": "explicit"}, frozenset()) == (
-        {"model": "explicit"},
-        [],
+        {"model": "explicit", "permission_mode": "auto"},
+        ["permission_mode"],
     )
     with pytest.raises(ValueError, match="excluded"):
         apply_member(None, "task", "claude", {}, frozenset({"claude"}))
@@ -160,17 +164,17 @@ def test_without_a_model_the_cli_default_model_keeps_its_saved_settings(
             "modes": {},
         }
     )
-    assert apply_member(document, "task", "grok", {}, frozenset()) == ({}, [])
+    assert document.apply("task", "grok", {}, frozenset()) == ({}, [])
     (tmp_path / "cli-defaults.json").write_text(
         json.dumps({"version": 1, "clis": {"grok": {"model": "grok-4.7", "effort": "high"}}}),
         encoding="utf-8",
     )
     # The model stays the CLI's choice; only the settings saved for it are applied.
-    assert apply_member(document, "task", "grok", {}, frozenset()) == (
+    assert document.apply("task", "grok", {}, frozenset()) == (
         {"effort": "low", "x": 1},
         ["effort", "x"],
     )
-    assert apply_member(document, "task", "grok", {"model": "grok-4.6"}, frozenset()) == (
+    assert document.apply("task", "grok", {"model": "grok-4.6"}, frozenset()) == (
         {"model": "grok-4.6"},
         [],
     )
@@ -192,21 +196,21 @@ def test_cached_native_model_does_not_transfer_execution_permissions(
         json.dumps({"version": 1, "clis": {"codex": {"model": "cached-A"}}}), encoding="utf-8"
     )
     # The CLI may now use model B. A cache entry cannot transfer A's execution authority.
-    assert apply_member(document, "task", "codex", {}, frozenset()) == (
+    assert document.apply("task", "codex", {}, frozenset()) == (
         {"effort": "high"},
         ["effort"],
     )
-    assert apply_member(document, "task", "codex", {"sandbox": "workspace-write"}, frozenset()) == (
+    assert document.apply("task", "codex", {"sandbox": "workspace-write"}, frozenset()) == (
         {"sandbox": "workspace-write", "effort": "high"},
         ["effort"],
     )
     explicit = {"model": "cached-A", "effort": "high", **permissions}
-    assert apply_member(document, "task", "codex", {"model": "cached-A"}, frozenset()) == (
+    assert document.apply("task", "codex", {"model": "cached-A"}, frozenset()) == (
         explicit,
         ["effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
     )
     document.defaults = {"task": {"codex": "cached-A"}}
-    assert apply_member(document, "task", "codex", {}, frozenset()) == (
+    assert document.apply("task", "codex", {}, frozenset()) == (
         explicit,
         ["model", "effort", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
     )
@@ -226,4 +230,66 @@ def test_cached_native_model_does_not_transfer_execution_permissions(
     (tmp_path / "cli-defaults.json").write_text(
         json.dumps({"clis": {"antigravity": {"model": "cached-A"}}}), encoding="utf-8"
     )
-    assert apply_member(document, "task", "antigravity", {}, frozenset()) == ({}, [])
+    assert document.apply("task", "antigravity", {}, frozenset()) == ({}, [])
+
+
+def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    assert read_permissions() is None
+    (tmp_path / "permissions.json").write_text('{"version": 1, "clis": {"x": "auto"}}')
+    with pytest.raises(PermissionFileError):
+        read_permissions()
+    (tmp_path / "permissions.json").write_text(
+        json.dumps({"version": 1, "clis": {"codex": "auto", "claude": "full", "pi": "auto"}})
+    )
+    tiers = read_permissions()
+    assert tiers is not None
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {"codex": {"models": {"m": {"options": {"sandbox": "read-only"}}}}},
+            "modes": {"task": {"codex": {"models": []}}},
+        }
+    )
+    # No model (CLI default) and a model the App never listed both get the tier.
+    for options in ({}, {"model": "unlisted"}):
+        assert apply_member(document, "task", "codex", options, frozenset(), permissions=tiers)[
+            1
+        ] == ["approve_for_me"]
+    # The tier replaces a saved model permission option rather than mixing with it.
+    assert apply_member(
+        document, "task", "codex", {"model": "m"}, frozenset(), permissions=tiers
+    ) == ({"model": "m", "approve_for_me": True}, ["approve_for_me"])
+    # A caller's own permission option keeps the tier out; restricted runs take none.
+    assert apply_member(
+        document, "task", "codex", {"sandbox": "workspace-write"}, frozenset(), permissions=tiers
+    ) == ({"sandbox": "workspace-write"}, [])
+    # A caller's read-only sandbox does not pick up a saved model approve_for_me either.
+    document.clis["codex"].models["m"].options = {"approve_for_me": True}
+    assert apply_member(
+        document, "task", "codex", {"model": "m", "sandbox": "read-only"}, frozenset()
+    ) == ({"model": "m", "sandbox": "read-only"}, [])
+    # Restricted saved in model options keeps the tier out too.
+    document.clis["codex"].models["m"].options = {"restricted_tools": True}
+    assert apply_member(document, "task", "codex", {"model": "m"}, frozenset()) == (
+        {"model": "m", "restricted_tools": True},
+        ["restricted_tools"],
+    )
+    assert apply_member(
+        None, "discussion", "claude", {}, frozenset(), restricted=True, permissions=tiers
+    ) == ({}, [])
+    assert apply_member(None, "discussion", "claude", {}, frozenset(), permissions=tiers) == (
+        {"permission_mode": "bypassPermissions"},
+        ["permission_mode"],
+    )
+    # Pi has no approval step; a CLI missing from the file, or no file, runs "auto".
+    assert apply_member(None, "task", "pi", {}, frozenset(), permissions=tiers) == ({}, [])
+    assert apply_member(None, "task", "grok", {}, frozenset(), permissions=tiers) == (
+        {"permission_mode": "auto"},
+        ["permission_mode"],
+    )
+    assert apply_member(
+        None, "task", "codex", {}, frozenset(), permissions=PermissionFile(version=1)
+    ) == ({"approve_for_me": True}, ["approve_for_me"])
