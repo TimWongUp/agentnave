@@ -328,7 +328,7 @@ async function setPermissionTier(provider, tier) {
     await apiPostPermissions({ version: 1, clis });
     permissionTiers = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后发起或继续的任务生效`);
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后派发的任务和新开的会议生效`);
   } catch (err) {
     showNotice(`权限保存失败: ${err.message}`, true);
   } finally {
@@ -359,7 +359,9 @@ function renderPermission(provider) {
           onClick: () => value !== tier && setPermissionTier(provider, value),
         }, label)))),
     el("p", { className: "cli-permission-text" },
-      `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 私聊和会议都按这一档，选完立即保存。`));
+      permissionsError
+        ? `${permissionsError}。修复或删除这个文件之前，派发会被拒绝。`
+        : `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 私聊和新开的会议都按这一档，选完立即保存。`));
 }
 
 async function apiPostMembers(doc) {
@@ -1678,7 +1680,9 @@ async function refreshDetection(quiet = false) {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
+    const tiersBefore = JSON.stringify([permissionTiers, permissionsError]);
     if (!busy && reviewSaves === seatsBefore) takeReview(data);
+    const tiersChanged = JSON.stringify([permissionTiers, permissionsError]) !== tiersBefore;
     // Without unsaved edits, or a save while probing, take the file as read too.
     // An unchanged file keeps the current objects, which the rendered cards still edit.
     const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
@@ -1696,7 +1700,7 @@ async function refreshDetection(quiet = false) {
     if (!quiet) showNotice("检测结果已刷新");
     else if (changed && currentTab === "members") showNotice("检测到工具或模型列表有变化，已自动刷新");
     // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
-    if (!quiet || changed || reloaded) renderCards();
+    if (!quiet || changed || reloaded || tiersChanged) renderCards();
   } catch (err) {
     if (!quiet) showNotice(`刷新检测失败: ${err.message}`, true);
   } finally {

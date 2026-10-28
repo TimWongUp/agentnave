@@ -266,6 +266,17 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
     assert apply_member(
         document, "task", "codex", {"sandbox": "workspace-write"}, frozenset(), permissions=tiers
     ) == ({"sandbox": "workspace-write"}, [])
+    # A caller's read-only sandbox does not pick up a saved model approve_for_me either.
+    document.clis["codex"].models["m"].options = {"approve_for_me": True}
+    assert apply_member(
+        document, "task", "codex", {"model": "m", "sandbox": "read-only"}, frozenset()
+    ) == ({"model": "m", "sandbox": "read-only"}, [])
+    # Restricted saved in model options keeps the tier out too.
+    document.clis["codex"].models["m"].options = {"restricted_tools": True}
+    assert apply_member(document, "task", "codex", {"model": "m"}, frozenset()) == (
+        {"model": "m", "restricted_tools": True},
+        ["restricted_tools"],
+    )
     assert apply_member(
         None, "discussion", "claude", {}, frozenset(), restricted=True, permissions=tiers
     ) == ({}, [])

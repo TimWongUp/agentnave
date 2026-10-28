@@ -742,7 +742,8 @@ async def start_agent(
     ended, hit a blocker or await review but no wait or cancel has returned that yet.
 
     The reply reports the requested model/effort, not the CLI's effective settings;
-    defaults_applied lists App defaults, other omitted settings inherit the native CLI.
+    defaults_applied lists App defaults, including each CLI's permission tier (auto unless
+    the user picked full in the App); other omitted settings inherit the native CLI.
     Each task starts a new native thread unless session_id continues one; a resumed native
     session joins its open conversation. CLI runs active at once (tasks plus seats) are
     limited by the App's setting, 8 by default; beyond it the call is rejected until some finish. The task and its final

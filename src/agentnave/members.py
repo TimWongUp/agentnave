@@ -320,16 +320,19 @@ def apply_permission(
     result: dict[str, ProviderOption],
     applied: list[str],
 ) -> None:
-    """Fill the options of the CLI's App permission tier unless the caller chose its own."""
+    """Fill the options of the CLI's App permission tier unless the caller chose its own.
+
+    Either way saved model permission options are dropped: the tier or the caller decides.
+    """
     tier = permissions.clis.get(provider, "auto") if permissions is not None else "auto"
     granted = PERMISSION_TIERS.get(provider, {}).get(tier)
     keys = PERMISSION_KEYS.get(provider, frozenset())
-    if not granted or keys & set(explicit):
-        return
-    # Saved model options must not mix with the tier the App shows for this CLI.
+    # Saved model options must not mix with the tier, nor with a caller's own permissions.
     for key in keys & set(applied):
         del result[key]
         applied.remove(key)
+    if not granted or keys & set(explicit):
+        return
     for key, value in granted.items():
         result[key] = value
         applied.append(key)
@@ -416,7 +419,7 @@ def apply_member(
         check_excluded(mode, provider, excluded)
         result, applied = dict(options), []
     # Restricted runs take no tools, so no permission tier either.
-    if not restricted and options.get("restricted_tools") is not True:
+    if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
     return result, applied
 

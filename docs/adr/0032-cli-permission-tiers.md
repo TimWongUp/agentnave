@@ -24,7 +24,7 @@ AgentNave 以非交互方式派发 CLI，派发时没人能点确认。各 CLI �
 
   CLI 没有可用的自动审核时，「自动」直接用完全放开。Pi 没有审批步骤，不设档位。
 
-- 调用方显式传了该 CLI 的任一权限键时，整档不套用；档位生效时替换模型级默认 options 里的权限键，不与之混用；受限工具运行（`restricted_tools`、隔离节目）不套用。要某次调用守原生权限，只能由用户本轮明确要求、boss 显式传权限参数。
+- 调用方显式传了该 CLI 的任一权限键时，整档不套用，模型级默认 options 里的权限键也不再补入，权限只由调用方决定；否则档位替换模型级默认 options 里的权限键，不与之混用。受限工具运行（`restricted_tools`，含写在模型默认 options 里的，以及隔离节目）不套用。会议节目在开节目时定下各席参数，之后改档位只影响新开的节目；私聊任务（含续接）每次派发现读。要某次调用守原生权限，只能由用户本轮明确要求、boss 显式传权限参数。
 - Codex Adapter 新增布尔选项 `approve_for_me`：新任务传 `--approve-for-me`；`exec resume` 没有这个参数，续接改传它实际设置的三项 `--config`（`approval_policy="on-request"`、`approvals_reviewer="auto_review"`、`sandbox_mode="workspace-write"`）。
 - `list_members` 回执列出每个有档位 CLI 的生效档位。
 - Claude 与 CodeBuddy 报成功、但有工具调用被拒（Claude 的 `permission_denials`，CodeBuddy 只写在工具结果里的“Permission to use … has been denied”）时，回执带 `warnings`，状态不改。
