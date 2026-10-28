@@ -83,7 +83,8 @@ def session_model(
         if host.name == "antigravity":
             return _antigravity_model(native_id)
         return _transcript_model(host, native_id, since)
-    except (OSError, sqlite3.Error):
+    except (OSError, sqlite3.Error, ValueError, RuntimeError):
+        # A relative HERMES_HOME (no file URI) or a missing home folder reads as unknown.
         return None
 
 
@@ -97,8 +98,10 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
     elif host.name == "pi":
         root = _home("PI_CODING_AGENT_DIR", ".pi/agent") / "sessions"
         pattern, marker = f"*/*_{native_id}.jsonl", b'"assistant"'
-    elif host.name == "codebuddy":
-        root = _home("CODEBUDDY_CONFIG_DIR", ".codebuddy") / "projects"
+    elif host.name in {"codebuddy", "workbuddy"}:
+        # WorkBuddy is CodeBuddy's desktop app and keeps the same records in its own folder.
+        default = ".workbuddy" if host.name == "workbuddy" else ".codebuddy"
+        root = _home("CODEBUDDY_CONFIG_DIR", default) / "projects"
         pattern, marker = f"*/{native_id}.jsonl", b'"assistant"'
     elif host.name == "grok":
         root = _home("GROK_HOME", ".grok") / "sessions"
@@ -138,7 +141,7 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
                 value = object_dict(event.get("payload")).get("model")
         elif host.name == "claude":
             value = model_from_event("claude", event)
-        elif host.name == "codebuddy":
+        elif host.name in {"codebuddy", "workbuddy"}:
             if event.get("role") == "assistant":
                 value = object_dict(event.get("providerData")).get("model")
         elif host.name == "pi":
@@ -221,6 +224,8 @@ def _proto_fields(data: bytes) -> Iterator[tuple[int, bytes]]:
 def _varint(data: bytes, index: int) -> tuple[int, int]:
     value = shift = 0
     while True:
+        if shift > 63:
+            raise IndexError("varint longer than ten bytes")  # malformed: stop parsing
         byte = data[index]
         index += 1
         value |= (byte & 0x7F) << shift

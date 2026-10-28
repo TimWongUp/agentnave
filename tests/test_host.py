@@ -110,6 +110,8 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     line = {"type": "message", "role": "assistant", "timestamp": 1767225600000}
     buddy.write_text(json.dumps(line | {"providerData": {"model": "glm-5.3-flash"}}))
     assert session_model(Host("codebuddy"), session) == "glm-5.3-flash"
+    # WorkBuddy, CodeBuddy's desktop app, keeps the same records.
+    assert session_model(Host("workbuddy"), session) == "glm-5.3-flash"
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
     grok = tmp_path / "grok" / "sessions" / "%2Fproject" / session / "chat_history.jsonl"
     grok.parent.mkdir(parents=True)
@@ -137,6 +139,14 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     db.close()
     assert session_model(Host("hermes"), hermes) == "deepseek-flash"
     assert session_model(Host("hermes"), "../state") is None
+    # A relative HERMES_HOME has no file URI; it reads as unknown instead of failing the call.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HERMES_HOME", "hermes")
+    assert session_model(Host("hermes"), hermes) is None
+    # Malformed protobuf ends the scan instead of growing one varint without bound.
+    from agentnave.host import _proto_fields  # pyright: ignore[reportPrivateUsage]
+
+    assert list(_proto_fields(b"\xff" * 100_000)) == []
 
 
 def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
