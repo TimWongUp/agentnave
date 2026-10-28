@@ -1013,6 +1013,7 @@ async def wait(
                 manager,
                 reason or "wait_elapsed",
                 include_output=include_output,
+                deliver=not elapsed,
                 reviews=_review_map(conversations, round_),
                 entries=conversations.committed_entries(round_.group.id, round_.number),
             )
@@ -1224,6 +1225,7 @@ def round_payload(
     reason: str,
     *,
     include_output: bool = True,
+    deliver: bool = True,
     reviews: dict[str, Review | None] | None = None,
     entries: list[CommittedEntry] | None = None,
 ) -> RoundPayload:
@@ -1236,8 +1238,9 @@ def round_payload(
         if result is not None:
             if run.output_returned:
                 seat["output_returned"] = True
-            elif include_output and result.output:
+            elif deliver and include_output and result.output:
                 # Each answer reaches the boss once per round; later payloads only mark it.
+                # A wait_elapsed snapshot holds it back until the round is delivered.
                 seat["output"] = result.output
                 run.output_returned = True
             if result.session_id:

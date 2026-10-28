@@ -69,7 +69,7 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "        print(json.dumps({'type':'system','subtype':'api_retry','error':'authentication_failed'}), flush=True)\n"
         "        time.sleep(0.05)\n"
         "    time.sleep(30)\n"
-        "if prompt == 'sleep':\n"
+        "if prompt == 'sleep' or prompt.endswith('take a nap'):\n"
         "    time.sleep(30)\n"
         "if prompt == 'malformed usage':\n"
         '    print(\'{"type":"result","result":"MALFORMED USAGE",\' '
@@ -289,6 +289,44 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
     assert all("COMPARE NOTES" in output for output in outputs)
     assert "ARGUE THE OTHER SIDE" not in outputs[0] and "ARGUE THE OTHER SIDE" in outputs[1]
     assert rejected.is_error is True and "unknown seat ids: c" in str(rejected.content)
+
+
+@pytest.mark.asyncio
+async def test_mcp_round_snapshot_holds_back_finished_answers_until_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    async with Client(mcp) as client:
+        started = await client.call_tool(
+            "run_round",
+            {
+                "title": "Snapshot",
+                "cwd": str(tmp_path),
+                "members": [{"id": s, "provider": "claude"} for s in "ab"],
+            },
+        )
+        group_id = _payload(started.structured_content)["group_id"]
+        started = await client.call_tool(
+            "run_round",
+            {
+                "group_id": group_id,
+                "seats": ["a", "b"],
+                "order": "parallel",
+                "prompt": "hello",
+                "instructions": {"b": "take a nap"},
+            },
+        )
+        round_id = _payload(_payload(started.structured_content)["round"])["round_id"]
+        async with asyncio.timeout(10):
+            while True:
+                waited = await client.call_tool("wait", {"ids": [round_id], "wait_seconds": 1})
+                snapshot = cast(list[dict[str, object]], _first(waited, "rounds")["seats"])
+                if snapshot[0]["status"] == "succeeded":
+                    break
+        assert "output" not in snapshot[0] and "output_returned" not in snapshot[0]
+        cancelled = await client.call_tool("cancel", {"id": round_id})
+        delivered = _payload(_payload(cancelled.structured_content)["round"])
+        assert "HELLO" in str(cast(list[dict[str, object]], delivered["seats"])[0]["output"])
 
 
 @pytest.mark.asyncio
