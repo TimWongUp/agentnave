@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS views (
     written_ms INTEGER NOT NULL,
     body TEXT NOT NULL
 );
--- Boss handover (ADR-0032): which boss writes each workspace (conversations.manager_session)
+-- Boss handover (ADR-0033): which boss writes each workspace (conversations.manager_session)
 -- now. A workspace without a row belongs to the boss that created it.
 CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
@@ -61,3 +61,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
     previous_file TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_owner ON workspaces (owner);
+-- A boss that passed on a workspace it had taken over: it stays refused, as the creator is by
+-- its own row, until it takes a workspace over again.
+CREATE TABLE IF NOT EXISTS former_bosses (
+    boss TEXT PRIMARY KEY,
+    workspace TEXT NOT NULL
+);

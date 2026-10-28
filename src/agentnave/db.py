@@ -108,7 +108,7 @@ class Database:
                         f"version {SCHEMA_VERSION}"
                     )
                 if not connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name = 'workspaces'"
+                    "SELECT 1 FROM sqlite_master WHERE name = 'former_bosses'"
                 ).fetchone():
                     # Created by an older version: add the tables it lacks (all idempotent).
                     connection.execute("BEGIN IMMEDIATE")
@@ -217,7 +217,7 @@ class Database:
         )
         return state, int(row[-1])
 
-    # Workspaces (ADR-0032)
+    # Workspaces (ADR-0033)
 
     def resolve(self, boss: str) -> tuple[str, Workspace | None]:
         """The workspace this boss writes now, and the row it was handed away in, if so."""
@@ -310,12 +310,18 @@ class Database:
                     )
                 # An empty workspace of this boss gives way to the one it takes over.
                 connection.execute("DELETE FROM workspaces WHERE owner = ?", (boss,))
+                connection.execute("DELETE FROM former_bosses WHERE boss = ?", (boss,))
                 connection.execute(
                     "UPDATE workspaces SET previous_host = owner_host, "
                     "previous_file = owner_file, owner = ?, owner_host = ?, owner_file = ?, "
                     "pending = 0 WHERE id = ?",
                     (boss, host, file, workspace_id),
                 )
+                if before.owner != workspace_id:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO former_bosses (boss, workspace) VALUES (?, ?)",
+                        (before.owner, workspace_id),
+                    )
             else:
                 connection.execute(
                     "UPDATE workspaces SET pending = 0, owner_host = ?, "
@@ -393,6 +399,11 @@ def _resolve(connection: sqlite3.Connection, boss: str) -> tuple[str, Workspace 
     owned = _workspace(connection, "owner", boss)
     if owned is not None:
         return owned.id, None
+    former = connection.execute(
+        "SELECT workspace FROM former_bosses WHERE boss = ?", (boss,)
+    ).fetchone()
+    if former is not None and (passed := _workspace(connection, "id", former[0])) is not None:
+        return boss, passed
     own = _workspace(connection, "id", boss)
     return boss, own  # own is set only when this boss's workspace went to another boss
 

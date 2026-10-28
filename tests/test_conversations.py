@@ -2003,6 +2003,14 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             "run_round", {"group_id": group, "prompt": "remark", "manager_session_id": "chat-a"}
         )
         assert refused.is_error and "handed its workspace" in str(refused.content)
+        # A boss that passes on a workspace it took over is refused too, not given a new one.
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
+        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
+        passed = await client.call_tool(
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
 
 
 @pytest.mark.asyncio

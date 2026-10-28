@@ -1745,7 +1745,10 @@ async def handover(
         raise _rejected(exc) from exc
     if before.owner == after.owner:
         status = "withdrawn" if before.pending else "yours"
-        previous_host, previous_file = after.previous_host, after.previous_file
+        # Withdrawing hands nothing over: no earlier boss's session to point at.
+        previous_host, previous_file = (
+            (None, None) if before.pending else (after.previous_host, after.previous_file)
+        )
     else:
         status = "claimed"
         previous_host, previous_file = before.owner_host, before.owner_file

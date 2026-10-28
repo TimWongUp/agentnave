@@ -276,7 +276,7 @@ function updateItem(rec, g) {
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
 }
-// A workspace waiting for, or taken over by, another boss (ADR-0032).
+// A workspace waiting for, or taken over by, another boss (ADR-0033).
 function handoverWord(g) {
   return { pending: "待接手 · ", changed: "boss 已更换 · " }[g.handover] || "";
 }

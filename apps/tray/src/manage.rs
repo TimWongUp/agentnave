@@ -211,10 +211,24 @@ pub fn delete(root: &Path, id: &str) -> Value {
     if state.pending {
         return result(id, "pending_review", "有待审回答，请先由 boss 处理");
     }
-    match connection.execute("DELETE FROM conversations WHERE id = ?1", [id]) {
-        Ok(_) => result(id, "deleted", "已删除会话记录；席位文件保留"),
+    let deleted = connection
+        .execute("DELETE FROM conversations WHERE id = ?1", [id])
+        .and_then(|_| forget_emptied(&connection));
+    match deleted {
+        Ok(()) => result(id, "deleted", "已删除会话记录；席位文件保留"),
         Err(e) => result(id, "error", &format!("删除失败：{e}")),
     }
+}
+
+/// Drop the handover of a workspace whose last conversation is gone, so its bosses are free
+/// again (ADR-0033). A database an older server created may lack the tables.
+fn forget_emptied(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
+    connection.execute_batch(
+        "DELETE FROM workspaces WHERE NOT EXISTS \
+         (SELECT 1 FROM conversations WHERE manager_session = workspaces.id); \
+         DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces);",
+    )
 }
 
 /// A workspace keyed by a boss chat; legacy identities have none.
@@ -223,7 +237,7 @@ fn boss_workspace(id: &str) -> bool {
         .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Mark a workspace as waiting for another boss (ADR-0032). Its boss keeps it until a new chat
+/// Mark a workspace as waiting for another boss (ADR-0033). Its boss keeps it until a new chat
 /// takes it over, so this needs no conversation lock.
 pub fn handover(root: &Path, group: &str) -> Value {
     if !boss_workspace(group) {
@@ -352,6 +366,7 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
                 .execute("DELETE FROM conversations WHERE id = ?1", [id])
                 .map_err(|e| e.to_string())?;
         }
+        forget_emptied(&transaction).map_err(|e| e.to_string())?;
         transaction.commit().map_err(|e| e.to_string())?;
         Ok(true)
     })();
@@ -484,11 +499,20 @@ mod tests {
             "UPDATE conversations SET manager_session = NULL WHERE id = ?1",
             "newly-finished",
         );
+        let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_eq!(handover(root.path(), workspace)["status"], "waiting");
         assert!(
             cleanup(root.path(), &ids[..1], cutoff)
                 .iter()
                 .all(|r| r["status"] == "deleted")
         );
+        // The emptied workspace's handover goes with its last conversation.
+        let handovers: i64 = crate::db::read(root.path())
+            .unwrap()
+            .unwrap()
+            .query_row("SELECT count(*) FROM workspaces", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(handovers, 0);
         assert_eq!(delete(root.path(), "newly-finished")["status"], "deleted");
     }
 

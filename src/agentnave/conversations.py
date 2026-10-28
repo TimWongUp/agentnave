@@ -355,7 +355,7 @@ class Conversations(Groups):
         return "s-" + hashlib.sha256(identity).hexdigest()[:32], raw
 
     def _manager_session(self, session_id: str | None, *, strict: bool = True) -> str | None:
-        """The workspace the calling boss writes (ADR-0032). Strictly, a boss whose workspace
+        """The workspace the calling boss writes (ADR-0033). Strictly, a boss whose workspace
         went to another boss is refused instead."""
         boss = self._boss(session_id)
         if boss is None:
@@ -364,7 +364,7 @@ class Conversations(Groups):
         if away is not None:
             if strict:
                 raise ValueError(
-                    f"this boss chat handed its workspace {workspace} over to "
+                    f"this boss chat handed its workspace {away.id} over to "
                     f"{_host_label(away.owner_host)}; continue there, or have that boss hand "
                     "it back with handover"
                 )
@@ -403,7 +403,7 @@ class Conversations(Groups):
                 self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
         return record
 
-    # Handover (ADR-0032)
+    # Handover (ADR-0033)
 
     def _workspace_records(self, workspace_id: str) -> list[Record]:
         self.scan()

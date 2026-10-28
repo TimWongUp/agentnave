@@ -675,7 +675,7 @@ struct Member {
     at: i64,
 }
 
-/// A workspace's handover (ADR-0032): waiting for another boss, or led by a boss other than
+/// A workspace's handover (ADR-0033): waiting for another boss, or led by a boss other than
 /// the one that created it (`host`, when known).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Handover {

@@ -901,13 +901,14 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
         .map_err(|e| e.to_string())
 }
 
-/// Workspaces waiting for, or led by, another boss (ADR-0032); none before a server added the
-/// table.
+/// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
+/// its creator; none before a server added the table.
 fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
     let rows = connection
         .prepare(
-            "SELECT id, owner != id, owner_host, pending FROM workspaces \
-             WHERE pending = 1 OR owner != id ORDER BY id",
+            "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending \
+             FROM workspaces WHERE pending = 1 OR owner != id OR previous_host IS NOT NULL \
+             ORDER BY id",
         )
         .and_then(|mut statement| {
             statement
