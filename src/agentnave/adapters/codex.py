@@ -89,6 +89,11 @@ class CodexAdapter:
         unknown = sorted(set(request.provider_options) - self._options)
         if unknown:
             raise ValueError(f"unsupported codex options: {', '.join(unknown)}")
+        # approve_for_me brings its own workspace-write sandbox; mixing would depend on order.
+        if request.provider_options.get("approve_for_me") is True and (
+            "sandbox" in request.provider_options
+        ):
+            raise ValueError("codex approve_for_me cannot be combined with sandbox")
 
         argv: list[str] = []
         for key, value in request.provider_options.items():

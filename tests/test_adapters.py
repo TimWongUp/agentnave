@@ -441,6 +441,10 @@ def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None
     assert "--approve-for-me" not in resumed.argv
     assert 'approvals_reviewer="auto_review"' in resumed.argv
     assert 'sandbox_mode="workspace-write"' in resumed.argv
+    with pytest.raises(ValueError, match="cannot be combined with sandbox"):
+        CodexAdapter().prepare(
+            request(tmp_path, "codex", provider_options={**options, "sandbox": "read-only"})
+        )
 
 
 def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
