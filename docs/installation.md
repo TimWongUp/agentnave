@@ -441,7 +441,7 @@ not as part of a release. Keep the installed runtime's stable launcher registrat
 
 boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `list_members(provider=...)` 核对该 CLI 的允许状态与参数。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 8 个。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 9 个。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
@@ -450,7 +450,7 @@ After registration or upgrade:
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
    visible (9 total).
    Confirm the host also discovers `agentnave-manager` in the intended
-   scope and can read its five referenced CLI files. Check for older user/project copies that
+   scope and can read its seven referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.
