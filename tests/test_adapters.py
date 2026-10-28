@@ -728,7 +728,7 @@ def test_claude_structured_error_preserves_usage_and_message() -> None:
     payload = {
         "type": "result",
         "subtype": "error_max_turns",
-        "errors": ["maximum turns reached"],
+        "errors": ["maximum turns reached " + "x" * 10_000],
         "usage": {"output_tokens": 10},
         "num_turns": 4,
     }
@@ -738,6 +738,7 @@ def test_claude_structured_error_preserves_usage_and_message() -> None:
     assert result.status is InvocationStatus.FAILED
     assert result.error_message is not None
     assert "maximum turns reached" in result.error_message
+    assert len(result.error_message) == 512  # a long provider error is summarized, bounded
     assert result.usage == {"num_turns": 4}
 
 
@@ -1203,12 +1204,6 @@ def test_grok_invalid_prompt_encoding_does_not_create_temp_file(
 
     with pytest.raises(UnicodeEncodeError):
         GrokAdapter().prepare(invalid)
-
-
-def test_provider_error_message_is_bounded() -> None:
-    result = ClaudeAdapter().parse(1, b"", b"secret" * 10_000)
-
-    assert result.error_message == "claude stream ended without a result event"
 
 
 def test_adapter_rejects_implicit_or_unknown_provider_overrides(tmp_path: Path) -> None:

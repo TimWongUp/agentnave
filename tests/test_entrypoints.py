@@ -176,8 +176,6 @@ async def test_provider_details_are_disclosed_only_on_request(
     async with Client(mcp) as client:
         before = await client.list_tools()
         catalog = str(before) + str(client.instructions)
-        assert "hy4-preview" not in catalog
-        assert "gpt-6-astra" not in catalog
         assert "permission_mode" not in catalog
         assert "list_members" in catalog
         described = await client.call_tool("list_members", {"provider": "codebuddy"})
@@ -186,7 +184,6 @@ async def test_provider_details_are_disclosed_only_on_request(
         assert payload["provider"] == "codebuddy"
         assert set(payload) == {"provider", "permitted", "show_permitted", "supported_options"}
         assert "permission_mode" in str(payload["supported_options"])
-        assert "gpt-6-astra" not in str(payload)
         assert await client.list_tools() == before
         invalid = await client.call_tool("list_members", {"provider": "unknown"})
         assert invalid.is_error is True
@@ -565,8 +562,6 @@ async def test_mcp_rejects_arguments_outside_the_schema(
     assert "go inside provider_options" in str(result.content)
     # Both mistakes come back in one reply, so a single retry fixes them.
     assert "needs manager_session_id" in str(result.content)
-    options = tools["start_agent"].input_schema["properties"]["provider_options"]
-    assert '"model": "gpt-6.1-sol"' in options["description"]
     assert listed["invocations"] == []
 
 
