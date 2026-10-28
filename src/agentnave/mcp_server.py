@@ -301,6 +301,7 @@ class SeatRunPayload(TypedDict):
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
     output_age_ms: NotRequired[int]
+    output_returned: NotRequired[bool]
     session_id: NotRequired[str]
 
 
@@ -928,7 +929,8 @@ async def wait(
     reason=ready returns every handle ready at that moment, in updates (tasks) and rounds;
     finished ones stay ready, so drop them from the next call. reason=wait_elapsed returns a
     running snapshot of each, with the latest reply tail (at most 1000 characters) and its age.
-    Unknown, expired or repeated ids reject the whole call before waiting. This is
+    A round returns each seat's final answer once; later payloads mark it output_returned, so
+    reread it with read_conversation. Unknown, expired or repeated ids reject the whole call before waiting. This is
     request/response waiting, not a background subscription.
 
     Omitting ids waits on the inbox instead: the handles above whose final state no wait or
@@ -1011,6 +1013,7 @@ async def wait(
                 manager,
                 reason or "wait_elapsed",
                 include_output=include_output,
+                deliver=not elapsed,
                 reviews=_review_map(conversations, round_),
                 entries=conversations.committed_entries(round_.group.id, round_.number),
             )
@@ -1222,6 +1225,7 @@ def round_payload(
     reason: str,
     *,
     include_output: bool = True,
+    deliver: bool = True,
     reviews: dict[str, Review | None] | None = None,
     entries: list[CommittedEntry] | None = None,
 ) -> RoundPayload:
@@ -1232,8 +1236,13 @@ def round_payload(
             seat["invocation_id"] = run.invocation_id
         result = run.result
         if result is not None:
-            if include_output and result.output:
+            if run.output_returned:
+                seat["output_returned"] = True
+            elif deliver and include_output and result.output:
+                # Each answer reaches the boss once per round; later payloads only mark it.
+                # A wait_elapsed snapshot holds it back until the round is delivered.
                 seat["output"] = result.output
+                run.output_returned = True
             if result.session_id:
                 seat["session_id"] = result.session_id
             if result.error:
@@ -1465,6 +1474,7 @@ async def run_round(
     native session across rounds and restarts. Shows follow discussion member limits, not
     host exclusions. A started round returns at once: use wait with its round_id. Private
     instructions go only to their seat; with review=true each answer waits for decide_answers.
+    wait and cancel return each final answer once per round, then mark it output_returned.
     entries lists the round's committed entries with message ids. unreceived lists your tasks
     and rounds that ended, hit a blocker or await review but no wait or cancel has returned
     that yet. Isolation
