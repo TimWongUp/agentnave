@@ -26,11 +26,17 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## boss 会话归属
 
-每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并一直沿用，不按任务重新生成。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它（且宿主未按聊天注入 `AGENTNAVE_HOST_SESSION_ID`）时服务拒绝调用。
+每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值。用宿主的真实会话 ID，App 才能按它读出 boss 的模型；在本聊天首次调用前取一次并沿用：
+
+- Claude Code：在 Bash 里运行 `echo $CLAUDE_CODE_SESSION_ID`。
+- Codex：在 shell 里运行 `echo $CODEX_THREAD_ID`。
+- 其他宿主：系统提示或环境明确给出当前会话 ID 时用它。
+
+取不到原生 ID 时，才在本聊天首次调用前生成一次 UUID 并一直沿用，不按任务重新生成。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它（且宿主未按聊天注入 `AGENTNAVE_HOST_SESSION_ID`）时服务拒绝调用。
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 
-`manager_model` 仅在可信宿主上下文明确给出当前模型时补充，未知就省略，不从 CLI 默认配置或组员模型猜测。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
+系统提示等可信宿主上下文写明了当前模型 ID（如“exact model ID is …”）时，把它作为 `manager_model` 传入；未知才省略，不从 CLI 默认配置或组员模型猜测。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
 
 ## 工位、续接与转发
 

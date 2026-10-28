@@ -43,6 +43,26 @@ class Host:
         return self.name
 
 
+# Hosts that start each chat's MCP server with that chat's native session ID in its environment.
+# Codex passes MCP servers only a fixed variable allowlist, so its thread ID never arrives here.
+NATIVE_SESSION_ENV = {"claude": "CLAUDE_CODE_SESSION_ID"}
+
+
+def host_session_id(host: Host) -> str | None:
+    """The boss chat this server runs for when the caller names none.
+
+    A per-chat AGENTNAVE_HOST_SESSION_ID wins; otherwise the host's native session ID, which
+    also lets session_model find the boss model.
+    """
+    injected = os.environ.get("AGENTNAVE_HOST_SESSION_ID")
+    if injected is not None:
+        return injected
+    name = NATIVE_SESSION_ENV.get(host.name or "")
+    if name is None:
+        return None
+    return os.environ.get(name, "").strip() or None
+
+
 def session_model(
     host: Host, session_id: str | None, *, since: datetime | None = None
 ) -> str | None:

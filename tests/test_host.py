@@ -78,6 +78,15 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
         )
     )
     assert session_model(Host("claude"), session) == "claude-main"
+    # Without an argument or injected ID, Claude Code's own session ID names the boss chat.
+    from agentnave.host import host_session_id
+
+    monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", session)
+    assert session_model(Host("claude"), host_session_id(Host("claude"))) == "claude-main"
+    assert host_session_id(Host("codex")) is None
+    monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "injected")
+    assert host_session_id(Host("claude")) == "injected"
 
 
 def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

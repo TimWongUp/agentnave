@@ -33,7 +33,7 @@ from agentnave.group import (
     SeatRun,
     SeatState,
 )
-from agentnave.host import Host, detect_host, session_model
+from agentnave.host import Host, detect_host, host_session_id, session_model
 from agentnave.members import CapacityError, read_max_running
 from agentnave.models import InvocationRequest
 from agentnave.store import (
@@ -339,7 +339,7 @@ class Conversations(Groups):
             return self._group(group_id)
 
     def _manager_session(self, session_id: str | None) -> str | None:
-        raw = session_id if session_id is not None else os.environ.get("AGENTNAVE_HOST_SESSION_ID")
+        raw = session_id if session_id is not None else host_session_id(self.host)
         if raw is None:
             return None
         if not raw.strip() or len(raw) > 200:
@@ -650,7 +650,7 @@ class Conversations(Groups):
     def inbox(self, manager_session_id: str | None) -> tuple[list[str], list[str]]:
         """This server's task invocations and rounds whose end no caller has received yet.
 
-        With a boss identity (argument or AGENTNAVE_HOST_SESSION_ID) only that boss's
+        With a boss identity (argument or host_session_id) only that boss's
         conversations count; without one, every handle of this server. Oldest first.
         """
         session = self._manager_session(manager_session_id)

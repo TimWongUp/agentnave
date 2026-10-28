@@ -27,7 +27,7 @@ from agentnave.conversations import (
 )
 from agentnave.core import InvocationManager
 from agentnave.group import GroupSeat, Round
-from agentnave.host import detect_host
+from agentnave.host import detect_host, host_session_id
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
@@ -94,7 +94,8 @@ type ManagerSessionId = Annotated[
             "for this manager chat and keep reusing it. A different chat needs a different ID. "
             "Never use the CLI name, MCP connection ID, or subagent session_id. "
             "Required by start_agent and run_round unless AGENTNAVE_HOST_SESSION_ID is "
-            "injected for this chat."
+            "injected for this chat or the host gives this server its native session ID "
+            "(Claude Code: CLAUDE_CODE_SESSION_ID)."
         ),
     ),
 ]
@@ -404,7 +405,7 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
     if (
         name in _CHAT_TOOLS
         and arguments.get("manager_session_id") is None
-        and not os.environ.get("AGENTNAVE_HOST_SESSION_ID", "").strip()
+        and not (host_session_id(HOST) or "").strip()
     ):
         problems.append(
             f"{name} needs manager_session_id: pass this manager chat's session ID (or one "

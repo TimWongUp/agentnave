@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import cast
 
 from agentnave.adapters.base import provider_bin_dirs
+from agentnave.host import NATIVE_SESSION_ENV
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,8 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     """
     env = dict(os.environ)
     env.pop("AGENTNAVE_HOST_SESSION_ID", None)
+    for name in NATIVE_SESSION_ENV.values():
+        env.pop(name, None)
     if os.name == "nt":
         return env
     inherited = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
