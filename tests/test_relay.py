@@ -473,6 +473,8 @@ mcp_server.main()
         time.sleep(0.5)
         assert host.relay.child.process.pid == first
         call("decide_answers", round_id=round_["round_id"], decisions={"a": "publish"})
+        # The round's end has not been received yet, so a new server must not take its id away.
+        assert call("list_invocations")["restart_safe"] is False
         call("wait", ids=[round_["round_id"]])
         second = changed_pid(first)
         saved = _saved(data, group["group_id"])
