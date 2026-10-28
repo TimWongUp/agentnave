@@ -26,7 +26,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## boss 会话归属
 
-每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值，App 靠它读出 boss 模型。本聊天首次调用前在 shell 里取一次宿主会话 ID：Claude Code `$CLAUDE_CODE_SESSION_ID`、Codex `$CODEX_THREAD_ID`、Antigravity `$ANTIGRAVITY_CONVERSATION_ID`、CodeBuddy `$CODEBUDDY_SESSION_ID`、Grok `$GROK_SESSION_ID`、Pi `$PI_SESSION_ID`、Hermes `$HERMES_SESSION_ID`；其他宿主用上下文明确给出的会话 ID，都没有才生成一次 UUID 并沿用。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它时服务先用按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再用 Claude Code 随 MCP 进程给出的 `CLAUDE_CODE_SESSION_ID`；该值在 `/clear` 等不重启 MCP 的切换后可能是旧聊天的，所以仍要每次显式传入；都没有时服务拒绝调用。
+每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值，App 靠它读出 boss 模型。本聊天首次调用前在 shell 里取一次宿主会话 ID：Claude Code `$CLAUDE_CODE_SESSION_ID`、Codex `$CODEX_THREAD_ID`、Antigravity `$ANTIGRAVITY_CONVERSATION_ID`、CodeBuddy 与 WorkBuddy `$CODEBUDDY_SESSION_ID`、Grok `$GROK_SESSION_ID`、Pi `$PI_SESSION_ID`、Hermes `$HERMES_SESSION_ID`；其他宿主用上下文明确给出的会话 ID，都没有才生成一次 UUID 并沿用。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它时服务先用按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再用 Claude Code 随 MCP 进程给出的 `CLAUDE_CODE_SESSION_ID`；该值在 `/clear` 等不重启 MCP 的切换后可能是旧聊天的，所以仍要每次显式传入；都没有时服务拒绝调用。
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 
