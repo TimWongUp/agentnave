@@ -108,6 +108,22 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
             "start_agent", {"provider": "claude", "prompt": "blocker", "cwd": str(tmp_path)}
         )
         invocation_id = _payload(started.structured_content)["invocation_id"]
+        # A later dispatch lists the blocker without taking it from wait.
+        blocked = {"id": invocation_id, "kind": "task", "status": "execution_blocked"}
+        async with asyncio.timeout(3):
+            while True:
+                other = _payload(
+                    (
+                        await client.call_tool(
+                            "start_agent",
+                            {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path)},
+                        )
+                    ).structured_content
+                )
+                listed = cast(list[dict[str, object]], other.get("unreceived", []))
+                if any(blocked.items() <= item.items() for item in listed):
+                    break
+                await asyncio.sleep(0.05)
         async with asyncio.timeout(3):
             response = await client.call_tool("wait", {"ids": [invocation_id]})
         assert _payload(response.structured_content)["reason"] == "ready"

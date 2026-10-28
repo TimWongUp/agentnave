@@ -207,7 +207,10 @@ class InvocationPayload(TypedDict):
 class UnreceivedPayload(TypedDict):
     id: str
     kind: Literal["task", "round"]
-    status: str  # a task's end status; a round's finished, failed, cancelled or review_needed
+    # a task's end status or execution_blocked; a round's finished, failed, cancelled or
+    # review_needed
+    status: str
+    error: NotRequired[InvocationErrorPayload]  # the oldest unread blocker of a running task
 
 
 class TaskStartPayload(InvocationPayload):
@@ -586,19 +589,31 @@ def _unknown_handle(handle: str) -> ToolError:
 def _unreceived(
     conversations: Conversations, manager_session_id: str | None
 ) -> list[UnreceivedPayload]:
-    """Ended tasks and rounds whose end no wait or cancel has returned yet. A dispatch reply
-    lists them so a boss busy with other work still learns of them; wait receives them."""
+    """Ended tasks and rounds whose end no wait or cancel has returned yet, and running tasks
+    with a blocker no wait has returned. A dispatch reply lists them so a boss busy with other
+    work still learns of them; wait receives them."""
     tasks, rounds = conversations.inbox(manager_session_id)
     ended = {
         listing.invocation_id: listing.status.value
         for listing in conversations.manager.list_invocations()
         if listing.status is not None
     }
-    found: list[UnreceivedPayload] = [
-        {"id": handle, "kind": "task", "status": ended[handle]}
-        for handle in tasks
-        if handle in ended
-    ]
+    found: list[UnreceivedPayload] = []
+    for handle in tasks:
+        if handle in ended:
+            found.append({"id": handle, "kind": "task", "status": ended[handle]})
+        elif blockers := conversations.manager.unread_blockers(handle):
+            found.append(
+                {
+                    "id": handle,
+                    "kind": "task",
+                    "status": "execution_blocked",
+                    "error": {
+                        "code": blockers[0],
+                        "message": "CLI reported an execution blocker; wait returns it.",
+                    },
+                }
+            )
     for handle in rounds:
         round_ = conversations.round(handle)
         if "pending" in conversations.reviews.get(handle, {}).values():
@@ -702,7 +717,7 @@ async def start_agent(
 
     Ends are never pushed: call wait right after starting and keep one pending until the
     result arrives, even while doing other work. unreceived lists your tasks and rounds that
-    ended (or await review) but no wait or cancel has returned yet.
+    ended, hit a blocker or await review but no wait or cancel has returned that yet.
 
     The reply reports the requested model/effort, not the CLI's effective settings;
     defaults_applied lists App defaults, other omitted settings inherit the native CLI.
@@ -1418,7 +1433,8 @@ async def run_round(
     host exclusions. A started round returns at once: use wait with its round_id. Private
     instructions go only to their seat; with review=true each answer waits for decide_answers.
     entries lists the round's committed entries with message ids. unreceived lists your tasks
-    and rounds that ended (or await review) but no wait or cancel has returned yet. Isolation
+    and rounds that ended, hit a blocker or await review but no wait or cancel has returned
+    that yet. Isolation
     restricts tools; it is not an OS sandbox.
     """
     conversations = _conversations(ctx)
