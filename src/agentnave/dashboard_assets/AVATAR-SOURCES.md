@@ -13,3 +13,9 @@
 - `avatar-qwen.png`：https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.3.19/favicon.png
 - `avatar-kimi.png`：https://www.kimi.com/pwa-192.png
 - `avatar-minimax.ico`：https://www.minimax.io/favicon.ico
+
+以下取自 LobeHub 开源图标库 `@lobehub/icons-static-svg@1.100.0`（MIT，商标归各自所有者），未改动，获取日期 2026-10-28：
+
+- `avatar-hunyuan.svg`：`icons/hunyuan-color.svg`
+- `avatar-doubao.svg`：`icons/doubao-color.svg`
+- `avatar-muse.svg`：`icons/muse-color.svg`（Meta 的 Muse 模型，不用 Meta 公司标志）

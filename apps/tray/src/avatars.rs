@@ -66,6 +66,9 @@ pub fn asset(name: &str) -> Option<(&'static str, &'static [u8])> {
         "avatar-qwen.svg" => ("image/svg+xml", asset!("avatar-qwen.svg")),
         "avatar-kimi.svg" => ("image/svg+xml", asset!("avatar-kimi.svg")),
         "avatar-minimax.svg" => ("image/svg+xml", asset!("avatar-minimax.svg")),
+        "avatar-hunyuan.svg" => ("image/svg+xml", asset!("avatar-hunyuan.svg")),
+        "avatar-doubao.svg" => ("image/svg+xml", asset!("avatar-doubao.svg")),
+        "avatar-muse.svg" => ("image/svg+xml", asset!("avatar-muse.svg")),
         _ => return None,
     })
 }

@@ -180,7 +180,8 @@
   // ---- painted office art (ui/art, served at /art/) -----------------------------------------
   // Characters follow the model family, like the avatars; a model without a character of its own is
   // the default newcomer. The CLI brand is never used to guess a model.
-  const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok", qwen: "qwen" };
+  const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok", qwen: "qwen",
+    kimi: "kimi", minimax: "minimax", hunyuan: "hunyuan", doubao: "doubao", muse: "muse" };
   const STATES = ["idle", "blink", "working", "speaking", "review", "done", "sleep"];
   // Optional frames: a character without them keeps the older look (grey idle, gliding seat).
   const EXTRA = ["sad", "walk-1", "walk-2"];
@@ -207,9 +208,33 @@
     return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
   };
   // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
-  // ahoge (tuft), cat ears (ear-l, ear-r), bat wings (wing-l, wing-r), a hairpin pendant or a starburst halo. parts.json gives each frame's pivot at the part's root,
+  // ahoge (tuft), cat ears (ear-l, ear-r), lop ears (lop-l, lop-r), bat wings (wing-l, wing-r), a whale tail, a two-piece devil tail, a hairpin pendant or a starburst halo. parts.json gives each frame's pivot at the part's root,
   // in percent of the frame, also as --ox/--oy for masks that must stay centred on it.
   const parts = fetch(artUrl("parts.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+  // Some characters give off little sprites instead (notes, bubbles, leaves): emit.json names them and,
+  // per frame, where they start in percent of the frame. The office mood sets how often; asleep, failed,
+  // walking, hidden or with reduced motion nothing comes out.
+  const emits = fetch(artUrl("emit.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+  const EMIT_EVERY = { idle: 2600, working: 700, speaking: 1000, review: 1800, done: 350 };
+  const emitters = new Set();
+  const still = matchMedia("(prefers-reduced-motion: reduce)");
+  setInterval(() => {
+    if (document.hidden || still.matches) return;
+    const now = performance.now();
+    for (const e of emitters) {
+      if (!e.fx.isConnected) { if (now - e.born > 5000) emitters.delete(e); continue; }
+      const mood = e.fig.closest("[data-mood]")?.dataset.mood || "idle";
+      const every = !e.fig.classList.contains("walk") && EMIT_EVERY[mood];
+      if (!every || now < e.next) continue;
+      e.next = now + every * (0.7 + 0.6 * Math.random());
+      const [x, y] = e.spec.origin[mood] || e.spec.origin.idle;
+      const sprite = e.spec.sprites[Math.floor(Math.random() * e.spec.sprites.length)];
+      const img = h(`img.fx-${sprite.replace(/-\d+\.\w+$/, "")}`, { src: artUrl(`m/${e.name}/${sprite}`), alt: "", decoding: "async", draggable: "false",
+        style: `left:${x}%;top:${y}%;--dx:${(Math.random() - 0.5).toFixed(2)};--life:${Math.round(every < 1000 ? 1700 : 2300)}ms` });
+      img.addEventListener("animationend", () => img.remove(), { once: true });
+      e.fx.append(img);
+    }
+  }, 120);
   const frameUrl = (name, size, state) => {
     if (!name.startsWith("@")) return artUrl(`${size}/${name}/${state}.webp`);
     const [, family, version] = name.split("@");
@@ -231,12 +256,22 @@
     });
     const body = h("span.fig-b", {}, imgs.filter(Boolean));
     fig.append(h("span.fig-a", {}, body));
+    if (!name.startsWith("@")) emits.then((all) => {
+      if (!all[name]) return;
+      const fx = h("span.fx");
+      fig.append(fx);
+      emitters.add({ name, fig, fx, spec: all[name], born: performance.now(), next: 0 });
+    });
     // Each part carries its frame's s-<state> class, so it shows with that frame.
     if (!name.startsWith("@")) parts.then((all) => {
       for (const [part, frames] of Object.entries(all[name] || {})) {
+        // A "<part>-tip" bends about its own pivot inside a box that swings about its "<part>"'s pivot.
+        const root = part.endsWith("-tip") ? all[name][part.slice(0, -4)] : null;
         for (const [state, [x, y]] of Object.entries(frames)) {
-          body.append(h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
-            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` }));
+          const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
+            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
+          const pivot = root?.[state];
+          body.append(pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img) : img);
         }
       }
     });
