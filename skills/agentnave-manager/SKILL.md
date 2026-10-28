@@ -29,7 +29,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值。优先用宿主提供的当前聊天／session ID；宿主不公开原生 ID 时，在本聊天首次调用前生成一次 UUID 并一直沿用，不按任务重新生成。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它（且宿主未按聊天注入 `AGENTNAVE_HOST_SESSION_ID`）时服务拒绝调用。
 
-只在用户要求交接或接手时用 `handover`，不在新聊天里主动去查：交出时带 `release=true` 和交接说明，再请用户在任意宿主开新聊天接手；接手方认领后按回执读交接说明、各会话和老 boss 会话文件尾部，再续用。
+只在用户要求交接或接手时用 `handover`，不在新聊天里主动去查：交出时带 `release=true` 和交接说明（按参数说明写：交接原因、下一步重点、建议加载的 Skill，已有材料只给出处，不含密钥），再请用户在任意宿主开新聊天接手；接手方认领后按回执读交接说明、各会话和老 boss 会话文件尾部，再续用。
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 

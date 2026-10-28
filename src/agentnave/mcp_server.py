@@ -1676,8 +1676,14 @@ async def handover(
         Field(
             min_length=1,
             max_length=20000,
-            description="With release: notes for the next boss: goal, what is done, decisions "
-            "and why, what is open, desks in use.",
+            description="With release: notes for the next boss, written for what it must do "
+            "next. Say why you hand over (out of quota, a model better suited to the work), the "
+            "goal, what is done, decisions and why, what is open, desks in use, and the Skills "
+            "to load (agentnave-manager, any review gate): it may come from another host. Cite "
+            "what already exists by reference only (conversation ids, PR or commit links, ADR "
+            "or spec paths); the next boss reads seat answers with read_conversation, so keep "
+            "this shorter than the records it points to. No keys, passwords or sensitive "
+            "personal data: it is saved and shown in the App.",
         ),
     ] = None,
     workspace_id: Annotated[
