@@ -207,10 +207,12 @@ class InvocationPayload(TypedDict):
 class UnreceivedPayload(TypedDict):
     id: str
     kind: Literal["task", "round"]
-    # a task's end status or execution_blocked; a round's finished, failed, cancelled or
-    # review_needed
+    # a task's end status or execution_blocked; a round's finished, failed, cancelled,
+    # review_needed or execution_blocked
     status: str
-    error: NotRequired[InvocationErrorPayload]  # the oldest unread blocker of a running task
+    error: NotRequired[
+        InvocationErrorPayload
+    ]  # the oldest unread blocker of a running task or seat
 
 
 class TaskStartPayload(InvocationPayload):
@@ -621,6 +623,19 @@ def _unreceived(
         elif round_.finished:
             status = "failed" if round_.error else "cancelled" if round_.cancelling else "finished"
             found.append({"id": handle, "kind": "round", "status": status})
+        elif blocked := [
+            run.blockers[-1]
+            for run in round_.runs
+            if run.status == "running" and run.reported_blockers < len(run.blockers)
+        ]:
+            found.append(
+                {
+                    "id": handle,
+                    "kind": "round",
+                    "status": "execution_blocked",
+                    "error": {"code": blocked[0].code, "message": blocked[0].message},
+                }
+            )
     return found
 
 

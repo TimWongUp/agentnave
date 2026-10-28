@@ -490,6 +490,43 @@ async def test_dispatch_reply_lists_ends_no_wait_has_received(tmp_path: Path) ->
             await _cancel(client, handle["invocation_id"])
 
 
+def test_unreceived_lists_a_seat_blocker_until_a_wait_reports_it() -> None:
+    from types import SimpleNamespace
+
+    from agentnave.models import InvocationError
+
+    run = SimpleNamespace(
+        status="running",
+        blockers=[InvocationError("provider_blocked", "waiting")],
+        reported_blockers=0,
+    )
+    round_ = SimpleNamespace(finished=False, runs=[run])
+
+    def inbox(_session: str | None) -> tuple[list[str], list[str]]:
+        return [], ["r1"]
+
+    def listings() -> list[object]:
+        return []
+
+    def find(_handle: str) -> object:
+        return round_
+
+    stub = SimpleNamespace(
+        inbox=inbox, manager=SimpleNamespace(list_invocations=listings), round=find, reviews={}
+    )
+    found = mcp_server._unreceived(cast(Conversations, stub), None)  # pyright: ignore[reportPrivateUsage]
+    assert found == [
+        {
+            "id": "r1",
+            "kind": "round",
+            "status": "execution_blocked",
+            "error": {"code": "provider_blocked", "message": "waiting"},
+        }
+    ]
+    run.reported_blockers = 1  # what wait does when it returns the blocker
+    assert mcp_server._unreceived(cast(Conversations, stub), None) == []  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.asyncio
 async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: Path) -> None:
     async with Client(mcp) as client:
