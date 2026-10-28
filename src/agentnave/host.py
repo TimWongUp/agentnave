@@ -43,10 +43,8 @@ class Host:
         return self.name
 
 
-def session_model(
-    host: Host, session_id: str | None, *, since: datetime | None = None
-) -> str | None:
-    """Read this native session's latest model, never a CLI-wide default or other chat."""
+def session_file(host: Host, session_id: str | None) -> Path | None:
+    """This native session's own transcript file, when the host keeps one we can find."""
     if host.name not in {"codex", "claude"} or session_id is None:
         return None
     try:
@@ -61,15 +59,28 @@ def session_model(
     else:
         root = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects"
         pattern = f"*/{native_id}.jsonl"
-    cutoff = datetime.now(UTC)
-    marker = b'"turn_context"' if host.name == "codex" else b'"assistant"'
     try:
         paths = list(root.glob(pattern))
         if len(paths) != 1 or not paths[0].resolve().is_relative_to(root.resolve()):
             return None
+    except OSError:
+        return None
+    return paths[0]
+
+
+def session_model(
+    host: Host, session_id: str | None, *, since: datetime | None = None
+) -> str | None:
+    """Read this native session's latest model, never a CLI-wide default or other chat."""
+    path = session_file(host, session_id)
+    if path is None:
+        return None
+    cutoff = datetime.now(UTC)
+    marker = b'"turn_context"' if host.name == "codex" else b'"assistant"'
+    try:
         # Transcripts append in time order and can hold huge lines (generated images), so read
         # from the end and stop at the newest qualifying turn instead of parsing everything.
-        for line in _lines_from_end(paths[0]):
+        for line in _lines_from_end(path):
             if marker not in line:
                 continue
             event = parse_json_object(line.decode("utf-8", "replace"))

@@ -675,9 +675,19 @@ struct Member {
     at: i64,
 }
 
+/// A workspace's handover (ADR-0032): waiting for another boss, or led by a boss other than
+/// the one that created it (`host`, when known).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Handover {
+    pub pending: bool,
+    pub changed: bool,
+    pub host: Option<String>,
+}
+
 struct Group {
     id: String,
     host: Option<String>,
+    handover: Handover,
     updated: String,
     at: i64,
     title: String,
@@ -708,6 +718,7 @@ impl Group {
             id,
             latest_end: None,
             host: None,
+            handover: Handover::default(),
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
@@ -736,7 +747,16 @@ impl Group {
     }
 
     fn header(&self) -> Value {
-        json!({"group": self.id, "host": self.host, "label": self.manager_label(),
+        let (host, label) = match &self.handover.host {
+            Some(host) if self.handover.changed => (Some(host.as_str()), label(Some(host))),
+            _ => (self.host.as_deref(), self.manager_label()),
+        };
+        let handover = if self.handover.pending {
+            Some("pending")
+        } else {
+            self.handover.changed.then_some("changed")
+        };
+        json!({"group": self.id, "host": host, "label": label, "handover": handover,
             "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
@@ -1796,6 +1816,7 @@ pub(crate) fn respond(
     mut snapshots: Vec<Snapshot>,
     data_exists: bool,
     limit: usize,
+    handovers: &HashMap<String, Handover>,
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let (requested, focus) = match requested {
@@ -1827,6 +1848,9 @@ pub(crate) fn respond(
     let mut groups: Vec<_> = groups.into_values().collect();
     for group in &mut groups {
         group.project(&snapshots, false);
+        if let Some(handover) = handovers.get(&group.id) {
+            group.handover = handover.clone();
+        }
     }
     // Work going on first, then unhandled failures, then the most recent; never empty while history exists.
     let tier = |status: &str| match status {

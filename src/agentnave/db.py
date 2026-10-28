@@ -12,6 +12,7 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord
 
@@ -106,6 +107,19 @@ class Database:
                         f"{self.path} has schema version {version}; this AgentNave reads "
                         f"version {SCHEMA_VERSION}"
                     )
+                if not connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name = 'workspaces'"
+                ).fetchone():
+                    # Created by an older version: add the tables it lacks (all idempotent).
+                    connection.execute("BEGIN IMMEDIATE")
+                    try:
+                        for statement in _SCHEMA.split(";"):
+                            if statement.strip():
+                                connection.execute(statement)
+                    except BaseException:
+                        connection.rollback()
+                        raise
+                    connection.execute("COMMIT")
             except BaseException:
                 connection.close()
                 raise
@@ -203,6 +217,115 @@ class Database:
         )
         return state, int(row[-1])
 
+    # Workspaces (ADR-0032)
+
+    def resolve(self, boss: str) -> tuple[str, Workspace | None]:
+        """The workspace this boss writes now, and the row it was handed away in, if so."""
+        connection = self._read()
+        if connection is None:
+            return boss, None
+        try:
+            return _resolve(connection, boss)
+        except sqlite3.Error as exc:
+            raise OSError(str(exc)) from exc
+
+    def workspace(self, workspace_id: str) -> Workspace | None:
+        connection = self._read()
+        if connection is None:
+            return None
+        try:
+            return _workspace(connection, "id", workspace_id)
+        except sqlite3.Error as exc:
+            raise OSError(str(exc)) from exc
+
+    def waiting(self) -> list[Workspace]:
+        """Workspaces marked for handover, oldest release first."""
+        connection = self._read()
+        if connection is None:
+            return []
+        try:
+            rows = connection.execute(
+                f"SELECT {', '.join(Workspace._fields)} FROM workspaces WHERE pending = 1 "
+                "ORDER BY released, id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise OSError(str(exc)) from exc
+        return [_row(row) for row in rows]
+
+    def register(self, workspace_id: str, boss: str, host: str | None, file: str | None) -> None:
+        """Record the boss that created a conversation, and its transcript once it is known."""
+        with self._write() as connection:
+            connection.execute(
+                "INSERT INTO workspaces (id, owner, owner_host, owner_file) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (id) DO UPDATE SET owner_host = excluded.owner_host, "
+                "owner_file = coalesce(excluded.owner_file, owner_file) "
+                "WHERE owner = excluded.owner AND (owner_host IS NOT excluded.owner_host OR "
+                "coalesce(excluded.owner_file, owner_file) IS NOT owner_file)",
+                (workspace_id, boss, host, file),
+            )
+
+    def release(
+        self,
+        workspace_id: str,
+        boss: str,
+        host: str | None,
+        file: str | None,
+        note: str | None,
+        released: str,
+    ) -> None:
+        """Mark the boss's own workspace as waiting for another boss."""
+        with self._write() as connection:
+            cursor = connection.execute(
+                "INSERT INTO workspaces (id, owner, owner_host, owner_file, pending, note, "
+                "released) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT (id) DO UPDATE SET "
+                "pending = 1, note = excluded.note, released = excluded.released, "
+                "owner_host = excluded.owner_host, "
+                "owner_file = coalesce(excluded.owner_file, owner_file) "
+                "WHERE owner = excluded.owner",
+                (workspace_id, boss, host, file, note, released),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("this workspace was just taken over by another boss")
+
+    def claim(
+        self, workspace_id: str, boss: str, host: str | None, file: str | None
+    ) -> tuple[Workspace, Workspace]:
+        """Take a waiting workspace over (or withdraw one's own); the row before and after."""
+        with self._write() as connection:
+            before = _workspace(connection, "id", workspace_id)
+            if before is None or (not before.pending and before.owner != boss):
+                raise ValueError(f"workspace {workspace_id} is not waiting for a new boss")
+            if before.owner != boss:
+                current, away = _resolve(connection, boss)
+                if (
+                    away is None
+                    and connection.execute(
+                        "SELECT 1 FROM conversations WHERE manager_session = ? LIMIT 1",
+                        (current,),
+                    ).fetchone()
+                ):
+                    raise ValueError(
+                        f"this chat already leads workspace {current}; take over from a new "
+                        "chat, or hand that workspace over first"
+                    )
+                # An empty workspace of this boss gives way to the one it takes over.
+                connection.execute("DELETE FROM workspaces WHERE owner = ?", (boss,))
+                connection.execute(
+                    "UPDATE workspaces SET previous_host = owner_host, "
+                    "previous_file = owner_file, owner = ?, owner_host = ?, owner_file = ?, "
+                    "pending = 0 WHERE id = ?",
+                    (boss, host, file, workspace_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE workspaces SET pending = 0, owner_host = ?, "
+                    "owner_file = coalesce(?, owner_file) WHERE id = ?",
+                    (host, file, workspace_id),
+                )
+            after = _workspace(connection, "id", workspace_id)
+            assert after is not None
+            return before, after
+
     # Writes
 
     def save(self, old: Conversation | None, new: Conversation, view: bytes | None) -> int:
@@ -238,6 +361,40 @@ class Database:
         """Replace the derived view when it differs; the conversation must still exist."""
         with self._write() as connection:
             _save_view(connection, conversation_id, view)
+
+
+class Workspace(NamedTuple):
+    """One workspaces row: who writes the workspace now, and the handover around it."""
+
+    id: str
+    owner: str
+    owner_host: str | None
+    owner_file: str | None
+    pending: bool
+    note: str | None
+    released: str | None
+    previous_host: str | None
+    previous_file: str | None
+
+
+def _row(row: tuple[object, ...]) -> Workspace:
+    item = Workspace(*row)  # pyright: ignore[reportArgumentType]
+    return item._replace(pending=bool(item.pending))
+
+
+def _workspace(connection: sqlite3.Connection, column: str, value: str) -> Workspace | None:
+    row = connection.execute(
+        f"SELECT {', '.join(Workspace._fields)} FROM workspaces WHERE {column} = ?", (value,)
+    ).fetchone()
+    return None if row is None else _row(row)
+
+
+def _resolve(connection: sqlite3.Connection, boss: str) -> tuple[str, Workspace | None]:
+    owned = _workspace(connection, "owner", boss)
+    if owned is not None:
+        return owned.id, None
+    own = _workspace(connection, "id", boss)
+    return boss, own  # own is set only when this boss's workspace went to another boss
 
 
 def _save_entries(

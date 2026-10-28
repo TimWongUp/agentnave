@@ -49,7 +49,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
-from agentnave.store import Review, Unavailable
+from agentnave.store import Record, Review, Unavailable
 
 type ManagerModel = Annotated[
     str | None,
@@ -95,8 +95,8 @@ type ManagerSessionId = Annotated[
             "Use the host's real session ID when available; otherwise generate one UUID once "
             "for this manager chat and keep reusing it. A different chat needs a different ID. "
             "Never use the CLI name, MCP connection ID, or subagent session_id. "
-            "Required by start_agent and run_round unless AGENTNAVE_HOST_SESSION_ID is "
-            "injected for this chat."
+            "Required by start_agent and run_round, and by handover to hand over or take over, "
+            "unless AGENTNAVE_HOST_SESSION_ID is injected for this chat."
         ),
     ),
 ]
@@ -477,7 +477,8 @@ mcp = _Server(
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
         "Every dispatched prompt includes an instruction to complete the assigned task, "
         "report back to the manager, and not call AgentNave tools or delegate through AgentNave. "
-        + PROVIDER_SELECTION
+        "handover passes a whole workspace to another boss chat; use it only when the user asks "
+        "to hand over or take over. " + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
 )
@@ -1633,6 +1634,129 @@ async def decide_answers(
         raise ToolError("Unknown round_id; read_conversation lists saved rounds.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
+
+
+_WORKSPACE_ID = r"^s-[0-9a-f]{32}$"
+
+
+def _handover_conversations(
+    conversations: Conversations, records: list[Record]
+) -> list[dict[str, Any]]:
+    writable = conversations.scan()
+    return [
+        {
+            "conversation_id": record.state.id,
+            "title": record.state.title,
+            "kind": record.state.kind,
+            "updated": views.updated(record.state),
+            "running": any(task.status == "running" for task in record.state.tasks)
+            or any(round_.status == "running" for round_ in record.state.rounds),
+            "writable": writable.get(record.state.id, True),
+        }
+        for record in sorted(records, key=lambda record: views.updated(record.state), reverse=True)
+    ]
+
+
+@mcp.tool(
+    title="Hand a workspace over to another boss",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+async def handover(
+    release: Annotated[
+        bool,
+        Field(
+            description="Mark this boss chat's whole workspace as waiting for another boss "
+            "chat to take over."
+        ),
+    ] = False,
+    note: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=20000,
+            description="With release: notes for the next boss: goal, what is done, decisions "
+            "and why, what is open, desks in use.",
+        ),
+    ] = None,
+    workspace_id: Annotated[
+        str | None,
+        Field(
+            pattern=_WORKSPACE_ID,
+            description="Take this waiting workspace over (from a call without arguments).",
+        ),
+    ] = None,
+    manager_session_id: ManagerSessionId = None,
+    *,
+    ctx: Context[Runtime],
+) -> dict[str, Any]:
+    """Pass a boss workspace (every task and show of one boss chat) to another boss chat.
+
+    Only when the user asks to hand over or take over; never as a routine check. release=true
+    marks this chat's workspace as waiting. Without arguments, lists waiting workspaces. With
+    workspace_id, this chat takes it over: its notes, conversations (read each with
+    read_conversation) and, when known, the previous boss's transcript file, whose tail holds
+    its last turns. From then on this chat continues those shows and tasks and the previous boss
+    is refused. Work still running finishes in the previous boss's server and lands in history;
+    continue such a conversation once writable is true. Taking over your own waiting workspace
+    withdraws the handover. Private: never send this to seats.
+    """
+    conversations = _conversations(ctx)
+    if note is not None and not release:
+        raise ToolError("note goes with release=true. Correct the request and retry.")
+    if release and workspace_id is not None:
+        raise ToolError(
+            "Use release=true to hand this chat's workspace over, or workspace_id to take one "
+            "over, not both. Correct the request and retry."
+        )
+    try:
+        if release:
+            released, count = conversations.release(manager_session_id, note)
+            return {
+                "workspace_id": released,
+                "status": "waiting",
+                "conversations": count,
+                "next": "Tell the user to open a new chat in any host and ask it to take over "
+                "this workspace. Work still running here finishes and lands in history.",
+            }
+        if workspace_id is None:
+            return {
+                "waiting": [
+                    {
+                        "workspace_id": item.id,
+                        "title": records[0].state.title,
+                        "from_host": item.owner_host or records[-1].state.host,
+                        "released": item.released,
+                        "conversations": len(records),
+                        "note": item.note,
+                    }
+                    for item, records in conversations.waiting()
+                ]
+            }
+        before, after, records = conversations.claim(manager_session_id, workspace_id)
+    except (OSError, ValueError) as exc:
+        raise _rejected(exc) from exc
+    if before.owner == after.owner:
+        status = "withdrawn" if before.pending else "yours"
+        previous_host, previous_file = after.previous_host, after.previous_file
+    else:
+        status = "claimed"
+        previous_host, previous_file = before.owner_host, before.owner_file
+    result: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "status": status,
+        "title": records[0].state.title,
+        "from_host": previous_host or records[-1].state.host,
+        "note": after.note,
+        "conversations": _handover_conversations(conversations, records),
+        "next": "Read the note, then each conversation with read_conversation. Continue shows "
+        "with run_round(group_id) and tasks with start_agent(conversation_id or session_id) "
+        "once writable is true; running work finishes in the previous boss's server.",
+    }
+    if previous_file is not None and Path(previous_file).is_file():
+        result["previous_session_file"] = previous_file
+    return result
 
 
 @mcp.tool(

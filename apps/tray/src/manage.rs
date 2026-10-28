@@ -217,6 +217,53 @@ pub fn delete(root: &Path, id: &str) -> Value {
     }
 }
 
+/// A workspace keyed by a boss chat; legacy identities have none.
+fn boss_workspace(id: &str) -> bool {
+    id.strip_prefix("s-")
+        .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Mark a workspace as waiting for another boss (ADR-0032). Its boss keeps it until a new chat
+/// takes it over, so this needs no conversation lock.
+pub fn handover(root: &Path, group: &str) -> Value {
+    if !boss_workspace(group) {
+        return result(group, "error", "这个工作区没有记录 boss 聊天，不能交接");
+    }
+    let connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return result(group, "missing", "工作区已不存在"),
+        Err(e) => return result(group, "error", &e),
+    };
+    let marked = (|| -> rusqlite::Result<bool> {
+        let found: bool = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?1)",
+            [group],
+            |row| row.get(0),
+        )?;
+        if !found {
+            return Ok(false);
+        }
+        // A database an older server created may still lack the table.
+        connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
+        connection.execute(
+            "INSERT INTO workspaces (id, owner, pending, released) \
+             VALUES (?1, ?1, 1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) \
+             ON CONFLICT (id) DO UPDATE SET pending = 1, released = excluded.released",
+            [group],
+        )?;
+        Ok(true)
+    })();
+    match marked {
+        Ok(true) => result(
+            group,
+            "waiting",
+            "已标为待接手。在任意宿主开一个新聊天，请它接手这个工作区",
+        ),
+        Ok(false) => result(group, "missing", "工作区已不存在"),
+        Err(e) => result(group, "error", &format!("交接失败：{e}")),
+    }
+}
+
 /// Current members of the anchor's workspace; legacy identities remain individual records.
 fn workspace_ids(connection: &Connection, anchor: &str) -> Result<Vec<String>, String> {
     let session: Option<Option<String>> = connection
@@ -230,11 +277,7 @@ fn workspace_ids(connection: &Connection, anchor: &str) -> Result<Vec<String>, S
     let Some(session) = session else {
         return Ok(Vec::new());
     };
-    let session = session.filter(|s| {
-        s.strip_prefix("s-")
-            .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
-    });
-    let Some(session) = session else {
+    let Some(session) = session.filter(|s| boss_workspace(s)) else {
         return Ok(vec![anchor.to_owned()]);
     };
     connection
