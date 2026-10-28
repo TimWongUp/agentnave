@@ -704,7 +704,8 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         done = _seats(await _wait(client, started["round_id"]))[0]
         assert done["status"] == "succeeded"
         ordinary_argv = cast(list[str], _seen(done)["argv"])
-        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "bypassPermissions"
+        # Ordinary seats take the CLI's permission tier, auto by default, over saved model options.
+        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "auto"
 
 
 @pytest.mark.asyncio
@@ -2157,14 +2158,15 @@ async def test_studio_enforces_discussion_defaults_before_saving(
         assert all(
             seat["model"] == "chosen"
             and seat["effort"] == "high"
-            and seat["defaults_applied"] == ["model", "effort"]
+            and seat["defaults_applied"] == ["model", "effort", "permission_mode"]
             for seat in cast(list[dict[str, object]], show["members"])
         )
         saved = _state(data_root, str(show["group_id"]))
         assert saved["host"] == "claude" and saved["host_source"] == "parent"
         assert saved["manager_session"]
         assert all(
-            seat["provider_options"] == {"model": "chosen", "effort": "high"}
+            seat["provider_options"]
+            == {"model": "chosen", "effort": "high", "permission_mode": "auto"}
             for seat in saved["seats"]
         )
         assert (
@@ -2246,7 +2248,7 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
         )
         assert "dashboard_error" not in first  # tasks never start the viewer
         assert first["model"] == "chosen" and first["effort"] == "high"
-        assert first["defaults_applied"] == ["model", "effort", "agent"]
+        assert first["defaults_applied"] == ["model", "effort", "agent", "permission_mode"]
         saved = _state(data_root, str(first["conversation_id"]))
         assert saved["host"] == "codex" and saved["host_source"] == "env"
         manager_session = saved["manager_session"]

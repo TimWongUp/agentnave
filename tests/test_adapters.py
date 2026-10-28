@@ -674,7 +674,7 @@ def test_adapters_drop_malformed_usage_without_losing_terminal_result(
     assert result.usage == {}
 
 
-def test_claude_permission_denials_block_only_a_failed_run() -> None:
+def test_claude_permission_denials_block_only_a_failed_run(tmp_path: Path) -> None:
     # Claude 2.1.308 reports subtype=success when the model finishes after a denied tool call.
     payload = {
         "type": "result",
@@ -700,7 +700,7 @@ def test_claude_permission_denials_block_only_a_failed_run() -> None:
     )
     assert clean.warnings == ()
     # CodeBuddy only reports the denial in the tool result; the capture keeps a marker of it.
-    capture = CodeBuddyAdapter().prepare(request(Path("/"), "codebuddy")).capture_line
+    capture = CodeBuddyAdapter().prepare(request(tmp_path, "codebuddy")).capture_line
     assert capture is not None
     text = "Error: Permission to use Bash has been denied because this tool requires approval"
     denial = {

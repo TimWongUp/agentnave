@@ -33,7 +33,7 @@ const FILE: &str = "members.json";
 const REVIEW_FILE: &str = "review.json";
 const PERMISSIONS_FILE: &str = "permissions.json";
 /// Per-CLI permission tiers; the server maps each to that CLI's own options. Pi has none.
-const TIERS: [&str; 3] = ["native", "auto", "full"];
+const TIERS: [&str; 2] = ["auto", "full"];
 
 pub fn empty() -> Value {
     json!({"version": 1, "clis": {}, "modes": {}})
@@ -315,9 +315,9 @@ pub fn save_review(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, REVIEW_FILE, document)
 }
 
-/// permissions.json: `{"version": 1, "clis": {provider: "native" | "auto" | "full"}}`. Kept out of
+/// permissions.json: `{"version": 1, "clis": {provider: "auto" | "full"}}`. Kept out of
 /// members.json so a server that predates permission tiers still reads its members. A missing
-/// file or CLI keeps that CLI's native permissions; nothing is written until the user picks.
+/// file or CLI runs "auto": a dispatched CLI cannot ask anyone, so its native defaults deny.
 pub fn validate_permissions(document: &Value) -> Result<(), String> {
     let top = object(document, PERMISSIONS_FILE)?;
     only(top, &["version", "clis"], PERMISSIONS_FILE)?;
@@ -329,7 +329,7 @@ pub fn validate_permissions(document: &Value) -> Result<(), String> {
             return Err(format!("{provider} 不支持权限档位"));
         }
         if !tier.as_str().is_some_and(|tier| TIERS.contains(&tier)) {
-            return Err(format!("{provider} 的权限档位只能是 native、auto 或 full"));
+            return Err(format!("{provider} 的权限档位只能是 auto 或 full"));
         }
     }
     Ok(())
@@ -376,7 +376,7 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         Ok(review) => (review, Value::Null),
         Err(error) => (Value::Null, json!(error)),
     };
-    // Null until the user first picks a tier, so the page can tell "never chosen" apart.
+    // Null until the user first picks a tier; every CLI then runs "auto".
     let (permissions, permissions_error) = match read_permissions(root) {
         Ok(permissions) => (permissions.unwrap_or(Value::Null), Value::Null),
         Err(error) => (Value::Null, json!(error)),
@@ -618,12 +618,12 @@ mod tests {
             json!({"pi": "auto"}),
             json!({"other": "auto"}),
             json!({"codex": "yolo"}),
+            json!({"codex": "native"}),
             json!({"codex": true}),
         ] {
             assert_eq!(post(&json!({"version": 1, "clis": clis})), 400);
         }
-        let tiers =
-            json!({"version": 1, "clis": {"codex": "auto", "claude": "full", "grok": "native"}});
+        let tiers = json!({"version": 1, "clis": {"codex": "auto", "claude": "full"}});
         assert_eq!(post(&tiers), 200);
         assert_eq!(read_permissions(&root).unwrap(), Some(tiers));
         assert!(!root.join(FILE).exists());

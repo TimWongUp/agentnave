@@ -12,6 +12,6 @@ App 中配置了组员时以 `list_members` 为准，超出模式范围会被拒
 
 AgentNave 通过 `--print` 调用 CodeBuddy。需要审批的工具若未获原生权限允许，会因非交互模式无法弹出确认而被拒绝；主 Agent 的任务授权不会自动改变 CLI 权限。
 
-用户可在 App 为 CodeBuddy 选权限档位；它的 `auto` 在 `--print` 下仍会拒绝命令，所以「自动」与「完全放开」都映射为 `bypassPermissions`。未选档位时沿用原生设置；需要改变时，说明被拒绝的具体工具，并让用户在 App 选档位、选择最小范围的允许规则或本次调用的 `permission_mode`。不要为完成任务自动开启 `bypassPermissions` 或永久放行全部 Bash。
+CodeBuddy 的 `auto` 在 `--print` 下仍会拒绝命令，所以它的权限档位「自动」与「完全放开」都映射为 `bypassPermissions`，缺省即套用。只有用户本轮明确要求收紧时才显式传 `permission_mode`（会让档位整档不套用）；不要为完成任务自行改动权限。
 
 CodeBuddy 可能把权限拒绝写入工具结果和最终回答，同时以正常对话终态结束。按主 Skill 的结果验收规则检查实际执行证据；拒绝后尚未完成的操作应报告为未完成，不能因 `succeeded` 宣称执行成功。

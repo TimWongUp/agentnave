@@ -646,7 +646,6 @@ All checks passed!
   }
   let membersReady = ["midway", "typical", "done"].includes(hostScene);
   let triedReady = hostScene === "done";
-  let permissionsReady = hostScene === "done";
   const confirmedReloads = new Map();
   let mockToolsSynced = q.get("activation") !== "refresh";
   if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
@@ -660,7 +659,6 @@ All checks passed!
     { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
     { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },
     { id: "members", done: membersReady, detail: "选择可以派出的 CLI 与模型" },
-    { id: "permissions", done: permissionsReady, detail: "推荐「自动」：CLI 自带的审核放行常规命令，派出去的任务才能跑命令" },
     { id: "try", done: triedReady, detail: "在宿主里派一次任务" }] });
   async function p3Fetch(path) {
     if (path === "/app/hosts") return structuredClone(hostView());
@@ -684,7 +682,6 @@ All checks passed!
       return p3Fetch("/app/status");
     }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
-    if (path === "/app/permissions") { permissionsReady = true; return { saved: true }; }
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }
     if (path === "/app/onboarding/reopen") { dismissed = false; return { dismissed }; }
     if (path === "/app/hosts/reveal-backups") return { ok: true, message: "预览：已打开备份目录" };

@@ -6,7 +6,7 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -75,11 +75,13 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
 )
 
 
-type PermissionTier = Literal["native", "auto", "full"]
+type PermissionTier = Literal["auto", "full"]
 
-# The native options each App permission tier stands for, per CLI. "auto" lets the CLI's own
-# reviewer or classifier approve tool calls; CodeBuddy's auto denies shell under -p and
-# DeepSeek has no reviewer, so their auto grants full access. Pi has no approval step.
+# The native options each App permission tier stands for, per CLI; a CLI without a saved tier
+# runs "auto", since a dispatched CLI cannot ask anyone and native defaults deny tool calls.
+# "auto" lets the CLI's own reviewer or classifier approve tool calls; CodeBuddy's auto denies
+# shell under -p and DeepSeek has no reviewer, so their auto grants full access. Pi has no
+# approval step.
 PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
     "claude": {
         "auto": {"permission_mode": "auto"},
@@ -319,7 +321,7 @@ def apply_permission(
     applied: list[str],
 ) -> None:
     """Fill the options of the CLI's App permission tier unless the caller chose its own."""
-    tier = permissions.clis.get(provider, "native") if permissions is not None else "native"
+    tier = permissions.clis.get(provider, "auto") if permissions is not None else "auto"
     granted = PERMISSION_TIERS.get(provider, {}).get(tier)
     keys = PERMISSION_KEYS.get(provider, frozenset())
     if not granted or keys & set(explicit):
@@ -455,7 +457,7 @@ class MemberList(StrictModel):
     modes: dict[Mode, ModeStatus]
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error: str | None = None
-    # The App permission tier of each CLI that has one; omitted CLIs keep native permissions.
+    # The App permission tier of each CLI that has one, "auto" unless the user picked "full".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
 
@@ -553,12 +555,9 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     except PermissionFileError as exc:
         permissions_error = str(exc)
     else:
-        if saved is not None:
-            permissions = {
-                provider: tier
-                for provider, tier in saved.clis.items()
-                if PERMISSION_TIERS.get(provider, {}).get(tier)
-            }
+        for provider in cast(tuple[ProviderName, ...], get_args(ProviderName.__value__)):
+            if provider in PERMISSION_TIERS:
+                permissions[provider] = saved.clis.get(provider, "auto") if saved else "auto"
     return MemberList(
         configured=document is not None,
         host=host.name,

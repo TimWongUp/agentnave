@@ -99,7 +99,9 @@ their official instructions. On macOS and Linux, AgentNave looks for each CLI on
 CLI's directory first, then the inherited `PATH`, then those directories. Desktop hosts may have a
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
-AgentNave does not install providers or change their login, permissions, or configuration.
+AgentNave does not install providers or change their login or configuration. It passes each CLI's
+permission tier on every dispatch (automatic approval by default, full access when chosen in the
+App) without changing the CLI's saved settings.
 
 ### Select installed CLIs before locating them
 
@@ -460,8 +462,9 @@ For Antigravity project work, use the absolute project directory as `cwd` and fo
 [directory handoff guidance](../skills/agentnave-manager/references/antigravity.md): require the
 terminal's explicit `Cwd`, verify it with `pwd`, and stop project operations on a mismatch.
 `provider_options.project` selects a native project, not a terminal working directory.
-For CodeBuddy, `--print` cannot display permission prompts. Preserve native permissions and resolve
-any denied tool with the user before retrying; do not automatically enable permission bypass.
+For CodeBuddy, `--print` cannot display permission prompts and its own `auto` mode still denies
+commands, so its permission tier passes `bypassPermissions`. A terminal result's `warnings` reports
+tool calls a CLI denied while still finishing successfully.
 The companion Skill's provider references give the calling guidance for these cases.
 
 Report installation results per host as **added**, **reused**, **updated**, or **pending** for

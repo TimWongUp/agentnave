@@ -173,19 +173,6 @@ a.ob-btn:hover {
   opacity: 0.75;
   cursor: default;
 }
-.ob-act {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ob-btn.ob-alt {
-  background: transparent;
-  color: var(--soft);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.ob-btn.ob-alt:hover:enabled {
-  color: var(--ink);
-}
 .ob-spin {
   width: 10px;
   height: 10px;

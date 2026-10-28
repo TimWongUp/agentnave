@@ -108,7 +108,7 @@ let probedAt = 0;
 let documentError = null;
 let reviewSeats = {}; // review.json seats; saved on their own, apart from members.json.
 let reviewError = null;
-let permissionTiers = null; // permissions.json tiers by CLI; null until the user first picks.
+let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "auto".
 let permissionsError = null;
 let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
@@ -299,13 +299,9 @@ async function apiPostPermissions(doc) {
 }
 
 // What each tier means for each CLI when a task runs unattended; the server maps the tier to
-// that CLI's own options. Pi has no approval step, so it has no tier.
-const TIERS = [["native", "原生"], ["auto", "自动"], ["full", "完全放开"]];
+// that CLI's own options, "auto" unless the user picked "full". Pi has no approval step.
+const TIERS = [["auto", "自动"], ["full", "完全放开"]];
 const TIER_TEXT = {
-  native: {
-    any: "沿用这个 CLI 自己的设置。派发时没人能点确认，需要确认的命令和改动会被直接拒绝。",
-    codebuddy: "沿用 CodeBuddy 自己的设置：派发时它会拒绝所有命令，任务往往做不完。",
-  },
   auto: {
     any: "CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。",
     codex: "Codex 自动审核放行命令，读写限在工作目录内。",
@@ -319,7 +315,7 @@ const TIER_TEXT = {
 };
 
 function permissionTier(provider) {
-  return permissionTiers?.[provider] || "native";
+  return permissionTiers?.[provider] || "auto";
 }
 
 async function setPermissionTier(provider, tier) {

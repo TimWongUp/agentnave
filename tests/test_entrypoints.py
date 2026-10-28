@@ -982,11 +982,13 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
         defaulted = await start({})
         assert defaulted["model"] == "chosen" and defaulted["effort"] == "medium"
-        assert defaulted["defaults_applied"] == ["model", "effort", "agent"]
+        # Without permissions.json every CLI with a tier runs it at "auto".
+        applied = ["model", "effort", "agent", "permission_mode"]
+        assert defaulted["defaults_applied"] == applied
         resumed = await start({}, "session-e2e")
-        assert resumed["defaults_applied"] == ["model", "effort", "agent"]
+        assert resumed["defaults_applied"] == applied
         explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
-        assert explicit["defaults_applied"] == [] and explicit["effort"] == "high"
+        assert explicit["defaults_applied"] == ["permission_mode"] and explicit["effort"] == "high"
         for options in ({"model": "outside"}, {"effort": "low"}, {"unknown": True}):
             result = await client.call_tool(
                 "start_agent",
