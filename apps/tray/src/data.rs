@@ -139,7 +139,13 @@ type CachedView = (i64, Option<Arc<Value>>);
 /// What identifies a route answer: each snapshot's view, whether the data root exists, and
 /// the reuse window.
 // Snapshots, whether the data root exists, the reuse window and the running limit.
-type RouteKey = (Vec<crate::stage::SourceKey>, bool, u64, usize);
+type RouteKey = (
+    Vec<crate::stage::SourceKey>,
+    bool,
+    u64,
+    usize,
+    Vec<(String, crate::stage::Handover)>,
+);
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
 type RouteAnswer = (RouteKey, Vec<Arc<Value>>, Response);
@@ -227,6 +233,24 @@ impl Reader {
                 Err(error) => Response::error(500, &error),
             };
         }
+        if path == "/app/permissions" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::members::validate_permissions(&payload) {
+                return Response::error(400, &error);
+            }
+            return match crate::members::save_permissions(&self.root, &payload) {
+                Ok(()) => Response::json(&json!({"saved": true})),
+                Err(error) => Response::error(500, &error),
+            };
+        }
         if path == "/app/members" {
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -305,6 +329,21 @@ impl Reader {
                 return Response::error(400, "需要有效的会话 ID 与标题");
             };
             return Response::json(&crate::manage::rename(&self.root, id, title));
+        }
+        if path == "/app/workspaces/handover" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
+                return Response::error(400, "需要有效的工作区 ID");
+            };
+            return Response::json(&crate::manage::handover(&self.root, group));
         }
         if path == "/app/conversations/delete" {
             if method != "POST" {
@@ -678,11 +717,16 @@ impl Reader {
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
+        let handovers = match crate::db::read(&self.root) {
+            Ok(Some(connection)) => handovers(&connection),
+            _ => Vec::new(),
+        };
         let key = (
             snapshots.iter().map(crate::stage::source_key).collect(),
             self.root.is_dir(),
             window,
             limit,
+            handovers,
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -691,7 +735,8 @@ impl Reader {
             return response.clone();
         }
         let views = snapshots.iter().map(|s| s.view.clone()).collect();
-        let response = crate::stage::respond(path, snapshots, key.1, limit);
+        let handovers = key.4.iter().cloned().collect();
+        let response = crate::stage::respond(path, snapshots, key.1, limit, &handovers);
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
             routes.clear();
@@ -854,6 +899,32 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .and_then(Iterator::collect)
         .map_err(|e| e.to_string())
+}
+
+/// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
+/// its creator; none before a server added the table.
+fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
+    let rows = connection
+        .prepare(
+            "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending \
+             FROM workspaces WHERE pending = 1 OR owner != id OR previous_host IS NOT NULL \
+             ORDER BY id",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        crate::stage::Handover {
+                            changed: row.get(1)?,
+                            host: row.get(2)?,
+                            pending: row.get(3)?,
+                        },
+                    ))
+                })?
+                .collect()
+        });
+    rows.unwrap_or_default()
 }
 
 fn view_body(connection: &rusqlite::Connection, id: &str) -> Option<String> {

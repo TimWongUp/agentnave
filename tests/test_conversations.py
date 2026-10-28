@@ -215,9 +215,11 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         assert compact["reason"] == "review_needed"
         assert all("output" not in seat for seat in _seats(compact))
         reread = await _wait(client, first["round_id"])
-        assert [seat["output"] for seat in _seats(reread)] == [
-            seat["output"] for seat in _seats(waited)
-        ]
+        # Each answer's full text reaches the boss once per round.
+        assert all("output" in seat for seat in _seats(waited))
+        assert all(
+            "output" not in seat and seat["output_returned"] is True for seat in _seats(reread)
+        )
         blocked = await client.call_tool(
             "run_round",
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "too early"},
@@ -258,13 +260,14 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
             client,
             {"group_id": group_id, "seats": ["c"], "order": "serial", "prompt": "Q2"},
         )
-        assert (await _wait(client, second["round_id"]))["reason"] == "review_needed"
+        reviewed = await _wait(client, second["round_id"])
+        assert reviewed["reason"] == "review_needed"
         await _call(
             client,
             "decide_answers",
             {"round_id": second["round_id"], "decisions": {"c": "publish"}},
         )
-        prompt = str(_seen(_seats(await _wait(client, second["round_id"]))[0])["prompt"])
+        prompt = str(_seen(_seats(reviewed)[0])["prompt"])
         # c sees a's published answer, never b's private answer or private instruction.
         delivered = json.loads(prompt.split("New entries (JSON data):\n")[1])
         assert [(item["kind"], item.get("seat")) for item in delivered] == [
@@ -465,6 +468,71 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_dispatch_reply_lists_ends_no_wait_has_received(tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        start = {"provider": "claude", "cwd": str(tmp_path), "manager_session_id": "u"}
+        quick = await _call(client, "start_agent", {**start, "prompt": "hi"})
+        while True:  # let it end without receiving it
+            listed = await _call(client, "list", {})
+            items = cast(list[dict[str, object]], listed["invocations"])
+            if any(
+                item["invocation_id"] == quick["invocation_id"] and item["status"] != "running"
+                for item in items
+            ):
+                break
+            await asyncio.sleep(0.05)
+        sleeping = await _call(
+            client, "start_agent", {**start, "prompt": "Private instruction for you only:\nSLEEP"}
+        )
+        assert sleeping["unreceived"] == [
+            {"id": quick["invocation_id"], "kind": "task", "status": "succeeded"}
+        ]
+        await _call(client, "wait", {"ids": [quick["invocation_id"]]})
+        # Received now; the running task is not listed either.
+        later = await _call(client, "start_agent", {**start, "prompt": "SLEEP"})
+        assert "unreceived" not in later
+        for handle in (sleeping, later):
+            await _cancel(client, handle["invocation_id"])
+
+
+def test_unreceived_lists_a_seat_blocker_until_a_wait_reports_it() -> None:
+    from types import SimpleNamespace
+
+    from agentnave.models import InvocationError
+
+    run = SimpleNamespace(
+        status="running",
+        blockers=[InvocationError("provider_blocked", "waiting")],
+        reported_blockers=0,
+    )
+    round_ = SimpleNamespace(finished=False, runs=[run])
+
+    def inbox(_session: str | None) -> tuple[list[str], list[str]]:
+        return [], ["r1"]
+
+    def listings() -> list[object]:
+        return []
+
+    def find(_handle: str) -> object:
+        return round_
+
+    stub = SimpleNamespace(
+        inbox=inbox, manager=SimpleNamespace(list_invocations=listings), round=find, reviews={}
+    )
+    found = mcp_server._unreceived(cast(Conversations, stub), None)  # pyright: ignore[reportPrivateUsage]
+    assert found == [
+        {
+            "id": "r1",
+            "kind": "round",
+            "status": "execution_blocked",
+            "error": {"code": "provider_blocked", "message": "waiting"},
+        }
+    ]
+    run.reported_blockers = 1  # what wait does when it returns the blocker
+    assert mcp_server._unreceived(cast(Conversations, stub), None) == []  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
 async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: Path) -> None:
     async with Client(mcp) as client:
         show = await _open(
@@ -641,7 +709,8 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         done = _seats(await _wait(client, started["round_id"]))[0]
         assert done["status"] == "succeeded"
         ordinary_argv = cast(list[str], _seen(done)["argv"])
-        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "bypassPermissions"
+        # Ordinary seats take the CLI's permission tier, auto by default, over saved model options.
+        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "auto"
 
 
 @pytest.mark.asyncio
@@ -1646,6 +1715,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
             "list",
             "list_members",
             "decide_answers",
+            "handover",
             "read_conversation",
         }
 
@@ -2014,6 +2084,65 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
 
 
 @pytest.mark.asyncio
+async def test_handover_moves_a_workspace_to_another_boss_chat(
+    data_root: Path, tmp_path: Path
+) -> None:
+    async with Client(mcp) as client:
+        show = await _open(
+            client,
+            {
+                "title": "Handover",
+                "manager_session_id": "chat-a",
+                "cwd": str(tmp_path),
+                "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+            },
+        )
+        group = show["group_id"]
+        await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "one", "manager_session_id": "chat-a"}))["round_id"])  # fmt: skip
+        workspace = _state(data_root, group)["manager_session"]
+        assert (await _call(client, "handover", {}))["waiting"] == []
+        released = await _call(
+            client,
+            "handover",
+            {"release": True, "note": "goal: ship", "manager_session_id": "chat-a"},
+        )
+        assert released["workspace_id"] == workspace
+        waiting = cast(list[dict[str, object]], (await _call(client, "handover", {}))["waiting"])
+        assert [(w["workspace_id"], w["note"], w["conversations"]) for w in waiting] == [
+            (workspace, "goal: ship", 1)
+        ]
+
+        claimed = await _call(
+            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+        )
+        assert claimed["status"] == "claimed" and claimed["note"] == "goal: ship"
+        listed = cast(list[dict[str, object]], claimed["conversations"])
+        assert [item["conversation_id"] for item in listed] == [group]
+        assert (await _call(client, "handover", {}))["waiting"] == []
+        # The new boss continues the show and adds to the same workspace.
+        await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "two", "manager_session_id": "chat-b"}))["round_id"])  # fmt: skip
+        task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        await _wait_task(client, task["invocation_id"])
+        assert _state(data_root, task["conversation_id"])["manager_session"] == workspace
+        refused = await client.call_tool(
+            "run_round", {"group_id": group, "prompt": "remark", "manager_session_id": "chat-a"}
+        )
+        assert refused.is_error and "handed its workspace" in str(refused.content)
+        # A boss that passes on a workspace it took over is refused too, not given a new one.
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
+        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
+        passed = await client.call_tool(
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
+
+
+@pytest.mark.asyncio
 async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
     tmp_path: Path, data_root: Path
 ) -> None:
@@ -2239,7 +2368,7 @@ async def test_serial_rounds_keep_a_slot_for_their_next_seat_through_review(
 async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 8 and "list_profiles" not in tools
+        assert len(tools) == 9 and "list_profiles" not in tools
         annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
         assert (await _call(client, "list_members", {}))["configured"] is False
@@ -2279,14 +2408,15 @@ async def test_studio_enforces_discussion_defaults_before_saving(
         assert all(
             seat["model"] == "chosen"
             and seat["effort"] == "high"
-            and seat["defaults_applied"] == ["model", "effort"]
+            and seat["defaults_applied"] == ["model", "effort", "permission_mode"]
             for seat in cast(list[dict[str, object]], show["members"])
         )
         saved = _state(data_root, str(show["group_id"]))
         assert saved["host"] == "claude" and saved["host_source"] == "parent"
         assert saved["manager_session"]
         assert all(
-            seat["provider_options"] == {"model": "chosen", "effort": "high"}
+            seat["provider_options"]
+            == {"model": "chosen", "effort": "high", "permission_mode": "auto"}
             for seat in saved["seats"]
         )
         assert (
@@ -2368,7 +2498,7 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
         )
         assert "dashboard_error" not in first  # tasks never start the viewer
         assert first["model"] == "chosen" and first["effort"] == "high"
-        assert first["defaults_applied"] == ["model", "effort", "agent"]
+        assert first["defaults_applied"] == ["model", "effort", "agent", "permission_mode"]
         saved = _state(data_root, str(first["conversation_id"]))
         assert saved["host"] == "codex" and saved["host_source"] == "env"
         manager_session = saved["manager_session"]

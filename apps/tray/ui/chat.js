@@ -54,7 +54,7 @@ function store(key, value) {
     if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value);
   } catch { /* storage may be unavailable */ }
 }
-const FIG = 100; // character size at desks and meeting seats, in px (matches --fig in chat.css)
+const FIG = 100; // character size at meeting seats before any desk is drawn, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 const WALK_MS = 1600; // a figure's walk between its desk and a meeting seat
 const HOLD_MS = 10e3; // an ended room stays empty this long after its seats are back
@@ -256,7 +256,7 @@ function updateItem(rec, g) {
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
-  setAttr(rec.el, "aria-label", `${name}，boss 在 ${g.label}，${word}`);
+  setAttr(rec.el, "aria-label", `${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`);
   setAttr(rec.el, "title", `${name} · ${chatPlace(g)}`);
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
   if (rec.tileKey !== tileKey) {
@@ -268,13 +268,17 @@ function updateItem(rec, g) {
   setText(rec.label, name);
   setText(
     rec.meta,
-    `${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
+    `${handoverWord(g)}${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
   );
   setText(rec.time, relTime(g.updated));
   setText(rec.prev, g.preview);
   rec.pill.hidden = g.status === "idle";
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
+}
+// A workspace waiting for, or taken over by, another boss (ADR-0033).
+function handoverWord(g) {
+  return { pending: "待接手 · ", changed: "boss 已更换 · " }[g.handover] || "";
 }
 function renderList() {
   const groups = state.groupsData;
@@ -422,7 +426,7 @@ function renderHead(c, n) {
   }
   const t = state.head;
   setText(t.title, chatName(c));
-  setText(t.sub, `boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  setText(t.sub, `${handoverWord(c)}boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
   t.run.hidden = !n.running && !n.review;
   setText(t.run, n.running ? `${n.running} 个在工作` : "会议进行中");
 }
@@ -754,14 +758,19 @@ function updateRoom(rec, r, ctx) {
   reconcile(rec.scene, nodes);
 }
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
+// The boss's scene takes a desk's size too, so it grows and shrinks with the row.
 function layoutRooms() {
+  const deskScene = el.desks.querySelector(".desk > .scene");
+  if (state.bossRec) state.bossRec.scene.style.width = deskScene ? `${deskScene.offsetWidth}px` : "";
+  // Desks scale with the floor, so seats take the size their figures have at the desks.
+  const fig = el.desks.querySelector(".desk > .scene > .fig")?.offsetWidth || FIG;
   for (const rec of state.roomRecs.values()) {
     const m = rec.scene;
     if (!m.isConnected) continue;
     const avail = rec.el.clientWidth - 26;
     const slots = m.children.length;
     if (avail <= 0 || !slots) continue;
-    const size = Math.min(FIG, avail);
+    const size = Math.min(fig, avail);
     const perRow = Math.min(slots, Math.max(1, Math.floor(avail / size)));
     m.style.setProperty("--S", `${size}px`);
     m.style.width = `${size * perRow}px`;

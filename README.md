@@ -9,8 +9,10 @@
 AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI,
 Grok CLI, Pi Coding Agent, or DeepSeek Harness as subagents, one at a time or as a group answering in parallel or
 serial rounds. Each provider keeps its native authentication,
-configuration, permissions, and session model; AgentNave supplies the adapter and process
-supervision around it.
+configuration, and session model; AgentNave supplies the adapter and process supervision around
+it. Dispatched CLIs cannot ask anyone for approval, so by default AgentNave runs each one with its
+own automatic approval reviewer, or without approvals where a CLI has no such reviewer; the App
+can switch a CLI to full access.
 
 The boundary is intentional. AgentNave does not plan tasks, assign roles, build DAGs, choose
 parallelism, review results, synthesize answers, retry work, or manage worktrees. Those decisions
@@ -57,7 +59,7 @@ Follow the [installation guide](docs/installation.md) to:
    the same release.
 4. Verify both MCP tools and Skill discovery; restart connections or sessions after changes.
 
-**The paired release is `v0.49.0`.** Install the runtime and complete Skill directory from that
+**The paired release is `v0.51.0`.** Install the runtime and complete Skill directory from that
 tag. Hosts under the same OS user and `uv` tool directories share one runtime installation, but
 each MCP connection runs its own STDIO service process. Provider CLIs must be installed and authenticated separately; `uv`
 manages only the runtime and does not install the Skill or change provider configuration.
@@ -77,6 +79,7 @@ authentication, configuration and native sessions remain provider-owned.
 | `list` | List this server's handles and saved conversations, and start the read-only dashboard |
 | `read_conversation` | Read one conversation back as the App shows it |
 | `list_members` | Read the member defaults set in the App, and one provider's options |
+| `handover` | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
 
 A seat in a group is an ordinary subagent with its own native session. In a `parallel` round all
 seats answer independently; in a `serial` round each sees the earlier answers. Seats share only

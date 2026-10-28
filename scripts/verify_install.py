@@ -22,6 +22,7 @@ TOOLS = [
     "list_members",
     "run_round",
     "decide_answers",
+    "handover",
     "read_conversation",
 ]
 

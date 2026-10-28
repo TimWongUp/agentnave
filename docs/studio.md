@@ -12,6 +12,7 @@
 | `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |
 | `list`、`read_conversation` | 列出句柄与会话并启动看板；按 App 的方式读回一个会话的最终消息 |
 | `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |
+| `handover` | 只在用户要求时把本聊天的整个工作区交给另一个 boss 聊天：`release=true` 交出（可附交接说明），不带参数列出待接手的工作区，`workspace_id` 认领；认领后老 boss 的 `start_agent`、`run_round` 与 `handover` 被拒绝，交接前的待审答案仍可由它用 `decide_answers` 决定（[ADR-0033](adr/0033-boss-workspace-handover.md)） |
 
 标题在创建时给出，之后只在 App 中改名；MCP 不提供改名工具。中继空闲探测使用的 `list_invocations` 仍可调用，但不在工具列表中（[ADR-0024](adr/0024-consolidated-tools-and-private-review.md)）。
 
@@ -74,7 +75,7 @@
 
 ## 保存与恢复
 
-数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`run_round` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时读取仅限逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，仍未知则拒绝调用。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
+数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`run_round` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时先读逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再读宿主给本服务进程的原生会话 ID（目前只有 Claude Code 的 `CLAUDE_CODE_SESSION_ID`；Codex 不给 MCP 进程传 `CODEX_THREAD_ID`），仍未知则拒绝调用。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
 
 每次写入前取锁并在锁内重读数据库状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；无归属的旧记录仍可读取，用原生 `session_id` 续接时创建当前 boss 的新记录。
 
@@ -96,7 +97,7 @@
 
 会话管理在办公室里进行，没有单独页面，旧的 `/manage/` 地址转到办公室。右键工作区可打开、改名或删除整个工作区；按住 ⌘（或 Ctrl）点选可逐个多选，按住 Shift 点选可选中一段，多选后右键可一起删除，Esc 取消选择。右键会议室（办公室里的会议桌或「会议」列表中的一条）可查看对话、改名或删除这场会议。给工作区改名就是改它第一个会话的标题；标题最多 48 列（汉字算 2 列）。工作区列表顶部的「清理…」按 7、30、90 或 180 天删除超过该时间没有动静的工作区，进行中和待审核的不在其列。删除前在对话框里列出将删除的内容并确认；运行中、待审核或被宿主占用的会话会保留并注明，删除后提示结果。
 
-模型图标固定为 LobeHub 官方图标。内置小人为 AI 生成；GPT 白龙娘与 DeepSeek 蓝色鲸鱼女仆的形象设定参考社区二创（上善无形、ZipZipPipe）。设置页「头像」可为每个模型家族换一套办公室小人：选择含 `s`、`m`、`h` 子文件夹的文件夹，按动作命名的 27 张 WebP（s 266、m 320、h 96 像素正方形，单张不超过 1 MB）须齐全且尺寸相符，托盘校验后整套替换保存到数据根 `characters/<家族>/`，恢复默认即删除；办公室与菜单栏面板共用。早期版本保存在 `avatars.json` 的家族、指定模型图片不再显示，CLI 标志的覆盖仍读取。
+模型图标固定为 LobeHub 官方图标。内置小人为 AI 生成；GPT 白龙娘与 DeepSeek 蓝色鲸鱼女仆的形象设定参考社区二创（上善无形、ZipZipPipe），豆包按其官方头像形象做画风适配。设置页「头像」可为每个模型家族换一套办公室小人：选择含 `s`、`m`、`h` 子文件夹的文件夹，按动作命名的 27 张 WebP（s 266、m 320、h 96 像素正方形，单张不超过 1 MB）须齐全且尺寸相符，托盘校验后整套替换保存到数据根 `characters/<家族>/`，恢复默认即删除；办公室与菜单栏面板共用。早期版本保存在 `avatars.json` 的家族、指定模型图片不再显示，CLI 标志的覆盖仍读取。
 
 设置页「编排偏好」给出可复制的推荐写法，并列出各宿主常见的全局规则文件位置，可用默认编辑器打开已存在的文件；App 不创建也不写入这些文件，是否采用由用户决定。
 

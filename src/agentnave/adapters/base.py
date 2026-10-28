@@ -75,6 +75,7 @@ class ParsedProviderResult:
     session_id: str | None = None
     usage: dict[str, int | float] = field(default_factory=lambda: {})
     error_message: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 class ProviderAdapter(Protocol):

@@ -27,17 +27,19 @@ from agentnave.conversations import (
 )
 from agentnave.core import InvocationManager
 from agentnave.group import GroupSeat, Round
-from agentnave.host import detect_host
+from agentnave.host import detect_host, host_session_id
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
     MemberFileError,
     MemberList,
+    PermissionFileError,
     ProviderExcludedError,
     ProviderName,
     SettingsFileError,
     apply_member,
     read_members,
+    read_permissions,
     validate_provider_options,
 )
 from agentnave.members import list_members as read_member_list
@@ -47,7 +49,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
-from agentnave.store import Review, Unavailable
+from agentnave.store import Record, Review, Unavailable
 
 type ManagerModel = Annotated[
     str | None,
@@ -93,8 +95,9 @@ type ManagerSessionId = Annotated[
             "Use the host's real session ID when available; otherwise generate one UUID once "
             "for this manager chat and keep reusing it. A different chat needs a different ID. "
             "Never use the CLI name, MCP connection ID, or subagent session_id. "
-            "Required by start_agent and run_round unless AGENTNAVE_HOST_SESSION_ID is "
-            "injected for this chat."
+            "Required by start_agent and run_round, and by handover to hand over or take over, "
+            "unless AGENTNAVE_HOST_SESSION_ID is injected for this chat or the host gives this "
+            "server its native session ID (Claude Code: CLAUDE_CODE_SESSION_ID)."
         ),
     ),
 ]
@@ -139,6 +142,9 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",
     "codex": (
         "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
+        "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
+        "workspace-write sandbox; not with sandbox or "
+        "dangerously_bypass_approvals_and_sandbox), "
         "sandbox (read-only, workspace-write or danger-full-access), "
         "dangerously_bypass_approvals_and_sandbox "
         "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
@@ -202,12 +208,24 @@ class InvocationPayload(TypedDict):
     output_age_ms: NotRequired[int]
     session_id: NotRequired[str]
     message_id: NotRequired[str]  # terminal saved task, referencable by forward
+    warnings: NotRequired[list[str]]
+
+
+class UnreceivedPayload(TypedDict):
+    id: str
+    kind: Literal["task", "round"]
+    # a task's end status or execution_blocked; a round's finished, failed, cancelled,
+    # review_needed or execution_blocked
+    status: str
+    error: NotRequired[
+        InvocationErrorPayload
+    ]  # the oldest unread blocker of a running task or seat
 
 
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: str | None  # the tier this call declared; recorded only, never enforced
-    warnings: NotRequired[list[str]]
+    unreceived: NotRequired[list[UnreceivedPayload]]
 
 
 class InvocationListItem(TypedDict):
@@ -279,10 +297,12 @@ class SeatRunPayload(TypedDict):
         "private",
     ]
     invocation_id: NotRequired[str]
+    warnings: NotRequired[list[str]]
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
     output_age_ms: NotRequired[int]
+    output_returned: NotRequired[bool]
     session_id: NotRequired[str]
 
 
@@ -322,6 +342,7 @@ class ShowRunPayload(TypedDict):
     members: NotRequired[list[GroupSeatPayload]]  # only when this call opened the show
     entries: NotRequired[list[CommittedEntryPayload]]  # a host remark posted without seats
     round: NotRequired[RoundPayload]
+    unreceived: NotRequired[list[UnreceivedPayload]]
 
 
 class ConversationSummary(TypedDict):
@@ -391,7 +412,7 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
     if (
         name in _CHAT_TOOLS
         and arguments.get("manager_session_id") is None
-        and not os.environ.get("AGENTNAVE_HOST_SESSION_ID", "").strip()
+        and not (host_session_id(HOST) or "").strip()
     ):
         problems.append(
             f"{name} needs manager_session_id: pass this manager chat's session ID (or one "
@@ -458,7 +479,8 @@ mcp = _Server(
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
         "Every dispatched prompt includes an instruction to complete the assigned task, "
         "report back to the manager, and not call AgentNave tools or delegate through AgentNave. "
-        + PROVIDER_SELECTION
+        "handover passes a whole workspace to another boss chat; use it only when the user asks "
+        "to hand over or take over. " + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
 )
@@ -494,7 +516,7 @@ def started_payload(
 
 
 def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolError:
-    if isinstance(exc, (MemberFileError, SettingsFileError, CapacityError)):
+    if isinstance(exc, (MemberFileError, PermissionFileError, SettingsFileError, CapacityError)):
         return ToolError(str(exc))
     if isinstance(exc, ProviderExcludedError):
         return ToolError(str(exc) + ". " + PROVIDER_SELECTION)
@@ -525,6 +547,8 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
         payload["model"] = result.reported_model
     if result.error:
         payload["error"] = {"code": result.error.code, "message": result.error.message}
+    if result.warnings:
+        payload["warnings"] = list(result.warnings)
     return payload
 
 
@@ -573,6 +597,57 @@ def _unknown_handle(handle: str) -> ToolError:
         "from run_round of this MCP server session; invocation handles expire seven days after "
         "completion, and saved rounds of earlier servers are read with read_conversation."
     )
+
+
+def _unreceived(
+    conversations: Conversations, manager_session_id: str | None
+) -> list[UnreceivedPayload]:
+    """Ended tasks and rounds whose end no wait or cancel has returned yet, and running tasks
+    with a blocker no wait has returned. A dispatch reply lists them so a boss busy with other
+    work still learns of them; wait receives them."""
+    tasks, rounds = conversations.inbox(manager_session_id)
+    ended = {
+        listing.invocation_id: listing.status.value
+        for listing in conversations.manager.list_invocations()
+        if listing.status is not None
+    }
+    found: list[UnreceivedPayload] = []
+    for handle in tasks:
+        if handle in ended:
+            found.append({"id": handle, "kind": "task", "status": ended[handle]})
+        elif blockers := conversations.manager.unread_blockers(handle):
+            found.append(
+                {
+                    "id": handle,
+                    "kind": "task",
+                    "status": "execution_blocked",
+                    "error": {
+                        "code": blockers[0],
+                        "message": "CLI reported an execution blocker; wait returns it.",
+                    },
+                }
+            )
+    for handle in rounds:
+        round_ = conversations.round(handle)
+        if "pending" in conversations.reviews.get(handle, {}).values():
+            found.append({"id": handle, "kind": "round", "status": "review_needed"})
+        elif round_.finished:
+            status = "failed" if round_.error else "cancelled" if round_.cancelling else "finished"
+            found.append({"id": handle, "kind": "round", "status": status})
+        elif blocked := [
+            run.blockers[-1]
+            for run in round_.runs
+            if run.status == "running" and run.reported_blockers < len(run.blockers)
+        ]:
+            found.append(
+                {
+                    "id": handle,
+                    "kind": "round",
+                    "status": "execution_blocked",
+                    "error": {"code": blocked[0].code, "message": blocked[0].message},
+                }
+            )
+    return found
 
 
 @mcp.tool(
@@ -666,8 +741,13 @@ async def start_agent(
 ) -> TaskStartPayload:
     """Start one private CLI task and return its invocation_id; use wait for the result.
 
+    Ends are never pushed: call wait right after starting and keep one pending until the
+    result arrives, even while doing other work. unreceived lists your tasks and rounds that
+    ended, hit a blocker or await review but no wait or cancel has returned that yet.
+
     The reply reports the requested model/effort, not the CLI's effective settings;
-    defaults_applied lists App defaults, other omitted settings inherit the native CLI.
+    defaults_applied lists App defaults, including each CLI's permission tier (auto unless
+    the user picked full in the App); other omitted settings inherit the native CLI.
     Each task starts a new native thread unless session_id continues one; a resumed native
     session joins its open conversation. CLI runs active at once (tasks plus seats) are
     limited by the App's setting, 8 by default; beyond it the call is rejected until some finish. The task and its final
@@ -685,7 +765,12 @@ async def start_agent(
         )
     try:
         options, defaults_applied = apply_member(
-            read_members(), "task", provider, provider_options or {}, EXCLUDED_PROVIDERS
+            read_members(),
+            "task",
+            provider,
+            provider_options or {},
+            EXCLUDED_PROVIDERS,
+            permissions=read_permissions(),
         )
         request = InvocationRequest(
             provider=provider,
@@ -729,6 +814,9 @@ async def start_agent(
                 f"{len(sharing)} other CLI run(s) active in this cwd ({', '.join(sharing)}); "
                 "parallel writers need separate worktrees. Declare access=read for read-only work."
             ]
+    unreceived = _unreceived(_conversations(ctx), manager_session_id)
+    if unreceived:
+        payload["unreceived"] = unreceived
     return payload
 
 
@@ -843,7 +931,8 @@ async def wait(
     reason=ready returns every handle ready at that moment, in updates (tasks) and rounds;
     finished ones stay ready, so drop them from the next call. reason=wait_elapsed returns a
     running snapshot of each, with the latest reply tail (at most 1000 characters) and its age.
-    Unknown, expired or repeated ids reject the whole call before waiting. This is
+    A round returns each seat's final answer once; later payloads mark it output_returned, so
+    reread it with read_conversation. Unknown, expired or repeated ids reject the whole call before waiting. This is
     request/response waiting, not a background subscription.
 
     Omitting ids waits on the inbox instead: the handles above whose final state no wait or
@@ -926,6 +1015,7 @@ async def wait(
                 manager,
                 reason or "wait_elapsed",
                 include_output=include_output,
+                deliver=not elapsed,
                 reviews=_review_map(conversations, round_),
                 entries=conversations.committed_entries(round_.group.id, round_.number),
             )
@@ -1137,6 +1227,7 @@ def round_payload(
     reason: str,
     *,
     include_output: bool = True,
+    deliver: bool = True,
     reviews: dict[str, Review | None] | None = None,
     entries: list[CommittedEntry] | None = None,
 ) -> RoundPayload:
@@ -1147,12 +1238,19 @@ def round_payload(
             seat["invocation_id"] = run.invocation_id
         result = run.result
         if result is not None:
-            if include_output and result.output:
+            if run.output_returned:
+                seat["output_returned"] = True
+            elif deliver and include_output and result.output:
+                # Each answer reaches the boss once per round; later payloads only mark it.
+                # A wait_elapsed snapshot holds it back until the round is delivered.
                 seat["output"] = result.output
+                run.output_returned = True
             if result.session_id:
                 seat["session_id"] = result.session_id
             if result.error:
                 seat["error"] = {"code": result.error.code, "message": result.error.message}
+            if result.warnings:
+                seat["warnings"] = list(result.warnings)
         elif run.launch_error is not None:
             seat["error"] = {"code": run.launch_error.code, "message": run.launch_error.message}
         elif run.status == "running" and run.invocation_id is not None:
@@ -1229,6 +1327,7 @@ def _open_show(
     manager_session_id: str | None,
 ) -> tuple[str, list[GroupSeatPayload]]:
     document = read_members()
+    permissions = read_permissions()
     prepared: list[GroupSeat] = []
     defaults: dict[str, list[str]] = {}
     for seat in members:
@@ -1239,6 +1338,7 @@ def _open_show(
             seat.provider_options,
             EXCLUDED_PROVIDERS,
             restricted=isolated,
+            permissions=permissions,
         )
         prepared.append(
             GroupSeat(
@@ -1376,8 +1476,11 @@ async def run_round(
     native session across rounds and restarts. Shows follow discussion member limits, not
     host exclusions. A started round returns at once: use wait with its round_id. Private
     instructions go only to their seat; with review=true each answer waits for decide_answers.
-    entries lists the round's committed entries with message ids. Isolation restricts tools;
-    it is not an OS sandbox.
+    wait and cancel return each final answer once per round, then mark it output_returned.
+    entries lists the round's committed entries with message ids. unreceived lists your tasks
+    and rounds that ended, hit a blocker or await review but no wait or cancel has returned
+    that yet. Isolation
+    restricts tools; it is not an OS sandbox.
     """
     conversations = _conversations(ctx)
     new = group_id is None
@@ -1403,7 +1506,7 @@ async def run_round(
             group_id, opened = _open_show(
                 conversations, title, members, cwd, review, isolated, manager_session_id
             )
-        except MemberFileError as exc:
+        except (MemberFileError, PermissionFileError) as exc:
             raise ToolError(str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc
@@ -1457,6 +1560,9 @@ async def run_round(
         reviews=_review_map(conversations, round_),
         entries=conversations.committed_entries(group_id, round_.number),
     )
+    unreceived = _unreceived(conversations, manager_session_id)
+    if unreceived:
+        payload["unreceived"] = unreceived
     return payload
 
 
@@ -1539,6 +1645,138 @@ async def decide_answers(
         raise ToolError("Unknown round_id; read_conversation lists saved rounds.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
+
+
+_WORKSPACE_ID = r"^s-[0-9a-f]{32}$"
+
+
+def _handover_conversations(
+    conversations: Conversations, records: list[Record]
+) -> list[dict[str, Any]]:
+    writable = conversations.scan()
+    return [
+        {
+            "conversation_id": record.state.id,
+            "title": record.state.title,
+            "kind": record.state.kind,
+            "updated": views.updated(record.state),
+            "running": any(task.status == "running" for task in record.state.tasks)
+            or any(round_.status == "running" for round_ in record.state.rounds),
+            "writable": writable.get(record.state.id, True),
+        }
+        for record in sorted(records, key=lambda record: views.updated(record.state), reverse=True)
+    ]
+
+
+@mcp.tool(
+    title="Hand a workspace over to another boss",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
+)
+async def handover(
+    release: Annotated[
+        bool,
+        Field(
+            description="Mark this boss chat's whole workspace as waiting for another boss "
+            "chat to take over."
+        ),
+    ] = False,
+    note: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=20000,
+            description="With release: notes for the next boss, written for what it must do "
+            "next. Say why you hand over (out of quota, a model better suited to the work), the "
+            "goal, what is done, decisions and why, what is open, desks in use, and the Skills "
+            "to load (agentnave-manager, any review gate): it may come from another host. Cite "
+            "what already exists by reference only (conversation ids, PR or commit links, ADR "
+            "or spec paths); the next boss reads seat answers with read_conversation, so keep "
+            "this shorter than the records it points to. No keys, passwords or sensitive "
+            "personal data: it is saved and shown in the App.",
+        ),
+    ] = None,
+    workspace_id: Annotated[
+        str | None,
+        Field(
+            pattern=_WORKSPACE_ID,
+            description="Take this waiting workspace over (from a call without arguments).",
+        ),
+    ] = None,
+    manager_session_id: ManagerSessionId = None,
+    *,
+    ctx: Context[Runtime],
+) -> dict[str, Any]:
+    """Pass a boss workspace (every task and show of one boss chat) to another boss chat.
+
+    Only when the user asks to hand over or take over; never as a routine check. release=true
+    marks this chat's workspace as waiting. Without arguments, lists waiting workspaces. With
+    workspace_id, this chat takes it over: its notes, conversations (read each with
+    read_conversation) and, when known, the previous boss's transcript file, whose tail holds
+    its last turns. From then on this chat continues those shows and tasks and the previous boss
+    is refused. Work still running finishes in the previous boss's server and lands in history;
+    continue such a conversation once writable is true. Taking over your own waiting workspace
+    withdraws the handover. Private: never send this to seats.
+    """
+    conversations = _conversations(ctx)
+    if note is not None and not release:
+        raise ToolError("note goes with release=true. Correct the request and retry.")
+    if release and workspace_id is not None:
+        raise ToolError(
+            "Use release=true to hand this chat's workspace over, or workspace_id to take one "
+            "over, not both. Correct the request and retry."
+        )
+    try:
+        if release:
+            released, count = conversations.release(manager_session_id, note)
+            return {
+                "workspace_id": released,
+                "status": "waiting",
+                "conversations": count,
+                "next": "Tell the user to open a new chat in any host and ask it to take over "
+                "this workspace. Work still running here finishes and lands in history.",
+            }
+        if workspace_id is None:
+            return {
+                "waiting": [
+                    {
+                        "workspace_id": item.id,
+                        "title": records[0].state.title,
+                        "from_host": item.owner_host or records[-1].state.host,
+                        "released": item.released,
+                        "conversations": len(records),
+                        "note": item.note,
+                    }
+                    for item, records in conversations.waiting()
+                ]
+            }
+        before, after, records = conversations.claim(manager_session_id, workspace_id)
+    except (OSError, ValueError) as exc:
+        raise _rejected(exc) from exc
+    if before.owner == after.owner:
+        status = "withdrawn" if before.pending else "yours"
+        # Withdrawing hands nothing over: no earlier boss's session to point at.
+        previous_host, previous_file = (
+            (None, None) if before.pending else (after.previous_host, after.previous_file)
+        )
+    else:
+        status = "claimed"
+        previous_host, previous_file = before.owner_host, before.owner_file
+    result: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "status": status,
+        "title": records[0].state.title,
+        "from_host": previous_host or records[-1].state.host,
+        "note": after.note,
+        "conversations": _handover_conversations(conversations, records),
+        "next": "Read the note, then each conversation with read_conversation. Continue shows "
+        "with run_round(group_id) and tasks with start_agent(conversation_id or session_id) "
+        "once writable is true; running work finishes in the previous boss's server.",
+    }
+    if previous_file is not None and Path(previous_file).is_file():
+        result["previous_session_file"] = previous_file
+    return result
 
 
 @mcp.tool(

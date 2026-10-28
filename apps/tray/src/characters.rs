@@ -9,8 +9,9 @@ use crate::data::Response;
 use serde_json::{Map, Value};
 
 static WRITE: Mutex<()> = Mutex::new(());
-pub const FAMILIES: [&str; 9] = [
-    "claude", "gpt", "gemini", "grok", "deepseek", "glm", "qwen", "kimi", "minimax",
+pub const FAMILIES: [&str; 12] = [
+    "claude", "gpt", "gemini", "grok", "deepseek", "glm", "qwen", "kimi", "minimax", "hunyuan",
+    "doubao", "muse",
 ];
 const STATES: [&str; 10] = [
     "idle", "blink", "working", "speaking", "review", "done", "sleep", "sad", "walk-1", "walk-2",

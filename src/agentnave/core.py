@@ -421,6 +421,10 @@ class InvocationManager:
             else max(0, round((now - record.last_activity_at) * 1000)),
         )
 
+    def unread_blockers(self, invocation_id: str) -> list[str]:
+        """Codes of blockers no wait has returned yet, oldest first; reading them consumes none."""
+        return [attention.code for attention in self._record(invocation_id).pending_attention]
+
     def progress(self, invocation_id: str) -> tuple[str | None, str | None]:
         """What the CLI is doing now and when its reply last grew, as labels that change only
         with the work itself: thinking, tool:<name>, writing or retrying, and a wall time."""
@@ -654,6 +658,7 @@ class InvocationManager:
                 parsed.usage,
                 _duration_ms(started),
                 parsed_error,
+                warnings=parsed.warnings,
             )
         except (OSError, ValueError) as exc:
             return InvocationResult(

@@ -404,8 +404,9 @@ def test_provider_environment_keeps_manager_chat_identity_private(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "private-manager-chat")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "boss-claude-chat")
     provider_keys = set(provider_environment(("claude",)))
-    assert "AGENTNAVE_HOST_SESSION_ID" not in provider_keys
+    assert not {"AGENTNAVE_HOST_SESSION_ID", "CLAUDE_CODE_SESSION_ID"} & provider_keys
     assert os.environ["AGENTNAVE_HOST_SESSION_ID"] == "private-manager-chat"
 
 
@@ -428,6 +429,24 @@ def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None)
     prepared = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
     flag = "--dangerously-bypass-approvals-and-sandbox"
     assert (flag in prepared.argv) is (value is True)
+
+
+def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None:
+    options: dict[str, str | int | float | bool] = {"approve_for_me": True}
+    fresh = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
+    assert "--approve-for-me" in fresh.argv
+    # `exec resume` has no such flag; the same settings go through --config.
+    resumed = CodexAdapter().prepare(
+        request(tmp_path, "codex", session_id="thread-1", provider_options=options)
+    )
+    assert "--approve-for-me" not in resumed.argv
+    assert 'approvals_reviewer="auto_review"' in resumed.argv
+    assert 'sandbox_mode="workspace-write"' in resumed.argv
+    for other in ({"sandbox": "read-only"}, {"dangerously_bypass_approvals_and_sandbox": True}):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            CodexAdapter().prepare(
+                request(tmp_path, "codex", provider_options={**options, **other})
+            )
 
 
 def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
@@ -661,7 +680,7 @@ def test_adapters_drop_malformed_usage_without_losing_terminal_result(
     assert result.usage == {}
 
 
-def test_claude_permission_denials_block_only_a_failed_run() -> None:
+def test_claude_permission_denials_block_only_a_failed_run(tmp_path: Path) -> None:
     # Claude 2.1.308 reports subtype=success when the model finishes after a denied tool call.
     payload = {
         "type": "result",
@@ -679,6 +698,30 @@ def test_claude_permission_denials_block_only_a_failed_run() -> None:
     assert succeeded.output == "FINISHED"
     assert failed.status is InvocationStatus.BLOCKED
     assert failed.output == "FINISHED"
+    # Success stays success, with a warning that names the denied tools.
+    assert len(succeeded.warnings) == 1
+    assert "denied 1 tool call(s)" in succeeded.warnings[0]
+    clean = ClaudeAdapter().parse(
+        0, json.dumps({**payload, "permission_denials": []}).encode(), b""
+    )
+    assert clean.warnings == ()
+    # CodeBuddy only reports the denial in the tool result; the capture keeps a marker of it.
+    capture = CodeBuddyAdapter().prepare(request(tmp_path, "codebuddy")).capture_line
+    assert capture is not None
+    text = "Error: Permission to use Bash has been denied because this tool requires approval"
+    denial = {
+        "type": "user",
+        "parent_tool_use_id": None,
+        "message": {
+            "content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]
+        },
+    }
+    captured = capture(json.dumps(denial).encode()) + capture(
+        json.dumps({**payload, "permission_denials": []}).encode()
+    )
+    warned = CodeBuddyAdapter().parse(0, captured, b"")
+    assert warned.status is InvocationStatus.SUCCEEDED
+    assert "codebuddy denied 1 tool call(s) (Bash)" in warned.warnings[0]
 
 
 def test_claude_structured_error_preserves_usage_and_message() -> None:

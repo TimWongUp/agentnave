@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.49.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.51.0` contains the runtime source, `agentnave-manager` Skill and all seven
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.49.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.51.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -99,7 +99,9 @@ their official instructions. On macOS and Linux, AgentNave looks for each CLI on
 CLI's directory first, then the inherited `PATH`, then those directories. Desktop hosts may have a
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
-AgentNave does not install providers or change their login, permissions, or configuration.
+AgentNave does not install providers or change their login or configuration. It passes each CLI's
+permission tier on every dispatch (automatic approval by default, full access when chosen in the
+App) without changing the CLI's saved settings.
 
 ### Select installed CLIs before locating them
 
@@ -445,7 +447,8 @@ After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
 2. Restart the server/session and confirm `start_agent`, `wait`, `cancel`, `list`,
-   `list_members`, `run_round`, `decide_answers` and `read_conversation` are visible (8 total).
+   `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
+   visible (9 total).
    Confirm the host also discovers `agentnave-manager` in the intended
    scope and can read its five referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
@@ -460,8 +463,9 @@ For Antigravity project work, use the absolute project directory as `cwd` and fo
 [directory handoff guidance](../skills/agentnave-manager/references/antigravity.md): require the
 terminal's explicit `Cwd`, verify it with `pwd`, and stop project operations on a mismatch.
 `provider_options.project` selects a native project, not a terminal working directory.
-For CodeBuddy, `--print` cannot display permission prompts. Preserve native permissions and resolve
-any denied tool with the user before retrying; do not automatically enable permission bypass.
+For CodeBuddy, `--print` cannot display permission prompts and its own `auto` mode still denies
+commands, so its permission tier passes `bypassPermissions`. A terminal result's `warnings` reports
+tool calls a CLI denied while still finishing successfully.
 The companion Skill's provider references give the calling guidance for these cases.
 
 Report installation results per host as **added**, **reused**, **updated**, or **pending** for
@@ -504,17 +508,22 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.48.0 to v0.49.0
+### Upgrading from v0.50.1 to v0.51.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.49.0 directory. This release redraws the Claude,
-Grok and Gemini characters and adds moving hair tufts, cat ears and GPT wings. Custom character
-sets keep their existing frames. From v0.48.0, the App shows the update notes before confirmation,
-then upgrades the runtime as needed, installs the App and restarts. The tool interface is unchanged,
-so no MCP reconnect is needed, and history, `members.json` and `settings.json` need no migration.
-Upgrading from v0.45.0 or earlier also drops Gemini CLI as a host, which needs manual cleanup of
-its old entry; see [v0.46.0 release notes](releases/v0.46.0.md). See
-[v0.49.0 release notes](releases/v0.49.0.md).
+`agentnave-manager` Skill with its complete v0.51.0 directory. Dispatched CLIs now run with a
+permission tier: "auto" by default (each CLI's own automatic approval reviewer; CodeBuddy and
+DeepSeek, which have none usable unattended, get full access), or "full" when chosen per CLI in the
+App's settings. Tiers live in a new `permissions.json`; no file means every CLI runs "auto", so
+CLIs that used to keep their native permissions now get the tier after upgrading. Permission
+options saved on individual models in `members.json` are replaced by the tier. A caller's explicit
+permission options still take precedence. Codex gains `approve_for_me`, and terminal results gain
+an optional `warnings` field when Claude Code or CodeBuddy report success after denying a tool
+call. Reconnect MCP to see the updated tool descriptions; history and `settings.json` need no
+migration. Upgrading from v0.49.0 or earlier also brings the v0.50.0 changes; see
+[v0.50.0 release notes](releases/v0.50.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
+CLI as a host, which needs manual cleanup of its old entry; see
+[v0.46.0 release notes](releases/v0.46.0.md). See [v0.51.0 release notes](releases/v0.51.0.md).
 
 ## Uninstall
 

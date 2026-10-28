@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import cast
 
@@ -22,6 +23,30 @@ from agentnave.adapters.base import (
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
+# CodeBuddy leaves permission_denials empty and reports a denial only in the tool result.
+_DENIED = re.compile(r"Error: Permission to use (\S{1,64}) has been denied")
+
+
+def _denied_tools(event: dict[str, object]) -> list[str]:
+    if event.get("type") != "user" or event.get("parent_tool_use_id") is not None:
+        return []
+    content = object_dict(event.get("message")).get("content")
+    names: list[str] = []
+    for raw in cast(list[object], content) if isinstance(content, list) else []:
+        block = object_dict(raw)
+        if block.get("type") != "tool_result":
+            continue
+        parts = block.get("content")
+        texts = (
+            [object_dict(part).get("text") for part in cast(list[object], parts)]
+            if isinstance(parts, list)
+            else [parts]
+        )
+        for text in texts:
+            if isinstance(text, str) and (match := _DENIED.match(text)):
+                names.append(match.group(1))
+    return names
+
 
 def _result_capture() -> Callable[[bytes], bytes]:
     last_session: str | None = None
@@ -33,6 +58,12 @@ def _result_capture() -> Callable[[bytes], bytes]:
             return b""
         if event.get("type") == "result":
             return line + b"\n"
+        denied = b"".join(
+            json.dumps({"permission_denial": {"tool_name": name}}).encode() + b"\n"
+            for name in _denied_tools(event)
+        )
+        if denied:
+            return denied
         # Keep only session changes for parse's fallback, not deltas or tool payloads.
         session_id = event.get("session_id")
         if not isinstance(session_id, str) or session_id == last_session:
@@ -188,6 +219,19 @@ class ClaudeAdapter:
             )
         return None
 
+    def _denials_warning(self, denials: list[object]) -> str:
+        tools = {
+            name
+            for denial in denials
+            if isinstance(name := object_dict(denial).get("tool_name"), str) and name
+        }
+        return (
+            f"{self.name} denied {len(denials)} tool call(s)"
+            + (f" ({', '.join(sorted(tools)[:5])})" if tools else "")
+            + " but reported success; the task may be incomplete. Choose a permission tier "
+            "for this CLI in the AgentNave App, or pass permission options explicitly."
+        )
+
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()
         events = parse_json_lines(stdout_text)
@@ -232,7 +276,17 @@ class ClaudeAdapter:
         # A run the CLI reports as successful stays successful even if some tool calls were
         # denied on the way: the model may have finished the task another way.
         if returncode == 0 and not is_error and not structured_error and not refused:
-            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id, usage)
+            denials = (
+                cast(list[object], permission_denials)
+                if has_permission_denials
+                else [
+                    event["permission_denial"] for event in events if "permission_denial" in event
+                ]
+            )
+            warnings = (self._denials_warning(denials),) if denials else ()
+            return ParsedProviderResult(
+                InvocationStatus.SUCCEEDED, output, session_id, usage, warnings=warnings
+            )
 
         if refused:
             message = error_summary(output, f"{self.name} refused the request")
