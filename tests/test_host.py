@@ -88,6 +88,50 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "injected")
     assert host_session_id(Host("claude")) == "injected"
 
+    # Pi, Grok, Antigravity and Hermes keep their own records under the IDs their shells expose.
+    import sqlite3
+
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "pi"))
+    pi = tmp_path / "pi" / "sessions" / "--project--" / f"2026-01-01T00-00-00-000Z_{session}.jsonl"
+    pi.parent.mkdir(parents=True)
+    pi.write_text(
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {"role": "assistant", "model": "zcode/GLM-5.3", "responseModel": "glm"},
+            }
+        )
+    )
+    assert session_model(Host("pi"), session) == "glm"
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
+    grok = tmp_path / "grok" / "sessions" / "%2Fproject" / session / "chat_history.jsonl"
+    grok.parent.mkdir(parents=True)
+    grok.write_text(json.dumps({"type": "assistant", "model_id": "grok-build"}) + "\n{}")
+    assert session_model(Host("grok"), session) == "grok-build"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    agy = tmp_path / ".gemini" / "antigravity-cli" / "conversations" / f"{session}.db"
+    agy.parent.mkdir(parents=True)
+    model = b"gemini-high"
+    step = b"\xe2\x01" + bytes([len(model)]) + model  # field 28 inside field 3
+    with sqlite3.connect(agy) as db:
+        db.execute("CREATE TABLE gen_metadata (idx integer, data blob)")
+        db.executemany(
+            "INSERT INTO gen_metadata VALUES (?, ?)",
+            [(0, b"\x1a" + bytes([len(step)]) + step), (1, b"\x0a\x02no")],
+        )
+    db.close()
+    assert session_model(Host("antigravity"), session) == "gemini-high"
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    (tmp_path / "hermes").mkdir()
+    hermes = "20261015_160609_65ab47af"
+    with sqlite3.connect(tmp_path / "hermes" / "state.db") as db:
+        db.execute("CREATE TABLE sessions (id text, model text)")
+        db.execute("INSERT INTO sessions VALUES (?, ?)", (hermes, "deepseek-flash"))
+    db.close()
+    assert session_model(Host("hermes"), hermes) == "deepseek-flash"
+    assert session_model(Host("hermes"), "../state") is None
+
 
 def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     from agentnave import host
