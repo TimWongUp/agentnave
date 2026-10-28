@@ -45,6 +45,10 @@ class SettingsFileError(ValueError):
     """The App-owned settings.json cannot be read or validated."""
 
 
+class PermissionFileError(ValueError):
+    """The App-owned permissions.json cannot be read or validated."""
+
+
 class CapacityError(ValueError):
     """Starting would exceed the App's limit on concurrently running CLI processes."""
 
@@ -57,6 +61,7 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
     {
         "permission_mode",
         "sandbox",
+        "approve_for_me",
         "dangerously_bypass_approvals_and_sandbox",
         "dangerously_skip_permissions",
         "skip_git_repo_check",
@@ -68,6 +73,49 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
         "disable_slash_commands",
     }
 )
+
+
+type PermissionTier = Literal["native", "auto", "full"]
+
+# The native options each App permission tier stands for, per CLI. "auto" lets the CLI's own
+# reviewer or classifier approve tool calls; CodeBuddy's auto denies shell under -p and
+# DeepSeek has no reviewer, so their auto grants full access. Pi has no approval step.
+PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
+    "claude": {
+        "auto": {"permission_mode": "auto"},
+        "full": {"permission_mode": "bypassPermissions"},
+    },
+    "codebuddy": {
+        "auto": {"permission_mode": "bypassPermissions"},
+        "full": {"permission_mode": "bypassPermissions"},
+    },
+    "grok": {
+        "auto": {"permission_mode": "auto"},
+        "full": {"permission_mode": "bypassPermissions"},
+    },
+    "antigravity": {
+        "auto": {"mode": "auto"},
+        "full": {"dangerously_skip_permissions": True},
+    },
+    "codex": {
+        "auto": {"approve_for_me": True},
+        "full": {"dangerously_bypass_approvals_and_sandbox": True},
+    },
+    "deepseek": {
+        "auto": {"permission_mode": "danger-full-access"},
+        "full": {"permission_mode": "danger-full-access"},
+    },
+}
+# Options that decide what a CLI may run unasked. A caller passing any of them keeps the
+# CLI's tier out; a tier replaces saved model options among them.
+PERMISSION_KEYS: dict[str, frozenset[str]] = {
+    "claude": frozenset({"permission_mode"}),
+    "codebuddy": frozenset({"permission_mode"}),
+    "grok": frozenset({"permission_mode", "sandbox"}),
+    "antigravity": frozenset({"mode", "sandbox", "dangerously_skip_permissions"}),
+    "codex": frozenset({"approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"}),
+    "deepseek": frozenset({"permission_mode"}),
+}
 
 
 def validate_provider_options(request: InvocationRequest) -> None:
@@ -239,6 +287,52 @@ class MemberFile(StrictModel):
         return result, applied
 
 
+class PermissionFile(StrictModel):
+    """permissions.json, apart from members.json so older servers keep reading their members."""
+
+    version: int = Field(ge=1, le=1)
+    clis: dict[ProviderName, PermissionTier] = {}
+
+
+def read_permissions() -> PermissionFile | None:
+    try:
+        content = (_data_root() / "permissions.json").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise PermissionFileError(
+            f"Unable to read permissions.json: {exc}. Repair it in the AgentNave App."
+        ) from exc
+    try:
+        return PermissionFile.model_validate_json(content)
+    except ValueError as exc:
+        raise PermissionFileError(
+            f"Invalid permissions.json: {exc}. Repair it in the AgentNave App."
+        ) from exc
+
+
+def apply_permission(
+    permissions: PermissionFile | None,
+    provider: ProviderName,
+    explicit: Mapping[str, ProviderOption],
+    result: dict[str, ProviderOption],
+    applied: list[str],
+) -> None:
+    """Fill the options of the CLI's App permission tier unless the caller chose its own."""
+    tier = permissions.clis.get(provider, "native") if permissions is not None else "native"
+    granted = PERMISSION_TIERS.get(provider, {}).get(tier)
+    keys = PERMISSION_KEYS.get(provider, frozenset())
+    if not granted or keys & set(explicit):
+        return
+    # Saved model options must not mix with the tier the App shows for this CLI.
+    for key in keys & set(applied):
+        del result[key]
+        applied.remove(key)
+    for key, value in granted.items():
+        result[key] = value
+        applied.append(key)
+
+
 def check_excluded(mode: Mode, provider: str, excluded: frozenset[str]) -> None:
     if mode == "task" and provider in excluded:
         raise ProviderExcludedError(f"Provider '{provider}' is excluded by this host")
@@ -312,11 +406,17 @@ def apply_member(
     excluded: frozenset[str],
     *,
     restricted: bool = False,
+    permissions: PermissionFile | None = None,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
     if document is not None:
-        return document.apply(mode, provider, options, excluded, restricted=restricted)
-    check_excluded(mode, provider, excluded)
-    return dict(options), []
+        result, applied = document.apply(mode, provider, options, excluded, restricted=restricted)
+    else:
+        check_excluded(mode, provider, excluded)
+        result, applied = dict(options), []
+    # Restricted runs take no tools, so no permission tier either.
+    if not restricted and options.get("restricted_tools") is not True:
+        apply_permission(permissions, provider, options, result, applied)
+    return result, applied
 
 
 class MemberStatus(StrictModel):
@@ -355,6 +455,9 @@ class MemberList(StrictModel):
     modes: dict[Mode, ModeStatus]
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error: str | None = None
+    # The App permission tier of each CLI that has one; omitted CLIs keep native permissions.
+    permissions: dict[ProviderName, PermissionTier] = {}
+    permissions_error: str | None = None
 
 
 def list_members(excluded: frozenset[str], host: Host) -> MemberList:
@@ -443,6 +546,19 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         pass
     except (OSError, ValueError) as exc:
         review_error = f"Invalid review.json: {exc}. Repair it in the AgentNave App."
+    permissions: dict[ProviderName, PermissionTier] = {}
+    permissions_error = None
+    try:
+        saved = read_permissions()
+    except PermissionFileError as exc:
+        permissions_error = str(exc)
+    else:
+        if saved is not None:
+            permissions = {
+                provider: tier
+                for provider, tier in saved.clis.items()
+                if PERMISSION_TIERS.get(provider, {}).get(tier)
+            }
     return MemberList(
         configured=document is not None,
         host=host.name,
@@ -450,6 +566,8 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         modes=modes,
         review=review,
         review_error=review_error,
+        permissions=permissions,
+        permissions_error=permissions_error,
     )
 
 

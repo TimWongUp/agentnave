@@ -79,6 +79,7 @@ class CodexAdapter:
         "model",
         "effort",
         "skip_git_repo_check",
+        "approve_for_me",
         "dangerously_bypass_approvals_and_sandbox",
         "sandbox",
     }
@@ -102,6 +103,14 @@ class CodexAdapter:
                 argv.extend(("--config", f'sandbox_mode="{value}"'))
             elif not isinstance(value, bool):
                 raise ValueError(f"codex option {key} must be a boolean")
+            elif value and key == "approve_for_me" and request.session_id is not None:
+                # `exec resume` has no --approve-for-me; these are the settings it applies.
+                for setting in (
+                    'approval_policy="on-request"',
+                    'approvals_reviewer="auto_review"',
+                    'sandbox_mode="workspace-write"',
+                ):
+                    argv.extend(("--config", setting))
             elif value:
                 argv.append("--" + key.replace("_", "-"))
 

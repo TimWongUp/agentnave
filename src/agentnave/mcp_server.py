@@ -33,11 +33,13 @@ from agentnave.members import (
     CapacityError,
     MemberFileError,
     MemberList,
+    PermissionFileError,
     ProviderExcludedError,
     ProviderName,
     SettingsFileError,
     apply_member,
     read_members,
+    read_permissions,
     validate_provider_options,
 )
 from agentnave.members import list_members as read_member_list
@@ -139,6 +141,8 @@ PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",
     "codex": (
         "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
+        "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
+        "workspace-write sandbox), "
         "sandbox (read-only, workspace-write or danger-full-access), "
         "dangerously_bypass_approvals_and_sandbox "
         "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
@@ -202,6 +206,7 @@ class InvocationPayload(TypedDict):
     output_age_ms: NotRequired[int]
     session_id: NotRequired[str]
     message_id: NotRequired[str]  # terminal saved task, referencable by forward
+    warnings: NotRequired[list[str]]
 
 
 class UnreceivedPayload(TypedDict):
@@ -218,7 +223,6 @@ class UnreceivedPayload(TypedDict):
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: str | None  # the tier this call declared; recorded only, never enforced
-    warnings: NotRequired[list[str]]
     unreceived: NotRequired[list[UnreceivedPayload]]
 
 
@@ -291,6 +295,7 @@ class SeatRunPayload(TypedDict):
         "private",
     ]
     invocation_id: NotRequired[str]
+    warnings: NotRequired[list[str]]
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
@@ -507,7 +512,7 @@ def started_payload(
 
 
 def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolError:
-    if isinstance(exc, (MemberFileError, SettingsFileError, CapacityError)):
+    if isinstance(exc, (MemberFileError, PermissionFileError, SettingsFileError, CapacityError)):
         return ToolError(str(exc))
     if isinstance(exc, ProviderExcludedError):
         return ToolError(str(exc) + ". " + PROVIDER_SELECTION)
@@ -538,6 +543,8 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
         payload["model"] = result.reported_model
     if result.error:
         payload["error"] = {"code": result.error.code, "message": result.error.message}
+    if result.warnings:
+        payload["warnings"] = list(result.warnings)
     return payload
 
 
@@ -753,7 +760,12 @@ async def start_agent(
         )
     try:
         options, defaults_applied = apply_member(
-            read_members(), "task", provider, provider_options or {}, EXCLUDED_PROVIDERS
+            read_members(),
+            "task",
+            provider,
+            provider_options or {},
+            EXCLUDED_PROVIDERS,
+            permissions=read_permissions(),
         )
         request = InvocationRequest(
             provider=provider,
@@ -1224,6 +1236,8 @@ def round_payload(
                 seat["session_id"] = result.session_id
             if result.error:
                 seat["error"] = {"code": result.error.code, "message": result.error.message}
+            if result.warnings:
+                seat["warnings"] = list(result.warnings)
         elif run.launch_error is not None:
             seat["error"] = {"code": run.launch_error.code, "message": run.launch_error.message}
         elif run.status == "running" and run.invocation_id is not None:
@@ -1300,6 +1314,7 @@ def _open_show(
     manager_session_id: str | None,
 ) -> tuple[str, list[GroupSeatPayload]]:
     document = read_members()
+    permissions = read_permissions()
     prepared: list[GroupSeat] = []
     defaults: dict[str, list[str]] = {}
     for seat in members:
@@ -1310,6 +1325,7 @@ def _open_show(
             seat.provider_options,
             EXCLUDED_PROVIDERS,
             restricted=isolated,
+            permissions=permissions,
         )
         prepared.append(
             GroupSeat(
@@ -1476,7 +1492,7 @@ async def run_round(
             group_id, opened = _open_show(
                 conversations, title, members, cwd, review, isolated, manager_session_id
             )
-        except MemberFileError as exc:
+        except (MemberFileError, PermissionFileError) as exc:
             raise ToolError(str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc

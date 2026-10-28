@@ -134,6 +134,8 @@ class InvocationResult:
     duration_ms: int
     error: InvocationError | None = None
     reported_model: str | None = None
+    # Problems in a run the CLI still reported as finished, such as denied tool calls.
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {

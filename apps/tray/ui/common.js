@@ -341,16 +341,26 @@
     service: "安装本机服务",
     host: "接入一个宿主",
     members: "设置组员",
+    permissions: "选择组员权限",
     try: "在宿主里派一次任务",
   };
   const FALLBACK = {
     service: "宿主要通过它才能启动 AgentNave",
     host: "在设置里一键接入已检测到的宿主",
     members: "选择哪些 CLI 与模型可以当组员",
+    permissions: "决定派出去的 CLI 能不能直接跑命令",
     try: "在宿主里说：用 agentnave 让几位组员各答一遍",
   };
   const SAMPLE = "用 agentnave 让两位组员各自回答一遍：这个仓库是做什么的？";
-  // First pending step -> its one primary action. `to` is a real route; `run` is an in-place action.
+  // Every CLI with an approval step gets the same tier; later ones per CLI in Settings.
+  const PERMISSION_CLIS = ["antigravity", "claude", "codebuddy", "codex", "deepseek", "grok"];
+  const setTiers = (tier) =>
+    post("/app/permissions", {
+      version: 1,
+      clis: Object.fromEntries(PERMISSION_CLIS.map((cli) => [cli, tier])),
+    });
+  // First pending step -> its primary action, then any alternatives. `to` is a real route; `run`
+  // is an in-place action.
   const ACTION = {
     service: {
       label: "安装本机服务",
@@ -359,6 +369,10 @@
     },
     host: { label: "去接入宿主", to: "/settings/#hosts" },
     members: { label: "去设置组员", to: "/settings/#members" },
+    permissions: [
+      { label: "用推荐的「自动」", busy: "保存中…", run: () => setTiers("auto") },
+      { label: "保持各 CLI 原生", busy: "保存中…", run: () => setTiers("native"), alt: true },
+    ],
     try: { label: "复制示例指令", copy: SAMPLE },
   };
 
@@ -485,8 +499,9 @@
       const li = h("li.ob-step" + cls, {}, ...kids);
       if (isCurrent) {
         const body = li.querySelector(".ob-body");
-        const act = ACTION[step.id];
-        if (act) body.append(h("div.ob-act", {}, actionNode(step.id, act)));
+        const acts = [].concat(ACTION[step.id] || []);
+        if (acts.length)
+          body.append(h("div.ob-act", {}, acts.map((act) => actionNode(step.id, act))));
         if (error && error.step === step.id)
           body.append(h("p.ob-err", { role: "alert" }, error.message));
       }
@@ -501,11 +516,11 @@
           act.label,
           h("span", { "aria-hidden": "true" }, " →"),
         );
-      const pending = busy === id;
+      const pending = busy === `${id}/${act.label}`;
       const btn = h(
-        "button.ob-btn" + (pending ? ".pending" : ""),
-        { type: "button", disabled: pending },
-        pending ? [h("i.ob-spin"), act.busy] : error && error.step === id && act.run ? "重试" : act.label,
+        "button.ob-btn" + (act.alt ? ".ob-alt" : "") + (pending ? ".pending" : ""),
+        { type: "button", disabled: !!busy },
+        pending ? [h("i.ob-spin"), act.busy] : error && error.act === act.label && act.run ? "重试" : act.label,
       );
       btn.addEventListener("click", async () => {
         if (act.copy) {
@@ -520,13 +535,13 @@
           setTimeout(() => setText(btn, act.label), 2000);
           return;
         }
-        busy = id;
+        busy = `${id}/${act.label}`;
         error = null;
         render();
         try {
           await act.run();
         } catch (e) {
-          error = { step: id, message: `${e.message || "操作失败"}` };
+          error = { step: id, act: act.label, message: `${e.message || "操作失败"}` };
         }
         busy = null;
         await refresh();

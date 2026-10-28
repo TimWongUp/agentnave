@@ -84,7 +84,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 | DeepSeek Harness | `deepseek` | [DeepSeek Harness](references/deepseek.md) |
 
-用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自用户在 App 中设定的默认 options 或用户本轮明确要求，boss 不得自行追加；App 默认值续接时也会套用。模型不可用时报告原错误，不静默替换。
+用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自用户在 App 中设定的默认 options、App 按 CLI 选的权限档位（`list_members` 的 `permissions`），或用户本轮明确要求，boss 不得自行追加；显式传任一权限参数会让该 CLI 的档位整档不套用。App 默认值续接时也会套用。终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒，按未完成处理并告知用户可在 App 调整档位。模型不可用时报告原错误，不静默替换。
 
 ## 目录与交接
 

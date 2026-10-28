@@ -430,6 +430,19 @@ def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None)
     assert (flag in prepared.argv) is (value is True)
 
 
+def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None:
+    options: dict[str, str | int | float | bool] = {"approve_for_me": True}
+    fresh = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
+    assert "--approve-for-me" in fresh.argv
+    # `exec resume` has no such flag; the same settings go through --config.
+    resumed = CodexAdapter().prepare(
+        request(tmp_path, "codex", session_id="thread-1", provider_options=options)
+    )
+    assert "--approve-for-me" not in resumed.argv
+    assert 'approvals_reviewer="auto_review"' in resumed.argv
+    assert 'sandbox_mode="workspace-write"' in resumed.argv
+
+
 def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError, match="dangerously_bypass_approvals_and_sandbox must be a boolean"
@@ -679,6 +692,30 @@ def test_claude_permission_denials_block_only_a_failed_run() -> None:
     assert succeeded.output == "FINISHED"
     assert failed.status is InvocationStatus.BLOCKED
     assert failed.output == "FINISHED"
+    # Success stays success, with a warning that names the denied tools.
+    assert len(succeeded.warnings) == 1
+    assert "denied 1 tool call(s)" in succeeded.warnings[0]
+    clean = ClaudeAdapter().parse(
+        0, json.dumps({**payload, "permission_denials": []}).encode(), b""
+    )
+    assert clean.warnings == ()
+    # CodeBuddy only reports the denial in the tool result; the capture keeps a marker of it.
+    capture = CodeBuddyAdapter().prepare(request(Path("/"), "codebuddy")).capture_line
+    assert capture is not None
+    text = "Error: Permission to use Bash has been denied because this tool requires approval"
+    denial = {
+        "type": "user",
+        "parent_tool_use_id": None,
+        "message": {
+            "content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]
+        },
+    }
+    captured = capture(json.dumps(denial).encode()) + capture(
+        json.dumps({**payload, "permission_denials": []}).encode()
+    )
+    warned = CodeBuddyAdapter().parse(0, captured, b"")
+    assert warned.status is InvocationStatus.SUCCEEDED
+    assert "codebuddy denied 1 tool call(s) (Bash)" in warned.warnings[0]
 
 
 def test_claude_structured_error_preserves_usage_and_message() -> None:

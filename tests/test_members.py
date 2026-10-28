@@ -9,9 +9,12 @@ from pydantic import ValidationError
 from agentnave.members import (
     MemberFile,
     MemberFileError,
+    PermissionFile,
+    PermissionFileError,
     ProviderExcludedError,
     apply_member,
     read_members,
+    read_permissions,
 )
 
 
@@ -227,3 +230,51 @@ def test_cached_native_model_does_not_transfer_execution_permissions(
         json.dumps({"clis": {"antigravity": {"model": "cached-A"}}}), encoding="utf-8"
     )
     assert apply_member(document, "task", "antigravity", {}, frozenset()) == ({}, [])
+
+
+def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    assert read_permissions() is None
+    (tmp_path / "permissions.json").write_text('{"version": 1, "clis": {"x": "auto"}}')
+    with pytest.raises(PermissionFileError):
+        read_permissions()
+    (tmp_path / "permissions.json").write_text(
+        json.dumps({"version": 1, "clis": {"codex": "auto", "claude": "full", "pi": "auto"}})
+    )
+    tiers = read_permissions()
+    assert tiers is not None
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {"codex": {"models": {"m": {"options": {"sandbox": "read-only"}}}}},
+            "modes": {"task": {"codex": {"models": []}}},
+        }
+    )
+    # No model (CLI default) and a model the App never listed both get the tier.
+    for options in ({}, {"model": "unlisted"}):
+        assert apply_member(document, "task", "codex", options, frozenset(), permissions=tiers)[
+            1
+        ] == ["approve_for_me"]
+    # The tier replaces a saved model permission option rather than mixing with it.
+    assert apply_member(
+        document, "task", "codex", {"model": "m"}, frozenset(), permissions=tiers
+    ) == ({"model": "m", "approve_for_me": True}, ["approve_for_me"])
+    # A caller's own permission option keeps the tier out; restricted runs take none.
+    assert apply_member(
+        document, "task", "codex", {"sandbox": "workspace-write"}, frozenset(), permissions=tiers
+    ) == ({"sandbox": "workspace-write"}, [])
+    assert apply_member(
+        None, "discussion", "claude", {}, frozenset(), restricted=True, permissions=tiers
+    ) == ({}, [])
+    assert apply_member(None, "discussion", "claude", {}, frozenset(), permissions=tiers) == (
+        {"permission_mode": "bypassPermissions"},
+        ["permission_mode"],
+    )
+    # Pi has no approval step; native or absent CLIs keep their own permissions.
+    for provider in ("pi", "grok"):
+        assert apply_member(None, "task", provider, {}, frozenset(), permissions=tiers) == ({}, [])
+    assert apply_member(
+        None, "task", "codex", {}, frozenset(), permissions=PermissionFile(version=1)
+    ) == ({}, [])

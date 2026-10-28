@@ -31,6 +31,9 @@ pub const REVIEW_ROLES: [&str; 8] = [
 ];
 const FILE: &str = "members.json";
 const REVIEW_FILE: &str = "review.json";
+const PERMISSIONS_FILE: &str = "permissions.json";
+/// Per-CLI permission tiers; the server maps each to that CLI's own options. Pi has none.
+const TIERS: [&str; 3] = ["native", "auto", "full"];
 
 pub fn empty() -> Value {
     json!({"version": 1, "clis": {}, "modes": {}})
@@ -312,6 +315,44 @@ pub fn save_review(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, REVIEW_FILE, document)
 }
 
+/// permissions.json: `{"version": 1, "clis": {provider: "native" | "auto" | "full"}}`. Kept out of
+/// members.json so a server that predates permission tiers still reads its members. A missing
+/// file or CLI keeps that CLI's native permissions; nothing is written until the user picks.
+pub fn validate_permissions(document: &Value) -> Result<(), String> {
+    let top = object(document, PERMISSIONS_FILE)?;
+    only(top, &["version", "clis"], PERMISSIONS_FILE)?;
+    if document["version"].as_u64() != Some(1) {
+        return Err(format!("{PERMISSIONS_FILE} 的 version 必须为 1"));
+    }
+    for (provider, tier) in object(&document["clis"], "clis")? {
+        if !PROVIDERS.contains(&provider.as_str()) || provider == "pi" {
+            return Err(format!("{provider} 不支持权限档位"));
+        }
+        if !tier.as_str().is_some_and(|tier| TIERS.contains(&tier)) {
+            return Err(format!("{provider} 的权限档位只能是 native、auto 或 full"));
+        }
+    }
+    Ok(())
+}
+
+pub fn read_permissions(root: &Path) -> Result<Option<Value>, String> {
+    let content = match fs::read(root.join(PERMISSIONS_FILE)) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法读取 {PERMISSIONS_FILE}：{error}")),
+    };
+    let document = serde_json::from_slice(&content)
+        .map_err(|error| format!("{PERMISSIONS_FILE} 损坏：{error}"))?;
+    validate_permissions(&document)
+        .map_err(|error| format!("{PERMISSIONS_FILE} 格式错误：{error}"))?;
+    Ok(Some(document))
+}
+
+pub fn save_permissions(root: &Path, document: &Value) -> Result<(), String> {
+    validate_permissions(document)?;
+    write_atomic(root, PERMISSIONS_FILE, document)
+}
+
 /// Run at App start: probe the CLIs once so the office can name each CLI's own default model
 /// before Settings is ever opened.
 pub fn prepare() {
@@ -335,11 +376,18 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         Ok(review) => (review, Value::Null),
         Err(error) => (Value::Null, json!(error)),
     };
+    // Null until the user first picks a tier, so the page can tell "never chosen" apart.
+    let (permissions, permissions_error) = match read_permissions(root) {
+        Ok(permissions) => (permissions.unwrap_or(Value::Null), Value::Null),
+        Err(error) => (Value::Null, json!(error)),
+    };
     json!({
         "document": document,
         "error": error,
         "review": review,
         "review_error": review_error,
+        "permissions": permissions,
+        "permissions_error": permissions_error,
         "detected": detected,
     })
 }
@@ -548,6 +596,39 @@ mod tests {
         assert!(!root.join(FILE).exists());
         fs::write(root.join(REVIEW_FILE), b"{").unwrap();
         assert!(read_review(&root).is_err());
+    }
+
+    #[test]
+    fn permission_tiers_save_to_their_own_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("data");
+        let reader = Reader::new(root.clone());
+        assert_eq!(read_permissions(&root).unwrap(), None);
+        let post = |body: &Value| {
+            reader
+                .request(
+                    "POST",
+                    "/app/permissions",
+                    Some("1"),
+                    &serde_json::to_vec(body).unwrap(),
+                )
+                .status
+        };
+        for clis in [
+            json!({"pi": "auto"}),
+            json!({"other": "auto"}),
+            json!({"codex": "yolo"}),
+            json!({"codex": true}),
+        ] {
+            assert_eq!(post(&json!({"version": 1, "clis": clis})), 400);
+        }
+        let tiers =
+            json!({"version": 1, "clis": {"codex": "auto", "claude": "full", "grok": "native"}});
+        assert_eq!(post(&tiers), 200);
+        assert_eq!(read_permissions(&root).unwrap(), Some(tiers));
+        assert!(!root.join(FILE).exists());
+        fs::write(root.join(PERMISSIONS_FILE), b"{").unwrap();
+        assert!(read_permissions(&root).is_err());
     }
 
     #[test]
