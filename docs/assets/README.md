@@ -6,6 +6,8 @@ This directory contains the project-local assets used by the AgentNave README.
   office props from `apps/tray/ui/art/` the way the App does; `?view=banner|cast&lang=zh|en` picks the image.
 - `readme-banner-zh.webp`, `readme-banner-en.webp` — rendered 1280×640 README banners (at 2×).
 - `readme-cast-zh.webp`, `readme-cast-en.webp` — rendered cast sheets of the office characters (at 2×).
+- `readme-demo.gif` — time-lapse of a real show in the tray App: seven CLI teammates answer in
+  parallel, then take turns.
 - `agentnave-banner.svg`, `agentnave-banner.png` — the previous banner, no longer referenced.
 - `tim-wong-mark.png` — project-local copy of the canonical personal brand mark.
 

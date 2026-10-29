@@ -21,8 +21,7 @@ has gone to the meeting room, and what everyone said.
 
 ## 🎬 Live demo
 
-<!-- Put the recording at docs/assets/readme-demo-en.gif, then uncomment the next line -->
-<!-- <p align="center"><img src="docs/assets/readme-demo-en.gif" alt="AgentNave live demo" width="100%"></p> -->
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss sends seven CLI teammates to the meeting room to answer in parallel, then take turns" width="100%"></p>
 
 ## ✨ What it does
 
