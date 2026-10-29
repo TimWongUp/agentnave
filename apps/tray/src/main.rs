@@ -38,6 +38,9 @@ const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
 const PANEL_SIZE: (f64, f64) = (480.0, 640.0);
+/// Matches `--panel-radius` in panel.css, close to the system's menu bar popovers.
+#[cfg(target_os = "macos")]
+const PANEL_RADIUS: f64 = 16.0;
 const MAIN_SIZE: (f64, f64) = (1440.0, 900.0);
 const MAIN_MIN: (f64, f64) = (420.0, 480.0);
 const POLL: Duration = Duration::from_secs(2);
@@ -79,7 +82,12 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
         && method != "GET"
         && !matches!(
             path,
-            "/app/window/drag" | "/app/window/zoom" | "/app/update/check"
+            "/app/window/drag"
+                | "/app/window/zoom"
+                | "/app/update/check"
+                | "/app/theme/system"
+                | "/app/theme/light"
+                | "/app/theme/dark"
         )
 }
 
@@ -138,6 +146,17 @@ fn main() {
                             }
                             None => data::Response::error(404, "找不到窗口"),
                         }
+                    }
+                    // Native appearance (the panel's glass, window buttons) follows the page's theme.
+                    ("POST", "/app/theme/system" | "/app/theme/light" | "/app/theme/dark")
+                        if action == Some("1") =>
+                    {
+                        app.set_theme(match path.as_str() {
+                            "/app/theme/light" => Some(tauri::Theme::Light),
+                            "/app/theme/dark" => Some(tauri::Theme::Dark),
+                            _ => None,
+                        });
+                        data::Response::json(&serde_json::json!({"ok": true}))
                     }
                     ("GET", "/settings/members") => reader.members(refresh),
                     (_, "/app/service/install") if method != "POST" => {
@@ -394,20 +413,81 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         tauri::window::EffectsBuilder::new()
             .effect(tauri::window::Effect::Popover)
             .state(tauri::window::EffectState::Active)
-            .radius(12.0)
             .build(),
     );
     let panel = builder.build()?;
-    let app = app.clone();
+    #[cfg(target_os = "macos")]
+    round_panel(&panel);
+    let blurred = app.clone();
     panel.on_window_event(move |event| {
-        if let WindowEvent::Focused(false) = event
-            && let Some(panel) = app.get_webview_window(PANEL)
-        {
-            let _ = panel.hide();
-            *app.state::<Tray>().panel_hidden.lock().unwrap() = Some(Instant::now());
+        if let WindowEvent::Focused(false) = event {
+            hide_panel(&blurred);
         }
     });
+    #[cfg(target_os = "macos")]
+    hide_panel_on_outside_click(app);
     Ok(())
+}
+
+/// Clip the whole window, glass and page together: the glass view's own radius is lost
+/// where it reaches past the window's bottom edge.
+#[cfg(target_os = "macos")]
+fn round_panel(panel: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    let Ok(view) = panel.ns_view() else {
+        return;
+    };
+    // SAFETY: setup runs on the main thread and the window keeps its content view alive.
+    unsafe {
+        let view = &*view.cast::<AnyObject>();
+        let _: () = msg_send![view, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if let Some(layer) = layer.as_ref() {
+            let _: () = msg_send![layer, setCornerRadius: PANEL_RADIUS];
+            let _: () = msg_send![layer, setMasksToBounds: true];
+        }
+    }
+}
+
+/// Hide on losing focus. The time guards the reopen: a click on the menu bar icon first blurs
+/// the panel, then toggles it, and that toggle must not show it again.
+fn hide_panel(app: &AppHandle) {
+    if hide_visible_panel(app) {
+        *app.state::<Tray>().panel_hidden.lock().unwrap() = Some(Instant::now());
+    }
+}
+
+/// Whether the panel was showing. Once hidden by an outside click it stays hidden on the blur
+/// that may follow, so that blur sets no reopen guard either.
+fn hide_visible_panel(app: &AppHandle) -> bool {
+    let Some(panel) = app.get_webview_window(PANEL) else {
+        return false;
+    };
+    let shown = panel.is_visible().unwrap_or(false);
+    if shown {
+        let _ = panel.hide();
+    }
+    shown
+}
+
+/// Recent macOS may refuse to activate the app when its menu bar icon is clicked, so the
+/// panel never becomes key and never loses focus. A global monitor sees only clicks sent to
+/// other apps: the panel itself and its menu bar icon never trigger it, so it needs no reopen
+/// guard and an immediate click on the icon opens the panel again.
+#[cfg(target_os = "macos")]
+fn hide_panel_on_outside_click(app: &AppHandle) {
+    use objc2_app_kit::{NSEvent, NSEventMask};
+    let app = app.clone();
+    let handler = block2::RcBlock::new(move |_| {
+        hide_visible_panel(&app);
+    });
+    let mask =
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+    // The monitor lives as long as the app.
+    std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+        mask, &handler,
+    ));
 }
 
 fn toggle_panel(app: &AppHandle, icon: Rect) {
@@ -643,6 +723,7 @@ mod tests {
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
         assert!(!preview_refuses(true, "POST", "/app/update/check"));
+        assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
     }
 
     #[test]
