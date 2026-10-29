@@ -1024,6 +1024,13 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert resumed["defaults_applied"] == applied
         explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
         assert explicit["defaults_applied"] == ["permission_mode"] and explicit["effort"] == "high"
+        # A CLI-wide setting joins the model's own defaults.
+        (tmp_path / "cli-options.json").write_text(
+            json.dumps({"version": 1, "clis": {"claude": {"max_budget_usd": 1}}})
+        )
+        wide = await start({"model": "chosen"})
+        assert wide["defaults_applied"] == ["effort", "agent", "max_budget_usd", "permission_mode"]
+        (tmp_path / "cli-options.json").unlink()
         for options in ({"model": "outside"}, {"effort": "low"}, {"unknown": True}):
             result = await client.call_tool(
                 "start_agent",

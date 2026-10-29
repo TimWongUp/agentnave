@@ -6,13 +6,17 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from agentnave.host import Host
 from agentnave.members import (
+    CLIOptionsFileError,
     MemberFile,
     MemberFileError,
     PermissionFile,
     PermissionFileError,
     ProviderExcludedError,
     apply_member,
+    list_members,
+    read_cli_options,
     read_members,
     read_permissions,
 )
@@ -231,6 +235,59 @@ def test_cached_native_model_does_not_transfer_execution_permissions(
         json.dumps({"clis": {"antigravity": {"model": "cached-A"}}}), encoding="utf-8"
     )
     assert document.apply("task", "antigravity", {}, frozenset()) == ({}, [])
+
+
+def test_cli_options_apply_to_every_model_of_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    assert read_cli_options() is None
+    for clis in ({"codex": {"sandbox": "read-only"}}, {"codex": {"model": "m"}}):
+        (tmp_path / "cli-options.json").write_text(json.dumps({"version": 1, "clis": clis}))
+        with pytest.raises(CLIOptionsFileError, match="must not contain"):
+            read_cli_options()
+    (tmp_path / "cli-options.json").write_text(
+        json.dumps({"version": 1, "clis": {"codex": {"skip_git_repo_check": True}}})
+    )
+    saved = read_cli_options()
+    assert saved is not None
+    (tmp_path / "cli-defaults.json").write_text(json.dumps({"clis": {"codex": {"model": "m"}}}))
+    document = MemberFile.model_validate(
+        {"version": 1, "clis": {"codex": {"models": {"m": {}}}}, "modes": {}}
+    )
+    # Listed, unlisted, and the CLI's own default model all carry the CLI setting,
+    # unlike execution controls saved on one model.
+    for options in ({"model": "m"}, {"model": "unlisted"}, {}):
+        for members in (document, None):
+            result, applied = apply_member(
+                members, "task", "codex", options, frozenset(), cli_options=saved
+            )
+            assert result["skip_git_repo_check"] is True
+            assert applied[-2:] == ["skip_git_repo_check", "approve_for_me"]
+    # The model's own option and the caller both win on the same key.
+    document.clis["codex"].models["m"].options = {"skip_git_repo_check": False}
+    for options in ({"model": "m"}, {"model": "x", "skip_git_repo_check": False}):
+        result, applied = apply_member(
+            document, "task", "codex", options, frozenset(), cli_options=saved
+        )
+        assert result["skip_git_repo_check"] is False
+        assert applied.count("skip_git_repo_check") == ("skip_git_repo_check" not in options)
+    # Restricted runs accept no tool-granting extras.
+    assert apply_member(
+        None, "discussion", "codex", {}, frozenset(), restricted=True, cli_options=saved
+    ) == ({}, [])
+    listed = list_members(frozenset(), Host())
+    assert listed.cli_options == {"codex": {"skip_git_repo_check": True}}
+    # A restricted model stays valid: list_members checks what a dispatch would send.
+    document.clis["codex"].models["m"].options = {"restricted_tools": True}
+    (tmp_path / "members.json").write_text(document.model_dump_json(exclude_unset=True))
+    [member] = list_members(frozenset(), Host()).modes["task"].members
+    assert (member.valid, member.options) == (True, {"restricted_tools": True})
+    assert apply_member(
+        document, "task", "codex", {"model": "m"}, frozenset(), cli_options=saved
+    ) == ({"model": "m", "restricted_tools": True}, ["restricted_tools"])
+    (tmp_path / "cli-options.json").write_text("{")
+    assert "cli-options.json" in str(list_members(frozenset(), Host()).cli_options_error)
 
 
 def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(

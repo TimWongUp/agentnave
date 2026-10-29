@@ -110,7 +110,9 @@ let reviewSeats = {}; // review.json seats; saved on their own, apart from membe
 let reviewError = null;
 let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "auto".
 let permissionsError = null;
-let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
+let cliOptions = null; // cli-options.json settings by CLI; they hold for every model of it.
+let cliOptionsError = null;
+let reviewSaves = 0; // Seats, tiers or CLI switches saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
 const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let missingOpen = false; // The folded list of CLIs not installed here
@@ -133,6 +135,7 @@ const isMock = new URLSearchParams(location.search).has("mock");
 const mockMembersData = {
   review: { version: 1, seats: {} },
   permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
+  cli_options: { version: 1, clis: { codex: { skip_git_repo_check: true } } },
   document: {
     version: 1,
     clis: {
@@ -142,7 +145,6 @@ const mockMembersData = {
             efforts: ["medium", "high", "xhigh"],
             effort: "high",
             options: {
-              skip_git_repo_check: true,
               dangerously_bypass_approvals_and_sandbox: false,
             },
             notes: "多文件实现、需要跑测试的任务",
@@ -282,6 +284,8 @@ function takeReview(data) {
   reviewError = data.review_error || null;
   permissionTiers = data.permissions?.clis || null;
   permissionsError = data.permissions_error || null;
+  cliOptions = data.cli_options?.clis || null;
+  cliOptionsError = data.cli_options_error || null;
 }
 
 async function apiPostPermissions(doc) {
@@ -296,6 +300,77 @@ async function apiPostPermissions(doc) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+}
+
+async function apiPostCliOptions(doc) {
+  if (isMock) {
+    mockMembersData.cli_options = JSON.parse(JSON.stringify(doc));
+    return;
+  }
+  const res = await fetch("/app/cli-options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+    body: JSON.stringify(doc),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+}
+
+// Switches that hold for every model of one CLI, saved apart from members.json; an "off"
+// switch removes the key so the CLI's own behaviour applies.
+const CLI_SWITCHES = {
+  codex: [{
+    key: "skip_git_repo_check",
+    label: "允许在 git 仓库外运行",
+    on: "Codex 在任何文件夹都能启动，包括临时目录和其他 App 的工作区。",
+    off: "Codex 只在 git 仓库或它信任过的文件夹里启动，其他文件夹会直接报错。",
+  }],
+};
+
+async function setCliSwitch(provider, item, enabled) {
+  if (cliOptionsError) return showNotice(`${cliOptionsError}；请先修复或删除这个文件`, true);
+  if (busy) return showNotice("正在保存，请稍后再选", true);
+  const options = { ...(cliOptions?.[provider] || {}) };
+  if (enabled) options[item.key] = true;
+  else delete options[item.key];
+  const clis = { ...(cliOptions || {}), [provider]: options };
+  if (!Object.keys(options).length) delete clis[provider];
+  busy = true;
+  updateControls();
+  try {
+    await apiPostCliOptions({ version: 1, clis });
+    cliOptions = clis;
+    reviewSaves += 1;
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型的私聊和新开的会议都生效`);
+  } catch (err) {
+    showNotice(`保存失败: ${err.message}`, true);
+  } finally {
+    busy = false;
+    updateControls();
+  }
+  renderCards();
+}
+
+function renderCliSwitches(provider) {
+  return (CLI_SWITCHES[provider] || []).map((item) => {
+    const enabled = cliOptions?.[provider]?.[item.key] === true;
+    return el("div", { className: "cli-permission" },
+      el("label", { className: "cli-permission-head" },
+        el("span", { className: "cli-permission-label" }, item.label),
+        el("input", {
+          type: "checkbox",
+          role: "switch",
+          className: "switch-input",
+          dataset: { focusKey: `${provider}/cli/${item.key}` },
+          checked: enabled,
+          disabled: Boolean(cliOptionsError),
+          onChange: (e) => setCliSwitch(provider, item, e.target.checked),
+        })),
+      el("p", { className: "cli-permission-text" },
+        cliOptionsError
+          ? `${cliOptionsError}。修复或删除这个文件之前，派发会被拒绝。`
+          : `${enabled ? item.on : item.off} 对这个 CLI 的所有模型都生效，选完立即保存。`));
+  });
 }
 
 // What each tier means for each CLI when a task runs unattended; the server maps the tier to
@@ -1332,6 +1407,7 @@ function renderCards() {
       card.appendChild(metaRow);
     }
     card.appendChild(renderPermission(provider));
+    for (const row of renderCliSwitches(provider)) card.appendChild(row);
 
     // Body
     const body = el("div", {
@@ -1680,9 +1756,9 @@ async function refreshDetection(quiet = false) {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
-    const tiersBefore = JSON.stringify([permissionTiers, permissionsError]);
+    const tiersBefore = JSON.stringify([permissionTiers, permissionsError, cliOptions, cliOptionsError]);
     if (!busy && reviewSaves === seatsBefore) takeReview(data);
-    const tiersChanged = JSON.stringify([permissionTiers, permissionsError]) !== tiersBefore;
+    const tiersChanged = JSON.stringify([permissionTiers, permissionsError, cliOptions, cliOptionsError]) !== tiersBefore;
     // Without unsaved edits, or a save while probing, take the file as read too.
     // An unchanged file keeps the current objects, which the rendered cards still edit.
     const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
