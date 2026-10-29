@@ -139,10 +139,16 @@
   const themeChoice = () => {
     try { return localStorage.getItem(THEME_KEY) || "system"; } catch { return "system"; }
   };
+  // The Mac App's native parts (the panel's glass, window buttons) follow the same choice.
+  let nativeTheme = null;
   function applyTheme() {
     const choice = themeChoice();
     document.documentElement.dataset.theme = choice === "system" ? (lightQuery.matches ? "light" : "dark") : choice;
     document.querySelectorAll("[data-theme-choice]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice)));
+    if (location.protocol === "agentnave:" && nativeTheme !== choice) {
+      nativeTheme = choice;
+      fetch(`/app/theme/${choice}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
+    }
   }
   function themeSwitch() {
     const labels = { system: ["◐", "跟随系统"], light: ["☀", "浅色"], dark: ["☾", "深色"] };
