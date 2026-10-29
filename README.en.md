@@ -34,12 +34,12 @@ has gone to the meeting room, and what everyone said.
 
 ## 👀 Who can be the boss, who can be a teammate
 
-| Role                                           | Supported                                                                                            |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Boss** (the host that connects to AgentNave) | Codex, Claude Code, CodeBuddy / WorkBuddy, Grok, Antigravity, Pi, Hermes, OpenCode (untested)        |
-| **Teammate** (the CLI that gets the work)      | Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI, Grok CLI, Pi Coding Agent, DeepSeek Harness |
+| Role                                                | Supported                                                                                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, Hermes |
+| **Teammate** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness                 |
 
-A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a meeting.
+The boss side is wider: any of these hosts can be the boss, desktop apps included, while teammates are only the CLIs listed. A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a meeting.
 
 ## 🎀 Meet the team
 

@@ -33,12 +33,12 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 ## 👀 谁当老板，谁当组员
 
-| 角色                              | 支持                                                                                                 |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **老板**（接入 AgentNave 的宿主） | Codex、Claude Code、CodeBuddy / WorkBuddy、Grok、Antigravity、Pi、Hermes、OpenCode（未实测）         |
-| **组员**（被派活的 CLI）          | Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness |
+| 角色                                 | 支持                                                                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、Hermes |
+| **组员**（被派活的 CLI）             | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness       |
 
-宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
+老板的范围更大：上面这些宿主都能当老板，桌面端也可以；组员目前只有表里这几个 CLI。宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
 
 ## 🎀 组员图鉴
 
