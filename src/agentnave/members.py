@@ -443,6 +443,28 @@ def read_members() -> MemberFile | None:
         ) from exc
 
 
+def add_cli_options(
+    provider: str,
+    saved: Mapping[str, ProviderOption],
+    result: dict[str, ProviderOption],
+    restricted: bool,
+) -> list[str]:
+    """Fill CLI-wide settings, which hold whichever model runs, the CLI's own default included.
+
+    The caller and the model's own options win on the same key; restricted runs take only
+    the extras that grant no tools. Returns the keys added.
+    """
+    unrestricted = not restricted and result.get("restricted_tools") is not True
+    added = [
+        key
+        for key in saved
+        if key not in result
+        and (unrestricted or key in RESTRICTED_EXTRA_OPTIONS.get(provider, set()))
+    ]
+    result.update({key: saved[key] for key in added})
+    return added
+
+
 def apply_member(
     document: MemberFile | None,
     mode: Mode,
@@ -459,16 +481,8 @@ def apply_member(
     else:
         check_excluded(mode, provider, excluded)
         result, applied = dict(options), []
-    # CLI-wide settings hold whichever model runs, the CLI's own default included; the
-    # caller and the model's own options win on the same key.
     if cli_options is not None:
-        unrestricted = not restricted and result.get("restricted_tools") is not True
-        for key, value in cli_options.clis.get(provider, {}).items():
-            if key not in result and (
-                unrestricted or key in RESTRICTED_EXTRA_OPTIONS.get(provider, set())
-            ):
-                result[key] = value
-                applied.append(key)
+        applied += add_cli_options(provider, cli_options.clis.get(provider, {}), result, restricted)
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
@@ -514,7 +528,8 @@ class MemberList(StrictModel):
     # The App permission tier of each CLI that has one, "auto" unless the user picked "full".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
-    # Settings the user saved for a whole CLI; they apply to every model of it.
+    # Settings the user saved for a whole CLI; they apply to every model of it and are not
+    # repeated in each member's options.
     cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
     cli_options_error: str | None = None
 
@@ -545,10 +560,12 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 for model in dict.fromkeys(models):
                     config = document.effective(mode, provider, model)
                     effort = config.effort if "effort" in config.model_fields_set else None
-                    options = cli_options.get(provider, {}) | config.options
+                    options = dict(config.options)
                     options["model"] = model
                     if effort is not None:
                         options["effort"] = effort
+                    # Validate what a dispatch would send; options below stay the model's own.
+                    add_cli_options(provider, cli_options.get(provider, {}), options, False)
                     error = None
                     try:
                         request = InvocationRequest(

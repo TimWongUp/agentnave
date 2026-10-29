@@ -278,6 +278,14 @@ def test_cli_options_apply_to_every_model_of_the_cli(
     ) == ({}, [])
     listed = list_members(frozenset(), Host())
     assert listed.cli_options == {"codex": {"skip_git_repo_check": True}}
+    # A restricted model stays valid: list_members checks what a dispatch would send.
+    document.clis["codex"].models["m"].options = {"restricted_tools": True}
+    (tmp_path / "members.json").write_text(document.model_dump_json(exclude_unset=True))
+    [member] = list_members(frozenset(), Host()).modes["task"].members
+    assert (member.valid, member.options) == (True, {"restricted_tools": True})
+    assert apply_member(
+        document, "task", "codex", {"model": "m"}, frozenset(), cli_options=saved
+    ) == ({"model": "m", "restricted_tools": True}, ["restricted_tools"])
     (tmp_path / "cli-options.json").write_text("{")
     assert "cli-options.json" in str(list_members(frozenset(), Host()).cli_options_error)
 
