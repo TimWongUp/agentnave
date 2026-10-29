@@ -739,9 +739,13 @@ impl Reader {
                 {
                     return desktop;
                 }
-                // Read without the lock; a transcript naming no entrypoint is remembered too.
-                let desktop = claude_entrypoint(Path::new(file))
-                    .is_some_and(|entrypoint| entrypoint.starts_with("claude-desktop"));
+                // Read without the lock; a transcript read whole that names no entrypoint is
+                // remembered too, a failed read is tried again next time.
+                let Ok(found) = claude_entrypoint(Path::new(file)) else {
+                    return false;
+                };
+                let desktop =
+                    found.is_some_and(|entrypoint| entrypoint.starts_with("claude-desktop"));
                 lock().insert(file.clone(), (len, desktop));
                 desktop
             })
@@ -946,8 +950,8 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
 
 /// The latest `entrypoint` a Claude Code transcript records ("cli", "claude-desktop", ...): a
 /// chat resumed in the other app keeps writing the same file. Its last 256 KiB are searched
-/// first, then its first; None while the file is missing or names none there.
-fn claude_entrypoint(path: &Path) -> Option<String> {
+/// first, then its first; None when it names none there.
+fn claude_entrypoint(path: &Path) -> std::io::Result<Option<String>> {
     use std::io::{Read, Seek, SeekFrom};
     const WINDOW: u64 = 256 * 1024;
     const KEY: &[u8] = b"\"entrypoint\":\"";
@@ -956,22 +960,21 @@ fn claude_entrypoint(path: &Path) -> Option<String> {
         let end = chunk[start..].iter().position(|&b| b == b'"')? + start;
         String::from_utf8(chunk[start..end].to_vec()).ok()
     };
-    let mut file = fs::File::open(path).ok()?;
-    let len = file.metadata().ok()?.len();
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
     let mut chunk = Vec::new();
-    file.seek(SeekFrom::Start(len.saturating_sub(WINDOW)))
-        .ok()?;
-    file.by_ref().take(WINDOW).read_to_end(&mut chunk).ok()?;
+    file.seek(SeekFrom::Start(len.saturating_sub(WINDOW)))?;
+    file.by_ref().take(WINDOW).read_to_end(&mut chunk)?;
     if let Some(found) = last(&chunk) {
-        return Some(found);
+        return Ok(Some(found));
     }
     if len <= WINDOW {
-        return None;
+        return Ok(None);
     }
     chunk.clear();
-    file.seek(SeekFrom::Start(0)).ok()?;
-    file.take(WINDOW).read_to_end(&mut chunk).ok()?;
-    last(&chunk)
+    file.seek(SeekFrom::Start(0))?;
+    file.take(WINDOW).read_to_end(&mut chunk)?;
+    Ok(last(&chunk))
 }
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
