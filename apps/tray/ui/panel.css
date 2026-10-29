@@ -22,6 +22,7 @@
   /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #6ea8ff; --m1: #a88bff; --m2: #e873d6; --m3: #ff7fa2;
   --m4: #ff9a4d; --m5: #b5d94e; --m6: #3fd08a; --m7: #42c7e6;
+  --panel-radius: 16px; /* PANEL_RADIUS in main.rs: the glass and the page share one outline */
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 :root[data-theme="light"] {
@@ -63,7 +64,7 @@ body {
   overflow: hidden;
 }
 /* The system material is very see-through on recent macOS: a tint of the theme keeps text legible. */
-body.glass { background: var(--glass); }
+body.glass { background: var(--glass); border-radius: var(--panel-radius); }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; cursor: default; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }

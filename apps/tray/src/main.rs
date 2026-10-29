@@ -38,6 +38,9 @@ const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
 const PANEL: &str = "panel";
 const PANEL_SIZE: (f64, f64) = (480.0, 640.0);
+/// Matches `--panel-radius` in panel.css, close to the system's menu bar popovers.
+#[cfg(target_os = "macos")]
+const PANEL_RADIUS: f64 = 16.0;
 const MAIN_SIZE: (f64, f64) = (1440.0, 900.0);
 const MAIN_MIN: (f64, f64) = (420.0, 480.0);
 const POLL: Duration = Duration::from_secs(2);
@@ -410,20 +413,44 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         tauri::window::EffectsBuilder::new()
             .effect(tauri::window::Effect::Popover)
             .state(tauri::window::EffectState::Active)
-            .radius(12.0)
+            .radius(PANEL_RADIUS)
             .build(),
     );
     let panel = builder.build()?;
-    let app = app.clone();
+    let blurred = app.clone();
     panel.on_window_event(move |event| {
-        if let WindowEvent::Focused(false) = event
-            && let Some(panel) = app.get_webview_window(PANEL)
-        {
-            let _ = panel.hide();
-            *app.state::<Tray>().panel_hidden.lock().unwrap() = Some(Instant::now());
+        if let WindowEvent::Focused(false) = event {
+            hide_panel(&blurred);
         }
     });
+    #[cfg(target_os = "macos")]
+    hide_panel_on_outside_click(app);
     Ok(())
+}
+
+fn hide_panel(app: &AppHandle) {
+    if let Some(panel) = app.get_webview_window(PANEL)
+        && panel.is_visible().unwrap_or(false)
+    {
+        let _ = panel.hide();
+        *app.state::<Tray>().panel_hidden.lock().unwrap() = Some(Instant::now());
+    }
+}
+
+/// Recent macOS may refuse to activate the app when its menu bar icon is clicked, so the
+/// panel never becomes key and never loses focus. A global monitor sees only clicks sent to
+/// other apps: the panel itself and its menu bar icon never trigger it.
+#[cfg(target_os = "macos")]
+fn hide_panel_on_outside_click(app: &AppHandle) {
+    use objc2_app_kit::{NSEvent, NSEventMask};
+    let app = app.clone();
+    let handler = block2::RcBlock::new(move |_| hide_panel(&app));
+    let mask =
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+    // The monitor lives as long as the app.
+    std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+        mask, &handler,
+    ));
 }
 
 fn toggle_panel(app: &AppHandle, icon: Rect) {
