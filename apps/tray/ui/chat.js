@@ -446,7 +446,6 @@ function recentlyActive(c) {
 }
 function createBoss() {
   const rec = {
-    say: h("span.say"),
     lid: h("span.lid"),
     scene: null,
     nm: h("div.nm", {}, "boss"),
@@ -473,8 +472,8 @@ function createBoss() {
       "div.boss-row",
       {},
       rec.chats,
-      // the speech bubble sits above the head, never over it
-      h("div.boss-mid", {}, rec.say, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
+      // no speech bubble: the label below already says what the boss is waiting for
+      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
       rec.meets,
     ),
   );
@@ -487,10 +486,6 @@ function updateBoss(rec, c, n) {
   dressLid(rec, c.host);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
-  setSay(
-    rec.say,
-    n.running ? [`等 ${n.running} 个回复`] : mood === "sleep" ? "zz" : "",
-  );
   setText(rec.cli, c.label);
   setText(
     rec.st,
