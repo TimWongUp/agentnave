@@ -145,6 +145,7 @@ type RouteKey = (
     u64,
     usize,
     Vec<(String, crate::stage::Handover)>,
+    Vec<String>,
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -181,6 +182,8 @@ pub struct Reader {
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
     merged: Mutex<HashMap<String, Merged>>,
     routes: Mutex<HashMap<String, RouteAnswer>>,
+    /// Whether a Claude boss transcript was started by Claude Desktop, by file; it never changes.
+    desktop_files: Mutex<HashMap<String, bool>>,
 }
 
 impl Reader {
@@ -193,6 +196,7 @@ impl Reader {
             live_files: Mutex::new(HashMap::new()),
             merged: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
+            desktop_files: Mutex::new(HashMap::new()),
         }
     }
 
@@ -708,6 +712,38 @@ impl Reader {
         }
     }
 
+    /// Workspaces whose Claude boss chats in Claude Desktop's Code tab. Desktop runs Claude Code
+    /// itself on the same settings, so the host stays `claude`; only the transcript's
+    /// `entrypoint` tells the app apart, and only the office shows it.
+    fn desktop_bosses(&self, connection: &rusqlite::Connection) -> Vec<String> {
+        let rows: Vec<(String, String)> = connection
+            .prepare(
+                "SELECT id, owner_file FROM workspaces \
+                 WHERE owner_host = 'claude' AND owner_file IS NOT NULL ORDER BY id",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut seen = self.desktop_files.lock().unwrap_or_else(|p| p.into_inner());
+        rows.into_iter()
+            .filter(|(_, file)| match seen.get(file) {
+                Some(desktop) => *desktop,
+                None => match claude_entrypoint(Path::new(file)) {
+                    Some(entrypoint) => {
+                        let desktop = entrypoint.starts_with("claude-desktop");
+                        seen.insert(file.clone(), desktop);
+                        desktop
+                    }
+                    None => false,
+                },
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// Stage and chat answers, reused while every snapshot and the reuse window are unchanged.
     fn route(&self, path: &str) -> Response {
         let snapshots = self.scan().1;
@@ -717,9 +753,9 @@ impl Reader {
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
-        let handovers = match crate::db::read(&self.root) {
-            Ok(Some(connection)) => handovers(&connection),
-            _ => Vec::new(),
+        let (handovers, desktop) = match crate::db::read(&self.root) {
+            Ok(Some(connection)) => (handovers(&connection), self.desktop_bosses(&connection)),
+            _ => (Vec::new(), Vec::new()),
         };
         let key = (
             snapshots.iter().map(crate::stage::source_key).collect(),
@@ -727,6 +763,7 @@ impl Reader {
             window,
             limit,
             handovers,
+            desktop,
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -736,7 +773,8 @@ impl Reader {
         }
         let views = snapshots.iter().map(|s| s.view.clone()).collect();
         let handovers = key.4.iter().cloned().collect();
-        let response = crate::stage::respond(path, snapshots, key.1, limit, &handovers);
+        let desktop = key.5.iter().cloned().collect();
+        let response = crate::stage::respond(path, snapshots, key.1, limit, &handovers, &desktop);
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
             routes.clear();
@@ -899,6 +937,22 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .and_then(Iterator::collect)
         .map_err(|e| e.to_string())
+}
+
+/// The `entrypoint` a Claude Code transcript records ("cli", "claude-desktop", ...), from its
+/// first lines; None while the file is missing or names none yet.
+fn claude_entrypoint(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(256 * 1024)
+        .read_to_end(&mut head)
+        .ok()?;
+    const KEY: &[u8] = b"\"entrypoint\":\"";
+    let start = head.windows(KEY.len()).position(|w| w == KEY)? + KEY.len();
+    let end = head[start..].iter().position(|&b| b == b'"')? + start;
+    String::from_utf8(head[start..end].to_vec()).ok()
 }
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
@@ -1189,9 +1243,49 @@ mod tests {
             item["summary"]["manager_session"] = json!(session);
             save(dir.path(), &item);
         }
+        // Claude Desktop's Code tab runs Claude Code too; its transcripts say which app started them.
+        let connection = crate::db::write(dir.path()).unwrap().unwrap();
+        for (workspace, entrypoint) in [
+            (MANAGER, "cli"),
+            ("s-ffffffffffffffffffffffffffffffff", "claude-desktop"),
+        ] {
+            let file = dir.path().join(format!("{entrypoint}.jsonl"));
+            fs::write(
+                &file,
+                format!("{{\"type\":\"user\",\"entrypoint\":\"{entrypoint}\"}}\n"),
+            )
+            .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO workspaces (id, owner, owner_host, owner_file) \
+                     VALUES (?1, ?1, 'claude', ?2)",
+                    rusqlite::params![workspace, file.to_str().unwrap()],
+                )
+                .unwrap();
+        }
         let reader = Reader::new(dir.path().to_path_buf());
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 4);
+        let shown = |id: &str| {
+            let chat = state(&reader, &format!("/app/chats/{id}"));
+            (
+                chat["host"].clone(),
+                chat["app"].clone(),
+                chat["label"].clone(),
+            )
+        };
+        assert_eq!(
+            shown("s-ffffffffffffffffffffffffffffffff"),
+            (
+                json!("claude"),
+                json!("claude-desktop"),
+                json!("Claude 桌面")
+            )
+        );
+        assert_eq!(
+            shown(MANAGER),
+            (json!("claude"), Value::Null, json!("Claude Code"))
+        );
         assert_eq!(
             state(&reader, &format!("/app/chats/{MANAGER}"))["conversations"]
                 .as_array()

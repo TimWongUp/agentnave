@@ -34,6 +34,7 @@
   // ---- vocabulary -----------------------------------------------------------------------
   const HOSTS = {
     claude: "Claude Code",
+    "claude-desktop": "Claude 桌面",
     codex: "Codex",
     codebuddy: "CodeBuddy",
     grok: "Grok",
@@ -199,7 +200,7 @@ All checks passed!
     const c3 = { id: "20261017-0958-c3d4e5", title: "补 relay 文档", mode: "task", specs: [buddy] };
     const c5 = { id: "20261017-0930-d4e5f6", title: "整理 relay 历史改动", mode: "task", specs: [ds] };
     return {
-      group: "3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", host: "claude", color: 0, live: true,
+      group: "3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", host: "claude", app: "claude-desktop", color: 0, live: true,
       convs: [room1, c1, c4, room2, c3, c5],
     };
   }
@@ -370,7 +371,7 @@ All checks passed!
     const latest = [...members].sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))[0];
     return latest && FAILED.includes(latest.status) ? "failed" : "idle";
   }
-  const label = (g) => (g.host ? HOSTS[g.host] : "未记录 boss");
+  const label = (g) => (g.host ? HOSTS[g.app || g.host] : "未记录 boss");
   const convStatus = (conv, w) => {
     const es = conv.specs.map((sp) => evalSpec(sp, w)).filter(Boolean);
     if (es.some((e) => e.status === "running")) return "running";
@@ -399,7 +400,7 @@ All checks passed!
       .sort((a, b) => (TIER[a.status] ?? 2) - (TIER[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated))
       .slice(0, 5)
       .map(({ g, members, status, updated }) => ({
-        group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status, updated, members,
+        group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated, members,
         ...limited(desksOf(g, w), true), rooms: roomsOf(g, w),
       }));
     return {
@@ -553,7 +554,7 @@ All checks passed!
         const conv = [...g.convs].sort((a, b) => Math.max(...b.specs.map((s) => s.end ?? w.s)) - Math.max(...a.specs.map((s) => s.end ?? w.s)))[0];
         const preview = last ? clip((last.kind === "typing" ? plain(last.text).slice(-1) : plain(last.text).slice(0, 1)).join(" "), 90) : "";
         return {
-          group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status, updated,
+          group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
           title: conv.title, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
         };
@@ -568,7 +569,7 @@ All checks passed!
     if (!g || !summaryOf(g, w).members.length) throw Object.assign(new Error("404"), { status: 404 });
     const { members, status } = summaryOf(g, w);
     return {
-      group: g.group, host: g.host, label: label(g), color: g.color, live: g.live, status,
+      group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status,
       conversations: g.convs
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
         .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
