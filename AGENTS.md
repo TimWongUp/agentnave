@@ -35,6 +35,6 @@
 
 - 用户明确要求更新本项目版本时，按完整发布任务执行：同一任务完成版本 PR、审查、合并，并等待对应 tag 与 GitHub Release 发布成功；用户明确限制交付范围时遵从该限制。
 
-- 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
+- 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档、`README.md` 与 `README.en.md` 中的配套版本和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
 - 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release，并附上签名的 macOS 托盘安装包、更新包与 `latest.json`（需仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`）；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
 - 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。
