@@ -49,6 +49,10 @@ class PermissionFileError(ValueError):
     """The App-owned permissions.json cannot be read or validated."""
 
 
+class CLIOptionsFileError(ValueError):
+    """The App-owned cli-options.json cannot be read or validated."""
+
+
 class CapacityError(ValueError):
     """Starting would exceed the App's limit on concurrently running CLI processes."""
 
@@ -296,6 +300,42 @@ class PermissionFile(StrictModel):
     clis: dict[ProviderName, PermissionTier] = {}
 
 
+class CLIOptionsFile(StrictModel):
+    """cli-options.json: settings that hold for every model of a CLI. Apart from members.json
+    so older servers keep reading their members."""
+
+    version: int = Field(ge=1, le=1)
+    clis: dict[ProviderName, dict[str, ProviderOption]] = {}
+
+    @model_validator(mode="after")
+    def option_keys(self) -> CLIOptionsFile:
+        for provider, options in self.clis.items():
+            # Permission keys belong to the tier, never to saved defaults.
+            reserved = {"model", "effort", "restricted_tools"} | PERMISSION_KEYS.get(
+                provider, frozenset()
+            )
+            if found := sorted(reserved.intersection(options)):
+                raise ValueError(f"clis.{provider} must not contain {', '.join(found)}")
+        return self
+
+
+def read_cli_options() -> CLIOptionsFile | None:
+    try:
+        content = (_data_root() / "cli-options.json").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise CLIOptionsFileError(
+            f"Unable to read cli-options.json: {exc}. Repair it in the AgentNave App."
+        ) from exc
+    try:
+        return CLIOptionsFile.model_validate_json(content)
+    except ValueError as exc:
+        raise CLIOptionsFileError(
+            f"Invalid cli-options.json: {exc}. Repair it in the AgentNave App."
+        ) from exc
+
+
 def read_permissions() -> PermissionFile | None:
     try:
         content = (_data_root() / "permissions.json").read_text(encoding="utf-8")
@@ -412,12 +452,23 @@ def apply_member(
     *,
     restricted: bool = False,
     permissions: PermissionFile | None = None,
+    cli_options: CLIOptionsFile | None = None,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
     if document is not None:
         result, applied = document.apply(mode, provider, options, excluded, restricted=restricted)
     else:
         check_excluded(mode, provider, excluded)
         result, applied = dict(options), []
+    # CLI-wide settings hold whichever model runs, the CLI's own default included; the
+    # caller and the model's own options win on the same key.
+    if cli_options is not None:
+        unrestricted = not restricted and result.get("restricted_tools") is not True
+        for key, value in cli_options.clis.get(provider, {}).items():
+            if key not in result and (
+                unrestricted or key in RESTRICTED_EXTRA_OPTIONS.get(provider, set())
+            ):
+                result[key] = value
+                applied.append(key)
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
@@ -463,10 +514,21 @@ class MemberList(StrictModel):
     # The App permission tier of each CLI that has one, "auto" unless the user picked "full".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
+    # Settings the user saved for a whole CLI; they apply to every model of it.
+    cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
+    cli_options_error: str | None = None
 
 
 def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     document = read_members()
+    cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
+    cli_options_error = None
+    try:
+        saved_options = read_cli_options()
+    except CLIOptionsFileError as exc:
+        cli_options_error = str(exc)
+    else:
+        cli_options = saved_options.clis if saved_options else {}
     modes: dict[Mode, ModeStatus] = {}
     for mode in ("task", "discussion"):
         items: list[MemberStatus] = []
@@ -483,7 +545,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 for model in dict.fromkeys(models):
                     config = document.effective(mode, provider, model)
                     effort = config.effort if "effort" in config.model_fields_set else None
-                    options = dict(config.options)
+                    options = cli_options.get(provider, {}) | config.options
                     options["model"] = model
                     if effort is not None:
                         options["effort"] = effort
@@ -570,6 +632,8 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         review_error=review_error,
         permissions=permissions,
         permissions_error=permissions_error,
+        cli_options=cli_options,
+        cli_options_error=cli_options_error,
     )
 
 
