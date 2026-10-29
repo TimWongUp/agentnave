@@ -51,6 +51,7 @@ fn seed(host: &Host) -> String {
         Format::Json => format!("{{\n// keep comment\n\"unknown\": {{\"a\": [1,2]}},\n\"{}\": {{\"other\": {{\"command\": \"keep\"}}}}}}", host.key),
         Format::Toml => "# keep comment\nunknown = { a = [1, 2] }\n[mcp_servers.other]\ncommand = 'keep'\n".into(),
         Format::Yaml => "# keep comment\nunknown:\n  - untouched\nmcp_servers:\n  other:\n    command: keep\ntail: 'exact' # keep\n".into(),
+        Format::DshPatch => "# keep comment\n- id: it's opaque\n- id: agent-default-model # keep\n  config:\n    model: keep\n- id: plugin-manager\n  disabled: !!js '!ctx.get(''profileContext'')'\n- insert:\n    - id: other\n      config:\n        command: keep\n".into(),
     }
 }
 #[test]
@@ -445,6 +446,13 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
         let original = h.read().unwrap();
         let result = hosts.action("connect", &json!({"id":id})).unwrap();
         assert_eq!(result["ok"], true, "{id}: {result}");
+        if id == "deepseek" {
+            // dsh would otherwise cut `wait` off after 60 s.
+            assert_eq!(
+                h.read().unwrap().entry.unwrap()["toolCallTimeoutMs"],
+                310_000
+            );
+        }
         assert_eq!(
             result["host"]["tested"],
             [
@@ -455,6 +463,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 "grok",
                 "antigravity",
                 "pi",
+                "deepseek",
                 "hermes"
             ]
             .contains(&id)
@@ -1395,6 +1404,58 @@ fn assert_scoped_takeover(raw: &str, expected: &str, format: Format, key: &'stat
         let raw = raw.replace('\n', eol);
         let expected = expected.replace('\n', eol);
         assert_scoped_takeover_bytes(&raw, &expected, format, key, id);
+    }
+}
+
+#[test]
+fn dsh_patch_list_round_trips_and_stays_a_list_dsh_can_boot() {
+    let entry =
+        json!({"serverName":"agentnave","transport":"stdio","command":"/old","env":{"KEEP":"x"}});
+    for raw in [
+        "",
+        "# mine\n[]\n",
+        "[] # 暂无补丁\n",
+        "- id: hmr\n  disabled: true",
+    ] {
+        let doc = Document::parse(raw, Format::DshPatch, "insert").unwrap();
+        assert!(doc.entry.is_none());
+        let written = doc.render(Some(&entry)).unwrap();
+        doc.verify(&written, Some(&entry)).unwrap();
+        assert!(
+            written.contains("- insert:\n    - id: agentnave\n      name: \"@deepseek-ai/dsh-mcp-client\"\n      config:\n        command: \"/old\"\n"),
+            "{written}"
+        );
+        let expected = written.replace(
+            "          KEEP: \"x\"\n",
+            "          KEEP: \"x\"\n          AGENTNAVE_HOST: \"deepseek\"\n",
+        );
+        assert_scoped_takeover(&written, &expected, Format::DshPatch, "insert", "deepseek");
+        // An empty file does not boot dsh, so removing the last item leaves an empty list.
+        let after = Document::parse(&written, Format::DshPatch, "insert").unwrap();
+        let removed = after.render(None).unwrap();
+        after.verify(&removed, None).unwrap();
+        let restored = match raw {
+            "" => "[]\n",
+            "[] # 暂无补丁\n" => "# 暂无补丁\n[]\n",
+            "- id: hmr\n  disabled: true" => "- id: hmr\n  disabled: true\n",
+            _ => raw,
+        };
+        assert_eq!(removed, restored);
+    }
+    for raw in [
+        "- insert:\n    - id: agentnave\n      config: {}\n    - id: other\n",
+        "[{id: hmr}]\n",
+        // A whole-list indent is valid YAML, but appending a column-0 item would add a root.
+        "  - id: hmr\n    disabled: true\n",
+        "\u{feff}- id: hmr\n",
+        "---\n- id: hmr\n",
+        // Another plugin's row named agentnave is not AgentNave's.
+        "- insert:\n    - id: agentnave\n      name: other\n      config:\n        command: x\n",
+    ] {
+        assert!(
+            Document::parse(raw, Format::DshPatch, "insert").is_err(),
+            "{raw}"
+        );
     }
 }
 

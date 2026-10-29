@@ -158,6 +158,7 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
     for name, provider in (
         ("codex", "codex"),
         ("workbuddy", "codebuddy"),
+        ("deepseek", "deepseek"),
         ("hermes", None),
     ):
         monkeypatch.setenv("AGENTNAVE_HOST", name)
@@ -197,10 +198,12 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("grok", "grok"),
         ("agy", "antigravity"),
         ("pi", "pi"),
+        ("dsh", "deepseek"),
         ("hermes", "hermes"),
         ("/Applications/Codex.app/Contents/MacOS/Electron", "codex"),
         ("/Applications/Claude.app/Contents/MacOS/Claude", "claude"),
         ("/Applications/Antigravity.app/Contents/MacOS/Electron", "antigravity"),
+        ("/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "deepseek"),
         ("/Users/test/.local/share/claude/versions/2.1.295", "claude"),
     ):
         table[40] = (executable,)

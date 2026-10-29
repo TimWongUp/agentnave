@@ -138,7 +138,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|hermes`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
 宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 或 `AGENTNAVE_HOST=opencode` 的旧条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
@@ -150,6 +150,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 | Grok CLI | `grok` |
 | Antigravity | `antigravity` |
 | Pi Coding Agent | `pi` |
+| DeepSeek Harness | `deepseek` |
 | Other hosts | Explicitly choose exclusions, or use an empty value |
 
 Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespace, letter case, and
@@ -217,9 +218,9 @@ format; register it with the official CLI command below instead of copying this 
 
 登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存的组员设置、带 manager_session 的记录计算。
 
-启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，均标为已实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
+启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，DeepSeek Harness 桌面 App 已通过真实调用 `list_members` 与 `start_agent` 验收，均标为已实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
 
-八个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
+九个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识，DeepSeek Harness 只增删自己的 `- insert:` 列表项；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
 
 MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。外部 Skill（包括符号链接）仅显示 external，跳过写入，不影响宿主接入状态或 MCP 接入、移除；只有实际写入 App 管理的 Skill 时才检查该路径。App 只更新版本标记与内容清单匹配的 Skill 副本；外部内容不覆盖，目录未知返回 manual。接入时自动安装缺失的 App Skill；启动和刷新检测还会为已有 `agentnave` 用户级入口的宿主自动补装，并更新 App 管理的旧版副本。安装失败会在下次刷新检测时继续自动重试。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
 
@@ -232,11 +233,12 @@ MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符�
 | grok | TOML 定点编辑 | `${GROK_HOME:-~/.grok}/config.toml` | 同配置根目录的 `skills` | true |
 | antigravity | JSON 定点编辑 | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills` | true |
 | pi | JSON 定点编辑 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置根目录的 `skills` | true |
+| deepseek | YAML 补丁列表项 | `${DSH_HOME:-~/.dsh}/cordis.patch.yml`，`- insert:` 插入 `id: agentnave` 的 `@deepseek-ai/dsh-mcp-client` | 同配置根目录的 `skills` | true |
 | hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置根目录的 `skills` | true |
 
 layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义，逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
 
-Pi 的 `agentDir/skills` 已从安装包代码核实；Hermes 新条目 `enabled: true` 且省略工具过滤表示启用全部工具，接管保留原 `include/exclude`，尤其 `include: []`。Hermes 流式 MCP 映射、锚点/别名、文档指令等结构仍拒绝自动写入并提示手动处理。真正的 MCP/Skill 发现须按第 5 节验证。
+Pi 的 `agentDir/skills` 已从安装包代码核实；Hermes 新条目 `enabled: true` 且省略工具过滤表示启用全部工具，接管保留原 `include/exclude`，尤其 `include: []`。DeepSeek Harness 的家目录级补丁层对桌面 App 与 `dsh` 各 profile 都生效（桌面 App 自己的设置写在 `profiles/desktop/cordis.patch.yml`，App 不碰）；新条目带 `toolCallTimeoutMs: 310000`，否则 dsh 默认 60 秒就截断 `wait`；接管已有条目不改这项。补丁文件必须是 YAML 列表，移除最后一项时留下 `[]`，空文件会让 dsh 启动失败；dsh 会热重载这一层，改动后自动换新 MCP 连接。其他列表项（含 `!!js` 表达式）不解析、原样保留；以下情况交回手动处理：`agentnave` 行与其他条目合在同一个 `insert` 里；`id: agentnave` 的 `name` 不是 `@deepseek-ai/dsh-mcp-client`；文件不是顶格书写的块式列表，比如整表缩进、带 BOM、以 `---` 开头，或写成 `[{...}]` 流式列表。要恢复自动接入，去掉 BOM 和 `---`，把每个列表项改成从行首 `- ` 开始的块式写法即可。Hermes 流式 MCP 映射、锚点/别名、文档指令等结构仍拒绝自动写入并提示手动处理。真正的 MCP/Skill 发现须按第 5 节验证。
 
 ### Codex
 
@@ -317,6 +319,29 @@ per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
 selection. Restart the host and verify Skill discovery separately.
 
+### DeepSeek Harness
+
+在 `${DSH_HOME:-~/.dsh}/cordis.patch.yml`（顶层 YAML 列表，不存在时新建）追加：
+
+```yaml
+- insert:
+    - id: agentnave
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: "agentnave"
+        transport: "stdio"
+        command: "/absolute/path/to/agentnave-mcp"
+        env:
+          AGENTNAVE_HOST: "deepseek"
+        toolCallTimeoutMs: 310000
+```
+
+`toolCallTimeoutMs` matters: dsh ends each MCP tool call after 60 seconds by default, while `wait`
+blocks for up to 300 seconds. This home-level patch applies to the desktop App and every `dsh` profile. dsh clears inherited
+`DSH_*` and secret-looking variables before starting stdio servers; the `env` block above is
+merged back on top. Restart DeepSeek Harness, then check that the tools appear as
+`mcp__agentnave__*`.
+
 ### Other hosts
 
 Use the host's documented MCP registration interface. Configure the absolute command, empty
@@ -345,6 +370,7 @@ configuration directories.
 | Antigravity | `~/.gemini/config/skills` |
 | Hermes | `~/.hermes/skills` |
 | Pi | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` |
+| DeepSeek Harness | `${DSH_HOME:-~/.dsh}/skills` |
 
 First inspect the host's effective Skill discovery locations and any existing deployment-manager
 entry. Check `agentnave-manager` in both user and project scopes, its source/release, and all of
