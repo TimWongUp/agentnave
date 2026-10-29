@@ -263,11 +263,15 @@ def test_zcode_reads_only_native_assistant_model(
             (session, "assistant", "actual", 1),
             (session, "user", "requested", 2),
             ("other", "assistant", "other", 3),
+            ("session_0123456789abcdef0123456789abcdef", "assistant", "desktop-model", 4),
         ]:
             db.execute(
                 "INSERT INTO message VALUES (?, 1000, ?, ?)",
                 (sid, sequence, json.dumps({"role": role, "modelId": model})),
             )
     assert session_model(Host("zcode"), session) == "actual"
+    assert (
+        session_model(Host("zcode"), "session_0123456789abcdef0123456789abcdef") == "desktop-model"
+    )
     assert session_model(Host("zcode"), "../bad") is None
     assert _match("/Applications/ZCode.app/Contents/MacOS/ZCode") == "zcode"

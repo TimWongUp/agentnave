@@ -216,7 +216,7 @@ def _hermes_model(session_id: str) -> str | None:
 
 
 def _zcode_model(session_id: str, since: datetime | None) -> str | None:
-    if not re.fullmatch(r"sess_[0-9a-fA-F-]{36}", session_id):
+    if not re.fullmatch(r"(?:sess_[0-9a-fA-F-]{36}|session_[0-9a-fA-F]{32})", session_id):
         return None
     path = Path.home() / ".zcode/cli/db/db.sqlite"
     config_path = Path.home() / ".zcode/cli/config.json"
