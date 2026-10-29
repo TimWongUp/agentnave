@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -17,6 +18,8 @@ from agentnave.host import Host, session_model
 def command() -> tuple[list[str], dict[str, str]]:
     """Prefer an installed CLI; macOS Desktop also ships its official Node bundle."""
     executable = resolve_executable("zcode")
+    # Unlike the outer Windows supervisor, Popen does not resolve PATHEXT command shims.
+    executable = shutil.which(executable) or executable
     env = os.environ.copy()
     if Path(executable).is_file():
         return [executable, "app-server", "--stdio"], env
