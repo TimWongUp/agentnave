@@ -425,7 +425,7 @@ mcp_server.main()
         env={
             **os.environ,
             "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-            "AGENTNAVE_HOST": "opencode",
+            "AGENTNAVE_HOST": "hermes",
             "AGENTNAVE_EXCLUDED_PROVIDERS": "",
             "AGENTNAVE_DATA_DIR": str(data),
         },

@@ -405,96 +405,30 @@ fn settings_path_errors_preserve_code_without_prefixing_the_message() {
 }
 
 #[test]
-fn multilayer_migration_and_removal_leave_project_configuration_untouched() {
+fn removal_leaves_project_configuration_untouched() {
     let (_temp, mut hosts) = fixture();
-    let global = hosts.context.home.join(".config/opencode/opencode.json");
-    let custom = hosts.context.home.join("custom.json");
-    let env_root = hosts.context.home.join("env-opencode");
-    let user_root = hosts.context.home.join("user-opencode");
-    let env_file = env_root.join("opencode.jsonc");
-    let user_file = user_root.join("opencode.json");
-    hosts
-        .context
-        .env
-        .insert("OPENCODE_CONFIG".into(), custom.display().to_string());
-    hosts
-        .context
-        .env
-        .insert("OPENCODE_CONFIG_DIR".into(), env_root.display().to_string());
-    hosts
-        .action("root", &json!({"id":"opencode", "path":user_root}))
-        .unwrap();
+    let h = host(&hosts, "pi");
     executable_file(
-        &hosts.context.search[0].join("opencode"),
+        &hosts.context.search[0].join(h.binary),
         "#!/bin/sh\nexit 99\n",
     );
     let missing = hosts.context.home.join("old-bin/agentnave-mcp");
-    for path in [&global, &custom, &env_file, &user_file] {
-        save(path,&json!({"keep":true,"mcp":{"agentnave":{"command":[missing,"--keep"],"environment":{},"enabled":false}}}).to_string());
-    }
-    let project = hosts.context.project.join("opencode.json");
-    save(&project, r#"{"mcp":{"agentnave":{"command":["project"]}}}"#);
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{"command":missing,"args":[]}}}).to_string(),
+    );
+    let project = hosts.context.project.join(".pi/mcp.json");
+    save(
+        &project,
+        r#"{"mcpServers":{"agentnave":{"command":"project"}}}"#,
+    );
     let project_bytes = fs::read(&project).unwrap();
-    let global_bytes = fs::read(&global).unwrap();
-    let other_bytes: Vec<_> = [&custom, &env_file, &user_file]
-        .map(|path| fs::read(path).unwrap())
-        .into();
-    save(&global, "{broken");
     hosts.refresh();
-    for (path, bytes) in [&custom, &env_file, &user_file].iter().zip(&other_bytes) {
-        assert_eq!(fs::read(path).unwrap(), *bytes);
-    }
-    fs::write(&global, global_bytes).unwrap();
-    hosts.refresh();
-    for path in [&global, &custom, &env_file, &user_file] {
-        let document = host(&hosts, "opencode").read_at(path).unwrap();
-        let entry = document.entry.unwrap();
-        assert_eq!(entry["command"], json!([hosts.launcher(), "--keep"]));
-        assert_eq!(entry["enabled"], false);
-        assert_eq!(document.rest["keep"], true);
-    }
     assert_eq!(fs::read(&project).unwrap(), project_bytes);
-    let result = hosts.action("remove", &json!({"id":"opencode"})).unwrap();
+    let result = hosts.action("remove", &json!({"id":"pi"})).unwrap();
     assert_eq!(result["ok"], true, "{result}");
-    assert!(
-        result["message"]
-            .as_str()
-            .unwrap()
-            .contains(global.to_str().unwrap())
-    );
-    assert!(
-        result["message"]
-            .as_str()
-            .unwrap()
-            .contains(custom.to_str().unwrap())
-    );
-    let state = hosts.refresh();
-    let h = state["hosts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|h| h["id"] == "opencode")
-        .unwrap();
-    assert_eq!(h["status"], "available");
-    assert!(
-        h["layers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|l| l["scope"] != "project")
-            .all(|l| l["has_entry"] == false)
-    );
-    assert_eq!(fs::read(project).unwrap(), project_bytes);
-    let config_backups = backup_paths(&hosts.context.app, CONFIG_BACKUP)
-        .iter()
-        .filter(|path| {
-            let name = path.file_name().unwrap().to_string_lossy();
-            ["opencode.json", "opencode.jsonc", "custom.json"]
-                .iter()
-                .any(|file| name.contains(&format!("-{file}-")))
-        })
-        .count();
-    assert_eq!(config_backups, 8);
+    assert!(h.read().unwrap().entry.is_none());
+    assert_eq!(fs::read(&project).unwrap(), project_bytes);
 }
 
 #[test]
@@ -878,15 +812,8 @@ fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
         let mut entry = before.entry.clone().unwrap();
         let old = hosts.context.home.join("old-bin/agentnave-mcp");
         h.set_command(&mut entry, &old);
-        if id == "opencode" {
-            entry["command"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!("--keep"));
-        } else {
-            entry["args"] = json!(["--keep"]);
-        }
-        entry[h.env_key()]["CUSTOM"] = json!("preserve");
+        entry["args"] = json!(["--keep"]);
+        entry["env"]["CUSTOM"] = json!("preserve");
         entry["disabled"] = json!(true);
         entry["allowedTools"] = json!(["wait_agent"]);
         save(&h.config, &before.render(Some(&entry)).unwrap());
@@ -1502,11 +1429,10 @@ fn assert_scoped_takeover_bytes(
 #[test]
 fn jsonc_and_quoted_yaml_values_survive_and_ambiguous_yaml_is_rejected() {
     let (_temp, hosts) = fixture();
-    let h = host(&hosts, "opencode");
-    let raw = "{\n// keep\n\"mcp\": { /* preserve */ \"other\": {\"type\":\"remote\",}, },\n\"future\": [1,2,],\n}";
+    let h = host(&hosts, "pi");
+    let raw = "{\n// keep\n\"mcpServers\": { /* preserve */ \"other\": {\"type\":\"remote\",}, },\n\"future\": [1,2,],\n}";
     let doc = Document::parse(raw, h.format, h.key).unwrap();
-    let entry =
-        json!({"type":"local","command":["/x"],"environment":{"AGENTNAVE_HOST":"opencode"}});
+    let entry = json!({"command":"/x","args":[],"env":{"AGENTNAVE_HOST":"pi"}});
     let changed = doc.render(Some(&entry)).unwrap();
     doc.verify(&changed, Some(&entry)).unwrap();
     assert!(changed.contains("// keep"));

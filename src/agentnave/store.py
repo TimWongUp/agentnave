@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from agentnave.core import lock_file
 from agentnave.group import RoundOrder
-from agentnave.host import HostName, HostSource
+from agentnave.host import HostName, HostSource, RetiredHostName
 from agentnave.models import ProviderOption
 
 if TYPE_CHECKING:
@@ -131,7 +131,7 @@ class Conversation(BaseModel):
     title: str
     kind: Literal["show", "task"]
     created: str = Field(default_factory=now)
-    host: HostName | None = None
+    host: HostName | RetiredHostName | None = None
     host_source: HostSource = "unknown"
     manager_session: str | None = None
     cwd: str | None = None
