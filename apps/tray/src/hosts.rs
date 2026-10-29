@@ -179,33 +179,14 @@ impl Host {
         };
         Document::parse(&raw, self.format, self.key)
     }
-    fn env_key(&self) -> &str {
-        if self.id == "opencode" {
-            "environment"
-        } else {
-            "env"
-        }
-    }
     fn command<'a>(&self, entry: &'a Value) -> Option<&'a str> {
-        if self.id == "opencode" {
-            entry["command"][0].as_str()
-        } else {
-            entry["command"].as_str()
-        }
+        entry["command"].as_str()
     }
     fn set_command(&self, entry: &mut Value, path: &Path) {
-        if self.id == "opencode" {
-            if entry["command"].as_array().is_none_or(|a| a.is_empty()) {
-                entry["command"] = json!([path]);
-            } else {
-                entry["command"][0] = json!(path);
-            }
-        } else {
-            entry["command"] = json!(path);
-        }
+        entry["command"] = json!(path);
     }
 }
-const IDS: [&str; 9] = [
+const IDS: [&str; 10] = [
     "codex",
     "claude",
     "codebuddy",
@@ -213,8 +194,9 @@ const IDS: [&str; 9] = [
     "grok",
     "antigravity",
     "pi",
-    "opencode",
+    "deepseek",
     "hermes",
+    "zcode",
 ];
 
 pub struct Hosts {
@@ -258,9 +240,6 @@ impl Hosts {
         hosts.cached = hosts.snapshot();
         hosts
     }
-    fn env_value(&self, var: &str) -> Option<(&str, &'static str)> {
-        effective_env(&self.context, self.shell.as_ref(), var)
-    }
     fn launcher(&self) -> Option<PathBuf> {
         let name = "agentnave-mcp";
         let tools = self.tool_dirs()?.tools;
@@ -282,11 +261,17 @@ impl Hosts {
     }
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
-        let xdg = self
-            .env_value("XDG_CONFIG_HOME")
-            .map(|(p, _)| PathBuf::from(p))
-            .unwrap_or_else(|| h.join(".config"));
         let specs = [
+            (
+                "zcode",
+                "ZCode",
+                "zcode",
+                None,
+                h.join(".zcode"),
+                "cli/config.json",
+                Format::Zcode,
+                "servers",
+            ),
             (
                 "codex",
                 "Codex",
@@ -358,14 +343,15 @@ impl Hosts {
                 "mcpServers",
             ),
             (
-                "opencode",
-                "OpenCode",
-                "opencode",
-                Some("OPENCODE_CONFIG_DIR"),
-                xdg.join("opencode"),
-                "opencode.json",
-                Format::Json,
-                "mcp",
+                // The home-level patch layer applies to the desktop App and every CLI profile.
+                "deepseek",
+                "DeepSeek Harness",
+                "dsh",
+                Some("DSH_HOME"),
+                h.join(".dsh"),
+                "cordis.patch.yml",
+                Format::DshPatch,
+                "insert",
             ),
             (
                 "hermes",
@@ -389,31 +375,12 @@ impl Hosts {
                     var,
                     default,
                 );
-                if id == "opencode"
-                    && root.source == "default"
-                    && let Some((_, source)) = self.env_value("XDG_CONFIG_HOME")
-                {
-                    root.source = source;
-                    root.confirmed = true;
-                }
                 if self.manual_roots.contains(id) {
                     root.confirmed = true;
                 }
                 let mut paths = vec![root.path.join(file)];
                 if id == "claude" && root.source == "default" {
                     paths = vec![h.join(".claude.json")];
-                }
-                if id == "opencode" {
-                    paths = config_candidates(&xdg.join("opencode"));
-                    if let Some((path, _)) = self.env_value("OPENCODE_CONFIG") {
-                        paths.push(path.into());
-                    }
-                    if let Some((path, _)) = self.env_value("OPENCODE_CONFIG_DIR") {
-                        paths.extend(config_candidates(Path::new(path)));
-                    }
-                    if root.source == "user" {
-                        paths.extend(config_candidates(&root.path));
-                    }
                 }
                 let mut unique = HashSet::new();
                 paths.retain(|p| unique.insert(p.clone()));
@@ -455,6 +422,8 @@ impl Hosts {
         let app = match host.id {
             "workbuddy" => Some("WorkBuddy.app"),
             "antigravity" => Some("Antigravity.app"),
+            "deepseek" => Some("DeepSeek Harness.app"),
+            "zcode" => Some("ZCode.app"),
             _ => None,
         };
         if let Some(path) = app.and_then(|name| {
@@ -496,7 +465,7 @@ impl Hosts {
         if path.components().count() != 1 {
             return "unknown";
         }
-        let env = entry.get(host.env_key());
+        let env = entry.get("env");
         let effective = if env.is_some_and(|e| e.get("PATH").is_some()) {
             env.and_then(|e| e["PATH"].as_str())
         } else {
@@ -525,12 +494,7 @@ impl Hosts {
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
                 "grok" => &[".grok/config.toml"],
                 "pi" => &[".pi/mcp.json"],
-                "opencode" => &[
-                    "opencode.json",
-                    "opencode.jsonc",
-                    ".opencode/opencode.json",
-                    ".opencode/opencode.jsonc",
-                ],
+                "zcode" => &["zcode.json", ".zcode/config.json"],
                 _ => &[],
             };
             for relative in relative {
@@ -562,7 +526,7 @@ impl Hosts {
         let command = entry.and_then(|e| host.command(e));
         let kind = command.map(entry_kind);
         let command_state = entry.map(|e| self.command_state(host, e));
-        let has_env = entry.is_some_and(|e| e[host.env_key()]["AGENTNAVE_HOST"] == host.id);
+        let has_env = entry.is_some_and(|e| e["env"]["AGENTNAVE_HOST"] == host.id);
         let layers = self.layers(host);
         let has_entry = entry.is_some()
             || layers
@@ -635,7 +599,7 @@ impl Hosts {
         };
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
             "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
@@ -811,7 +775,7 @@ impl Hosts {
     }
     fn connection_root(&self, host: &Host) -> Option<PathBuf> {
         let entry = host.read().ok()?.entry?;
-        let explicit = entry[host.env_key()]["AGENTNAVE_DATA_DIR"]
+        let explicit = entry["env"]["AGENTNAVE_DATA_DIR"]
             .as_str()
             .map(str::to_owned)
             .or_else(|| self.context.env.get("AGENTNAVE_DATA_DIR").cloned());
@@ -942,10 +906,10 @@ impl Hosts {
                             let Some(desired) = latest.as_mut() else {
                                 return Ok(());
                             };
-                            if desired.get(host.env_key()).is_none() {
-                                desired[host.env_key()] = json!({});
+                            if desired.get("env").is_none() {
+                                desired["env"] = json!({});
                             }
-                            desired[host.env_key()]
+                            desired["env"]
                                 .as_object_mut()
                                 .ok_or("takeover_failed:env 必须为对象")?
                                 .insert("AGENTNAVE_HOST".into(), json!(host.id));
@@ -1156,16 +1120,28 @@ impl Hosts {
                 "connect" => {
                     if let Some(value) = desired.as_mut() {
                         host.set_command(value, &path);
-                        if value.get(host.env_key()).is_none() {
-                            value[host.env_key()] = json!({});
+                        if value.get("env").is_none() {
+                            value["env"] = json!({});
                         }
-                        value[host.env_key()]
+                        value["env"]
                             .as_object_mut()
                             .ok_or("write_failed:env 必须为对象")?
                             .insert("AGENTNAVE_HOST".into(), json!(id));
                     } else {
-                        desired = Some(if id == "opencode" {
-                            json!({"type":"local","command":[path],"environment":{"AGENTNAVE_HOST":id},"enabled":true})
+                        if id == "zcode"
+                            && let Some(fallback) = zcode_fallback(&self.context.home, &before)
+                        {
+                            return Err(format!(
+                                "write_failed:ZCode 只在 ~/.zcode/cli/config.json 没有 MCP 服务时读取 {}，接入后其中的服务将不再加载；请先把它们移到 ~/.zcode/cli/config.json 的 mcp.servers 再接入",
+                                fallback.display()
+                            ));
+                        }
+                        desired = Some(if id == "deepseek" {
+                            // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
+                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":id},"toolCallTimeoutMs":310_000})
+                        } else if id == "zcode" {
+                            // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
+                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"timeoutMs":310000})
                         } else if id == "hermes" {
                             json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
                         } else {
@@ -1399,10 +1375,29 @@ fn reload_hint(id: &str) -> &'static str {
         "grok" => "重启 Grok CLI",
         "antigravity" => "重启 Antigravity",
         "pi" => "重启 Pi",
-        "opencode" => "重启 OpenCode",
+        "deepseek" => "重启 DeepSeek Harness",
         "hermes" => "重启 Hermes 网关",
+        "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",
     }
+}
+/// ZCode falls back to `~/.agents/mcp.json` only while its own user config names no MCP server,
+/// so a first entry there would silently hide every other server kept in the fallback. An
+/// `agentnave` server there is the one being connected, so it alone does not block.
+fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
+    if before.rest["mcp"]["servers"]
+        .as_object()
+        .is_some_and(|servers| !servers.is_empty())
+    {
+        return None;
+    }
+    let path = home.join(".agents/mcp.json");
+    let fallback =
+        Document::parse(&fs::read_to_string(&path).ok()?, Format::Json, "mcpServers").ok()?;
+    fallback.rest["mcpServers"]
+        .as_object()
+        .is_some_and(|servers| !servers.is_empty())
+        .then_some(path)
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)
@@ -1475,9 +1470,6 @@ fn patch(latest: &mut Value, before: Option<&Value>, desired: &Value) {
     } else {
         *latest = desired.clone();
     }
-}
-fn config_candidates(dir: &Path) -> Vec<PathBuf> {
-    vec![dir.join("opencode.json"), dir.join("opencode.jsonc")]
 }
 fn entry_kind(command: &str) -> &'static str {
     let name = Path::new(command)

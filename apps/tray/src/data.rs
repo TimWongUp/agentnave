@@ -145,6 +145,7 @@ type RouteKey = (
     u64,
     usize,
     Vec<(String, crate::stage::Handover)>,
+    Vec<String>,
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -181,6 +182,9 @@ pub struct Reader {
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
     merged: Mutex<HashMap<String, Merged>>,
     routes: Mutex<HashMap<String, RouteAnswer>>,
+    /// Whether a Claude boss transcript was last written by Claude Desktop, by file and its
+    /// length: transcripts only grow, so an unchanged length needs no second read.
+    desktop_files: Mutex<HashMap<String, (u64, bool)>>,
 }
 
 impl Reader {
@@ -193,6 +197,7 @@ impl Reader {
             live_files: Mutex::new(HashMap::new()),
             merged: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
+            desktop_files: Mutex::new(HashMap::new()),
         }
     }
 
@@ -247,6 +252,24 @@ impl Reader {
                 return Response::error(400, &error);
             }
             return match crate::members::save_permissions(&self.root, &payload) {
+                Ok(()) => Response::json(&json!({"saved": true})),
+                Err(error) => Response::error(500, &error),
+            };
+        }
+        if path == "/app/cli-options" {
+            if method != "POST" {
+                return Response::error(405, "此操作只接受 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::members::validate_cli_options(&payload) {
+                return Response::error(400, &error);
+            }
+            return match crate::members::save_cli_options(&self.root, &payload) {
                 Ok(()) => Response::json(&json!({"saved": true})),
                 Err(error) => Response::error(500, &error),
             };
@@ -708,6 +731,46 @@ impl Reader {
         }
     }
 
+    /// Workspaces whose Claude boss chats in Claude Desktop's Code tab. Desktop runs Claude Code
+    /// itself on the same settings, so the host stays `claude`; only the transcript's
+    /// `entrypoint` tells the app apart, and only the office shows it.
+    fn desktop_bosses(&self, connection: &rusqlite::Connection) -> Vec<String> {
+        let rows: Vec<(String, String)> = connection
+            .prepare(
+                "SELECT id, owner_file FROM workspaces \
+                 WHERE owner_host = 'claude' AND owner_file IS NOT NULL ORDER BY id",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect()
+            })
+            .unwrap_or_default();
+        rows.into_iter()
+            .filter(|(_, file)| {
+                let Ok(len) = fs::metadata(file).map(|m| m.len()) else {
+                    return false;
+                };
+                let lock = || self.desktop_files.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(&(seen, desktop)) = lock().get(file)
+                    && seen == len
+                {
+                    return desktop;
+                }
+                // Read without the lock; a transcript read whole that names no entrypoint is
+                // remembered too, a failed read is tried again next time.
+                let Ok(found) = claude_entrypoint(Path::new(file)) else {
+                    return false;
+                };
+                let desktop =
+                    found.is_some_and(|entrypoint| entrypoint.starts_with("claude-desktop"));
+                lock().insert(file.clone(), (len, desktop));
+                desktop
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// Stage and chat answers, reused while every snapshot and the reuse window are unchanged.
     fn route(&self, path: &str) -> Response {
         let snapshots = self.scan().1;
@@ -717,9 +780,9 @@ impl Reader {
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
-        let handovers = match crate::db::read(&self.root) {
-            Ok(Some(connection)) => handovers(&connection),
-            _ => Vec::new(),
+        let (handovers, desktop) = match crate::db::read(&self.root) {
+            Ok(Some(connection)) => (handovers(&connection), self.desktop_bosses(&connection)),
+            _ => (Vec::new(), Vec::new()),
         };
         let key = (
             snapshots.iter().map(crate::stage::source_key).collect(),
@@ -727,6 +790,7 @@ impl Reader {
             window,
             limit,
             handovers,
+            desktop,
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -736,7 +800,8 @@ impl Reader {
         }
         let views = snapshots.iter().map(|s| s.view.clone()).collect();
         let handovers = key.4.iter().cloned().collect();
-        let response = crate::stage::respond(path, snapshots, key.1, limit, &handovers);
+        let desktop = key.5.iter().cloned().collect();
+        let response = crate::stage::respond(path, snapshots, key.1, limit, &handovers, &desktop);
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
             routes.clear();
@@ -899,6 +964,35 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .and_then(Iterator::collect)
         .map_err(|e| e.to_string())
+}
+
+/// The latest `entrypoint` a Claude Code transcript records ("cli", "claude-desktop", ...): a
+/// chat resumed in the other app keeps writing the same file. Its last 256 KiB are searched
+/// first, then its first; None when it names none there.
+fn claude_entrypoint(path: &Path) -> std::io::Result<Option<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 256 * 1024;
+    const KEY: &[u8] = b"\"entrypoint\":\"";
+    let last = |chunk: &[u8]| {
+        let start = chunk.windows(KEY.len()).rposition(|w| w == KEY)? + KEY.len();
+        let end = chunk[start..].iter().position(|&b| b == b'"')? + start;
+        String::from_utf8(chunk[start..end].to_vec()).ok()
+    };
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let mut chunk = Vec::new();
+    file.seek(SeekFrom::Start(len.saturating_sub(WINDOW)))?;
+    file.by_ref().take(WINDOW).read_to_end(&mut chunk)?;
+    if let Some(found) = last(&chunk) {
+        return Ok(Some(found));
+    }
+    if len <= WINDOW {
+        return Ok(None);
+    }
+    chunk.clear();
+    file.seek(SeekFrom::Start(0))?;
+    file.take(WINDOW).read_to_end(&mut chunk)?;
+    Ok(last(&chunk))
 }
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
@@ -1189,9 +1283,59 @@ mod tests {
             item["summary"]["manager_session"] = json!(session);
             save(dir.path(), &item);
         }
+        // Claude Desktop's Code tab runs Claude Code too; its transcripts say which app started them.
+        let connection = crate::db::write(dir.path()).unwrap().unwrap();
+        for (workspace, entrypoint) in [
+            (MANAGER, "cli"),
+            ("s-ffffffffffffffffffffffffffffffff", "claude-desktop"),
+        ] {
+            let file = dir.path().join(format!("{entrypoint}.jsonl"));
+            fs::write(
+                &file,
+                format!("{{\"type\":\"user\",\"entrypoint\":\"{entrypoint}\"}}\n"),
+            )
+            .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO workspaces (id, owner, owner_host, owner_file) \
+                     VALUES (?1, ?1, 'claude', ?2)",
+                    rusqlite::params![workspace, file.to_str().unwrap()],
+                )
+                .unwrap();
+        }
         let reader = Reader::new(dir.path().to_path_buf());
         let groups = state(&reader, "/app/chats");
         assert_eq!(groups["groups"].as_array().unwrap().len(), 4);
+        let shown = |id: &str| {
+            let chat = state(&reader, &format!("/app/chats/{id}"));
+            (
+                chat["host"].clone(),
+                chat["app"].clone(),
+                chat["label"].clone(),
+            )
+        };
+        assert_eq!(
+            shown("s-ffffffffffffffffffffffffffffffff"),
+            (
+                json!("claude"),
+                json!("claude-desktop"),
+                json!("Claude 桌面")
+            )
+        );
+        assert_eq!(
+            shown(MANAGER),
+            (json!("claude"), Value::Null, json!("Claude Code"))
+        );
+        // The same chat resumed in the CLI appends to its transcript; the latest entrypoint wins.
+        let mut resumed = fs::OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("claude-desktop.jsonl"))
+            .unwrap();
+        std::io::Write::write_all(&mut resumed, b"{\"entrypoint\":\"cli\"}\n").unwrap();
+        assert_eq!(
+            shown("s-ffffffffffffffffffffffffffffffff"),
+            (json!("claude"), Value::Null, json!("Claude Code"))
+        );
         assert_eq!(
             state(&reader, &format!("/app/chats/{MANAGER}"))["conversations"]
                 .as_array()
@@ -1270,6 +1414,13 @@ mod tests {
         assert_eq!(
             state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
             "受阻：需要授权"
+        );
+        changed["director"]["tasks"][0]["status"] = json!("cancelled");
+        changed["director"]["tasks"][0]["error"] = json!("cancelled: invocation was cancelled");
+        save(root, &changed);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
+            "已取消"
         );
     }
 

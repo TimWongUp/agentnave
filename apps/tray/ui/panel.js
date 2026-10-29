@@ -131,7 +131,7 @@ function tile(rec, m) {
   const key = `${m.host}|${m.label}`;
   if (rec.tileKey === key) return;
   rec.tileKey = key;
-  rec.tile.replaceChildren(hostTile(m.host, m.label));
+  rec.tile.replaceChildren(hostTile(m.app || m.host, m.label));
 }
 function running(m) {
   let n = 0;

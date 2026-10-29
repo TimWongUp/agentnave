@@ -151,7 +151,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .boss-zone .lid { top: 54.42%; }
 .say { position: absolute; top: 2px; right: 4px; z-index: 6; max-width: 70%; padding: 3px 8px; border-radius: 10px 10px 10px 3px; background: var(--card-hover); color: var(--muted); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .say:empty { display: none; }
-[data-mood="working"] .boss-mid > .say, [data-mood="speaking"] > .say, [data-mood="working"] > .say { background: var(--run); color: var(--bg); }
+[data-mood="speaking"] > .say, [data-mood="working"] > .say { background: var(--run); color: var(--bg); }
 [data-mood="failed"] .say { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
 .say .dots { display: inline-flex; gap: 3px; margin-left: 3px; vertical-align: middle; }
 .say .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: dot 1.2s infinite; }
@@ -394,11 +394,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .desk.away .scene > .fig { opacity: 0; }
-.desk.only { opacity: 0.75; }
 .desk-tags { position: absolute; top: 7px; left: 8px; z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 46%; pointer-events: none; }
 .desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* the bubble sits in the card's top-right corner, above the figure like the tags opposite it */
-.desk > .say, .boss-mid > .say { top: 7px; right: 8px; max-width: 50%; }
+.desk > .say { top: 7px; right: 8px; max-width: 50%; }
 .boss-mid { position: relative; padding-top: 8px; }
 /* the scene fills its card, so figure and desk grow and shrink together with the row; the 170px
    minimum card keeps them at least the size of --fig */

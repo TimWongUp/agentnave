@@ -25,9 +25,12 @@ type HostName = Literal[
     "grok",
     "antigravity",
     "pi",
-    "opencode",
+    "deepseek",
     "hermes",
+    "zcode",
 ]
+# Hosts no longer connected or detected; saved history may still name them.
+type RetiredHostName = Literal["gemini", "opencode"]
 type HostSource = Literal["env", "parent", "unknown"]
 
 
@@ -40,7 +43,7 @@ class Host:
     def provider(self) -> str | None:
         if self.name == "workbuddy":
             return "codebuddy"
-        if self.name in {"opencode", "hermes"}:
+        if self.name == "hermes":
             return None
         return self.name
 
@@ -86,6 +89,8 @@ def session_model(
     try:
         if host.name == "hermes":
             return _hermes_model(session_id)
+        if host.name == "zcode":
+            return _zcode_model(session_id, since)
         native_id = _native_id(session_id)
         if native_id is None:
             return None
@@ -212,6 +217,31 @@ def _hermes_model(session_id: str) -> str | None:
     return _clean_model(row[0]) if row is not None else None
 
 
+def _zcode_model(session_id: str, since: datetime | None) -> str | None:
+    if not re.fullmatch(r"(?:sess_[0-9a-fA-F-]{36}|session_[0-9a-fA-F]{32})", session_id):
+        return None
+    path = Path.home() / ".zcode/cli/db/db.sqlite"
+    config_path = Path.home() / ".zcode/cli/config.json"
+    if config_path.is_file():
+        config = parse_json_object(config_path.read_text()) or {}
+        override = object_dict(config.get("storage")).get("sessionDbPath")
+        if isinstance(override, str) and override:
+            path = Path(override).expanduser()
+    if not path.is_file():
+        return None
+    with closing(_read_only(path)) as db:
+        rows = db.execute(
+            "SELECT data FROM message WHERE session_id = ? AND time_created >= ? "
+            "ORDER BY time_created DESC, sequence DESC",
+            (session_id, int(since.timestamp() * 1000) if since else 0),
+        )
+        for (raw,) in rows:
+            message = parse_json_object(raw) or {}
+            if message.get("role") == "assistant":
+                return _clean_model(message.get("modelId"))
+    return None
+
+
 def _home(variable: str, default: str) -> Path:
     return Path(os.environ.get(variable) or Path.home() / default)
 
@@ -313,6 +343,8 @@ def _match(executable: str) -> HostName | None:
         "claude.app": "claude",
         "workbuddy.app": "workbuddy",
         "antigravity.app": "antigravity",
+        "deepseek harness.app": "deepseek",
+        "zcode.app": "zcode",
     }
     for part in path.parts:
         if part.lower() in apps:
@@ -322,6 +354,8 @@ def _match(executable: str) -> HostName | None:
         name = path.stem.lower()
     if name == "agy":
         return "antigravity"
+    if name == "dsh":
+        return "deepseek"
     for host in get_args(HostName.__value__):
         if name == host and host not in {"workbuddy", "antigravity"}:
             return host

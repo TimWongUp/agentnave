@@ -31,6 +31,7 @@ from agentnave.host import detect_host, host_session_id
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
+    CLIOptionsFileError,
     MemberFileError,
     MemberList,
     PermissionFileError,
@@ -38,6 +39,7 @@ from agentnave.members import (
     ProviderName,
     SettingsFileError,
     apply_member,
+    read_cli_options,
     read_members,
     read_permissions,
     validate_provider_options,
@@ -137,11 +139,12 @@ ACCESS = (
     "Recorded and shown only; it never changes the CLI's native permissions."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
+    "zcode": "permission_mode (auto, build, edit, plan, yolo, guarded); model accepts providerId/modelId; effort is native thoughtLevel; restricted_tools is not supported",
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
     "claude": "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)",
     "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",
     "codex": (
-        "skip_git_repo_check (boolean; explicitly true outside Git repositories), "
+        "skip_git_repo_check (boolean; true outside Git repositories unless cli_options has it), "
         "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
         "workspace-write sandbox; not with sandbox or "
         "dangerously_bypass_approvals_and_sandbox), "
@@ -516,7 +519,16 @@ def started_payload(
 
 
 def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolError:
-    if isinstance(exc, (MemberFileError, PermissionFileError, SettingsFileError, CapacityError)):
+    if isinstance(
+        exc,
+        (
+            MemberFileError,
+            PermissionFileError,
+            CLIOptionsFileError,
+            SettingsFileError,
+            CapacityError,
+        ),
+    ):
         return ToolError(str(exc))
     if isinstance(exc, ProviderExcludedError):
         return ToolError(str(exc) + ". " + PROVIDER_SELECTION)
@@ -771,6 +783,7 @@ async def start_agent(
             provider_options or {},
             EXCLUDED_PROVIDERS,
             permissions=read_permissions(),
+            cli_options=read_cli_options(),
         )
         request = InvocationRequest(
             provider=provider,
@@ -1187,6 +1200,7 @@ async def list_members(
     Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
     review holds the CLI and model the user picked in the App for each agentnave-review role,
     from review.json; review_error reports a broken review.json without affecting members.
+    cli_options holds settings the user saved for a whole CLI, applied to every model of it.
     """
     try:
         members = read_member_list(EXCLUDED_PROVIDERS, HOST)
@@ -1329,6 +1343,7 @@ def _open_show(
 ) -> tuple[str, list[GroupSeatPayload]]:
     document = read_members()
     permissions = read_permissions()
+    cli_options = read_cli_options()
     prepared: list[GroupSeat] = []
     defaults: dict[str, list[str]] = {}
     for seat in members:
@@ -1340,6 +1355,7 @@ def _open_show(
             EXCLUDED_PROVIDERS,
             restricted=isolated,
             permissions=permissions,
+            cli_options=cli_options,
         )
         prepared.append(
             GroupSeat(
@@ -1513,7 +1529,7 @@ async def run_round(
             group_id, opened = _open_show(
                 conversations, title, members, cwd, review, isolated, manager_session_id
             )
-        except (MemberFileError, PermissionFileError) as exc:
+        except (MemberFileError, PermissionFileError, CLIOptionsFileError) as exc:
             raise ToolError(str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise ToolError(f"Invalid meeting: {exc}. Correct the arguments and retry.") from exc

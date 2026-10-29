@@ -43,7 +43,7 @@ def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _server_args(module: str) -> list[str]:
     return [
         "-c",
-        "import os; os.environ.setdefault('AGENTNAVE_HOST', 'opencode'); "
+        "import os; os.environ.setdefault('AGENTNAVE_HOST', 'hermes'); "
         f"import {module} as server; "
         "server.main()",
     ]
@@ -666,7 +666,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "excluded",
-    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi"],
+    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi,zcode"],
 )
 async def test_stdio_enforces_host_exclusions_before_launch(
     excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1024,6 +1024,13 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert resumed["defaults_applied"] == applied
         explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
         assert explicit["defaults_applied"] == ["permission_mode"] and explicit["effort"] == "high"
+        # A CLI-wide setting joins the model's own defaults.
+        (tmp_path / "cli-options.json").write_text(
+            json.dumps({"version": 1, "clis": {"claude": {"max_budget_usd": 1}}})
+        )
+        wide = await start({"model": "chosen"})
+        assert wide["defaults_applied"] == ["effort", "agent", "max_budget_usd", "permission_mode"]
+        (tmp_path / "cli-options.json").unlink()
         for options in ({"model": "outside"}, {"effort": "low"}, {"unknown": True}):
             result = await client.call_tool(
                 "start_agent",

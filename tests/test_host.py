@@ -158,17 +158,25 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
     for name, provider in (
         ("codex", "codex"),
         ("workbuddy", "codebuddy"),
-        ("opencode", None),
+        ("deepseek", "deepseek"),
         ("hermes", None),
     ):
         monkeypatch.setenv("AGENTNAVE_HOST", name)
         identified = host.detect_host()
         assert identified.name == name and identified.source == "env"
         assert identified.provider == provider
-    for value in ("unknown", "", "CODEX"):
+    for value in ("unknown", "", "CODEX", "opencode"):
         monkeypatch.setenv("AGENTNAVE_HOST", value)
         with pytest.raises(ValueError, match="Unknown AGENTNAVE_HOST"):
             host.detect_host()
+
+
+def test_retired_host_history_still_loads() -> None:
+    from agentnave.store import Conversation
+
+    for retired in ("opencode", "gemini"):
+        saved = {"id": "c", "title": "t", "kind": "task", "host": retired}
+        assert Conversation.model_validate(saved).host == retired
 
 
 def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
@@ -190,11 +198,12 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("grok", "grok"),
         ("agy", "antigravity"),
         ("pi", "pi"),
-        ("opencode", "opencode"),
+        ("dsh", "deepseek"),
         ("hermes", "hermes"),
         ("/Applications/Codex.app/Contents/MacOS/Electron", "codex"),
         ("/Applications/Claude.app/Contents/MacOS/Claude", "claude"),
         ("/Applications/Antigravity.app/Contents/MacOS/Electron", "antigravity"),
+        ("/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "deepseek"),
         ("/Users/test/.local/share/claude/versions/2.1.295", "claude"),
     ):
         table[40] = (executable,)
@@ -204,7 +213,7 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("node", "/pkg/codebuddy.js", "codebuddy"),
         ("bun", "/pkg/pi.mjs", "pi"),
         ("python", "/pkg/hermes.py", "hermes"),
-        ("deno", "/pkg/opencode.cjs", "opencode"),
+        ("deno", "/pkg/grok.cjs", "grok"),
         ("uvx", "hermes", "hermes"),
         ("npx", "codebuddy", "codebuddy"),
     ):
@@ -242,3 +251,36 @@ def test_macos_info_reads_privileged_ancestors() -> None:
     assert process_info._macos_info(1).uid == 0  # pyright: ignore[reportPrivateUsage]
     own = process_info._macos_info(os.getpid())  # pyright: ignore[reportPrivateUsage]
     assert own == _ProcessInfo(os.getppid(), os.geteuid())
+
+
+def test_zcode_reads_only_native_assistant_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    from agentnave.host import Host, _match, session_model  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    database = tmp_path / ".zcode/cli/db/db.sqlite"
+    database.parent.mkdir(parents=True)
+    session = "sess_11111111-1111-4111-8111-111111111111"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "CREATE TABLE message (session_id TEXT, time_created INTEGER, sequence INTEGER, data TEXT)"
+        )
+        for sid, role, model, sequence in [
+            (session, "assistant", "actual", 1),
+            (session, "user", "requested", 2),
+            ("other", "assistant", "other", 3),
+            ("session_0123456789abcdef0123456789abcdef", "assistant", "desktop-model", 4),
+        ]:
+            db.execute(
+                "INSERT INTO message VALUES (?, 1000, ?, ?)",
+                (sid, sequence, json.dumps({"role": role, "modelId": model})),
+            )
+    assert session_model(Host("zcode"), session) == "actual"
+    assert (
+        session_model(Host("zcode"), "session_0123456789abcdef0123456789abcdef") == "desktop-model"
+    )
+    assert session_model(Host("zcode"), "../bad") is None
+    assert _match("/Applications/ZCode.app/Contents/MacOS/ZCode") == "zcode"

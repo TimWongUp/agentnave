@@ -1008,3 +1008,91 @@ async def test_codex_filtered_capture_drops_tool_output_but_not_replies(
         + b"x" * 300
         + b'"},"type":"turn.failed"}'
     )
+
+
+@pytest.mark.asyncio
+async def test_zcode_protocol_model_resume_and_provider_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the real bridge over a fake app-server, including native bidirectional RPC."""
+    script = tmp_path / ("zcode.py" if os.name == "nt" else "zcode")
+    script.write_text(
+        f"#!{sys.executable}\n"
+        + r"""
+import json, sys
+session = None
+resume = False
+selected = False
+thought = False
+for line in sys.stdin:
+    m = json.loads(line)
+    method, p = m.get('method'), m.get('params', {})
+    if method is None:
+        assert m['error']['code'] == -32601
+        continue
+    result = {}
+    if method in ('session/create', 'session/resume'):
+        session = p['sessionId']
+        resume = method.endswith('resume')
+        print(json.dumps({'id':'prefs','method':'session/requestRuntimePreferences','params':{}}), flush=True)
+        if resume:
+            # A log line and the previous prompt's late end must not finish this one.
+            print('zcode: resuming session', flush=True)
+            print(json.dumps({'method':'state.updated','params':{'sessionId':session,'reason':'prompt_completed'}}),flush=True)
+        result = {'settings':{'model':{'available':[{'ref':{'providerId':'route','modelId':'model'}}]}}}
+    elif method == 'session/setModel':
+        assert p['model'] == {'providerId':'route','modelId':'model','options':{'reasoningLevel':'low'}}
+        assert p['persistAsWorkspaceLastUsed'] is False
+        selected = True
+    elif method == 'session/setThoughtLevel':
+        assert p['thoughtLevel'] == 'low'
+        thought = True
+    elif method == 'session/send':
+        assert selected and thought
+        assert 'Do not call AgentNave tools' in p['content']
+    print(json.dumps({'id':m['id'],'result':result}), flush=True)
+    if method == 'session/send':
+        failed = 'fail-task' in p['content']
+        if failed:
+            print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'model.streaming','payload':{'kind':'text_delta','delta':'answer'}}}),flush=True)
+            print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'turn.failed','payload':{'error':{'type':'auth','message':'authentication required'},'turnPhase':'model'}}}),flush=True)
+        else:
+            print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'turn.completed','payload':{'response':'resumed' if resume else 'answer'}}}),flush=True)
+        print(json.dumps({'method':'state.updated','params':{'sessionId':session,'reason':'prompt_failed' if failed else 'prompt_completed'}}),flush=True)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    if os.name == "nt":
+        (tmp_path / "zcode.cmd").write_text(f'@"{sys.executable}" "%~dp0zcode.py" %*\n')
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    manager = InvocationManager()
+    try:
+        options = {"model": "route/model", "effort": "low"}
+        invocation = manager.start(
+            InvocationRequest("zcode", "task", tmp_path, provider_options=options)
+        )
+        result = await manager.wait(invocation, 10)
+        assert result is not None and result.status is InvocationStatus.SUCCEEDED
+        assert result.output == "answer" and result.session_id
+        resumed = manager.start(
+            InvocationRequest(
+                "zcode",
+                "continue",
+                tmp_path,
+                session_id=result.session_id,
+                provider_options=options,
+            )
+        )
+        continued = await manager.wait(resumed, 10)
+        assert continued is not None and continued.status is InvocationStatus.SUCCEEDED
+        assert continued.session_id == result.session_id and continued.output == "resumed"
+        failed = manager.start(
+            InvocationRequest("zcode", "fail-task", tmp_path, provider_options=options)
+        )
+        failure = await manager.wait(failed, 10)
+        assert failure is not None and failure.status is InvocationStatus.BLOCKED
+        assert failure.output == "answer" and failure.session_id
+        assert failure.error is not None and "authentication required" in failure.error.message
+    finally:
+        await manager.shutdown()

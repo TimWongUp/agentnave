@@ -1051,7 +1051,9 @@ class Conversations(Groups):
             task.reported_model = result.reported_model or task.reported_model
             task.error = error
 
-        finish(result.status.value, result.error.code if result.error else None)
+        error = result.error
+        # Keep the provider's own message like a seat does; older records hold only the code.
+        finish(result.status.value, f"{error.code}: {error.message}" if error else None)
         try:
             self._persist(record)
         except OSError:
