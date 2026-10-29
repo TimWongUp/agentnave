@@ -95,7 +95,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @media (max-width: 1100px) and (min-width: 761px) {
   .app { grid-template-columns: 64px minmax(0, 1fr) var(--conv-w, clamp(300px, 34vw, 400px)); }
   .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-head, .side-tip, .gl-sec, .gi-body, .gl-wrap > .ob-slot, .split-side { display: none; }
+  .side-head, .gl-sec, .gi-body, .gl-wrap > .ob-slot, .split-side { display: none; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi::before { left: 2px; }
 }
@@ -541,7 +541,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 /* ---- narrow: the conversation slides over the floor; very narrow: one column ---- */
 @media (max-width: 860px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-head, .side-tip, .gl-sec, .gi-body, .gl-wrap > .ob-slot, .split { display: none; }
+  .side-head, .gl-sec, .gi-body, .gl-wrap > .ob-slot, .split { display: none; }
   .gi { justify-content: center; padding: 9px 0; }
   .conv { position: fixed; z-index: 30; top: 48px; right: 0; bottom: 0; width: min(400px, 92vw); box-shadow: 0 22px 60px #0009; animation: slide-in 0.25s ease-out; }
   .dr-close { display: grid; place-items: center; }
@@ -549,7 +549,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @keyframes slide-in { from { transform: translateX(40px); opacity: 0; } }
 @media (max-width: 760px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 1fr; }
-  .side-head, .side-tip, .gl-sec, .gi-body, .gl-wrap > .ob-slot { display: revert; }
+  .side-head, .gl-sec, .gi-body, .gl-wrap > .ob-slot { display: revert; }
   .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
@@ -584,7 +584,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 /* ---- managing history from the office: picks, right-click menu, dialogs ---- */
 .side-act { margin-left: auto; padding: 2px 9px; border-radius: 7px; font-size: 11.5px; color: var(--muted); background: transparent; }
 .side-act:hover { color: var(--ink); background: var(--hover); }
-.side-tip { margin: -2px 18px 4px; font-size: 10.5px; color: var(--faint); }
 .gi.picked { background: color-mix(in srgb, var(--accent) 14%, var(--card)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .ctx { position: fixed; z-index: 400; min-width: 168px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: 0 12px 34px #0007; }
 .ctx-item { display: block; width: 100%; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 12.5px; }

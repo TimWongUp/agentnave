@@ -1,7 +1,9 @@
 //! Which provider CLIs are installed here and which models they list (ADR-0014). Probes only run
-//! each CLI's own listing or help command with empty stdin; they never start a model turn.
+//! each CLI's own listing or help command with empty stdin, or ask a CLI that serves requests on
+//! stdin for its model metadata; they never start a model turn. Each model carries the efforts
+//! the CLI itself offers for it.
 
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -39,9 +41,9 @@ const DESKTOP_CODEX: [&str; 4] = [
     "~/Applications/Codex.app/Contents/Resources/codex",
 ];
 /// Known effort values, checked against each CLI's `--help` (Grok: its bundled `/effort` docs;
-/// Codex: the model cache when present).
-const EFFORTS: [(&str, &[&str]); 7] = [
-    ("antigravity", &["low", "medium", "high", "xhigh", "max"]),
+/// Codex: the model cache when present). Antigravity has none: each model it lists already
+/// carries its level, as in `gemini-4-argon-high`.
+const EFFORTS: [(&str, &[&str]); 6] = [
     ("claude", &["low", "medium", "high", "xhigh", "max"]),
     (
         "codebuddy",
@@ -316,26 +318,57 @@ fn dsh_default(dump: &str, key: &str) -> Option<String> {
 }
 
 /// The models the configured providers declare (`config.providers.<route>.models[].id`), in
-/// order: what a model override may name besides the bundled official models.
-fn dsh_provider_models(dump: &str) -> Vec<String> {
+/// order: what a model override may name besides the bundled official models. Each comes with
+/// the keys of its `reasoningEfforts`; a model without them does not reason and has none.
+fn dsh_provider_models(dump: &str) -> Vec<(String, Vec<String>)> {
     let mut providers = false;
-    let mut models = Vec::new();
+    let mut levels = false;
+    let mut models: Vec<(String, Vec<String>)> = Vec::new();
     for line in dump.lines() {
         if line.starts_with("- ") || line.starts_with('#') {
             providers = false;
         } else if line.starts_with("    ") && !line.starts_with("     ") {
             providers = line.trim_end() == "    providers:";
-        } else if providers
-            && let Some(id) = line.strip_prefix("          - id:").and_then(dsh_scalar)
-            && !models.contains(&id)
+        } else if !providers {
+            continue;
+        } else if let Some(id) = line.strip_prefix("          - id:").and_then(dsh_scalar) {
+            levels = false;
+            if !models.iter().any(|(known, _)| *known == id) {
+                models.push((id, Vec::new()));
+            }
+        } else if line.starts_with("            ") && !line.starts_with("             ") {
+            levels = line.trim_end() == "            reasoningEfforts:";
+        } else if levels
+            && line.starts_with("              ")
+            && !line.starts_with("               ")
+            && let Some((level, _)) = line.trim().split_once(':')
+            && let Some((_, efforts)) = models.last_mut()
         {
-            models.push(id);
+            efforts.push(level.to_owned());
+        } else if !line.starts_with("              ") {
+            levels = false;
         }
     }
     models
 }
 
+/// ZCode's providers' models, each with the `reasoningLevel` values its model rule offers.
 fn zcode_models(document: &Value) -> Vec<Value> {
+    let config = &document["config"];
+    let levels = |qualified: &str| {
+        config["modelConfigRules"]["providerModelRules"]
+            .as_array()?
+            .iter()
+            .find(|rule| {
+                format!(
+                    "{}/{}",
+                    rule["providerId"].as_str().unwrap_or(""),
+                    rule["modelId"].as_str().unwrap_or("")
+                ) == qualified
+            })?["config"]["optionSpecs"]["reasoningLevel"]["values"]
+            .as_array()
+            .cloned()
+    };
     let mut models = Vec::new();
     if let Some(rules) = document["config"]["providerConfigRules"]["providerRules"].as_array() {
         for rule in rules {
@@ -347,7 +380,11 @@ fn zcode_models(document: &Value) -> Vec<Value> {
                     for id in ids.iter().filter_map(Value::as_str) {
                         let qualified = format!("{provider}/{id}");
                         if !models.iter().any(|m: &Value| m["id"] == qualified) {
-                            models.push(model(&qualified, &qualified, false));
+                            let mut listed = model(&qualified, &qualified, false);
+                            if let Some(efforts) = levels(&qualified) {
+                                listed["efforts"] = Value::Array(efforts);
+                            }
+                            models.push(listed);
                         }
                     }
                 }
@@ -440,23 +477,30 @@ fn probe_path(provider: &str, path: &Path) -> Value {
             }
             ("codex-cache", models)
         }),
-        "claude" => Ok((
-            "aliases",
-            CLAUDE_ALIASES
-                .iter()
-                .map(|alias| model(alias, alias, false))
-                .collect(),
+        // Its own model picker; the aliases alone when it cannot answer.
+        "claude" => Ok(claude_models(path).map_or_else(
+            |_| {
+                let aliases = CLAUDE_ALIASES.iter();
+                (
+                    "aliases",
+                    aliases.map(|alias| model(alias, alias, false)).collect(),
+                )
+            },
+            |models| ("initialize", models),
         )),
         "deepseek" => {
             // The composed profile's default first, then the official models and the ones
             // its configured providers (a gateway, say) declare.
             let mut ids: Vec<String> = Vec::new();
-            let declared = dsh_dump.map(|dump| dsh_provider_models(dump));
+            let declared_efforts = dsh_dump
+                .map(|dump| dsh_provider_models(dump))
+                .unwrap_or_default();
+            let declared = declared_efforts.iter().map(|(id, _)| id.clone());
             for id in configured_model
                 .iter()
                 .cloned()
                 .chain(DEEPSEEK_CATALOG.iter().map(|id| (*id).to_owned()))
-                .chain(declared.into_iter().flatten())
+                .chain(declared)
             {
                 if !ids.contains(&id) {
                     ids.push(id);
@@ -464,7 +508,15 @@ fn probe_path(provider: &str, path: &Path) -> Value {
             }
             let models = ids
                 .iter()
-                .map(|id| model(id, id, configured_model.as_ref() == Some(id)))
+                .map(|id| {
+                    let mut listed = model(id, id, configured_model.as_ref() == Some(id));
+                    // A declared model offers the levels it declares; the official ones keep
+                    // the route's levels.
+                    if let Some((_, efforts)) = declared_efforts.iter().find(|(m, _)| m == id) {
+                        listed["efforts"] = json!(efforts);
+                    }
+                    listed
+                })
                 .collect();
             let source = if dsh_dump.is_some() {
                 "config"
@@ -473,10 +525,34 @@ fn probe_path(provider: &str, path: &Path) -> Value {
             };
             Ok((source, models))
         }
-        "grok" => run(path, &["models"]).map(|out| ("command", grok_models(&out))),
+        "grok" => run(path, &["models"]).map(|out| {
+            let cache = dirs::home_dir()
+                .and_then(|home| std::fs::read_to_string(home.join(".grok/models_cache.json")).ok())
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .unwrap_or(Value::Null);
+            let mut models = grok_models(&out);
+            for listed in &mut models {
+                if let Some(efforts) = grok_efforts(&cache, listed["id"].as_str().unwrap_or("")) {
+                    listed["efforts"] = json!(efforts);
+                }
+            }
+            ("command", models)
+        }),
         "antigravity" => run(path, &["models"]).map(|out| ("command", agy_models(&out))),
-        "pi" => run(path, &["--list-models"]).map(|out| ("command", pi_models(&out))),
-        "codebuddy" => run(path, &["--help"]).map(|out| ("help", codebuddy_models(&out))),
+        // Pi answers over RPC with each model's thinking levels; the listing has no levels.
+        "pi" => pi_rpc_models(path)
+            .map(|models| ("rpc", models))
+            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out)))),
+        "codebuddy" => run(path, &["--help"]).map(|out| {
+            let mut models = codebuddy_models(&out);
+            let supported = codebuddy_supported_efforts();
+            for listed in &mut models {
+                if let Some(efforts) = listed["id"].as_str().and_then(|id| supported.get(id)) {
+                    listed["efforts"] = efforts.clone();
+                }
+            }
+            ("help", models)
+        }),
         _ => Err("未知 CLI".to_owned()),
     };
     match listed {
@@ -577,14 +653,12 @@ fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
 }
 
 /// Run a listing command with empty stdin; give up after the timeout.
-fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
+fn command(executable: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(executable);
     command
         .args(args)
         .current_dir(std::env::temp_dir())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::piped());
     if let Some(path) = search_path(executable) {
         command.env("PATH", path);
     }
@@ -596,7 +670,195 @@ fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
     // Its own process group, so a timeout also stops descendants holding the pipes.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    command
+}
+
+/// Send one request line to a CLI serving requests on stdin and return the first JSON line
+/// `answers` accepts, then stop the CLI with its group. stdin stays open until then, since these
+/// CLIs exit when it closes.
+fn ask(
+    executable: &Path,
+    args: &[&str],
+    request: &Value,
+    answers: impl Fn(&Value) -> bool,
+) -> Result<Value, String> {
+    let mut child = command(executable, args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let stdin = child.stdin.take();
+    let written = stdin
+        .map(|mut stdin| writeln!(stdin, "{request}").map(|()| stdin))
+        .transpose();
+    let (sender, receiver) = mpsc::channel();
+    if let Some(stdout) = child.stdout.take() {
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Ok(value) = serde_json::from_str::<Value>(&line)
+                    && sender.send(value).is_err()
+                {
+                    break;
+                }
+            }
+        });
+    }
+    let deadline = Instant::now() + TIMEOUT;
+    let answer = loop {
+        if written.is_err() {
+            break Err("无法发送请求".to_owned());
+        }
+        match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(value) if answers(&value) => break Ok(value),
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                break Err(format!("{} 秒内未完成", TIMEOUT.as_secs()));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Err("没有回应".to_owned()),
+        }
+    };
+    kill_group(&mut child);
+    let _ = child.wait();
+    answer
+}
+
+/// Claude Code's own model picker, from its `initialize` control response with hooks off: every
+/// entry but `default`, each with the efforts it offers (none when the model has no effort).
+fn claude_models(path: &Path) -> Result<Vec<Value>, String> {
+    let request = json!({"type": "control_request", "request_id": "agentnave-models",
+        "request": {"subtype": "initialize"}});
+    let args = [
+        "-p",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--no-session-persistence",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ];
+    let response = ask(path, &args, &request, |line| {
+        line["type"] == "control_response"
+    })?;
+    let models = claude_picker(&response);
+    if models.is_empty() {
+        return Err("Claude 没有列出模型".to_owned());
+    }
+    Ok(models)
+}
+
+fn claude_picker(response: &Value) -> Vec<Value> {
+    let entries = response["response"]["response"]["models"].as_array();
+    entries
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let id = entry["value"].as_str().filter(|id| *id != "default")?;
+            let mut listed = model(id, entry["displayName"].as_str().unwrap_or(id), false);
+            listed["efforts"] = match &entry["supportedEffortLevels"] {
+                Value::Array(levels) => Value::Array(levels.clone()),
+                _ => json!([]),
+            };
+            Some(listed)
+        })
+        .collect()
+}
+
+/// Pi's available models over RPC, as `provider/model` with the thinking levels Pi offers.
+fn pi_rpc_models(path: &Path) -> Result<Vec<Value>, String> {
+    let request = json!({"id": "agentnave-models", "type": "get_available_models"});
+    let response = ask(path, &["--mode", "rpc", "--no-session"], &request, |line| {
+        line["id"] == "agentnave-models"
+    })?;
+    let models = response["data"]["models"]
+        .as_array()
+        .ok_or("Pi 没有列出模型")?;
+    Ok(models
+        .iter()
+        .filter_map(|entry| {
+            let id = format!("{}/{}", entry["provider"].as_str()?, entry["id"].as_str()?);
+            let mut listed = model(&id, &id, false);
+            listed["efforts"] = json!(pi_levels(entry));
+            Some(listed)
+        })
+        .collect())
+}
+
+/// Pi's `getSupportedThinkingLevels`: only `off` without reasoning; otherwise every level the
+/// model's map does not null out, `xhigh` and `max` only where the map names them.
+fn pi_levels(entry: &Value) -> Vec<&'static str> {
+    if entry["reasoning"] != true {
+        return vec!["off"];
+    }
+    let map = &entry["thinkingLevelMap"];
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        .into_iter()
+        .filter(|level| match map.get(level) {
+            Some(Value::Null) => false,
+            Some(_) => true,
+            None => !matches!(*level, "xhigh" | "max"),
+        })
+        .collect()
+}
+
+/// The efforts Grok's model cache lists for one model, `None` when the cache does not know it.
+fn grok_efforts(cache: &Value, model: &str) -> Option<Vec<String>> {
+    let info = &cache["models"].get(model)?["info"];
+    let efforts = info["reasoning_efforts"].as_array();
+    Some(
+        efforts
+            .into_iter()
+            .flatten()
+            .filter_map(|effort| effort["value"].as_str().map(str::to_owned))
+            .collect(),
+    )
+}
+
+/// The `reasoning.supportedEfforts` CodeBuddy's cached product configuration lists per model
+/// (`~/.codebuddy/local_storage/*.info`: a JSON string of base64 gzip JSON). CodeBuddy offers
+/// every level for a model that lists none, so only non-empty lists are kept.
+fn codebuddy_supported_efforts() -> Map<String, Value> {
+    let Some(dir) = dirs::home_dir().map(|home| home.join(".codebuddy/local_storage")) else {
+        return Map::new();
+    };
+    let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+    entries
+        .filter_map(|entry| {
+            let text: String =
+                serde_json::from_str(&std::fs::read_to_string(entry.path()).ok()?).ok()?;
+            let config = codebuddy_product_config(&text)?;
+            (config["productName"].is_string()).then_some(config)
+        })
+        .flat_map(|config| {
+            let models = config["models"].as_array().cloned().unwrap_or_default();
+            models.into_iter().filter_map(|model| {
+                let efforts = &model["reasoning"]["supportedEfforts"];
+                let listed = efforts.as_array().is_some_and(|levels| !levels.is_empty());
+                listed.then_some((model["id"].as_str()?.to_owned(), efforts.clone()))
+            })
+        })
+        .collect()
+}
+
+fn codebuddy_product_config(encoded: &str) -> Option<Value> {
+    use base64::Engine;
+    let compressed = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_string(&mut text)
+        .ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
+    let mut child = command(executable, args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
     let (sender, receiver) = mpsc::channel();
     for (stream, pipe) in [
         (
@@ -726,7 +988,7 @@ fn parse_codex_cache(text: &str) -> Result<(Vec<Value>, Vec<String>), String> {
         }
         let mut listed = model(id, label, false);
         // Per-model efforts where the cache knows them; the provider list is the fallback.
-        if !own.is_empty() {
+        if entry["supported_reasoning_levels"].is_array() {
             listed["efforts"] = json!(own);
         }
         models.push(listed);
@@ -902,13 +1164,16 @@ mod tests {
         );
         let providers = "- id: llm-pi-ai\n  config:\n    providers:\n      gw:\n        models:\n\
             \x20         - id: opencode-go/v4.1\n            reasoningEfforts:\n\
+            \x20             low: low\n              max: max\n            input:\n\
+            \x20             - text\n\
             \x20         - id: \"codex/sol\"\n      gw2:\n        models:\n\
             \x20         - id: codex/sol\n          - id: grok/4\n    other:\n\
             \x20         - id: skipped\n- id: jobs\n";
-        assert_eq!(
-            dsh_provider_models(providers),
-            ["opencode-go/v4.1", "codex/sol", "grok/4"]
-        );
+        let declared = dsh_provider_models(providers);
+        let ids: Vec<&str> = declared.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["opencode-go/v4.1", "codex/sol", "grok/4"]);
+        assert_eq!(declared[0].1, ["low", "max"]);
+        assert!(declared[1].1.is_empty());
     }
 
     #[test]
@@ -978,6 +1243,28 @@ mod tests {
             Some("high")
         );
         assert_eq!(grok_default_effort(&cache, "grok-4.6"), None);
+        assert_eq!(grok_efforts(&cache, "grok-4.7").unwrap(), ["xhigh", "high"]);
+        assert_eq!(grok_efforts(&cache, "grok-4.6"), None);
+
+        // Claude's own picker and Pi's levels, as the CLIs answer over stdin.
+        let initialize = json!({"type": "control_response", "response": {"response": {"models": [
+            {"value": "default", "displayName": "Default", "supportedEffortLevels": ["low"]},
+            {"value": "opus", "displayName": "Opus 5.5", "supportedEffortLevels": ["low", "max"]},
+            {"value": "claude-haiku-4-5", "displayName": "Haiku 4.5"}]}}});
+        let picker = claude_picker(&initialize);
+        assert_eq!(ids(&picker), ["opus", "claude-haiku-4-5"]);
+        assert_eq!(picker[0]["efforts"], json!(["low", "max"]));
+        assert_eq!(picker[1]["efforts"], json!([]));
+        assert_eq!(pi_levels(&json!({"reasoning": false})), ["off"]);
+        assert_eq!(
+            pi_levels(&json!({"reasoning": true})),
+            ["off", "minimal", "low", "medium", "high"]
+        );
+        assert_eq!(
+            pi_levels(&json!({"reasoning": true, "thinkingLevelMap":
+                {"off": null, "minimal": null, "medium": null, "max": "max"}})),
+            ["low", "high", "max"]
+        );
         let agy = agy_models(agy);
         assert_eq!(native_model(&agy, None), None);
         let label = agy[1]["label"].as_str().unwrap();

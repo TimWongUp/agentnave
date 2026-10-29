@@ -381,17 +381,17 @@
   // ---- 开始使用 -----------------------------------------------------------------------------
   const TITLES = {
     service: "安装本机服务",
-    host: "接入一个宿主",
-    members: "设置组员",
-    try: "在宿主里派一次任务",
+    host: "接入一个 boss 应用",
+    members: "设置员工",
+    try: "在 boss 里派一次任务",
   };
   const FALLBACK = {
-    service: "宿主要通过它才能启动 AgentNave",
-    host: "在设置里一键接入已检测到的宿主",
-    members: "选择哪些 CLI 与模型可以当组员",
-    try: "在宿主里说：用 agentnave 让几位组员各答一遍",
+    service: "boss 要通过它才能启动 AgentNave",
+    host: "在设置里一键接入已检测到的应用",
+    members: "选择哪些 CLI 与模型可以当员工",
+    try: "在 boss 里说：用 agentnave 让几位员工各答一遍",
   };
-  const SAMPLE = "用 agentnave 让两位组员各自回答一遍：这个仓库是做什么的？";
+  const SAMPLE = "用 agentnave 让两位员工各自回答一遍：这个仓库是做什么的？";
   // First pending step -> its one primary action. `to` is a real route; `run` is an in-place action.
   const ACTION = {
     service: {
@@ -399,8 +399,8 @@
       busy: "安装中，约需一分钟…",
       run: installService,
     },
-    host: { label: "去接入宿主", to: "/settings/#hosts" },
-    members: { label: "去设置组员", to: "/settings/#members" },
+    host: { label: "去接入 boss", to: "/settings/#hosts" },
+    members: { label: "去设置员工", to: "/settings/#members" },
     try: { label: "复制示例指令", copy: SAMPLE },
   };
 

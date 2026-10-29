@@ -343,7 +343,7 @@ async function setCliSwitch(provider, item, enabled) {
     await apiPostCliOptions({ version: 1, clis });
     cliOptions = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型的私聊和新开的会议都生效`);
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型单独干活和新开的会都生效`);
   } catch (err) {
     showNotice(`保存失败: ${err.message}`, true);
   } finally {
@@ -406,7 +406,7 @@ async function setPermissionTier(provider, tier) {
     await apiPostPermissions({ version: 1, clis });
     permissionTiers = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后派发的任务和新开的会议生效`);
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后单独干活和新开的会都生效`);
   } catch (err) {
     showNotice(`权限保存失败: ${err.message}`, true);
   } finally {
@@ -439,7 +439,7 @@ function renderPermission(provider) {
     el("p", { className: "cli-permission-text" },
       permissionsError
         ? `${permissionsError}。修复或删除这个文件之前，派发会被拒绝。`
-        : `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 私聊和新开的会议都按这一档，选完立即保存。`));
+        : `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 单独干活和新开的会都按这一档，选完立即保存。`));
 }
 
 async function apiPostMembers(doc) {
@@ -488,6 +488,11 @@ async function apiCheckUpdate(quiet = false) {
 }
 
 // Notice display
+// Settings name the two modes by what the employees do in them.
+const SCENES = { task: "单独干活", discussion: "开会" };
+const lastModelHint = () =>
+  `至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“${SCENES[currentMode]}时可用”`;
+
 function showNotice(msg, isError = false) {
   const notice = $("notice");
   notice.textContent = msg;
@@ -602,7 +607,7 @@ function configurationErrors() {
     for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, "共享");
   }
   for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
-    const scope = mode === "task" ? "私聊" : "会议";
+    const scope = SCENES[mode];
     for (const [provider, selection] of Object.entries(providers)) {
       const models = currentDoc.clis?.[provider]?.models || {};
       for (const model of selection.models) {
@@ -620,7 +625,7 @@ function configurationErrors() {
     }
   }
   for (const [mode, providers] of Object.entries(currentDoc.defaults || {})) {
-    const scope = mode === "task" ? "私聊" : "会议";
+    const scope = SCENES[mode];
     for (const [provider, model] of Object.entries(providers)) {
       if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
     }
@@ -629,7 +634,7 @@ function configurationErrors() {
 }
 
 function updateControls() {
-  $("dirty-text").textContent = dirty ? "有未保存的修改" : "没有未保存的修改";
+  $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
   $("members-badge").hidden = !dirty;
   if (!dirty && !busy) leaveTarget = null;
   renderLeaveConfirm();
@@ -683,16 +688,16 @@ function updateControls() {
 
 // Switch tabs
 function setTab(tab) {
-  if (tab === "updates") tab = "hosts"; // Preserve old update links.
+  if (tab === "updates") tab = "about"; // Preserve old update links.
   // Status lines belong to the tab that produced them.
   if (currentTab !== tab) showNotice("");
   currentTab = tab;
-  for (const id of ["members", "skills", "avatars", "orchestration", "hosts"]) {
+  for (const id of ["hosts", "members", "skills", "avatars", "orchestration", "about"]) {
     if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
     else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
-  if (tab === "hosts") loadStatus().then(checkIfStale);
+  if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "skills") window.AgentNaveSkills?.load();
   if (tab === "orchestration") {
     loadRuleFiles();
@@ -704,7 +709,7 @@ function setTab(tab) {
 let limitDoc = null;
 async function loadLimit() {
   if (!$("max-running").options.length) {
-    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, String(n)));
+    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? "8（默认）" : String(n)));
     $("max-running").value = "8";
   }
   try {
@@ -821,17 +826,12 @@ function isModeRestricted(mode = currentMode) {
 function renderModeToolbar() {
   const restricted = isModeRestricted();
   const toggle = $("mode-restrict-toggle");
-  const hint = $("mode-restrict-hint");
   if (toggle) toggle.checked = restricted;
-  if (hint) {
-    hint.textContent = restricted
-      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会保留已设置的默认模型，清除本场景的名单和专用设置。"
-      : "已关闭：不额外限制可用工具和模型，仍可为本场景设置各 CLI 的默认模型。开启后可逐项选择可用名单。";
-  }
+  $("mode-restrict-title").textContent = `${SCENES[currentMode]}时只用选中的员工`;
   const confirm = $("restrict-confirm");
   if (confirm) {
     confirm.hidden = !pendingRestrictOff;
-    const scene = currentMode === "task" ? "私聊" : "会议";
+    const scene = SCENES[currentMode];
     confirm.replaceChildren(...(pendingRestrictOff ? [
       el("p", {}, `关闭后${scene}不再限制工具和模型：保留已设置的默认模型和共享设置，清除可用名单和${scene}专用设置。重新开启不会恢复名单和专用设置，默认模型沿用保留值，没设置的继续跟随 CLI 默认；点击“保存设置”后才生效。`),
       el("div", { className: "btn-group" },
@@ -839,9 +839,6 @@ function renderModeToolbar() {
         el("button", { type: "button", className: "danger", onClick: () => toggleModeRestricted(false, true) }, "确认关闭")),
     ] : []));
   }
-  $("mode-description").textContent = currentMode === "task"
-    ? "私聊：boss 把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
-    : "会议：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
 }
 
 function toggleModeRestricted(restricted, confirmed = false) {
@@ -972,8 +969,9 @@ const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max",
 // A model's effort levels from low to high: its own detected levels, else its CLI's, plus any
 // configured value a probe no longer lists.
 function effortLevels(provider, modelId) {
+  // A model's own list, even an empty one, is what its CLI offers; the CLI's list is the fallback.
   const own = (detected[provider]?.models || []).find((m) => m.id === modelId)?.efforts;
-  const detectedEfforts = Array.isArray(own) && own.length ? own : detected[provider]?.efforts || [];
+  const detectedEfforts = Array.isArray(own) ? own : detected[provider]?.efforts || [];
   const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
   const overrides = Object.values(currentDoc.modes || {})
     .map((providers) => providers?.[provider]?.overrides?.[modelId])
@@ -1000,7 +998,8 @@ function middleEffort(range) {
 // Without a default the knob sits hollow on the middle level until the bar is touched.
 function renderEffortBar(provider, modelId) {
   const levels = effortLevels(provider, modelId);
-  if (!levels.length) return null;
+  // A single level leaves nothing to choose.
+  if (levels.length < 2) return null;
   const overridden = isModelOverridden(provider, modelId);
   const override = overridden ? currentDoc.modes[currentMode][provider].overrides[modelId] : null;
   const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
@@ -1188,7 +1187,7 @@ function toggleModelAllowed(provider, modelId, allowed) {
     // If only 1 model left, do not allow unchecking
     const uniqueModels = Array.from(new Set(provConf.models));
     if (uniqueModels.length <= 1 && uniqueModels.includes(modelId)) {
-      showNotice("至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”", true);
+      showNotice(lastModelHint(), true);
       renderCards();
       return;
     }
@@ -1352,11 +1351,11 @@ function renderCards() {
         role: "switch",
         className: "switch-input",
         dataset: { focusKey: `${provider}/enabled` },
-        "aria-label": `在${currentMode === "task" ? "私聊" : "会议"}中使用 ${PROVIDER_NAMES[provider]}`,
+        "aria-label": `${SCENES[currentMode]}时可用 ${PROVIDER_NAMES[provider]}`,
         checked: isEnabled,
         onChange: (e) => toggleProviderInMode(provider, e.target.checked),
       });
-      enableControl = el("label", {}, enableCheckbox, textNode(" 在此场景启用"));
+      enableControl = el("label", {}, enableCheckbox, textNode(` ${SCENES[currentMode]}时可用`));
     }
 
     const isOpen = openCards.has(provider);
@@ -1519,7 +1518,7 @@ function renderCards() {
         if (modeRestricted) {
           const checkLabelAttrs = { className: "model-check-label" };
           if (isLastChecked) {
-            checkLabelAttrs.title = "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”";
+            checkLabelAttrs.title = lastModelHint();
           } else if (isUnlimited) {
             checkLabelAttrs.title = "已允许任意模型。要逐个选择，请先关闭上方“允许使用这个工具支持的任意模型”";
           }
@@ -1538,9 +1537,9 @@ function renderCards() {
               "span",
               {
                 className: "model-single-hint",
-                title: "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”",
+                title: lastModelHint(),
               },
-              "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”"
+              lastModelHint()
             )
           );
         }
@@ -1609,7 +1608,7 @@ const REVIEW_ROLES = [
   ["adversarial-verifier", "反证", "高风险改动修完后尝试推翻结论"],
 ];
 
-// Seats save on their own to review.json, so unsaved 执行者 edits stay unsaved. A picked model
+// Seats save on their own to review.json, so unsaved 员工 edits stay unsaved. A picked model
 // missing from that CLI's configured models is also added to the last saved members.json,
 // where the server looks for it.
 async function setReviewSeat(role, seat) {
@@ -1635,7 +1634,7 @@ async function setReviewSeat(role, seat) {
   updateControls();
   try {
     if (missing) {
-      if (documentError) throw new Error("配置文件有错误，请先在“执行者”里修复");
+      if (documentError) throw new Error("配置文件有错误，请先在“员工”里修复");
       await apiPostMembers(add(saved));
       savedSnapshot = JSON.stringify(saved);
       add(currentDoc);
@@ -1688,12 +1687,12 @@ function renderReviewSeats() {
     const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
-        !listed && el("small", { className: "review-warn" }, "私聊名单没有选中这个模型，评审时会改找其他 CLI")),
+        !listed && el("small", { className: "review-warn" }, "单独干活的名单没有选中这个模型，评审时会改找其他 CLI")),
       reviewSelect(`${role}/cli`, `${name}评审的 CLI`, provider, [["", "自动"], ...clis], pickCli),
       reviewSelect(`${role}/model`, `${name}评审的模型`, seat?.model || "",
         seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
       reviewSelect(`${role}/effort`, `${name}评审的思考档位`, seat?.effort || "",
-        seat ? [["", "组员默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
+        seat ? [["", "员工默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
     );
   });
   box.replaceChildren(...rows);
@@ -1808,7 +1807,7 @@ async function loadMembers() {
     if (documentError) {
       showNotice(`配置文件损坏: ${documentError}。当前只读，禁止保存。`, true);
     } else if (currentTab === "members") {
-      showNotice("已载入执行者与模型配置");
+      showNotice("");
     }
 
     renderCards();
@@ -1887,10 +1886,8 @@ function renderUpdates() {
   if (!serviceInfo) {
     $("service-version").textContent = installedService?.version ? `v${installedService.version}` : "—";
     serviceBadge.hidden = true;
-    serviceMsg.hidden = false;
-    serviceMsg.textContent = installedService?.installed
-      ? "本机服务已安装。各应用的实际连接状态，请查看下方宿主卡片。"
-      : "请在下方接入区安装本机服务。";
+    serviceMsg.hidden = Boolean(installedService?.installed);
+    serviceMsg.textContent = "请在 boss 分区安装本机服务。";
   } else {
     $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
     const isServiceOutdated =
@@ -1919,7 +1916,7 @@ function renderUpdates() {
       serviceBadge.className = "tag done";
       serviceBadge.textContent = "安装完成";
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "安装完成。下方会自动检测各宿主连接，无需仅因版本变化逐个重启。";
+      serviceMsg.textContent = "安装完成，无需仅因版本变化重启 boss 应用。";
     } else {
       serviceBadge.hidden = true;
       serviceMsg.hidden = true;
@@ -2066,7 +2063,7 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
 }, true);
 $("copy-orchestration").addEventListener("click", copyOrchestration);
 $("save-limit").addEventListener("click", saveLimit);
-const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["skills", "avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
+const tabFromHash = () => location.hash === "#updates" ? "about" : ["members", "skills", "avatars", "orchestration", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts";
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 
@@ -2107,8 +2104,9 @@ function renderLeaveConfirm() {
 }
 document.querySelector("header.bar").addEventListener("click", (e) => {
   const link = e.target.closest("a[href]");
-  // Moving between this page's sections keeps the edits; only leaving the page loses them.
-  if (!link || !(dirty || busy) || link.getAttribute("href").startsWith("/settings/")) return;
+  // The settings link points at this page; following it would reload and drop the edits.
+  if (link?.getAttribute("href") === "/settings/") return e.preventDefault();
+  if (!link || !(dirty || busy)) return;
   e.preventDefault();
   leaveTarget = link.href;
   if (currentTab !== "members") {

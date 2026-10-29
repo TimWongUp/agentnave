@@ -19,18 +19,13 @@
   <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
   <nav class="nav" aria-label="主导航">
     <a draggable="false" href="/chat/" aria-current="page">办公室</a>
-    <a draggable="false" id="nav-members" href="/settings/#members">执行者</a>
-    <a draggable="false" id="nav-skills" href="/settings/#skills">技能</a>
-    <a draggable="false" id="nav-hosts" href="/settings/#hosts">接入</a>
-    <a draggable="false" id="nav-avatars" href="/settings/#avatars">头像</a>
-    <a draggable="false" id="nav-orchestration" href="/settings/#orchestration">编排</a>
+    <a draggable="false" href="/settings/">设置</a>
   </nav>
 </header>
 <div id="banner" class="banner" role="status" hidden>读取中断，正在重试…</div>
 <div id="app" class="app" data-view="list">
   <aside class="side" aria-label="工作区列表">
     <div class="side-head"><h1>工作区</h1><span id="side-count" class="side-count"></span><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的工作区">清理…</button></div>
-    <p class="side-tip">右键改名或删除 · ⌘/Shift 点选多个</p>
     <div class="gl-wrap"><div id="onboard-side" class="ob-slot"></div><div id="list" class="gl"></div></div>
     <div class="split split-side" data-split="side" role="separator" aria-orientation="vertical" aria-label="调整工作区列表宽度" tabindex="0"></div>
   </aside>
@@ -41,7 +36,7 @@
         <section id="boss" class="zone boss-zone" aria-label="boss 办公室"></section>
         <div id="rooms" class="rooms"></div>
         <section class="zone wide desks-zone" aria-labelledby="desks-title">
-          <h2 class="zone-h" id="desks-title">开放工位<span id="desks-count" class="zone-count"></span><span class="r">点工位或会议室，看它们的对话</span></h2>
+          <h2 class="zone-h" id="desks-title">开放工位<span id="desks-count" class="zone-count"></span></h2>
           <div id="desks" class="desks"></div>
         </section>
         <div id="fx" class="fx" aria-hidden="true"></div>
@@ -62,7 +57,7 @@
     <p id="dr-note" class="dr-note" hidden></p>
     <div id="timeline" class="tl" role="log" aria-label="消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
     <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
-    <div id="ro" class="ro">只读视图 · 派任务和审核都在 boss 里进行</div>
+    <div id="ro" class="ro">只读</div>
   </aside>
 </div>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>

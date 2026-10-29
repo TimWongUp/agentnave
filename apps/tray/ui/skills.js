@@ -10,7 +10,7 @@ const S = { catalog: null, hosts: null, open: new Set(), busy: new Set() };
 const SETTINGS = {
   "agentnave-review": () => [
     h("h3", {}, "评审工位"),
-    h("p.guidance", {}, "选“自动”时由主控按组员挑选；你在对话里点名的 CLI 和模型优先于这里。宿主用不了所选 CLI 时改用宿主自己的子代理，所选模型不在组员里时改找提供同一模型的其他 CLI。改动立即保存。"),
+    h("p.guidance", {}, "选“自动”时由 boss 按员工挑选；你在对话里点名的 CLI 和模型优先于这里。boss 应用用不了所选 CLI 时改用它自己的子代理，所选模型不在员工里时改找提供同一模型的其他 CLI。改动立即保存。"),
     h("div.review-grid", { id: "review-seats" }),
   ],
 };
@@ -18,7 +18,7 @@ const SETTINGS = {
 const why = (host, state) =>
   state.state === "external" ? "由其他方式管理，App 不会改动"
     : !state.enabled ? `点选为 ${host.label} 安装`
-      : state.state === "app" ? "已安装，点选停用" : "已选，接入此宿主时自动安装";
+      : state.state === "app" ? "已安装，点选停用" : "已选，接入这个应用时自动安装";
 
 // One chip per detected host, so a host added later simply appears as another chip.
 function chip(skill, host) {
@@ -60,15 +60,15 @@ function row(skill) {
   };
   const head = h("button.skill-head", { type: "button", "aria-expanded": String(open), "data-focus-key": `${skill.name}/open` },
     h("span.skill-name", {}, h("strong", {}, skill.title), h("small", {}, skill.description)),
-    h("span.skill-count", {}, installed ? `已装到 ${installed} 个宿主` : "未使用"),
+    h("span.skill-count", {}, installed ? `已装到 ${installed} 个应用` : "未使用"),
     h("span.skill-chevron", { "aria-hidden": "true" }));
   head.addEventListener("click", toggle(skill.name));
   const more = h("button.skill-more", { type: "button", "aria-expanded": String(reading) }, reading ? "收起写法" : "查看写法");
   more.addEventListener("click", toggle(`${skill.name}/content`));
   return h("div.skill-row", { "data-open": String(open) }, head, open && h("div.skill-body", {},
     h("h3", {}, "安装到"),
-    chips.length ? h("div.skill-chips", {}, chips) : h("p.guidance", {}, "还没有可安装的宿主；在“接入”里接入后会出现在这里。"),
-    h("p.skill-hint", {}, "点选宿主即安装或停用；灰色的由其他方式管理。新接入的宿主会自动出现。"),
+    chips.length ? h("div.skill-chips", {}, chips) : h("p.guidance", {}, "还没有可安装的应用；在“boss”里接入后会出现在这里。"),
+    h("p.skill-hint", {}, "点选应用即安装或停用；灰色的由其他方式管理。新接入的应用会自动出现。"),
     SETTINGS[skill.name]?.(),
     more,
     reading && h("pre.skill-content", {}, skill.content),
