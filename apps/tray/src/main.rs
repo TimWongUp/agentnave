@@ -413,10 +413,11 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         tauri::window::EffectsBuilder::new()
             .effect(tauri::window::Effect::Popover)
             .state(tauri::window::EffectState::Active)
-            .radius(PANEL_RADIUS)
             .build(),
     );
     let panel = builder.build()?;
+    #[cfg(target_os = "macos")]
+    round_panel(&panel);
     let blurred = app.clone();
     panel.on_window_event(move |event| {
         if let WindowEvent::Focused(false) = event {
@@ -426,6 +427,27 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     hide_panel_on_outside_click(app);
     Ok(())
+}
+
+/// Clip the whole window, glass and page together: the glass view's own radius is lost
+/// where it reaches past the window's bottom edge.
+#[cfg(target_os = "macos")]
+fn round_panel(panel: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    let Ok(view) = panel.ns_view() else {
+        return;
+    };
+    // SAFETY: setup runs on the main thread and the window keeps its content view alive.
+    unsafe {
+        let view = &*view.cast::<AnyObject>();
+        let _: () = msg_send![view, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if let Some(layer) = layer.as_ref() {
+            let _: () = msg_send![layer, setCornerRadius: PANEL_RADIUS];
+            let _: () = msg_send![layer, setMasksToBounds: true];
+        }
+    }
 }
 
 fn hide_panel(app: &AppHandle) {
