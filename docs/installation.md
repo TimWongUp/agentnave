@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.53.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.53.1` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.53.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.53.1`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -541,20 +541,18 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.52.0 to v0.53.0
+### Upgrading from v0.53.0 to v0.53.1
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.53.0 directory, which adds `references/zcode.md`.
-DeepSeek Harness and ZCode can now be connected as hosts from the App, and ZCode is also a
-provider. OpenCode is no longer a host: `AGENTNAVE_HOST=opencode` now fails startup, so delete
-`mcp.agentnave` from its configuration and the App-installed Skill directory (by default
-`~/.config/opencode/skills/agentnave-manager`); saved OpenCode history stays readable. Reconnect
-MCP to see the reworded tool descriptions ("show" is now "meeting"). The App writes CLI-wide member
-settings to the new `cli-options.json`; older servers ignore it, and model-level
-`skip_git_repo_check` keeps working. Upgrading from v0.51.0 or earlier also brings the v0.52.0
-changes; see [v0.52.0 release notes](releases/v0.52.0.md). Upgrading from v0.45.0 or earlier also
-drops Gemini CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.53.0 release notes](releases/v0.53.0.md).
+`agentnave-manager` Skill with its complete v0.53.1 directory. This release lets each CLI listing
+command in the App's probe run for up to 45 seconds instead of 15, so Antigravity CLI's
+network-bound `agy models` (about 20 seconds) lists its models again. The tool interface is
+unchanged, so no MCP reconnect is needed, and history, member configuration and settings need no
+migration. Upgrading from v0.52.0 or earlier also brings the v0.53.0 changes, including manual
+cleanup of an OpenCode host entry; see [v0.53.0 release notes](releases/v0.53.0.md). Upgrading
+from v0.45.0 or earlier also drops Gemini CLI as a host, which needs manual cleanup of its old
+entry; see [v0.46.0 release notes](releases/v0.46.0.md). See
+[v0.53.1 release notes](releases/v0.53.1.md).
 
 ## Uninstall
 
