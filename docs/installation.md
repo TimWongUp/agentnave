@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.52.0` contains the runtime source, `agentnave-manager` Skill and all seven
+**Paired release:** `v0.53.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.52.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.53.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -482,7 +482,7 @@ After registration or upgrade:
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
    visible (9 total).
    Confirm the host also discovers `agentnave-manager` in the intended
-   scope and can read its seven referenced CLI files. Check for older user/project copies that
+   scope and can read its eight referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.
@@ -508,7 +508,7 @@ protocol/provider path, not every desktop host's discovery or long-result render
 versions above are observations from 2026-09-08, not an all-version compatibility guarantee.
 
 Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
-and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all seven CLI
+and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all eight CLI
 references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
 through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
@@ -540,22 +540,20 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.51.0 to v0.52.0
+### Upgrading from v0.52.0 to v0.53.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.52.0 directory. This release adds a ninth tool,
-`handover`, which hands a boss chat's whole workspace to another boss chat; reconnect MCP to see it
-and the updated tool descriptions. The conversation database gains the `workspaces` and
-`former_bosses` tables on first open (its `user_version` stays 1), so no migration step is needed;
-older servers ignore them and do not recognize handovers. Claude Code bosses that omit
-`manager_session_id` now fall back to `CLAUDE_CODE_SESSION_ID`, and the boss model is read from more
-hosts' native sessions. A shared native session is now locked across servers while it runs, so a
-seat and a private task can no longer resume it at once. Upgrading from v0.50.1 or earlier also
-brings the v0.51.0 permission tiers; see [v0.51.0 release notes](releases/v0.51.0.md). Upgrading
-from v0.49.0 or earlier also brings the v0.50.0 changes; see
-[v0.50.0 release notes](releases/v0.50.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
-CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.52.0 release notes](releases/v0.52.0.md).
+`agentnave-manager` Skill with its complete v0.53.0 directory, which adds `references/zcode.md`.
+DeepSeek Harness and ZCode can now be connected as hosts from the App, and ZCode is also a
+provider. OpenCode is no longer a host: `AGENTNAVE_HOST=opencode` now fails startup, so delete
+`mcp.agentnave` from its configuration and the App-installed Skill directory (by default
+`~/.config/opencode/skills/agentnave-manager`); saved OpenCode history stays readable. Reconnect
+MCP to see the reworded tool descriptions ("show" is now "meeting"). The App writes CLI-wide member
+settings to the new `cli-options.json`; older servers ignore it, and model-level
+`skip_git_repo_check` keeps working. Upgrading from v0.51.0 or earlier also brings the v0.52.0
+changes; see [v0.52.0 release notes](releases/v0.52.0.md). Upgrading from v0.45.0 or earlier also
+drops Gemini CLI as a host, which needs manual cleanup of its old entry; see
+[v0.46.0 release notes](releases/v0.46.0.md). See [v0.53.0 release notes](releases/v0.53.0.md).
 
 ## Uninstall
 
