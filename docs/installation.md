@@ -100,8 +100,9 @@ CLI's directory first, then the inherited `PATH`, then those directories. Deskto
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
 AgentNave does not install providers or change their login or configuration. It passes each CLI's
-permission tier on every dispatch (automatic approval by default, full access when chosen in the
-App) without changing the CLI's saved settings.
+permission tier on every dispatch (its automatic approval reviewer by default, or full access when
+the CLI has no such reviewer or the App chooses full access) without changing the CLI's saved
+settings.
 
 ### Select installed CLIs before locating them
 
@@ -220,7 +221,7 @@ format; register it with the official CLI command below instead of copying this 
 
 登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析，绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录一起显式传给 uv。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测；“开始使用”使用缓存，按已安装服务、connected 宿主、已保存的组员设置、带 manager_session 的记录计算。
 
-启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，DeepSeek Harness 桌面 App 已通过真实调用 `list_members` 与 `start_agent` 验收，均标为已实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
+启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入，不自动增加组员；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，DeepSeek Harness 桌面 App 已通过真实调用 `list_members` 与 `start_agent` 验收，均标为已实测；ZCode Desktop 已用手写条目通过真实调用 `list_members` 验收，尚未经 App 接管验收，仍标为未实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
 
 十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识，DeepSeek Harness 只增删自己的 `- insert:` 列表项；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
 
