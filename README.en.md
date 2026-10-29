@@ -26,14 +26,12 @@ has gone to the meeting room, and what everyone said.
 
 ## ✨ What it does
 
-| Feature                            | How                                                                                                                                                                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🧑‍💼 **Send one teammate a task**    | `start_agent` hands a task to one CLI; the result goes back only to the boss                                                                                                                                                       |
-| 👯 **Ask a group**                 | `run_round` opens a show of 2–7 seats. In a parallel round everyone answers on their own; in a serial round each speaker sees the earlier answers. "Answer first, then discuss" and multi-round relays are combinations of the two |
-| 🔍 **Review before sharing**       | With review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer                                                                                                   |
-| 🏢 **A cozy tray office**          | Desks, the meeting room and every conversation at a glance, with one-click cleanup of old workspaces                                                                                                                               |
-| 🧠 **Native sessions stay native** | Each CLI keeps its own login, configuration and native session; its `session_id` is kept so you can continue later                                                                                                                 |
-| 🤝 **Hand over to another chat**   | `handover` passes a whole workspace to another boss chat                                                                                                                                                                           |
+- 🧑‍💼 **Send one teammate a task**: `start_agent` hands a task to one CLI; the result goes back only to the boss
+- 👯 **Ask a group**: `run_round` opens a show of 2–7 seats. In a parallel round everyone answers on their own; in a serial round each speaker sees the earlier answers. "Answer first, then discuss" and multi-round relays are combinations of the two
+- 🔍 **Review before sharing**: with review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer
+- 🏢 **A cozy tray office**: desks, the meeting room and every conversation at a glance, with one-click cleanup of old workspaces
+- 🧠 **Native sessions stay native**: each CLI keeps its own login, configuration and native session; its `session_id` is kept so you can continue later
+- 🤝 **Hand over to another chat**: `handover` passes a whole workspace to another boss chat
 
 ## 👀 Who can be the boss, who can be a teammate
 
