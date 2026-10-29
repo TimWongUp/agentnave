@@ -27,6 +27,8 @@ type HostName = Literal[
     "pi",
     "hermes",
 ]
+# Hosts no longer connected or detected; saved history may still name them.
+type RetiredHostName = Literal["gemini", "opencode"]
 type HostSource = Literal["env", "parent", "unknown"]
 
 

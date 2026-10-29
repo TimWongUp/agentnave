@@ -138,9 +138,9 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|hermes`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|hermes`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装的 `~/.config/opencode/skills/agentnave-manager` 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
-宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 的旧 Gemini CLI 条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
+宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 或 `AGENTNAVE_HOST=opencode` 的旧条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
 | Host product | Exclusion value |
 | --- | --- |

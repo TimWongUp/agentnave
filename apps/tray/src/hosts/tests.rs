@@ -405,6 +405,33 @@ fn settings_path_errors_preserve_code_without_prefixing_the_message() {
 }
 
 #[test]
+fn removal_leaves_project_configuration_untouched() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    let missing = hosts.context.home.join("old-bin/agentnave-mcp");
+    save(
+        &h.config,
+        &json!({"mcpServers":{"agentnave":{"command":missing,"args":[]}}}).to_string(),
+    );
+    let project = hosts.context.project.join(".pi/mcp.json");
+    save(
+        &project,
+        r#"{"mcpServers":{"agentnave":{"command":"project"}}}"#,
+    );
+    let project_bytes = fs::read(&project).unwrap();
+    hosts.refresh();
+    assert_eq!(fs::read(&project).unwrap(), project_bytes);
+    let result = hosts.action("remove", &json!({"id":"pi"})).unwrap();
+    assert_eq!(result["ok"], true, "{result}");
+    assert!(h.read().unwrap().entry.is_none());
+    assert_eq!(fs::read(&project).unwrap(), project_bytes);
+}
+
+#[test]
 fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
     for id in IDS {
         let (_temp, mut hosts) = fixture();

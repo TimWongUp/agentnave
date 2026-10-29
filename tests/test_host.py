@@ -170,6 +170,14 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
             host.detect_host()
 
 
+def test_retired_host_history_still_loads() -> None:
+    from agentnave.store import Conversation
+
+    for retired in ("opencode", "gemini"):
+        saved = {"id": "c", "title": "t", "kind": "task", "host": retired}
+        assert Conversation.model_validate(saved).host == retired
+
+
 def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
     from agentnave.host import Host, _detect_parent  # pyright: ignore[reportPrivateUsage]
 
