@@ -558,6 +558,8 @@ fn line(status: &str, output: &str, error: &str) -> String {
     match status {
         "running" => lines().next_back().unwrap_or_default(),
         "succeeded" => lines().next().unwrap_or_default(),
+        // A cancel's reason only repeats the status.
+        "cancelled" => failure(status).into(),
         _ => {
             let error = error
                 .lines()

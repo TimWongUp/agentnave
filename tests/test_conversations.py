@@ -57,6 +57,10 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "assert 'Do not call AgentNave tools' in prompt.split('\\n\\nAssigned task:\\n', 1)[0]\n"
         "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
+        "if 'FAIL_TASK' in prompt:\n"
+        "    print(json.dumps({'type': 'result', 'is_error': True, 'session_id': 'failed',\n"
+        "                      'errors': 'workspace routing discovery timed out'}))\n"
+        "    sys.exit(1)\n"
         "session = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--resume=')),\n"
         "               'session-' + uuid.uuid4().hex[:8])\n"
         "if 'REPORT_MODEL' in prompt:\n"
@@ -825,6 +829,25 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
         assert after.st_ino == before.st_ino and after.st_mtime_ns > before.st_mtime_ns
         await _cancel(client, sleeping["invocation_id"])
         await asyncio.sleep(0.05)  # let the collector save the cancelled task
+        failing = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "FAIL_TASK", "cwd": str(tmp_path)},
+        )
+        # The error result may first wake wait as a blocker; wait again for the end.
+        while (await _wait_task(client, failing["invocation_id"]))["status"] == "running":
+            pass
+        await asyncio.sleep(0.05)  # let the collector save the failure
+        # The saved failure keeps the provider's message, not only the code.
+        failure = "provider_error: workspace routing discovery timed out"
+        read = await _call(
+            client, "read_conversation", {"conversation_id": failing["conversation_id"]}
+        )
+        assert cast(list[dict[str, object]], read["tasks"])[-1]["error"] == failure
+        assert (
+            _views(data_root, failing["conversation_id"])["director"]["tasks"][-1]["error"]
+            == failure
+        )
     assert not list((data_root / "live").glob("*.json"))  # removed once nothing runs
 
 
