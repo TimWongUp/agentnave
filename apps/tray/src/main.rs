@@ -79,7 +79,12 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
         && method != "GET"
         && !matches!(
             path,
-            "/app/window/drag" | "/app/window/zoom" | "/app/update/check"
+            "/app/window/drag"
+                | "/app/window/zoom"
+                | "/app/update/check"
+                | "/app/theme/system"
+                | "/app/theme/light"
+                | "/app/theme/dark"
         )
 }
 
@@ -138,6 +143,17 @@ fn main() {
                             }
                             None => data::Response::error(404, "找不到窗口"),
                         }
+                    }
+                    // Native appearance (the panel's glass, window buttons) follows the page's theme.
+                    ("POST", "/app/theme/system" | "/app/theme/light" | "/app/theme/dark")
+                        if action == Some("1") =>
+                    {
+                        app.set_theme(match path.as_str() {
+                            "/app/theme/light" => Some(tauri::Theme::Light),
+                            "/app/theme/dark" => Some(tauri::Theme::Dark),
+                            _ => None,
+                        });
+                        data::Response::json(&serde_json::json!({"ok": true}))
                     }
                     ("GET", "/settings/members") => reader.members(refresh),
                     (_, "/app/service/install") if method != "POST" => {
@@ -643,6 +659,7 @@ mod tests {
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
         assert!(!preview_refuses(true, "POST", "/app/update/check"));
+        assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
     }
 
     #[test]
