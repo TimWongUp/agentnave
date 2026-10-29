@@ -13,7 +13,8 @@ use serde_json::{Map, Value, json};
 
 use crate::members::PROVIDERS;
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+/// `agy models` waits on the network and takes about 20 seconds.
+const TIMEOUT: Duration = Duration::from_secs(45);
 /// The same common install locations the Python Adapters search after PATH.
 const COMMON_DIRS: [&str; 8] = [
     "~/.local/bin",
