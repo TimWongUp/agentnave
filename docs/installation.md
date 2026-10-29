@@ -546,13 +546,14 @@ transaction or automatic host configuration update.
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
 `agentnave-manager` Skill with its complete v0.53.1 directory. This release lets each CLI listing
 command in the App's probe run for up to 45 seconds instead of 15, so Antigravity CLI's
-network-bound `agy models` (about 20 seconds) lists its models again. The tool interface is
-unchanged, so no MCP reconnect is needed, and history, member configuration and settings need no
-migration. Upgrading from v0.52.0 or earlier also brings the v0.53.0 changes, including manual
-cleanup of an OpenCode host entry; see [v0.53.0 release notes](releases/v0.53.0.md). Upgrading
-from v0.45.0 or earlier also drops Gemini CLI as a host, which needs manual cleanup of its old
-entry; see [v0.46.0 release notes](releases/v0.46.0.md). See
-[v0.53.1 release notes](releases/v0.53.1.md).
+network-bound `agy models` (about 20 seconds) lists its models again. The fix ships in the App, so
+updating only the runtime does not bring it. The tool interface is unchanged, so no MCP reconnect
+is needed, and history, member configuration and settings need no migration. Upgrading from
+v0.52.0 or earlier also brings the v0.53.0 changes, including manual cleanup of an OpenCode host
+entry and an MCP reconnect for the reworded tool descriptions; see
+[v0.53.0 release notes](releases/v0.53.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
+CLI as a host, which needs manual cleanup of its old entry; see
+[v0.46.0 release notes](releases/v0.46.0.md). See [v0.53.1 release notes](releases/v0.53.1.md).
 
 ## Uninstall
 
