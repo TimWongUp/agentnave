@@ -476,7 +476,7 @@ function renderSidebar() {
       show.director_url,
       "conv",
       [
-        h("span.glyph." + show.mode, {}, show.mode === "task" ? "任" : "节"),
+        h("span.glyph." + show.mode, {}, show.mode === "task" ? "任" : "会"),
         h(
           "span.conv-body",
           {},
@@ -655,7 +655,7 @@ function renderOverview() {
                   h(
                     "span.glyph." + show.mode,
                     {},
-                    show.mode === "task" ? "任" : "节",
+                    show.mode === "task" ? "任" : "会",
                   ),
                   h(
                     "span.conv-body",
@@ -766,14 +766,14 @@ function renderShow() {
       state,
       [
         speaking.length ? `${speaking.join("、")} 作答中 · ` : "",
-        `${detail.seats.length} 位选手 · ${detail.messages.length} 条公开发言`,
+        `${detail.seats.length} 位参会者 · ${detail.messages.length} 条公开发言`,
       ].join(""),
       [
         detail.public_url
           ? h(
               "a.btn",
               { href: detail.public_url, target: "_blank", rel: "noreferrer" },
-              "选手视角 ↗",
+              "参会者视角 ↗",
             )
           : null,
         h(
@@ -978,7 +978,7 @@ function renderTranscript(detail, cast) {
         ),
         app.speaker
           ? "换一个角色看看。"
-          : "主持人开场、选手回应，公开发言会依次留在这里。",
+          : "主持人开场、参会者回应，公开发言会依次留在这里。",
       ),
     ];
   let round = null;
@@ -1196,7 +1196,7 @@ function renderPublic() {
           h(
             "span.meta",
             {},
-            `${detail.seats.length} 位选手 · ${detail.messages.length} 条公开发言`,
+            `${detail.seats.length} 位参会者 · ${detail.messages.length} 条公开发言`,
           ),
         ),
       ),

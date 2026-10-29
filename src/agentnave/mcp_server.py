@@ -1116,7 +1116,8 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
 )
 async def list_all(
     kind: Annotated[
-        Literal["show", "task"] | None, Field(description="Only shows or only task conversations.")
+        Literal["show", "task"] | None,
+        Field(description="Only meetings or only task conversations."),
     ] = None,
     limit: Annotated[int, Field(ge=1, le=200, description="Most recent conversations.")] = 20,
     *,

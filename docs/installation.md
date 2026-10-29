@@ -159,14 +159,14 @@ Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespac
 duplicates are normalized; empty items are ignored. An unset or empty value adds no exclusions beyond the detected host provider.
 Unknown IDs prevent server startup so a typo cannot silently disable the intended restriction.
 Every provider may be excluded; the tools remain discoverable, but `start_agent` then accepts none.
-Groups and shows still run, since exclusions apply to single tasks only.
+Meetings still run, since exclusions apply to single tasks only.
 
 Exclusions are fixed when the server starts. Restart it after changing configuration. MCP tool
 metadata lists permitted and excluded providers. A permitted provider is not necessarily installed
 or authenticated. `start_agent` rejects an excluded provider before creating an invocation; a call
 cannot override the exclusion and the server never substitutes a different provider. If no permitted
 provider is usable, the Manager reports the blocker. Exclusions apply to single tasks only: the host
-can run its own native subagents for those, while groups and shows may seat any provider, including
+can run its own native subagents for those, while meetings may seat any provider, including
 the host's own CLI.
 
 This is a restriction on calls through this MCP server, not a sandbox preventing the host from
