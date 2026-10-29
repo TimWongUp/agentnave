@@ -24,6 +24,7 @@
 - 托盘门（改动 `apps/tray` 或看板前端时，在 `apps/tray` 下）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。
 - 托盘界面目测：`scripts/preview_tray.sh` 把当前分支编译成「AgentNave 预览」并打开（macOS），与已装正式版并存、读同一份数据；预览版不改 AgentNave 数据、宿主配置和 Skill（改动数据的请求一律拒绝，启动也不修复宿主接入），不更新、不升级服务；只有它自己的界面显示偏好单独保存。界面改动先用它给用户看，不必退出正式版。AGENTNAVE_PREVIEW 构建的 clippy 用 `AGENTNAVE_PREVIEW=1 CARGO_TARGET_DIR=target/preview cargo clippy --all-targets -- -D warnings`。
 - 真实 CLI 标准套件：`uv run python scripts/real_suite.py [--duration 秒] [--providers ...]`，用各 CLI 的便宜模型覆盖服务各模式并持续运行（默认 10 分钟），会消耗配额，执行前同样需要授权；加 `--real-history` 写入真实历史，可在托盘和看板实时查看，标题用可读名称，工位角色为 `real-suite` 以便识别测试数据，事后在 App 清理；宿主自己的 CLI 不会被 `start_agent` 派发，需要覆盖它时从普通终端运行。
+- 接入为组员的 Provider CLI 必须同时接入为宿主（boss）；未经真实调用验收的宿主不接入。
 - 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
 
 ## Context change gate
@@ -35,6 +36,6 @@
 
 - 用户明确要求更新本项目版本时，按完整发布任务执行：同一任务完成版本 PR、审查、合并，并等待对应 tag 与 GitHub Release 发布成功；用户明确限制交付范围时遵从该限制。
 
-- 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
+- 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档、`README.md` 与 `README.en.md` 中的配套版本和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
 - 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release，并附上签名的 macOS 托盘安装包、更新包与 `latest.json`（需仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`）；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
 - 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。

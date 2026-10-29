@@ -25,10 +25,12 @@ type HostName = Literal[
     "grok",
     "antigravity",
     "pi",
-    "opencode",
+    "deepseek",
     "hermes",
     "zcode",
 ]
+# Hosts no longer connected or detected; saved history may still name them.
+type RetiredHostName = Literal["gemini", "opencode"]
 type HostSource = Literal["env", "parent", "unknown"]
 
 
@@ -41,7 +43,7 @@ class Host:
     def provider(self) -> str | None:
         if self.name == "workbuddy":
             return "codebuddy"
-        if self.name in {"opencode", "hermes"}:
+        if self.name == "hermes":
             return None
         return self.name
 
@@ -341,6 +343,7 @@ def _match(executable: str) -> HostName | None:
         "claude.app": "claude",
         "workbuddy.app": "workbuddy",
         "antigravity.app": "antigravity",
+        "deepseek harness.app": "deepseek",
         "zcode.app": "zcode",
     }
     for part in path.parts:
@@ -351,6 +354,8 @@ def _match(executable: str) -> HostName | None:
         name = path.stem.lower()
     if name == "agy":
         return "antigravity"
+    if name == "dsh":
+        return "deepseek"
     for host in get_args(HostName.__value__):
         if name == host and host not in {"workbuddy", "antigravity"}:
             return host

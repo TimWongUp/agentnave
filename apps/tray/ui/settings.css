@@ -222,7 +222,8 @@
 
 /* CLI rows: an icon and the installed version beside the name; missing CLIs fold into one line. */
 .cli-icon { display: grid; place-items: center; flex: none; width: 22px; height: 22px; }
-.cli-icon > * { width: 22px; height: 22px; border-radius: 6px; }
+/* .cli-icon > .avatar outranks hosts.css's .avatar, which loads later and would draw the mark at 36px */
+.cli-icon > *, .cli-icon > .avatar { width: 22px; height: 22px; border-radius: 6px; }
 .cli-icon .host-letter { display: grid; place-items: center; background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); font-size: 11px; font-weight: 650; color: var(--soft); }
 .cli-version { font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--muted); }
 .cli-missing { margin-top: 4px; }
