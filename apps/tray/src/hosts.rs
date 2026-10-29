@@ -1430,7 +1430,8 @@ fn reload_hint(id: &str) -> &'static str {
     }
 }
 /// ZCode falls back to `~/.agents/mcp.json` only while its own user config names no MCP server,
-/// so a first entry there would silently hide every server kept in the fallback.
+/// so a first entry there would silently hide every other server kept in the fallback. An
+/// `agentnave` server there is the one being connected, so it alone does not block.
 fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
     if before.rest["mcp"]["servers"]
         .as_object()
@@ -1441,11 +1442,10 @@ fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
     let path = home.join(".agents/mcp.json");
     let fallback =
         Document::parse(&fs::read_to_string(&path).ok()?, Format::Json, "mcpServers").ok()?;
-    let servers = fallback.entry.is_some()
-        || fallback.rest["mcpServers"]
-            .as_object()
-            .is_some_and(|servers| !servers.is_empty());
-    servers.then_some(path)
+    fallback.rest["mcpServers"]
+        .as_object()
+        .is_some_and(|servers| !servers.is_empty())
+        .then_some(path)
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)

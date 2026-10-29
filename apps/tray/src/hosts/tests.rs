@@ -1648,7 +1648,12 @@ fn zcode_fallback_servers_block_only_a_first_server() {
     assert_eq!(zcode_fallback(home, &empty), None);
     save(
         &fallback,
-        "{\"mcpServers\": {\"other\": {\"command\": \"keep\"}}}",
+        "{\"mcpServers\": {\"agentnave\": {\"command\": \"old\"}}}",
+    );
+    assert_eq!(zcode_fallback(home, &empty), None);
+    save(
+        &fallback,
+        "{\n  // JSONC\n  \"mcpServers\": {\"other\": {\"command\": \"keep\"}}\n}",
     );
     assert_eq!(zcode_fallback(home, &empty), Some(fallback.clone()));
     // Once ZCode's own config names a server the fallback is already ignored.
