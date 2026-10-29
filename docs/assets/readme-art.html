@@ -1,0 +1,463 @@
+<!doctype html>
+<!--
+  README art source. Renders the banner or the cast sheet from the tray App's painted art, stacked the
+  way the App stacks it (chair → character → desk → laptop → lid logo). Pick with the query string:
+  ?view=banner|cast&lang=zh|en. docs/assets/README.md has the render command.
+-->
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>AgentNave README art</title>
+    <style>
+      :root {
+        --ink: #3d3350;
+        --soft: #7a6f8c;
+        --cream: #fff8ee;
+        --peach: #ffd9c7;
+        --pink: #ffc4d6;
+        --mint: #c9eedc;
+        --sky: #cfe6ff;
+        --lilac: #e4dcff;
+        --wall: #fdf3e4;
+        --floor: #f1dcc0;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        background: transparent;
+      }
+      body {
+        font-family: "Yuanti SC", "PingFang SC", sans-serif;
+        color: var(--ink);
+      }
+      :lang(en) body,
+      body:lang(en) {
+        font-family: "Arial Rounded MT Bold", "Yuanti SC", sans-serif;
+      }
+
+      /* ---- one painted desk, the App's 1536×1200 stage ---- */
+      .scene {
+        position: relative;
+        aspect-ratio: 1536 / 1200;
+      }
+      .scene > img,
+      .scene > .fig {
+        position: absolute;
+        display: block;
+      }
+      .l-chair,
+      .scene > .fig {
+        left: 16.667%;
+        top: 0;
+        width: 66.667%;
+      }
+      .l-chair {
+        z-index: 1;
+      }
+      .scene > .fig {
+        z-index: 2;
+      }
+      .l-desk,
+      .l-laptop {
+        left: 0;
+        top: 35%;
+        width: 100%;
+        z-index: 3;
+      }
+      .l-laptop {
+        z-index: 4;
+      }
+      .boss .l-laptop {
+        top: 34.25%;
+      }
+      .lid {
+        position: absolute;
+        left: 50%;
+        top: 55.17%;
+        width: 8.5%;
+        transform: translate(-50%, -50%);
+        z-index: 5;
+      }
+      .boss .lid {
+        top: 54.42%;
+      }
+      /* a character: its frame plus any part layers; tails, wings and the halo go behind the body */
+      .fig {
+        position: relative;
+        aspect-ratio: 1;
+        isolation: isolate;
+      }
+      .fig > img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .fig > img.back {
+        z-index: -1;
+      }
+      .fig > img.halo {
+        -webkit-mask-image: conic-gradient(
+          at var(--ox) var(--oy),
+          #000 0 92deg,
+          transparent 112deg 248deg,
+          #000 268deg
+        );
+      }
+      .fig > img.fx {
+        inset: auto;
+        width: 13%;
+        height: auto;
+      }
+
+      .say {
+        position: absolute;
+        z-index: 6;
+        padding: 6px 14px;
+        border-radius: 16px 16px 16px 4px;
+        background: #fff;
+        box-shadow: 0 3px 0 rgba(61, 51, 80, 0.12);
+        font-size: 17px;
+        white-space: nowrap;
+      }
+
+      /* ---- banner 1280×640 ---- */
+      .banner {
+        position: relative;
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+        border-radius: 36px;
+        background:
+          radial-gradient(
+            circle at 40% 13%,
+            var(--pink) 0 60px,
+            transparent 61px
+          ),
+          radial-gradient(
+            circle at 3% 97%,
+            var(--lilac) 0 96px,
+            transparent 97px
+          ),
+          radial-gradient(
+            circle at 92% 92%,
+            var(--mint) 0 130px,
+            transparent 131px
+          ),
+          radial-gradient(#f3e2cf 1.6px, transparent 1.8px) 0 0 / 26px 26px,
+          var(--cream);
+      }
+      .left {
+        position: absolute;
+        left: 72px;
+        top: 0;
+        bottom: 0;
+        width: 520px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .mark {
+        width: 72px;
+        height: 72px;
+        padding: 8px;
+        border-radius: 20px;
+        margin-bottom: 26px;
+        background: #1f2a24;
+        box-shadow: 0 4px 0 rgba(61, 51, 80, 0.15);
+      }
+      h1 {
+        font-family: "Arial Rounded MT Bold", sans-serif;
+        font-size: 84px;
+        letter-spacing: -1px;
+        line-height: 1;
+      }
+      h1 .n {
+        color: #ff8fab;
+      }
+      .tag {
+        margin-top: 22px;
+        font-size: 29px;
+        line-height: 1.5;
+        color: var(--ink);
+      }
+      html:lang(en) .tag {
+        font-size: 25px;
+      }
+      html:lang(en) .chip {
+        font-size: 16px;
+      }
+      .tag b {
+        color: #ff7a9c;
+        font-weight: inherit;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 30px;
+      }
+      .chip {
+        padding: 8px 18px;
+        border-radius: 999px;
+        font-size: 18px;
+        border: 2px solid rgba(61, 51, 80, 0.12);
+      }
+      .chip:nth-child(1) {
+        background: var(--peach);
+      }
+      .chip:nth-child(2) {
+        background: var(--sky);
+      }
+      .chip:nth-child(3) {
+        background: var(--lilac);
+      }
+
+      .room {
+        position: absolute;
+        right: 44px;
+        top: 44px;
+        bottom: 44px;
+        width: 640px;
+        border-radius: 30px;
+        overflow: hidden;
+        background: linear-gradient(var(--wall) 0 36%, var(--floor) 36%);
+        border: 4px solid #fff;
+        box-shadow: 0 8px 0 rgba(61, 51, 80, 0.08);
+      }
+      .room::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 36%;
+        height: 6px;
+        background: #e6c9a6;
+      }
+      .boss-spot {
+        position: absolute;
+        left: 50%;
+        top: 46px;
+        width: 280px;
+        transform: translateX(-50%);
+      }
+      .plate {
+        position: absolute;
+        left: 50%;
+        top: -2px;
+        transform: translateX(-50%);
+        padding: 3px 14px;
+        border-radius: 999px;
+        background: #ffe6a8;
+        font-size: 15px;
+        z-index: 7;
+        white-space: nowrap;
+      }
+      .row {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 26px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .row .scene {
+        width: 196px;
+      }
+      /* the boss hands work down to each desk */
+      .routes {
+        position: absolute;
+        inset: 0;
+      }
+      /* party bunting along the top of the wall */
+      .bunting {
+        position: absolute;
+        left: 24px;
+        right: 24px;
+        top: 0;
+        display: flex;
+        justify-content: space-between;
+        border-top: 3px solid #e6c9a6;
+      }
+      .bunting i {
+        width: 26px;
+        height: 30px;
+        clip-path: polygon(0 0, 100% 0, 50% 100%);
+      }
+      .bunting i:nth-child(4n + 1) {
+        background: var(--pink);
+      }
+      .bunting i:nth-child(4n + 2) {
+        background: var(--sky);
+      }
+      .bunting i:nth-child(4n + 3) {
+        background: #ffe6a8;
+      }
+      .bunting i:nth-child(4n) {
+        background: var(--mint);
+      }
+
+      /* ---- cast sheet ---- */
+      .cast {
+        width: 1280px;
+        padding: 34px 40px 30px;
+        border-radius: 36px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 18px 14px;
+        background:
+          radial-gradient(#f3e2cf 1.6px, transparent 1.8px) 0 0 / 26px 26px,
+          var(--cream);
+      }
+      .card {
+        width: 158px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .card .bubble {
+        width: 150px;
+        height: 150px;
+        border-radius: 50%;
+        display: grid;
+        place-items: end center;
+        overflow: hidden;
+        border: 4px solid #fff;
+      }
+      .card .fig {
+        width: 150px;
+      }
+      .card .name {
+        margin-top: 10px;
+        padding: 4px 14px;
+        border-radius: 999px;
+        background: #fff;
+        font-size: 20px;
+        box-shadow: 0 3px 0 rgba(61, 51, 80, 0.1);
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      const ART = "../../apps/tray/ui/art/";
+      // parts.json's parts per character; halo needs its pivot for the upper-arc mask, as in the App.
+      const PARTS = {
+        claude: ["halo"],
+        grok: ["tuft", "devil-tail", "devil-tail-tip"],
+        gemini: ["ear-l", "ear-r", "tail"],
+        deepseek: ["tuft", "tail", "lop-l", "lop-r"],
+        codex: ["wing-l", "wing-r", "tail"],
+        qwen: ["pendant"],
+        glm: ["tuft"],
+        kimi: ["lop-l", "lop-r"],
+        hunyuan: ["tuft"],
+      };
+      const BACK = new Set([
+        "wing-l",
+        "wing-r",
+        "halo",
+        "devil-tail",
+        "devil-tail-tip",
+        "tail",
+      ]);
+      const HALO = {
+        idle: [49.95, 33.36],
+        working: [50.26, 33.68],
+        speaking: [50.26, 32.74],
+        done: [49.95, 33.05],
+      };
+      // One sprite from emit.json per emitting character, nudged off its origin the way it drifts.
+      const FX = {
+        minimax: ["note-1", 72, 18],
+        doubao: ["bubble-1", 6, 26],
+        muse: ["leaf-1", 70, 30],
+      };
+
+      const params = new URLSearchParams(location.search);
+      const lang = params.get("lang") === "en" ? "en" : "zh";
+      document.documentElement.lang = lang;
+      const T = (zh, en) => (lang === "en" ? en : zh);
+
+      function fig(name, state) {
+        const parts = (PARTS[name] || []).map((p) => {
+          const style =
+            p === "halo"
+              ? ` style="--ox:${HALO[state][0]}%;--oy:${HALO[state][1]}%"`
+              : "";
+          return `<img class="${BACK.has(p) ? "back " : ""}${p}" src="${ART}m/${name}/${p}-${state}.webp"${style}>`;
+        });
+        const fx = FX[name]
+          ? `<img class="fx" src="${ART}m/${name}/${FX[name][0]}.webp" style="left:${FX[name][1]}%;top:${FX[name][2]}%">`
+          : "";
+        return `<div class="fig"><img src="${ART}m/${name}/${state}.webp">${parts.join("")}${fx}</div>`;
+      }
+
+      function scene(name, state, { cli, boss = false } = {}) {
+        const open = state === "working";
+        return `<div class="scene${boss ? " boss" : ""}">
+    <img class="l-chair" src="${ART}office/chair.webp">${fig(name, state)}
+    <img class="l-desk" src="${ART}office/${boss ? "boss-desk" : "desk"}.webp">
+    <img class="l-laptop" src="${ART}office/${open ? "laptop" : "laptop-closed"}.webp">
+    ${open && cli ? `<img class="lid" src="${ART}cli/${cli}.svg">` : ""}</div>`;
+      }
+
+      function banner() {
+        return `<div class="banner">
+    <div class="left">
+      <img class="mark" src="tim-wong-mark.png">
+      <h1>Agent<span class="n">Nave</span></h1>
+      <p class="tag">${T("让你的 Agent <b>当上老板</b>，<br>带一屋子 CLI 小伙伴一起干活", "Your Agent <b>becomes the boss</b>,<br>with a whole office of CLI teammates")}</p>
+      <div class="chips">
+        <span class="chip">${T("本地 MCP", "Local MCP")}</span>
+        <span class="chip">${T("并联 · 串联协作", "Group rounds")}</span>
+        <span class="chip">${T("托盘小办公室", "Cozy tray office")}</span>
+      </div>
+    </div>
+    <div class="room">
+      <div class="bunting">${"<i></i>".repeat(14)}</div>
+      <svg class="routes" viewBox="0 0 632 544" fill="none" stroke="#ff9fb8" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9">
+        <path d="M300 252 C300 292 110 282 110 322" /><path d="M316 252 V322" /><path d="M332 252 C332 292 512 282 512 322" />
+      </svg>
+      <div class="boss-spot">${scene("claude", "working", { cli: "claude", boss: true })}<span class="plate">boss</span>
+        <span class="say" style="left:-112px;top:62px">${T("派活咯～", "New task!")}</span></div>
+      <div class="row">
+        <div style="position:relative">${scene("codex", "working", { cli: "codex" })}<span class="say" style="left:8px;top:-34px">${T("收到！", "On it!")}</span></div>
+        <div style="position:relative">${scene("deepseek", "speaking")}<span class="say" style="left:20px;top:-34px">${T("我有个想法～", "Idea time~")}</span></div>
+        <div style="position:relative">${scene("gemini", "done")}<span class="say" style="left:26px;top:-34px">${T("搞定啦 ✨", "All done ✨")}</span></div>
+      </div>
+    </div>
+  </div>`;
+      }
+
+      const CAST = [
+        ["claude", "Claude", "Claude", "#ffd9c7"],
+        ["codex", "GPT", "GPT", "#e4dcff"],
+        ["gemini", "Gemini", "Gemini", "#cfe6ff"],
+        ["grok", "Grok", "Grok", "#f0d8ff"],
+        ["deepseek", "DeepSeek", "DeepSeek", "#cfe0ff"],
+        ["glm", "GLM", "GLM", "#c9eedc"],
+        ["qwen", "Qwen", "Qwen", "#ddd8ff"],
+        ["kimi", "Kimi", "Kimi", "#e6e6ee"],
+        ["minimax", "MiniMax", "MiniMax", "#ffc4d6"],
+        ["hunyuan", "混元", "Hunyuan", "#cfeeff"],
+        ["doubao", "豆包", "Doubao", "#ffe6a8"],
+        ["muse", "Muse", "Muse", "#ffd0d0"],
+        ["default", "新同事", "Newcomer", "#e8f0d8"],
+      ];
+
+      function cast() {
+        return `<div class="cast">${CAST.map(
+          ([name, zh, en, bg]) =>
+            `<div class="card"><div class="bubble" style="background:${bg}">${fig(name, "idle")}</div><span class="name">${T(zh, en)}</span></div>`,
+        ).join("")}</div>`;
+      }
+
+      document.body.innerHTML =
+        params.get("view") === "cast" ? cast() : banner();
+    </script>
+  </body>
+</html>
