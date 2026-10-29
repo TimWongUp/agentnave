@@ -26,6 +26,7 @@ fn label(host: Option<&str>) -> &str {
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
         Some("opencode") => "OpenCode",
+        Some("gemini") => "Gemini CLI",
         Some("hermes") => "Hermes",
         _ => "未知 boss",
     }

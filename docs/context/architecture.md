@@ -158,7 +158,7 @@ App 内置八个宿主 ID：`codex|claude|codebuddy|workbuddy|grok|antigravity|p
 
 启动、POST /app/hosts/refresh 和服务安装成功后接管已有用户级条目。先解析全部用户层，复用备份、并发重读、原子替换及写后校验；确认安装元数据只声明 `agentnave-mcp = agentnave.relay:main` 且 launcher 可执行后，才修复已缺失的 `agentnave-mcp` 路径。服务尚未就绪时不改命令，自定义命令不自动替换；保留参数、环境、启停、工具过滤、未知字段与注释，补齐宿主标识。失败抑制签名包含宿主、各用户层路径及目标条目；无关字段变化不重试。项目层只提示、不改写。
 
-八个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份（拆分前的旧备份按配置计）。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回用户层与项目层；移除遍历全部用户层并逐个备份，项目层不写，多层独立替换不构成原子整体。
+八个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份（拆分前的旧备份按配置计）。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回用户层与项目层；移除用户层条目并备份，项目层不写。
 
 构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「技能」页列出说明与完整写法，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；开启时已接入则立即安装，否则下次接入时安装，关闭只移除 App 副本（共用同一目录的宿主仍有一方开启时保留），移除宿主条目时两者一并移除。评审工位存于独立的 `review.json`，经 `POST /app/review` 保存，不进入 `members.json`。Skill 为 missing/app/external/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的 App 副本才可更新或删除。接入及刷新更新旧版 App 副本；更新/删除前备份，替换前重查所有权。外部内容保持不变。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
