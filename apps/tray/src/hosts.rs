@@ -205,7 +205,7 @@ impl Host {
         }
     }
 }
-const IDS: [&str; 9] = [
+const IDS: [&str; 10] = [
     "codex",
     "claude",
     "codebuddy",
@@ -215,6 +215,7 @@ const IDS: [&str; 9] = [
     "pi",
     "opencode",
     "hermes",
+    "zcode",
 ];
 
 pub struct Hosts {
@@ -287,6 +288,16 @@ impl Hosts {
             .map(|(p, _)| PathBuf::from(p))
             .unwrap_or_else(|| h.join(".config"));
         let specs = [
+            (
+                "zcode",
+                "ZCode",
+                "zcode",
+                None,
+                h.join(".zcode"),
+                "cli/config.json",
+                Format::Zcode,
+                "servers",
+            ),
             (
                 "codex",
                 "Codex",
@@ -455,6 +466,7 @@ impl Hosts {
         let app = match host.id {
             "workbuddy" => Some("WorkBuddy.app"),
             "antigravity" => Some("Antigravity.app"),
+            "zcode" => Some("ZCode.app"),
             _ => None,
         };
         if let Some(path) = app.and_then(|name| {
@@ -525,6 +537,7 @@ impl Hosts {
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
                 "grok" => &[".grok/config.toml"],
                 "pi" => &[".pi/mcp.json"],
+                "zcode" => &["zcode.json", ".zcode/config.json"],
                 "opencode" => &[
                     "opencode.json",
                     "opencode.jsonc",
@@ -1166,6 +1179,8 @@ impl Hosts {
                     } else {
                         desired = Some(if id == "opencode" {
                             json!({"type":"local","command":[path],"environment":{"AGENTNAVE_HOST":id},"enabled":true})
+                        } else if id == "zcode" {
+                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":id}})
                         } else if id == "hermes" {
                             json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
                         } else {
@@ -1401,6 +1416,7 @@ fn reload_hint(id: &str) -> &'static str {
         "pi" => "重启 Pi",
         "opencode" => "重启 OpenCode",
         "hermes" => "重启 Hermes 网关",
+        "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",
     }
 }

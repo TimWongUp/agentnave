@@ -7,7 +7,7 @@
 **A thin local bridge from Agent Managers to CLI subagents.**
 
 AgentNave lets an Agent Manager launch Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI,
-Grok CLI, Pi Coding Agent, or DeepSeek Harness as subagents, one at a time or as a group answering in parallel or
+Grok CLI, Pi Coding Agent, DeepSeek Harness, or ZCode as subagents, one at a time or as a group answering in parallel or
 serial rounds. Each provider keeps its native authentication,
 configuration, and session model; AgentNave supplies the adapter and process supervision around
 it. Dispatched CLIs cannot ask anyone for approval, so by default AgentNave runs each one with its

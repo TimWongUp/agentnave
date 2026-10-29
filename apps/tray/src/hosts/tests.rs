@@ -48,6 +48,7 @@ fn save(path: &Path, text: &str) {
 }
 fn seed(host: &Host) -> String {
     match host.format {
+        Format::Zcode => "{\n\"unknown\":true,\"mcp\":{\"servers\":{\"other\":{\"command\":\"keep\"}}}}".into(),
         Format::Json => format!("{{\n// keep comment\n\"unknown\": {{\"a\": [1,2]}},\n\"{}\": {{\"other\": {{\"command\": \"keep\"}}}}}}", host.key),
         Format::Toml => "# keep comment\nunknown = { a = [1, 2] }\n[mcp_servers.other]\ncommand = 'keep'\n".into(),
         Format::Yaml => "# keep comment\nunknown:\n  - untouched\nmcp_servers:\n  other:\n    command: keep\ntail: 'exact' # keep\n".into(),
@@ -1589,4 +1590,28 @@ fn an_equivalent_root_after_upgrade_records_no_reload() {
         .action("root", &json!({"id":"codex","path":null}))
         .unwrap();
     assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+}
+
+#[test]
+fn zcode_nested_mcp_preserves_siblings_and_rejects_ambiguous_maps() {
+    let raw = "{\n  \"other\": true,\n  \"mcp\": {\"policy\": \"keep\", \"servers\": {\"other\": {\"command\": \"keep\"}}}\n}";
+    let document = Document::parse(raw, Format::Zcode, "servers").unwrap();
+    let entry = json!({"type":"stdio","command":"/new","env":{"AGENTNAVE_HOST":"zcode"}});
+    let changed = document.render(Some(&entry)).unwrap();
+    document.verify(&changed, Some(&entry)).unwrap();
+    assert!(changed.contains("\"policy\": \"keep\""));
+    let next = Document::parse(&changed, Format::Zcode, "servers").unwrap();
+    let removed = next.render(None).unwrap();
+    next.verify(&removed, None).unwrap();
+    for bad in [
+        "{\"mcp\":null}",
+        "{\"mcp\":{\"servers\":[]}}",
+        "{\"mcp\":{},\"mcp\":{}}",
+        "{\"mcp\":{\"servers\":{},\"servers\":{}}}",
+    ] {
+        assert!(
+            Document::parse(bad, Format::Zcode, "servers").is_err(),
+            "{bad}"
+        );
+    }
 }

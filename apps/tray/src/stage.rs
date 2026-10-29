@@ -25,6 +25,7 @@ fn label(host: Option<&str>) -> &str {
         Some("antigravity") => "Antigravity",
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
+        Some("zcode") => "ZCode",
         Some("opencode") => "OpenCode",
         Some("hermes") => "Hermes",
         _ => "未知 boss",
@@ -213,7 +214,7 @@ fn seat_desk(conversation: &str, seat: &str) -> String {
 
 fn cli_label(provider: &str) -> &str {
     match provider {
-        "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "deepseek" => {
+        "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "zcode" => {
             label(Some(provider))
         }
         other => other,

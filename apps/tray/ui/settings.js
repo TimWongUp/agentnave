@@ -47,8 +47,8 @@ function textNode(content) {
   return document.createTextNode(String(content == null ? "" : content));
 }
 
-// 7 supported CLI providers
-const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek"];
+// Supported CLI providers
+const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "zcode"];
 const PROVIDER_NAMES = {
   codex: "Codex CLI",
   claude: "Claude Code",
@@ -57,9 +57,11 @@ const PROVIDER_NAMES = {
   antigravity: "Antigravity CLI",
   pi: "Pi Coding Agent",
   deepseek: "DeepSeek Harness",
+  zcode: "ZCode",
 };
 const SOURCE_LABELS = {
   "codex-cache": "Codex 缓存",
+  "zcode-config": "ZCode 配置",
   command: "命令输出",
   help: "帮助信息",
   aliases: "别名配置",
@@ -307,6 +309,7 @@ const TIER_TEXT = {
     codex: "Codex 自动审核放行命令，读写限在工作目录内。",
     codebuddy: "CodeBuddy 的自动模式在派发时连查看目录都会拒绝，所以这一档与「完全放开」相同。",
     deepseek: "DeepSeek 没有自动审核，所以这一档与「完全放开」相同。",
+    zcode: "ZCode 的 auto 模式尚未实现，所以这一档与「完全放开」相同。",
   },
   full: {
     any: "不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。",

@@ -15,7 +15,9 @@ from agentnave.adapters.base import RESTRICTED_EXTRA_OPTIONS, restricted_options
 from agentnave.host import Host, HostName, HostSource
 from agentnave.models import InvocationRequest, ProviderOption
 
-type ProviderName = Literal["antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi"]
+type ProviderName = Literal[
+    "antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi", "zcode"
+]
 type Mode = Literal["task", "discussion"]
 type ReviewRole = Literal[
     "correctness-reviewer",
@@ -83,6 +85,8 @@ type PermissionTier = Literal["auto", "full"]
 # shell under -p and DeepSeek has no reviewer, so their auto grants full access. Pi has no
 # approval step.
 PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
+    # ZCode's "auto" is reserved and rejects every tool; it has no automatic reviewer yet.
+    "zcode": {"auto": {"permission_mode": "yolo"}, "full": {"permission_mode": "yolo"}},
     "claude": {
         "auto": {"permission_mode": "auto"},
         "full": {"permission_mode": "bypassPermissions"},
@@ -111,6 +115,7 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
 # Options that decide what a CLI may run unasked. A caller passing any of them keeps the
 # CLI's tier out; a tier replaces saved model options among them.
 PERMISSION_KEYS: dict[str, frozenset[str]] = {
+    "zcode": frozenset({"permission_mode"}),
     "claude": frozenset({"permission_mode"}),
     "codebuddy": frozenset({"permission_mode"}),
     "grok": frozenset({"permission_mode", "sandbox"}),

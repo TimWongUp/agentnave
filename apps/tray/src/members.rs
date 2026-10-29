@@ -8,7 +8,8 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-pub const PROVIDERS: [&str; 7] = [
+pub const PROVIDERS: [&str; 8] = [
+    "zcode",
     "antigravity",
     "claude",
     "codebuddy",

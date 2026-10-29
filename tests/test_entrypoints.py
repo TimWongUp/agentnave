@@ -666,7 +666,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "excluded",
-    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi"],
+    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi,zcode"],
 )
 async def test_stdio_enforces_host_exclusions_before_launch(
     excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

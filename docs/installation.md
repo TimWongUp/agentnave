@@ -116,6 +116,7 @@ numbers, for example `1, 3`:
 5. Antigravity CLI (`agy`)
 6. Pi Coding Agent (`pi`)
 7. DeepSeek Harness (`dsh`; on macOS bundled in `DeepSeek Harness.app`)
+8. ZCode (`zcode app-server --stdio`; on macOS the official `ZCode.app` Node bundle is also supported with Node.js installed)
 
 The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.
@@ -138,7 +139,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|opencode|hermes`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|opencode|hermes|zcode`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
 宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 的旧 Gemini CLI 条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
@@ -150,6 +151,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 | Grok CLI | `grok` |
 | Antigravity | `antigravity` |
 | Pi Coding Agent | `pi` |
+| ZCode | `zcode` |
 | Other hosts | Explicitly choose exclusions, or use an empty value |
 
 OpenCode does not have a same-product provider in the current registry; it needs no automatic
@@ -343,6 +345,29 @@ per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
 selection. Restart the host and verify Skill discovery separately.
 
+### ZCode
+
+Use `~/.zcode/cli/config.json`, keeping any other settings and servers:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "agentnave": {
+        "type": "stdio",
+        "command": "/absolute/path/to/agentnave-mcp",
+        "args": [],
+        "env": {"AGENTNAVE_HOST": "zcode"}
+      }
+    }
+  }
+}
+```
+
+Use the installed release launcher's absolute path. New sessions load this entry; in Desktop,
+inspect the connection under Settings → MCP. ZCode's native permission prompts still apply to
+boss tool calls. This host configuration does not change its permission mode.
+
 ### Other hosts
 
 Use the host's documented MCP registration interface. Configure the absolute command, empty
@@ -370,6 +395,7 @@ configuration directories.
 | Grok CLI | `~/.grok/skills` |
 | Antigravity | `~/.gemini/config/skills` |
 | Hermes | `~/.hermes/skills` |
+| ZCode | `~/.zcode/skills` |
 | Pi | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` |
 | OpenCode | 有效配置目录的 `skills`，默认 `~/.config/opencode/skills`（未实测） |
 

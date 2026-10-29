@@ -242,3 +242,32 @@ def test_macos_info_reads_privileged_ancestors() -> None:
     assert process_info._macos_info(1).uid == 0  # pyright: ignore[reportPrivateUsage]
     own = process_info._macos_info(os.getpid())  # pyright: ignore[reportPrivateUsage]
     assert own == _ProcessInfo(os.getppid(), os.geteuid())
+
+
+def test_zcode_reads_only_native_assistant_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    from agentnave.host import Host, _match, session_model  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    database = tmp_path / ".zcode/cli/db/db.sqlite"
+    database.parent.mkdir(parents=True)
+    session = "sess_11111111-1111-4111-8111-111111111111"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "CREATE TABLE message (session_id TEXT, time_created INTEGER, sequence INTEGER, data TEXT)"
+        )
+        for sid, role, model, sequence in [
+            (session, "assistant", "actual", 1),
+            (session, "user", "requested", 2),
+            ("other", "assistant", "other", 3),
+        ]:
+            db.execute(
+                "INSERT INTO message VALUES (?, 1000, ?, ?)",
+                (sid, sequence, json.dumps({"role": role, "modelId": model})),
+            )
+    assert session_model(Host("zcode"), session) == "actual"
+    assert session_model(Host("zcode"), "../bad") is None
+    assert _match("/Applications/ZCode.app/Contents/MacOS/ZCode") == "zcode"
