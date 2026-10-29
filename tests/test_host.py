@@ -158,14 +158,13 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
     for name, provider in (
         ("codex", "codex"),
         ("workbuddy", "codebuddy"),
-        ("opencode", None),
         ("hermes", None),
     ):
         monkeypatch.setenv("AGENTNAVE_HOST", name)
         identified = host.detect_host()
         assert identified.name == name and identified.source == "env"
         assert identified.provider == provider
-    for value in ("unknown", "", "CODEX"):
+    for value in ("unknown", "", "CODEX", "opencode"):
         monkeypatch.setenv("AGENTNAVE_HOST", value)
         with pytest.raises(ValueError, match="Unknown AGENTNAVE_HOST"):
             host.detect_host()
@@ -190,7 +189,6 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("grok", "grok"),
         ("agy", "antigravity"),
         ("pi", "pi"),
-        ("opencode", "opencode"),
         ("hermes", "hermes"),
         ("/Applications/Codex.app/Contents/MacOS/Electron", "codex"),
         ("/Applications/Claude.app/Contents/MacOS/Claude", "claude"),
@@ -204,7 +202,7 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("node", "/pkg/codebuddy.js", "codebuddy"),
         ("bun", "/pkg/pi.mjs", "pi"),
         ("python", "/pkg/hermes.py", "hermes"),
-        ("deno", "/pkg/opencode.cjs", "opencode"),
+        ("deno", "/pkg/grok.cjs", "grok"),
         ("uvx", "hermes", "hermes"),
         ("npx", "codebuddy", "codebuddy"),
     ):
