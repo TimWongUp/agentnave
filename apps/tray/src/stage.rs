@@ -1,6 +1,6 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use serde_json::{Value, json};
@@ -19,6 +19,7 @@ fn label(host: Option<&str>) -> &str {
     match host {
         Some("codex") => "Codex",
         Some("claude") => "Claude Code",
+        Some("claude-desktop") => "Claude 桌面",
         Some("codebuddy") => "CodeBuddy",
         Some("workbuddy") => "WorkBuddy",
         Some("grok") => "Grok",
@@ -26,6 +27,7 @@ fn label(host: Option<&str>) -> &str {
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
         Some("opencode") => "OpenCode",
+        Some("gemini") => "Gemini CLI",
         Some("hermes") => "Hermes",
         _ => "未知 boss",
     }
@@ -557,6 +559,8 @@ fn line(status: &str, output: &str, error: &str) -> String {
     match status {
         "running" => lines().next_back().unwrap_or_default(),
         "succeeded" => lines().next().unwrap_or_default(),
+        // A cancel's reason only repeats the status.
+        "cancelled" => failure(status).into(),
         _ => {
             let error = error
                 .lines()
@@ -688,6 +692,8 @@ struct Group {
     id: String,
     host: Option<String>,
     handover: Handover,
+    /// The boss chats in Claude Desktop's Code tab: shown as its own app, still the `claude` host.
+    desktop: bool,
     updated: String,
     at: i64,
     title: String,
@@ -719,6 +725,7 @@ impl Group {
             latest_end: None,
             host: None,
             handover: Handover::default(),
+            desktop: false,
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
@@ -747,16 +754,22 @@ impl Group {
     }
 
     fn header(&self) -> Value {
-        let (host, label) = match &self.handover.host {
+        let (host, name) = match &self.handover.host {
             Some(host) if self.handover.changed => (Some(host.as_str()), label(Some(host))),
             _ => (self.host.as_deref(), self.manager_label()),
+        };
+        let (app, label) = match host {
+            Some("claude") if self.desktop => {
+                (Some("claude-desktop"), label(Some("claude-desktop")))
+            }
+            _ => (None, name),
         };
         let handover = if self.handover.pending {
             Some("pending")
         } else {
             self.handover.changed.then_some("changed")
         };
-        json!({"group": self.id, "host": host, "label": label, "handover": handover,
+        json!({"group": self.id, "host": host, "app": app, "label": label, "handover": handover,
             "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
@@ -1817,6 +1830,7 @@ pub(crate) fn respond(
     data_exists: bool,
     limit: usize,
     handovers: &HashMap<String, Handover>,
+    desktop: &HashSet<String>,
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let (requested, focus) = match requested {
@@ -1851,6 +1865,7 @@ pub(crate) fn respond(
         if let Some(handover) = handovers.get(&group.id) {
             group.handover = handover.clone();
         }
+        group.desktop = desktop.contains(&group.id);
     }
     // Work going on first, then unhandled failures, then the most recent; never empty while history exists.
     let tier = |status: &str| match status {

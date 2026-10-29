@@ -696,7 +696,7 @@ function renderCards() {
         "div.cards-empty",
         {},
         h("strong", {}, "没有检测到受支持的宿主"),
-        "支持 Codex、Claude Code、CodeBuddy Code、WorkBuddy 桌面、Grok CLI、Antigravity、Pi、DeepSeek Harness、Gemini CLI、OpenCode、Hermes。安装其中任意一个后点“刷新检测”。",
+        "支持 Codex、Claude Code、CodeBuddy Code、WorkBuddy 桌面、Grok CLI、Antigravity、Pi、DeepSeek Harness、Hermes。安装其中任意一个后点“刷新检测”。",
       ),
     );
     return;

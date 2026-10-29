@@ -26,9 +26,10 @@ type HostName = Literal[
     "antigravity",
     "pi",
     "deepseek",
-    "opencode",
     "hermes",
 ]
+# Hosts no longer connected or detected; saved history may still name them.
+type RetiredHostName = Literal["gemini", "opencode"]
 type HostSource = Literal["env", "parent", "unknown"]
 
 
@@ -41,7 +42,7 @@ class Host:
     def provider(self) -> str | None:
         if self.name == "workbuddy":
             return "codebuddy"
-        if self.name in {"opencode", "hermes"}:
+        if self.name == "hermes":
             return None
         return self.name
 
