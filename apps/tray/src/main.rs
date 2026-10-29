@@ -450,23 +450,38 @@ fn round_panel(panel: &WebviewWindow) {
     }
 }
 
+/// Hide on losing focus. The time guards the reopen: a click on the menu bar icon first blurs
+/// the panel, then toggles it, and that toggle must not show it again.
 fn hide_panel(app: &AppHandle) {
-    if let Some(panel) = app.get_webview_window(PANEL)
-        && panel.is_visible().unwrap_or(false)
-    {
-        let _ = panel.hide();
+    if hide_visible_panel(app) {
         *app.state::<Tray>().panel_hidden.lock().unwrap() = Some(Instant::now());
     }
 }
 
+/// Whether the panel was showing. Once hidden by an outside click it stays hidden on the blur
+/// that may follow, so that blur sets no reopen guard either.
+fn hide_visible_panel(app: &AppHandle) -> bool {
+    let Some(panel) = app.get_webview_window(PANEL) else {
+        return false;
+    };
+    let shown = panel.is_visible().unwrap_or(false);
+    if shown {
+        let _ = panel.hide();
+    }
+    shown
+}
+
 /// Recent macOS may refuse to activate the app when its menu bar icon is clicked, so the
 /// panel never becomes key and never loses focus. A global monitor sees only clicks sent to
-/// other apps: the panel itself and its menu bar icon never trigger it.
+/// other apps: the panel itself and its menu bar icon never trigger it, so it needs no reopen
+/// guard and an immediate click on the icon opens the panel again.
 #[cfg(target_os = "macos")]
 fn hide_panel_on_outside_click(app: &AppHandle) {
     use objc2_app_kit::{NSEvent, NSEventMask};
     let app = app.clone();
-    let handler = block2::RcBlock::new(move |_| hide_panel(&app));
+    let handler = block2::RcBlock::new(move |_| {
+        hide_visible_panel(&app);
+    });
     let mask =
         NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
     // The monitor lives as long as the app.
