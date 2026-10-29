@@ -1484,7 +1484,12 @@ fn assert_scoped_takeover(raw: &str, expected: &str, format: Format, key: &'stat
 fn dsh_patch_list_round_trips_and_stays_a_list_dsh_can_boot() {
     let entry =
         json!({"serverName":"agentnave","transport":"stdio","command":"/old","env":{"KEEP":"x"}});
-    for raw in ["", "# mine\n[]\n", "- id: hmr\n  disabled: true"] {
+    for raw in [
+        "",
+        "# mine\n[]\n",
+        "[] # 暂无补丁\n",
+        "- id: hmr\n  disabled: true",
+    ] {
         let doc = Document::parse(raw, Format::DshPatch, "insert").unwrap();
         assert!(doc.entry.is_none());
         let written = doc.render(Some(&entry)).unwrap();
@@ -1504,6 +1509,7 @@ fn dsh_patch_list_round_trips_and_stays_a_list_dsh_can_boot() {
         after.verify(&removed, None).unwrap();
         let restored = match raw {
             "" => "[]\n",
+            "[] # 暂无补丁\n" => "# 暂无补丁\n[]\n",
             "- id: hmr\n  disabled: true" => "- id: hmr\n  disabled: true\n",
             _ => raw,
         };
@@ -1512,6 +1518,12 @@ fn dsh_patch_list_round_trips_and_stays_a_list_dsh_can_boot() {
     for raw in [
         "- insert:\n    - id: agentnave\n      config: {}\n    - id: other\n",
         "[{id: hmr}]\n",
+        // A whole-list indent is valid YAML, but appending a column-0 item would add a root.
+        "  - id: hmr\n    disabled: true\n",
+        "\u{feff}- id: hmr\n",
+        "---\n- id: hmr\n",
+        // Another plugin's row named agentnave is not AgentNave's.
+        "- insert:\n    - id: agentnave\n      name: other\n      config:\n        command: x\n",
     ] {
         assert!(
             Document::parse(raw, Format::DshPatch, "insert").is_err(),

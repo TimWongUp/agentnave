@@ -219,7 +219,10 @@ impl Document {
                     block.push_str(&yaml_line(key, value, 8, 2, eol));
                 }
                 if let Some((offset, line)) = dsh_lines(&self.raw).find(|(_, l)| dsh_empty(l)) {
-                    // Expand the empty flow list before adding a block item.
+                    // Expand the empty flow list before adding a block item, keeping its comment.
+                    if let Some(comment) = line.find('#').map(|i| line[i..].trim_end()) {
+                        block.insert_str(0, &format!("{comment}{eol}"));
+                    }
                     out.replace_range(offset..offset + line.len(), &block);
                 } else {
                     if !out.is_empty() && !out.ends_with('\n') {
@@ -317,7 +320,13 @@ impl Document {
             if written != expected {
                 return Err("写后校验发现其他 YAML 内容变化".into());
             }
-        } else if after.rest != self.rest {
+        }
+        if matches!(self.format, Format::DshPatch) {
+            // Independent of render: other items and comments survive, only `[]` comes or goes.
+            if dsh_rest(&after.rest) != dsh_rest(&self.rest) {
+                return Err("写后校验发现其他补丁变化".into());
+            }
+        } else if !matches!(self.format, Format::Yaml) && after.rest != self.rest {
             return Err("写后校验发现其他配置变化".into());
         }
         Ok(())
@@ -629,16 +638,41 @@ fn dsh_empty(line: &str) -> bool {
     yaml_value_text(line).is_ok_and(|text| text == "[]")
 }
 
+/// Everything but AgentNave's item, ignoring an empty `[]` (its comment kept) and line endings.
+fn dsh_rest(rest: &Value) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in rest.as_str().unwrap_or_default().lines() {
+        if line.starts_with([' ', '\t']) || !dsh_empty(line) {
+            lines.push(line.trim_end());
+        } else if let Some(i) = line.find('#') {
+            lines.push(line[i..].trim_end());
+        }
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+const DSH_MANUAL: &str = "DeepSeek Harness 补丁需为顶格书写的块式 YAML 列表（不支持 BOM、`---`、缩进或流式列表），需手动配置";
+
 /// Top-level list items, each up to the next column-0 line. Only block lists are edited: any
 /// other column-0 content than items, comments and an empty `[]` needs manual configuration.
 fn dsh_items(raw: &str) -> Result<Vec<Range<usize>>, String> {
     let mut items: Vec<Range<usize>> = Vec::new();
+    // A list indented as a whole is valid YAML, but an appended column-0 item would add a root.
+    let first = raw
+        .lines()
+        .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
+    if first.is_some_and(|l| l.starts_with([' ', '\t'])) {
+        return Err(DSH_MANUAL.into());
+    }
     let lines: Vec<_> = dsh_lines(raw).collect();
     for (i, (offset, line)) in lines.iter().enumerate() {
         if line.starts_with("- ") || line.trim_end() == "-" {
             items.push(*offset..lines.get(i + 1).map_or(raw.len(), |next| next.0));
         } else if !line.starts_with('#') && !dsh_empty(line) {
-            return Err("DeepSeek Harness 补丁需为块式 YAML 列表，需手动配置".into());
+            return Err(DSH_MANUAL.into());
         }
     }
     Ok(items)
@@ -694,10 +728,14 @@ fn dsh_item(raw: &str) -> Result<Option<DshItem>, String> {
             if !id.is_some_and(|f| yaml_scalar(&f.value).is_ok_and(|v| v == "agentnave")) {
                 continue;
             }
+            // dsh's plugin manager matches a row by id and name; another plugin's row is not ours.
+            let name = fields.iter().find(|f| f.key == "name");
+            let ours =
+                name.is_some_and(|f| yaml_scalar(&f.value).is_ok_and(|v| v == DSH_MCP_CLIENT));
             let config = fields
                 .iter()
                 .find(|f| f.key == "config" && f.value.is_empty());
-            let (Some(config), 1, None) = (config, rows.len(), found.as_ref()) else {
+            let (Some(config), true, 1, None) = (config, ours, rows.len(), found.as_ref()) else {
                 return Err("DeepSeek Harness 的 agentnave 条目需手动配置".into());
             };
             let start = item.start + row.start;
