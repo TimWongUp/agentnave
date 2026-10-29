@@ -25,7 +25,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 ## ✨ 能做什么
 
 - 🧑‍💼 **派一位组员干活**：`start_agent` 把任务交给一个 CLI，结果只回给老板
-- 👯 **拉几位组员一起答**：`run_round` 开一档 2–7 席的节目。并联轮各自独立作答，串联轮后发言的人能看到前面的回答。「先各答再讨论」「多轮接力」都是这两种轮次的组合
+- 👯 **拉几位组员开个会**：`run_round` 请 2–7 位组员进会议室。默认开两轮并联：第一轮各自给方案，第二轮看过大家的回答再补充，最后由 boss 总结。想让大家最后接力收个尾，就加一轮串联，后发言的人能看到前面的回答
 - 🔍 **先审再公开**：开了审核，每条回答由老板决定公开还是留作私聊，不公开的回答其他席位看不到
 - 🏢 **托盘小办公室**：工位、会议室、对话记录一目了然，旧工作区可以一键清理
 - 🧠 **原生会话照旧**：每个 CLI 用自己的登录、配置和原生会话，保留 `session_id`，之后能接着聊
@@ -38,7 +38,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 | **老板**（接入 AgentNave 的宿主） | Codex、Claude Code、CodeBuddy / WorkBuddy、Grok、Antigravity、Pi、Hermes、OpenCode（未实测）         |
 | **组员**（被派活的 CLI）          | Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness |
 
-宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但节目里可以有它的席位。
+宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
 
 ## 🎀 组员图鉴
 
@@ -76,14 +76,14 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0
 安装指南本来就是写给 Agent 看的，可以直接交给你的 Agent，让它照着检查和安装。
 可选的 [agentnave-review Skill](skills/agentnave-review/SKILL.md) 是一道按风险分级的 PR／合并评审门，评审工位也由 AgentNave 派出去的只读 CLI 担任。
 
-任务和节目的历史保存在 `~/.agentnave/`（也可以用 `AGENTNAVE_DATA_DIR` 指定别的目录）。各 CLI 的登录、配置和原生会话仍归 CLI 自己管。
+任务和会议的历史保存在 `~/.agentnave/`（也可以用 `AGENTNAVE_DATA_DIR` 指定别的目录）。各 CLI 的登录、配置和原生会话仍归 CLI 自己管。
 
 ## 🧰 MCP 工具一览
 
 | 工具                | 用途                                                                 |
 | ------------------- | -------------------------------------------------------------------- |
 | `start_agent`       | 派一个 CLI 任务，立即返回 `invocation_id`，任务会自动保存            |
-| `run_round`         | 开一档 2–7 席的节目、跑一轮并联或串联，或者以主持人身份发言          |
+| `run_round`         | 开一场 2–7 席的会议、跑一轮并联或串联，或者以主持人身份发言          |
 | `wait`              | 最多等五分钟，任一任务或轮次有结果就提前返回                         |
 | `cancel`            | 停止任务或轮次，返回它的最终结果                                     |
 | `decide_answers`    | 开了审核时，逐条决定回答公开还是留作私聊                             |
@@ -106,7 +106,7 @@ AgentNave 只负责把活派出去、管好进程、把结果原样带回来。�
 | 内存中的调用生命周期              | 选 CLI、选模型                 |
 | POSIX 进程组 / Windows Job Object | 并行度、复核与综合             |
 | 统一格式的终态结果                | 重试、权限和 worktree          |
-| 保存的并联／串联节目轮次          | 谁来答、按什么顺序、答得行不行 |
+| 保存的并联／串联会议轮次          | 谁来答、按什么顺序、答得行不行 |
 
 派出去的 CLI 没法找人点「批准」，所以 AgentNave 默认让它用自带的自动审批；CLI 没有自动审批时就直接放开。在 App 里也可以把某个 CLI 改成完全放开。
 AgentNave 没有给人用的命令行，`agentnave-mcp` 只是 MCP 宿主启动它用的 STDIO 入口。
@@ -115,7 +115,7 @@ AgentNave 没有给人用的命令行，`agentnave-mcp` 只是 MCP 宿主启动�
 <summary>🔒 生命周期与安全</summary>
 
 调用句柄只存在于当前 MCP 服务进程里，完成七天后失效。服务停止时，AgentNave 会尽力结束仍留在 Provider 进程树里的进程。
-重启后找不回旧句柄，但保存的节目可以继续；留下的 Provider `session_id` 也可以传给新的 `start_agent` 接着用。
+重启后找不回旧句柄，但保存的会议可以继续；留下的 Provider `session_id` 也可以传给新的 `start_agent` 接着用。
 
 在 macOS／Linux 上，AgentNave 给每个 Provider 配一个专用的 POSIX 进程组 supervisor；在 Windows 上用 kill-on-close 的 Job Object：
 Provider 以挂起状态创建，先加入 Job Object 再恢复运行，子孙进程就不会跑到受管进程树之外。

@@ -26,7 +26,7 @@ has gone to the meeting room, and what everyone said.
 ## ✨ What it does
 
 - 🧑‍💼 **Send one teammate a task**: `start_agent` hands a task to one CLI; the result goes back only to the boss
-- 👯 **Ask a group**: `run_round` opens a show of 2–7 seats. In a parallel round everyone answers on their own; in a serial round each speaker sees the earlier answers. "Answer first, then discuss" and multi-round relays are combinations of the two
+- 👯 **Call a meeting**: `run_round` brings 2–7 teammates into the meeting room. By default it runs two parallel rounds: everyone proposes on their own, then revises after reading all the answers, and the boss sums up. Ask for a final serial round when you want them to close it out in turn, each speaker seeing the earlier answers
 - 🔍 **Review before sharing**: with review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer
 - 🏢 **A cozy tray office**: desks, the meeting room and every conversation at a glance, with one-click cleanup of old workspaces
 - 🧠 **Native sessions stay native**: each CLI keeps its own login, configuration and native session; its `session_id` is kept so you can continue later
@@ -39,7 +39,7 @@ has gone to the meeting room, and what everyone said.
 | **Boss** (the host that connects to AgentNave) | Codex, Claude Code, CodeBuddy / WorkBuddy, Grok, Antigravity, Pi, Hermes, OpenCode (untested)        |
 | **Teammate** (the CLI that gets the work)      | Antigravity CLI, Claude Code, CodeBuddy Code, Codex CLI, Grok CLI, Pi Coding Agent, DeepSeek Harness |
 
-A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a show.
+A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a meeting.
 
 ## 🎀 Meet the team
 
@@ -83,7 +83,7 @@ can hand it straight to yours and let it check and install. The optional
 [agentnave-review Skill](skills/agentnave-review/SKILL.md) adds a risk-graded review gate for PRs and merges, staffed by
 read-only reviewer CLIs that AgentNave dispatches.
 
-Task and show history lives in `~/.agentnave/` (or the directory set by `AGENTNAVE_DATA_DIR`). Each CLI's login,
+Task and meeting history lives in `~/.agentnave/` (or the directory set by `AGENTNAVE_DATA_DIR`). Each CLI's login,
 configuration and native sessions stay with that CLI.
 
 ## 🧰 The MCP tools
@@ -91,7 +91,7 @@ configuration and native sessions stay with that CLI.
 | Tool                | Purpose                                                                                   |
 | ------------------- | ----------------------------------------------------------------------------------------- |
 | `start_agent`       | Start one CLI task; returns an `invocation_id` immediately and saves the task             |
-| `run_round`         | Open a show of 2–7 seats, run a parallel or serial round, or post a host remark           |
+| `run_round`         | Open a meeting of 2–7 seats, run a parallel or serial round, or post a host remark        |
 | `wait`              | Wait up to five minutes; returns early as soon as any task or round is ready              |
 | `cancel`            | Stop a task or a round and return its final result                                        |
 | `decide_answers`    | With review on, publish each answer or keep it private                                    |
@@ -116,7 +116,7 @@ whom to ask and whether to double-check stay with the boss, who already has the 
 | In-memory invocation lifecycle             | Provider and model selection               |
 | POSIX process groups / Windows Job Objects | Parallelism, review and synthesis          |
 | Normalized terminal results                | Retries, permissions and worktrees         |
-| Saved parallel and serial show rounds      | Who answers, in what order, and acceptance |
+| Saved parallel and serial meeting rounds   | Who answers, in what order, and acceptance |
 
 A dispatched CLI has no one to click "approve", so by default AgentNave runs it with its own automatic approval
 reviewer, or without approvals where it has none. The App can switch a CLI to full access. AgentNave has no
@@ -127,7 +127,7 @@ human-facing CLI: `agentnave-mcp` is only the STDIO entry point an MCP host star
 
 Invocation handles live only in the current MCP server process and expire seven days after completion. When the server
 stops, AgentNave makes a best-effort attempt to end processes still in the provider process tree. A restart cannot
-recover old handles, but saved shows continue and a retained provider `session_id` can be passed to a new
+recover old handles, but saved meetings continue and a retained provider `session_id` can be passed to a new
 `start_agent` call.
 
 On macOS/Linux each provider runs under a dedicated POSIX process-group supervisor; on Windows under a kill-on-close
