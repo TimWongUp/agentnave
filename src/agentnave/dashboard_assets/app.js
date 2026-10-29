@@ -38,8 +38,8 @@ const REVIEW = {
 const HOST = { id: "@host", label: "主持人", model: "", provider: "host" };
 const EXAMPLES = [
   [
-    "节目",
-    "开一档节目，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。",
+    "会议",
+    "开个会，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。",
   ],
   ["做任务", "让 CLI 完成任务：……，将结果放进同一个任务会话。"],
 ];
@@ -452,7 +452,7 @@ function renderSidebar() {
     { role: "group", "aria-label": "按用途筛选" },
     [
       ["all", "全部"],
-      ["show", "节目"],
+      ["show", "会议"],
       ["task", "任务"],
     ].map(([mode, label]) =>
       h(
@@ -476,7 +476,7 @@ function renderSidebar() {
       show.director_url,
       "conv",
       [
-        h("span.glyph." + show.mode, {}, show.mode === "task" ? "任" : "节"),
+        h("span.glyph." + show.mode, {}, show.mode === "task" ? "任" : "会"),
         h(
           "span.conv-body",
           {},
@@ -507,7 +507,7 @@ function renderSidebar() {
           {},
           shows.length
             ? "没有匹配的会话"
-            : "还没有会话。在 boss 的对话中开始一档节目或一个任务。",
+            : "还没有会话。在 boss 的对话中开始一场会议或一个任务。",
         )
       : null,
   );
@@ -627,7 +627,7 @@ function renderOverview() {
       tile("进行中", running.length, "run", "all"),
       tile("待审核", review.length, "review", "all"),
       tile(
-        "节目",
+        "会议",
         shows.filter((show) => show.mode === "show").length,
         "",
         "show",
@@ -655,7 +655,7 @@ function renderOverview() {
                   h(
                     "span.glyph." + show.mode,
                     {},
-                    show.mode === "task" ? "任" : "节",
+                    show.mode === "task" ? "任" : "会",
                   ),
                   h(
                     "span.conv-body",
@@ -664,7 +664,7 @@ function renderOverview() {
                     h(
                       "span.conv-meta",
                       {},
-                      show.mode === "task" ? "任务" : "节目",
+                      show.mode === "task" ? "任务" : "会议",
                     ),
                   ),
                   pill(state),
@@ -697,7 +697,7 @@ function renderOverview() {
           h(
             "p",
             {},
-            h("span.badge." + (label === "节目" ? "show" : "task"), {}, label),
+            h("span.badge." + (label === "会议" ? "show" : "task"), {}, label),
             " ",
             text,
           ),
@@ -762,18 +762,18 @@ function renderShow() {
     {},
     header(
       detail,
-      [h("span.badge.show", {}, "节目"), flags],
+      [h("span.badge.show", {}, "会议"), flags],
       state,
       [
         speaking.length ? `${speaking.join("、")} 作答中 · ` : "",
-        `${detail.seats.length} 位选手 · ${detail.messages.length} 条公开发言`,
+        `${detail.seats.length} 位参会者 · ${detail.messages.length} 条公开发言`,
       ].join(""),
       [
         detail.public_url
           ? h(
               "a.btn",
               { href: detail.public_url, target: "_blank", rel: "noreferrer" },
-              "选手视角 ↗",
+              "参会者视角 ↗",
             )
           : null,
         h(
@@ -978,7 +978,7 @@ function renderTranscript(detail, cast) {
         ),
         app.speaker
           ? "换一个角色看看。"
-          : "主持人开场、选手回应，公开发言会依次留在这里。",
+          : "主持人开场、参会者回应，公开发言会依次留在这里。",
       ),
     ];
   let round = null;
@@ -1186,7 +1186,7 @@ function renderPublic() {
         h(
           "p.eyebrow",
           {},
-          h("span.badge.show", {}, "节目"),
+          h("span.badge.show", {}, "会议"),
           "全员可见的公开记录",
         ),
         h("h1", {}, detail.title),
@@ -1196,7 +1196,7 @@ function renderPublic() {
           h(
             "span.meta",
             {},
-            `${detail.seats.length} 位选手 · ${detail.messages.length} 条公开发言`,
+            `${detail.seats.length} 位参会者 · ${detail.messages.length} 条公开发言`,
           ),
         ),
       ),

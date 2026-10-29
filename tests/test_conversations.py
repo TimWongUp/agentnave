@@ -429,7 +429,7 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
         rejected = await client.call_tool(
             "run_round", {"group_id": show["group_id"], "title": "again", "prompt": "x"}
         )
-        assert rejected.is_error and "only open a new show" in str(rejected.content)
+        assert rejected.is_error and "only open a new meeting" in str(rejected.content)
         sleeping = await _call(
             client,
             "start_agent",

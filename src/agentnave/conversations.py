@@ -529,7 +529,7 @@ class Conversations(Groups):
         record = self.writable(group_id)
         if group_id not in self._groups:
             if record.state.kind != "show":
-                raise KeyError(f"conversation {group_id} is not a show")
+                raise KeyError(f"conversation {group_id} is not a meeting")
             state = record.state
             assert state.cwd is not None
             group = Group(
