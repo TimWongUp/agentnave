@@ -182,8 +182,9 @@ pub struct Reader {
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
     merged: Mutex<HashMap<String, Merged>>,
     routes: Mutex<HashMap<String, RouteAnswer>>,
-    /// Whether a Claude boss transcript was started by Claude Desktop, by file; it never changes.
-    desktop_files: Mutex<HashMap<String, bool>>,
+    /// Whether a Claude boss transcript was last written by Claude Desktop, by file and its
+    /// length: transcripts only grow, so an unchanged length needs no second read.
+    desktop_files: Mutex<HashMap<String, (u64, bool)>>,
 }
 
 impl Reader {
@@ -727,18 +728,22 @@ impl Reader {
                     .collect()
             })
             .unwrap_or_default();
-        let mut seen = self.desktop_files.lock().unwrap_or_else(|p| p.into_inner());
         rows.into_iter()
-            .filter(|(_, file)| match seen.get(file) {
-                Some(desktop) => *desktop,
-                None => match claude_entrypoint(Path::new(file)) {
-                    Some(entrypoint) => {
-                        let desktop = entrypoint.starts_with("claude-desktop");
-                        seen.insert(file.clone(), desktop);
-                        desktop
-                    }
-                    None => false,
-                },
+            .filter(|(_, file)| {
+                let Ok(len) = fs::metadata(file).map(|m| m.len()) else {
+                    return false;
+                };
+                let lock = || self.desktop_files.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(&(seen, desktop)) = lock().get(file)
+                    && seen == len
+                {
+                    return desktop;
+                }
+                // Read without the lock; a transcript naming no entrypoint is remembered too.
+                let desktop = claude_entrypoint(Path::new(file))
+                    .is_some_and(|entrypoint| entrypoint.starts_with("claude-desktop"));
+                lock().insert(file.clone(), (len, desktop));
+                desktop
             })
             .map(|(id, _)| id)
             .collect()
@@ -939,20 +944,34 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
         .map_err(|e| e.to_string())
 }
 
-/// The `entrypoint` a Claude Code transcript records ("cli", "claude-desktop", ...), from its
-/// first lines; None while the file is missing or names none yet.
+/// The latest `entrypoint` a Claude Code transcript records ("cli", "claude-desktop", ...): a
+/// chat resumed in the other app keeps writing the same file. Its last 256 KiB are searched
+/// first, then its first; None while the file is missing or names none there.
 fn claude_entrypoint(path: &Path) -> Option<String> {
-    use std::io::Read;
-    let mut head = Vec::new();
-    fs::File::open(path)
-        .ok()?
-        .take(256 * 1024)
-        .read_to_end(&mut head)
-        .ok()?;
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 256 * 1024;
     const KEY: &[u8] = b"\"entrypoint\":\"";
-    let start = head.windows(KEY.len()).position(|w| w == KEY)? + KEY.len();
-    let end = head[start..].iter().position(|&b| b == b'"')? + start;
-    String::from_utf8(head[start..end].to_vec()).ok()
+    let last = |chunk: &[u8]| {
+        let start = chunk.windows(KEY.len()).rposition(|w| w == KEY)? + KEY.len();
+        let end = chunk[start..].iter().position(|&b| b == b'"')? + start;
+        String::from_utf8(chunk[start..end].to_vec()).ok()
+    };
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut chunk = Vec::new();
+    file.seek(SeekFrom::Start(len.saturating_sub(WINDOW)))
+        .ok()?;
+    file.by_ref().take(WINDOW).read_to_end(&mut chunk).ok()?;
+    if let Some(found) = last(&chunk) {
+        return Some(found);
+    }
+    if len <= WINDOW {
+        return None;
+    }
+    chunk.clear();
+    file.seek(SeekFrom::Start(0)).ok()?;
+    file.take(WINDOW).read_to_end(&mut chunk).ok()?;
+    last(&chunk)
 }
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
@@ -1284,6 +1303,16 @@ mod tests {
         );
         assert_eq!(
             shown(MANAGER),
+            (json!("claude"), Value::Null, json!("Claude Code"))
+        );
+        // The same chat resumed in the CLI appends to its transcript; the latest entrypoint wins.
+        let mut resumed = fs::OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("claude-desktop.jsonl"))
+            .unwrap();
+        std::io::Write::write_all(&mut resumed, b"{\"entrypoint\":\"cli\"}\n").unwrap();
+        assert_eq!(
+            shown("s-ffffffffffffffffffffffffffffffff"),
             (json!("claude"), Value::Null, json!("Claude Code"))
         );
         assert_eq!(

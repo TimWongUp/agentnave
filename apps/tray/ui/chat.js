@@ -1336,7 +1336,7 @@ function createMessage(m) {
 }
 function setFace(rec, m, ctx) {
   const s = m.speaker || {};
-  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? ctx.c.host : ""}|${ART.version()}`;
+  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? `${ctx.c.host}|${ctx.c.app || ""}` : ""}|${ART.version()}`;
   if (rec.avKey === key) return;
   rec.avKey = key;
   const face = speakerFace(m, ctx);
