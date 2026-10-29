@@ -33,10 +33,10 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 ## 👀 谁当老板，谁当组员
 
-| 角色                                 | 支持                                                                                                       |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、Hermes |
-| **组员**（被派活的 CLI）             | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness       |
+| 角色                                 | 支持                                                                                                                                |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes |
+| **组员**（被派活的 CLI）             | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode                         |
 
 老板的范围更大：上面这些宿主都能当老板，桌面端也可以；组员目前只有表里这几个 CLI。宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
 
@@ -66,10 +66,10 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 ### 方式二：手动安装（Windows / Linux，或不装 App）
 
-当前配套版本是 **`v0.52.0`**，运行时和 Skill 都要从这个 tag 安装：
+当前配套版本是 **`v0.53.0`**，运行时和 Skill 都要从这个 tag 安装：
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.52.0"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.53.0"
 ```
 
 然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，再做验证。
