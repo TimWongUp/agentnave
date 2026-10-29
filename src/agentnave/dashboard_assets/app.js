@@ -38,8 +38,8 @@ const REVIEW = {
 const HOST = { id: "@host", label: "主持人", model: "", provider: "host" };
 const EXAMPLES = [
   [
-    "节目",
-    "开一档节目，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。",
+    "会议",
+    "开个会，让 Codex、Grok 和 Pi 先并联回答：……，回答先给我审核再公开。",
   ],
   ["做任务", "让 CLI 完成任务：……，将结果放进同一个任务会话。"],
 ];
@@ -452,7 +452,7 @@ function renderSidebar() {
     { role: "group", "aria-label": "按用途筛选" },
     [
       ["all", "全部"],
-      ["show", "节目"],
+      ["show", "会议"],
       ["task", "任务"],
     ].map(([mode, label]) =>
       h(
@@ -507,7 +507,7 @@ function renderSidebar() {
           {},
           shows.length
             ? "没有匹配的会话"
-            : "还没有会话。在 boss 的对话中开始一档节目或一个任务。",
+            : "还没有会话。在 boss 的对话中开始一场会议或一个任务。",
         )
       : null,
   );
@@ -627,7 +627,7 @@ function renderOverview() {
       tile("进行中", running.length, "run", "all"),
       tile("待审核", review.length, "review", "all"),
       tile(
-        "节目",
+        "会议",
         shows.filter((show) => show.mode === "show").length,
         "",
         "show",
@@ -664,7 +664,7 @@ function renderOverview() {
                     h(
                       "span.conv-meta",
                       {},
-                      show.mode === "task" ? "任务" : "节目",
+                      show.mode === "task" ? "任务" : "会议",
                     ),
                   ),
                   pill(state),
@@ -697,7 +697,7 @@ function renderOverview() {
           h(
             "p",
             {},
-            h("span.badge." + (label === "节目" ? "show" : "task"), {}, label),
+            h("span.badge." + (label === "会议" ? "show" : "task"), {}, label),
             " ",
             text,
           ),
@@ -762,7 +762,7 @@ function renderShow() {
     {},
     header(
       detail,
-      [h("span.badge.show", {}, "节目"), flags],
+      [h("span.badge.show", {}, "会议"), flags],
       state,
       [
         speaking.length ? `${speaking.join("、")} 作答中 · ` : "",
@@ -1186,7 +1186,7 @@ function renderPublic() {
         h(
           "p.eyebrow",
           {},
-          h("span.badge.show", {}, "节目"),
+          h("span.badge.show", {}, "会议"),
           "全员可见的公开记录",
         ),
         h("h1", {}, detail.title),

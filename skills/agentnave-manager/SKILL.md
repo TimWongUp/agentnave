@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent 或 DeepSeek Harness 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的协作节目；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent 或 DeepSeek Harness 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的会议；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用 CLI
@@ -37,7 +37,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 工位、续接与转发
 
-每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议节目的每个席位也是一个工位。`role` 是可选的显示标签，不影响身份。
+每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是可选的显示标签，不影响身份。
 
 - 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
@@ -55,14 +55,15 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | 各自答 | `run_round` 一轮 `parallel`，本轮答案互不可见 |
 | 多轮各自答 | 连续 `parallel`，第二轮起收到上一轮全部答案 |
 | 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
-| 先各自答再讨论、分歧收敛 | 先 `parallel`，再一轮或多轮 `serial`；轮数用户未指定时由 boss 定，汇报结论与保留的异议 |
+| 开会、先各自答再讨论、分歧收敛 | 用户未指定轮次时默认两轮 `parallel`：第一轮各自给方案，第二轮看过全部答案后补充或修正；boss 综合两轮做总结，汇报结论、共识与保留的异议 |
+| 最终收束 | 仅在用户要求时，在 `parallel` 之后加一轮 `serial`，后发言者在前者基础上收束 |
 
-常用组合只说明怎么调用；选谁、几轮、何时收手按用户的全局规则或由 boss 定：
+常用组合只说明怎么调用；会议轮次按上表默认，用户另有要求时从其要求；选谁、何时收手按用户的全局规则或由 boss 定：
 
 - **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就写明不改文件）；写代码的交接先由 boss 建好 worktree 作 `cwd`。
 - **顾问**：`access=read`，prompt 写明只分析、不改文件、给出建议与理由；追问用同一 `session_id` 续接。
 - **先计划后实现**：先 `access=read`，prompt 写明只出计划（改动范围、步骤、风险与验证方式）、不改文件；boss 按已有授权核对计划，需用户决定的转达用户，确认后用同一 `session_id` 续接、`access=write`，写明按已确认计划实现及调整内容。
-- **委员会**：`run_round` 先 `parallel` 各自给根因与方案，再 `serial` 互相回应；汇报共识、分歧及如何收敛。
+- **委员会**：`run_round` 两轮 `parallel`，先各自给根因与方案，再看过全部答案后补充或修正；boss 汇报共识、分歧及如何收敛。用户要求最终收束时再加一轮 `serial`。
 - **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
 会议室每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，续接自己的原生会话；席位只共享已提交条目，私密指令只给对应席位。同组同时一轮；`run_round` 立即返回，用 `wait` 等。可单独 `cancel` 某席的 `invocation_id`，记缺席后串联轮继续。不自动重试，不设每席截止时间。并联写代码的席位各用独立 worktree。会议室保存为会话，可跨服务重启继续；运行中的进程和句柄不恢复。审核、主持人、隔离和看板见[会话与审核](references/studio.md)。

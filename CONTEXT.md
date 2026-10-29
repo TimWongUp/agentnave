@@ -37,7 +37,7 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 工位（Desk）
 
-工作区内的一个子代理：一条 Provider 原生线程（私聊任务及其用 `session_id` 的续接），或会议节目中的一个席位。`role` 是 boss 传入的可选显示标签，不参与身份。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」，模型、角色与访问等级取最近一次。每次派发可声明访问等级 `read`／`write`，只记录并显示；它是约定，不拒绝调用，也不改变 CLI 原生权限。
+工作区内的一个子代理：一条 Provider 原生线程（私聊任务及其用 `session_id` 的续接），或会议中的一个席位。`role` 是 boss 传入的可选显示标签，不参与身份。App 显示名为「模型 · CLI · 角色」，无角色时为「模型 · CLI」，模型、角色与访问等级取最近一次。每次派发可声明访问等级 `read`／`write`，只记录并显示；它是约定，不拒绝调用，也不改变 CLI 原生权限。
 _Avoid_: 按 `(provider, model, role)` 合并的工位
 
 ## 同时运行上限
@@ -87,18 +87,18 @@ AgentNave 对运行中 Invocation 的粗粒度观察，描述生命周期阶段�
 
 ## Conversation
 
-AgentNave 保存的一份记录，分为节目 `show` 和任务 `task`，是存储单位；标题由 Manager 创建时给出，之后只由用户在 App 中修改；工作区、工位与时间线是对它们的投影。节目即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一 boss 会话内的同一原生会话并入其任务会话。会话没有结束状态，boss 不删除会话；App 可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
-_Avoid_: 房间、工作台
+AgentNave 保存的一份记录，分为会议 `show` 和任务 `task`，是存储单位；标题由 Manager 创建时给出，之后只由用户在 App 中修改；工作区、工位与时间线是对它们的投影。会议即保存的 Group，`group_id` 就是会话 ID，席位会话与已送达游标跨重启保留；任务会话保存普通 `start_agent` 的元信息、原生 session 绑定和最终输出，同一 boss 会话内的同一原生会话并入其任务会话。会话没有结束状态，boss 不删除会话；App 可删除空闲且无待审回答的记录。运行中的进程不跨重启恢复。
+_Avoid_: 房间、工作台、节目（旧称）
 
 ## Review
 
-节目的可选审核：成功回答先停在待审，由 Manager 用 `decide_answers` 公开（`publish`）后才成为 Entry，或不公开（`private`）留在 boss 与该席之间。并联轮全员结束后一起待审，串联轮逐席待审；不公开的回答不进入任何其他席位的输入，该席下一轮会被告知。取消或退出时未决回答按不公开处理。
+会议的可选审核：成功回答先停在待审，由 Manager 用 `decide_answers` 公开（`publish`）后才成为 Entry，或不公开（`private`）留在 boss 与该席之间。并联轮全员结束后一起待审，串联轮逐席待审；不公开的回答不进入任何其他席位的输入，该席下一轮会被告知。取消或退出时未决回答按不公开处理。
 _Avoid_: 丢弃
 
 ## 评审门控（Review Gate）
 
 可选 Skill `agentnave-review` 规定的代码评审流程：在创建或更新 PR、用户要求评审、合并到主分支前，由 boss 按失败风险定 R0–R3 级、派只读评审工位、裁决 findings 并留存记录。流程由调用方 Agent 执行，不进入运行时；用户在 App「技能」页按宿主开关安装该 Skill，默认关闭。
-_Avoid_: Review（专指节目答案的审核）
+_Avoid_: Review（专指会议答案的审核）
 
 ## 评审工位（Review Seat）
 
@@ -111,15 +111,15 @@ _Avoid_: 沙箱（档位只是代用户选择原生权限，不是隔离）
 
 ## Isolated Seat
 
-隔离节目中的席位：每席使用会话目录下的独立空目录并启用 `restricted_tools`，只接受模型与 effort（Pi 另可选模型后端）。它限制工具，不是操作系统沙箱。
+隔离会议中的席位：每席使用会话目录下的独立空目录并启用 `restricted_tools`，只接受模型与 effort（Pi 另可选模型后端）。它限制工具，不是操作系统沙箱。
 
-## 主持人（Show Host）
+## 主持人（Host）
 
-Manager 在节目中的公开身份。主持人发言由不带席位的 `run_round` 在轮次之间发布，作为 `host` Entry 送达各席位。
+Manager 在会议中的公开身份。主持人发言由不带席位的 `run_round` 在轮次之间发布，作为 `host` Entry 送达各席位。
 
 ## Dashboard
 
-Manager 调用 `list` 时才启动并返回入口的本机只读页面。节目公开页只投影已提交的 Entry；导演页另含私密指令、待审回答和运行尾部，任务页只给 Manager。页面不是控制端。
+Manager 调用 `list` 时才启动并返回入口的本机只读页面。会议公开页只投影已提交的 Entry；导演页另含私密指令、待审回答和运行尾部，任务页只给 Manager。页面不是控制端。
 
 ## Tray App
 

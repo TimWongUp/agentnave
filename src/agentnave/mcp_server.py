@@ -130,7 +130,7 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". start_agent rejects excluded providers; shows follow discussion member limits without host exclusions."
+    + ". start_agent rejects excluded providers; meetings follow discussion member limits without host exclusions."
 )
 ACCESS = (
     "Declared desk access: read for exploring, planning or reviewing, write for changing files. "
@@ -339,7 +339,7 @@ class CancelPayload(TypedDict):
 
 class ShowRunPayload(TypedDict):
     group_id: str
-    members: NotRequired[list[GroupSeatPayload]]  # only when this call opened the show
+    members: NotRequired[list[GroupSeatPayload]]  # only when this call opened the meeting
     entries: NotRequired[list[CommittedEntryPayload]]  # a host remark posted without seats
     round: NotRequired[RoundPayload]
     unreceived: NotRequired[list[UnreceivedPayload]]
@@ -469,7 +469,7 @@ mcp = _Server(
         "AgentNave launches local CLI subagents and saves their history. Use the "
         "agentnave-manager Skill for CLI usage and model selection. "
         "start_agent runs a private task whose result returns only to you; run_round opens a "
-        "saved show and runs rounds whose answers seats share automatically. wait and cancel "
+        "saved meeting and runs rounds whose answers seats share automatically. wait and cancel "
         "take task invocation_ids and round_ids; list shows handles, saved conversations and "
         "the dashboard link; read_conversation reads one back. list_members reads App members "
         "and, for one provider, its options; omitted model/effort/options use App defaults "
@@ -1378,7 +1378,7 @@ def _open_show(
 
 
 @mcp.tool(
-    title="Run a show round",
+    title="Run a meeting round",
     annotations=ToolAnnotations(
         read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
     ),
@@ -1392,13 +1392,15 @@ async def run_round(
             description=(
                 "Shared task for this round, visible to all seats; without seats, a public "
                 "host remark every seat receives with its next round. Omit only to open a new "
-                "show without posting anything."
+                "meeting without posting anything."
             ),
         ),
     ] = None,
     group_id: Annotated[
         str | None,
-        Field(description="Show to continue; omit to open a new show from title and members."),
+        Field(
+            description="Meeting to continue; omit to open a new meeting from title and members."
+        ),
     ] = None,
     seats: Annotated[
         list[str],
@@ -1436,7 +1438,7 @@ async def run_round(
         str | None,
         Field(
             description=(
-                "New show only: its short title, at most 48 columns (CJK characters count 2). "
+                "New meeting only: its short title, at most 48 columns (CJK characters count 2). "
                 "If it is the manager chat's first conversation, it also names the workspace."
             )
         ),
@@ -1444,21 +1446,23 @@ async def run_round(
     ] = None,
     members: Annotated[
         list[GroupSeatSpec] | None,
-        Field(min_length=2, max_length=7, description="New show only: its 2–7 seats."),
+        Field(min_length=2, max_length=7, description="New meeting only: its 2–7 seats."),
     ] = None,
     cwd: Annotated[
         str | None,
-        Field(description="New show only: absolute directory seats run in; ignored when isolated."),
+        Field(
+            description="New meeting only: absolute directory seats run in; ignored when isolated."
+        ),
     ] = None,
     review: Annotated[
         bool,
-        Field(description="New show only: hold each answer until decide_answers decides it."),
+        Field(description="New meeting only: hold each answer until decide_answers decides it."),
     ] = False,
     isolated: Annotated[
         bool,
         Field(
             description=(
-                "New show only: each seat gets its own empty directory and restricted_tools; "
+                "New meeting only: each seat gets its own empty directory and restricted_tools; "
                 "seat options may only set model and effort (and Pi's provider)."
             )
         ),
@@ -1468,12 +1472,12 @@ async def run_round(
     *,
     ctx: Context[Runtime],
 ) -> ShowRunPayload:
-    """Run a round of a saved show; answers reach the other seats without passing through you.
+    """Run a round of a saved meeting; answers reach the other seats without passing through you.
 
-    Without group_id, opens a show of 2–7 seats first (group_id is its conversation id);
-    with no prompt it only opens the show.
+    Without group_id, opens a meeting of 2–7 seats first (group_id is its conversation id);
+    with no prompt it only opens the meeting.
     Seats are subagents with native tools and permissions unless isolated; each keeps its
-    native session across rounds and restarts. Shows follow discussion member limits, not
+    native session across rounds and restarts. Meetings follow discussion member limits, not
     host exclusions. A started round returns at once: use wait with its round_id. Private
     instructions go only to their seat; with review=true each answer waits for decide_answers.
     wait and cancel return each final answer once per round, then mark it output_returned.
@@ -1486,19 +1490,21 @@ async def run_round(
     new = group_id is None
     if new:
         if not title or not title.strip() or not members:
-            raise ToolError("A new show needs title and members. Correct the arguments and retry.")
+            raise ToolError(
+                "A new meeting needs title and members. Correct the arguments and retry."
+            )
         unknown = sorted(set(seats) - {seat.id for seat in members})
         if unknown:
             raise ToolError("Unknown seat ids: " + ", ".join(unknown) + ". Correct and retry.")
     elif title is not None or members is not None or cwd is not None or review or isolated:
         raise ToolError(
-            "title, members, cwd, review and isolated only open a new show; omit them with "
+            "title, members, cwd, review and isolated only open a new meeting; omit them with "
             "group_id."
         )
     if not seats and forward:
         raise ToolError("forward needs seats to answer this round. Correct and retry.")
     if prompt is None and (seats or not new):
-        raise ToolError("prompt is required unless only opening a new show. Correct and retry.")
+        raise ToolError("prompt is required unless only opening a new meeting. Correct and retry.")
     opened: list[GroupSeatPayload] | None = None
     if group_id is None:
         assert title is not None and members is not None
@@ -1509,7 +1515,7 @@ async def run_round(
         except (MemberFileError, PermissionFileError) as exc:
             raise ToolError(str(exc)) from exc
         except (OSError, ValueError) as exc:
-            raise ToolError(f"Invalid show: {exc}. Correct the arguments and retry.") from exc
+            raise ToolError(f"Invalid meeting: {exc}. Correct the arguments and retry.") from exc
     payload: ShowRunPayload = {"group_id": group_id}
     if opened is not None:
         payload["members"] = opened
@@ -1548,7 +1554,7 @@ async def run_round(
     except (OSError, ValueError) as exc:
         if new:
             raise ToolError(
-                f"Show {group_id} was opened but nothing was posted: {exc}. Retry with group_id."
+                f"Meeting {group_id} was opened but nothing was posted: {exc}. Retry with group_id."
             ) from exc
         if isinstance(exc, (SettingsFileError, CapacityError)):
             raise ToolError(str(exc)) from exc
@@ -1708,13 +1714,13 @@ async def handover(
     *,
     ctx: Context[Runtime],
 ) -> dict[str, Any]:
-    """Pass a boss workspace (every task and show of one boss chat) to another boss chat.
+    """Pass a boss workspace (every task and meeting of one boss chat) to another boss chat.
 
     Only when the user asks to hand over or take over; never as a routine check. release=true
     marks this chat's workspace as waiting. Without arguments, lists waiting workspaces. With
     workspace_id, this chat takes it over: its notes, conversations (read each with
     read_conversation) and, when known, the previous boss's transcript file, whose tail holds
-    its last turns. From then on this chat continues those shows and tasks and the previous boss
+    its last turns. From then on this chat continues those meetings and tasks and the previous boss
     is refused. Work still running finishes in the previous boss's server and lands in history;
     continue such a conversation once writable is true. Taking over your own waiting workspace
     withdraws the handover. Private: never send this to seats.
@@ -1770,7 +1776,7 @@ async def handover(
         "from_host": previous_host or records[-1].state.host,
         "note": after.note,
         "conversations": _handover_conversations(conversations, records),
-        "next": "Read the note, then each conversation with read_conversation. Continue shows "
+        "next": "Read the note, then each conversation with read_conversation. Continue meetings "
         "with run_round(group_id) and tasks with start_agent(conversation_id or session_id) "
         "once writable is true; running work finishes in the previous boss's server.",
     }
@@ -1791,7 +1797,7 @@ async def read_conversation(
         int,
         Field(
             ge=0,
-            description="Shows: only messages from this round on; 0 includes host remarks "
+            description="Meetings: only messages from this round on; 0 includes host remarks "
             "posted before the first round.",
         ),
     ] = 0,
@@ -1807,7 +1813,7 @@ async def read_conversation(
         bool,
         Field(
             description=(
-                "Shows: also each seat's private instructions and the answers kept private."
+                "Meetings: also each seat's private instructions and the answers kept private."
             )
         ),
     ] = False,
@@ -1816,10 +1822,10 @@ async def read_conversation(
 ) -> dict[str, Any]:
     """Read a conversation back as its final messages, the way the App shows them.
 
-    Shows return seats, the latest round and messages in order: tasks, published answers,
+    Meetings return seats, the latest round and messages in order: tasks, published answers,
     absences, forwards, host remarks and answers waiting for review (pending_answer). Tasks
     return each prompt, final reply and native session_id. Message ids can be forwarded.
-    Private: never forward this whole result to seats. A show's id is its group_id.
+    Private: never forward this whole result to seats. A meeting's id is its group_id.
     """
     conversations = _conversations(ctx)
     try:

@@ -7,8 +7,8 @@
 | 工具 | 说明 |
 | --- | --- |
 | `start_agent` | 私聊任务，结果只回给 boss；另接受 `title`、`conversation_id`、`role`、`access` 与 `forward`，自动保存为私有任务会话，默认开新线程，传 `session_id` 续接原线程；`access` 只记录 |
-| `run_round` | 不带 `group_id` 时用 `title`、2–7 个 `members`、`cwd`（可选 `review`、`isolated`）开节目，返回的 `group_id` 就是会话 ID；带 `seats` 跑一轮，不带 `seats` 发主持人发言；`forward` 把已完成消息转入会议室 |
-| `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；审核节目中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
+| `run_round` | 不带 `group_id` 时用 `title`、2–7 个 `members`、`cwd`（可选 `review`、`isolated`）开会，返回的 `group_id` 就是会话 ID；带 `seats` 跑一轮，不带 `seats` 发主持人发言；`forward` 把已完成消息转入会议室 |
+| `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；审核会议中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
 | `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |
 | `list`、`read_conversation` | 列出句柄与会话并启动看板；按 App 的方式读回一个会话的最终消息 |
 | `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |
@@ -16,11 +16,11 @@
 
 标题在创建时给出，之后只在 App 中改名；MCP 不提供改名工具。中继空闲探测使用的 `list_invocations` 仍可调用，但不在工具列表中（[ADR-0024](adr/0024-consolidated-tools-and-private-review.md)）。
 
-旧版的 `open_discussion`、`start_discussion_turn`、`decide_discussion_turn`、`decide_discussion_round`、`mark_discussion_absent`、`continue_discussion`、`reset_discussion_seat`、`open_workbench` 已移除：点名发言由串联轮取代，盲答揭晓由并联轮加审核取代，缺席自动记录，失败后的会话不确定由游标规则自动新开，换身份请新建节目。
+旧版的 `open_discussion`、`start_discussion_turn`、`decide_discussion_turn`、`decide_discussion_round`、`mark_discussion_absent`、`continue_discussion`、`reset_discussion_seat`、`open_workbench` 已移除：点名发言由串联轮取代，盲答揭晓由并联轮加审核取代，缺席自动记录，失败后的会话不确定由游标规则自动新开，换身份请新建会议。
 
-## 一档节目怎么跑
+## 一场会议怎么跑
 
-1. `run_round(title, members, cwd, review=true)` 开节目；用户在 App 中观看，参演 CLI 只接收公开条目。
+1. `run_round(title, members, cwd, review=true)` 开会；用户在 App 中观看，参会 CLI 只接收公开条目。
 2. 需要时 `run_round(group_id, prompt)` 以主持人身份开场；`run_round(group_id, seats, order, prompt, instructions)` 出题。并联轮里所有人同时独立作答；串联轮按名单依次作答、后者看得到前者。私密指令只发给对应席位。
 3. `wait` 对轮次返回 `review_needed` 时，用 `read_conversation` 或返回的 `output` 查看待审回答，再 `decide_answers`。并联轮全员结束后一起审，全部决定后按名单一次公开；串联轮逐席审，决定后才轮到下一席。
 4. 选择 `private` 的回答不进入会议室，也不会进入任何其他席位的输入；它留在 boss 与该席之间，App 显示为该工位给 boss 的「🔒 未公开」回复。该席自己的原生会话仍记得它，下一次轮到它时会被告知这一回答未公开。失败、受阻、取消自动记为缺席，不需审核。
@@ -28,15 +28,15 @@
 
 不审核（`review=false`）时，成功回答按并联／串联规则自动提交，历史照常保存。
 
-`start_agent` 使用 task 配置，节目每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建节目回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、节目与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
+`start_agent` 使用 task 配置，会议每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建会议回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、会议与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
 
-`wait(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，节目席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
+`wait(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，会议席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
 
 ## 隔离席位
 
 普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求AgentNave准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
-`isolated=true` 时，AgentNave在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。节目（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
+`isolated=true` 时，AgentNave在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。会议（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
 
 各 CLI 的原生限制（下列版本已核对本机帮助与受限调用；精确参数以 Adapter 为准，版本或配置变化后复核受影响项）：
 
@@ -55,8 +55,8 @@
 
 | 区域 | 可见内容 |
 | --- | --- |
-| 节目公开页 / `transcript.jsonl` | 席位资料与已提交条目：任务、主持人发言、公开回答、缺席 |
-| 参演 CLI | 自己的原生会话、尚未收到的条目、本轮任务与自己的私密指令 |
+| 会议公开页 / `transcript.jsonl` | 席位资料与已提交条目：任务、主持人发言、公开回答、缺席 |
+| 参会 CLI | 自己的原生会话、尚未收到的条目、本轮任务与自己的私密指令 |
 | 导演页 | 公开页内容，另加本轮各席状态、私密指令、待审回答与运行中的回复尾部 |
 | `read_conversation` | 与 App 相同的最终消息时间线（任务含原生会话 ID），`include_private=true` 另含私密指令与不公开回答；只给 boss |
 | 数据目录 | 完整会话状态；只给 boss |
@@ -67,7 +67,7 @@
 
 看板只在 boss 调用 `list` 时启动并返回首页入口，之后 `read_conversation` 附带该会话的页面地址，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。重启后地址会更换。
 
-界面是左右两栏的工作台：左侧按“需要关注／其他会话”分组列出会话，可搜索并按节目、任务筛选；“需要关注”只收进行中与待审核的会话，失败、受阻或中断是已交给 boss 的结果，带红色状态留在其他会话中。右侧未选会话时是总览（进行中与待审核的会话），选中后显示详情，切换会话不离开页面。节目详情分“本轮现场”（私有：各席位私密指令、实时回复、审核状态）和“公开记录”（按轮分隔的公开发言），有工作进行或待审核时默认停在现场；“选手视角”打开公开地址。任务详情按时间倒序显示每次调用的状态、模型、目录、耗时、boss 派发的任务原文与回复，“已回复”不等于已验收。公开地址只显示公开记录，不含会话列表。跟随系统浅色／深色，窄屏下列表与详情分屏显示。
+界面是左右两栏的工作台：左侧按“需要关注／其他会话”分组列出会话，可搜索并按会议、任务筛选；“需要关注”只收进行中与待审核的会话，失败、受阻或中断是已交给 boss 的结果，带红色状态留在其他会话中。右侧未选会话时是总览（进行中与待审核的会话），选中后显示详情，切换会话不离开页面。会议详情分“本轮现场”（私有：各席位私密指令、实时回复、审核状态）和“公开记录”（按轮分隔的公开发言），有工作进行或待审核时默认停在现场；“选手视角”打开公开地址。任务详情按时间倒序显示每次调用的状态、模型、目录、耗时、boss 派发的任务原文与回复，“已回复”不等于已验收。公开地址只显示公开记录，不含会话列表。跟随系统浅色／深色，窄屏下列表与详情分屏显示。
 
 回复按常用 Markdown（标题、列表、引用、代码、粗体、链接）以纯文本节点渲染，长内容折叠可展开；支持按角色查看、复制单条台词或回复、回到最新发言、导出完整公共 JSONL。角色筛选只影响当前浏览器画面，不改变选手收到的公共历史；导出不随筛选裁剪。头像按模型家族使用官方图标，不意味着尚未接入的模型已可用。
 
@@ -75,11 +75,11 @@
 
 ## 保存与恢复
 
-数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与节目保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`run_round` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时先读逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再读宿主给本服务进程的原生会话 ID（目前只有 Claude Code 的 `CLAUDE_CODE_SESSION_ID`；Codex 不给 MCP 进程传 `CODEX_THREAD_ID`），仍未知则拒绝调用。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
+数据根默认 `~/.agentnave`，可用 `AGENTNAVE_DATA_DIR` 指定绝对路径；首次保存会话时才创建。会话保存在数据根的 `agentnave.db`（SQLite），每个会话一把 `locks/<会话ID>.lock` 文件锁；不读取旧版本的会话目录，见 [ADR-0026](adr/0026-sqlite-conversation-store.md)。新任务与会议保存创建者的 `host`、`host_source` 与 boss 聊天身份 `manager_session`，后续接手不改写创建归属；旧记录缺失时兼容读取为 null／unknown／null。`start_agent`、`run_round` 的 `manager_session_id` 用宿主当前聊天 ID，同一聊天全部调用沿用，新聊天换值；宿主不公开原生 ID 时，boss 为该聊天生成一次 UUID 并复用。省略时先读逐聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再读宿主给本服务进程的原生会话 ID（目前只有 Claude Code 的 `CLAUDE_CODE_SESSION_ID`；Codex 不给 MCP 进程传 `CODEX_THREAD_ID`），仍未知则拒绝调用。服务把宿主与原始 ID 确定性散列为带 `s-` 前缀的分组键，不保存原始 ID；见 [ADR-0017](adr/0017-manager-chat-session-identity.md)。视图快照与 live 会话摘要带同样归属，live 顶层另带当前服务的 `connection_id` 与开始时间，连接 ID 不用于聊天归并。
 
 每次写入前取锁并在锁内重读数据库状态；运行中的轮次／任务、待审回答及未成功落盘的回写持续持锁，全部回写完成且空闲后释放，并清除写入缓存。持锁期间其他服务可读，在 `list` 中显示 `writable=false`，写入或续接直接报错；空闲后其他服务可取得同一把锁继续写入。若会话已被删除，下次写入会遗忘该会话并返回未知会话错误，不会重建历史。已知 boss 身份时，子 CLI 原生续接只自动关联本 boss 的任务记录，不能通过 `conversation_id` 并入另一 boss 的记录；无归属的旧记录仍可读取，用原生 `session_id` 续接时创建当前 boss 的新记录。
 
-重启后节目按保存的条目、席位会话与游标继续；续轮与主持人发言须与创建归属一致（身份来自参数或逐聊天注入），无归属的旧节目只读，需新建节目；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
+重启后会议按保存的条目、席位会话与游标继续；续轮与主持人发言须与创建归属一致（身份来自参数或逐聊天注入），无归属的旧会议只读，需新建会议；运行中的席位记为中断并在下次新开会话补全条目，被中断的轮次不续跑。崩溃时停在待审的回答仍可用 `decide_answers` 决定。运行中的任务记为中断，旧 `invocation_id` 不恢复，原生 `session_id` 保留。
 
 会话没有“结束”状态，boss 也不删除会话；清理由用户在托盘 App 的办公室里右键进行。旧版本写入的 `archived` 字段读取时忽略。
 
