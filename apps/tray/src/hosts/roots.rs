@@ -18,6 +18,7 @@ pub(super) const VARIABLES: &[&str] = &[
     "PI_CODING_AGENT_DIR",
     "GROK_HOME",
     "HERMES_HOME",
+    "DSH_HOME",
     "XDG_CONFIG_HOME",
     "OPENCODE_CONFIG_DIR",
     "OPENCODE_CONFIG",

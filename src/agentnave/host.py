@@ -25,6 +25,7 @@ type HostName = Literal[
     "grok",
     "antigravity",
     "pi",
+    "deepseek",
     "opencode",
     "hermes",
 ]
@@ -313,6 +314,7 @@ def _match(executable: str) -> HostName | None:
         "claude.app": "claude",
         "workbuddy.app": "workbuddy",
         "antigravity.app": "antigravity",
+        "deepseek harness.app": "deepseek",
     }
     for part in path.parts:
         if part.lower() in apps:
@@ -322,6 +324,8 @@ def _match(executable: str) -> HostName | None:
         name = path.stem.lower()
     if name == "agy":
         return "antigravity"
+    if name == "dsh":
+        return "deepseek"
     for host in get_args(HostName.__value__):
         if name == host and host not in {"workbuddy", "antigravity"}:
             return host

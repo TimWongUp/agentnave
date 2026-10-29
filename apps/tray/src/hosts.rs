@@ -205,7 +205,7 @@ impl Host {
         }
     }
 }
-const IDS: [&str; 9] = [
+const IDS: [&str; 10] = [
     "codex",
     "claude",
     "codebuddy",
@@ -213,6 +213,7 @@ const IDS: [&str; 9] = [
     "grok",
     "antigravity",
     "pi",
+    "deepseek",
     "opencode",
     "hermes",
 ];
@@ -358,6 +359,17 @@ impl Hosts {
                 "mcpServers",
             ),
             (
+                // The home-level patch layer applies to the desktop App and every CLI profile.
+                "deepseek",
+                "DeepSeek Harness",
+                "dsh",
+                Some("DSH_HOME"),
+                h.join(".dsh"),
+                "cordis.patch.yml",
+                Format::DshPatch,
+                "insert",
+            ),
+            (
                 "opencode",
                 "OpenCode",
                 "opencode",
@@ -455,6 +467,7 @@ impl Hosts {
         let app = match host.id {
             "workbuddy" => Some("WorkBuddy.app"),
             "antigravity" => Some("Antigravity.app"),
+            "deepseek" => Some("DeepSeek Harness.app"),
             _ => None,
         };
         if let Some(path) = app.and_then(|name| {
@@ -635,7 +648,7 @@ impl Hosts {
         };
         json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
             "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
@@ -1166,6 +1179,9 @@ impl Hosts {
                     } else {
                         desired = Some(if id == "opencode" {
                             json!({"type":"local","command":[path],"environment":{"AGENTNAVE_HOST":id},"enabled":true})
+                        } else if id == "deepseek" {
+                            // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
+                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":id},"toolCallTimeoutMs":310_000})
                         } else if id == "hermes" {
                             json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
                         } else {
@@ -1399,6 +1415,7 @@ fn reload_hint(id: &str) -> &'static str {
         "grok" => "重启 Grok CLI",
         "antigravity" => "重启 Antigravity",
         "pi" => "重启 Pi",
+        "deepseek" => "重启 DeepSeek Harness",
         "opencode" => "重启 OpenCode",
         "hermes" => "重启 Hermes 网关",
         _ => "重启宿主应用",

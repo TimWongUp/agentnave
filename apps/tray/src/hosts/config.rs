@@ -7,6 +7,8 @@ pub enum Format {
     Json,
     Toml,
     Yaml,
+    /// A dsh `cordis.patch.yml`: a top-level YAML list whose `- insert:` item adds the MCP row.
+    DshPatch,
 }
 
 pub struct Document {
@@ -94,6 +96,16 @@ impl Document {
                     (None, json!(raw))
                 }
             }
+            Format::DshPatch => match dsh_item(raw)? {
+                Some(item) => {
+                    let config = &raw[item.config.clone()];
+                    let entry = yaml_entry(config, yaml_indent(config, item.indent + 2))?;
+                    let mut rest = raw.to_owned();
+                    rest.replace_range(item.full, "");
+                    (Some(entry), json!(rest))
+                }
+                None => (None, json!(raw)),
+            },
         };
         if entry.as_ref().is_some_and(|e| !e.is_object()) {
             return Err("agentnave 条目必须为对象".into());
@@ -169,7 +181,56 @@ impl Document {
                     .replace('\n', newline(&self.raw)))
             }
             Format::Yaml => self.render_yaml(entry),
+            Format::DshPatch => self.render_dsh(entry),
         }
+    }
+
+    fn render_dsh(&self, desired: Option<&Value>) -> Result<String, String> {
+        let eol = newline(&self.raw);
+        let mut out = self.raw.clone();
+        match (dsh_item(&self.raw)?, desired) {
+            (Some(item), Some(desired)) => {
+                let config = &self.raw[item.config.clone()];
+                let changed = yaml_patch(
+                    config,
+                    yaml_indent(config, item.indent + 2),
+                    self.entry.as_ref().unwrap(),
+                    desired,
+                    yaml_step(&self.raw),
+                    eol,
+                )?;
+                out.replace_range(item.config, &changed);
+            }
+            (Some(item), None) => {
+                out.replace_range(item.full, "");
+                // dsh refuses to boot on a patch file that is not a list, even an empty one.
+                if dsh_items(&out)?.is_empty() && !dsh_lines(&out).any(|(_, l)| dsh_empty(l)) {
+                    if !out.is_empty() && !out.ends_with('\n') {
+                        out.push_str(eol);
+                    }
+                    out.push_str(&format!("[]{eol}"));
+                }
+            }
+            (None, Some(entry)) => {
+                let mut block = format!(
+                    "- insert:{eol}    - id: agentnave{eol}      name: \"{DSH_MCP_CLIENT}\"{eol}      config:{eol}"
+                );
+                for (key, value) in entry.as_object().unwrap() {
+                    block.push_str(&yaml_line(key, value, 8, 2, eol));
+                }
+                if let Some((offset, line)) = dsh_lines(&self.raw).find(|(_, l)| dsh_empty(l)) {
+                    // Expand the empty flow list before adding a block item.
+                    out.replace_range(offset..offset + line.len(), &block);
+                } else {
+                    if !out.is_empty() && !out.ends_with('\n') {
+                        out.push_str(eol);
+                    }
+                    out.push_str(&block);
+                }
+            }
+            (None, None) => {}
+        }
+        Ok(out)
     }
 
     fn render_yaml(&self, desired: Option<&Value>) -> Result<String, String> {
@@ -250,7 +311,7 @@ impl Document {
         if after.entry.as_ref() != desired {
             return Err("写后条目校验失败".into());
         }
-        if matches!(self.format, Format::Yaml) {
+        if matches!(self.format, Format::Yaml | Format::DshPatch) {
             // Compare exact non-target bytes, allowing only a newly created empty container.
             let expected = self.render(desired)?;
             if written != expected {
@@ -542,6 +603,112 @@ fn yaml_entry(raw: &str, indent: usize) -> Result<Value, String> {
         entry[&field.key] = value;
     }
     Ok(entry)
+}
+
+const DSH_MCP_CLIENT: &str = "@deepseek-ai/dsh-mcp-client";
+
+/// AgentNave's item in a dsh patch list and the `config` body of the row it inserts.
+struct DshItem {
+    full: Range<usize>,
+    config: Range<usize>,
+    indent: usize,
+}
+
+/// Column-0 lines that are not blank, comments included, with their byte offsets.
+fn dsh_lines(raw: &str) -> impl Iterator<Item = (usize, &str)> {
+    raw.split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .filter(|(_, line)| !line.starts_with([' ', '\t']) && !line.trim().is_empty())
+}
+
+fn dsh_empty(line: &str) -> bool {
+    yaml_value_text(line).is_ok_and(|text| text == "[]")
+}
+
+/// Top-level list items, each up to the next column-0 line. Only block lists are edited: any
+/// other column-0 content than items, comments and an empty `[]` needs manual configuration.
+fn dsh_items(raw: &str) -> Result<Vec<Range<usize>>, String> {
+    let mut items: Vec<Range<usize>> = Vec::new();
+    let lines: Vec<_> = dsh_lines(raw).collect();
+    for (i, (offset, line)) in lines.iter().enumerate() {
+        if line.starts_with("- ") || line.trim_end() == "-" {
+            items.push(*offset..lines.get(i + 1).map_or(raw.len(), |next| next.0));
+        } else if !line.starts_with('#') && !dsh_empty(line) {
+            return Err("DeepSeek Harness 补丁需为块式 YAML 列表，需手动配置".into());
+        }
+    }
+    Ok(items)
+}
+
+/// The `- insert:` item whose single row is `id: agentnave`. Other items stay opaque, so their
+/// `!!js` expressions are never parsed; a row sharing an item with others is left to the user.
+fn dsh_item(raw: &str) -> Result<Option<DshItem>, String> {
+    let mut found = None;
+    for item in dsh_items(raw)? {
+        let text = &raw[item.clone()];
+        let (head, body) = text.split_at(text.find('\n').map_or(text.len(), |i| i + 1));
+        if yaml_value_text(head).ok() != Some("- insert:") {
+            continue;
+        }
+        let manual = || {
+            if body.contains("agentnave") {
+                Err("DeepSeek Harness 的 agentnave 条目需手动配置".to_string())
+            } else {
+                Ok(())
+            }
+        };
+        let indent = yaml_indent(body, 4);
+        let mut rows = Vec::new();
+        let mut offset = head.len();
+        for line in body.split_inclusive('\n') {
+            let content = !line.trim().is_empty() && !line.trim_start().starts_with('#');
+            if content && line.len() - line.trim_start_matches(' ').len() == indent {
+                if !line[indent..].starts_with("- ") {
+                    manual()?;
+                    rows.clear();
+                    break;
+                }
+                rows.push(offset..text.len());
+                if let Some(previous) = rows.iter_mut().rev().nth(1) {
+                    previous.end = offset;
+                }
+            }
+            offset += line.len();
+        }
+        for row in &rows {
+            // Read the row as a mapping by blanking its dash; offsets stay the same.
+            let masked = format!(
+                "{}  {}",
+                " ".repeat(indent),
+                &text[row.start + indent + 2..row.end]
+            );
+            let Ok(fields) = yaml_fields(&masked, indent + 2) else {
+                manual()?;
+                continue;
+            };
+            let id = fields.iter().find(|f| f.key == "id");
+            if !id.is_some_and(|f| yaml_scalar(&f.value).is_ok_and(|v| v == "agentnave")) {
+                continue;
+            }
+            let config = fields
+                .iter()
+                .find(|f| f.key == "config" && f.value.is_empty());
+            let (Some(config), 1, None) = (config, rows.len(), found.as_ref()) else {
+                return Err("DeepSeek Harness 的 agentnave 条目需手动配置".into());
+            };
+            let start = item.start + row.start;
+            found = Some(DshItem {
+                full: item.clone(),
+                config: start + config.body.start..start + config.body.end,
+                indent: indent + 2,
+            });
+        }
+    }
+    Ok(found)
 }
 
 /// Remove JSONC comments/trailing commas while retaining byte offsets for surgical edits.
