@@ -394,7 +394,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .desk.away .scene > .fig { opacity: 0; }
-.desk.only { opacity: 0.75; }
 .desk-tags { position: absolute; top: 7px; left: 8px; z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 46%; pointer-events: none; }
 .desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* the bubble sits in the card's top-right corner, above the figure like the tags opposite it */

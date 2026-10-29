@@ -261,7 +261,7 @@ function updateItem(rec, g) {
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
   if (rec.tileKey !== tileKey) {
     rec.tileKey = tileKey;
-    rec.tile.replaceChildren(hostTile(g.host, g.label));
+    rec.tile.replaceChildren(hostTile(g.app || g.host, g.label));
   }
   setClass(rec.presence, g.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", g.live ? "有任务在运行" : null);
@@ -483,7 +483,7 @@ function createBoss() {
 function updateBoss(rec, c, n) {
   const model = bossModel(c);
   dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
-  dressLid(rec, c.host);
+  dressLid(rec, c.app || c.host);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
   setText(rec.cli, c.label);
@@ -1161,7 +1161,7 @@ function speakerSub(m, ctx) {
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
   if (s.role === "system") return null;
-  if (isBoss(m)) return hostTile(ctx.c.host, ctx.c.label);
+  if (isBoss(m)) return hostTile(ctx.c.app || ctx.c.host, ctx.c.label);
   const d = speakerDesk(m, ctx);
   return ART.head(d ? deskChar(d) : ART.character(s.provider, s.model), "idle");
 }
@@ -1331,7 +1331,7 @@ function createMessage(m) {
 }
 function setFace(rec, m, ctx) {
   const s = m.speaker || {};
-  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? ctx.c.host : ""}|${ART.version()}`;
+  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? `${ctx.c.host}|${ctx.c.app || ""}` : ""}|${ART.version()}`;
   if (rec.avKey === key) return;
   rec.avKey = key;
   const face = speakerFace(m, ctx);
@@ -1574,7 +1574,7 @@ function scopeHead(c, ctx, shown) {
   }
   return {
     key: `all|${c.host}|${c.label}`,
-    ico: () => hostTile(c.host, c.label),
+    ico: () => hostTile(c.app || c.host, c.label),
     title: "boss",
     sub: `${c.label} · 全部消息 ${real} 条`,
     note: "",
