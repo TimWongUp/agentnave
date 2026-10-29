@@ -14,6 +14,8 @@ from typing import Any, cast
 from agentnave.adapters.base import resolve_executable
 from agentnave.host import Host, session_model
 
+LINE_LIMIT = 64 * 1024 * 1024
+
 
 def command() -> tuple[list[str], dict[str, str]]:
     """Prefer an installed CLI; macOS Desktop also ships its official Node bundle."""
@@ -49,6 +51,9 @@ class Connection:
         self.process = process
         self.session_id = session_id
         self.counter = 0
+        self.reset()
+
+    def reset(self) -> None:
         self.response = ""
         self.partial = ""
         self.usage: dict[str, Any] = {}
@@ -63,14 +68,19 @@ class Connection:
 
     def receive(self) -> dict[str, Any]:
         assert self.process.stdout is not None
-        line = self.process.stdout.readline(1024 * 1024 + 1)
-        if len(line) > 1024 * 1024:
-            raise RuntimeError("ZCode protocol line exceeds 1 MiB")
-        if not line:
-            raise RuntimeError("ZCode app-server closed before completing the request")
-        raw: object = json.loads(line)
-        if not isinstance(raw, dict):
-            raise RuntimeError("Invalid ZCode protocol message")
+        while True:
+            # A resumed session's snapshot carries its history, so lines can be large.
+            line = self.process.stdout.readline(LINE_LIMIT + 1)
+            if len(line) > LINE_LIMIT:
+                raise RuntimeError("ZCode protocol line exceeds 64 MiB")
+            if not line:
+                raise RuntimeError("ZCode app-server closed before completing the request")
+            try:
+                raw: object = json.loads(line)
+            except ValueError:
+                continue  # a log line on stdout is not a protocol message
+            if isinstance(raw, dict):
+                break
         value = cast(dict[str, Any], raw)
         if "method" in value and "id" in value:
             # Ask the runtime to use its native compatibility behavior, never approve a tool.
@@ -86,7 +96,13 @@ class Connection:
                     self.usage = payload.get("usage", {})
                 elif kind == "turn.failed":
                     self.failed = True
-                    self.failure = "ZCode turn failed"
+                    error: object = payload.get("error")
+                    message = (
+                        cast(dict[str, Any], error).get("message")
+                        if isinstance(error, dict)
+                        else None
+                    )
+                    self.failure = str(message or "ZCode turn failed")
                 if kind == "model.streaming" and payload.get("kind") == "text_delta":
                     self.partial = (self.partial + payload.get("delta", ""))[-1024 * 1024 :]
                     emit({"type": "text", "text": payload.get("delta", "")})
@@ -193,6 +209,8 @@ def run(request: dict[str, Any]) -> int:
                 "session/subscribe",
                 {"sessionId": connection.session_id, "deliveryKind": "desktop-continuous"},
             )
+            # Only this prompt's events count: drop anything a resumed session reported earlier.
+            connection.reset()
             connection.call(
                 "session/send", {"sessionId": connection.session_id, "content": request["prompt"]}
             )
@@ -202,7 +220,7 @@ def run(request: dict[str, Any]) -> int:
                 {
                     "type": "result",
                     "session_id": connection.session_id,
-                    "output": connection.response,
+                    "output": connection.response or connection.partial,
                     "usage": connection.usage,
                     "failed": connection.failed,
                     "error": connection.failure,
@@ -211,14 +229,15 @@ def run(request: dict[str, Any]) -> int:
             if model := session_model(Host("zcode"), connection.session_id, since=started):
                 emit({"type": "model", "model": model})
             return int(connection.failed)
-        except (OSError, ValueError, RuntimeError) as exc:
+        except Exception as exc:  # an unexpected native reply must still end with a result
+            expected = isinstance(exc, OSError | ValueError | RuntimeError)
             emit(
                 {
                     "type": "result",
                     "session_id": connection.session_id,
                     "output": connection.response or connection.partial,
                     "failed": True,
-                    "error": str(exc),
+                    "error": str(exc) if expected else f"Unexpected ZCode reply: {exc!r}",
                 }
             )
             return 1

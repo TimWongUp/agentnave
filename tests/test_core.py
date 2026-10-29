@@ -1035,6 +1035,10 @@ for line in sys.stdin:
         session = p['sessionId']
         resume = method.endswith('resume')
         print(json.dumps({'id':'prefs','method':'session/requestRuntimePreferences','params':{}}), flush=True)
+        if resume:
+            # A log line and the previous prompt's late end must not finish this one.
+            print('zcode: resuming session', flush=True)
+            print(json.dumps({'method':'state.updated','params':{'sessionId':session,'reason':'prompt_completed'}}),flush=True)
         result = {'settings':{'model':{'available':[{'ref':{'providerId':'route','modelId':'model'}}]}}}
     elif method == 'session/setModel':
         assert p['model'] == {'providerId':'route','modelId':'model','options':{'reasoningLevel':'low'}}
@@ -1049,7 +1053,11 @@ for line in sys.stdin:
     print(json.dumps({'id':m['id'],'result':result}), flush=True)
     if method == 'session/send':
         failed = 'fail-task' in p['content']
-        print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'turn.completed','payload':{'response':'resumed' if resume else 'answer'}}}),flush=True)
+        if failed:
+            print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'model.streaming','payload':{'kind':'text_delta','delta':'answer'}}}),flush=True)
+            print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'turn.failed','payload':{'error':{'type':'auth','message':'authentication required'},'turnPhase':'model'}}}),flush=True)
+        else:
+            print(json.dumps({'method':'session/event','params':{'sessionId':session,'type':'turn.completed','payload':{'response':'resumed' if resume else 'answer'}}}),flush=True)
         print(json.dumps({'method':'state.updated','params':{'sessionId':session,'reason':'prompt_failed' if failed else 'prompt_completed'}}),flush=True)
 """,
         encoding="utf-8",
@@ -1083,7 +1091,8 @@ for line in sys.stdin:
             InvocationRequest("zcode", "fail-task", tmp_path, provider_options=options)
         )
         failure = await manager.wait(failed, 10)
-        assert failure is not None and failure.status is InvocationStatus.FAILED
+        assert failure is not None and failure.status is InvocationStatus.BLOCKED
         assert failure.output == "answer" and failure.session_id
+        assert failure.error is not None and "authentication required" in failure.error.message
     finally:
         await manager.shutdown()

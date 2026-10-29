@@ -1177,10 +1177,19 @@ impl Hosts {
                             .ok_or("write_failed:env 必须为对象")?
                             .insert("AGENTNAVE_HOST".into(), json!(id));
                     } else {
+                        if id == "zcode"
+                            && let Some(fallback) = zcode_fallback(&self.context.home, &before)
+                        {
+                            return Err(format!(
+                                "write_failed:ZCode 只在 ~/.zcode/cli/config.json 没有 MCP 服务时读取 {}，接入后其中的服务将不再加载；请先把它们移到 ~/.zcode/cli/config.json 的 mcp.servers 再接入",
+                                fallback.display()
+                            ));
+                        }
                         desired = Some(if id == "opencode" {
                             json!({"type":"local","command":[path],"environment":{"AGENTNAVE_HOST":id},"enabled":true})
                         } else if id == "zcode" {
-                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":id}})
+                            // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
+                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"timeoutMs":310000})
                         } else if id == "hermes" {
                             json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
                         } else {
@@ -1419,6 +1428,24 @@ fn reload_hint(id: &str) -> &'static str {
         "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",
     }
+}
+/// ZCode falls back to `~/.agents/mcp.json` only while its own user config names no MCP server,
+/// so a first entry there would silently hide every server kept in the fallback.
+fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
+    if before.rest["mcp"]["servers"]
+        .as_object()
+        .is_some_and(|servers| !servers.is_empty())
+    {
+        return None;
+    }
+    let path = home.join(".agents/mcp.json");
+    let fallback =
+        Document::parse(&fs::read_to_string(&path).ok()?, Format::Json, "mcpServers").ok()?;
+    let servers = fallback.entry.is_some()
+        || fallback.rest["mcpServers"]
+            .as_object()
+            .is_some_and(|servers| !servers.is_empty());
+    servers.then_some(path)
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)

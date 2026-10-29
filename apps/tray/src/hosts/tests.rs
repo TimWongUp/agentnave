@@ -1615,3 +1615,48 @@ fn zcode_nested_mcp_preserves_siblings_and_rejects_ambiguous_maps() {
         );
     }
 }
+
+#[test]
+fn zcode_first_entry_creates_nested_servers_and_keeps_comments() {
+    let entry = json!({"type":"stdio","command":"/new","args":[],"env":{"AGENTNAVE_HOST":"zcode"}});
+    for raw in [
+        "",
+        "{\n  // keep comment\n  \"hooks\": {}\n}",
+        "{\"mcp\": {\"policy\": \"keep\"}}",
+    ] {
+        let document = Document::parse(raw, Format::Zcode, "servers").unwrap();
+        let changed = document.render(Some(&entry)).unwrap();
+        document.verify(&changed, Some(&entry)).unwrap();
+        let next = Document::parse(&changed, Format::Zcode, "servers").unwrap();
+        assert_eq!(next.entry.as_ref(), Some(&entry), "{changed}");
+        for kept in ["// keep comment", "\"policy\": \"keep\""] {
+            assert!(!raw.contains(kept) || changed.contains(kept), "{changed}");
+        }
+        let removed = next.render(None).unwrap();
+        next.verify(&removed, None).unwrap();
+    }
+}
+
+#[test]
+fn zcode_fallback_servers_block_only_a_first_server() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let fallback = home.join(".agents/mcp.json");
+    let empty = Document::parse("{}", Format::Zcode, "servers").unwrap();
+    assert_eq!(zcode_fallback(home, &empty), None);
+    save(&fallback, "{\"mcpServers\": {}}");
+    assert_eq!(zcode_fallback(home, &empty), None);
+    save(
+        &fallback,
+        "{\"mcpServers\": {\"other\": {\"command\": \"keep\"}}}",
+    );
+    assert_eq!(zcode_fallback(home, &empty), Some(fallback.clone()));
+    // Once ZCode's own config names a server the fallback is already ignored.
+    let own = Document::parse(
+        "{\"mcp\": {\"servers\": {\"mine\": {\"command\": \"x\"}}}}",
+        Format::Zcode,
+        "servers",
+    )
+    .unwrap();
+    assert_eq!(zcode_fallback(home, &own), None);
+}
