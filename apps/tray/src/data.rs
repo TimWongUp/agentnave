@@ -1271,6 +1271,13 @@ mod tests {
             state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
             "受阻：需要授权"
         );
+        changed["director"]["tasks"][0]["status"] = json!("cancelled");
+        changed["director"]["tasks"][0]["error"] = json!("cancelled: invocation was cancelled");
+        save(root, &changed);
+        assert_eq!(
+            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
+            "已取消"
+        );
     }
 
     #[test]
