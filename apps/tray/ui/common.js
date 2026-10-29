@@ -289,7 +289,7 @@
   // The laptop lid shows the CLI the desk runs in; the figure at it is the model.
   const lid = (provider) => cliMark(provider) || h("img", { src: artUrl("logo-default.svg"), alt: "" });
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
-  const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness" };
+  const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", zcode: "ZCode" };
   const cliName = (provider) => CLI[provider] || provider || "";
   // The boss tile and CLI badges show the CLI's mark, or its initial. A boss in Claude Desktop's Code tab
   // keeps the claude host and passes its app, claude-desktop, for the mark.

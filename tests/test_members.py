@@ -303,6 +303,11 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
     )
     tiers = read_permissions()
     assert tiers is not None
+    # ZCode advertises auto but rejects every tool in that unimplemented native mode.
+    assert apply_member(None, "task", "zcode", {}, frozenset(), permissions=tiers) == (
+        {"permission_mode": "yolo"},
+        ["permission_mode"],
+    )
     document = MemberFile.model_validate(
         {
             "version": 1,

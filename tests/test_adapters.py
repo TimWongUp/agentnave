@@ -1836,3 +1836,26 @@ def test_deepseek_parse_maps_turn_end_and_keeps_only_terminal_events(tmp_path: P
     assert failed.error_message == "unknown session id"
     incomplete = adapter.parse(0, json.dumps({"type": "final", "text": "partial"}).encode(), b"")
     assert incomplete.status is InvocationStatus.FAILED and incomplete.output == "partial"
+
+
+def test_zcode_result_requires_terminal_and_preserves_session(tmp_path: Path) -> None:
+    adapter = get_adapter("zcode")
+    prepared = adapter.prepare(
+        InvocationRequest(
+            "zcode", "hello", tmp_path, provider_options={"model": "route/model", "effort": "low"}
+        )
+    )
+    payload = json.loads(prepared.stdin or b"{}")
+    assert payload["options"] == {"model": "route/model", "effort": "low"}
+    assert prepared.session_id == payload["session_id"]
+    assert "-I" in prepared.argv
+    events = b'{"type":"session","session_id":"sess-known"}\n'
+    assert adapter.parse(0, events, b"").status is InvocationStatus.FAILED
+    events += b'{"type":"result","session_id":"sess-known","output":"answer","failed":false}\n'
+    result = adapter.parse(0, events, b"")
+    assert (result.status, result.output, result.session_id) == (
+        InvocationStatus.SUCCEEDED,
+        "answer",
+        "sess-known",
+    )
+    assert adapter.parse(1, events, b"transport failed").status is InvocationStatus.FAILED

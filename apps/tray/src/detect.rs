@@ -334,7 +334,58 @@ fn dsh_provider_models(dump: &str) -> Vec<String> {
     models
 }
 
+fn zcode_models(document: &Value) -> Vec<Value> {
+    let mut models = Vec::new();
+    if let Some(rules) = document["config"]["providerConfigRules"]["providerRules"].as_array() {
+        for rule in rules {
+            let Some(provider) = rule["providerId"].as_str() else {
+                continue;
+            };
+            for key in ["modelOrder", "personalModelIds"] {
+                if let Some(ids) = rule["config"][key].as_array() {
+                    for id in ids.iter().filter_map(Value::as_str) {
+                        let qualified = format!("{provider}/{id}");
+                        if !models.iter().any(|m: &Value| m["id"] == qualified) {
+                            models.push(model(&qualified, &qualified, false));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    models
+}
+
+fn probe_zcode() -> Value {
+    let path = find("zcode").or_else(|| {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        [
+            Some(PathBuf::from("/Applications/ZCode.app")),
+            dirs::home_dir().map(|h| h.join("Applications/ZCode.app")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|p| p.join("Contents/Resources/glm/zcode.cjs"))
+        .find(|p| p.is_file())
+    });
+    let Some(path) = path else {
+        return failure("zcode", None, "");
+    };
+    let models = dirs::home_dir()
+        .and_then(|h| std::fs::read_to_string(h.join(".zcode/v2/provider_config.json")).ok())
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .map(|d| zcode_models(&d))
+        .unwrap_or_default();
+    json!({"installed":true,"path":path,"source":"zcode-config","error":null,
+        "native":{"model":null,"effort":null},"models":models,"efforts":[]})
+}
+
 fn probe(provider: &str) -> Value {
+    if provider == "zcode" {
+        return probe_zcode();
+    }
     let binary = match provider {
         "antigravity" => "agy",
         "deepseek" => "dsh",

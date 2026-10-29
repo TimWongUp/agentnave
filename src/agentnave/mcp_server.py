@@ -139,6 +139,7 @@ ACCESS = (
     "Recorded and shown only; it never changes the CLI's native permissions."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
+    "zcode": "permission_mode (auto, build, edit, plan, yolo, guarded); model accepts providerId/modelId; effort is native thoughtLevel; restricted_tools is not supported",
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
     "claude": "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)",
     "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",

@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent 或 DeepSeek Harness 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的协作节目；咨询或仅提到模型名称不授权执行。
+description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent 、DeepSeek Harness 或 ZCode 执行任务时使用，说明如何通过 AgentNave 交接任务、选择模型、传参、等待、取消及续接。也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、择优、分歧收敛、接力，以及保存的协作节目；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用 CLI
@@ -86,6 +86,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 | DeepSeek Harness | `deepseek` | [DeepSeek Harness](references/deepseek.md) |
+| ZCode | `zcode` | [ZCode](references/zcode.md) |
 
 用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自用户在 App 中设定的默认 options、服务按 CLI 套用的权限档位（缺省「自动」，用户可在 App 改为「完全放开」；见 `list_members` 的 `permissions`），或用户本轮明确要求，boss 不得自行追加；显式传任一权限参数会让该 CLI 的档位整档不套用。App 默认值续接时也会套用。终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒，按未完成处理并告知用户可在 App 调整档位。模型不可用时报告原错误，不静默替换。
 

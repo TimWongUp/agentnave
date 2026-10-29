@@ -186,7 +186,7 @@ impl Host {
         entry["command"] = json!(path);
     }
 }
-const IDS: [&str; 9] = [
+const IDS: [&str; 10] = [
     "codex",
     "claude",
     "codebuddy",
@@ -196,6 +196,7 @@ const IDS: [&str; 9] = [
     "pi",
     "deepseek",
     "hermes",
+    "zcode",
 ];
 
 pub struct Hosts {
@@ -261,6 +262,16 @@ impl Hosts {
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
         let specs = [
+            (
+                "zcode",
+                "ZCode",
+                "zcode",
+                None,
+                h.join(".zcode"),
+                "cli/config.json",
+                Format::Zcode,
+                "servers",
+            ),
             (
                 "codex",
                 "Codex",
@@ -412,6 +423,7 @@ impl Hosts {
             "workbuddy" => Some("WorkBuddy.app"),
             "antigravity" => Some("Antigravity.app"),
             "deepseek" => Some("DeepSeek Harness.app"),
+            "zcode" => Some("ZCode.app"),
             _ => None,
         };
         if let Some(path) = app.and_then(|name| {
@@ -482,6 +494,7 @@ impl Hosts {
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
                 "grok" => &[".grok/config.toml"],
                 "pi" => &[".pi/mcp.json"],
+                "zcode" => &["zcode.json", ".zcode/config.json"],
                 _ => &[],
             };
             for relative in relative {
@@ -1115,9 +1128,20 @@ impl Hosts {
                             .ok_or("write_failed:env 必须为对象")?
                             .insert("AGENTNAVE_HOST".into(), json!(id));
                     } else {
+                        if id == "zcode"
+                            && let Some(fallback) = zcode_fallback(&self.context.home, &before)
+                        {
+                            return Err(format!(
+                                "write_failed:ZCode 只在 ~/.zcode/cli/config.json 没有 MCP 服务时读取 {}，接入后其中的服务将不再加载；请先把它们移到 ~/.zcode/cli/config.json 的 mcp.servers 再接入",
+                                fallback.display()
+                            ));
+                        }
                         desired = Some(if id == "deepseek" {
                             // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
                             json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":id},"toolCallTimeoutMs":310_000})
+                        } else if id == "zcode" {
+                            // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
+                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"timeoutMs":310000})
                         } else if id == "hermes" {
                             json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
                         } else {
@@ -1353,8 +1377,27 @@ fn reload_hint(id: &str) -> &'static str {
         "pi" => "重启 Pi",
         "deepseek" => "重启 DeepSeek Harness",
         "hermes" => "重启 Hermes 网关",
+        "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",
     }
+}
+/// ZCode falls back to `~/.agents/mcp.json` only while its own user config names no MCP server,
+/// so a first entry there would silently hide every other server kept in the fallback. An
+/// `agentnave` server there is the one being connected, so it alone does not block.
+fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
+    if before.rest["mcp"]["servers"]
+        .as_object()
+        .is_some_and(|servers| !servers.is_empty())
+    {
+        return None;
+    }
+    let path = home.join(".agents/mcp.json");
+    let fallback =
+        Document::parse(&fs::read_to_string(&path).ok()?, Format::Json, "mcpServers").ok()?;
+    fallback.rest["mcpServers"]
+        .as_object()
+        .is_some_and(|servers| !servers.is_empty())
+        .then_some(path)
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)

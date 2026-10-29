@@ -145,6 +145,8 @@ def model_from_event(provider: str, event: dict[str, object]) -> str | None:
         message = object_dict(event.get("message"))
         if message.get("role") == "assistant":
             value = message.get("responseModel") or message.get("model")
+    elif provider == "zcode" and kind == "model":
+        value = event.get("model")
     if (
         isinstance(value, str)
         and value.strip()

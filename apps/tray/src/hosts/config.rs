@@ -5,6 +5,7 @@ use std::ops::Range;
 #[derive(Clone, Copy, Debug)]
 pub enum Format {
     Json,
+    Zcode,
     Toml,
     Yaml,
     /// A dsh `cordis.patch.yml`: a top-level YAML list whose `- insert:` item adds the MCP row.
@@ -21,7 +22,34 @@ pub struct Document {
 
 impl Document {
     pub fn parse(raw: &str, format: Format, key: &'static str) -> Result<Self, String> {
+        if matches!(format, Format::Zcode) {
+            let raw_object = if raw.trim().is_empty() { "{}" } else { raw };
+            let mut rest: Value =
+                serde_json::from_str(&clean_json(raw_object)?).map_err(|_| "JSON 配置解析失败")?;
+            let fields = json_fields(raw_object)?;
+            let nested = fields.iter().find(|f| f.0 == "mcp");
+            let document = Self::parse(
+                nested.map_or("{}", |f| &raw_object[f.1.clone()]),
+                Format::Json,
+                "servers",
+            )?;
+            if document.rest.as_object().is_some_and(|o| o.is_empty()) {
+                rest.as_object_mut()
+                    .ok_or("配置根必须为对象")?
+                    .remove("mcp");
+            } else {
+                rest["mcp"] = document.rest;
+            }
+            return Ok(Self {
+                raw: raw.into(),
+                entry: document.entry,
+                rest,
+                format,
+                key,
+            });
+        }
         let (entry, rest) = match format {
+            Format::Zcode => unreachable!(),
             Format::Json | Format::Toml => {
                 let mut all = if raw.trim().is_empty() {
                     json!({})
@@ -121,6 +149,31 @@ impl Document {
 
     pub fn render(&self, entry: Option<&Value>) -> Result<String, String> {
         match self.format {
+            Format::Zcode => {
+                let raw = if self.raw.trim().is_empty() {
+                    "{}"
+                } else {
+                    &self.raw
+                };
+                if let Some(parent) = json_fields(raw)?.into_iter().find(|f| f.0 == "mcp") {
+                    let nested = Self::parse(&raw[parent.1.clone()], Format::Json, "servers")?;
+                    let changed = nested.render(entry)?;
+                    let mut out = raw.to_owned();
+                    out.replace_range(parent.1, &changed);
+                    Ok(out)
+                } else if let Some(entry) = entry {
+                    json_set(
+                        raw,
+                        "mcp",
+                        Some(&json!({"servers":{"agentnave":entry}})),
+                        "",
+                        json_indent(raw),
+                        newline(raw),
+                    )
+                } else {
+                    Ok(raw.into())
+                }
+            }
             Format::Json => {
                 let raw = if self.raw.trim().is_empty() {
                     "{}"
