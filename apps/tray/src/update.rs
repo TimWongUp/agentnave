@@ -42,6 +42,7 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SERVICE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Long enough to read the last step before the window goes away.
 const RESTART_NOTE: Duration = Duration::from_secs(1);
+const EMBEDDED_WHEEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/agentnave.whl"));
 
 #[derive(Clone, Default, PartialEq)]
 enum Phase {
@@ -203,7 +204,11 @@ impl Updates {
 }
 
 async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
-    let found = match app.updater_builder().timeout(CHECK_TIMEOUT).build() {
+    let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
+    if let Some(proxy) = updater_proxy(&app) {
+        builder = builder.proxy(proxy);
+    }
+    let found = match builder.build() {
         Ok(updater) => updater.check().await,
         Err(error) => Err(error),
     };
@@ -362,10 +367,13 @@ fn install(app: &AppHandle, mut update: Update) {
             updates.lock().enter("service");
             let service = app.clone();
             let target = version.clone();
-            tauri::async_runtime::spawn_blocking(move || upgrade_service_to(&service, &target))
-                .await
-                .map_err(|error| error.to_string())?
-                .map_err(|error| format!("本机服务升级失败，App 未更新：{error}"))?;
+            let archive = bytes.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                upgrade_service_to(&service, &target, Some(&archive))
+            })
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| format!("本机服务升级失败，App 未更新：{error}"))?;
             updates.lock().enter("app");
             update
                 .install(bytes)
@@ -387,7 +395,11 @@ fn install(app: &AppHandle, mut update: Update) {
 }
 
 /// Bring a uv-installed service up to `version` before the app that needs it is installed.
-fn upgrade_service_to(app: &AppHandle, version: &str) -> Result<(), String> {
+fn upgrade_service_to(
+    app: &AppHandle,
+    version: &str,
+    archive: Option<&[u8]>,
+) -> Result<(), String> {
     let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请稍后重试")?;
     let Some(installed) = installed_version(&dirs.tools.join("agentnave")) else {
         return Ok(());
@@ -396,7 +408,7 @@ fn upgrade_service_to(app: &AppHandle, version: &str) -> Result<(), String> {
         return Ok(());
     }
     let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或在终端运行升级命令")?;
-    install_service_version(&uv, &dirs, version)?;
+    install_service_version(&uv, &dirs, version, archive)?;
     app.state::<crate::Tray>().reader.refresh_hosts();
     Ok(())
 }
@@ -543,16 +555,118 @@ fn finish_upgrade(app: &AppHandle) {
 }
 
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
-    install_service_version(uv, dirs, VERSION)
+    install_service_version(uv, dirs, VERSION, None)
 }
 
-fn install_service_version(uv: &Path, dirs: &ToolDirs, version: &str) -> Result<(), String> {
+fn install_service_version(
+    uv: &Path,
+    dirs: &ToolDirs,
+    version: &str,
+    archive: Option<&[u8]>,
+) -> Result<(), String> {
+    let embedded = if version == VERSION {
+        extract_wheel(EMBEDDED_WHEEL, VERSION)
+    } else {
+        archive.and_then(|bytes| wheel_from_archive(bytes, version))
+    };
+    if let Some(wheel) = embedded {
+        let stage = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let file = stage
+            .path()
+            .join(format!("agentnave-{version}-py3-none-any.whl"));
+        fs::write(&file, wheel).map_err(|error| error.to_string())?;
+        let source = file.to_str().ok_or("临时目录路径无效")?;
+        let online = run(
+            uv,
+            &["tool", "install", "--force", "--python", "3.12", source],
+            dirs,
+        );
+        if online.is_err()
+            && installed_version(&dirs.tools.join("agentnave")).is_some()
+            && run(
+                uv,
+                &[
+                    "tool",
+                    "install",
+                    "--force",
+                    "--offline",
+                    "--python",
+                    "3.12",
+                    source,
+                ],
+                dirs,
+            )
+            .is_ok()
+        {
+            return Ok(());
+        }
+        return online;
+    }
     let source = format!("git+{REPOSITORY}@v{version}");
     run(
         uv,
         &["tool", "install", "--force", "--python", "3.12", &source],
         dirs,
     )
+}
+
+fn extract_wheel(haystack: &[u8], version: &str) -> Option<Vec<u8>> {
+    let mut prefix = Vec::with_capacity(20 + version.len());
+    prefix.extend_from_slice(b"\x89ANWHEEL");
+    prefix.extend_from_slice(b"\r\n\x1a\n\x00\x00\x00\x01");
+    prefix.extend_from_slice(&(version.len() as u32).to_le_bytes());
+    prefix.extend_from_slice(version.as_bytes());
+    let pos = haystack
+        .windows(prefix.len())
+        .position(|window| window == prefix.as_slice())?;
+    let len_start = pos + prefix.len();
+    let len_bytes: [u8; 4] = haystack.get(len_start..len_start + 4)?.try_into().ok()?;
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    let start = len_start + 4;
+    let wheel = haystack.get(start..start.checked_add(len)?)?;
+    wheel.starts_with(b"PK\x03\x04").then(|| wheel.to_vec())
+}
+
+fn wheel_from_archive(archive: &[u8], version: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut decompressed = Vec::new();
+    if flate2::read::GzDecoder::new(archive)
+        .take(64 * 1024 * 1024)
+        .read_to_end(&mut decompressed)
+        .is_ok()
+        && let Some(wheel) = extract_wheel(&decompressed, version)
+    {
+        return Some(wheel);
+    }
+    extract_wheel(archive, version)
+}
+
+fn updater_proxy(app: &AppHandle) -> Option<tauri::Url> {
+    if let Some(dirs) = service_dirs(app)
+        && let Some(url) = proxy_url(&dirs.network)
+    {
+        return Some(url);
+    }
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    proxy_url(&env)
+}
+
+fn proxy_url(env: &std::collections::BTreeMap<String, String>) -> Option<tauri::Url> {
+    for key in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ] {
+        if let Some(raw) = env.get(key).map(|s| s.trim()).filter(|s| !s.is_empty())
+            && let Ok(url) = tauri::Url::parse(raw)
+        {
+            return Some(url);
+        }
+    }
+    None
 }
 
 pub fn service_command() -> String {
@@ -579,6 +693,7 @@ fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
     let mut command = Command::new(uv);
     command
         .args(args)
+        .envs(&dirs.network)
         .env("HOME", &dirs.home)
         .env("UV_TOOL_DIR", &dirs.tools)
         .env("UV_TOOL_BIN_DIR", &dirs.bin)
@@ -935,5 +1050,30 @@ mod tests {
         assert_eq!(rfc3339(SystemTime::UNIX_EPOCH), "1970-01-01T00:00:00Z");
         let leap = SystemTime::UNIX_EPOCH + Duration::from_secs(951_782_400);
         assert_eq!(rfc3339(leap), "2000-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn extracts_embedded_wheel_from_gzip_archive_and_parses_proxy() {
+        use std::io::Write;
+        let wheel = extract_wheel(EMBEDDED_WHEEL, VERSION).expect("embedded wheel");
+        assert!(wheel.starts_with(b"PK\x03\x04"));
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(b"tar-header-padding").unwrap();
+        gz.write_all(EMBEDDED_WHEEL).unwrap();
+        let archive = gz.finish().unwrap();
+        assert_eq!(
+            wheel_from_archive(&archive, VERSION).as_deref(),
+            Some(wheel.as_slice())
+        );
+        assert_eq!(wheel_from_archive(&archive, "99.99.99"), None);
+
+        let env = std::collections::BTreeMap::from([
+            ("HTTPS_PROXY".to_owned(), "  ".to_owned()),
+            ("all_proxy".to_owned(), "socks5://127.0.0.1:7890".to_owned()),
+        ]);
+        assert_eq!(
+            proxy_url(&env).map(|u| u.to_string()).as_deref(),
+            Some("socks5://127.0.0.1:7890")
+        );
     }
 }
