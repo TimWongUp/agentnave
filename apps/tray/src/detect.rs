@@ -282,6 +282,39 @@ fn grok_default_effort(cache: &Value, model: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Each model's `effort`: the level its CLI runs it at when a call names none. The CLI's own
+/// setting wins where the model offers it (Claude's per model, Pi's falling back to Pi's
+/// `medium`), else the level the CLI's listing marks for the model; unknown stays unset.
+fn model_efforts(provider: &str, models: &mut [Value], levels: &[String], setting: Option<String>) {
+    for listed in models {
+        let offered: Vec<String> = match listed["efforts"].as_array() {
+            Some(own) => own
+                .iter()
+                .filter_map(|l| l.as_str().map(str::to_owned))
+                .collect(),
+            None => levels.to_vec(),
+        };
+        let setting = match provider {
+            "claude" => configured_effort(provider, listed["id"].as_str()),
+            "pi" => setting.clone().or_else(|| Some("medium".to_owned())),
+            _ => setting.clone(),
+        };
+        let own = listed["effort"].as_str().map(str::to_owned);
+        let effort = [setting, own]
+            .into_iter()
+            .flatten()
+            .find(|level| offered.contains(level));
+        match effort {
+            Some(level) => listed["effort"] = json!(level),
+            None => {
+                if let Some(entry) = listed.as_object_mut() {
+                    entry.remove("effort");
+                }
+            }
+        }
+    }
+}
+
 /// One plain, single- or double-quoted YAML scalar from `dsh --dump-config`.
 fn dsh_scalar(raw: &str) -> Option<String> {
     let raw = raw.trim();
@@ -532,8 +565,12 @@ fn probe_path(provider: &str, path: &Path) -> Value {
                 .unwrap_or(Value::Null);
             let mut models = grok_models(&out);
             for listed in &mut models {
-                if let Some(efforts) = grok_efforts(&cache, listed["id"].as_str().unwrap_or("")) {
+                let id = listed["id"].as_str().unwrap_or("").to_owned();
+                if let Some(efforts) = grok_efforts(&cache, &id) {
                     listed["efforts"] = json!(efforts);
+                }
+                if let Some(effort) = grok_default_effort(&cache, &id) {
+                    listed["effort"] = json!(effort);
                 }
             }
             ("command", models)
@@ -545,10 +582,20 @@ fn probe_path(provider: &str, path: &Path) -> Value {
             .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out)))),
         "codebuddy" => run(path, &["--help"]).map(|out| {
             let mut models = codebuddy_models(&out);
-            let supported = codebuddy_supported_efforts();
+            let reasoning = codebuddy_reasoning();
             for listed in &mut models {
-                if let Some(efforts) = listed["id"].as_str().and_then(|id| supported.get(id)) {
-                    listed["efforts"] = efforts.clone();
+                let Some(own) = listed["id"].as_str().and_then(|id| reasoning.get(id)) else {
+                    continue;
+                };
+                // CodeBuddy offers every level for a model that lists none.
+                if own["supportedEfforts"]
+                    .as_array()
+                    .is_some_and(|l| !l.is_empty())
+                {
+                    listed["efforts"] = own["supportedEfforts"].clone();
+                }
+                if let Some(effort) = own["defaultEffort"].as_str().or(own["effort"].as_str()) {
+                    listed["effort"] = json!(effort);
                 }
             }
             ("help", models)
@@ -558,7 +605,16 @@ fn probe_path(provider: &str, path: &Path) -> Value {
     match listed {
         Ok((source, models)) => {
             let native = native_model(&models, configured_model.as_deref());
-            let effort = dsh_effort.or_else(|| configured_effort(provider, native.as_deref()));
+            let effort = dsh_effort
+                .clone()
+                .or_else(|| configured_effort(provider, native.as_deref()));
+            let mut models = models;
+            let setting = match provider {
+                "deepseek" => dsh_effort,
+                "codex" | "pi" => configured_effort(provider, None),
+                _ => None,
+            };
+            model_efforts(provider, &mut models, &efforts, setting);
             json!({
             "installed": true,
             "path": path.display().to_string(),
@@ -815,10 +871,10 @@ fn grok_efforts(cache: &Value, model: &str) -> Option<Vec<String>> {
     )
 }
 
-/// The `reasoning.supportedEfforts` CodeBuddy's cached product configuration lists per model
-/// (`~/.codebuddy/local_storage/*.info`: a JSON string of base64 gzip JSON). CodeBuddy offers
-/// every level for a model that lists none, so only non-empty lists are kept.
-fn codebuddy_supported_efforts() -> Map<String, Value> {
+/// The `reasoning` settings CodeBuddy's cached product configuration keeps per model
+/// (`~/.codebuddy/local_storage/*.info`: a JSON string of base64 gzip JSON): `supportedEfforts`
+/// and its default level, `defaultEffort` or `effort`.
+fn codebuddy_reasoning() -> Map<String, Value> {
     let Some(dir) = dirs::home_dir().map(|home| home.join(".codebuddy/local_storage")) else {
         return Map::new();
     };
@@ -833,9 +889,10 @@ fn codebuddy_supported_efforts() -> Map<String, Value> {
         .flat_map(|config| {
             let models = config["models"].as_array().cloned().unwrap_or_default();
             models.into_iter().filter_map(|model| {
-                let efforts = &model["reasoning"]["supportedEfforts"];
-                let listed = efforts.as_array().is_some_and(|levels| !levels.is_empty());
-                listed.then_some((model["id"].as_str()?.to_owned(), efforts.clone()))
+                let reasoning = model["reasoning"].clone();
+                reasoning
+                    .is_object()
+                    .then_some((model["id"].as_str()?.to_owned(), reasoning))
             })
         })
         .collect()
@@ -991,6 +1048,9 @@ fn parse_codex_cache(text: &str) -> Result<(Vec<Value>, Vec<String>), String> {
         if entry["supported_reasoning_levels"].is_array() {
             listed["efforts"] = json!(own);
         }
+        if let Some(level) = entry["default_reasoning_level"].as_str() {
+            listed["effort"] = json!(level);
+        }
         models.push(listed);
     }
     let rank = |effort: &String| {
@@ -1126,6 +1186,7 @@ mod tests {
     fn codex_cache_lists_visible_models_by_priority_with_their_efforts() {
         let cache = json!({"models": [
             {"slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "visibility": "list", "priority": 4,
+             "default_reasoning_level": "medium",
              "supported_reasoning_levels": [{"effort": "medium"}, {"effort": "max"}]},
             {"slug": "hidden", "visibility": "hide", "priority": 1,
              "supported_reasoning_levels": [{"effort": "secret"}]},
@@ -1137,9 +1198,27 @@ mod tests {
         assert_eq!(models[0], model("gpt-6.1-sol", "GPT-6.1-Sol", false));
         assert_eq!(models[1]["efforts"], json!(["low", "ultra"]));
         assert_eq!(models[2]["efforts"], json!(["medium", "max"]));
+        assert_eq!(models[2]["effort"], "medium");
         assert_eq!(efforts, ["low", "medium", "max", "ultra"]);
         assert!(parse_codex_cache("{").is_err());
         assert!(parse_codex_cache("{}").is_err());
+    }
+
+    #[test]
+    fn each_model_runs_at_the_clis_setting_where_offered_else_its_own_level() {
+        let levels = ["low".to_owned(), "high".to_owned()];
+        let mut models = vec![
+            json!({"id": "a", "efforts": ["low", "medium"], "effort": "low"}),
+            json!({"id": "b", "effort": "high"}),
+            json!({"id": "c", "efforts": ["max"], "effort": "high"}),
+        ];
+        model_efforts("codex", &mut models, &levels, Some("medium".to_owned()));
+        assert_eq!(models[0]["effort"], "medium");
+        assert_eq!(models[1]["effort"], "high");
+        assert!(models[2].get("effort").is_none());
+        let mut pi = vec![json!({"id": "p/m", "efforts": ["off", "medium", "high"]})];
+        model_efforts("pi", &mut pi, &[], None);
+        assert_eq!(pi[0]["effort"], "medium");
     }
 
     #[test]
