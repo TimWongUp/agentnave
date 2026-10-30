@@ -1735,7 +1735,9 @@ async def handover(
             description="With release: notes for the next boss, written for what it must do "
             "next. Say why you hand over (out of quota, a model better suited to the work), the "
             "goal, what is done, decisions and why, what is open, desks in use, and the Skills "
-            "to load (agentnave-manager, any review gate): it may come from another host. Cite "
+            "to load (agentnave-manager, any review gate): it may come from another host. Name "
+            "the conversations to read first and any worktree or uncommitted work needed to "
+            "continue. Cite "
             "what already exists by reference only (conversation ids, PR or commit links, ADR "
             "or spec paths); the next boss reads seat answers with read_conversation, so keep "
             "this shorter than the records it points to. No keys, passwords or sensitive "
@@ -1757,9 +1759,11 @@ async def handover(
 
     Only when the user asks to hand over or take over; never as a routine check. release=true
     marks this chat's workspace as waiting. Without arguments, lists waiting workspaces. With
-    workspace_id, this chat takes it over: its notes, conversations (read each with
-    read_conversation) and, when known, the previous boss's transcript file, whose tail holds
-    its last turns. From then on this chat continues those meetings and tasks and the previous boss
+    workspace_id, this chat takes it over: its notes, conversation list and, when known, the
+    previous boss's transcript file. Read the note and available transcript tail, then use
+    read_conversation for relevant conversations. If the note is missing, incomplete or leaves
+    open work unclear, expand reading from recent history until the goal, constraints and next
+    step are clear. From then on this chat continues those meetings and tasks and the previous boss
     is refused. Work still running finishes in the previous boss's server and lands in history;
     continue such a conversation once writable is true. Taking over your own waiting workspace
     withdraws the handover. Private: never send this to seats.
@@ -1815,7 +1819,10 @@ async def handover(
         "from_host": previous_host or records[-1].state.host,
         "note": after.note,
         "conversations": _handover_conversations(conversations, records),
-        "next": "Read the note, then each conversation with read_conversation. Continue meetings "
+        "next": "Read the note and available previous_session_file tail, then use "
+        "read_conversation for relevant conversations. If the note is missing, incomplete or "
+        "leaves open work unclear, expand reading from recent history until the goal, constraints "
+        "and next step are clear. Continue meetings "
         "with run_round(group_id) and tasks with start_agent(conversation_id or session_id) "
         "once writable is true; running work finishes in the previous boss's server.",
     }
