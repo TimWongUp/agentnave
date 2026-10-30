@@ -1148,7 +1148,7 @@ function speakerName(m, ctx) {
   if (s.role === "system") return s.label || "系统";
   if (isBoss(m)) return "boss";
   const d = speakerDesk(m, ctx);
-  return d ? deskName(d) : AN.modelName(s.model) || cliName(s.provider) || "组员";
+  return d ? deskName({ ...d, effort: s.effort }) : [AN.modelName(s.model) || cliName(s.provider) || "组员", s.effort].filter(Boolean).join(" · ");
 }
 // CLI and role after the name, so several "默认模型" desks stay apart.
 function speakerSub(m, ctx) {

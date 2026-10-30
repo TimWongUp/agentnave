@@ -238,7 +238,14 @@ fn desk_label(model: &str, provider: &str, role: Option<&str>) -> String {
     parts.join(" · ")
 }
 
-fn handle(model: &str, provider: &str, role: Option<&str>) -> String {
+fn model_with_effort(model: &str, effort: Option<&str>) -> String {
+    match effort.filter(|effort| !effort.is_empty()) {
+        Some(effort) => format!("{model} · {effort}"),
+        None => model.to_owned(),
+    }
+}
+
+fn handle(model: &str, effort: Option<&str>, provider: &str, role: Option<&str>) -> String {
     let chars: Vec<_> = model.chars().collect();
     let model = if chars.len() > 20 {
         format!(
@@ -251,7 +258,11 @@ fn handle(model: &str, provider: &str, role: Option<&str>) -> String {
     } else {
         model.to_owned()
     };
-    let mut value = format!("@{model}·{}", cli_label(provider));
+    let mut value = format!(
+        "@{}·{}",
+        model_with_effort(&model, effort),
+        cli_label(provider)
+    );
     if let Some(role) = role {
         value.push('·');
         value.push_str(role);
@@ -307,6 +318,7 @@ struct Desk {
     room: Option<String>,
     provider: String,
     model: String,
+    effort: Option<String>,
     role: Option<String>,
     labelled: Option<i64>,
     // Several desks with the same model, CLI and role are numbered by first appearance.
@@ -327,10 +339,11 @@ struct Desk {
 
 impl Desk {
     /// Model and role follow the desk's latest call; a resumed thread may relabel it.
-    fn label(&mut self, at: i64, model: &str, role: Option<String>) {
+    fn label(&mut self, at: i64, model: &str, effort: Option<String>, role: Option<String>) {
         if self.labelled.is_none_or(|old| at >= old) {
             self.labelled = Some(at);
             self.model = model.to_owned();
+            self.effort = effort;
             self.role = role;
         }
     }
@@ -419,6 +432,7 @@ impl Desk {
     fn handle(&self) -> String {
         self.numbered(handle(
             &self.display_model(),
+            self.effort.as_deref(),
             &self.provider,
             self.role.as_deref(),
         ))
@@ -453,9 +467,10 @@ impl Desk {
             "room": self.room,
             "provider": self.provider,
             "model": self.model,
+            "effort": self.effort,
             "role": self.role,
             "access": self.access.as_ref().map(|(_, access)| access),
-            "label": self.numbered(desk_label(&self.display_model(), &self.provider, self.role.as_deref())),
+            "label": self.numbered(desk_label(&model_with_effort(&self.display_model(), self.effort.as_deref()), &self.provider, self.role.as_deref())),
             "display_model": self.display_model(),
             "model_source": self.model_source(),
             "handle": self.handle(), "activities": self.activities.iter().rev().collect::<Vec<_>>(),
@@ -600,6 +615,7 @@ fn member_speaker(identity: &Value) -> Value {
     let provider = text(identity, "provider");
     let model = model(identity);
     let mut who = speaker("member", provider, model, label(Some(provider)));
+    who["effort"] = identity["effort"].clone();
     who["model_source"] = json!(if !text(identity, "reported_model").is_empty() {
         "native"
     } else if !model.is_empty() {
@@ -886,7 +902,12 @@ impl Group {
             provider: provider.to_owned(),
             ..Desk::default()
         });
-        desk.label(created, text(identity, "model"), desk_role(identity));
+        desk.label(
+            created,
+            text(identity, "model"),
+            opt_text(identity, "effort"),
+            desk_role(identity),
+        );
         desk.seen(created);
         desk.declare(created, opt_text(identity, "access"));
         desk.seat(at, status, meeting.then_some((room, seat)));
@@ -1270,6 +1291,7 @@ impl Group {
                 entry.label(
                     timestamp(raw_start).unwrap_or_default(),
                     text(task, "model"),
+                    opt_text(task, "effort"),
                     desk_role(task),
                 );
                 entry.seen(timestamp(raw_start).unwrap_or_default());
@@ -2051,8 +2073,22 @@ mod tests {
     #[test]
     fn handles_shorten_only_the_model_middle_by_unicode_characters() {
         assert_eq!(
-            handle("backend/abcdefghijklmno尾部模型", "pi", Some("review")),
+            handle(
+                "backend/abcdefghijklmno尾部模型",
+                None,
+                "pi",
+                Some("review")
+            ),
             "@backend/ab…klmno尾部模型·Pi·review"
+        );
+        assert_eq!(
+            handle(
+                "backend/abcdefghijklmno尾部模型",
+                Some("high"),
+                "pi",
+                Some("review")
+            ),
+            "@backend/ab…klmno尾部模型 · high·Pi·review"
         );
     }
 }

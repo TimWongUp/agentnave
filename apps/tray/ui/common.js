@@ -310,7 +310,7 @@
     try { localStorage.setItem(MODEL_NAMES_KEY, full ? "full" : "short"); } catch { /* storage may be unavailable */ }
   };
   const modelName = (model) => (model && !fullModelNames() ? model.split("/").pop() || model : model);
-  const deskName = (d) => modelName(d.display_model || d.model) || "CLI 默认模型";
+  const deskName = (d) => [modelName(d.display_model || d.model) || "CLI 默认模型", d.effort].filter(Boolean).join(" · ");
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
