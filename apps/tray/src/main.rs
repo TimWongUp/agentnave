@@ -262,18 +262,16 @@ fn main() {
                 });
                 if !PREVIEW {
                     update::resume(&resumer);
+                    thread::spawn(move || {
+                        loop {
+                            update::check(&checker, false);
+                            thread::sleep(update::EVERY);
+                        }
+                    });
                 }
             });
             thread::spawn(members::prepare);
             thread::spawn(move || poll(handle, reader, overview));
-            if !PREVIEW {
-                thread::spawn(move || {
-                    loop {
-                        update::check(&checker, false);
-                        thread::sleep(update::EVERY);
-                    }
-                });
-            }
             Ok(())
         })
         .build(tauri::generate_context!())

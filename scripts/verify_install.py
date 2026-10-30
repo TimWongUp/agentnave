@@ -81,6 +81,11 @@ async def _check(launcher: str, home: Path) -> None:
 async def main(launcher: str, *legacy_launchers: str) -> None:
     for legacy in legacy_launchers:
         assert not Path(legacy).exists(), f"legacy launcher still installed: {legacy}"
+    import agentnave
+
+    skills = Path(agentnave.__file__).resolve().parent / "skills"
+    assert (skills / "agentnave-manager/SKILL.md").is_file(), "missing bundled agentnave-manager"
+    assert (skills / "agentnave-review/SKILL.md").is_file(), "missing bundled agentnave-review"
     with tempfile.TemporaryDirectory() as directory:
         home = Path(directory)
         await _check(launcher, home)

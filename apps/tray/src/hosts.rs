@@ -30,6 +30,7 @@ pub(crate) struct ToolDirs {
     pub home: PathBuf,
     pub tools: PathBuf,
     pub bin: PathBuf,
+    pub network: BTreeMap<String, String>,
 }
 fn effective_env<'a>(
     context: &'a Context,
@@ -70,10 +71,28 @@ impl ToolDirs {
                 })
             })
             .unwrap_or_else(|| context.home.join(".local/bin"));
+        let mut network = BTreeMap::new();
+        for &var in roots::NETWORK_VARIABLES {
+            let found = context
+                .env
+                .get(var)
+                .filter(|v| !v.is_empty() && !v.contains('\n'))
+                .or_else(|| {
+                    shell
+                        .as_ref()
+                        .ok()
+                        .and_then(|s| s.get(var))
+                        .filter(|v| !v.is_empty() && !v.contains('\n'))
+                });
+            if let Some(val) = found {
+                network.insert(var.into(), val.clone());
+            }
+        }
         Self {
             home: context.home.clone(),
             tools,
             bin,
+            network,
         }
     }
 }

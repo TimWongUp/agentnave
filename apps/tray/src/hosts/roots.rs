@@ -24,6 +24,24 @@ pub(super) const VARIABLES: &[&str] = &[
     "XDG_BIN_HOME",
     "XDG_DATA_HOME",
 ];
+pub(super) const NETWORK_VARIABLES: &[&str] = &[
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "UV_DEFAULT_INDEX",
+    "UV_INDEX",
+    "UV_INDEX_URL",
+    "UV_EXTRA_INDEX_URL",
+    "UV_PYTHON_INSTALL_MIRROR",
+    "UV_PYPY_INSTALL_MIRROR",
+    "PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL",
+];
 pub(crate) type Shell = Result<BTreeMap<String, String>, String>;
 
 pub(super) fn probe(context: &Context) -> Shell {
@@ -34,6 +52,7 @@ pub(super) fn probe(context: &Context) -> Shell {
         .ok_or("登录 shell 未知，根目录尚未确认")?;
     let script = VARIABLES
         .iter()
+        .chain(NETWORK_VARIABLES.iter())
         .map(|name| format!("printf '%s\\0%s\\0' '{name}' \"${{{name}-}}\"\n"))
         .collect::<String>();
     let out = tempfile::tempfile().map_err(|_| "无法暂存 shell 探测结果")?;
@@ -92,9 +111,11 @@ pub(super) fn probe(context: &Context) -> Shell {
     for pair in parts.as_chunks::<2>().0 {
         if VARIABLES.contains(&pair[0]) {
             seen.insert(pair[0]);
-        }
-        if VARIABLES.contains(&pair[0])
-            && Path::new(pair[1]).is_absolute()
+            if Path::new(pair[1]).is_absolute() && !pair[1].contains('\n') {
+                values.insert(pair[0].into(), pair[1].into());
+            }
+        } else if NETWORK_VARIABLES.contains(&pair[0])
+            && !pair[1].is_empty()
             && !pair[1].contains('\n')
         {
             values.insert(pair[0].into(), pair[1].into());
