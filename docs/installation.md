@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.56.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.57.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.56.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.57.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -549,23 +549,25 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.55.0 to v0.56.0
+### Upgrading from v0.56.0 to v0.57.0
 
-"Update all" updates the App, the runtime and App-managed Skills; for a host not connected through
-the App, replace its `agentnave-manager` and `agentnave-review` Skills with the complete v0.56.0
-directories. The runtime now applies the App's selected model and effort when `start_agent.role`
-names a matching review or Explorer/Worker seat and provider; explicit options still take priority.
-Refresh or reconnect hosts marked by the App so they load the updated tool and Skill instructions.
+Update the App and its paired runtime and Skills together. The App now bundles the
+matching runtime wheel and reuses detected proxy and uv mirror settings. Reconnect
+or restart the host after updating to refresh its tool schema and Skills.
 
-The App shows download progress and each update step, keeps the failed step for retry, and reuses
-an update already found by a recent check. These improvements arrive with the new App, so the
-update from an older App uses that App's existing updater. Workspace chats now show the latest
-handover's release time, source and current boss (when recorded), and its plain-text note. A
-withdrawn handover clears its release time and note; no complete handover history is stored.
+`wait_seconds` now accepts only `0` and `240`; omit it for normal waiting.
+Normal waits return running status and activity without reply tails. Use `0` only
+for a specific progress or intervention check; it may return up to 1000 characters
+of public reply tail per running task or seat. Final answers, blockers and answers
+awaiting review keep their existing delivery rules. Do not routinely follow every
+elapsed wait with a zero-second check. Hosts with shorter tool-call timeouts must
+resolve that host limit; arbitrary shorter wait windows are no longer accepted.
 
-History and member settings need no migration. For earlier upgrade changes, see
-[v0.55.0 release notes](releases/v0.55.0.md) and their linked prior releases.
-See [v0.56.0 release notes](releases/v0.56.0.md).
+History, member settings and credentials need no migration. Handover now prioritizes
+the note and relevant conversation history, expanding the read when details are missing.
+
+See [v0.57.0 release notes](releases/v0.57.0.md) for this release and
+[v0.56.0 release notes](releases/v0.56.0.md) for earlier upgrade notes.
 
 ## Uninstall
 
