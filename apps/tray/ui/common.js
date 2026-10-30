@@ -185,7 +185,8 @@
 
   // ---- painted office art (ui/art, served at /art/) -----------------------------------------
   // Characters follow the model family, like the avatars; a model without a character of its own is
-  // the default newcomer. The CLI brand is never used to guess a model.
+  // the default newcomer. The CLI brand is never used to guess a model, except DeepSeek Harness:
+  // its boss and desks wear DeepSeek's character when their model is unknown or has none.
   const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok", qwen: "qwen",
     kimi: "kimi", minimax: "minimax", hunyuan: "hunyuan", doubao: "doubao", muse: "muse" };
   const STATES = ["idle", "blink", "working", "speaking", "review", "done", "sleep"];
@@ -210,7 +211,7 @@
     return loadCharacters();
   };
   const character = (provider, model) => {
-    const family = window.Avatars?.family(provider, model);
+    const family = window.Avatars?.family(provider, model) || (provider === "deepseek" ? "deepseek" : null);
     return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
   };
   // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
