@@ -1092,6 +1092,9 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             },
         )
         assert stale.is_error and "'correctness-reviewer' seat" in str(stale.content)
+        assert (await start({"model": "chosen", "effort": "medium"}, role="correctness-reviewer"))[
+            "effort"
+        ] == "medium"
         (tmp_path / "review.json").unlink()
         (tmp_path / "orchestration.json").unlink()
         for options in ({"model": "outside"}, {"effort": "low"}, {"unknown": True}):

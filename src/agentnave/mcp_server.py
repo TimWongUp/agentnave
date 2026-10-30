@@ -819,8 +819,8 @@ async def start_agent(
         error = invocation_request_error(provider, exc)
         if seat_applied:
             raise ToolError(
-                f"{error} The {', '.join(seat_applied)} came from the App's {role!r} seat; "
-                "pass them explicitly to override."
+                f"{error} App defaults applied: {(role or '').strip()!r} seat "
+                f"({', '.join(seat_applied)})."
             ) from exc
         raise error from exc
     except OSError as exc:
