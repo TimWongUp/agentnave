@@ -31,7 +31,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     let rows = listed["files"].as_array().unwrap();
     let row = |file: &str| {
         rows.iter()
-            .find(|row| row["path"] == json!(h.join(file)))
+            .find(|row| Path::new(row["path"].as_str().unwrap()) == h.join(file))
             .cloned()
     };
     assert_eq!(
@@ -53,13 +53,13 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     // Grok already reads Claude's file; ZCode has none yet, so its usual one comes last.
     assert!(row(".grok/AGENTS.md").is_none());
     assert_eq!(
-        rows.last().unwrap()["path"],
-        json!(h.join(".zcode/AGENTS.md"))
+        Path::new(rows.last().unwrap()["path"].as_str().unwrap()),
+        h.join(".zcode/AGENTS.md")
     );
     assert_eq!(rows.last().unwrap()["exists"], false);
 
     assert!(
-        open(&apps, h, h.join(".zcode/AGENTS.md").to_str().unwrap())
+        open(&apps, h, rows.last().unwrap()["path"].as_str().unwrap())
             .unwrap_err()
             .contains("未找到")
     );
@@ -77,7 +77,9 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     let listed = list(&apps, &[], h, None);
     let readers = |file: &str| {
         let rows = listed["files"].as_array().unwrap();
-        let row = rows.iter().find(|row| row["path"] == json!(h.join(file)));
+        let row = rows
+            .iter()
+            .find(|row| Path::new(row["path"].as_str().unwrap()) == h.join(file));
         row.map(|row| row["readers"].clone())
     };
     assert_eq!(readers(".claude/CLAUDE.md"), Some(json!(["Claude Code"])));

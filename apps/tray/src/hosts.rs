@@ -60,7 +60,17 @@ impl ToolDirs {
         let value = |var| effective_env(context, Some(shell), var);
         let tools = value("UV_TOOL_DIR")
             .map(|(p, _)| PathBuf::from(p))
-            .or_else(|| value("XDG_DATA_HOME").map(|(p, _)| PathBuf::from(p).join("uv/tools")))
+            .or_else(|| {
+                // On Windows uv ignores XDG and only keeps using `uv\data` where it already exists.
+                if cfg!(windows) {
+                    return context.env.get("APPDATA").map(|p| {
+                        let uv = PathBuf::from(p).join("uv");
+                        let legacy = uv.join("data");
+                        if legacy.exists() { legacy } else { uv }.join("tools")
+                    });
+                }
+                value("XDG_DATA_HOME").map(|(p, _)| PathBuf::from(p).join("uv/tools"))
+            })
             .unwrap_or_else(|| context.home.join(".local/share/uv/tools"));
         let bin = value("UV_TOOL_BIN_DIR")
             .or_else(|| value("XDG_BIN_HOME"))
@@ -553,7 +563,12 @@ impl Hosts {
                 unknown = true;
                 continue;
             }
-            if executable(&dir.join(command)) {
+            if executable(&dir.join(command))
+                || (cfg!(windows)
+                    && ["exe", "cmd", "bat"]
+                        .iter()
+                        .any(|ext| executable(&dir.join(format!("{command}.{ext}")))))
+            {
                 return "present";
             }
         }
