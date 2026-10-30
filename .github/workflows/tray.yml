@@ -60,6 +60,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: npx --yes @tauri-apps/cli@2.12.3 build --bundles nsis
       - name: Upload installer
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agentnave-windows-installer

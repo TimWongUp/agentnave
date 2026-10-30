@@ -45,6 +45,10 @@ pub(super) const NETWORK_VARIABLES: &[&str] = &[
 pub(crate) type Shell = Result<BTreeMap<String, String>, String>;
 
 pub(super) fn probe(context: &Context) -> Shell {
+    // Windows has no login shell: the app's own environment is already the user's.
+    if cfg!(windows) {
+        return Ok(BTreeMap::new());
+    }
     let shell = context
         .env
         .get("SHELL")

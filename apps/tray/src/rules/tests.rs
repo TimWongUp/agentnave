@@ -31,7 +31,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     let rows = listed["files"].as_array().unwrap();
     let row = |file: &str| {
         rows.iter()
-            .find(|row| row["path"] == json!(h.join(file)))
+            .find(|row| Path::new(row["path"].as_str().unwrap()) == h.join(file))
             .cloned()
     };
     assert_eq!(

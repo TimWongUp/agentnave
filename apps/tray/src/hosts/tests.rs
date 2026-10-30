@@ -32,7 +32,24 @@ fn fixture() -> (TempDir, Hosts) {
     hosts.processes = Mutex::new(processes::Probe::fixed(Some(HashMap::new())));
     (temp, hosts)
 }
+/// Where uv puts a console script in a tool environment.
+fn launcher_in(tools: &Path) -> PathBuf {
+    if cfg!(windows) {
+        tools.join("agentnave/Scripts/agentnave-mcp.exe")
+    } else {
+        tools.join("agentnave/bin/agentnave-mcp")
+    }
+}
+/// A fake CLI under the name this platform looks for; only POSIX tests ever run its script.
 fn executable_file(path: &Path, text: &str) {
+    let launcher = path.ends_with("agentnave/bin/agentnave-mcp");
+    let path = &if !cfg!(windows) {
+        path.to_owned()
+    } else if launcher {
+        launcher_in(path.parent().unwrap().parent().unwrap().parent().unwrap())
+    } else {
+        path.with_extension("exe")
+    };
     save(path, text);
     #[cfg(unix)]
     {
@@ -239,7 +256,12 @@ fn skill_links_are_replaced_and_linked_folders_left_without_blocking_mcp_actions
 
 #[test]
 fn service_detection_and_connect_share_shell_tool_directory_resolution() {
-    for var in ["UV_TOOL_DIR", "XDG_DATA_HOME"] {
+    let vars: &[&str] = if cfg!(windows) {
+        &["UV_TOOL_DIR"]
+    } else {
+        &["UV_TOOL_DIR", "XDG_DATA_HOME"]
+    };
+    for &var in vars {
         let (_temp, mut hosts) = fixture();
         let root = hosts.context.home.join("shell-data");
         let tools = if var == "UV_TOOL_DIR" {
@@ -257,10 +279,7 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
         assert_eq!(hosts.service()["installed"], true);
         let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
         assert_eq!(result["ok"], true);
-        assert_eq!(
-            result["host"]["command"],
-            json!(tools.join("agentnave/bin/agentnave-mcp"))
-        );
+        assert_eq!(result["host"]["command"], json!(launcher_in(&tools)));
         let env_root = hosts.context.home.join("env-data");
         let env_tools = if var == "UV_TOOL_DIR" {
             env_root.clone()
@@ -275,10 +294,7 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
             .insert(var.into(), env_root.display().to_string());
         assert_eq!(hosts.service()["installed"], true);
         let result = hosts.action("connect", &json!({"id":"pi"})).unwrap();
-        assert_eq!(
-            result["host"]["command"],
-            json!(env_tools.join("agentnave/bin/agentnave-mcp"))
-        );
+        assert_eq!(result["host"]["command"], json!(launcher_in(&env_tools)));
     }
 }
 
@@ -1012,6 +1028,21 @@ fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() 
 }
 
 #[test]
+#[cfg(windows)]
+fn windows_has_no_login_shell_and_finds_uv_tools_under_appdata() {
+    let (_temp, mut hosts) = fixture();
+    hosts.context.env.remove("SHELL");
+    hosts
+        .context
+        .env
+        .insert("APPDATA".into(), r"C:\Roaming".into());
+    let (shell, dirs) = probe_tools(&hosts.context);
+    assert_eq!(shell, Ok(BTreeMap::new()));
+    assert_eq!(dirs.tools, Path::new(r"C:\Roaming\uv\data\tools"));
+}
+
+#[test]
+#[cfg(unix)]
 fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writes() {
     let (_temp, mut hosts) = fixture();
     let script = hosts.context.home.join("fake-shell");
