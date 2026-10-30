@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.53.1` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.54.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.53.1`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.54.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -541,19 +541,23 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.53.0 to v0.53.1
+### Upgrading from v0.53.1 to v0.54.0
 
 "Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.53.1 directory. This release lets each CLI listing
-command in the App's probe run for up to 45 seconds instead of 15, so Antigravity CLI's
-network-bound `agy models` (about 20 seconds) lists its models again. The fix ships in the App, so
-updating only the runtime does not bring it. The tool interface is unchanged, so no MCP reconnect
-is needed, and history, member configuration and settings need no migration. Upgrading from
-v0.52.0 or earlier also brings the v0.53.0 changes, including manual cleanup of an OpenCode host
-entry and an MCP reconnect for the reworded tool descriptions; see
+`agentnave-manager` Skill with its complete v0.54.0 directory. The changes ship in the App, so
+updating only the runtime does not bring them. The App now owns the `agentnave-manager` and
+`agentnave-review` Skill directories of connected hosts: anything else at those paths, a symbolic
+link included, is moved whole into the App's `backups/` folder and replaced with the App's copy
+when a host is connected or detection refreshes; a Skill whose parent folder is a symbolic link is
+left alone and shown as not installable. To keep managing a Skill yourself, install it under a
+different directory name. The settings page is reorganized (one card per CLI for members, models
+and effort levels as each CLI offers them); `members.json` keeps its structure, the tool interface
+is unchanged, so no MCP reconnect is needed, and history, member configuration and settings need
+no migration. Upgrading from v0.52.0 or earlier also brings the v0.53.0 changes, including manual
+cleanup of an OpenCode host entry and an MCP reconnect for the reworded tool descriptions; see
 [v0.53.0 release notes](releases/v0.53.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
 CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.53.1 release notes](releases/v0.53.1.md).
+[v0.46.0 release notes](releases/v0.46.0.md). See [v0.54.0 release notes](releases/v0.54.0.md).
 
 ## Uninstall
 
