@@ -984,7 +984,7 @@ function renderTranscript(detail, cast) {
   let round = null;
   const items = [];
   for (const { message, index } of shown) {
-    if (message.round !== round) {
+    if (message.kind !== "host" && message.round > 0 && message.round !== round) {
       round = message.round;
       items.push(h("div.divider", {}, `第 ${round} 轮`));
     }

@@ -16,7 +16,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | 工具 | 用途 |
 | --- | --- |
 | `start_agent` | 私聊：一个 CLI 做一项任务，结果只回给 boss |
-| `run_round` | 会议室：不带 `group_id` 时用 `title`、`members` 新建；带 `seats` 跑一轮，答案自动在席位间共享；不带 `seats` 只发一条 boss 公开发言 |
+| `run_round` | 会议室：用 `title`、`members`、`prompt`、`seats` 一次新建并启动第 1 轮；后续带 `group_id`、`prompt`、`seats` 继续，答案自动在席位间共享 |
 | `wait` | 等任务 `invocation_id` 和轮次 `round_id`，任一就绪即返回；省略 `ids` 等收件箱 |
 | `cancel` | 取消任务或轮次 |
 | `decide_answers` | `review=true` 的会议室：逐席公开或不公开 |
@@ -57,6 +57,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | 指定轮数的各自答 | 连续 `parallel`，第二轮起收到上一轮公开的答案 |
 | 轮流聊 | `serial` 按名单发言，后者收到前者；多轮即多圈 |
 | 先各自答再讨论、最终收束 | 用户这样要求时，在 `parallel` 之后加一轮或多轮 `serial`，后发言者在前者基础上回应、收束 |
+
+需要席位作答时，新建会议的同一次 `run_round` 就传 `prompt` 和 `seats`，直接启动第 1 轮。只准备会议室时省略 `prompt`；已有会议中单独的 boss 公开发言用 `run_round(group_id, prompt)`，不带 `seats`，不启动组员，也不增加轮次。
 
 常用组合只说明怎么调用；会议轮次按上表默认，用户另有要求时从其要求；选谁、何时收手按用户的全局规则或由 boss 定：
 

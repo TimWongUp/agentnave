@@ -996,6 +996,9 @@ class Conversations(Groups):
                 id=uuid4().hex,
                 provider=request.provider,
                 model=str(request.provider_options.get("model", "")),
+                effort=str(request.provider_options["effort"])
+                if "effort" in request.provider_options
+                else None,
                 cwd=str(request.cwd),
                 prompt=prompt,
                 manager_model=manager_model,

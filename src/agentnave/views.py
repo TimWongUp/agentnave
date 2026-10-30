@@ -78,6 +78,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                 "id": seat.id,
                 "label": seat.id,
                 "model": str(seat.provider_options.get("model", "")),
+                "effort": seat.provider_options.get("effort"),
                 "provider": seat.provider,
                 "role": seat.role,
                 "access": seat.access,

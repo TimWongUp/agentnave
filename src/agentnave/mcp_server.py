@@ -1411,8 +1411,8 @@ async def run_round(
             max_length=12000,
             description=(
                 "Shared task for this round, visible to all seats; without seats, a public "
-                "host remark every seat receives with its next round. Omit only to open a new "
-                "meeting without posting anything."
+                "host remark every seat receives with its next round. To get answers, include "
+                "seats even when opening a new meeting. Omit to only create the meeting."
             ),
         ),
     ] = None,
@@ -1426,7 +1426,8 @@ async def run_round(
         list[str],
         Field(
             description=(
-                "Ordered seat ids that each answer once; empty posts prompt as a host remark."
+                "Ordered seat ids that each answer once. Include with title, members and prompt "
+                "to open a meeting and run round 1 in one call. Empty only posts a host remark."
             )
         ),
     ] = [],  # noqa: B006 - pydantic copies defaults
@@ -1494,8 +1495,10 @@ async def run_round(
 ) -> ShowRunPayload:
     """Run a round of a saved meeting; answers reach the other seats without passing through you.
 
-    Without group_id, opens a meeting of 2–7 seats first (group_id is its conversation id);
-    with no prompt it only opens the meeting.
+    Without group_id, opens a meeting of 2–7 seats (group_id is its conversation id).
+    To start immediately, pass title, members, prompt and seats together: this runs round 1
+    in the same call. With no prompt it only creates the meeting. With prompt but no seats it
+    only posts a host remark, starts no subagents and does not advance the round number.
     Seats are subagents with native tools and permissions unless isolated; each keeps its
     native session across rounds and restarts. Meetings follow discussion member limits, not
     host exclusions. A started round returns at once: use wait with its round_id. Private
