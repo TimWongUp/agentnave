@@ -240,6 +240,7 @@ fn desk_label(model: &str, provider: &str, role: Option<&str>) -> String {
 
 fn model_with_effort(model: &str, effort: Option<&str>) -> String {
     match effort.filter(|effort| !effort.is_empty()) {
+        Some(effort) if model.is_empty() => format!("CLI 默认模型 · {effort}"),
         Some(effort) => format!("{model} · {effort}"),
         None => model.to_owned(),
     }
@@ -2068,7 +2069,7 @@ mod tests {
         assert_eq!(super::project_name("/"), None);
     }
 
-    use super::handle;
+    use super::{desk_label, handle, model_with_effort};
 
     #[test]
     fn handles_shorten_only_the_model_middle_by_unicode_characters() {
@@ -2089,6 +2090,10 @@ mod tests {
                 Some("review")
             ),
             "@backend/ab…klmno尾部模型 · high·Pi·review"
+        );
+        assert_eq!(
+            desk_label(&model_with_effort("", Some("high")), "codex", None),
+            "CLI 默认模型 · high · Codex"
         );
     }
 }

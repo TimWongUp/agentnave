@@ -809,6 +809,30 @@ impl Hosts {
         }
         json!({"state":state,"reason":reason,"token":token,"connections":connections.len(),"confirmed_at":confirmed["at"]})
     }
+    /// A new connection proves the current entry loaded; keep that proof once it closes.
+    pub(crate) fn remember_reloads(&mut self) {
+        let mut settings = self.settings.clone();
+        let mut proved = false;
+        for host in self.registry() {
+            let Some(token) = self.reload_token(&host) else {
+                continue;
+            };
+            let record = &self.settings[host.id];
+            if record["reload_changed"]["v"] != RELOAD_FORMAT
+                || record["reload_changed"]["token"] != token.as_str()
+                || record["reload_confirmed"]["token"] == token.as_str()
+                || self.reload_state(&host, &token)["state"] != "current"
+            {
+                continue;
+            }
+            settings[host.id]["reload_confirmed"] =
+                json!({"v":RELOAD_FORMAT,"token":token,"at":timestamp()});
+            proved = true;
+        }
+        if proved && roots::save(&self.context, &settings).is_ok() {
+            self.settings = settings;
+        }
+    }
     fn connection_root(&self, host: &Host) -> Option<PathBuf> {
         let entry = host.read().ok()?.entry?;
         let explicit = entry["env"]["AGENTNAVE_DATA_DIR"]
@@ -888,6 +912,7 @@ impl Hosts {
         self.refresh_probed()
     }
     pub(crate) fn refresh_probed(&mut self) -> Value {
+        self.remember_reloads();
         let mut settings = self.settings.clone();
         for host in self.registry() {
             let state = self.state(&host);

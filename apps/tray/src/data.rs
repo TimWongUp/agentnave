@@ -487,7 +487,12 @@ impl Reader {
             return Response::error(503, "宿主接入尚未初始化");
         };
         match path {
-            "/app/hosts" => Response::json(&hosts.snapshot()),
+            "/app/hosts" => {
+                if !crate::PREVIEW {
+                    hosts.remember_reloads();
+                }
+                Response::json(&hosts.snapshot())
+            }
             "/app/hosts/refresh" => Response::json(&hosts.refresh()),
             "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
             "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {

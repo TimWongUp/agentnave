@@ -544,6 +544,10 @@ fn first_connection_detects_running_hosts_without_mcp_receipts() {
             .to_string(),
         );
         assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+        // The proof outlives the connection while the host stays open.
+        hosts.remember_reloads();
+        fs::remove_file(dir.join(format!("{id}.json"))).unwrap();
+        assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
     }
 }
 

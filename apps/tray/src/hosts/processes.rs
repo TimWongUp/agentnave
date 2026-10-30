@@ -162,9 +162,9 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
                 .first()
                 .and_then(|p| identify(Path::new(p)))
                 .or_else(|| {
-                    let exe = process.exe()?.file_stem()?.to_str()?;
+                    let exe = process.exe()?.file_stem()?.to_str()?.to_lowercase();
                     if !matches!(
-                        exe,
+                        exe.as_str(),
                         "node" | "bun" | "deno" | "python" | "python3" | "uv" | "uvx" | "npx"
                     ) && !exe.starts_with("python3.")
                     {
