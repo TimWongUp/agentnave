@@ -15,7 +15,7 @@ const SHARED: &str = "## AgentNave 编排偏好
 
 - 仅在作为主对话 boss 时适用；被 AgentNave 派发时只完成任务、回报，不再派发。与本文件其他规则冲突时，以其他规则为准。
 - 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数；派发前按 agentnave-manager 调用。
-- Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一，取 `list_members` 的 `orchestration`：标为 `native` 的交给宿主自带子代理并尽量用该模型，其余经 AgentNave 派发；没有设置时按任务组员选，都不可用时自己做。
+- Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一，取 `list_members` 的 `orchestration`：标为 `native` 的交给宿主自带子代理并尽量用该模型，其余经 AgentNave 派发，`role` 用 `explorer-easy`、`explorer-hard`、`worker-easy` 或 `worker-hard`，服务套用 App 里选的模型；没有设置时按任务组员选，都不可用时自己做。
 - 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；小事自己做。
 - 探索、规划、评审派 Explorer，prompt 写明不改文件；实现派 Worker。评审不交给原来的 Worker，尽量换模型。
 - 同一组文件同一时间只有一个 Worker 在写；同一职责可以续接，换职责时给自足的简报，不让下一位重新探索。

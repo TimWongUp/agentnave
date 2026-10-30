@@ -39,9 +39,11 @@ from agentnave.members import (
     ProviderName,
     SettingsFileError,
     apply_member,
+    apply_seat,
     read_cli_options,
     read_members,
     read_permissions,
+    role_seat,
     validate_provider_options,
 )
 from agentnave.members import list_members as read_member_list
@@ -729,7 +731,11 @@ async def start_agent(
             description=(
                 "Optional label shown on this task's desk; 1–40 characters after trimming, no "
                 "newlines or control characters. Blank or omitted means no label. Each native "
-                "thread is its own desk, whatever its role."
+                "thread is its own desk, whatever its role. An agentnave-review role (e.g. "
+                "correctness-reviewer) or explorer-easy, explorer-hard, worker-easy, "
+                "worker-hard also brings the model and effort the user picked for that seat in "
+                "the App when provider is the seat's CLI; explicit options win, and "
+                "defaults_applied names the seat."
             )
         ),
     ] = None,
@@ -775,16 +781,20 @@ async def start_agent(
             "session_id is an AgentNave handle, not a native session. Use the session_id from "
             "the finished wait result or read_conversation."
         )
+    seat_applied: list[str] = []
     try:
+        options, seat_applied = apply_seat(role_seat(role), provider, provider_options or {})
         options, defaults_applied = apply_member(
             read_members(),
             "task",
             provider,
-            provider_options or {},
+            options,
             EXCLUDED_PROVIDERS,
             permissions=read_permissions(),
             cli_options=read_cli_options(),
         )
+        if seat_applied:
+            defaults_applied = [f"{(role or '').strip()} seat", *seat_applied, *defaults_applied]
         request = InvocationRequest(
             provider=provider,
             prompt=prompt,
@@ -806,7 +816,13 @@ async def start_agent(
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list.") from exc
     except ValueError as exc:
-        raise invocation_request_error(provider, exc) from exc
+        error = invocation_request_error(provider, exc)
+        if seat_applied:
+            raise ToolError(
+                f"{error} The {', '.join(seat_applied)} came from the App's {role!r} seat; "
+                "pass them explicitly to override."
+            ) from exc
+        raise error from exc
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
     payload: TaskStartPayload = {

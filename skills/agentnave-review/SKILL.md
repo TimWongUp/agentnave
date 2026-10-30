@@ -51,10 +51,10 @@ description: 代码评审流程：按失败风险定 R0–R3 级，通过 AgentN
 按顺序取第一个适用的来源：
 
 1. **本次点名**：用户在当前对话里指定的 CLI、模型或档位。指明角色时只对该角色生效，否则对全部工位生效；只给 CLI 时用其 App 组员默认模型。本次评审的复核和反证沿用。点名的工位用不了时报告原因并询问用户，不擅自替换。
-2. **App 评审工位**：`list_members` 回执的 `review`，按角色给出用户在 AgentNave App 里选的 `provider`、`model` 和 `effort`。`native=true` 表示该 CLI 与宿主同类：改用宿主自带的只读子代理，宿主允许指定模型时用同一模型。`available=false` 时按 `reason` 替换：
+2. **App 评审工位**：`list_members` 回执的 `review`，按角色给出用户在 AgentNave App 里选的 `provider`、`model` 和 `effort`。派发和续接时传该 `provider` 与 `role`，服务自动套用模型和档位，不必再传；核对回执 `defaults_applied` 以该角色的 seat 开头。`native=true` 表示该 CLI 与宿主同类：改用宿主自带的只读子代理，宿主允许指定模型时用同一模型。`available=false` 时按 `reason` 替换：
    - CLI 被宿主配置排除：改用 `alternatives` 中提供同一模型 ID 的 CLI，没有时按组员另选。
    - 模型不在该 CLI 的组员里：改用 `alternatives` 中提供同一模型 ID 的 CLI；没有时按组员说明找写法不同但确为同一模型的 CLI。
-   - 档位不在该模型允许范围：不传档位，用组员默认。
+   - 档位不在该模型允许范围：显式传该模型且不传档位，用组员默认。
    - 仍无合适工位：按第 3 项自动选。
 3. **自动**：按 `list_members` 选，优先与改动作者不同的模型，高推理角色（见评审角色表）用最强可用组员。
 

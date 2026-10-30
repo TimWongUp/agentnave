@@ -37,7 +37,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 工位、续接与转发
 
-每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是可选的显示标签，不影响身份。
+每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是可选的显示标签，不影响身份；用评审角色名（如 `correctness-reviewer`）或 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard` 且 `provider` 是该工位的 CLI 时，服务自动套用用户在 App 里给该工位选的模型和档位，回执 `defaults_applied` 注明，显式传的 `model`、`effort` 优先。续接时同样传 `role`。
 
 - 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
@@ -47,7 +47,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档。
+选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档，派发时 `role` 写成对应的 `explorer-easy` 等，不必再传模型。
 
 | 用户需要 | 调用方式 |
 | --- | --- |
