@@ -401,7 +401,8 @@
   const usable = (target) => target instanceof HTMLSelectElement && !target.disabled && !target.multiple && target.size <= 1;
 
   document.addEventListener("mousedown", (e) => {
-    if (open && open.menu.contains(e.target)) return;
+    // Keep focus on the box, so its scrollbar can be dragged.
+    if (open && open.menu.contains(e.target)) return e.preventDefault();
     if (!usable(e.target) || e.button !== 0) return close();
     e.preventDefault();
     e.target.focus({ preventScroll: true });
@@ -432,7 +433,8 @@
       Escape: close,
       Tab: close,
     };
-    if (!keys[e.key]) return;
+    // A typed letter would change the box underneath the open list.
+    if (!keys[e.key]) return e.key.length === 1 && e.preventDefault();
     if (e.key !== "Tab") e.preventDefault();
     keys[e.key]();
   }, true);

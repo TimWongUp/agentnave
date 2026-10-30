@@ -225,18 +225,20 @@ fn configured(provider: &str) -> Option<String> {
             }
         }
         "antigravity" => json(home.join(".gemini/antigravity-cli/settings.json"), "model"),
-        "codebuddy" => json(home.join(".codebuddy/settings.json"), "model"),
+        "codebuddy" => codebuddy_settings()?["model"].as_str().map(str::to_owned),
         _ => None,
     }?;
     let name = name.trim();
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-/// The default thinking level a CLI's own settings name, if any: Codex `config.toml`
-/// `model_reasoning_effort`, Claude `settings.json` `effortLevel` (per model first), Pi `defaultThinkingLevel`,
-/// and the level Grok's model cache marks as default for its default model (dsh's comes from
-/// its dump; Antigravity's is part of the model).
-fn configured_effort(provider: &str, model: Option<&str>) -> Option<String> {
+/// The thinking level a CLI's own settings name for a model, if any: Codex `config.toml`
+/// `model_reasoning_effort`, Claude `settings.json` `effortLevel` (per model first), Pi
+/// `modelThinkingLevels` then `defaultThinkingLevel`, CodeBuddy `reasoningEffort`, and Grok
+/// `config.toml` `[model.<id>] reasoning_effort`, then for its default model `[models]
+/// default_reasoning_effort` and the level its model cache marks (dsh's comes from its dump;
+/// Antigravity's is part of the model).
+fn configured_effort(provider: &str, model: Option<&str>, native: bool) -> Option<String> {
     let home = dirs::home_dir()?;
     let dir = |variable: &str, fallback: &str| match std::env::var_os(variable) {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
@@ -260,11 +262,33 @@ fn configured_effort(provider: &str, model: Option<&str>) -> Option<String> {
         "pi" => {
             let path = dir("PI_CODING_AGENT_DIR", ".pi/agent").join("settings.json");
             let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-            value["defaultThinkingLevel"].as_str()?.to_owned()
+            let per_model = model.map(|model| &value["modelThinkingLevels"][model]);
+            per_model
+                .and_then(Value::as_str)
+                .or_else(|| value["defaultThinkingLevel"].as_str())?
+                .to_owned()
         }
+        "codebuddy" => codebuddy_settings()?["reasoningEffort"]
+            .as_str()?
+            .to_owned(),
         "grok" => {
-            let cache = std::fs::read_to_string(home.join(".grok/models_cache.json")).ok()?;
-            grok_default_effort(&serde_json::from_str(&cache).ok()?, model?)?
+            let model = model?;
+            let text = std::fs::read_to_string(home.join(".grok/config.toml")).unwrap_or_default();
+            let table: toml::Table = text.parse().unwrap_or_default();
+            let per_model = table.get("model").and_then(|models| models.get(model));
+            let default = native
+                .then(|| table.get("models")?.get("default_reasoning_effort"))
+                .flatten();
+            let cache = || {
+                let text = std::fs::read_to_string(home.join(".grok/models_cache.json")).ok()?;
+                grok_default_effort(&serde_json::from_str(&text).ok()?, model)
+            };
+            per_model
+                .and_then(|entry| entry.get("reasoning_effort"))
+                .or(default)
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| native.then(cache).flatten())?
         }
         _ => return None,
     };
@@ -282,10 +306,39 @@ fn grok_default_effort(cache: &Value, model: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// CodeBuddy's `settings.json` in its config folder.
+fn codebuddy_settings() -> Option<Value> {
+    let dir = match std::env::var_os("CODEBUDDY_CONFIG_DIR") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => dirs::home_dir()?.join(".codebuddy"),
+    };
+    serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).ok()?).ok()
+}
+
+/// Pi's thinking levels, lowest first: a level a model lacks runs at the next one up it has,
+/// else the next one down.
+const PI_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn pi_level(wanted: &str, offered: &[String]) -> Option<String> {
+    let at = PI_LEVELS.iter().position(|level| *level == wanted)?;
+    let has = |level: &&&str| offered.iter().any(|own| own == **level);
+    PI_LEVELS[at..]
+        .iter()
+        .find(has)
+        .or_else(|| PI_LEVELS[..at].iter().rev().find(has))
+        .map(|level| (*level).to_owned())
+}
+
 /// Each model's `effort`: the level its CLI runs it at when a call names none. The CLI's own
-/// setting wins where the model offers it (Claude's per model, Pi's falling back to Pi's
-/// `medium`), else the level the CLI's listing marks for the model; unknown stays unset.
-fn model_efforts(provider: &str, models: &mut [Value], levels: &[String], setting: Option<String>) {
+/// setting for the model wins where the model offers it (Pi's falling back to Pi's `medium`
+/// and moving to a level the model has), else the level the CLI's listing marks for the model;
+/// unknown stays unset.
+fn model_efforts(
+    provider: &str,
+    models: &mut [Value],
+    levels: &[String],
+    setting: impl Fn(&str) -> Option<String>,
+) {
     for listed in models {
         let offered: Vec<String> = match listed["efforts"].as_array() {
             Some(own) => own
@@ -294,10 +347,10 @@ fn model_efforts(provider: &str, models: &mut [Value], levels: &[String], settin
                 .collect(),
             None => levels.to_vec(),
         };
+        let setting = setting(listed["id"].as_str().unwrap_or_default());
         let setting = match provider {
-            "claude" => configured_effort(provider, listed["id"].as_str()),
-            "pi" => setting.clone().or_else(|| Some("medium".to_owned())),
-            _ => setting.clone(),
+            "pi" => pi_level(setting.as_deref().unwrap_or("medium"), &offered),
+            _ => setting,
         };
         let own = listed["effort"].as_str().map(str::to_owned);
         let effort = [setting, own]
@@ -605,16 +658,34 @@ fn probe_path(provider: &str, path: &Path) -> Value {
     match listed {
         Ok((source, models)) => {
             let native = native_model(&models, configured_model.as_deref());
-            let effort = dsh_effort
-                .clone()
-                .or_else(|| configured_effort(provider, native.as_deref()));
             let mut models = models;
-            let setting = match provider {
-                "deepseek" => dsh_effort,
-                "codex" | "pi" => configured_effort(provider, None),
-                _ => None,
+            model_efforts(provider, &mut models, &efforts, |id| match provider {
+                "deepseek" => dsh_effort.clone(),
+                "codex" => configured_effort(provider, None, false),
+                _ => configured_effort(provider, Some(id), Some(id) == native.as_deref()),
+            });
+            // CodeBuddy thinks only on request when `alwaysThinkingEnabled` is off.
+            let thinking_off = provider == "codebuddy"
+                && codebuddy_settings().is_some_and(|settings| {
+                    settings["alwaysThinkingEnabled"] == false
+                        && settings["reasoningEffort"].is_null()
+                });
+            if thinking_off {
+                for listed in &mut models {
+                    listed.as_object_mut().map(|entry| entry.remove("effort"));
+                }
+            }
+            let effort = match &native {
+                Some(id) => models
+                    .iter()
+                    .find(|listed| listed["id"] == id.as_str())
+                    .and_then(|listed| listed["effort"].as_str().map(str::to_owned))
+                    .or_else(|| {
+                        let setting = configured_effort(provider, Some(id), true);
+                        dsh_effort.clone().or(setting).filter(|_| !thinking_off)
+                    }),
+                None => dsh_effort.clone(),
             };
-            model_efforts(provider, &mut models, &efforts, setting);
             json!({
             "installed": true,
             "path": path.display().to_string(),
@@ -1212,13 +1283,21 @@ mod tests {
             json!({"id": "b", "effort": "high"}),
             json!({"id": "c", "efforts": ["max"], "effort": "high"}),
         ];
-        model_efforts("codex", &mut models, &levels, Some("medium".to_owned()));
+        model_efforts("codex", &mut models, &levels, |_| Some("medium".to_owned()));
         assert_eq!(models[0]["effort"], "medium");
         assert_eq!(models[1]["effort"], "high");
         assert!(models[2].get("effort").is_none());
-        let mut pi = vec![json!({"id": "p/m", "efforts": ["off", "medium", "high"]})];
-        model_efforts("pi", &mut pi, &[], None);
+        let mut pi = vec![
+            json!({"id": "p/m", "efforts": ["off", "medium", "high"]}),
+            json!({"id": "p/x", "efforts": ["off", "low", "high"]}),
+            json!({"id": "p/y", "efforts": ["off", "low"]}),
+        ];
+        model_efforts("pi", &mut pi, &[], |id| {
+            (id != "p/m").then(|| "medium".to_owned())
+        });
         assert_eq!(pi[0]["effort"], "medium");
+        assert_eq!(pi[1]["effort"], "high");
+        assert_eq!(pi[2]["effort"], "low");
     }
 
     #[test]

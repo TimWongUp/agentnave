@@ -1204,17 +1204,21 @@ fn skill_ownership_links_and_refresh_replace_other_copies_after_a_backup() {
         skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
         "external"
     );
+    // More files than the backup budget: the whole copy is moved, so none is dropped.
+    for n in 0..40 {
+        save(&path.join(format!("notes/{n}.md")), "mine");
+    }
     let backups_dir = hosts.context.app.join("backups");
     let backups = || {
         fs::read_dir(&backups_dir)
             .unwrap()
             .flatten()
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .contains("-skill-pi-SKILL.md-")
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().contains("-skill-pi-agentnave-manager"))
+            .any(|p| {
+                fs::read_to_string(p.join("SKILL.md")).ok().as_deref() == Some("external")
+                    && (0..40).all(|n| p.join(format!("notes/{n}.md")).is_file())
             })
-            .any(|e| fs::read_to_string(e.path()).unwrap() == "external")
     };
     hosts.action("connect", &json!({"id":"pi"})).unwrap();
     assert_eq!(

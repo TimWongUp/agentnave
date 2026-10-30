@@ -20,11 +20,26 @@ fn candidates(app: &App, home: &Path) -> (bool, Vec<PathBuf>) {
         "claude" => (false, at(&["CLAUDE.md"])),
         "codex" => (true, at(&["AGENTS.override.md", "AGENTS.md"])),
         "codebuddy" | "workbuddy" => (false, at(&["CODEBUDDY.md"])),
-        // Claude compatibility is on by default and reads the home-level `~/.claude`.
-        "grok" => (
-            false,
-            vec![root.join("AGENTS.md"), home.join(".claude/CLAUDE.md")],
-        ),
+        // Every one of these names counts; `~/.claude` too unless `[compat.claude] agents = false`.
+        "grok" => {
+            let names = [
+                "Agents.md",
+                "Claude.md",
+                "CLAUDE.md",
+                "CLAUDE.local.md",
+                "AGENT.md",
+                "AGENTS.md",
+            ];
+            let mut files = at(&names);
+            let config = std::fs::read_to_string(root.join("config.toml")).unwrap_or_default();
+            let config: toml::Table = config.parse().unwrap_or_default();
+            let claude = config.get("compat").and_then(|compat| compat.get("claude"));
+            let agents = claude.and_then(|claude| claude.get("agents"));
+            if agents.and_then(toml::Value::as_bool) != Some(false) {
+                files.extend(names.iter().map(|name| home.join(".claude").join(name)));
+            }
+            (false, files)
+        }
         // agy's root is `~/.gemini/config`; the folder above it counts too.
         "antigravity" => {
             let gemini = root.parent().unwrap_or(root);
@@ -58,12 +73,21 @@ fn candidates(app: &App, home: &Path) -> (bool, Vec<PathBuf>) {
     }
 }
 
+/// A file under exactly this name: on a case-insensitive disk `Agents.md` is not also `AGENTS.md`.
+fn exists(path: &Path) -> bool {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return false;
+    };
+    let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+    path.is_file() && entries.into_iter().any(|entry| entry.file_name() == name)
+}
+
 /// Each file an app actually reads, or its usual file when it has none yet.
 fn files(apps: &[App], home: &Path) -> Vec<(PathBuf, Vec<&'static str>)> {
     let mut out: Vec<(PathBuf, Vec<&'static str>)> = Vec::new();
     for app in apps {
         let (first, candidates) = candidates(app, home);
-        let existing: Vec<&PathBuf> = candidates.iter().filter(|path| path.is_file()).collect();
+        let existing: Vec<&PathBuf> = candidates.iter().filter(|path| exists(path)).collect();
         let read: Vec<&PathBuf> = match (first, existing.is_empty()) {
             (_, true) => candidates
                 .iter()
@@ -192,5 +216,23 @@ mod tests {
         );
         assert!(open(&apps, h, "/etc/hosts").is_err());
         assert!(!h.join(".zcode").exists()); // never created
+
+        // Grok can be told not to read `~/.claude`; its own file counts under its exact name.
+        std::fs::create_dir_all(h.join(".grok")).unwrap();
+        std::fs::write(
+            h.join(".grok/config.toml"),
+            "[compat.claude]\nagents = false\n",
+        )
+        .unwrap();
+        std::fs::write(h.join(".grok/Agents.md"), "rules").unwrap();
+        let listed = list(&apps, h);
+        let readers = |file: &str| {
+            let rows = listed["files"].as_array().unwrap();
+            let row = rows.iter().find(|row| row["path"] == json!(h.join(file)));
+            row.map(|row| row["readers"].clone())
+        };
+        assert_eq!(readers(".claude/CLAUDE.md"), Some(json!(["Claude Code"])));
+        assert_eq!(readers(".grok/Agents.md"), Some(json!(["Grok"])));
+        assert_eq!(readers(".grok/AGENTS.md"), None);
     }
 }

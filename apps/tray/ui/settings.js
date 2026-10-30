@@ -868,14 +868,17 @@ const splitCards = new Set(); // Cards split by hand while both scenes still mat
 const isSplit = (provider) => splitCards.has(provider) ||
   JSON.stringify(shownSlot("task", provider)) !== JSON.stringify(shownSlot("discussion", provider));
 
+// Installed CLIs, and ones a scene still names after they were removed.
+const known = (provider) => detected[provider]?.installed || SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider]);
+
 // A scene names its CLIs only when it must (one is off, a model list or a scene-only effort):
-// every installed CLI is listed with any model and keeps its default model (ADR-0021).
+// every known CLI is listed with any model and keeps its default model (ADR-0021).
 function restrict(scene) {
   if (isRestricted(scene)) return currentDoc.modes[scene];
   const kept = currentDoc.defaults?.[scene] || {};
   const selection = {};
   for (const p of PROVIDERS) {
-    if (!detected[p]?.installed && !kept[p]) continue;
+    if (!known(p) && !kept[p]) continue;
     selection[p] = { models: [], overrides: {} };
     if (kept[p]) selection[p].default = kept[p];
   }
@@ -891,7 +894,7 @@ function relax(scene) {
   if (!selection) return;
   const entries = Object.entries(selection);
   const open = entries.every(([, c]) => !c.models?.length && !Object.keys(c.overrides || {}).length);
-  const all = PROVIDERS.every((p) => !detected[p]?.installed || selection[p]);
+  const all = PROVIDERS.every((p) => !known(p) || selection[p]);
   if (!entries.length || !open || !all) return;
   delete currentDoc.modes[scene];
   setKeptDefaults(Object.fromEntries(entries.filter(([, c]) => c.default).map(([p, c]) => [p, c.default])), scene);
@@ -903,7 +906,8 @@ function writeSlot(scene, provider, next) {
     delete restrict(scene)[provider];
     return;
   }
-  const model = next.model || (next.allowed ? nativeDefault(provider).model || next.allowed[0] : "");
+  const native = nativeDefault(provider).model;
+  const model = next.model || (next.allowed ? (next.allowed.includes(native) ? native : next.allowed[0]) : "");
   if (next.allowed || isRestricted(scene)) {
     const selection = restrict(scene);
     const conf = (selection[provider] ||= { models: [], overrides: {} });
@@ -925,8 +929,11 @@ function writeEfforts(provider, modelId, wants) {
   if (!modelId) return;
   ensureCliModel(provider, modelId);
   const shared = currentDoc.clis[provider].models[modelId];
-  const base = wants.task === wants.discussion || !wants.task ? "task"
+  let base = wants.task === wants.discussion || !wants.task ? "task"
     : !wants.discussion || isRestricted("task") ? "discussion" : "task";
+  const fits = (level) => !level || !shared.efforts?.length || shared.efforts.includes(level);
+  const other = base === "task" ? "discussion" : "task";
+  if (!fits(wants[base]) && fits(wants[other])) base = other;
   if (wants[base]) shared.effort = wants[base];
   else delete shared.effort;
   for (const scene of SCENE_IDS) {
@@ -953,16 +960,18 @@ function edited() {
 // Change one scene, or both while the card is not split.
 function changeSlot(provider, scene, change) {
   const scenes = scene ? [scene] : SCENE_IDS;
+  // A joined card shows the private-task row, so both scenes take it.
+  const shown = slot(scene || "task", provider);
   for (const s of scenes) {
-    const current = slot(s, provider);
-    const next = { ...current, ...change };
+    const next = { ...shown, ...change };
     writeSlot(s, provider, next);
     if (Object.hasOwn(change, "effort")) {
       const modelId = next.model || nativeDefault(provider).model;
       const other = SCENE_IDS.find((o) => o !== s);
+      const follows = !scene || !slot(other, provider).enabled;
       writeEfforts(provider, modelId, {
         [s]: change.effort,
-        [other]: scene ? sceneEffort(other, provider, modelId) : change.effort,
+        [other]: follows ? change.effort : sceneEffort(other, provider, modelId),
       });
     }
   }
@@ -997,6 +1006,8 @@ function setSplit(provider, split) {
   splitCards.delete(provider);
   const task = slot("task", provider);
   writeSlot("discussion", provider, task);
+  const joined = currentDoc.modes?.discussion?.[provider];
+  if (joined) joined.overrides = structuredClone(currentDoc.modes?.task?.[provider]?.overrides || {});
   const modelId = task.model || nativeDefault(provider).model;
   if (task.enabled) writeEfforts(provider, modelId, { task: task.effort, discussion: task.effort });
   pickerOpen = null;
@@ -1022,15 +1033,18 @@ function slotRows(provider, scene, split) {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
         "aria-label": "默认模型",
-        onChange: (e) => pick({ enabled: true, model: e.target.value === OFF ? "" : e.target.value }),
-      }, el("option", { value: OFF, selected: true }, "不用"), ...all.map((m) => el("option", { value: m }, m))), el("span", { className: "member-reset-slot" })))];
+        onChange: (e) => pick({ enabled: true, model: e.target.value === native.model ? "" : e.target.value }),
+      }, el("option", { value: OFF, selected: true }, "不用"),
+      ...(native.model ? [] : [el("option", { value: "" }, "CLI 自己决定")]),
+      ...all.map((m) => el("option", { value: m }, m === native.model ? `${m}（CLI 当前设置）` : m))), el("span", { className: "member-reset-slot" })))];
   }
 
-  const model = current.model || native.model || "";
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
+  const model = current.model || (offered.includes(native.model) || !current.allowed ? native.model : "") || "";
   const options = [
     el("option", { value: OFF }, "不用"),
-    ...(native.model ? [] : [el("option", { value: "", selected: !model }, "CLI 自己决定")]),
+    ...(current.allowed && !model ? [el("option", { value: "", selected: true, disabled: true }, "选一个默认模型")]
+      : native.model ? [] : [el("option", { value: "", selected: !model }, "CLI 自己决定")]),
     ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? `${m}（CLI 当前设置）` : m)),
   ];
   const modelLine = el("div", { className: "member-line" },
@@ -1113,7 +1127,10 @@ function slotRows(provider, scene, split) {
           type: "checkbox",
           dataset: { focusKey: `${key}/all` },
           checked: !current.allowed,
-          onChange: (e) => pick({ allowed: e.target.checked ? null : [model || all[0]] }),
+          disabled: !all.length,
+          onChange: (e) => pick(e.target.checked
+            ? { allowed: null, model: current.model === native.model ? "" : current.model }
+            : { allowed: [model || all[0]] }),
         }), textNode("全部模型（以后新出的也算）")),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
