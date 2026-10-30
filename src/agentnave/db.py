@@ -324,7 +324,7 @@ class Database:
                     )
             else:
                 connection.execute(
-                    "UPDATE workspaces SET pending = 0, owner_host = ?, "
+                    "UPDATE workspaces SET pending = 0, note = NULL, released = NULL, owner_host = ?, "
                     "owner_file = coalesce(?, owner_file) WHERE id = ?",
                     (host, file, workspace_id),
                 )

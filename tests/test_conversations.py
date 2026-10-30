@@ -2157,6 +2157,18 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             "run_round", {"group_id": group, "prompt": "remark", "manager_session_id": "chat-a"}
         )
         assert refused.is_error and "handed its workspace" in str(refused.content)
+        # Withdrawing a later release must not relabel the previous handover with its note/time.
+        await _call(
+            client,
+            "handover",
+            {"release": True, "note": "cancelled release", "manager_session_id": "chat-b"},
+        )
+        withdrawn = await _call(
+            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+        )
+        assert withdrawn["status"] == "withdrawn"
+        row = Database(data_root).workspace(workspace)
+        assert row is not None and row.note is None and row.released is None
         # A boss that passes on a workspace it took over is refused too, not given a new one.
         await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
         await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
