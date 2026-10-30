@@ -1116,21 +1116,24 @@ impl Group {
             // Only the latest handover is stored. Its timestamp is the release time;
             // the database does not record when the next boss took over.
             let from = if self.handover.pending {
-                self.handover.host.as_deref()
+                self.handover.host.as_deref().or(self.host.as_deref())
             } else {
-                self.handover
-                    .previous_host
-                    .as_deref()
-                    .or(self.host.as_deref())
+                self.handover.previous_host.as_deref()
             };
             let text = if self.handover.pending {
                 format!("{} 交出工作区，等待接手", label(from))
             } else {
-                format!(
-                    "{} 交出工作区，{} 已接手",
-                    label(from),
-                    label(self.handover.host.as_deref())
-                )
+                match from {
+                    Some(from) => format!(
+                        "{} 交出工作区，{} 已接手",
+                        label(Some(from)),
+                        label(self.handover.host.as_deref())
+                    ),
+                    None => format!(
+                        "工作区已交出，{} 已接手",
+                        label(self.handover.host.as_deref())
+                    ),
+                }
             };
             let mut message = Self::message(
                 format!("{}:handover:{released}", self.id),
@@ -1266,6 +1269,9 @@ impl Group {
             .chain(self.typing.values().map(|(_, m)| m))
         {
             let thread = &msg["thread"];
+            if thread.is_null() {
+                continue;
+            }
             let key = thread.to_string();
             let entry = threads.entry(key).or_insert_with(|| {
                 let mut value = thread.clone();
@@ -1861,7 +1867,7 @@ pub(crate) fn source_key(snapshot: &Snapshot) -> SourceKey {
 
 /// The chat list's previews by group, with the views each was computed from (held so their
 /// addresses stay unique); only groups whose snapshots changed are projected again.
-type Preview = (Vec<SourceKey>, Vec<Arc<Value>>, String);
+type Preview = ((Vec<SourceKey>, Handover), Vec<Arc<Value>>, String);
 static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex::default);
 
 /// At most this many undrawn desks are listed; the count still covers all of them.
@@ -2022,11 +2028,13 @@ pub(crate) fn respond(
             .into_iter()
             .take(200)
             .map(|mut g| {
-                let key: Vec<_> = g
-                    .sources
-                    .iter()
-                    .map(|&i| source_key(&snapshots[i]))
-                    .collect();
+                let key = (
+                    g.sources
+                        .iter()
+                        .map(|&i| source_key(&snapshots[i]))
+                        .collect(),
+                    g.handover.clone(),
+                );
                 let preview = match previews.remove(&g.id) {
                     Some(preview) if preview.0 == key => preview,
                     _ => {

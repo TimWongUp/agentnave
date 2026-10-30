@@ -1772,6 +1772,13 @@ mod tests {
         ).unwrap();
         let reader = Reader::new(dir.path().to_path_buf());
         let path = format!("/app/chats/{MANAGER}");
+        let waiting_list = state(&reader, "/app/chats");
+        assert!(
+            waiting_list["groups"][0]["preview"]
+                .as_str()
+                .unwrap()
+                .contains("等待接手")
+        );
         let waiting = state(&reader, &path);
         let message = waiting["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(message["kind"], "handover");
@@ -1782,7 +1789,21 @@ mod tests {
             "UPDATE workspaces SET owner = 'new-boss', previous_host = owner_host, owner_host = 'codex', pending = 0 WHERE id = ?1",
             [MANAGER],
         ).unwrap();
+        let claimed_list = state(&reader, "/app/chats");
+        assert!(
+            claimed_list["groups"][0]["preview"]
+                .as_str()
+                .unwrap()
+                .contains("Codex 已接手")
+        );
         let claimed = state(&reader, &path);
+        assert!(
+            claimed["threads"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|t| t["kind"].is_string())
+        );
         let message = claimed["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(message["text"], "Claude Code 交出工作区，Codex 已接手");
         assert_eq!(claimed["omitted"], 0);

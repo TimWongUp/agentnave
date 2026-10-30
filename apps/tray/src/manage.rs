@@ -265,9 +265,11 @@ pub fn handover(root: &Path, group: &str) -> Value {
         // A database an older server created may still lack the table.
         connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
         connection.execute(
-            "INSERT INTO workspaces (id, owner, pending, released) \
-             VALUES (?1, ?1, 1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) \
-             ON CONFLICT (id) DO UPDATE SET pending = 1, released = excluded.released",
+            "INSERT INTO workspaces (id, owner, owner_host, pending, released) \
+             VALUES (?1, ?1, (SELECT host FROM conversations WHERE manager_session = ?1 \
+             ORDER BY created DESC, id DESC LIMIT 1), 1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) \
+             ON CONFLICT (id) DO UPDATE SET pending = 1, note = NULL, released = excluded.released, \
+             owner_host = coalesce(workspaces.owner_host, excluded.owner_host)",
             [group],
         )?;
         Ok(true)
