@@ -983,7 +983,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
     async with Client(mcp) as client:
 
         async def start(
-            options: dict[str, object], session_id: str | None = None
+            options: dict[str, object], session_id: str | None = None, role: str | None = None
         ) -> dict[str, object]:
             result = await client.call_tool(
                 "start_agent",
@@ -993,6 +993,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
                     "cwd": str(tmp_path),
                     "provider_options": options,
                     "session_id": session_id,
+                    "role": role,
                 },
             )
             assert not result.is_error, result.content
@@ -1046,6 +1047,56 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         wide = await start({"model": "chosen"})
         assert wide["defaults_applied"] == ["effort", "agent", "max_budget_usd", "permission_mode"]
         (tmp_path / "cli-options.json").unlink()
+        # A review or Explorer/Worker role brings the seat the user picked for this CLI.
+        seat = {"provider": "claude", "model": "chosen", "effort": "high"}
+        (tmp_path / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+        )
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps({"version": 1, "worker": {"easy": seat}, "explorer": {"hard": seat}})
+        )
+        seated = await start({}, role="correctness-reviewer")
+        assert seated["effort"] == "high"
+        assert seated["defaults_applied"] == [
+            "correctness-reviewer seat",
+            "model",
+            "effort",
+            "agent",
+            "permission_mode",
+        ]
+        worker = await start({"effort": "medium"}, role="worker-easy")
+        assert worker["effort"] == "medium"
+        assert worker["defaults_applied"] == [
+            "worker-easy seat",
+            "model",
+            "agent",
+            "permission_mode",
+        ]
+        assert (await start({}, role="explorer-easy"))["defaults_applied"] == applied
+        (tmp_path / "review.json").write_text(
+            json.dumps(
+                {"version": 1, "seats": {"correctness-reviewer": {**seat, "provider": "codex"}}}
+            )
+        )
+        assert (await start({}, role="correctness-reviewer"))["defaults_applied"] == applied
+        (tmp_path / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": {**seat, "effort": "low"}}})
+        )
+        stale = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "ok",
+                "cwd": str(tmp_path),
+                "role": "correctness-reviewer",
+            },
+        )
+        assert stale.is_error and "'correctness-reviewer' seat" in str(stale.content)
+        assert (await start({"model": "chosen", "effort": "medium"}, role="correctness-reviewer"))[
+            "effort"
+        ] == "medium"
+        (tmp_path / "review.json").unlink()
+        (tmp_path / "orchestration.json").unlink()
         for options in ({"model": "outside"}, {"effort": "low"}, {"unknown": True}):
             result = await client.call_tool(
                 "start_agent",

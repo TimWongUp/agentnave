@@ -30,6 +30,8 @@ type ReviewRole = Literal[
     "adversarial-verifier",
 ]
 type Difficulty = Literal["easy", "hard"]
+# Task roles naming an Explorer or Worker difficulty in orchestration.json.
+type OrchestrationRole = Literal["explorer-easy", "explorer-hard", "worker-easy", "worker-hard"]
 
 
 class MemberFileError(ValueError):
@@ -503,6 +505,44 @@ def apply_member(
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
+    return result, applied
+
+
+def role_seat(role: str | None) -> ReviewSeat | None:
+    """The App seat a task role names: an agentnave-review role from review.json, or an
+    Explorer/Worker difficulty from orchestration.json. A missing or broken file names none;
+    list_members reports it."""
+    role = (role or "").strip()
+    try:
+        if role in get_args(ReviewRole.__value__):
+            content = (_data_root() / "review.json").read_text(encoding="utf-8")
+            return ReviewFile.model_validate_json(content).seats.get(cast(ReviewRole, role))
+        if role in get_args(OrchestrationRole.__value__):
+            kind, difficulty = role.split("-")
+            content = (_data_root() / "orchestration.json").read_text(encoding="utf-8")
+            roles = OrchestrationFile.model_validate_json(content)
+            seats = roles.explorer if kind == "explorer" else roles.worker
+            return seats.get(cast(Difficulty, difficulty))
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def apply_seat(
+    seat: ReviewSeat | None, provider: ProviderName, options: Mapping[str, ProviderOption]
+) -> tuple[dict[str, ProviderOption], list[str]]:
+    """Fill the model and effort the user picked for the seat, when it uses this CLI. Explicit
+    options win; the seat's effort only goes with its own model."""
+    result = dict(options)
+    if seat is None or seat.provider != provider:
+        return result, []
+    applied: list[str] = []
+    if "model" not in result:
+        result["model"] = seat.model
+        applied.append("model")
+    if seat.effort and "effort" not in result and result["model"] == seat.model:
+        result["effort"] = seat.effort
+        applied.append("effort")
     return result, applied
 
 
