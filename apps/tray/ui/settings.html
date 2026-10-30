@@ -96,14 +96,20 @@
     </div>
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>编排偏好推荐写法</h2>
-        <pre id="orchestration-template" class="orchestration-template">## AgentNave 编排偏好
-- 探索、规划和评审交给只读工位，实现交给可写工位，派发时用 access 标明（只是标记，实际权限看 CLI 原生设置）；评审不用实现工位本身，尽量换一个模型。
-- 实现工位按模块分角色，跨阶段传上次的 session_id 续接同一会话；探索结论和已定契约用 forward 转给它，不让它重新探索。
-- 并行实现各用独立 worktree 或互不重叠的文件，由 boss 合并与验收。
-- 方案取舍或分歧进会议室讨论：会议只出决定，不在会上改代码；分歧收敛默认最多 3 轮，会后把决定转给实现工位。
-- 每个结果都由 boss 验收，succeeded 不等于完成；失败或取消由 boss 决定是否重派。</pre>
-        <div class="btn-group"><button id="copy-orchestration" type="button">复制推荐写法</button></div>
+        <h2>编排</h2>
+        <div id="orchestration-presets" class="segment-control" role="radiogroup" aria-label="编排档位">
+          <button class="segment-btn" role="radio" type="button" data-preset="off">关闭</button>
+          <button class="segment-btn" role="radio" type="button" data-preset="split">分工协作</button>
+          <button class="segment-btn" role="radio" type="button" data-preset="parallel">并行复核</button>
+          <button class="segment-btn" role="radio" type="button" data-preset="custom">自定义</button>
+        </div>
+        <p id="orchestration-effect" class="fine orchestration-effect"></p>
+        <div id="orchestration-roles" class="review-grid orchestration-roles" hidden></div>
+        <pre id="orchestration-text" class="orchestration-template" hidden></pre>
+        <div id="orchestration-custom" class="orchestration-custom" hidden>
+          <textarea id="custom-text" aria-label="自定义编排规则" spellcheck="false"></textarea>
+          <div class="btn-group"><button id="save-custom" class="primary" type="button">保存并写入</button></div>
+        </div>
       </div>
     </div>
     <div class="updates-panel">

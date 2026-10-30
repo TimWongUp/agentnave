@@ -427,6 +427,34 @@ impl Hosts {
             })
             .collect()
     }
+    /// The installed boss apps that are connected, which alone get the orchestration block.
+    pub fn connected_rule_apps(&self) -> Vec<crate::rules::App> {
+        self.registry()
+            .into_iter()
+            .filter(|host| self.state(host)["status"] == "connected")
+            .map(|host| crate::rules::App {
+                id: host.id,
+                label: host.label,
+                root: host.root.path,
+            })
+            .collect()
+    }
+    /// Write the orchestration block into the connected apps' rules and take it out of the rest,
+    /// backing up each file first. Returns the files that could not be written.
+    pub fn sync_rules(&self, text: Option<&str>) -> Vec<Value> {
+        let (app, home) = (&self.context.app, &self.context.home);
+        let backup = |path: &Path, bytes: &[u8]| {
+            backup_bytes(app, RULES_BACKUP, "rules", path, bytes, home)
+                .map_err(|error| message(&error).to_owned())
+        };
+        crate::rules::sync(
+            &self.rule_apps(),
+            &self.connected_rule_apps(),
+            home,
+            text,
+            &backup,
+        )
+    }
     fn detect(&self, host: &Host) -> (bool, &'static str, Option<PathBuf>) {
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
@@ -1403,7 +1431,7 @@ fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)
         .is_some_and(|command| entry_kind(command) == "agentnave")
 }
-fn message(error: &str) -> &str {
+pub(crate) fn message(error: &str) -> &str {
     error_parts(error, "takeover_failed").1
 }
 fn error_attention(error: &str, fallback: &str) -> Value {
@@ -1510,10 +1538,11 @@ pub(crate) fn atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     tmp.persist(path).map_err(|_| "无法原子替换配置")?;
     Ok(())
 }
-/// Host config files and Skill files are kept apart, so Skill copies never evict config backups.
+/// Host config, Skill and global rules backups are kept apart, so one kind never evicts another.
 /// Files written before the split carry no kind and count as config backups.
 const CONFIG_BACKUP: &str = "config";
 const SKILL_BACKUP: &str = "skill";
+const RULES_BACKUP: &str = "rules";
 const KEEP_BACKUPS: usize = 30;
 fn backup_paths(app: &Path, kind: &str) -> Vec<PathBuf> {
     let mut paths: Vec<_> = fs::read_dir(app.join("backups"))
@@ -1524,10 +1553,12 @@ fn backup_paths(app: &Path, kind: &str) -> Vec<PathBuf> {
         .filter(|p| p.is_file() && !p.is_symlink())
         .filter(|p| {
             let name = p.file_name().unwrap_or_default().to_string_lossy();
-            let skill = name
-                .get(21..)
-                .is_some_and(|rest| rest.starts_with(&format!("{SKILL_BACKUP}-")));
-            skill == (kind == SKILL_BACKUP)
+            let rest = name.get(21..).unwrap_or_default();
+            let own = [SKILL_BACKUP, RULES_BACKUP]
+                .into_iter()
+                .find(|other| rest.starts_with(&format!("{other}-")))
+                .unwrap_or(CONFIG_BACKUP);
+            own == kind
         })
         .collect();
     paths.sort();

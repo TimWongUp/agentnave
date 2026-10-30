@@ -5,7 +5,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 # 通过 AgentNave 调用 CLI
 
-本 Skill 只讲调用方式；参数细节以连接中的实时 schema 和工具说明为准。任务选择、规划、分工、审核、综合、重试和 worktree 由主 Agent 决定；用户若有固定的编排偏好，写在宿主的全局规则里，按那里执行。
+本 Skill 只讲调用方式；参数细节以连接中的实时 schema 和工具说明为准。任务选择、规划、分工、审核、综合、重试和 worktree 由主 Agent 决定；用户的编排偏好写在宿主的全局规则里（可能是 AgentNave App 写入的「AgentNave 编排偏好」一段），按那里执行。
 
 编排单向：boss 是宿主里的 Agent，由 boss 自己决定、或按用户指示编排其他 CLI。被 AgentNave 启动的子代理（含其自带子代理）不调用 AgentNave 的工具。这条约束只写在每次派发的指令里，服务端不禁用工具，也不构成权限隔离。
 
@@ -42,12 +42,12 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
-- 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。
+- 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。`list_members` 的 `review`、`orchestration` 把这类工位标为 `native=true`：交给宿主自带子代理，宿主允许时用所选模型。
 - 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，不拒绝调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。未声明 `read` 而同一 `cwd` 已有其他运行中的 CLI 时，回执带 `warnings`：并行写入要换独立 worktree，只读就补声明 `read`。
 
 ## 选择调用方式
 
-选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。
+选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档。
 
 | 用户需要 | 调用方式 |
 | --- | --- |

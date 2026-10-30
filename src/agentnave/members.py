@@ -29,6 +29,7 @@ type ReviewRole = Literal[
     "specialist-reviewer",
     "adversarial-verifier",
 ]
+type Difficulty = Literal["easy", "hard"]
 
 
 class MemberFileError(ValueError):
@@ -182,6 +183,17 @@ class ReviewFile(StrictModel):
 
     version: int = Field(ge=1, le=1)
     seats: dict[ReviewRole, ReviewSeat] = {}
+
+
+class OrchestrationFile(BaseModel):
+    """orchestration.json: the CLI and model the user picked for each Explorer and Worker
+    difficulty. The App also keeps its rule preset there, which the server does not read."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    version: int = Field(ge=1, le=1)
+    explorer: dict[Difficulty, ReviewSeat] = {}
+    worker: dict[Difficulty, ReviewSeat] = {}
 
 
 class MemberFile(StrictModel):
@@ -518,8 +530,15 @@ class ReviewSeatStatus(StrictModel):
     effort: str | None
     available: bool
     reason: str | None
+    # The host's own CLI: dispatch to the host's built-in subagent, with this model if it can.
+    native: bool = False
     # Other permitted task CLIs listing the same model ID.
     alternatives: list[ProviderName]
+
+
+class OrchestrationStatus(StrictModel):
+    explorer: dict[Difficulty, ReviewSeatStatus] = {}
+    worker: dict[Difficulty, ReviewSeatStatus] = {}
 
 
 class MemberList(StrictModel):
@@ -530,6 +549,8 @@ class MemberList(StrictModel):
     modes: dict[Mode, ModeStatus]
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error: str | None = None
+    orchestration: OrchestrationStatus = Field(default_factory=OrchestrationStatus)
+    orchestration_error: str | None = None
     # The App permission tier of each CLI that has one, "auto" unless the user picked "full".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
@@ -629,12 +650,25 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     try:
         content = (_data_root() / "review.json").read_text(encoding="utf-8")
         review = _review_status(
-            ReviewFile.model_validate_json(content).seats, modes["task"], excluded
+            ReviewFile.model_validate_json(content).seats, modes["task"], excluded, host
         )
     except FileNotFoundError:
         pass
     except (OSError, ValueError) as exc:
         review_error = f"Invalid review.json: {exc}. Repair it in the AgentNave App."
+    orchestration = OrchestrationStatus()
+    orchestration_error = None
+    try:
+        content = (_data_root() / "orchestration.json").read_text(encoding="utf-8")
+        roles = OrchestrationFile.model_validate_json(content)
+        orchestration = OrchestrationStatus(
+            explorer=_review_status(roles.explorer, modes["task"], excluded, host),
+            worker=_review_status(roles.worker, modes["task"], excluded, host),
+        )
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        orchestration_error = f"Invalid orchestration.json: {exc}. Repair it in the AgentNave App."
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error = None
     try:
@@ -652,6 +686,8 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         modes=modes,
         review=review,
         review_error=review_error,
+        orchestration=orchestration,
+        orchestration_error=orchestration_error,
         permissions=permissions,
         permissions_error=permissions_error,
         cli_options=cli_options,
@@ -659,17 +695,21 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     )
 
 
-def _review_status(
-    review: dict[ReviewRole, ReviewSeat], mode: ModeStatus, excluded: frozenset[str]
-) -> dict[ReviewRole, ReviewSeatStatus]:
+def _review_status[Role: str](
+    review: dict[Role, ReviewSeat], mode: ModeStatus, excluded: frozenset[str], host: Host
+) -> dict[Role, ReviewSeatStatus]:
     task = mode.members
-    seats: dict[ReviewRole, ReviewSeatStatus] = {}
+    seats: dict[Role, ReviewSeatStatus] = {}
     for role, seat in review.items():
         member = next(
             (m for m in task if m.provider == seat.provider and m.model in (seat.model, "*")),
             None,
         )
-        if seat.provider in excluded:
+        # The host's own CLI is never dispatched through AgentNave; its built-in subagent does it.
+        native = seat.provider == host.provider
+        if native:
+            reason = None
+        elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
         elif member is None:
             # An unrestricted task mode accepts any model.
@@ -691,6 +731,7 @@ def _review_status(
             effort=seat.effort or None,
             available=reason is None,
             reason=reason,
+            native=native,
             alternatives=list(dict.fromkeys(alternatives)),
         )
     return seats

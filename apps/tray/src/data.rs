@@ -313,6 +313,39 @@ impl Reader {
                 Err(error) => Response::error(500, &error),
             };
         }
+        if path == "/app/orchestration" {
+            if method == "GET" {
+                let (document, error) = match crate::members::read_orchestration(&self.root) {
+                    Ok(document) => (document, Value::Null),
+                    Err(error) => (json!({"version": 1, "preset": "off"}), json!(error)),
+                };
+                return Response::json(&json!({"document": document, "error": error,
+                    "presets": crate::rules::presets(), "files": self.rule_files()["files"]}));
+            }
+            if method != "POST" {
+                return Response::error(405, "此路由只接受 GET 或 POST");
+            }
+            if action != Some("1") {
+                return Response::error(403, "缺少操作请求头");
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+                return Response::error(400, "请求必须为 JSON");
+            };
+            if let Err(error) = crate::members::validate_orchestration(&payload) {
+                return Response::error(400, &error);
+            }
+            if let Err(error) = crate::members::save_orchestration(&self.root, &payload) {
+                return Response::error(500, &error);
+            }
+            let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+            let failures = guard
+                .as_ref()
+                .map(|hosts| self.sync_rules(hosts))
+                .unwrap_or_default();
+            drop(guard);
+            return Response::json(&json!({"saved": true, "failures": failures,
+                "files": self.rule_files()["files"]}));
+        }
         if path == "/app/rules" || path == "/app/rules/open" {
             let home = dirs::home_dir().unwrap_or_default();
             let apps = self
@@ -326,7 +359,7 @@ impl Reader {
                 if method != "GET" {
                     return Response::error(405, "此路由只接受 GET");
                 }
-                return Response::json(&crate::rules::list(&apps, &home));
+                return Response::json(&self.rule_files());
             }
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -446,7 +479,35 @@ impl Reader {
             .as_mut()
         {
             hosts.refresh_probed();
+            self.sync_rules(hosts);
         }
+    }
+
+    /// The orchestration rules the saved settings put in the boss apps' rules files, if any.
+    fn rules_text(&self) -> Option<String> {
+        crate::members::read_orchestration(&self.root)
+            .ok()
+            .and_then(|document| crate::rules::chosen(&document))
+    }
+
+    /// Bring the orchestration block in line with the settings and the connected apps. A broken
+    /// orchestration.json leaves the files alone; a preview build never writes them.
+    fn sync_rules(&self, hosts: &crate::hosts::Hosts) -> Vec<Value> {
+        if crate::PREVIEW || crate::members::read_orchestration(&self.root).is_err() {
+            return Vec::new();
+        }
+        hosts.sync_rules(self.rules_text().as_deref())
+    }
+
+    /// The global rules files with whether each carries the current orchestration block.
+    fn rule_files(&self) -> Value {
+        let home = dirs::home_dir().unwrap_or_default();
+        let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        let (installed, connected) = guard
+            .as_ref()
+            .map(|hosts| (hosts.rule_apps(), hosts.connected_rule_apps()))
+            .unwrap_or_default();
+        crate::rules::list(&installed, &connected, &home, self.rules_text().as_deref())
     }
 
     pub(crate) fn tool_dirs(&self) -> Option<crate::hosts::ToolDirs> {
@@ -488,7 +549,11 @@ impl Reader {
         };
         match path {
             "/app/hosts" => Response::json(&hosts.snapshot()),
-            "/app/hosts/refresh" => Response::json(&hosts.refresh()),
+            "/app/hosts/refresh" => {
+                let snapshot = hosts.refresh();
+                self.sync_rules(hosts);
+                Response::json(&snapshot)
+            }
             "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
             "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {
                 Ok(result) => Response::json(&result),
@@ -507,7 +572,12 @@ impl Reader {
                     return Response::error(400, "请求必须为 JSON");
                 };
                 let operation = path.rsplit('/').next().unwrap();
-                match hosts.action(operation, &payload) {
+                let result = hosts.action(operation, &payload);
+                // Connecting, removing or moving a host changes which rules files carry the block.
+                if matches!(operation, "connect" | "remove" | "root") {
+                    self.sync_rules(hosts);
+                }
+                match result {
                     Ok(result) => Response::json(&result),
                     Err(error) => Response::error(400, &error),
                 }
