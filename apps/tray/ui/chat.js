@@ -1210,9 +1210,9 @@ function verbOf(m, ctx) {
   if (m.kind === "forward") return ["转发", targets(m, ctx)];
   if (isBoss(m)) {
     if (t?.kind !== "room") return ["任务", targets(m, ctx)];
-    const round = m.round != null ? `第 ${m.round} 轮` : "";
+    const round = m.round > 0 ? `第 ${m.round} 轮` : "";
     const where = state.drawer.kind === "room" || !room ? round : `「${room.title}」${round}`;
-    return ["议题", targets(m, ctx), where];
+    return [m.round > 0 ? "议题" : "发言", targets(m, ctx), where];
   }
   // Kept from the other seats in review: a reply only boss sees, never deleted.
   if (m.kept_private) return ["", [], "", "未公开 · 仅 boss 可见"];
@@ -1665,7 +1665,7 @@ function renderConv(c, ctx) {
       round = null;
       separator(`day:${m.id}`, dayLabel(m.time));
     }
-    if (state.drawer.kind === "room" && m.round != null && m.round !== round) {
+    if (state.drawer.kind === "room" && m.round > 0 && m.round !== round) {
       round = m.round;
       separator(`round:${m.conversation}:${m.round}`, `第 ${m.round} 轮`);
     }

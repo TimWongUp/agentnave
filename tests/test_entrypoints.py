@@ -237,26 +237,21 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
     async with Client(mcp) as client:
-        opened = await client.call_tool(
+        started = await client.call_tool(
             "run_round",
             {
                 "title": "Parallel",
                 "cwd": str(tmp_path),
                 "members": [{"id": s, "provider": "claude"} for s in "ab"],
-            },
-        )
-        group_id = _payload(opened.structured_content)["group_id"]
-        started = await client.call_tool(
-            "run_round",
-            {
-                "group_id": group_id,
                 "seats": ["a", "b"],
                 "order": "parallel",
                 "prompt": "compare notes",
                 "instructions": {"b": "argue the other side"},
             },
         )
+        group_id = _payload(started.structured_content)["group_id"]
         started_payload = _payload(_payload(started.structured_content)["round"])
+        assert started_payload["round"] == 1
         assert started_payload["reason"] == "started"
         seats = cast(list[dict[str, object]], started_payload["seats"])
         assert [seat["status"] for seat in seats] == ["running", "running"]

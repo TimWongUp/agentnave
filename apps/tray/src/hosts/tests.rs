@@ -29,6 +29,7 @@ fn fixture() -> (TempDir, Hosts) {
         "[console_scripts]\nagentnave-mcp = agentnave.relay:main\n");
     let mut hosts = Hosts::new(context);
     hosts.shell = Some(Ok(BTreeMap::new()));
+    hosts.processes = Mutex::new(processes::Probe::fixed(Some(HashMap::new())));
     (temp, hosts)
 }
 fn executable_file(path: &Path, text: &str) {
@@ -498,6 +499,51 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
             assert!(raw.ends_with("tail: 'exact' # keep\n"));
         }
         assert!(!marker.exists());
+    }
+}
+
+#[test]
+fn first_connection_detects_running_hosts_without_mcp_receipts() {
+    let (_temp, mut hosts) = fixture();
+    for id in IDS {
+        let h = host(&hosts, id);
+        executable_file(
+            &hosts.context.search[0].join(h.binary),
+            "#!/bin/sh\nexit 99\n",
+        );
+        hosts.processes = Mutex::new(processes::Probe::fixed(Some(HashMap::from([(id, 1)]))));
+        let connected = hosts.action("connect", &json!({"id":id})).unwrap();
+        assert_eq!(connected["ok"], true, "{id}: {connected}");
+        assert_eq!(connected["host"]["reload"]["state"], "required", "{id}");
+        assert_eq!(connected["host"]["reload"]["reason"], "host_running");
+        assert!(connected["message"].as_str().unwrap().contains("重启"));
+        let changed = hosts.settings[id]["reload_changed"].clone();
+        hosts.refresh();
+        assert_eq!(hosts.settings[id]["reload_changed"], changed);
+        assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+        let repeated = hosts.action("connect", &json!({"id":id})).unwrap();
+        assert!(!repeated["message"].as_str().unwrap().contains("后生效"));
+        hosts.processes = Mutex::new(processes::Probe::fixed(None));
+        assert_eq!(hosts.state(&h)["reload"]["state"], "unverified");
+        hosts.processes = Mutex::new(processes::Probe::fixed(Some(HashMap::new())));
+        assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
+        let after_change = changed["at_ms"].as_u64().unwrap() / 1000 + 1;
+        hosts.processes = Mutex::new(processes::Probe::fixed(Some(HashMap::from([(
+            id,
+            after_change,
+        )]))));
+        assert_eq!(hosts.state(&h)["reload"]["state"], "unverified");
+        let dir = hosts.context.home.join(".agentnave/connections");
+        save(
+            &dir.join(format!("{id}.json")),
+            &json!({
+                "version":1,"host":id,"started_ms":(after_change + 1) * 1000,
+                "runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64),
+                "runtime_version":"0.22.0"
+            })
+            .to_string(),
+        );
+        assert_eq!(hosts.state(&h)["reload"]["state"], "current");
     }
 }
 

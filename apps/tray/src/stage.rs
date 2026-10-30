@@ -1474,7 +1474,9 @@ impl Group {
                     text(entry, "text")
                 },
             );
-            msg["round"] = entry["round"].clone();
+            if kind != "host" && entry["round"].as_u64().is_some_and(|r| r > 0) {
+                msg["round"] = entry["round"].clone();
+            }
             if kind == "task" {
                 let round = array(view, "rounds")
                     .find(|r| r["number"] == entry["round"])

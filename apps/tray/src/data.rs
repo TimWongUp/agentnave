@@ -2529,6 +2529,24 @@ mod tests {
         assert_eq!(answer2["visibility"], "public");
         assert_eq!(answer2["to"], json!([{"key": "@all", "handle": "@all"}]));
         assert_eq!(answer2["reply_to"], prompt["id"]);
+        assert_eq!(answer2["round"], 1);
+        let remark = published["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "remark")
+            .unwrap();
+        assert!(remark["round"].is_null());
+        show["director"]["messages"].as_array_mut().unwrap().insert(0, json!({"kind":"host", "speaker":"@host", "round":0, "text":"opening", "time":"2098-12-31T23:59:59Z"}));
+        save(dir.path(), &show);
+        let legacy = state(&reader, &path);
+        let opening = legacy["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "opening")
+            .unwrap();
+        assert!(opening["round"].is_null());
     }
 
     #[test]
