@@ -61,12 +61,13 @@ impl ToolDirs {
         let tools = value("UV_TOOL_DIR")
             .map(|(p, _)| PathBuf::from(p))
             .or_else(|| {
-                // uv ignores XDG for its data directory on Windows.
+                // On Windows uv ignores XDG and only keeps using `uv\data` where it already exists.
                 if cfg!(windows) {
-                    return context
-                        .env
-                        .get("APPDATA")
-                        .map(|p| PathBuf::from(p).join("uv/data/tools"));
+                    return context.env.get("APPDATA").map(|p| {
+                        let uv = PathBuf::from(p).join("uv");
+                        let legacy = uv.join("data");
+                        if legacy.exists() { legacy } else { uv }.join("tools")
+                    });
                 }
                 value("XDG_DATA_HOME").map(|(p, _)| PathBuf::from(p).join("uv/tools"))
             })

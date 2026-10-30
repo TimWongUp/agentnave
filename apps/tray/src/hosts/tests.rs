@@ -1035,13 +1035,17 @@ fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() 
 fn windows_has_no_login_shell_and_finds_uv_tools_under_appdata() {
     let (_temp, mut hosts) = fixture();
     hosts.context.env.remove("SHELL");
+    let appdata = hosts.context.home.join("Roaming");
     hosts
         .context
         .env
-        .insert("APPDATA".into(), r"C:\Roaming".into());
+        .insert("APPDATA".into(), appdata.display().to_string());
     let (shell, dirs) = probe_tools(&hosts.context);
     assert_eq!(shell, Ok(BTreeMap::new()));
-    assert_eq!(dirs.tools, Path::new(r"C:\Roaming\uv\data\tools"));
+    assert_eq!(dirs.tools, appdata.join("uv").join("tools"));
+    fs::create_dir_all(appdata.join("uv").join("data")).unwrap();
+    let (_, dirs) = probe_tools(&hosts.context);
+    assert_eq!(dirs.tools, appdata.join("uv").join("data").join("tools"));
 }
 
 #[test]
