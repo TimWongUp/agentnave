@@ -154,6 +154,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Create tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -186,6 +190,8 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag \
               --title "AgentNave $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
           fi
+          uv build --wheel
+          gh release upload "$RELEASE_TAG" dist/agentnave-*.whl --clobber
 
   tray-release:
     name: Attach macOS tray app

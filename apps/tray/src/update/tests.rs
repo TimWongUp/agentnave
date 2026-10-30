@@ -148,3 +148,28 @@ fn last_checked_is_utc_rfc3339() {
     let leap = SystemTime::UNIX_EPOCH + Duration::from_secs(951_782_400);
     assert_eq!(rfc3339(leap), "2000-02-29T00:00:00Z");
 }
+
+#[test]
+fn extracts_embedded_wheel_from_gzip_archive_and_parses_proxy() {
+    use std::io::Write;
+    let wheel = extract_wheel(EMBEDDED_WHEEL, VERSION).expect("embedded wheel");
+    assert!(wheel.starts_with(b"PK\x03\x04"));
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(b"tar-header-padding").unwrap();
+    gz.write_all(EMBEDDED_WHEEL).unwrap();
+    let archive = gz.finish().unwrap();
+    assert_eq!(
+        wheel_from_archive(&archive, VERSION).as_deref(),
+        Some(wheel.as_slice())
+    );
+    assert_eq!(wheel_from_archive(&archive, "99.99.99"), None);
+
+    let env = std::collections::BTreeMap::from([
+        ("HTTPS_PROXY".to_owned(), "  ".to_owned()),
+        ("all_proxy".to_owned(), "socks5://127.0.0.1:7890".to_owned()),
+    ]);
+    assert_eq!(
+        proxy_url(&env).map(|u| u.to_string()).as_deref(),
+        Some("socks5://127.0.0.1:7890")
+    );
+}

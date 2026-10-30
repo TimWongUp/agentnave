@@ -346,6 +346,11 @@ fn service_installer_passes_cached_shell_directories_to_uv_and_version_checks() 
     hosts.shell = Some(Ok(BTreeMap::from([
         ("UV_TOOL_DIR".into(), tools.display().to_string()),
         ("UV_TOOL_BIN_DIR".into(), bin.display().to_string()),
+        (
+            "UV_DEFAULT_INDEX".into(),
+            "https://pypi.tuna.tsinghua.edu.cn/simple".into(),
+        ),
+        ("HTTPS_PROXY".into(), "http://127.0.0.1:7890".into()),
     ])));
     let dirs = hosts.tool_dirs().unwrap();
     let site = tools.join("agentnave/lib/python3.12/site-packages");
@@ -363,6 +368,9 @@ fn service_installer_passes_cached_shell_directories_to_uv_and_version_checks() 
 tools=$(cat "$0.tools")
 bin=$(cat "$0.bin")
 [ "$UV_TOOL_DIR" = "$tools" ] && [ "$UV_TOOL_BIN_DIR" = "$bin" ] || exit 7
+[ "$UV_DEFAULT_INDEX" = "https://pypi.tuna.tsinghua.edu.cn/simple" ] || exit 11
+[ "$HTTPS_PROXY" = "http://127.0.0.1:7890" ] || exit 12
+[ -f "$6" ] || exit 13
 printf '%s\n' "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" "$HOME" "$1 $2" >> "$0.calls"
 if [ "$2" = install ]; then
   site="$tools/agentnave/lib/python3.12/site-packages"
@@ -1020,6 +1028,7 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
         };
         output.push_str(&format!("printf '{name}\\0{value}\\0'\n"));
     }
+    output.push_str("printf 'HTTPS_PROXY\\0http://127.0.0.1:7890\\0'\n");
     output.push_str(&format!(
         "printf 'BAD\\0$(touch {})\\0'\n",
         marker.display()
@@ -1030,8 +1039,9 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
         .env
         .insert("SHELL".into(), script.display().to_string());
     let values = roots::probe(&hosts.context).unwrap();
-    assert_eq!(values.len(), 1);
+    assert_eq!(values.len(), 2);
     assert_eq!(values["CODEX_HOME"], root.to_str().unwrap());
+    assert_eq!(values["HTTPS_PROXY"], "http://127.0.0.1:7890");
     assert!(!marker.exists());
     executable_file(&script, "#!/bin/sh\nexit 0\n");
     assert!(roots::probe(&hosts.context).is_err());
