@@ -46,6 +46,7 @@ fn main() {
 }
 
 fn collect(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+    println!("cargo:rerun-if-changed={}", dir.display());
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         assert!(
@@ -59,6 +60,7 @@ fn collect(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String,
         if path.is_dir() {
             collect(root, &path, out);
         } else {
+            println!("cargo:rerun-if-changed={}", path.display());
             out.push((
                 path.strip_prefix(root)
                     .unwrap()
