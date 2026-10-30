@@ -35,12 +35,6 @@
 .cli-card:focus-within { border-color: var(--accent); }
 .cli-name { font-size: 14px; font-weight: 620; color: var(--ink); }
 .cli-chevron { width: 7px; height: 7px; margin: 0 3px 0 1px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
-.cli-meta-row { padding: 8px 18px; font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--hover); display: flex; gap: 14px; flex-wrap: wrap; }
-.cli-meta-row .cli-error { color: var(--bad); }
-.cli-permission { padding: 10px 18px; border-bottom: 1px solid var(--line); }
-.cli-permission-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.cli-permission-label { font-size: 12.5px; font-weight: 550; }
-.cli-permission-text { margin: 6px 0 0; font-size: 11.5px; color: var(--muted); }
 
 .field-hint { color: var(--muted); font-size: 11px; margin: 0; }
 
@@ -117,7 +111,6 @@
 .settings-page input.switch-input:checked { background: var(--accent); }
 .settings-page input.switch-input:checked::before { transform: translateX(14px); }
 .settings-page input.switch-input:disabled { opacity: .45; cursor: default; }
-.cli-meta-row { overflow-wrap: anywhere; }
 .field-hint { font-size: 12px; line-height: 1.6; }
 .save-bar-inner { min-height: 64px; box-shadow: 0 3px 14px #00000014; }
 .save-bar-info { flex-wrap: wrap; gap: 4px 12px; }
@@ -155,16 +148,15 @@
 /* Member cards: a head line, then one row for both scenes or one per scene. */
 .cli-cards { gap: 10px; }
 .member-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px; overflow: visible; }
-.member-card.off .member-title { opacity: .6; }
 .member-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 28px; }
 .member-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .member-end { display: inline-flex; align-items: center; gap: 14px; }
-.member-split { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
-.member-more { padding: 0 8px; min-height: 24px; font-size: 14px; line-height: 1; color: var(--muted); }
-.member-more[aria-expanded="true"] { color: var(--ink); background: var(--hover); }
-.member-row { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 12px; padding-left: 30px; }
-.member-row:has(> .member-scene) { grid-template-columns: 64px auto auto 1fr; }
+.member-row { display: grid; grid-template-columns: 96px auto auto 1fr; align-items: center; gap: 12px; padding-left: 30px; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
+.member-tier { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.member-tier select { font-size: 12.5px; padding: 4px 8px; min-width: 104px; }
+.member-switch { display: inline-flex; align-items: center; gap: 8px; padding-left: 30px; font-size: 12.5px; cursor: pointer; }
+.member-error { margin: 0; padding-left: 30px; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
 .member-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .member-model { font-size: 12.5px; padding: 5px 8px; max-width: 320px; }
 .member-efforts { justify-self: start; }
@@ -176,11 +168,10 @@
 .member-option:has(input:disabled) { cursor: default; }
 .member-option-id { overflow-wrap: anywhere; }
 .member-option-all { grid-column: 1 / -1; font-weight: 600; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-.member-details { margin: 2px -16px -10px; border-top: 1px solid var(--line); }
-.member-details > :last-child { border-bottom: 0; }
 .member-card > .disable-confirm { margin: 0 -16px; border-top: 1px solid var(--line); }
 @media (max-width: 700px) {
-  .member-row, .member-row:has(> .member-scene) { grid-template-columns: minmax(0, 1fr); padding-left: 0; gap: 8px; }
+  .member-row { grid-template-columns: minmax(0, 1fr); padding-left: 0; gap: 8px; }
+  .member-switch, .member-error { padding-left: 0; }
   .member-picker { margin-left: 0; }
 }
 .review-grid { display: grid; gap: 8px; }

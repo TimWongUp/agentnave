@@ -59,16 +59,6 @@ const PROVIDER_NAMES = {
   deepseek: "DeepSeek Harness",
   zcode: "ZCode",
 };
-const SOURCE_LABELS = {
-  "codex-cache": "Codex 缓存",
-  "zcode-config": "ZCode 配置",
-  command: "命令输出",
-  help: "帮助信息",
-  aliases: "别名配置",
-  catalog: "内置目录",
-  config: "dsh 配置",
-  none: "未检测到",
-};
 
 // Permission-related keywords for sensitive options
 const PERMISSION_KEYWORDS = [
@@ -115,7 +105,6 @@ let cliOptions = null; // cli-options.json settings by CLI; they hold for every 
 let cliOptionsError = null;
 let reviewSaves = 0; // Seats, tiers or CLI switches saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
-const openCards = new Set(); // Cards showing their permission, switches and path
 let missingOpen = false; // The folded list of CLIs not installed here
 let appStatus = null;
 let installedService = null;
@@ -357,22 +346,14 @@ async function setCliSwitch(provider, item, enabled) {
 function renderCliSwitches(provider) {
   return (CLI_SWITCHES[provider] || []).map((item) => {
     const enabled = cliOptions?.[provider]?.[item.key] === true;
-    return el("div", { className: "cli-permission" },
-      el("label", { className: "cli-permission-head" },
-        el("span", { className: "cli-permission-label" }, item.label),
-        el("input", {
-          type: "checkbox",
-          role: "switch",
-          className: "switch-input",
-          dataset: { focusKey: `${provider}/cli/${item.key}` },
-          checked: enabled,
-          disabled: Boolean(cliOptionsError),
-          onChange: (e) => setCliSwitch(provider, item, e.target.checked),
-        })),
-      el("p", { className: "cli-permission-text" },
-        cliOptionsError
-          ? `${cliOptionsError}。修复或删除这个文件之前，派发会被拒绝。`
-          : `${enabled ? item.on : item.off} 对这个 CLI 的所有模型都生效，选完立即保存。`));
+    return el("label", { className: "member-switch", title: cliOptionsError || `${enabled ? item.on : item.off} 选完立即保存。` },
+      el("input", {
+        type: "checkbox",
+        dataset: { focusKey: `${provider}/cli/${item.key}` },
+        checked: enabled,
+        disabled: Boolean(cliOptionsError),
+        onChange: (e) => setCliSwitch(provider, item, e.target.checked),
+      }), textNode(item.label));
   });
 }
 
@@ -418,29 +399,15 @@ async function setPermissionTier(provider, tier) {
 }
 
 function renderPermission(provider) {
-  if (provider === "pi") {
-    return el("div", { className: "cli-permission" },
-      el("p", { className: "cli-permission-text" }, "权限：Pi 没有审批步骤，工具总是直接执行，不需要设置。"));
-  }
+  if (provider === "pi") return null;
   const tier = permissionTier(provider);
-  const name = PROVIDER_NAMES[provider];
-  return el("div", { className: "cli-permission" },
-    el("div", { className: "cli-permission-head" },
-      el("span", { className: "cli-permission-label" }, "派发时的权限"),
-      el("div", { className: "segment-control", role: "radiogroup", "aria-label": `${name} 派发时的权限` },
-        TIERS.map(([value, label]) => el("button", {
-          type: "button",
-          role: "radio",
-          className: `segment-btn${value === tier ? " active" : ""}`,
-          "aria-checked": String(value === tier),
-          dataset: { focusKey: `${provider}/tier/${value}` },
-          disabled: Boolean(permissionsError),
-          onClick: () => value !== tier && setPermissionTier(provider, value),
-        }, label)))),
-    el("p", { className: "cli-permission-text" },
-      permissionsError
-        ? `${permissionsError}。修复或删除这个文件之前，派发会被拒绝。`
-        : `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 单独干活和新开的会都按这一档，选完立即保存。`));
+  return el("label", { className: "member-tier", title: permissionsError || `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 选完立即保存。` },
+    textNode("权限"),
+    el("select", {
+      dataset: { focusKey: `${provider}/tier` },
+      disabled: Boolean(permissionsError),
+      onChange: (e) => setPermissionTier(provider, e.target.value),
+    }, TIERS.map(([value, label]) => el("option", { value, selected: value === tier }, label))));
 }
 
 async function apiPostMembers(doc) {
@@ -1043,15 +1010,17 @@ function slotRows(provider, scene, split) {
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
   if (native.model && !all.includes(native.model)) all.unshift(native.model);
-  const label = split ? el("span", { className: "member-scene" }, SCENES[scene]) : null;
+  const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : `${SCENES.task}、${SCENES.discussion}`);
   const pick = (change) => changeSlot(provider, scene, change);
+  // Turning a CLI off for both scenes asks first when it drops settings.
+  const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
 
   if (!current.enabled) {
     return [el("div", { className: "member-row" }, label,
       el("select", {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
-        "aria-label": `${SCENES[scene]}的默认模型`,
+        "aria-label": "默认模型",
         onChange: (e) => pick({ enabled: true, model: e.target.value === OFF ? "" : e.target.value }),
       }, el("option", { value: OFF, selected: true }, "不用"), ...all.map((m) => el("option", { value: m }, m))))];
   }
@@ -1059,7 +1028,7 @@ function slotRows(provider, scene, split) {
   const model = current.model || native.model || "";
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const options = [
-    ...(split ? [el("option", { value: OFF }, "不用")] : []),
+    el("option", { value: OFF }, "不用"),
     ...(native.model ? [] : [el("option", { value: "", selected: !model }, "CLI 自己决定")]),
     ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? `${m}（CLI 当前设置）` : m)),
   ];
@@ -1067,10 +1036,10 @@ function slotRows(provider, scene, split) {
     el("select", {
       className: "member-model",
       dataset: { focusKey: `${key}/model` },
-      "aria-label": split ? `${SCENES[scene]}的默认模型` : "默认模型",
+      "aria-label": "默认模型",
       onChange: (e) => {
         const value = e.target.value;
-        if (value === OFF) return pick({ enabled: false });
+        if (value === OFF) return off();
         pick({ model: value === native.model && !current.allowed ? "" : value, effort: sceneEffort(scene || "task", provider, value || native.model) });
       },
     }, ...options),
@@ -1182,46 +1151,23 @@ function renderCards() {
     }
     const name = PROVIDER_NAMES[provider] || provider;
     const split = enabled && isSplit(provider);
-    const isOpen = openCards.has(provider);
     const head = el("div", { className: "member-head" },
       el("div", { className: "member-title" },
         el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
         el("span", { className: "cli-name" }, name),
         info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
-        info.installed ? null : el("span", { className: "badge badge-bad" }, "未安装"),
-        permissionTier(provider) === "full" && provider !== "pi" ? el("span", { className: "badge badge-warning" }, "完全放开") : null),
+        info.installed ? null : el("span", { className: "badge badge-bad" }, "未安装")),
       el("div", { className: "member-end" },
-        enabled ? el("label", { className: "member-split" },
-          el("input", {
-            type: "checkbox",
-            role: "switch",
-            className: "switch-input",
-            dataset: { focusKey: `${provider}/split` },
-            checked: split,
-            onChange: (e) => setSplit(provider, e.target.checked),
-          }), textNode("单独干活和开会分开设置")) : null,
-        el("input", {
-          type: "checkbox",
-          role: "switch",
-          className: "switch-input",
-          dataset: { focusKey: `${provider}/enabled` },
-          "aria-label": `使用 ${name}`,
-          checked: enabled,
-          onChange: (e) => setProviderEnabled(provider, e.target.checked),
-        }),
-        el("button", {
-          type: "button",
-          className: "member-more",
-          dataset: { focusKey: `${provider}/more` },
-          title: "权限与路径",
-          "aria-label": `${name} 的权限与路径`,
-          "aria-expanded": String(isOpen),
-          onClick: () => {
-            if (isOpen) openCards.delete(provider);
-            else openCards.add(provider);
-            renderCards();
-          },
-        }, "⋯")));
+        enabled ? el("div", { className: "segment-control", role: "radiogroup", "aria-label": `${name} 的两个场景` },
+          [[false, "一起设置"], [true, "分开设置"]].map(([value, text]) => el("button", {
+            type: "button",
+            role: "radio",
+            className: `segment-btn${value === split ? " active" : ""}`,
+            "aria-checked": String(value === split),
+            dataset: { focusKey: `${provider}/split/${value}` },
+            onClick: () => value !== split && setSplit(provider, value),
+          }, text))) : null,
+        renderPermission(provider)));
     const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
       card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": `确认停用 ${name}` },
@@ -1230,18 +1176,10 @@ function renderCards() {
           el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, "保留启用"),
           el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, "确认停用"))));
     }
-    if (enabled) {
-      const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
-      for (const row of rows) card.appendChild(row);
-    }
-    if (isOpen) {
-      const sourceLabel = SOURCE_LABELS[info.source] || info.source;
-      const meta = el("div", { className: "cli-meta-row" },
-        info.path ? el("span", {}, `路径: ${info.path}`) : null,
-        el("span", {}, `模型来源: ${sourceLabel}`),
-        info.error ? el("span", { className: "cli-error" }, `探测状态: ${info.error}`) : null);
-      card.appendChild(el("div", { className: "member-details" }, meta, renderPermission(provider), ...renderCliSwitches(provider)));
-    }
+    const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
+    for (const row of rows) card.appendChild(row);
+    if (enabled) for (const row of renderCliSwitches(provider)) card.appendChild(row);
+    if (info.error) card.appendChild(el("p", { className: "member-error" }, `读取模型列表失败：${info.error}`));
     cards.appendChild(card);
   }
 
@@ -1265,7 +1203,7 @@ function renderCards() {
   if (focusKey) {
     const controls = [...container.querySelectorAll("[data-focus-key]")];
     const replacement = controls.find((control) => control.dataset.focusKey === focusKey)
-      || (focusKey.endsWith("-disable") ? controls.find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/enabled`) : null);
+      || (focusKey.endsWith("-disable") ? controls.find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/both/model`) : null);
     if (replacement && !replacement.disabled) {
       replacement.focus({ preventScroll: true });
       // A confirmation button returns focus to the switch, not its screen position.
