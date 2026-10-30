@@ -1200,6 +1200,9 @@ async def list_members(
     Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
     review holds the CLI and model the user picked in the App for each agentnave-review role,
     from review.json; review_error reports a broken review.json without affecting members.
+    orchestration holds the CLI and model picked for each Explorer (read-only: explore, plan,
+    review) and Worker (writes) difficulty, easy or hard, from orchestration.json. native=true
+    marks the host's own CLI: give that work to the host's built-in subagent instead.
     cli_options holds settings the user saved for a whole CLI, applied to every model of it.
     """
     try:

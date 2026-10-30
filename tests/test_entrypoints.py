@@ -782,10 +782,12 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
 
     from agentnave.adapters.antigravity import AntigravityAdapter
     from agentnave.adapters.grok import GrokAdapter
+    from agentnave.host import Host
 
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
     monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    monkeypatch.setattr(mcp_server, "HOST", Host(name="claude", source="env"))
 
     def no_prepare(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("list_members must not prepare CLI commands or discover executables")
@@ -824,7 +826,15 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             "correctness-reviewer": {"provider": "grok", "model": "chosen", "effort": "high"},
             "security-reviewer": {"provider": "codex", "model": "chosen"},
             "performance-reviewer": {"provider": "grok", "model": "gone"},
+            "simplicity-reviewer": {"provider": "claude", "model": "chosen"},
         }
+        roles = {
+            "version": 1,
+            "preset": "split",
+            "explorer": {"easy": {"provider": "claude", "model": "chosen"}},
+            "worker": {"hard": {"provider": "codex", "model": "chosen", "effort": "high"}},
+        }
+        (root / "orchestration.json").write_text(json.dumps(roles), encoding="utf-8")
         (root / "review.json").write_text("{", encoding="utf-8")
         content = json.dumps(document, ensure_ascii=False)
         path = root / "members.json"
@@ -839,6 +849,16 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         assert review["correctness-reviewer"]["available"] is True
         assert review["correctness-reviewer"]["effort"] == "high"
         assert review["security-reviewer"]["reason"] == "CLI is excluded by this host"
+        # The host's own CLI goes to its built-in subagent rather than being unavailable.
+        assert review["simplicity-reviewer"]["available"] is True
+        assert review["simplicity-reviewer"]["native"] is True
+        orchestration = cast(
+            dict[str, dict[str, dict[str, object]]],
+            _payload(listed.structured_content)["orchestration"],
+        )
+        assert orchestration["explorer"]["easy"]["native"] is True
+        assert orchestration["worker"]["hard"]["available"] is False
+        assert orchestration["worker"]["hard"]["effort"] == "high"
         assert review["security-reviewer"]["alternatives"] == [
             "claude",
             "codebuddy",
@@ -865,7 +885,7 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             ("codex", "chosen")
         ]
         assert path.read_text(encoding="utf-8") == content
-        assert sorted(root.iterdir()) == [path, root / "review.json"]
+        assert sorted(root.iterdir()) == [path, root / "orchestration.json", root / "review.json"]
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
         fresh = _payload((await client.call_tool("list_members", {})).structured_content)
         assert fresh["configured"] is True

@@ -34,6 +34,7 @@ const FILE: &str = "members.json";
 const REVIEW_FILE: &str = "review.json";
 const PERMISSIONS_FILE: &str = "permissions.json";
 const CLI_OPTIONS_FILE: &str = "cli-options.json";
+const ORCHESTRATION_FILE: &str = "orchestration.json";
 /// Options the permission tier decides for some CLI; saved CLI settings never carry them.
 const TIER_KEYS: [&str; 6] = [
     "permission_mode",
@@ -279,31 +280,100 @@ pub fn validate_review(document: &Value) -> Result<(), String> {
         if !REVIEW_ROLES.contains(&role.as_str()) {
             return Err(format!("未知评审角色：{role}"));
         }
-        let what = format!("seats.{role}");
-        let fields = object(seat, &what)?;
-        only(fields, &["provider", "model", "effort"], &what)?;
-        if !fields
-            .get("provider")
-            .and_then(Value::as_str)
-            .is_some_and(|provider| PROVIDERS.contains(&provider))
-        {
-            return Err(format!("{what} 的 CLI 不受支持"));
-        }
-        if !fields
-            .get("model")
-            .and_then(Value::as_str)
-            .is_some_and(|model| !model.trim().is_empty())
-        {
-            return Err(format!("{what} 缺少模型"));
-        }
-        if fields
-            .get("effort")
-            .is_some_and(|effort| !effort.is_string())
-        {
-            return Err(format!("{what} 的 effort 必须为字符串"));
+        validate_seat(seat, &format!("seats.{role}"))?;
+    }
+    Ok(())
+}
+
+/// One picked CLI and model, with an optional effort; shared by review and orchestration seats.
+fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
+    let fields = object(seat, what)?;
+    only(fields, &["provider", "model", "effort"], what)?;
+    if !fields
+        .get("provider")
+        .and_then(Value::as_str)
+        .is_some_and(|provider| PROVIDERS.contains(&provider))
+    {
+        return Err(format!("{what} 的 CLI 不受支持"));
+    }
+    if !fields
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(|model| !model.trim().is_empty())
+    {
+        return Err(format!("{what} 缺少模型"));
+    }
+    if fields
+        .get("effort")
+        .is_some_and(|effort| !effort.is_string())
+    {
+        return Err(format!("{what} 的 effort 必须为字符串"));
+    }
+    Ok(())
+}
+
+/// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
+/// "custom": text, "explorer": {"easy" | "hard": seat}, "worker": {...}}`. The App writes the
+/// chosen rules into the boss apps' global rules; the server reads only the role seats.
+pub fn validate_orchestration(document: &Value) -> Result<(), String> {
+    let top = object(document, ORCHESTRATION_FILE)?;
+    only(
+        top,
+        &["version", "preset", "custom", "explorer", "worker"],
+        ORCHESTRATION_FILE,
+    )?;
+    if document["version"].as_u64() != Some(1) {
+        return Err(format!("{ORCHESTRATION_FILE} 的 version 必须为 1"));
+    }
+    if !document["preset"]
+        .as_str()
+        .is_some_and(|preset| crate::rules::PRESETS.contains(&preset))
+    {
+        return Err("编排档位无效".into());
+    }
+    match top.get("custom") {
+        None => {}
+        Some(Value::String(text)) => crate::rules::check_custom(text)?,
+        Some(_) => return Err("自定义编排必须为文本".into()),
+    }
+    if document["preset"] == "custom"
+        && !document["custom"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty())
+    {
+        return Err("自定义编排不能为空".into());
+    }
+    for role in ["explorer", "worker"] {
+        let Some(seats) = top.get(role) else { continue };
+        for (difficulty, seat) in object(seats, role)? {
+            if !matches!(difficulty.as_str(), "easy" | "hard") {
+                return Err(format!("{role} 只有 easy 与 hard 两档"));
+            }
+            validate_seat(seat, &format!("{role}.{difficulty}"))?;
         }
     }
     Ok(())
+}
+
+/// The saved orchestration settings, or "off" with no seats when none was written yet.
+pub fn read_orchestration(root: &Path) -> Result<Value, String> {
+    let content = match fs::read(root.join(ORCHESTRATION_FILE)) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(json!({"version": 1, "preset": "off"}));
+        }
+        Err(error) => return Err(format!("无法读取 {ORCHESTRATION_FILE}：{error}")),
+    };
+    let document = serde_json::from_slice(&content)
+        .map_err(|error| format!("{ORCHESTRATION_FILE} 损坏：{error}"))?;
+    validate_orchestration(&document)
+        .map_err(|error| format!("{ORCHESTRATION_FILE} 格式错误：{error}"))?;
+    Ok(document)
+}
+
+pub fn save_orchestration(root: &Path, document: &Value) -> Result<(), String> {
+    validate_orchestration(document)?;
+    write_atomic(root, ORCHESTRATION_FILE, document)
 }
 
 /// The saved review seats, or an empty file when none was written yet.

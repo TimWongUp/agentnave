@@ -660,7 +660,7 @@ function setTab(tab) {
   if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "skills") window.AgentNaveSkills?.load();
   if (tab === "orchestration") {
-    loadRuleFiles();
+    loadOrchestration();
     loadLimit();
   }
 }
@@ -709,23 +709,155 @@ async function saveLimit() {
   }
 }
 
-// Orchestration preferences live in the boss apps' global rules, one row per file with every app
-// that reads it; the App only opens them.
-async function loadRuleFiles() {
-  const list = $("rule-files");
+// Orchestration lives in orchestration.json: a preset (or the user's own text) the App writes
+// into the connected boss apps' global rules, and the Explorer and Worker seats boss reads from
+// list_members. The rules files are listed one row per file with every app that reads it.
+const ORCHESTRATION_EFFECTS = {
+  off: "不写入全局规则，boss 按自己的习惯派发。",
+  split: "写入已接入应用的全局规则：boss 未被点名也会把探索、规划、评审交给 Explorer，实现交给 Worker，会用到它们的额度。",
+  parallel: "在分工协作之外，互不依赖的步骤会同时派给多个 Worker，实现后再换一个 Explorer 复核，额度用得更多。",
+  custom: "写入你自己的规则，起始内容是选自定义前的档位。",
+};
+const ORCHESTRATION_ROLES = [
+  ["explorer", "easy", "Explorer · 简单", "只读：探索、规划、评审"],
+  ["explorer", "hard", "Explorer · 困难", "只读：探索、规划、评审"],
+  ["worker", "easy", "Worker · 简单", "可写：实现"],
+  ["worker", "hard", "Worker · 困难", "可写：实现"],
+];
+let orchestration = null; // { document, error, presets, files } from GET /app/orchestration.
+const mockOrchestration = {
+  document: { version: 1, preset: "split" },
+  error: null,
+  presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行复核的规则" },
+  files: [
+    { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
+    { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },
+  ],
+};
+
+async function loadOrchestration() {
   try {
-    const response = await fetch("/app/rules", { cache: "no-store" });
-    if (!response.ok) throw new Error(`读取失败（${response.status}）`);
-    const data = await response.json();
-    list.replaceChildren(...data.files.map((file) => el("li", {},
+    if (isMock) orchestration = JSON.parse(JSON.stringify(mockOrchestration));
+    else {
+      const response = await fetch("/app/orchestration", { cache: "no-store" });
+      if (!response.ok) throw new Error(`读取失败（${response.status}）`);
+      orchestration = await response.json();
+    }
+    if (orchestration.error) showNotice(`${orchestration.error}；请先修复或删除这个文件`, true);
+    $("custom-text").value = orchestration.document.custom ?? "";
+  } catch (error) {
+    orchestration = null;
+    showNotice(`无法读取编排设置：${error.message}`, true);
+  }
+  renderOrchestration();
+}
+
+async function saveOrchestration(document, done) {
+  if (!orchestration || orchestration.error) return;
+  if (busy) {
+    showNotice("正在保存，请稍后再选", true);
+    return renderOrchestration();
+  }
+  busy = true;
+  updateControls();
+  $("save-custom").disabled = true;
+  try {
+    let data = { files: orchestration.files, failures: [] };
+    if (!isMock) {
+      const response = await fetch("/app/orchestration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+        body: JSON.stringify(document),
+      });
+      data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.error || `保存失败（${response.status}）`);
+    }
+    orchestration.document = document;
+    orchestration.files = data.files;
+    const failed = data.failures || [];
+    if (failed.length) showNotice(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, true);
+    else showNotice(done);
+  } catch (error) {
+    showNotice(`编排设置保存失败：${error.message}`, true);
+  } finally {
+    busy = false;
+    updateControls();
+  }
+  renderOrchestration();
+}
+
+function pickPreset(preset) {
+  const document = { ...orchestration.document, preset };
+  // The editor starts from the preset the user leaves, and keeps its text once written; what it
+  // shows is always what gets written.
+  if (preset === "custom") {
+    const from = orchestration.document.preset;
+    if (!document.custom?.trim()) document.custom = orchestration.presets[from === "off" ? "split" : from];
+    $("custom-text").value = document.custom;
+  }
+  saveOrchestration(document, preset === "off" ? "已关闭编排，已从全局规则中移除" : "已保存，并写入已接入应用的全局规则");
+}
+
+function saveCustom() {
+  if (!$("custom-text").value.trim()) return showNotice("自定义规则不能为空；不想写入时选「关闭」", true);
+  saveOrchestration({ ...orchestration.document, preset: "custom", custom: $("custom-text").value }, "自定义规则已保存并写入");
+}
+
+async function setOrchestrationSeat(role, difficulty, seat) {
+  const seats = { ...(orchestration.document[role] || {}) };
+  if (seat) seats[difficulty] = seat;
+  else delete seats[difficulty];
+  const document = { ...orchestration.document, [role]: seats };
+  if (!Object.keys(seats).length) delete document[role];
+  if (seat && !(await listSeatModel(seat))) return renderOrchestration();
+  saveOrchestration(document, "已保存");
+}
+
+function renderOrchestration() {
+  const preset = orchestration?.document.preset || "off";
+  for (const button of $("orchestration-presets").querySelectorAll("button")) {
+    const active = button.dataset.preset === preset;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-checked", String(active));
+    button.disabled = !orchestration || Boolean(orchestration.error);
+  }
+  $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
+  const text = orchestration?.presets[preset];
+  $("orchestration-text").hidden = !text;
+  $("orchestration-text").textContent = text || "";
+  $("orchestration-custom").hidden = preset !== "custom";
+  $("save-custom").disabled = busy || preset !== "custom";
+  const roles = $("orchestration-roles");
+  roles.hidden = preset === "off";
+  if (!roles.hidden) {
+    const focusKey = document.activeElement?.dataset?.focusKey;
+    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
+      const seat = orchestration.document[role]?.[difficulty];
+      return el("div", { className: "review-row" },
+        el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
+        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next)));
+    }));
+    if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+  }
+  renderRuleFiles();
+}
+
+function renderRuleFiles() {
+  const list = $("rule-files");
+  if (!orchestration) return list.replaceChildren();
+  const on = orchestration.document.preset !== "off";
+  list.replaceChildren(...orchestration.files.map((file) => {
+    const state = !on || !file.target ? null
+      : file.current ? ["written", "已写入"]
+        : file.blocked ? ["failed", "经过符号链接，无法写入"] : ["failed", "未写入"];
+    return el("li", {},
       el("span", { className: "rule-label" }, file.readers.join("、")),
       el("code", {}, file.path),
+      state && el("span", { className: `rule-state ${state[0]}` }, state[1]),
       file.exists
         ? el("button", { type: "button", onClick: () => openRuleFile(file) }, "打开")
-        : el("span", { className: "rule-missing" }, "未找到"))));
-  } catch (error) {
-    list.replaceChildren(el("li", {}, `无法读取规则文件位置：${error.message}`));
-  }
+        : el("span", { className: "rule-missing" }, "未找到"));
+  }));
 }
 
 async function openRuleFile(file) {
@@ -741,28 +873,6 @@ async function openRuleFile(file) {
   } catch (error) {
     showNotice(error.message, true);
   }
-}
-
-async function copyOrchestration() {
-  const text = $("orchestration-template").textContent;
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    // Some webviews deny the async clipboard; fall back to copying the selected text.
-    const range = document.createRange();
-    range.selectNodeContents($("orchestration-template"));
-    const selection = getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    const copied = document.execCommand("copy");
-    selection.removeAllRanges();
-    if (!copied) { showNotice("无法写入剪贴板，请手动选择文字复制", true); return; }
-  }
-  showNotice("已复制推荐写法");
-  // The page notice sits at the top, out of view below the template; confirm on the button too.
-  const button = $("copy-orchestration");
-  button.textContent = "已复制";
-  setTimeout(() => { button.textContent = "复制推荐写法"; }, 2000);
 }
 
 const SCENE_IDS = ["task", "discussion"];
@@ -1246,6 +1356,7 @@ function renderCards() {
     }
   }
   renderReviewSeats();
+  if (orchestration) renderOrchestration();
 }
 
 // Save members.json with race version checking
@@ -1261,9 +1372,49 @@ const REVIEW_ROLES = [
   ["adversarial-verifier", "反证", "高风险改动修完后尝试推翻结论"],
 ];
 
-// Seats save on their own to review.json, so unsaved 员工 edits stay unsaved. A picked model
-// missing from that CLI's configured models is also added to the last saved members.json,
-// where the server looks for it.
+// A picked model missing from that CLI's configured models is added to the last saved
+// members.json, where the server looks for it; unsaved 员工 edits stay unsaved.
+async function listSeatModel(seat) {
+  const add = (doc) => {
+    doc.clis ||= {};
+    doc.clis[seat.provider] ||= { models: {} };
+    doc.clis[seat.provider].models ||= {};
+    doc.clis[seat.provider].models[seat.model] ||= {};
+    return doc;
+  };
+  // Until 员工 is read there is nothing to add to: an empty document would replace the file.
+  if (!savedSnapshot && !documentError) {
+    showNotice("员工配置还在读取，请稍后再选", true);
+    return false;
+  }
+  const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
+  if (Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model)) return true;
+  if (documentError) {
+    showNotice("配置文件有错误，请先在“员工”里修复", true);
+    return false;
+  }
+  if (busy) {
+    showNotice("正在保存，请稍后再选", true);
+    return false;
+  }
+  busy = true;
+  updateControls();
+  try {
+    await apiPostMembers(add(saved));
+    savedSnapshot = JSON.stringify(saved);
+    add(currentDoc);
+    refreshDirty();
+    return true;
+  } catch (err) {
+    showNotice(`无法把 ${seat.model} 加入员工：${err.message}`, true);
+    return false;
+  } finally {
+    busy = false;
+    updateControls();
+  }
+}
+
+// Seats save on their own to review.json.
 async function setReviewSeat(role, seat) {
   if (reviewError) return showNotice(`${reviewError}；请先修复或删除这个文件`, true);
   // One write at a time: a write built on a stale saved document would undo the other one.
@@ -1274,25 +1425,10 @@ async function setReviewSeat(role, seat) {
   const seats = { ...reviewSeats };
   if (seat) seats[role] = seat;
   else delete seats[role];
-  const add = (doc) => {
-    doc.clis ||= {};
-    doc.clis[seat.provider] ||= { models: {} };
-    doc.clis[seat.provider].models ||= {};
-    doc.clis[seat.provider].models[seat.model] ||= {};
-    return doc;
-  };
-  const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
-  const missing = seat && !Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model);
+  if (seat && !(await listSeatModel(seat))) return renderReviewSeats();
   busy = true;
   updateControls();
   try {
-    if (missing) {
-      if (documentError) throw new Error("配置文件有错误，请先在“员工”里修复");
-      await apiPostMembers(add(saved));
-      savedSnapshot = JSON.stringify(saved);
-      add(currentDoc);
-      refreshDirty();
-    }
     await apiPostReview({ version: 1, seats });
     reviewSeats = seats;
     reviewSaves += 1;
@@ -1313,7 +1449,34 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
   }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
 }
 
-// One row per role: CLI, then one of that CLI's models, then an effort or the member's default.
+// A seat's CLI, then one of that CLI's models, then an effort or the member's default.
+function seatSelects(key, name, seat, onSet) {
+  const provider = seat?.provider || "";
+  const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
+    .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : "（没有可选模型）"), !getAllModelIds(p).length && p !== provider]);
+  const models = provider ? getAllModelIds(provider) : [];
+  if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
+  const levels = seat?.model ? effortLevels(provider, seat.model) : [];
+  if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
+  const pickCli = (next) => {
+    if (!next) return onSet(null);
+    const ids = getAllModelIds(next);
+    const preferred = slot("task", next).model || nativeDefault(next).model;
+    const model = ids.includes(preferred) ? preferred : ids[0];
+    onSet({ provider: next, model });
+  };
+  const pickModel = (model) => onSet({ provider, model });
+  const pickEffort = (effort) => onSet(effort ? { ...seat, effort } : { provider, model: seat.model });
+  return [
+    reviewSelect(`${key}/cli`, `${name}的 CLI`, provider, [["", "自动"], ...clis], pickCli),
+    reviewSelect(`${key}/model`, `${name}的模型`, seat?.model || "",
+      seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
+    reviewSelect(`${key}/effort`, `${name}的思考档位`, seat?.effort || "",
+      seat ? [["", "员工默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
+  ];
+}
+
+// One row per role.
 function renderReviewSeats() {
   const box = $("review-seats");
   if (!box) return;
@@ -1321,33 +1484,13 @@ function renderReviewSeats() {
   const rows = REVIEW_ROLES.map(([role, name, hint]) => {
     const seat = reviewSeats[role];
     const provider = seat?.provider || "";
-    const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
-      .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : "（没有可选模型）"), !getAllModelIds(p).length && p !== provider]);
-    const models = provider ? getAllModelIds(provider) : [];
-    if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
-    const levels = seat?.model ? effortLevels(provider, seat.model) : [];
-    if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
-    const pickCli = (next) => {
-      if (!next) return setReviewSeat(role, null);
-      const ids = getAllModelIds(next);
-      const preferred = slot("task", next).model || nativeDefault(next).model;
-      const model = ids.includes(preferred) ? preferred : ids[0];
-      setReviewSeat(role, { provider: next, model });
-    };
-    const pickModel = (model) => setReviewSeat(role, { provider, model });
-    const pickEffort = (effort) => setReviewSeat(role, effort ? { ...seat, effort } : { provider, model: seat.model });
     // A restricted private-task list that leaves this seat out makes the server report it unavailable.
     const task = currentDoc.modes?.task;
     const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
         !listed && el("small", { className: "review-warn" }, "单独干活的名单没有选中这个模型，评审时会改找其他 CLI")),
-      reviewSelect(`${role}/cli`, `${name}评审的 CLI`, provider, [["", "自动"], ...clis], pickCli),
-      reviewSelect(`${role}/model`, `${name}评审的模型`, seat?.model || "",
-        seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
-      reviewSelect(`${role}/effort`, `${name}评审的思考档位`, seat?.effort || "",
-        seat ? [["", "员工默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
-    );
+      ...seatSelects(role, `${name}评审`, seat, (next) => setReviewSeat(role, next)));
   });
   box.replaceChildren(...rows);
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
@@ -1713,7 +1856,12 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
   operatedControl = e.target.closest("[data-focus-key]");
   queueMicrotask(() => { operatedControl = null; });
 }, true);
-$("copy-orchestration").addEventListener("click", copyOrchestration);
+for (const button of $("orchestration-presets").querySelectorAll("button")) {
+  button.addEventListener("click", () => {
+    if (button.dataset.preset !== orchestration?.document.preset) pickPreset(button.dataset.preset);
+  });
+}
+$("save-custom").addEventListener("click", saveCustom);
 $("save-limit").addEventListener("click", saveLimit);
 const tabFromHash = () => location.hash === "#updates" ? "about" : ["members", "skills", "avatars", "orchestration", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts";
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
