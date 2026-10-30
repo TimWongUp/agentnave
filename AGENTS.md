@@ -16,6 +16,16 @@
   kill-on-close Job Object 的专用 supervisor，不得用 Windows process group 冒充树级所有权。
 - stdout 的 JSON 结果遵守 `InvocationResult` 稳定字段；Provider 业务终态必须尽量保全输出和原生 `session_id`。
 
+## Code readability
+
+Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的信号，目的是减少读者一次要记住的内容。
+
+- 函数超过 100 行时，按步骤拆成有名字的函数，主函数读起来像目录；多个函数共用的局部状态收进一个小结构。声明式数据表、MCP 参数定义和 JSON 投影字面量不计入行数。
+- 文件超过 1000 行时，按职责放进同名子模块（如 `stage.rs` 与 `stage/show.rs`）；新内容进子模块。
+- 改到已超限的函数或文件时，小修复就地改；新增功能放进新函数或子模块。存量超限不用汇报，也不用询问，除非用户要求处理。
+- 同样的校验、错误响应或工具函数出现第三次时抽成一处，跨文件的相同实现合并。
+- Rust 内联测试超过 100 行时移到 `<模块>/tests.rs`。
+
 ## Setup and verification
 
 - 开发环境：`uv sync --all-groups`。

@@ -221,76 +221,44 @@ impl Reader {
             return crate::characters::request(&self.root, family, method, action, body);
         }
         if path == "/app/review" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            if let Err(error) = crate::members::validate_review(&payload) {
-                return Response::error(400, &error);
-            }
-            return match crate::members::save_review(&self.root, &payload) {
-                Ok(()) => Response::json(&json!({"saved": true})),
-                Err(error) => Response::error(500, &error),
-            };
+            return post(method, action, body, |payload| {
+                save(
+                    &self.root,
+                    &payload,
+                    crate::members::validate_review,
+                    crate::members::save_review,
+                )
+            });
         }
         if path == "/app/permissions" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            if let Err(error) = crate::members::validate_permissions(&payload) {
-                return Response::error(400, &error);
-            }
-            return match crate::members::save_permissions(&self.root, &payload) {
-                Ok(()) => Response::json(&json!({"saved": true})),
-                Err(error) => Response::error(500, &error),
-            };
+            return post(method, action, body, |payload| {
+                save(
+                    &self.root,
+                    &payload,
+                    crate::members::validate_permissions,
+                    crate::members::save_permissions,
+                )
+            });
         }
         if path == "/app/cli-options" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            if let Err(error) = crate::members::validate_cli_options(&payload) {
-                return Response::error(400, &error);
-            }
-            return match crate::members::save_cli_options(&self.root, &payload) {
-                Ok(()) => Response::json(&json!({"saved": true})),
-                Err(error) => Response::error(500, &error),
-            };
+            return post(method, action, body, |payload| {
+                save(
+                    &self.root,
+                    &payload,
+                    crate::members::validate_cli_options,
+                    crate::members::save_cli_options,
+                )
+            });
         }
         if path == "/app/members" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            if let Err(error) = crate::members::validate(&payload) {
-                return Response::error(400, &error);
-            }
-            return match crate::members::save(&self.root, &payload) {
-                Ok(()) => Response::json(&json!({"saved": true})),
-                Err(error) => Response::error(500, &error),
-            };
+            return post(method, action, body, |payload| {
+                save(
+                    &self.root,
+                    &payload,
+                    crate::members::validate,
+                    crate::members::save,
+                )
+            });
         }
         if path == "/app/settings" {
             if method == "GET" {
@@ -299,52 +267,23 @@ impl Reader {
             if method != "POST" {
                 return Response::error(405, "此路由只接受 GET 或 POST");
             }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            if let Err(error) = crate::settings::validate(&payload) {
-                return Response::error(400, &error);
-            }
-            return match crate::settings::save(&self.root, &payload) {
-                Ok(()) => Response::json(&json!({"saved": true})),
-                Err(error) => Response::error(500, &error),
-            };
+            return with_payload(action, body, |payload| {
+                save(
+                    &self.root,
+                    &payload,
+                    crate::settings::validate,
+                    crate::settings::save,
+                )
+            });
         }
         if path == "/app/orchestration" {
             if method == "GET" {
-                let (document, error) = match crate::members::read_orchestration(&self.root) {
-                    Ok(document) => (document, Value::Null),
-                    Err(error) => (json!({"version": 1, "preset": "off"}), json!(error)),
-                };
-                return Response::json(&json!({"document": document, "error": error,
-                    "presets": crate::rules::presets(), "files": self.rule_files()["files"]}));
+                return self.orchestration();
             }
             if method != "POST" {
                 return Response::error(405, "此路由只接受 GET 或 POST");
             }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            if let Err(error) = crate::members::validate_orchestration(&payload) {
-                return Response::error(400, &error);
-            }
-            if let Err(error) = crate::members::save_orchestration(&self.root, &payload) {
-                return Response::error(500, &error);
-            }
-            let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
-            let failures = guard
-                .as_ref()
-                .map(|hosts| self.sync_rules(hosts, &[]))
-                .unwrap_or_default();
-            drop(guard);
-            return Response::json(&json!({"saved": true, "failures": failures,
-                "files": self.rule_files()["files"]}));
+            return with_payload(action, body, |payload| self.save_orchestration(&payload));
         }
         if path == "/app/rules" || path == "/app/rules/open" {
             let home = dirs::home_dir().unwrap_or_default();
@@ -361,98 +300,97 @@ impl Reader {
                 }
                 return Response::json(&self.rule_files());
             }
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            return match crate::rules::open(
-                &apps,
-                &home,
-                payload["path"].as_str().unwrap_or_default(),
-            ) {
-                Ok(result) => Response::json(&result),
-                Err(error) => Response::error(400, &error),
-            };
+            return post(method, action, body, |payload| {
+                match crate::rules::open(&apps, &home, payload["path"].as_str().unwrap_or_default())
+                {
+                    Ok(result) => Response::json(&result),
+                    Err(error) => Response::error(400, &error),
+                }
+            });
         }
         if path == "/app/conversations/rename" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            let (Some(id), Some(title)) = (
-                payload["id"].as_str().filter(|id| valid_id(id)),
-                payload["title"].as_str(),
-            ) else {
-                return Response::error(400, "需要有效的会话 ID 与标题");
-            };
-            return Response::json(&crate::manage::rename(&self.root, id, title));
+            return post(method, action, body, |payload| {
+                let (Some(id), Some(title)) = (
+                    payload["id"].as_str().filter(|id| valid_id(id)),
+                    payload["title"].as_str(),
+                ) else {
+                    return Response::error(400, "需要有效的会话 ID 与标题");
+                };
+                Response::json(&crate::manage::rename(&self.root, id, title))
+            });
         }
         if path == "/app/workspaces/handover" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
-                return Response::error(400, "需要有效的工作区 ID");
-            };
-            return Response::json(&crate::manage::handover(&self.root, group));
+            return post(method, action, body, |payload| {
+                let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
+                    return Response::error(400, "需要有效的工作区 ID");
+                };
+                Response::json(&crate::manage::handover(&self.root, group))
+            });
         }
         if path == "/app/conversations/delete" {
-            if method != "POST" {
-                return Response::error(405, "此操作只接受 POST");
-            }
-            if action != Some("1") {
-                return Response::error(403, "缺少操作请求头");
-            }
-            let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-                return Response::error(400, "请求必须为 JSON");
-            };
-            let Some(ids) = payload.get("ids").and_then(Value::as_array).filter(|ids| {
-                !ids.is_empty() && ids.iter().all(|id| id.as_str().is_some_and(valid_id))
-            }) else {
-                return Response::error(400, "ids 必须为非空的有效会话 ID 数组");
-            };
-            let cutoff = match payload.get("updated_before") {
-                None => None,
-                Some(value) => match value.as_i64().filter(|cutoff| *cutoff > 0) {
-                    Some(cutoff) => Some(cutoff),
-                    None => return Response::error(400, "updated_before 必须是有效的毫秒时间"),
-                },
-            };
-            let results: Vec<Value> = match cutoff {
-                Some(cutoff) => crate::manage::cleanup(
-                    &self.root,
-                    &ids.iter()
-                        .map(|id| id.as_str().unwrap().to_owned())
-                        .collect::<Vec<_>>(),
-                    cutoff,
-                ),
-                None => ids
-                    .iter()
-                    .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
-                    .collect(),
-            };
-            return Response::json(&json!({"results": results}));
+            return post(method, action, body, |payload| {
+                self.delete_conversations(&payload)
+            });
         }
         if method != "GET" {
             return Response::error(405, "此路由只接受 GET");
         }
         self.respond(path)
+    }
+
+    fn orchestration(&self) -> Response {
+        let (document, error) = match crate::members::read_orchestration(&self.root) {
+            Ok(document) => (document, Value::Null),
+            Err(error) => (json!({"version": 1, "preset": "off"}), json!(error)),
+        };
+        Response::json(&json!({"document": document, "error": error,
+            "presets": crate::rules::presets(), "files": self.rule_files()["files"]}))
+    }
+
+    fn save_orchestration(&self, payload: &Value) -> Response {
+        if let Err(error) = crate::members::validate_orchestration(payload) {
+            return Response::error(400, &error);
+        }
+        if let Err(error) = crate::members::save_orchestration(&self.root, payload) {
+            return Response::error(500, &error);
+        }
+        let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        let failures = guard
+            .as_ref()
+            .map(|hosts| self.sync_rules(hosts, &[]))
+            .unwrap_or_default();
+        drop(guard);
+        Response::json(&json!({"saved": true, "failures": failures,
+            "files": self.rule_files()["files"]}))
+    }
+
+    fn delete_conversations(&self, payload: &Value) -> Response {
+        let Some(ids) = payload.get("ids").and_then(Value::as_array).filter(|ids| {
+            !ids.is_empty() && ids.iter().all(|id| id.as_str().is_some_and(valid_id))
+        }) else {
+            return Response::error(400, "ids 必须为非空的有效会话 ID 数组");
+        };
+        let cutoff = match payload.get("updated_before") {
+            None => None,
+            Some(value) => match value.as_i64().filter(|cutoff| *cutoff > 0) {
+                Some(cutoff) => Some(cutoff),
+                None => return Response::error(400, "updated_before 必须是有效的毫秒时间"),
+            },
+        };
+        let results: Vec<Value> = match cutoff {
+            Some(cutoff) => crate::manage::cleanup(
+                &self.root,
+                &ids.iter()
+                    .map(|id| id.as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>(),
+                cutoff,
+            ),
+            None => ids
+                .iter()
+                .map(|id| crate::manage::delete(&self.root, id.as_str().unwrap()))
+                .collect(),
+        };
+        Response::json(&json!({"results": results}))
     }
 
     /// This phase only runs the bounded shell probe, never reads host configuration.
@@ -974,6 +912,50 @@ impl Reader {
 
 /// One conversation's live view: a version 1 projection as published, or version 2 tails laid
 /// over the saved views, which they need beneath them. Reused while its inputs are the same.
+/// A write route: an explicit POST with the action header and a JSON body.
+fn post(
+    method: &str,
+    action: Option<&str>,
+    body: &[u8],
+    handle: impl FnOnce(Value) -> Response,
+) -> Response {
+    if method != "POST" {
+        return Response::error(405, "此操作只接受 POST");
+    }
+    with_payload(action, body, handle)
+}
+
+/// The action header and JSON body of a write, for a route that has already checked its method.
+fn with_payload(
+    action: Option<&str>,
+    body: &[u8],
+    handle: impl FnOnce(Value) -> Response,
+) -> Response {
+    if action != Some("1") {
+        return Response::error(403, "缺少操作请求头");
+    }
+    let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+        return Response::error(400, "请求必须为 JSON");
+    };
+    handle(payload)
+}
+
+/// A rejected document is the caller's error; a failed save is ours.
+fn save<T>(
+    root: &Path,
+    payload: &Value,
+    validate: impl FnOnce(&Value) -> Result<T, String>,
+    save: impl FnOnce(&Path, &Value) -> Result<(), String>,
+) -> Response {
+    if let Err(error) = validate(payload) {
+        return Response::error(400, &error);
+    }
+    match save(root, payload) {
+        Ok(()) => Response::json(&json!({"saved": true})),
+        Err(error) => Response::error(500, &error),
+    }
+}
+
 fn live_view(
     merged: &mut HashMap<String, Merged>,
     id: &str,
@@ -1229,1643 +1211,4 @@ fn summary(snapshot: &Value) -> Option<Item> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn snapshot(id: &str, status: &str) -> Value {
-        json!({
-            "version": 1,
-            "summary": {"id": id, "title": format!("T {id}"), "mode": "show", "status": status, "updated": "2026-10-15T00:00:00+00:00"},
-            "director": {"view": "director", "mode": "show", "status": status, "round": {"seats": [{"seat_id": "a", "status": if status == "review" { "succeeded" } else { status }, "review": if status == "review" { "pending" } else { "none" }}]}, "messages": [{"text": "hi"}]},
-            "public": {"view": "public", "mode": "show", "messages": [{"text": "hi"}]},
-        })
-    }
-
-    fn write(path: &Path, value: &Value) {
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, value.to_string()).unwrap();
-    }
-
-    /// Save a conversation's view in the database, as a server does with every save.
-    fn save_view(root: &Path, id: &str, view: &Value) {
-        let state = json!({"kind": view["summary"]["mode"], "title": view["summary"]["title"]});
-        crate::db::put(root, id, &state, view);
-    }
-
-    fn state(reader: &Reader, path: &str) -> Value {
-        let response = reader.respond(path);
-        assert_eq!(response.status, 200, "{path}");
-        serde_json::from_slice(&response.body).unwrap()
-    }
-
-    #[test]
-    fn fresh_live_files_override_saved_views() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        save_view(root, "a1", &snapshot("a1", "finished"));
-        save_view(root, "b2", &json!({"version": 2}));
-        let reader = Reader::new(root.to_path_buf());
-
-        let overview = reader.overview();
-        assert_eq!(overview.items.len(), 1);
-        assert_eq!(overview.unavailable.len(), 1);
-        assert_eq!(reader.overview().items[0].status, "finished");
-
-        let live = root.join("live/1-x.json");
-        write(
-            &live,
-            &json!({"version": 1, "conversations": {"a1": snapshot("a1", "running")}}),
-        );
-        assert_eq!(reader.overview().count("running"), 1);
-        assert_eq!(reader.overview().items[0].status, "running");
-
-        // A crashed server's file stops counting once it is older than LIVE_FRESH.
-        let old = SystemTime::now() - LIVE_FRESH - Duration::from_secs(1);
-        fs::File::options()
-            .write(true)
-            .open(&live)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
-        assert_eq!(reader.overview().count("running"), 0);
-        assert_eq!(reader.overview().items[0].status, "finished");
-    }
-
-    #[test]
-    fn routes_serve_views_and_reject_everything_else() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        save_view(root, "a1", &snapshot("a1", "review"));
-        let mut task = snapshot("t1", "succeeded");
-        task["director"]["mode"] = json!("task");
-        task["public"] = Value::Null;
-        save_view(root, "t1", &task);
-        let reader = Reader::new(root.to_path_buf());
-
-        assert!(String::from_utf8_lossy(&reader.respond("/").body).contains("url=/chat/"));
-        assert_eq!(reader.respond("/panel/").status, 200);
-        for path in [
-            "/manage/",
-            "/manage/manage.css",
-            "/settings/",
-            "/settings/settings.js",
-            "/settings/settings.css",
-            "/chat/",
-            "/chat/missing-group",
-            "/chat/chat.js",
-            "/chat/actions.js",
-            "/chat/chat.css",
-            "/chat/common.js",
-            "/chat/mock.js",
-            "/panel/common.js",
-            "/panel/mock.js",
-        ] {
-            assert_eq!(reader.respond(path).status, 200, "{path}");
-        }
-        assert_eq!(
-            reader.respond("/chat/").body,
-            reader.respond("/chat/missing-group").body
-        );
-        assert_eq!(
-            reader.respond("/panel/common.js").body,
-            reader.respond("/chat/common.js").body
-        );
-        for path in [
-            "/state",
-            "/c/a1/",
-            "/p/a1/state",
-            "/p/a1/transcript.jsonl",
-            "/p/t1/state",
-            "/c/t1/transcript.jsonl",
-            "/transcript.jsonl",
-            "/c/../state",
-            "/c/a1",
-            "/c/zz/state",
-            "/x/a1/state",
-            "/panel/state",
-            "/manage/unknown",
-            "/manage/manage.js",
-            "/chat/not-a-file.js",
-            "/chat/group/extra",
-        ] {
-            assert_eq!(reader.respond(path).status, 404, "{path}");
-        }
-    }
-
-    const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
-
-    fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
-        json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
-            "mode": "task", "status": status, "updated": updated, "host": "claude", "manager_session": MANAGER},
-            "director": {"mode": "task", "tasks": [{"id": format!("t-{id}"), "provider": "codex", "model": "m",
-                "time": updated, "status": status, "prompt": "请检查", "output": "# 结果\n\n**最后一行**", "elapsed_ms": 0}]}})
-    }
-
-    fn save(root: &Path, value: &Value) {
-        save_view(root, value["summary"]["id"].as_str().unwrap(), value);
-    }
-
-    #[test]
-    fn chats_separate_host_sessions_and_do_not_merge_legacy_connections() {
-        let dir = tempfile::tempdir().unwrap();
-        for (id, session) in [
-            ("a", MANAGER),
-            ("b", MANAGER),
-            ("c", "s-ffffffffffffffffffffffffffffffff"),
-            ("old-a", "0123456789abcdef0123456789abcdef"),
-            ("old-b", "0123456789abcdef0123456789abcdef"),
-        ] {
-            let mut item = task_snapshot(id, "succeeded", "2026-10-15T00:00:00Z");
-            item["summary"]["manager_session"] = json!(session);
-            save(dir.path(), &item);
-        }
-        // Claude Desktop's Code tab runs Claude Code too; its transcripts say which app started them.
-        let connection = crate::db::write(dir.path()).unwrap().unwrap();
-        for (workspace, entrypoint) in [
-            (MANAGER, "cli"),
-            ("s-ffffffffffffffffffffffffffffffff", "claude-desktop"),
-        ] {
-            let file = dir.path().join(format!("{entrypoint}.jsonl"));
-            fs::write(
-                &file,
-                format!("{{\"type\":\"user\",\"entrypoint\":\"{entrypoint}\"}}\n"),
-            )
-            .unwrap();
-            connection
-                .execute(
-                    "INSERT INTO workspaces (id, owner, owner_host, owner_file) \
-                     VALUES (?1, ?1, 'claude', ?2)",
-                    rusqlite::params![workspace, file.to_str().unwrap()],
-                )
-                .unwrap();
-        }
-        let reader = Reader::new(dir.path().to_path_buf());
-        let groups = state(&reader, "/app/chats");
-        assert_eq!(groups["groups"].as_array().unwrap().len(), 4);
-        let shown = |id: &str| {
-            let chat = state(&reader, &format!("/app/chats/{id}"));
-            (
-                chat["host"].clone(),
-                chat["app"].clone(),
-                chat["label"].clone(),
-            )
-        };
-        assert_eq!(
-            shown("s-ffffffffffffffffffffffffffffffff"),
-            (
-                json!("claude"),
-                json!("claude-desktop"),
-                json!("Claude 桌面")
-            )
-        );
-        assert_eq!(
-            shown(MANAGER),
-            (json!("claude"), Value::Null, json!("Claude Code"))
-        );
-        // The same chat resumed in the CLI appends to its transcript; the latest entrypoint wins.
-        let mut resumed = fs::OpenOptions::new()
-            .append(true)
-            .open(dir.path().join("claude-desktop.jsonl"))
-            .unwrap();
-        std::io::Write::write_all(&mut resumed, b"{\"entrypoint\":\"cli\"}\n").unwrap();
-        assert_eq!(
-            shown("s-ffffffffffffffffffffffffffffffff"),
-            (json!("claude"), Value::Null, json!("Claude Code"))
-        );
-        assert_eq!(
-            state(&reader, &format!("/app/chats/{MANAGER}"))["conversations"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            state(&reader, "/app/chats/c-old-a")["conversations"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            state(&reader, "/app/chats/c-old-b")["conversations"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        // The earliest conversation names the chat unless it kept the default task title.
-        let mut first = task_snapshot("z", "succeeded", "2026-10-15T02:00:01.000001Z");
-        first["summary"]["title"] = json!("codex 任务");
-        save(root, &first);
-        // A different offset still denotes a newer activity than z, even within the same millisecond.
-        let mut newer = task_snapshot("b", "blocked", "2026-10-15T10:00:01.000002+08:00");
-        newer["director"]["cwd"] = json!("/work/newer-project");
-        save(root, &newer);
-        let mut legacy = task_snapshot("legacy", "succeeded", "2026-10-15T00:00:00Z");
-        legacy["summary"]["manager_session"] = Value::Null;
-        legacy["summary"]["host"] = Value::Null;
-        legacy["director"]["tasks"][0]["model"] = Value::Null;
-        legacy["director"]["tasks"][0]["time"] = json!("2026-10-14T23:59:59.750123Z");
-        legacy["director"]["tasks"][0]["elapsed_ms"] = json!(1500);
-        save(root, &legacy);
-        let reader = Reader::new(root.to_path_buf());
-        let groups = state(&reader, "/app/chats");
-        assert_eq!(groups["groups"].as_array().unwrap().len(), 2);
-        assert_eq!(groups["groups"][0]["group"], MANAGER);
-        assert_eq!(groups["groups"][0]["conversations"], 2);
-        assert_eq!(groups["groups"][0]["title"], "任务 b");
-        assert_eq!(groups["groups"][0]["title_id"], "b");
-        assert_eq!(groups["groups"][0]["project"], "newer-project");
-        assert_eq!(groups["groups"][0]["label"], "Claude Code");
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        assert_eq!(chat["members"].as_array().unwrap().len(), 1);
-        assert_eq!(chat["members"][0]["conversation"], "b");
-        assert_eq!(chat["members"][0]["status"], "blocked");
-        assert_eq!(chat["conversations"][0]["id"], "z");
-        let legacy = state(&reader, "/app/chats/c-legacy");
-        assert_eq!(legacy["host"], Value::Null);
-        assert_eq!(legacy["label"], "未记录 boss");
-        assert_eq!(legacy["members"][0]["key"], "codex/");
-        assert_eq!(legacy["desks"][0]["label"], "CLI 默认模型 · Codex");
-        assert_eq!(legacy["desks"][0]["handle"], "@CLI 默认模型·Codex");
-        assert_eq!(legacy["desks"][0]["model_source"], "unknown");
-        assert_eq!(legacy["project"], Value::Null);
-        assert_eq!(legacy["members"][0]["line"], "结果");
-        assert_eq!(legacy["messages"][1]["time"], "2026-10-15T00:00:01.250123Z");
-        assert!(legacy["color"].as_u64().unwrap() < 8);
-        assert_eq!(state(&reader, &format!("/app/chats/{MANAGER}")), chat);
-        assert_eq!(
-            state(&reader, "/app/chats/c-legacy")["color"],
-            legacy["color"]
-        );
-        let mut changed = newer;
-        changed["director"]["tasks"][0]["error"] = json!("**需要授权**");
-        save(root, &changed);
-        assert_eq!(
-            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
-            "受阻：需要授权"
-        );
-        changed["director"]["tasks"][0]["status"] = json!("cancelled");
-        changed["director"]["tasks"][0]["error"] = json!("cancelled: invocation was cancelled");
-        save(root, &changed);
-        assert_eq!(
-            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
-            "已取消"
-        );
-    }
-
-    #[test]
-    fn chat_live_overrides_disk_and_typing_is_unique_and_stable() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        save(
-            root,
-            &task_snapshot("a", "succeeded", "2026-10-15T01:00:00Z"),
-        );
-        let mut a = task_snapshot("a", "running", "2026-10-15T02:00:00Z");
-        a["director"]["tasks"][0]["output"] = json!("one\ntwo\nthree\nfour\n**five**\n");
-        let b = task_snapshot("b", "running", "2026-10-15T01:30:00Z");
-        // A newer finished call of the same member must not hide another active call's typing.
-        save(
-            root,
-            &task_snapshot("c", "succeeded", "2026-10-15T03:00:00Z"),
-        );
-        let live = root.join("live/1-fresh.json");
-        write(
-            &live,
-            &json!({"version": 1, "conversations": {"a": a, "b": b}}),
-        );
-        let reader = Reader::new(root.to_path_buf());
-        let path = format!("/app/chats/{MANAGER}");
-        let chat = state(&reader, &path);
-        assert_eq!(chat["live"], true);
-        assert_eq!(chat["status"], "running");
-        assert_eq!(chat["conversations"].as_array().unwrap().len(), 3);
-        assert_eq!(chat["members"][0]["conversation"], "c");
-        let messages = chat["messages"].as_array().unwrap();
-        // Each running thread keeps its own bubble, keyed by desk and conversation.
-        let typing_a = |messages: &[Value]| {
-            messages
-                .iter()
-                .find(|m| m["id"] == "typing:task:a:t-a:a:")
-                .cloned()
-                .unwrap()
-        };
-        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 2);
-        assert!(messages.iter().any(|m| m["id"] == "typing:task:b:t-b:b:"));
-        assert_eq!(typing_a(messages)["text"], "two\nthree\nfour\n**five**");
-        a["director"]["tasks"][0]["output"] = json!("new tail");
-        write(
-            &live,
-            &json!({"version": 1, "conversations": {"a": a, "b": b}}),
-        );
-        let next = state(&reader, &path);
-        assert_eq!(
-            typing_a(next["messages"].as_array().unwrap())["text"],
-            "new tail"
-        );
-        fs::File::options()
-            .write(true)
-            .open(&live)
-            .unwrap()
-            .set_modified(SystemTime::now() - LIVE_FRESH - Duration::from_secs(1))
-            .unwrap();
-        let stale = state(&reader, &path);
-        assert_eq!(stale["live"], false);
-        assert!(
-            !stale["messages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|m| m["kind"] == "typing")
-        );
-    }
-
-    #[test]
-    fn tail_live_files_lay_over_saved_running_work_only() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        save(root, &task_snapshot("a", "running", "2026-10-15T02:00:00Z"));
-        save(
-            root,
-            &task_snapshot("c", "succeeded", "2026-10-15T03:00:00Z"),
-        );
-        write(
-            &root.join("live/1-tails.json"),
-            &json!({"version": 2, "conversations": {
-                "a": {"tasks": {"t-a": {"output": "streamed tail", "reported_model": null,
-                    "doing": "tool:Read", "output_at": "2026-10-15T02:01:00+00:00"}}, "seats": {}},
-                "c": {"tasks": {"t-c": {"output": "late tail", "reported_model": null}}, "seats": {}},
-                // Tails without saved views beneath them show nothing.
-                "gone": {"tasks": {"t-gone": {"output": "x", "reported_model": null}}, "seats": {}}}}),
-        );
-        let reader = Reader::new(root.to_path_buf());
-        let overview = reader.overview();
-        assert_eq!((overview.items.len(), overview.count("running")), (2, 1));
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        assert_eq!(chat["live"], true);
-        let messages = chat["messages"].as_array().unwrap();
-        let typing: Vec<_> = messages.iter().filter(|m| m["kind"] == "typing").collect();
-        assert_eq!(typing.len(), 1);
-        assert_eq!(typing[0]["text"], "streamed tail");
-        assert_eq!(
-            (&typing[0]["doing"], &typing[0]["output_at"]),
-            (&json!("tool:Read"), &json!("2026-10-15T02:01:00+00:00"))
-        );
-        // A finished task keeps its saved answer.
-        assert!(!messages.iter().any(|m| m["text"] == "late tail"));
-        // A heartbeat that only refreshes the mtime keeps the parsed payload.
-        let path = root.join("live/1-tails.json");
-        let parsed = |reader: &Reader| reader.live_files.lock().unwrap()[&path].clone();
-        let before = parsed(&reader);
-        fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(SystemTime::now() + Duration::from_secs(1))
-            .unwrap();
-        reader.overview();
-        let after = parsed(&reader);
-        assert_ne!(after.0, before.0);
-        assert!(Arc::ptr_eq(
-            after.3.as_ref().unwrap(),
-            before.3.as_ref().unwrap()
-        ));
-    }
-
-    #[test]
-    fn show_chats_project_prompts_answers_review_absence_and_typing() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut show = snapshot("show", "running");
-        show["summary"]["updated"] = json!("2026-10-15T00:00:03Z");
-        show["summary"]["manager_session"] = json!(MANAGER);
-        show["summary"]["host"] = json!("codex");
-        show["director"] = json!({"mode": "show", "seats": [
-            {"id": "a", "label": "甲", "provider": "claude", "model": "m"},
-            {"id": "b", "label": "乙", "provider": "codex", "model": "m"},
-            {"id": "c", "label": "丙", "provider": "grok", "model": "m"},
-            {"id": "d", "label": "丁", "provider": "claude", "model": "m"}],
-            "messages": [
-                {"kind": "task", "speaker": "@host", "manager_model": "requested", "manager_reported_model": "gpt-6", "round": 1, "text": "题目", "time": "2026-10-15T00:00:00Z", "recipients": [
-                    {"seat": "a", "provider": "claude", "model": "m"},
-                    {"seat": "d", "provider": "claude", "model": "m"}]},
-                {"kind": "answer", "speaker": "a", "round": 1, "text": "# 已提交", "time": "2026-10-15T00:00:01Z"},
-                {"kind": "answer", "speaker": "d", "round": 1, "text": "丁的回答", "time": "2026-10-15T00:00:01Z"},
-                {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
-                {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
-            "round": {"number": 2, "seats": [
-                {"seat_id": "a", "status": "succeeded", "review": "pending", "output": "待审核私密回答"},
-                {"seat_id": "b", "status": "running", "output": "**正在写**"},
-                {"seat_id": "c", "status": "not_started"}]}});
-        save(dir.path(), &show);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let messages = chat["messages"].as_array().unwrap();
-        assert_eq!(messages.iter().filter(|m| m["kind"] == "prompt").count(), 2);
-        let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
-        assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
-        assert_eq!(prompts[0]["speaker"]["model_source"], "native");
-        assert_eq!(prompts[0]["to"], json!([{"key": "@all", "handle": "@all"}]));
-        assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
-        assert_ne!(
-            prompts[0]["recipients"][0]["focus"],
-            prompts[0]["recipients"][1]["focus"]
-        );
-        for (body, index) in [("# 已提交", 0), ("丁的回答", 1)] {
-            assert_eq!(
-                messages.iter().find(|m| m["text"] == body).unwrap()["focus"],
-                prompts[0]["recipients"][index]["focus"]
-            );
-        }
-        assert_eq!(prompts[1]["speaker"]["model"], "");
-        assert!(
-            messages
-                .iter()
-                .any(|m| m["kind"] == "reply" && m["text"] == "# 已提交")
-        );
-        assert!(
-            messages
-                .iter()
-                .any(|m| m["kind"] == "notice" && m["status"] == "blocked")
-        );
-        assert!(
-            messages
-                .iter()
-                .any(|m| m["kind"] == "reply" && m["text"] == "待审核私密回答")
-        );
-        assert!(messages.iter().any(|m| m["text"] == "待审核私密回答"));
-        let review_notice = messages
-            .iter()
-            .find(|m| m["text"] == "待审核私密回答")
-            .unwrap();
-        assert_eq!(review_notice["status"], "review");
-        assert_eq!(review_notice["focus"], prompts[0]["recipients"][0]["focus"]);
-        assert_eq!(messages.last().unwrap()["focus"], "seat:show:b");
-        assert_eq!(messages.last().unwrap()["kind"], "typing");
-        let members = chat["members"].as_array().unwrap();
-        assert_eq!(
-            members.iter().find(|m| m["key"] == "claude/m").unwrap()["line"],
-            "待审核：请在 boss 中决定"
-        );
-        assert_eq!(
-            members.iter().find(|m| m["key"] == "codex/m").unwrap()["line"],
-            "正在写"
-        );
-        assert_eq!(
-            members.iter().find(|m| m["key"] == "grok/m").unwrap()["status"],
-            "pending"
-        );
-    }
-
-    #[test]
-    fn show_chats_keep_private_history_after_new_rounds() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut show = snapshot("private-show", "finished");
-        show["summary"]["manager_session"] = json!(MANAGER);
-        show["director"] = json!({"mode": "show", "seats": [
-            {"id": "a", "provider": "claude", "model": "m"}],
-            "messages": [],
-            "private_messages": [
-                {"round": 1, "seat_id": "a", "reported_model": "m-old", "text": "旧轮私信", "time": "2026-10-15T00:00:00Z"},
-                {"round": 2, "seat_id": "a", "reported_model": "m-native", "text": "本轮私信", "time": "2026-10-15T00:00:01Z"}],
-            "round": {"number": 2, "seats": [
-                {"seat_id": "a", "status": "succeeded", "reported_model": "m-native", "review": "private", "output": "本轮私信"}]}});
-        save(dir.path(), &show);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let path = format!("/app/chats/{MANAGER}");
-        let first = state(&reader, &path);
-        let messages = first["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 2);
-        assert!(
-            messages
-                .iter()
-                .all(|m| m["private"] == true && m["kind"] == "reply")
-        );
-        assert_eq!(messages[0]["text"], "旧轮私信");
-        assert_eq!(messages[1]["text"], "本轮私信");
-        assert_eq!(messages[0]["speaker"]["model"], "m-old");
-        assert_eq!(messages[1]["speaker"]["model"], "m-native");
-        assert_eq!(messages[1]["speaker"]["model_source"], "native");
-        assert_eq!(messages[1]["focus"], "seat:private-show:a");
-        show["director"]["round"] = json!({"number": 3, "seats": []});
-        save(dir.path(), &show);
-        assert_eq!(state(&reader, &path)["messages"], first["messages"]);
-    }
-
-    #[test]
-    fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
-        let dir = tempfile::tempdir().unwrap();
-        save(
-            dir.path(),
-            &task_snapshot("handover-task", "succeeded", "2026-01-01T00:00:00Z"),
-        );
-        let connection = crate::db::write(dir.path()).unwrap().unwrap();
-        connection.execute(
-            "INSERT INTO workspaces (id, owner, owner_host, pending, note, released) VALUES (?1, ?1, 'claude', 1, ?2, '2026-01-02T00:00:00Z')",
-            rusqlite::params![MANAGER, "<script>untrusted</script>\n下一步"],
-        ).unwrap();
-        let reader = Reader::new(dir.path().to_path_buf());
-        let path = format!("/app/chats/{MANAGER}");
-        let waiting_list = state(&reader, "/app/chats");
-        assert!(
-            waiting_list["groups"][0]["preview"]
-                .as_str()
-                .unwrap()
-                .contains("等待接手")
-        );
-        let waiting = state(&reader, &path);
-        let message = waiting["messages"].as_array().unwrap().last().unwrap();
-        assert_eq!(message["kind"], "handover");
-        assert_eq!(message["text"], "Claude Code 交出工作区，等待接手");
-        assert_eq!(message["detail"], "<script>untrusted</script>\n下一步");
-        assert_eq!(message["time"], "2026-01-02T00:00:00Z");
-        connection.execute(
-            "UPDATE workspaces SET owner = 'new-boss', previous_host = owner_host, owner_host = 'codex', pending = 0 WHERE id = ?1",
-            [MANAGER],
-        ).unwrap();
-        let claimed_list = state(&reader, "/app/chats");
-        assert!(
-            claimed_list["groups"][0]["preview"]
-                .as_str()
-                .unwrap()
-                .contains("Codex 已接手")
-        );
-        let claimed = state(&reader, &path);
-        assert!(
-            claimed["threads"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|t| t["kind"].is_string())
-        );
-        let message = claimed["messages"].as_array().unwrap().last().unwrap();
-        assert_eq!(message["text"], "Claude Code 交出工作区，Codex 已接手");
-        assert_eq!(claimed["omitted"], 0);
-        connection
-            .execute(
-                "UPDATE workspaces SET owner = id, previous_host = NULL, pending = 0 WHERE id = ?1",
-                [MANAGER],
-            )
-            .unwrap();
-        assert!(
-            state(&reader, &path)["messages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|m| m["kind"] != "handover")
-        );
-    }
-
-    #[test]
-    fn stage_and_chats_sort_filter_and_enforce_limits() {
-        let dir = tempfile::tempdir().unwrap();
-        for i in 0..205 {
-            let mut value = task_snapshot(
-                &format!("c{i:03}"),
-                "succeeded",
-                &format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
-            );
-            value["summary"]["manager_session"] = json!(format!("s-{i:032x}"));
-            save(dir.path(), &value);
-        }
-        // Active groups remain first even when old; the stage keeps the five most relevant.
-        let running = task_snapshot("running", "running", "2020-01-01T00:00:00Z");
-        save(dir.path(), &running);
-        let mut review = task_snapshot("review", "review", "2020-01-02T00:00:00Z");
-        review["summary"]["manager_session"] = Value::Null;
-        save(dir.path(), &review);
-        let mut old = task_snapshot("old", "succeeded", "2000-01-01T00:00:00Z");
-        old["summary"]["manager_session"] = Value::Null;
-        save(dir.path(), &old);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let stage = state(&reader, "/app/stage");
-        let managers = stage["managers"].as_array().unwrap();
-        assert_eq!(managers.len(), 5);
-        assert_eq!(managers[0]["group"], "c-review");
-        assert_eq!(managers[1]["group"], MANAGER);
-        assert_eq!(managers[2]["group"], format!("s-{:032x}", 204));
-        assert_eq!(stage["counts"], json!({"running": 1, "review": 1}));
-        let groups = state(&reader, "/app/chats");
-        assert_eq!(groups["groups"].as_array().unwrap().len(), 200);
-        assert_eq!(groups["groups"][0]["group"], "c-review");
-        // Remove recent groups: the old idle group still shows, so the stage is never empty.
-        let connection = crate::db::write(dir.path()).unwrap().unwrap();
-        for i in 0..205 {
-            connection
-                .execute(
-                    "DELETE FROM conversations WHERE id = ?1",
-                    [format!("c{i:03}")],
-                )
-                .unwrap();
-        }
-        assert_eq!(
-            state(&reader, "/app/stage")["managers"]
-                .as_array()
-                .unwrap()
-                .len(),
-            3
-        );
-        assert_eq!(
-            state(&reader, "/app/chats")["groups"]
-                .as_array()
-                .unwrap()
-                .len(),
-            3
-        );
-
-        old["summary"]["manager_session"] = json!(MANAGER);
-        old["summary"]["archived"] = json!(true);
-        save(dir.path(), &old);
-        let mut many = task_snapshot("many", "running", "2099-01-01T00:00:00Z");
-        many["director"]["tasks"] = json!((0..160).map(|i| json!({"id": i.to_string(), "provider": "pi", "model": "m",
-            "status": if i == 159 { "running" } else { "succeeded" }, "time": format!("2099-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
-            "prompt": "go", "output": "done"})).collect::<Vec<_>>());
-        save(dir.path(), &many);
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let messages = chat["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 300);
-        assert_eq!(messages.last().unwrap()["kind"], "typing");
-        assert!(!messages.iter().any(|m| m["id"] == "many:task:0:prompt"));
-        assert_eq!(messages.iter().filter(|m| m["kind"] == "typing").count(), 2);
-        let members = chat["members"].as_array().unwrap();
-        assert_eq!(members[0]["key"], "pi/m");
-        assert_eq!(members[1]["key"], "codex/m");
-
-        // A management deep link must still expose an older conversation in the same group.
-        let focused = state(&reader, &format!("/app/chats/{MANAGER}/focus/old"));
-        let focused_messages = focused["messages"].as_array().unwrap();
-        assert!(focused_messages.iter().any(|m| m["conversation"] == "old"));
-        assert!(focused_messages.len() > 300);
-        assert_eq!(
-            reader
-                .respond(&format!("/app/chats/{MANAGER}/focus/missing"))
-                .status,
-            404
-        );
-        assert_eq!(
-            state(&reader, &format!("/app/chats/{MANAGER}"))["messages"],
-            chat["messages"]
-        );
-    }
-
-    #[test]
-    fn failed_task_keeps_native_output_beside_the_failure_notice() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut task = task_snapshot("failed", "blocked", "2026-10-15T01:00:00Z");
-        task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
-        task["director"]["tasks"][0]["error"] = json!("permission_denied");
-        task["director"]["tasks"][0]["manager_model"] = json!("gemini-3.5-pro");
-        save(dir.path(), &task);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let messages = chat["messages"].as_array().unwrap();
-        assert!(
-            messages
-                .iter()
-                .any(|m| m["kind"] == "reply" && m["text"] == "已完成的部分结果")
-        );
-        assert_eq!(
-            messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"]["model"],
-            "gemini-3.5-pro"
-        );
-        assert!(messages.iter().any(|m| m["kind"] == "notice"
-            && m["status"] == "blocked"
-            && m["detail"] == "permission_denied"));
-    }
-
-    #[test]
-    fn chat_routes_reject_writes_and_unknown_groups_without_creating_data() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("missing");
-        let reader = Reader::new(root.clone());
-        assert_eq!(state(&reader, "/app/stage")["managers"], json!([]));
-        assert_eq!(state(&reader, "/app/stage")["empty"], "no_data");
-        assert_eq!(state(&reader, "/app/chats")["groups"], json!([]));
-        for path in ["/app/stage", "/app/chats", "/app/chats/c-missing"] {
-            for method in ["POST", "PUT", "DELETE", "HEAD"] {
-                assert_eq!(reader.request(method, path, Some("1"), b"{}").status, 405);
-            }
-        }
-        for path in [
-            "/app/chats/c-missing",
-            "/app/chats/../x",
-            "/app/chats/",
-            "/app/chats/a/b",
-        ] {
-            assert_eq!(reader.request("GET", path, None, b"").status, 404, "{path}");
-        }
-        // Settings: GET only reads; a save needs POST, the action header and a valid document.
-        let settings = reader.request("GET", "/app/settings", None, b"");
-        assert_eq!(settings.status, 200);
-        let good = br#"{"version": 1, "max_running": 4}"#;
-        assert_eq!(
-            reader.request("POST", "/app/settings", None, good).status,
-            403
-        );
-        assert_eq!(
-            reader
-                .request("PUT", "/app/settings", Some("1"), good)
-                .status,
-            405
-        );
-        let bad = br#"{"version": 1, "max_running": 99}"#;
-        assert_eq!(
-            reader
-                .request("POST", "/app/settings", Some("1"), bad)
-                .status,
-            400
-        );
-        assert!(!root.exists());
-        fs::create_dir(&root).unwrap();
-        assert_eq!(state(&reader, "/app/stage")["empty"], "quiet");
-    }
-
-    fn finished_show(id: &str) -> Value {
-        let mut show = snapshot(id, "finished");
-        show["summary"]["manager_session"] = json!(MANAGER);
-        show["summary"]["updated"] = json!("2099-01-01T12:00:00Z");
-        show["director"] = json!({"mode": "show", "seats": [
-            {"id": "a", "provider": "codex", "model": "m", "label": "甲"},
-            {"id": "z", "provider": "codex", "model": "m", "label": "乙"}],
-            "messages": [
-                {"kind": "answer", "speaker": "z", "round": 1, "text": "较早回答", "time": "2099-01-01T10:00:00Z"},
-                {"kind": "answer", "speaker": "a", "round": 1, "text": "最近回答", "time": "2099-01-01T11:00:00Z"},
-                {"kind": "host", "speaker": "@host", "round": 1, "text": "主持人后来发言", "time": "2099-01-01T12:00:00Z"}],
-            "round": {"number": 1, "status": "finished", "seats": [
-                {"seat_id": "a", "status": "succeeded", "output": "最近回答"},
-                {"seat_id": "z", "status": "succeeded", "output": "较早回答"}]}});
-        show
-    }
-
-    #[test]
-    fn regression_member_activity_uses_seat_time_across_seats_and_conversations() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut show = finished_show("show");
-        save(dir.path(), &show);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let path = format!("/app/chats/{MANAGER}");
-        let chat = state(&reader, &path);
-        assert_eq!(chat["members"][0]["line"], "最近回答");
-        assert_eq!(chat["members"][0]["updated"], "2099-01-01T11:00:00Z");
-        show["director"]["messages"][0]["kind"] = json!("absent");
-        show["director"]["messages"][0]["text"] = json!("（本轮未作答：受阻）");
-        show["director"]["round"]["seats"][1]["status"] = json!("blocked");
-        save(dir.path(), &show);
-        save(
-            dir.path(),
-            &task_snapshot("task", "succeeded", "2099-01-01T11:30:00Z"),
-        );
-        assert_eq!(state(&reader, &path)["members"][0]["conversation"], "task");
-        show["summary"]["updated"] = json!("2099-01-01T13:00:00Z");
-        show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "host", "speaker": "@host", "text": "再说一句", "time": "2099-01-01T13:00:00Z"}));
-        save(dir.path(), &show);
-        assert_eq!(state(&reader, &path)["members"][0]["conversation"], "task");
-        assert_eq!(
-            state(&reader, "/app/stage")["managers"][0]["members"][0]["conversation"],
-            "task"
-        );
-        // A live running seat has current activity even when its conversation's last entry is old.
-        show["summary"]["updated"] = json!("2000-01-01T00:00:00Z");
-        show["summary"]["status"] = json!("running");
-        show["director"]["round"]["number"] = json!(2);
-        show["director"]["round"]["seats"][0]["status"] = json!("running");
-        write(
-            &dir.path().join("live/1-now.json"),
-            &json!({"version": 1, "updated_at": "2099-01-01T14:00:00Z", "conversations": {"show": show}}),
-        );
-        let chat = state(&reader, &path);
-        let typing = chat["messages"].as_array().unwrap().last().unwrap();
-        assert_eq!(typing["kind"], "typing");
-        assert_eq!(typing["time"], "2099-01-01T14:00:00Z");
-    }
-
-    #[test]
-    fn regression_finished_show_status_includes_failed_seats_but_not_cancelled() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut show = finished_show("show");
-        let reader = Reader::new(dir.path().to_path_buf());
-        for (status, expected) in [
-            ("failed", "failed"),
-            ("blocked", "failed"),
-            ("interrupted", "failed"),
-            ("cancelled", "idle"),
-        ] {
-            show["director"]["round"]["seats"][0]["status"] = json!(status);
-            save(dir.path(), &show);
-            assert_eq!(
-                state(&reader, &format!("/app/chats/{MANAGER}"))["status"],
-                expected,
-                "{status}"
-            );
-            assert_eq!(
-                state(&reader, "/app/chats")["groups"][0]["status"],
-                expected,
-                "{status}"
-            );
-            assert_eq!(
-                state(&reader, "/app/stage")["managers"][0]["status"],
-                expected,
-                "{status}"
-            );
-        }
-        let mut task = task_snapshot("task", "cancelled", "2099-01-01T12:00:01Z");
-        save(dir.path(), &task);
-        assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
-        task["director"]["tasks"][0]["status"] = json!("review");
-        save(dir.path(), &task);
-        assert_eq!(
-            state(&reader, "/app/chats")["groups"][0]["status"],
-            "review"
-        );
-        show["director"]["round"]["seats"][0]["status"] = json!("running");
-        save(dir.path(), &show);
-        assert_eq!(
-            state(&reader, "/app/chats")["groups"][0]["status"],
-            "running"
-        );
-    }
-
-    #[test]
-    fn regression_markdown_summary_preserves_paths_flags_and_literal_characters() {
-        let dir = tempfile::tempdir().unwrap();
-        let reader = Reader::new(dir.path().to_path_buf());
-        let mut task = task_snapshot("task", "succeeded", "2099-01-01T00:00:00Z");
-        task["director"]["tasks"][0]["output"] = json!(
-            "# > - **结果** __OK__ **`a_b.rs **raw**`** --my_flag foo*bar ~tmp [arg] *literal* **未闭合"
-        );
-        save(dir.path(), &task);
-        assert_eq!(
-            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
-            "结果 OK a_b.rs **raw** --my_flag foo*bar ~tmp [arg] *literal* **未闭合"
-        );
-        let literal = "--dry_run ~/a_b [x](y) a*b _x_ ~x~ name__part__x";
-        task["director"]["tasks"][0]["output"] = json!(literal);
-        save(dir.path(), &task);
-        assert_eq!(
-            state(&reader, &format!("/app/chats/{MANAGER}"))["members"][0]["line"],
-            literal
-        );
-    }
-
-    #[test]
-    fn regression_missing_or_invalid_times_fall_back_without_reordering_messages() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut show = finished_show("show");
-        for (index, entry) in show["director"]["messages"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .enumerate()
-        {
-            entry["time"] =
-                [Value::Null, json!("invalid"), json!("2099-01-01T12:00:00Z")][index].clone();
-        }
-        save(dir.path(), &show);
-        let mut task = task_snapshot("task", "succeeded", "2099-01-01T12:00:00Z");
-        task["director"]["tasks"][0]["time"] = Value::Null;
-        let mut second = task["director"]["tasks"][0].clone();
-        second["id"] = json!("second");
-        second["time"] = json!("2099/01/01T12:00:00Z");
-        task["director"]["tasks"]
-            .as_array_mut()
-            .unwrap()
-            .push(second);
-        save(dir.path(), &task);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let messages = chat["messages"].as_array().unwrap();
-        assert!(messages.iter().all(|m| m["time"] == "2099-01-01T12:00:00Z"));
-        assert_eq!(
-            messages
-                .iter()
-                .map(|m| m["id"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec![
-                "show:round:1:z:result",
-                "show:round:1:a:result",
-                "show:entry:2",
-                "task:task:t-task:prompt",
-                "task:task:t-task:result",
-                "task:task:second:prompt",
-                "task:task:second:result"
-            ]
-        );
-    }
-
-    #[test]
-    fn revision_one_counts_members_and_assigns_consistent_collision_free_colors() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut work = task_snapshot("work", "running", "2099-01-01T00:00:00Z");
-        work["summary"]["manager_session"] = json!(format!("s-{:032x}", 0));
-        let mut pi = work["director"]["tasks"][0].clone();
-        pi["id"] = json!("pi");
-        pi["provider"] = json!("pi");
-        let mut review = pi.clone();
-        review["id"] = json!("review");
-        review["provider"] = json!("claude");
-        review["status"] = json!("review");
-        work["director"]["tasks"]
-            .as_array_mut()
-            .unwrap()
-            .extend([pi, review]);
-        save(dir.path(), &work);
-        let mut duplicate = task_snapshot("duplicate", "running", "2098-01-01T00:00:00Z");
-        duplicate["summary"]["manager_session"] = work["summary"]["manager_session"].clone();
-        save(dir.path(), &duplicate);
-        // The IDs ending 0 and 8 collide in FNV-1a modulo 8.
-        let mut other = task_snapshot("other", "succeeded", "2099-01-01T00:00:01Z");
-        other["summary"]["manager_session"] = json!(format!("s-{:032x}", 8));
-        save(dir.path(), &other);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let stage = state(&reader, "/app/stage");
-        assert_eq!(stage["counts"], json!({"running": 3, "review": 1}));
-        assert_eq!(stage["empty"], Value::Null);
-        let managers = stage["managers"].as_array().unwrap();
-        assert_eq!(managers.len(), 2);
-        assert_ne!(managers[0]["color"], managers[1]["color"]);
-        let groups = state(&reader, "/app/chats");
-        for manager in managers {
-            let id = manager["group"].as_str().unwrap();
-            assert_eq!(
-                groups["groups"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|g| g["group"] == id)
-                    .unwrap()["color"],
-                manager["color"]
-            );
-            assert_eq!(
-                state(&reader, &format!("/app/chats/{id}"))["color"],
-                manager["color"]
-            );
-        }
-        // The limit applies before counts, even if more active groups exist.
-        for i in 1..=7 {
-            let mut extra = task_snapshot(&format!("extra{i}"), "running", "2099-01-01T00:00:02Z");
-            extra["summary"]["manager_session"] = json!(format!("s-{:032x}", i));
-            save(dir.path(), &extra);
-        }
-        let stage = state(&reader, "/app/stage");
-        assert_eq!(stage["managers"].as_array().unwrap().len(), 5);
-        assert_eq!(stage["counts"], json!({"running": 5, "review": 0}));
-        let colors: std::collections::HashSet<_> = stage["managers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|m| m["color"].as_u64().unwrap())
-            .collect();
-        assert_eq!(colors.len(), 5);
-    }
-
-    #[test]
-    fn revision_one_old_failure_clears_after_a_newer_terminal_member() {
-        let dir = tempfile::tempdir().unwrap();
-        let reader = Reader::new(dir.path().to_path_buf());
-        let failed = task_snapshot("failed", "failed", "2099-01-01T00:00:00Z");
-        save(dir.path(), &failed);
-        let mut latest = task_snapshot("latest", "succeeded", "2099-01-01T00:00:01Z");
-        latest["director"]["tasks"][0]["provider"] = json!("pi");
-        save(dir.path(), &latest);
-        assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
-        assert_eq!(
-            state(&reader, "/app/stage")["managers"][0]["status"],
-            "idle"
-        );
-        latest["summary"]["status"] = json!("blocked");
-        latest["director"]["tasks"][0]["status"] = json!("blocked");
-        latest["director"]["tasks"][0]["error"] = json!("needs permission");
-        save(dir.path(), &latest);
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        assert_eq!(chat["status"], "failed");
-        let notice = chat["messages"].as_array().unwrap().last().unwrap();
-        assert_eq!(notice["text"], "受阻");
-        assert_eq!(notice["detail"], "needs permission");
-        assert_eq!(notice["speaker"]["provider"], "pi");
-        latest["summary"]["status"] = json!("cancelled");
-        latest["director"]["tasks"][0]["status"] = json!("cancelled");
-        save(dir.path(), &latest);
-        assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
-    }
-
-    #[test]
-    fn revision_one_typing_uses_live_publication_time_and_stops_when_stale() {
-        let dir = tempfile::tempdir().unwrap();
-        let task = task_snapshot("task", "running", "2020-01-01T00:00:00Z");
-        save(dir.path(), &task);
-        let live = dir.path().join("live/1-time.json");
-        write(
-            &live,
-            &json!({"version": 1, "updated_at": "2099-01-01T00:00:00.123456Z", "conversations": {"task": task}}),
-        );
-        let reader = Reader::new(dir.path().to_path_buf());
-        let path = format!("/app/chats/{MANAGER}");
-        let chat = state(&reader, &path);
-        assert_eq!(
-            chat["messages"].as_array().unwrap().last().unwrap()["time"],
-            "2099-01-01T00:00:00.123456Z"
-        );
-        fs::File::options()
-            .write(true)
-            .open(&live)
-            .unwrap()
-            .set_modified(SystemTime::now() - LIVE_FRESH - Duration::from_secs(1))
-            .unwrap();
-        let chat = state(&reader, &path);
-        assert_eq!(chat["live"], false);
-        assert_eq!(
-            chat["messages"].as_array().unwrap().last().unwrap()["time"],
-            "2020-01-01T00:00:00Z"
-        );
-    }
-
-    fn office_show(id: &str, updated: &str, created: &str) -> Value {
-        json!({
-            "version": 1,
-            "summary": {"id": id, "title": format!("房间 {id}"), "mode": "show", "status": "running",
-                "updated": updated, "host": "claude", "manager_session": MANAGER},
-            "director": {"mode": "show", "created": created, "seats": [
-                {"id": "a", "provider": "claude", "model": "m", "role": "reviewer"},
-                {"id": "b", "provider": "codex", "model": "m", "role": Value::Null}],
-            "messages": [
-                {"kind": "task", "speaker": "@host", "round": 1, "text": "task", "time": created,
-                    "recipients": [{"seat": "a", "provider": "claude", "model": "m"}]},
-                {"kind": "answer", "speaker": "a", "round": 1, "text": "answer", "time": updated}],
-            "round": {"number": 1, "seats": [{"seat_id": "a", "status": "running"}]}}})
-    }
-
-    #[test]
-    fn a_private_answer_counts_until_the_next_round() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let mut show = office_show("show", "2026-10-15T03:00:00Z", "2026-10-15T00:00:00Z");
-        show["summary"]["status"] = json!("finished");
-        show["director"]["messages"] = json!([
-            {"kind": "task", "speaker": "@host", "round": 1, "text": "一", "time": "2026-10-15T01:00:00Z",
-                "recipients": [{"seat": "a", "provider": "claude", "model": "m"}]},
-            {"kind": "task", "speaker": "@host", "round": 2, "text": "二", "time": "2026-10-15T02:00:00Z",
-                "recipients": [{"seat": "b", "provider": "codex", "model": "m"}]}]);
-        show["director"]["private_messages"] = json!([
-            {"round": 1, "seat_id": "a", "text": "不公开", "time": "2026-10-15T01:00:00Z"}]);
-        show["director"]["round"] = json!({"number": 2, "seats": [
-            {"seat_id": "b", "status": "succeeded", "output": "好"}]});
-        save(root, &show);
-        let reader = Reader::new(root.to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let desks = chat["desks"].as_array().unwrap();
-        let desk = desks.iter().find(|d| d["key"] == "seat:show:a").unwrap();
-        // Only round 1's start is recorded, but the answer was done by the time round 2 began.
-        assert_eq!(desk["last_active"], "2026-10-15T02:00:00.000000Z");
-    }
-
-    #[test]
-    fn desks_stay_persistent_ordered_and_split_by_identity() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let mut reviewer = task_snapshot("r1", "succeeded", "2026-10-15T01:00:00Z");
-        reviewer["director"]["tasks"][0]["role"] = json!("reviewer");
-        reviewer["director"]["tasks"][0]["thread"] = json!("native-1");
-        reviewer["director"]["tasks"][0]["access"] = json!("read");
-        save(root, &reviewer);
-        let mut author = task_snapshot("a1", "running", "2026-10-15T02:00:00Z");
-        author["director"]["tasks"][0]["role"] = json!("author");
-        save(root, &author);
-        let mut other_model = task_snapshot("r2", "succeeded", "2026-10-15T03:00:00Z");
-        other_model["director"]["tasks"][0]["role"] = json!("reviewer");
-        other_model["director"]["tasks"][0]["model"] = json!("m2");
-        other_model["director"]["tasks"][0]["thread"] = json!("native-2");
-        save(root, &other_model);
-        let mut newer = task_snapshot("r3", "succeeded", "2026-10-15T04:00:00Z");
-        newer["director"]["tasks"][0]["role"] = json!("reviewer");
-        newer["director"]["tasks"][0]["thread"] = json!("native-1");
-        newer["director"]["tasks"][0]["access"] = json!("write"); // the latest declaration shows
-        save(root, &newer);
-        let mut claude = task_snapshot("c1", "succeeded", "2026-10-15T05:00:00Z");
-        claude["director"]["tasks"][0]["provider"] = json!("claude");
-        save(root, &claude);
-        // Another session with the same model, CLI and role is another desk.
-        let mut twin = task_snapshot("r4", "succeeded", "2026-10-15T06:00:00Z");
-        twin["director"]["tasks"][0]["role"] = json!("reviewer");
-        twin["director"]["tasks"][0]["thread"] = json!("native-3");
-        save(root, &twin);
-        // Resuming a thread under a new role relabels its desk.
-        let mut relabel = task_snapshot("r5", "succeeded", "2026-10-15T07:00:00Z");
-        relabel["director"]["tasks"][0]["role"] = json!("reviewer-b");
-        relabel["director"]["tasks"][0]["model"] = json!("m2");
-        relabel["director"]["tasks"][0]["thread"] = json!("native-2");
-        save(root, &relabel);
-        let reader = Reader::new(root.to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let desks = chat["desks"].as_array().unwrap();
-        assert_eq!(desks.len(), 5);
-        let keys: Vec<_> = desks
-            .iter()
-            .map(|desk| desk["key"].as_str().unwrap().to_owned())
-            .collect();
-        assert_eq!(
-            keys,
-            vec![
-                "thread:native-3",
-                "task:c1:t-c1",
-                "thread:native-2",
-                "task:a1:t-a1",
-                "thread:native-1"
-            ]
-        );
-        // Newest first; the checks below go from the oldest.
-        let desks: Vec<_> = desks.iter().rev().collect();
-        assert_eq!(desks[0]["label"], "m · Codex · reviewer #1");
-        assert_eq!(desks[4]["label"], "m · Codex · reviewer #2");
-        assert_eq!(desks[4]["handle"], "@m·Codex·reviewer #2");
-        assert_eq!(desks[0]["kind"], "task");
-        assert_eq!(desks[0]["role"], "reviewer");
-        assert_eq!(desks[2]["role"], "reviewer-b");
-        assert_eq!(desks[2]["private"]["tasks"], 2);
-        assert_eq!(desks[0]["access"], "write");
-        assert_eq!(desks[1]["access"], Value::Null);
-        assert_eq!(desks[0]["model"], "m");
-        assert_eq!(desks[0]["first_seen"], "2026-10-15T01:00:00.000000Z");
-        assert_eq!(desks[0]["last_active"], "2026-10-15T04:00:00.000000Z");
-        // The same native session stays one desk across its calls.
-        assert_eq!(desks[0]["private"]["tasks"], 2);
-        assert_eq!(desks[0]["private"]["running"], 0);
-        assert_eq!(desks[0]["status"], "idle");
-        assert_eq!(desks[0]["private_allowed"], true);
-        assert_eq!(desks[1]["status"], "running");
-        assert_eq!(desks[1]["private"]["running"], 1); // no session yet: its own desk
-        // A thread desk names the task keys its calls had before the session was known.
-        assert_eq!(desks[0]["aliases"], json!(["task:r1:t-r1", "task:r3:t-r3"]));
-        assert_eq!(desks[1]["aliases"], json!([]));
-        assert_eq!(desks[3]["private_allowed"], false); // same as the workspace host's CLI
-        assert_eq!(desks[3]["role"], Value::Null);
-        assert_eq!(desks[3]["label"], "m · Claude Code");
-    }
-
-    #[test]
-    fn desks_report_meeting_and_rooms_in_creation_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let older = office_show("older", "2026-10-15T09:00:00Z", "2026-10-15T00:00:00Z");
-        save(root, &older);
-        let mut newer = office_show("newer", "2026-10-15T10:00:00Z", "2026-10-15T01:00:00Z");
-        newer["summary"]["status"] = json!("review");
-        newer["director"]["round"]["seats"][0]["review"] = json!("pending");
-        newer["director"]["round"]["seats"][0]["status"] = json!("succeeded");
-        save(root, &newer);
-        let reader = Reader::new(root.to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let rooms = chat["rooms"].as_array().unwrap();
-        assert_eq!(rooms.len(), 2);
-        assert_eq!(rooms[0]["id"], "older");
-        assert_eq!(rooms[0]["title"], "房间 older");
-        assert_eq!(rooms[0]["status"], "running");
-        assert_eq!(rooms[0]["pending_review"], 0);
-        assert_eq!(rooms[0]["board"], 2);
-        assert_eq!(
-            rooms[0]["seats"],
-            json!([
-                {"seat": "a", "desk": "seat:older:a", "handle": "@m·Claude Code·reviewer #1"},
-                {"seat": "b", "desk": "seat:older:b", "handle": "@m·Codex #1"}
-            ])
-        );
-        assert_eq!(rooms[1]["id"], "newer");
-        assert_eq!(rooms[1]["status"], "review");
-        assert_eq!(rooms[1]["pending_review"], 1);
-        let desks = chat["desks"].as_array().unwrap();
-        let reviewer = desks
-            .iter()
-            .find(|desk| desk["key"] == "seat:newer:a")
-            .unwrap();
-        assert_eq!(reviewer["kind"], "seat");
-        assert_eq!(reviewer["room"], "newer");
-        assert_eq!(
-            reviewer["meeting"],
-            json!({"room": "newer", "seat": "a", "status": "review"})
-        );
-        let pending = desks
-            .iter()
-            .find(|desk| desk["key"] == "seat:newer:b")
-            .unwrap();
-        assert_eq!(pending["status"], "pending");
-        assert_eq!(
-            pending["meeting"],
-            json!({"room": Value::Null, "seat": Value::Null, "status": Value::Null})
-        );
-    }
-
-    #[test]
-    fn messages_carry_message_id_visibility_thread_desk_and_forward() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let mut task = task_snapshot("task", "succeeded", "2026-10-15T00:00:00Z");
-        task["director"]["tasks"][0]["role"] = json!("reviewer");
-        task["director"]["tasks"][0]["thread"] = json!("native-1");
-        task["director"]["tasks"][0]["message_id"] = json!("task:t:t-task");
-        save(root, &task);
-        let mut show = office_show("show", "2026-10-15T02:00:00Z", "2026-10-15T00:00:00Z");
-        show["summary"]["status"] = json!("finished");
-        show["director"]["messages"] = json!([
-            {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T01:00:00Z",
-                "recipients": [{"seat": "a", "provider": "claude", "model": "m"}], "message_id": "show:e:0"},
-            {"kind": "forward", "speaker": "@forward", "round": 1, "text": "转发内容", "time": "2026-10-15T01:01:00Z",
-                "message_id": "show:e:1", "forward_id": "task:t:t-task", "forward_source": "房间 · 工位 · 时间"},
-            {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：失败）", "time": "2026-10-15T01:02:00Z",
-                "message_id": "show:e:2"}]);
-        show["director"]["private_messages"] = json!([
-            {"round": 1, "seat_id": "a", "text": "丢弃回答", "time": "2026-10-15T01:03:00Z"}
-        ]);
-        show["director"]["round"] = json!({"number": 1, "seats": [
-            {"seat_id": "a", "status": "running", "output": "正在写"}]});
-        save(root, &show);
-        let reader = Reader::new(root.to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let messages = chat["messages"].as_array().unwrap();
-        let by_id = |id: &str| messages.iter().find(|m| m["id"] == id).unwrap();
-        let prompt = by_id("task:task:t-task:prompt");
-        assert_eq!(prompt["visibility"], "private");
-        assert_eq!(prompt["message_id"], "task:t:t-task");
-        assert_eq!(
-            prompt["thread"],
-            json!({"kind": "desk", "key": "thread:native-1"})
-        );
-        assert_eq!(prompt["desk"], "thread:native-1");
-        assert_eq!(prompt["forward"], Value::Null);
-        let entry = by_id("show:entry:0");
-        assert_eq!(entry["visibility"], "public");
-        assert_eq!(entry["message_id"], "show:e:0");
-        assert_eq!(entry["thread"], json!({"kind": "room", "id": "show"}));
-        assert_eq!(entry["desk"], "seat:show:a");
-        let forward = by_id("show:entry:1");
-        assert_eq!(forward["kind"], "forward");
-        assert_eq!(forward["visibility"], "public");
-        assert_eq!(forward["message_id"], "show:e:1");
-        assert_eq!(forward["desk"], Value::Null);
-        assert_eq!(
-            forward["forward"],
-            json!({"message_id": "task:t:t-task", "source": "房间 · 工位 · 时间"})
-        );
-        assert_eq!(forward["speaker"]["label"], "boss 转发");
-        let absent = by_id("show:entry:2");
-        assert_eq!(absent["visibility"], "public");
-        assert_eq!(absent["message_id"], "show:e:2");
-        assert_eq!(absent["desk"], "seat:show:b");
-        let private = by_id("show:round:1:a:private");
-        assert_eq!(private["visibility"], "private");
-        assert_eq!(private["kept_private"], true);
-        assert_eq!(private["message_id"], Value::Null);
-        let typing = messages.iter().find(|m| m["kind"] == "typing").unwrap();
-        assert_eq!(typing["desk"], "seat:show:a");
-        assert_eq!(typing["thread"], json!({"kind": "room", "id": "show"}));
-        assert_eq!(typing["message_id"], Value::Null);
-    }
-
-    #[test]
-    fn old_snapshots_still_project_desks_rooms_and_messages() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        save(
-            root,
-            &task_snapshot("old", "succeeded", "2026-10-15T00:00:00Z"),
-        );
-        let mut show = snapshot("old-show", "finished");
-        show["summary"]["manager_session"] = json!(MANAGER);
-        show["summary"]["updated"] = json!("2026-10-15T01:00:00Z");
-        show["director"] = json!({"mode": "show",
-            "seats": [{"id": "a", "provider": "claude", "model": "m"}],
-            "messages": [{"kind": "strange", "speaker": "a", "round": 1, "text": "未知种类",
-                "time": "2026-10-15T01:00:00Z"}],
-            "round": {"number": 1, "seats": []}});
-        save(root, &show);
-        let reader = Reader::new(root.to_path_buf());
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let desks = chat["desks"].as_array().unwrap();
-        assert!(desks.iter().any(|desk| desk["key"] == "task:old:t-old"));
-        assert!(
-            desks
-                .iter()
-                .any(|desk| desk["key"] == "seat:old-show:a" && desk["role"].is_null())
-        );
-        let rooms = chat["rooms"].as_array().unwrap();
-        assert_eq!(rooms.len(), 1);
-        assert_eq!(rooms[0]["id"], "old-show");
-        let unknown = chat["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["text"] == "未知种类")
-            .unwrap();
-        assert_eq!(unknown["message_id"], Value::Null);
-        assert_eq!(unknown["thread"], json!({"kind": "room", "id": "old-show"}));
-        assert_eq!(unknown["visibility"], "public");
-        assert_eq!(unknown["desk"], "seat:old-show:a");
-        let prompt = chat["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["kind"] == "prompt")
-            .unwrap();
-        assert_eq!(prompt["message_id"], Value::Null);
-        assert_eq!(
-            prompt["thread"],
-            json!({"kind": "desk", "key": "task:old:t-old"})
-        );
-    }
-    #[test]
-    fn office_resources_are_embedded_cached_and_reject_traversal() {
-        let dir = tempfile::tempdir().unwrap();
-        let reader = Reader::new(dir.path().to_path_buf());
-        assert_eq!(reader.request("GET", "/art/../x", None, &[]).status, 404);
-        assert_eq!(reader.respond("/art/missing.webp").status, 404);
-        if let Some((name, bytes)) = ART.first() {
-            let response = reader.request("GET", &format!("/art/{name}"), None, &[]);
-            assert_eq!(response.status, 200);
-            assert_eq!(&response.body, bytes);
-            assert_eq!(response.cache_control, "public, max-age=31536000");
-            assert!(response.content_type.starts_with("image/"));
-        }
-        let script = reader.respond("/chat/common.js");
-        let script = String::from_utf8(script.body).unwrap();
-        assert!(script.contains(&format!(
-            "const AGENTNAVE_ART_VERSION = \"{}\";",
-            env!("CARGO_PKG_VERSION")
-        )));
-        assert!(script.contains("/art/${path}?v=${encodeURIComponent(artVersion)}"));
-        let manifest = reader.respond("/art/parts.json");
-        assert_eq!(manifest.status, 200);
-        assert_eq!(manifest.content_type, "application/json");
-    }
-
-    #[test]
-    fn desk_effort_follows_latest_call_without_rewriting_message_efforts() {
-        let dir = tempfile::tempdir().unwrap();
-        let reader = Reader::new(dir.path().to_path_buf());
-        for (id, hour, effort) in [
-            ("a", "01", Some("high")),
-            ("b", "02", Some("low")),
-            ("c", "03", None),
-        ] {
-            let mut task = task_snapshot(id, "succeeded", &format!("2099-01-01T{hour}:00:00Z"));
-            task["director"]["tasks"][0]["thread"] = json!("same-thread");
-            task["director"]["tasks"][0]["effort"] = json!(effort);
-            save(dir.path(), &task);
-            let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-            assert_eq!(chat["desks"].as_array().unwrap().len(), 1);
-            assert_eq!(chat["desks"][0]["model"], "m");
-            assert_eq!(chat["desks"][0]["effort"], json!(effort));
-            if let Some(effort) = effort {
-                assert!(
-                    chat["desks"][0]["handle"]
-                        .as_str()
-                        .unwrap()
-                        .contains(&format!("m · {effort}"))
-                );
-            }
-            let answers: Vec<_> = chat["messages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|m| m["speaker"]["role"] == "member")
-                .collect();
-            assert_eq!(answers[0]["speaker"]["effort"], "high");
-            if answers.len() > 1 {
-                assert_eq!(answers[1]["speaker"]["effort"], "low");
-            }
-            if answers.len() > 2 {
-                assert!(answers[2]["speaker"]["effort"].is_null());
-                assert_eq!(chat["desks"][0]["handle"], "@m·Codex");
-            }
-        }
-    }
-
-    #[test]
-    fn office_messages_keep_identity_routes_and_review_id_when_published() {
-        let dir = tempfile::tempdir().unwrap();
-        let reader = Reader::new(dir.path().to_path_buf());
-        let mut show = office_show("show", "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z");
-        show["director"]["cwd"] = json!("/work/project-name");
-        show["director"]["seats"][0]["model"] = json!("");
-        show["director"]["seats"][0]["effort"] = json!("high");
-        show["director"]["seats"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id": "c", "provider": "claude", "model": "", "role": "reviewer"}));
-        // The old recipient model is native and its role is absent. Identity comes from seats.
-        show["director"]["messages"] = json!([{"kind": "task", "round": 1, "text": "body @boss @all is not routing", "time": "2099-01-01T00:00:00Z", "recipients": [{"seat": "a", "provider": "claude", "model": "native"}]}]);
-        show["director"]["round"] = json!({"number": 1, "order": "serial", "status": "review", "seats": [
-            {"seat_id": "a", "status": "succeeded", "review": "pending", "reported_model": "claude-opus-5-5", "output": "answer"},
-            {"seat_id": "c", "status": "not_started"}]});
-        show["director"]["instructions"] =
-            json!([{"round": 1, "seat_id": "a", "text": "secret", "time": "2099-01-01T00:00:00Z"}]);
-        save(dir.path(), &show);
-        let path = format!("/app/chats/{MANAGER}");
-        let chat = state(&reader, &path);
-        assert_eq!(chat["project"], "project-name");
-        assert_eq!(chat["title"], "房间 show");
-        let messages = chat["messages"].as_array().unwrap();
-        let prompt = messages.iter().find(|m| m["kind"] == "prompt").unwrap();
-        assert_eq!(prompt["speaker"]["handle"], "@boss");
-        assert_eq!(prompt["to"], json!([{"key": "@all", "handle": "@all"}]));
-        assert_eq!(
-            prompt["answering"],
-            json!([
-                "@claude-opus-5-5 · high·Claude Code·reviewer",
-                "@CLI 默认模型·Claude Code·reviewer"
-            ])
-        );
-        let instruction = messages
-            .iter()
-            .find(|m| m["kind"] == "instruction")
-            .unwrap();
-        assert_eq!(instruction["visibility"], "private");
-        assert_eq!(instruction["to"][0]["key"], "seat:show:a");
-        assert_eq!(instruction["to"][0]["handle"], prompt["answering"][0]);
-        let answer = messages.iter().find(|m| m["status"] == "review").unwrap();
-        assert_eq!(answer["text"], "answer");
-        assert_eq!(answer["speaker"]["effort"], "high");
-        assert_eq!(answer["to"], json!([{"key": "@boss", "handle": "@boss"}]));
-        assert_eq!(answer["reply_to"], prompt["id"]);
-        assert_eq!(answer["speaker"]["handle"], prompt["answering"][0]);
-        let desk = chat["desks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|d| d["key"] == "seat:show:a")
-            .unwrap();
-        assert_eq!(desk["display_model"], "claude-opus-5-5");
-        assert_eq!(desk["model_source"], "native");
-        assert_eq!(desk["effort"], "high");
-        assert_eq!(
-            chat["rooms"][0]["round"],
-            json!({"number": 1, "order": "serial", "status": "review"})
-        );
-        let stage = state(&reader, "/app/stage");
-        assert_eq!(stage["counts"], json!({"running": 0, "review": 1}));
-        assert_eq!(stage["managers"][0]["threads"], chat["threads"]);
-        show["director"]["round"]["seats"][0]["review"] = json!("publish");
-        show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "answer", "speaker": "a", "round": 1, "text": "answer", "reported_model": "claude-opus-5-5", "time": "2099-01-01T00:00:01Z"}));
-        // A host remark after the round shares its number but is not what the answer replies to.
-        show["director"]["messages"].as_array_mut().unwrap().push(json!({"kind": "host", "speaker": "@host", "round": 1, "text": "remark", "time": "2099-01-01T00:00:02Z"}));
-        save(dir.path(), &show);
-        let published = state(&reader, &path);
-        let answer2 = published["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["text"] == "answer")
-            .unwrap();
-        assert_eq!(answer2["id"], answer["id"]);
-        assert_eq!(answer2["visibility"], "public");
-        assert_eq!(answer2["to"], json!([{"key": "@all", "handle": "@all"}]));
-        assert_eq!(answer2["reply_to"], prompt["id"]);
-        assert_eq!(answer2["round"], 1);
-        assert_eq!(answer2["speaker"]["effort"], "high");
-        let remark = published["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["text"] == "remark")
-            .unwrap();
-        assert!(remark["round"].is_null());
-        show["director"]["messages"].as_array_mut().unwrap().insert(0, json!({"kind":"host", "speaker":"@host", "round":0, "text":"opening", "time":"2098-12-31T23:59:59Z"}));
-        save(dir.path(), &show);
-        let legacy = state(&reader, &path);
-        let opening = legacy["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["text"] == "opening")
-            .unwrap();
-        assert!(opening["round"].is_null());
-    }
-
-    #[test]
-    fn office_counts_activities_and_threads_preserve_concurrent_calls() {
-        let dir = tempfile::tempdir().unwrap();
-        for id in ["one", "two"] {
-            save(
-                dir.path(),
-                &office_show(id, "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z"),
-            );
-        }
-        let mut task = task_snapshot("private", "running", "2099-01-01T00:00:00Z");
-        task["director"]["tasks"][0]["provider"] = json!("claude");
-        task["director"]["tasks"][0]["role"] = json!("reviewer");
-        task["director"]["tasks"][0]["reported_model"] = json!("native-model");
-        save(dir.path(), &task);
-        let reader = Reader::new(dir.path().to_path_buf());
-        assert_eq!(reader.overview().count("running"), 3);
-        let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
-        let desks = chat["desks"].as_array().unwrap();
-        let desk = |key: &str| desks.iter().find(|d| d["key"] == key).unwrap();
-        // Each concurrent call is its own session, so its own desk: none hides another.
-        for room in ["one", "two"] {
-            let seat = desk(&format!("seat:{room}:a"));
-            assert_eq!(seat["activities"].as_array().unwrap().len(), 1);
-            assert_eq!(seat["meeting"]["room"], room);
-        }
-        let private = desk("task:private:t-private");
-        assert_eq!(private["activities"][0]["kind"], "private");
-        assert_eq!(private["model_source"], "requested");
-        assert_eq!(private["display_model"], "m");
-        let mut labels: Vec<_> = desks.iter().filter_map(|d| d["label"].as_str()).collect();
-        labels.sort();
-        assert_eq!(
-            labels,
-            [
-                "m · Claude Code · reviewer #1",
-                "m · Claude Code · reviewer #2",
-                "m · Claude Code · reviewer #3",
-                "m · Codex #1",
-                "m · Codex #2"
-            ]
-        );
-        // Running and reviewed desks are drawn even past the limit; idle seats fold away.
-        crate::settings::save(dir.path(), &json!({"version": 1, "max_running": 1})).unwrap();
-        let limited = state(&reader, &format!("/app/chats/{MANAGER}"));
-        assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
-        assert_eq!(limited["optimized"]["count"], 2);
-        // The panel lists no folded desk except those its rooms' seats sit at.
-        let stage = state(&reader, "/app/stage");
-        let folded = stage["managers"][0]["optimized"]["desks"]
-            .as_array()
-            .unwrap();
-        assert_eq!(stage["managers"][0]["optimized"]["count"], 2);
-        assert_eq!(folded.len(), 2);
-        assert!(folded.iter().all(|desk| desk["kind"] == "seat"));
-        assert_eq!(chat["threads"].as_array().unwrap().len(), 3);
-        assert_eq!(
-            state(&reader, "/app/stage")["counts"],
-            json!({"running": 3, "review": 0})
-        );
-    }
-
-    #[test]
-    fn office_timeline_reports_omitted_and_counts_full_threads() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut task = task_snapshot("many", "succeeded", "2099-01-01T00:00:00Z");
-        let call = task["director"]["tasks"][0].clone();
-        task["director"]["tasks"] = json!(
-            (0..211)
-                .map(|i| {
-                    let mut call = call.clone();
-                    call["id"] = json!(i.to_string());
-                    call
-                })
-                .collect::<Vec<_>>()
-        );
-        save(dir.path(), &task);
-        let reader = Reader::new(dir.path().to_path_buf());
-        let path = format!("/app/chats/{MANAGER}");
-        let chat = state(&reader, &path);
-        assert_eq!(chat["omitted"], 122);
-        assert_eq!(chat["messages"].as_array().unwrap().len(), 300);
-        // Calls without a native session are separate desks of two messages each.
-        assert_eq!(chat["threads"].as_array().unwrap().len(), 211);
-        assert_eq!(chat["threads"][0]["count"], 2);
-        // The office draws as many desks as the running limit; the rest are "optimized", listed
-        // up to 200 plus any the returned messages name, so every message finds its desk.
-        let resolves = |chat: &Value| {
-            let listed: Vec<_> = chat["desks"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .chain(chat["optimized"]["desks"].as_array().unwrap())
-                .map(|desk| desk["key"].clone())
-                .collect();
-            let listed_len = chat["optimized"]["desks"].as_array().unwrap().len();
-            assert!(
-                chat["messages"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .all(|message| listed.contains(&message["desk"]))
-            );
-            listed_len
-        };
-        assert_eq!(chat["desks"].as_array().unwrap().len(), 8);
-        assert_eq!(chat["optimized"]["count"], 203);
-        assert!((200..=203).contains(&resolves(&chat)));
-        crate::settings::save(dir.path(), &json!({"version": 1, "max_running": 3})).unwrap();
-        let limited = state(&reader, &path);
-        assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
-        assert_eq!(limited["optimized"]["count"], 208);
-        let stage = state(&reader, "/app/stage");
-        assert_eq!(stage["managers"][0]["desks"].as_array().unwrap().len(), 3);
-        assert_eq!(
-            stage["managers"][0]["optimized"],
-            json!({"count": 208, "desks": []})
-        );
-        assert_eq!(chat["messages"][1]["reply_to"], chat["messages"][0]["id"]);
-        let focused = state(&reader, &format!("{path}/focus/many"));
-        assert_eq!(focused["omitted"], 0);
-        assert_eq!(focused["messages"].as_array().unwrap().len(), 422);
-        // Focusing the conversation returns every message, so every folded desk is listed.
-        assert_eq!(resolves(&focused), 208);
-    }
-}
+mod tests;

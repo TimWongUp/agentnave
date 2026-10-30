@@ -1,0 +1,150 @@
+use super::*;
+
+#[test]
+fn notes_an_older_service() {
+    let tools = tempfile::tempdir().unwrap();
+    let site = tools.path().join("agentnave/lib/python3.12/site-packages");
+    std::fs::create_dir_all(site.join("agentnave-0.1.0.dist-info")).unwrap();
+    std::fs::create_dir_all(site.join("mcp-2.1.1.dist-info")).unwrap();
+    let tools = Some(tools.path().to_path_buf());
+
+    let note = service(&tools);
+    assert_eq!(note["version"], "0.1.0");
+    assert!(
+        note["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("@v{VERSION}\""))
+    );
+
+    std::fs::rename(
+        site.join("agentnave-0.1.0.dist-info"),
+        site.join(format!("agentnave-{VERSION}.dist-info")),
+    )
+    .unwrap();
+    assert!(service(&tools).is_null());
+}
+
+#[test]
+fn a_found_update_is_used_for_a_day() {
+    let now = SystemTime::now();
+    assert!(!check_fresh(None, now));
+    assert!(check_fresh(Some(now - Duration::from_secs(60)), now));
+    assert!(!check_fresh(Some(now - FOUND_FOR), now));
+}
+
+#[test]
+fn a_command_over_its_limit_is_stopped_and_reported() {
+    let mut slow = Command::new("sleep");
+    slow.arg("30");
+    let started = Instant::now();
+    let error = output_within(slow, Duration::from_millis(100)).unwrap_err();
+    assert!(error.contains("没有完成"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    let mut fast = Command::new("sh");
+    fast.args(["-c", "echo nope >&2; exit 3"]);
+    let output = output_within(fast, Duration::from_secs(10)).unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "nope");
+}
+
+#[cfg(unix)]
+#[test]
+fn command_timeout_reaps_descendants_holding_output_pipes() {
+    let mut command = Command::new("sh");
+    command.args(["-c", "trap '' TERM; sleep 2 & wait"]);
+    let started = Instant::now();
+    assert!(output_within(command, Duration::from_millis(100)).is_err());
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn service_state_follows_the_upgrade() {
+    let outdated = json!({"state": "outdated", "version": "0.1.0", "error": null, "command": "uv"});
+    assert_eq!(service_state(outdated.clone(), Upgrade::Idle), outdated);
+    assert_eq!(
+        service_state(outdated.clone(), Upgrade::Running),
+        json!({"state": "upgrading", "version": "0.1.0", "error": null})
+    );
+    let failed = service_state(outdated, Upgrade::Failed("uv 返回失败".into()));
+    assert_eq!(
+        (failed["state"].as_str(), failed["error"].as_str()),
+        (Some("failed"), Some("uv 返回失败"))
+    );
+    assert_eq!(
+        service_state(Value::Null, Upgrade::Done(Instant::now()))["state"],
+        "done"
+    );
+    assert_eq!(
+        service_state(Value::Null, Upgrade::Failed("x".into())),
+        json!({"state":"failed", "error":"x"})
+    );
+    assert_eq!(
+        service_state(Value::Null, Upgrade::Installing)["state"],
+        "installing"
+    );
+}
+
+#[test]
+fn restart_marker_is_written_once_and_cleared() {
+    let directory = tempfile::tempdir().unwrap();
+    let dir = directory.path().join("app-data");
+    assert!(!take_marker(&dir));
+    write_marker(&dir).unwrap();
+    assert!(dir.join(UPGRADE_MARKER).is_file());
+    assert!(take_marker(&dir));
+    assert!(!take_marker(&dir));
+}
+
+#[test]
+fn notes_keep_the_releases_after_this_app_newest_first() {
+    let body = json!([
+        {"version": "0.46.1", "notes": "a"},
+        {"version": "0.48.0", "notes": "c"},
+        {"version": "0.47.0", "notes": "b"},
+        {"version": "0.49.0", "notes": "d"},
+        {"version": "0.47.5"},
+    ])
+    .to_string();
+    let notes = release_notes(Some(&body), "0.46.1", "0.48.0");
+    let versions: Vec<_> = notes["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["version"].as_str().unwrap())
+        .collect();
+    assert_eq!(versions, ["0.48.0", "0.47.0"]);
+    assert_eq!(notes["link"], Value::Null);
+    assert_eq!(
+        release_notes(Some(&body), "0.40.0", "0.48.0")["link"],
+        RELEASES
+    );
+    let old = "https://github.com/TimWongUp/agentnave/releases/tag/v0.47.0";
+    assert_eq!(
+        release_notes(Some(old), "0.46.1", "0.47.0"),
+        json!({"items": [], "link": old})
+    );
+    assert_eq!(
+        release_notes(None, "0.46.1", "0.47.0"),
+        json!({"items": [], "link": null})
+    );
+}
+
+#[test]
+fn the_updated_version_is_read_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let dir = directory.path().join("app-data");
+    assert_eq!(take_updated(&dir), None);
+    write_updated(&dir, "0.48.0").unwrap();
+    assert_eq!(take_updated(&dir).as_deref(), Some("0.48.0"));
+    assert_eq!(take_updated(&dir), None);
+}
+
+#[test]
+fn last_checked_is_utc_rfc3339() {
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_792_152_000);
+    assert_eq!(rfc3339(at), "2026-10-16T12:00:00Z");
+    assert_eq!(rfc3339(SystemTime::UNIX_EPOCH), "1970-01-01T00:00:00Z");
+    let leap = SystemTime::UNIX_EPOCH + Duration::from_secs(951_782_400);
+    assert_eq!(rfc3339(leap), "2000-02-29T00:00:00Z");
+}
