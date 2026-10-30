@@ -410,11 +410,13 @@ fn dsh_default(dump: &str, key: &str) -> Option<String> {
 
 /// The models the configured providers declare (`config.providers.<route>.models[].id`), in
 /// order: what a model override may name besides the bundled official models. Each comes with
-/// the keys of its `reasoningEfforts`; a model without them does not reason and has none.
+/// the keys of its `reasoningEfforts`; a model without them does not reason and has none. A model
+/// declared again keeps its first levels.
 fn dsh_provider_models(dump: &str) -> Vec<(String, Vec<String>)> {
     let mut providers = false;
     let mut levels = false;
     let mut models: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current = None;
     for line in dump.lines() {
         if line.starts_with("- ") || line.starts_with('#') {
             providers = false;
@@ -424,7 +426,8 @@ fn dsh_provider_models(dump: &str) -> Vec<(String, Vec<String>)> {
             continue;
         } else if let Some(id) = line.strip_prefix("          - id:").and_then(dsh_scalar) {
             levels = false;
-            if !models.iter().any(|(known, _)| *known == id) {
+            current = (!models.iter().any(|(known, _)| *known == id)).then_some(models.len());
+            if current.is_some() {
                 models.push((id, Vec::new()));
             }
         } else if line.starts_with("            ") && !line.starts_with("             ") {
@@ -433,7 +436,7 @@ fn dsh_provider_models(dump: &str) -> Vec<(String, Vec<String>)> {
             && line.starts_with("              ")
             && !line.starts_with("               ")
             && let Some((level, _)) = line.trim().split_once(':')
-            && let Some((_, efforts)) = models.last_mut()
+            && let Some((_, efforts)) = current.and_then(|at| models.get_mut(at))
         {
             efforts.push(level.to_owned());
         } else if !line.starts_with("              ") {
@@ -1329,7 +1332,8 @@ mod tests {
             \x20             low: low\n              max: max\n            input:\n\
             \x20             - text\n\
             \x20         - id: \"codex/sol\"\n      gw2:\n        models:\n\
-            \x20         - id: codex/sol\n          - id: grok/4\n    other:\n\
+            \x20         - id: codex/sol\n          - id: opencode-go/v4.1\n            reasoningEfforts:\n\
+            \x20             high: high\n          - id: grok/4\n    other:\n\
             \x20         - id: skipped\n- id: jobs\n";
         let declared = dsh_provider_models(providers);
         let ids: Vec<&str> = declared.iter().map(|(id, _)| id.as_str()).collect();

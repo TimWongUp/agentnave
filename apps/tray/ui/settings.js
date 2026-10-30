@@ -1082,7 +1082,8 @@ function slotRows(provider, scene, split) {
       : el("span", { className: "member-reset-slot" }));
 
   const conf = currentDoc.modes?.[scene || "task"]?.[provider]?.overrides?.[model];
-  const range = conf?.efforts?.length ? conf.efforts : currentDoc.clis?.[provider]?.models?.[model]?.efforts || [];
+  // A scene's own range, even an empty one, replaces the shared one.
+  const range = (conf && Object.hasOwn(conf, "efforts") ? conf.efforts : currentDoc.clis?.[provider]?.models?.[model]?.efforts) || [];
   const levels = model ? effortLevels(provider, model).filter((l) => !range.length || range.includes(l)) : [];
   const cli = model ? cliEffort(provider, model) : null;
   let effortLine = el("span");
