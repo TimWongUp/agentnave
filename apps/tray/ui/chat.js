@@ -1205,6 +1205,7 @@ function chip(t) {
 function verbOf(m, ctx) {
   const t = m.thread;
   const room = t?.kind === "room" ? ctx.rooms.get(t.id) : null;
+  if (m.kind === "handover") return ["", []];
   if (m.kind === "typing") return ["", [], "正在输入…", ""];
   if (m.kind === "instruction") return ["私下交代", targets(m, ctx), "", "仅 TA 可见"];
   if (m.kind === "forward") return ["转发", targets(m, ctx)];
@@ -1242,7 +1243,9 @@ function eventText(m, ctx) {
     )
     .join("、");
   const text =
-    m.kind === "instruction"
+    m.kind === "handover"
+      ? m.text
+      : m.kind === "instruction"
       ? `boss 私下交代 ${to}`
       : m.kind === "forward"
         ? `boss 转发了一条消息${room ? `到「${room.title}」` : ""}`
@@ -1417,12 +1420,17 @@ function updateMessage(rec, m, ctx, id) {
     setText(rec.status, status);
     rec.status.hidden = !status;
   }
-  if (rec.text !== m.text) {
-    rec.text = m.text;
+  const body = m.kind === "handover" ? [m.text, m.detail].filter(Boolean).join("\n\n") : m.text;
+  if (rec.text !== body) {
+    rec.text = body;
     if (m.kind === "typing") {
       setText(rec.tail, m.text);
       rec.dots.hidden = !!m.text;
       rec.tail.hidden = !m.text;
+    } else if (m.kind === "handover") {
+      setClass(rec.md, "md handover-text");
+      setText(rec.md, body);
+      rec.dirty = true;
     } else {
       renderMarkdown(rec.md, m.text);
       rec.dirty = true; // height changed: measure again

@@ -478,6 +478,12 @@ All checks passed!
           ));
       }
     }
+    if (q.has("handover")) out.push({
+      id: `${g.group}:handover`, time: stamp(w, w.s - 1), conversation: "", kind: "handover",
+      speaker: { role: "system", label: "工作区交接" },
+      text: q.get("handover") === "pending" ? "Claude Code 交出工作区，等待接手" : "Claude Code 交出工作区，Codex 已接手",
+      detail: "下一步：评审三个 PR 后统一发版。\n说明按纯文本显示：<script>alert(1)</script>\n\n" + "保留已有改动，核对 CI 与正式发布产物。\n".repeat(25),
+    });
     out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
     typing.sort((a, b) => a._s - b._s).forEach((m) => delete m._s);
     return [...out, ...typing].slice(-300);

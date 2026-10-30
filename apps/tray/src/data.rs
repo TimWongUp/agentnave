@@ -1092,7 +1092,8 @@ fn claude_entrypoint(path: &Path) -> std::io::Result<Option<String>> {
 fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
     let rows = connection
         .prepare(
-            "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending \
+            "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending, \
+             note, released, previous_host \
              FROM workspaces WHERE pending = 1 OR owner != id OR previous_host IS NOT NULL \
              ORDER BY id",
         )
@@ -1105,6 +1106,9 @@ fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Ha
                             changed: row.get(1)?,
                             host: row.get(2)?,
                             pending: row.get(3)?,
+                            note: row.get(4)?,
+                            released: row.get(5)?,
+                            previous_host: row.get(6)?,
                         },
                     ))
                 })?
@@ -1752,6 +1756,49 @@ mod tests {
         show["director"]["round"] = json!({"number": 3, "seats": []});
         save(dir.path(), &show);
         assert_eq!(state(&reader, &path)["messages"], first["messages"]);
+    }
+
+    #[test]
+    fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        save(
+            dir.path(),
+            &task_snapshot("handover-task", "succeeded", "2026-01-01T00:00:00Z"),
+        );
+        let connection = crate::db::write(dir.path()).unwrap().unwrap();
+        connection.execute(
+            "INSERT INTO workspaces (id, owner, owner_host, pending, note, released) VALUES (?1, ?1, 'claude', 1, ?2, '2026-01-02T00:00:00Z')",
+            rusqlite::params![MANAGER, "<script>untrusted</script>\n下一步"],
+        ).unwrap();
+        let reader = Reader::new(dir.path().to_path_buf());
+        let path = format!("/app/chats/{MANAGER}");
+        let waiting = state(&reader, &path);
+        let message = waiting["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(message["kind"], "handover");
+        assert_eq!(message["text"], "Claude Code 交出工作区，等待接手");
+        assert_eq!(message["detail"], "<script>untrusted</script>\n下一步");
+        assert_eq!(message["time"], "2026-01-02T00:00:00Z");
+        connection.execute(
+            "UPDATE workspaces SET owner = 'new-boss', previous_host = owner_host, owner_host = 'codex', pending = 0 WHERE id = ?1",
+            [MANAGER],
+        ).unwrap();
+        let claimed = state(&reader, &path);
+        let message = claimed["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(message["text"], "Claude Code 交出工作区，Codex 已接手");
+        assert_eq!(claimed["omitted"], 0);
+        connection
+            .execute(
+                "UPDATE workspaces SET owner = id, previous_host = NULL, pending = 0 WHERE id = ?1",
+                [MANAGER],
+            )
+            .unwrap();
+        assert!(
+            state(&reader, &path)["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["kind"] != "handover")
+        );
     }
 
     #[test]

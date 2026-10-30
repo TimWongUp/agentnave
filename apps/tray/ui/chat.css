@@ -515,6 +515,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .typing i:nth-child(3) { animation-delay: 0.3s; }
 .msg.flash .bub, .note.flash { animation: flash 1.6s ease-out; }
 @keyframes flash { from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, transparent); } }
+.handover-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* status lines: failures, absences */
 .note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin: 10px 0 0 28px; font-size: 11.5px; color: var(--muted); }
 .note .m-ava .avatar, .note .m-ava .head { width: 16px; height: 16px; }
