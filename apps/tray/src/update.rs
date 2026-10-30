@@ -604,8 +604,10 @@ fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
     Err(reason.chars().take(200).collect())
 }
 
-/// `Command::output` that gives up after `limit`, killing the process.
+/// `Command::output` bounded by `limit`, stopping the process tree before returning.
 fn output_within(mut command: Command, limit: Duration) -> Result<std::process::Output, String> {
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -620,6 +622,7 @@ fn output_within(mut command: Command, limit: Duration) -> Result<std::process::
     });
     if finished.recv_timeout(limit).is_err() {
         kill(id);
+        let _ = waiter.join();
         return Err(format!(
             "超过 {} 分钟没有完成，请检查网络后重试",
             limit.as_secs() / 60
@@ -632,8 +635,10 @@ fn output_within(mut command: Command, limit: Duration) -> Result<std::process::
 }
 
 fn kill(id: u32) {
-    #[cfg(not(windows))]
-    let _ = Command::new("kill").arg(id.to_string()).status();
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(id as i32), libc::SIGKILL);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -816,6 +821,16 @@ mod tests {
         let output = output_within(fast, Duration::from_secs(10)).unwrap();
         assert_eq!(output.status.code(), Some(3));
         assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "nope");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_timeout_reaps_descendants_holding_output_pipes() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "trap '' TERM; sleep 2 & wait"]);
+        let started = Instant::now();
+        assert!(output_within(command, Duration::from_millis(100)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
