@@ -543,21 +543,23 @@ transaction or automatic host configuration update.
 
 ### Upgrading from v0.53.1 to v0.54.0
 
-"Update all" updates the App, the runtime and App-managed Skills; replace an externally managed
-`agentnave-manager` Skill with its complete v0.54.0 directory. The changes ship in the App, so
-updating only the runtime does not bring them. The App now owns the `agentnave-manager` and
-`agentnave-review` Skill directories of connected hosts: anything else at those paths, a symbolic
-link included, is moved whole into the App's `backups/` folder and replaced with the App's copy
-when a host is connected or detection refreshes; a Skill whose parent folder is a symbolic link is
-left alone and shown as not installable. To keep managing a Skill yourself, install it under a
-different directory name. The settings page is reorganized (one card per CLI for members, models
-and effort levels as each CLI offers them); `members.json` keeps its structure, the tool interface
-is unchanged, so no MCP reconnect is needed, and history, member configuration and settings need
-no migration. Upgrading from v0.52.0 or earlier also brings the v0.53.0 changes, including manual
-cleanup of an OpenCode host entry and an MCP reconnect for the reworded tool descriptions; see
-[v0.53.0 release notes](releases/v0.53.0.md). Upgrading from v0.45.0 or earlier also drops Gemini
-CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.54.0 release notes](releases/v0.54.0.md).
+"Update all" updates the App, the runtime and App-managed Skills; for a host not connected through
+the App, replace its `agentnave-manager` Skill with the complete v0.54.0 directory. The changes ship
+in the App, so updating only the runtime does not bring them. The App now owns the
+`agentnave-manager` Skill directory of connected hosts, and the `agentnave-review` one where its
+switch on the Skills page is on: when the App starts, a host is connected or detection refreshes,
+anything else at those paths, a symbolic link included, is moved whole into its own folder under
+`backups/` in the App's data folder (not `~/.agentnave`; the boss page's 「打开备份目录」 opens it) and
+replaced with the App's copy. A Skill whose parent folder is a symbolic link is left alone and shown
+as not installable. To keep managing a Skill yourself, install it under a different directory name.
+The settings page is reorganized (one card per CLI for members, models and effort levels as each CLI
+offers them); `members.json` keeps its structure, the tool interface is unchanged, so no MCP
+reconnect is needed, and history, member configuration and settings need no migration. Upgrading
+from v0.52.0 or earlier also brings the v0.53.0 changes, including manual cleanup of an OpenCode
+host entry and an MCP reconnect for the reworded tool descriptions; see [v0.53.0 release
+notes](releases/v0.53.0.md). Upgrading from v0.45.0 or earlier also drops Gemini CLI as a host,
+which needs manual cleanup of its old entry; see [v0.46.0 release notes](releases/v0.46.0.md). See
+[v0.54.0 release notes](releases/v0.54.0.md).
 
 ## Uninstall
 
