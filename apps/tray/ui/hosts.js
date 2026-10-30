@@ -407,37 +407,17 @@ function renderBackups() {
 }
 
 // ---------------------------------------------------------------- host card
+// The App installs and updates the Skill with every connection, start, update and refresh, so a
+// connected app only shows the version, or why it could not be installed.
 function skillNode(host) {
   const s = host.skill;
-  if (s.state === "app") {
-    const old = s.version && S.appVersion && s.version !== S.appVersion;
-    return h(
-      "span",
-      {},
-      `v${s.version}`,
-      old && h("span.sub", {}, `· 刷新检测时更新到 v${S.appVersion}`),
-    );
-  }
-  if (s.state === "external")
-    return h("span", {}, h("span.warn-text", {}, "待更新"), h("span.sub", {}, "· 刷新检测时更新"));
   if (s.state === "blocked")
     return h("span", {}, h("span.warn-text", {}, "无法安装"), h("span.sub", {}, "· Skill 目录经过符号链接"));
   if (s.state === "manual")
-    return h(
-      "span",
-      {},
-      h("span.warn-text", {}, "无法自动安装"),
-      h("span.sub", {}, "· 这个应用的 Skill 目录尚未确定"),
-    );
-  const auto =
-    host.status === "connected" &&
-    host.entry === "agentnave";
-  return h(
-    "span",
-    {},
-    h("span.dim", {}, "未安装"),
-    auto && h("span.sub", {}, "· 刷新检测时自动安装"),
-  );
+    return h("span", {}, h("span.warn-text", {}, "无法安装"), h("span.sub", {}, "· 这个应用的 Skill 目录尚未确定"));
+  if (host.status !== "connected") return h("span.dim", {}, "接入时安装");
+  if (s.state === "app" && (!S.appVersion || s.version === S.appVersion)) return h("span", {}, `v${s.version}`);
+  return h("span.warn-text", {}, "未能安装，点「刷新检测」重试");
 }
 
 function entryNode(host) {
@@ -576,12 +556,11 @@ function actionButtons(host) {
 // One line under the name: the state, then what matters most about it.
 function subLine(host, word) {
   const bits = [h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word)];
-  if (host.status === "connected" || host.status === "needs_attention") {
-    // Only a Skill that needs something is mentioned.
+  if (host.status === "connected") {
+    // A Skill is only mentioned when it could not be installed.
     const s = host.skill;
-    const skill = s.state === "app" ? (S.appVersion && s.version !== S.appVersion ? "Skill 待更新" : "")
-      : s.state === "external" ? "Skill 待更新" : s.state === "blocked" ? "Skill 无法安装" : "Skill 未安装";
-    if (skill) bits.push(h("span.hc-fact", {}, skill));
+    const current = s.state === "app" && (!S.appVersion || s.version === S.appVersion);
+    if (!current) bits.push(h("span.hc-fact.warn-text", {}, ["blocked", "manual"].includes(s.state) ? "Skill 无法安装" : "Skill 未能安装"));
   } else if (host.status === "available") {
     bits.push(h("span.hc-fact", {}, "本机已安装，还没有接入 AgentNave"));
   }

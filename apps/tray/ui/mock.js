@@ -637,7 +637,7 @@ All checks passed!
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
       first_seen: "2026-10-17T00:00:00Z", reload_hint: reload, attention: null, last_action: null,
-      skill: { state: connected ? "app" : "missing", path: `${root}/skills/agentnave-manager`, version: connected ? "0.53.1" : null },
+      skill: { state: connected ? "app" : "missing", path: `${root}/skills/agentnave-manager`, version: connected ? mockVersion : null },
       skills: { "agentnave-review": { state: "missing", path: `${root}/skills/agentnave-review`, version: null, enabled: false } } };
   });
   if (hostScene === "typical") {
