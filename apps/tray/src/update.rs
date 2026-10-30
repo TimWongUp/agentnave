@@ -31,8 +31,17 @@ const UPGRADE_MARKER: &str = "upgrade-service-after-restart";
 const UPDATED_MARKER: &str = "updated-to";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
 const CHECK_WAIT: Duration = Duration::from_secs(60);
-/// Bounds the update check request; downloads keep the updater's own behavior.
+/// Bounds the update check request.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+/// A found update is used as it is for this long, the same as the automatic checks' interval;
+/// after that the update flow first looks for a newer one.
+const FOUND_FOR: Duration = EVERY;
+/// The updater sets no limit of its own, and the update dialog cannot be closed while it runs.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// `uv tool install` fetches from GitHub without a limit of its own.
+const SERVICE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Long enough to read the last step before the window goes away.
+const RESTART_NOTE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Default, PartialEq)]
 enum Phase {
@@ -64,8 +73,13 @@ struct State {
     upgrade: Upgrade,
     /// What changed in each release between this app and the one found, newest first.
     notes: Value,
-    /// Which part of an install runs: "download", "service" or "app".
+    /// Which part of an install runs or, after a failure, failed: "download", "service", "app"
+    /// or "restart".
     step: Option<&'static str>,
+    /// When the running step or service upgrade started.
+    started: Option<Instant>,
+    /// Bytes of the app update downloaded, and its size when the server tells.
+    download: (u64, Option<u64>),
     /// The version the last restart updated to, and when this app started.
     updated: Option<(String, Instant)>,
 }
@@ -78,6 +92,11 @@ impl State {
     fn busy(&self) -> bool {
         matches!(self.phase, Phase::Checking | Phase::Installing(_))
             || matches!(self.upgrade, Upgrade::Running | Upgrade::Installing)
+    }
+
+    fn enter(&mut self, step: &'static str) {
+        self.step = Some(step);
+        self.started = Some(Instant::now());
     }
 }
 
@@ -131,15 +150,15 @@ impl Updates {
     }
 
     /// Mark a check as started, unless one is already checking or installing. A running service
-    /// upgrade does not conflict with a check, which installs nothing.
+    /// upgrade does not conflict with a check, which installs nothing. A found update stays until
+    /// the check ends, so a silent one that fails can keep it.
     fn begin(&self) -> Option<Phase> {
         let mut state = self.lock();
         if matches!(state.phase, Phase::Checking | Phase::Installing(_)) {
             return None;
         }
         let before = std::mem::replace(&mut state.phase, Phase::Checking);
-        state.pending = None;
-        state.notes = Value::Null;
+        state.step = None;
         drop(state);
         self.label(&Phase::Checking);
         Some(before)
@@ -154,13 +173,15 @@ impl Updates {
         }
         if let Some(update) = state.pending.take() {
             state.phase = Phase::Installing(update.version.clone());
-            state.step = Some("download");
+            state.enter("download");
+            state.download = (0, None);
             drop(state);
             self.label(&Phase::Installing(update.version.clone()));
             return Claim::Install(Box::new(update));
         }
         if upgrade && outdated {
             state.upgrade = Upgrade::Running;
+            state.started = Some(Instant::now());
             return Claim::Upgrade;
         }
         Claim::Nothing
@@ -173,6 +194,7 @@ impl Updates {
             return false;
         }
         state.upgrade = Upgrade::Running;
+        state.started = Some(Instant::now());
         true
     }
 
@@ -199,15 +221,15 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
         }
         Ok(None) => updates.set(Phase::Latest, None),
         Err(error) if manual => updates.set(Phase::Failed(brief(&error.to_string())), None),
-        Err(_) => updates.set(
-            // A found update was dropped by `begin`, so it cannot be kept.
-            if matches!(before, Phase::Failed(_) | Phase::Latest) {
+        Err(_) => {
+            let found = updates.lock().pending.take();
+            let phase = if found.is_some() || matches!(before, Phase::Failed(_) | Phase::Latest) {
                 before
             } else {
                 Phase::Idle
-            },
-            None,
-        ),
+            };
+            updates.set(phase, found);
+        }
     }
 }
 
@@ -238,9 +260,9 @@ pub fn check_now(app: &AppHandle, manual: bool) -> Value {
     status(app)
 }
 
-/// `POST /app/update/apply`, sent once the page showed what a fresh check found: install a found
-/// app update with its service (see `install`), otherwise upgrade an older service now. While a
-/// check, an install or a service upgrade is running it only reports the status.
+/// `POST /app/update/apply`, sent once the page showed what a check found: install a found app
+/// update with its service (see `install`), otherwise upgrade an older service now. While a check,
+/// an install or a service upgrade is running it only reports the status.
 pub fn apply(app: &AppHandle) -> Value {
     let outdated = service_for_app(app).is_object();
     match app.state::<Updates>().claim(true, outdated) {
@@ -302,25 +324,37 @@ fn brief(text: &str) -> String {
 
 /// Download the new app, upgrade the service to its version, then install and restart. A failed
 /// download or service upgrade changes nothing; the service upgrade is skipped when it is not
-/// uv-installed or already new enough.
-fn install(app: &AppHandle, update: Update) {
+/// uv-installed or already new enough. A failure keeps the update, so a retry needs no new check.
+fn install(app: &AppHandle, mut update: Update) {
     let app = app.clone();
+    update.timeout = Some(DOWNLOAD_TIMEOUT);
     tauri::async_runtime::spawn(async move {
         let updates = app.state::<Updates>();
         let version = update.version.clone();
         let outcome = async {
             let bytes = update
-                .download(|_, _| {}, || {})
+                .download(
+                    |chunk, total| {
+                        let mut state = updates.lock();
+                        state.download = (state.download.0 + chunk as u64, total);
+                    },
+                    || {},
+                )
                 .await
-                .map_err(|error| format!("下载失败：{}", brief(&error.to_string())))?;
-            updates.lock().step = Some("service");
+                .map_err(|error| {
+                    format!(
+                        "下载失败，App 和本机服务都没有改动：{}",
+                        brief(&error.to_string())
+                    )
+                })?;
+            updates.lock().enter("service");
             let service = app.clone();
             let target = version.clone();
             tauri::async_runtime::spawn_blocking(move || upgrade_service_to(&service, &target))
                 .await
                 .map_err(|error| error.to_string())?
                 .map_err(|error| format!("本机服务升级失败，App 未更新：{error}"))?;
-            updates.lock().step = Some("app");
+            updates.lock().enter("app");
             update
                 .install(bytes)
                 .map_err(|error| format!("安装失败：{}", brief(&error.to_string())))
@@ -331,12 +365,11 @@ fn install(app: &AppHandle, update: Update) {
                 if let Some(dir) = marker_dir(&app) {
                     let _ = write_updated(&dir, &version);
                 }
+                updates.lock().enter("restart");
+                thread::sleep(RESTART_NOTE);
                 app.restart();
             }
-            Err(error) => {
-                updates.lock().step = None;
-                updates.set(Phase::Failed(error), None);
-            }
+            Err(error) => updates.set(Phase::Failed(error), Some(update)),
         }
     });
 }
@@ -391,7 +424,7 @@ fn release_notes(body: Option<&str>, current: &str, target: &str) -> Value {
 /// service, and when the last check succeeded.
 pub fn status(app: &AppHandle) -> Value {
     let updates = app.try_state::<Updates>();
-    let (phase, upgrade, notes, step, updated) = updates
+    let (phase, upgrade, notes, step, download, started, retry, updated) = updates
         .as_ref()
         .map(|updates| {
             let state = updates.lock();
@@ -400,6 +433,9 @@ pub fn status(app: &AppHandle) -> Value {
                 state.upgrade.clone(),
                 state.notes.clone(),
                 state.step,
+                state.download,
+                state.started,
+                state.pending.as_ref().map(|update| update.version.clone()),
                 state
                     .updated
                     .as_ref()
@@ -409,6 +445,8 @@ pub fn status(app: &AppHandle) -> Value {
         })
         .unwrap_or_default();
     let checked = updates.and_then(|updates| *updates.checked.lock().unwrap());
+    let running = matches!(phase, Phase::Installing(_))
+        || matches!(upgrade, Upgrade::Running | Upgrade::Installing);
     let update = match phase {
         Phase::Idle => Value::Null,
         Phase::Checking => json!({"state": "checking", "version": null, "error": null}),
@@ -417,17 +455,31 @@ pub fn status(app: &AppHandle) -> Value {
             json!({"state": "available", "version": version, "error": null, "notes": notes})
         }
         Phase::Installing(version) => {
-            json!({"state": "installing", "version": version, "error": null, "step": step})
+            json!({
+                "state": "installing", "version": version, "error": null, "step": step,
+                "downloaded": download.0, "total": download.1,
+            })
         }
-        Phase::Failed(error) => json!({"state": "failed", "version": null, "error": error}),
+        // A version and a step say the install failed there and can be retried as it is.
+        Phase::Failed(error) => {
+            json!({"state": "failed", "version": retry, "error": error, "step": step})
+        }
     };
     json!({
         "version": VERSION,
         "update": update,
         "service": service_state(service_for_app(app), upgrade),
         "last_checked": checked.map(rfc3339),
+        "check_fresh": check_fresh(checked, SystemTime::now()),
+        "elapsed": started.filter(|_| running).map(|at| at.elapsed().as_secs()),
         "updated": updated,
     })
+}
+
+/// Whether what the last check found can be used without checking again.
+fn check_fresh(checked: Option<SystemTime>, now: SystemTime) -> bool {
+    // A clock set back reads as just checked, which at worst keeps a found update a little longer.
+    checked.is_some_and(|at| now.duration_since(at).unwrap_or_default() < FOUND_FOR)
 }
 
 /// The outdated note combined with what a one-click upgrade is doing or did.
@@ -504,6 +556,7 @@ pub fn install_service_now(app: &AppHandle) -> Value {
             return json!({"ok": false, "message": "已有更新或安装正在进行"});
         }
         state.upgrade = Upgrade::Installing;
+        state.started = Some(Instant::now());
     }
     let app = app.clone();
     thread::spawn(move || finish_upgrade(&app));
@@ -537,7 +590,7 @@ fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output = output_within(command, SERVICE_TIMEOUT)?;
     if output.status.success() {
         return Ok(());
     }
@@ -549,6 +602,46 @@ fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
         .find(|line| !line.is_empty())
         .unwrap_or("uv 返回失败");
     Err(reason.chars().take(200).collect())
+}
+
+/// `Command::output` that gives up after `limit`, killing the process.
+fn output_within(mut command: Command, limit: Duration) -> Result<std::process::Output, String> {
+    let child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let id = child.id();
+    let (done, finished) = std::sync::mpsc::channel();
+    let waiter = thread::spawn(move || {
+        let output = child.wait_with_output();
+        let _ = done.send(());
+        output
+    });
+    if finished.recv_timeout(limit).is_err() {
+        kill(id);
+        return Err(format!(
+            "超过 {} 分钟没有完成，请检查网络后重试",
+            limit.as_secs() / 60
+        ));
+    }
+    waiter
+        .join()
+        .map_err(|_| "uv 进程读取失败".to_owned())?
+        .map_err(|error| error.to_string())
+}
+
+fn kill(id: u32) {
+    #[cfg(not(windows))]
+    let _ = Command::new("kill").arg(id.to_string()).status();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &id.to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .status();
+    }
 }
 
 /// uv on PATH, else where its installers put it.
@@ -700,6 +793,29 @@ mod tests {
         )
         .unwrap();
         assert!(service(&tools).is_null());
+    }
+
+    #[test]
+    fn a_found_update_is_used_for_a_day() {
+        let now = SystemTime::now();
+        assert!(!check_fresh(None, now));
+        assert!(check_fresh(Some(now - Duration::from_secs(60)), now));
+        assert!(!check_fresh(Some(now - FOUND_FOR), now));
+    }
+
+    #[test]
+    fn a_command_over_its_limit_is_stopped_and_reported() {
+        let mut slow = Command::new("sleep");
+        slow.arg("30");
+        let started = Instant::now();
+        let error = output_within(slow, Duration::from_millis(100)).unwrap_err();
+        assert!(error.contains("没有完成"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let mut fast = Command::new("sh");
+        fast.args(["-c", "echo nope >&2; exit 3"]);
+        let output = output_within(fast, Duration::from_secs(10)).unwrap();
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "nope");
     }
 
     #[test]

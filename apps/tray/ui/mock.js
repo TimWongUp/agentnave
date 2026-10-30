@@ -7,6 +7,7 @@
 //   new URLSearchParams(location.search).has("mock") || location.protocol === "file:"
 // The prototype keeps it always on. Query: ?scene=live|calm|review|failed|six|quiet|empty|error
 // &update=available|installing|failed &service=older|upgrading|done|failed &at=<seconds into live>
+// &stale (the last check is too old) &fail=download|service|app (the update stops at that step)
 // &restart (reset the scenario clock; it is shared between pages through localStorage).
 (function () {
   const q = new URLSearchParams(location.search);
@@ -580,7 +581,7 @@ All checks passed!
     };
   }
 
-  let mockVersion = "0.21.0", updateOverride = null;
+  let mockVersion = "0.21.0", updateOverride = null, mockElapsed = () => 0;
   const NOTES = { link: null, items: [
     { version: "0.21.1", notes: "## 变更\n\n- 更新时先看更新内容，确认后一次完成本机服务和 App 的更新。\n- 修复 `wait` 偶尔漏报的问题。" },
   ] };
@@ -589,8 +590,10 @@ All checks passed!
     const service = q.get("service");
     return {
       version: mockVersion,
-      update: updateOverride || (update ? { state: update, version: "0.21.1", notes: NOTES, step: update === "installing" ? "service" : null } : { state: "current" }),
+      update: updateOverride || (update ? { state: update, version: "0.21.1", notes: NOTES, step: update === "installing" ? "service" : null, ...(update === "failed" ? { step: "service", error: "本机服务升级失败，App 未更新：无法连接 github.com" } : {}) } : { state: "current" }),
       service: service ? { state: service === "older" ? "outdated" : service, version: service === "older" ? "0.19.2" : mockVersion, error: service === "failed" ? "uv tool install 失败：无法连接 github.com" : null } : null,
+      check_fresh: !q.has("stale"),
+      elapsed: mockElapsed(),
     };
   }
 
@@ -669,17 +672,31 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
-    if (path === "/app/update/check") return p3Fetch("/app/status");
+    if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply") {
-      // Walks the real steps: download, service, then the App (which would restart here).
-      updateOverride = { state: "installing", version: "0.21.1", step: "download" };
-      setTimeout(() => { updateOverride = { ...updateOverride, step: "service" }; }, 1200);
-      setTimeout(() => { updateOverride = { ...updateOverride, step: "app" }; }, 3000);
-      setTimeout(() => {
+      // Walks the real steps: download, service, the App, then the restart. &fail=<step> stops there.
+      const total = 43 * 1048576;
+      const fail = q.get("fail");
+      const steps = [["download", 0], ["service", 4000], ["app", 9000], ["restart", 10500]];
+      const stop = (step) => {
+        timers.forEach(clearTimeout);
+        const error = { download: "下载失败，App 和本机服务都没有改动：error sending request for url", service: "本机服务升级失败，App 未更新：无法连接 github.com", app: "安装失败：磁盘空间不足" }[step];
+        updateOverride = { state: "failed", version: "0.21.1", step, error };
+      };
+      const started = Date.now();
+      const timers = [];
+      updateOverride = { state: "installing", version: "0.21.1", step: "download", downloaded: 0, total };
+      for (let at = 200; at < 4000; at += 200)
+        timers.push(setTimeout(() => { updateOverride = { ...updateOverride, downloaded: Math.floor(total * at / 4000) }; }, at));
+      for (const [step, at] of steps.slice(1))
+        timers.push(setTimeout(() => { updateOverride = { ...updateOverride, step }; mockElapsed = () => Math.floor((Date.now() - started - at) / 1000); }, at));
+      if (fail) timers.push(setTimeout(() => stop(fail), fail === "download" ? 2000 : steps.find(([step]) => step === fail)[1] + 1500));
+      timers.push(setTimeout(() => {
+        if (fail) return;
         mockVersion = "0.21.1";
         updateOverride = { state: "none" };
         installedState = { state: "done", version: mockVersion };
-      }, 4200);
+      }, 11500));
       return p3Fetch("/app/status");
     }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());

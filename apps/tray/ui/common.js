@@ -733,9 +733,11 @@
   Object.assign(AN, { post, installService, onboarding });
 })();
 
-// Updating, as one flow everywhere (header button, settings, the menu's "检查更新"): check again,
-// show what changed since this version, and only on "立即更新" upgrade the service, install the
-// App and restart. The release notes are plain text set with textContent, never as HTML.
+// Updating, as one flow everywhere (header button, settings, the menu's "检查更新"): use what the
+// last check found (check again only when it found nothing to do or is too old), show what changed
+// since this version, and only on "立即更新" upgrade the service, install the App and restart. An
+// update already running shows its progress. The release notes are plain text set with
+// textContent, never as HTML.
 (function () {
   const { h, load, post } = AN;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -786,39 +788,65 @@
   const close = () => dialog?.close();
   const done = (status) => window.dispatchEvent(new CustomEvent("agentnave:status", { detail: status }));
 
-  const STEPS = [["download", "下载新版 App"], ["service", "升级本机服务（约一分钟）"], ["app", "安装 App 并重启"]];
-  function progress(step, version) {
-    const at = STEPS.findIndex(([key]) => key === step);
-    show(`正在更新到 v${version}`, [
-      h("ol.upd-steps", {}, ...STEPS.map(([, label], i) =>
-        h(`li.${i < at ? "done" : i === at ? "now" : "todo"}`, {}, label))),
-      h("p.upd-note", {}, "完成后 App 会自动重启。正在运行的任务不受影响。"),
+  const STEPS = [["download", "下载 App 更新包"], ["service", "更新本机服务"], ["app", "安装 App"], ["restart", "重启并更新 Skill"]];
+  const mb = (bytes) => (bytes / 1048576).toFixed(1);
+  const took = (seconds) => seconds >= 60 ? `已用 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `已用 ${seconds} 秒`;
+  function stepList(update, elapsed, failed) {
+    const at = STEPS.findIndex(([key]) => key === update.step);
+    return h("ol.upd-steps", {}, ...STEPS.map(([key, label], i) => {
+      if (i !== at) return h(`li.${i < at ? "done" : "todo"}`, {}, label);
+      if (failed) return h("li.bad", {}, label);
+      if (key !== "download") return h(`li.now${elapsed >= 3 ? ".told" : ""}`, {}, label, elapsed >= 3 && h("span.upd-detail", {}, took(elapsed)));
+      const known = update.total > 0;
+      const percent = known ? Math.min(100, Math.floor(update.downloaded / update.total * 100)) : 0;
+      return h(`li.now${update.downloaded > 0 ? ".told" : ""}`, {}, label, update.downloaded > 0 && h("span.upd-detail", {}, known
+        ? `${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`
+        : `已下载 ${mb(update.downloaded)} MB`),
+        known && h("div.upd-bar", {}, h("i", { style: `width:${percent}%` })));
+    }));
+  }
+  function progress(status) {
+    const update = status.update;
+    show(`正在更新到 v${update.version}`, [
+      stepList(update, status.elapsed),
+      h("p.upd-note", {}, "正在运行的任务不受影响。"),
+    ], []);
+  }
+  function serviceProgress(status) {
+    show("正在升级本机服务", [
+      h("p.upd-p", {}, status.elapsed >= 3 ? `约需一分钟，${took(status.elapsed)}。` : "约需一分钟。"),
+      h("p.upd-note", {}, "正在运行的任务不受影响。"),
     ], []);
   }
 
-  async function apply(version, serviceOnly) {
+  function failure(update) {
+    show("更新没有完成", [
+      stepList(update, 0, true),
+      h("p.upd-p.upd-error", {}, update.error || "更新失败"),
+    ], [["关闭", close], ["重试", () => apply(update.version, false), true]]);
+  }
+
+  // Report what a started update does until it ends; on a real App update the restart ends it.
+  async function follow(status, serviceOnly) {
     running = true;
+    const version = status.update?.version;
     try {
-      if (serviceOnly) show("正在升级本机服务", [h("p.upd-p", {}, "约需一分钟，正在运行的任务不受影响。")], []);
-      else progress("download", version);
-      let status = await post("/app/update/apply");
-      // Another check or update holding the lock leaves this one unstarted. A fast end (failed or,
-      // for the service, done) still counts as started; the loop below reports it.
-      const started = serviceOnly
-        ? ["upgrading", "installing", "failed", "done"].includes(status.service?.state)
-        : ["installing", "failed"].includes(status.update?.state);
-      if (!started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
       for (;;) {
         done(status);
         const update = status.update;
         const service = status.service;
-        if (update?.state === "failed") throw new Error(update.error || "更新失败");
+        if (update?.state === "failed") {
+          running = false;
+          if (update.step) return failure(update);
+          throw new Error(update.error || "更新失败");
+        }
         if (serviceOnly) {
           if (service?.state === "failed") throw new Error(service.error || "升级本机服务失败");
           if (!["upgrading", "installing"].includes(service?.state)) break;
+          serviceProgress(status);
         } else if (update?.state === "installing") {
-          progress(update.step, version);
-        } else if (update?.state !== "installing" && status.version === version) {
+          progress(status);
+        } else if (status.version === version) {
           break;
         }
         await sleep(1000);
@@ -829,24 +857,60 @@
       show(serviceOnly ? "本机服务已升级" : `已更新到 v${version}`, [h("p.upd-p", {}, "已切换到新版本，无需重连。")], [["好", close, true]]);
     } catch (error) {
       running = false;
-      show("更新没有完成", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重新检查", () => run(), true]]);
+      show("更新没有完成", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重新检查", () => run(true), true]]);
     }
   }
 
-  async function run() {
-    if (running) return;
-    show("检查更新", [h("p.upd-p", {}, "正在检查最新版本…")], [["取消", close]]);
-    let status;
+  async function apply(version, serviceOnly) {
+    running = true;
     try {
-      status = await post("/app/update/check");
+      if (serviceOnly) serviceProgress({});
+      else progress({ update: { version, step: "download" } });
+      const status = await post("/app/update/apply");
+      // Another check or update holding the lock leaves this one unstarted. A fast end (failed or,
+      // for the service, done) still counts as started; `follow` reports it.
+      const started = serviceOnly
+        ? ["upgrading", "installing", "failed", "done"].includes(status.service?.state)
+        : ["installing", "failed"].includes(status.update?.state);
+      if (!started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
+      return follow(status, serviceOnly);
     } catch (error) {
-      return show("检查更新失败", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重试", () => run(), true]]);
+      running = false;
+      show("更新没有完成", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重新检查", () => run(true), true]]);
+    }
+  }
+
+  // Something to do, from a check recent enough to use as it is.
+  const usable = (status) => status.check_fresh && (status.update?.state === "available"
+    || (status.update?.state === "none" && ["outdated", "failed"].includes(status.service?.state)));
+
+  async function run(recheck = false) {
+    if (running) return;
+    let status = null;
+    if (!recheck) {
+      try { status = await load("/app/status"); } catch { /* A check below reports the trouble. */ }
+      const update = status?.update;
+      if (update?.state === "installing") return follow(status, false);
+      if (["upgrading", "installing"].includes(status?.service?.state)) return follow(status, true);
+      if (update?.state === "failed" && update.step && status.check_fresh) return failure(update);
+    }
+    // Only a found update can stay if this check fails, so only that one may fail silently.
+    const found = status?.update?.state === "available";
+    if (recheck || !status || !usable(status)) {
+      const reason = found ? "上次检查已超过一天，先确认有没有更新的版本…" : "正在检查最新版本…";
+      show("检查更新", [h("p.upd-p", {}, reason)], [["取消", close]]);
+      try {
+        status = await post(found ? "/app/update/check?quiet=1" : "/app/update/check");
+      } catch (error) {
+        return show("检查更新失败", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重试", () => run(true), true]]);
+      }
     }
     done(status);
     const update = status.update;
     const service = status.service;
+    if (update?.state === "installing") return follow(status, false);
     if (update?.state === "failed")
-      return show("检查更新失败", [h("p.upd-p.upd-error", {}, update.error || "请检查网络后重试")], [["关闭", close], ["重试", () => run(), true]]);
+      return show("检查更新失败", [h("p.upd-p.upd-error", {}, update.error || "请检查网络后重试")], [["关闭", close], ["重试", () => run(true), true]]);
     if (update?.state === "available") {
       const items = update.notes?.items || [];
       const link = update.notes?.link;
@@ -893,6 +957,9 @@
   end.prepend(button);
   const short = end.matches(".top-end");
   let status = null;
+  function percent(update) {
+    return update?.step === "download" && update.total > 0 ? ` ${Math.min(100, Math.floor(update.downloaded / update.total * 100))}%` : "";
+  }
   function render() {
     const update = status?.update?.state;
     const service = status?.service?.state;
@@ -900,18 +967,23 @@
     const found = update === "available" || service === "outdated";
     const updated = !busy && !found && status?.updated;
     button.hidden = !busy && !found && !updated;
-    button.disabled = busy;
     button.classList.toggle("updated", Boolean(updated));
-    button.textContent = busy ? (short ? "更新中…" : "正在更新…")
+    button.textContent = busy ? `更新中${percent(status.update) || "…"}`
       : updated ? `已更新到 v${status.updated}`
       : update === "available" ? `↑ ${short ? "" : "更新到 "}v${status.update.version}`
       : short ? "↑ 升级服务" : "↑ 升级本机服务";
-    button.title = updated ? "点此查看是否还有更新" : "先看看更新了什么，确认后再更新";
+    button.title = busy ? "查看更新进度" : updated ? "点此查看是否还有更新" : "先看看更新了什么，确认后再更新";
   }
   async function refresh() {
     if (document.hidden) return;
     try { status = await load("/app/status"); } catch { return; }
     render();
+  }
+  // Fast only while an update runs, which another window may have started.
+  const busyNow = () => status?.update?.state === "installing" || ["upgrading", "installing"].includes(status?.service?.state);
+  async function tick() {
+    await refresh();
+    setTimeout(tick, busyNow() ? 1000 : 60000);
   }
   button.addEventListener("click", () => {
     if (short) location.href = "/app/update";
@@ -920,9 +992,8 @@
   // The settings page and the update flow read the status themselves; reuse what they got.
   addEventListener("agentnave:status", ({ detail }) => { status = detail; render(); });
   document.addEventListener("visibilitychange", refresh);
-  setInterval(refresh, 60000);
   // After every deferred script, so the preview's mock backend is in place too.
-  addEventListener("DOMContentLoaded", refresh);
+  addEventListener("DOMContentLoaded", tick);
 })();
 
 // The brand's N lets its dot drip when the pointer comes over it, as the menu bar icon does on a

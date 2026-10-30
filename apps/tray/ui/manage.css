@@ -89,6 +89,12 @@ dialog.upd::backdrop { background: #0006; }
 .upd-steps .done::after { content: " ✓"; color: var(--run, var(--accent)); }
 .upd-steps .now { color: var(--ink); font-weight: 600; }
 .upd-steps .now::after { content: " …"; }
+.upd-steps .told::after { content: none; }
+.upd-steps .bad { color: var(--bad); font-weight: 600; }
+.upd-steps .bad::after { content: " ✕"; }
+.upd-detail { margin-left: 8px; font-weight: 400; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.upd-bar { height: 4px; margin: 2px 0 6px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.upd-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
 .upd-steps .todo { color: var(--faint, var(--muted)); }
 .upd-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .upd-row:empty { display: none; }
