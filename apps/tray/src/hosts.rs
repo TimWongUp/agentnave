@@ -441,7 +441,7 @@ impl Hosts {
     }
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
     /// backing up each file first. Returns the files that could not be written.
-    pub fn sync_rules(&self, text: Option<&str>) -> Vec<Value> {
+    pub fn sync_rules(&self, text: Option<&str>, also: &[PathBuf]) -> Vec<Value> {
         let (app, home) = (&self.context.app, &self.context.home);
         // Named by the folder under home, so `AGENTS.md` copies of different apps stay apart.
         let backup = |path: &Path, bytes: &[u8]| {
@@ -456,8 +456,14 @@ impl Hosts {
             &self.connected_rule_apps(),
             home,
             text,
+            also,
             &backup,
         )
+    }
+    /// The rules files the installed apps could read now, kept across a root change so the
+    /// files left behind lose their block too.
+    pub fn rule_paths(&self) -> Vec<PathBuf> {
+        crate::rules::existing(&self.rule_apps(), &self.context.home)
     }
     fn detect(&self, host: &Host) -> (bool, &'static str, Option<PathBuf>) {
         if self.context.find(host.binary).is_some() {

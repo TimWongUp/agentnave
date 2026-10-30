@@ -336,6 +336,13 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         Some(Value::String(text)) => crate::rules::check_custom(text)?,
         Some(_) => return Err("自定义编排必须为文本".into()),
     }
+    if document["preset"] == "custom"
+        && !document["custom"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty())
+    {
+        return Err("自定义编排不能为空".into());
+    }
     for role in ["explorer", "worker"] {
         let Some(seats) = top.get(role) else { continue };
         for (difficulty, seat) in object(seats, role)? {

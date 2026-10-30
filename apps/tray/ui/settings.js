@@ -754,9 +754,13 @@ async function loadOrchestration() {
 
 async function saveOrchestration(document, done) {
   if (!orchestration || orchestration.error) return;
-  if (busy) return showNotice("正在保存，请稍后再选", true);
+  if (busy) {
+    showNotice("正在保存，请稍后再选", true);
+    return renderOrchestration();
+  }
   busy = true;
   updateControls();
+  $("save-custom").disabled = true;
   try {
     let data = { files: orchestration.files, failures: [] };
     if (!isMock) {
@@ -784,16 +788,18 @@ async function saveOrchestration(document, done) {
 
 function pickPreset(preset) {
   const document = { ...orchestration.document, preset };
-  // The editor starts from the preset the user leaves, and keeps its text once written.
-  if (preset === "custom" && !document.custom?.trim()) {
+  // The editor starts from the preset the user leaves, and keeps its text once written; what it
+  // shows is always what gets written.
+  if (preset === "custom") {
     const from = orchestration.document.preset;
-    document.custom = orchestration.presets[from === "off" ? "split" : from];
+    if (!document.custom?.trim()) document.custom = orchestration.presets[from === "off" ? "split" : from];
     $("custom-text").value = document.custom;
   }
   saveOrchestration(document, preset === "off" ? "已关闭编排，已从全局规则中移除" : "已保存，并写入已接入应用的全局规则");
 }
 
 function saveCustom() {
+  if (!$("custom-text").value.trim()) return showNotice("自定义规则不能为空；不想写入时选「关闭」", true);
   saveOrchestration({ ...orchestration.document, preset: "custom", custom: $("custom-text").value }, "自定义规则已保存并写入");
 }
 
@@ -1376,6 +1382,11 @@ async function listSeatModel(seat) {
     doc.clis[seat.provider].models[seat.model] ||= {};
     return doc;
   };
+  // Until 员工 is read there is nothing to add to: an empty document would replace the file.
+  if (!savedSnapshot && !documentError) {
+    showNotice("员工配置还在读取，请稍后再选", true);
+    return false;
+  }
   const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
   if (Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model)) return true;
   if (documentError) {

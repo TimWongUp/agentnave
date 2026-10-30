@@ -340,7 +340,7 @@ impl Reader {
             let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
             let failures = guard
                 .as_ref()
-                .map(|hosts| self.sync_rules(hosts))
+                .map(|hosts| self.sync_rules(hosts, &[]))
                 .unwrap_or_default();
             drop(guard);
             return Response::json(&json!({"saved": true, "failures": failures,
@@ -479,7 +479,7 @@ impl Reader {
             .as_mut()
         {
             hosts.refresh_probed();
-            self.sync_rules(hosts);
+            self.sync_rules(hosts, &[]);
         }
     }
 
@@ -492,11 +492,11 @@ impl Reader {
 
     /// Bring the orchestration block in line with the settings and the connected apps. A broken
     /// orchestration.json leaves the files alone; a preview build never writes them.
-    fn sync_rules(&self, hosts: &crate::hosts::Hosts) -> Vec<Value> {
+    fn sync_rules(&self, hosts: &crate::hosts::Hosts, also: &[std::path::PathBuf]) -> Vec<Value> {
         if crate::PREVIEW || crate::members::read_orchestration(&self.root).is_err() {
             return Vec::new();
         }
-        hosts.sync_rules(self.rules_text().as_deref())
+        hosts.sync_rules(self.rules_text().as_deref(), also)
     }
 
     /// The global rules files with whether each carries the current orchestration block.
@@ -551,7 +551,7 @@ impl Reader {
             "/app/hosts" => Response::json(&hosts.snapshot()),
             "/app/hosts/refresh" => {
                 let snapshot = hosts.refresh();
-                self.sync_rules(hosts);
+                self.sync_rules(hosts, &[]);
                 Response::json(&snapshot)
             }
             "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
@@ -572,10 +572,16 @@ impl Reader {
                     return Response::error(400, "请求必须为 JSON");
                 };
                 let operation = path.rsplit('/').next().unwrap();
+                // A moved host's old rules files still carry the block; clean them after the move.
+                let before = if operation == "root" {
+                    hosts.rule_paths()
+                } else {
+                    Vec::new()
+                };
                 let result = hosts.action(operation, &payload);
                 // Connecting, removing or moving a host changes which rules files carry the block.
                 if matches!(operation, "connect" | "remove" | "root") {
-                    self.sync_rules(hosts);
+                    self.sync_rules(hosts, &before);
                 }
                 match result {
                     Ok(result) => Response::json(&result),

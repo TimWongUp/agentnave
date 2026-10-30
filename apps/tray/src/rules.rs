@@ -19,7 +19,7 @@ const SHARED: &str = "## AgentNave 编排偏好
 - 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；小事自己做。
 - 探索、规划、评审派 Explorer，prompt 写明不改文件；实现派 Worker。评审不交给原来的 Worker，尽量换模型。
 - 同一组文件同一时间只有一个 Worker 在写；同一职责可以续接，换职责时给自足的简报，不让下一位重新探索。
-- 评审按风险定级，启用 agentnave-review 时按它定级。
+- 评审按风险定级；启用 agentnave-review 时，评审的定级和选工位都按它，不用 Explorer。
 - `succeeded` 不等于完成，boss 核对产物后验收；失败或取消时先核对现状，再决定续接、重派还是收尾。";
 
 const PARALLEL: &str = "
@@ -239,19 +239,21 @@ fn splice(content: &str, text: Option<&str>) -> Result<String, String> {
         (Some((start, end)), Some(text)) => {
             format!("{}{}{}", &content[..start], block(text), &content[end..])
         }
+        // Undo what adding it put around it: the newline after it and, at the end of the file, the
+        // blank line before it. The user's own spacing stays.
         (Some((start, end)), None) => {
-            let before = content[..start].trim_end_matches(['\n', '\r']);
-            let after = content[end..].trim_start_matches(['\n', '\r']);
-            match (before.is_empty(), after.is_empty()) {
-                (true, _) => after.into(),
-                (false, true) => format!("{before}\n"),
-                (false, false) => format!("{before}\n\n{after}"),
-            }
+            let after = content[end..].strip_prefix('\n').unwrap_or(&content[end..]);
+            let before = &content[..start];
+            let before = match before.strip_suffix('\n') {
+                Some(trimmed) if after.is_empty() && trimmed.ends_with('\n') => trimmed,
+                _ => before,
+            };
+            format!("{before}{after}")
         }
         (None, Some(text)) => {
+            // One blank line before it, which removing it takes away again.
             let gap = match content {
                 "" => "",
-                _ if content.ends_with("\n\n") => "",
                 _ if content.ends_with('\n') => "\n",
                 _ => "\n\n",
             };
@@ -319,22 +321,9 @@ fn write(path: &Path, home: &Path, text: Option<&str>, backup: &Backup) -> Resul
     Ok(true)
 }
 
-/// Put `text` in the block of every target file and take it out of every other rules file an
-/// installed app could read, including one it stopped reading; with no text, take it out
-/// everywhere. Returns the files that could not be written.
-pub fn sync(
-    installed: &[App],
-    connected: &[App],
-    home: &Path,
-    text: Option<&str>,
-    backup: &Backup<'_>,
-) -> Vec<Value> {
-    let targets = if text.is_some() {
-        targets(connected, home)
-    } else {
-        Vec::new()
-    };
-    let mut paths = targets.clone();
+/// Every existing rules file an installed app could read, including one it stopped reading.
+pub fn existing(installed: &[App], home: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
     for app in installed {
         for path in candidates(app, home)
             .1
@@ -344,6 +333,34 @@ pub fn sync(
             if !paths.contains(&path) {
                 paths.push(path);
             }
+        }
+    }
+    paths
+}
+
+/// Put `text` in the block of every target file and take it out of every other rules file an
+/// installed app could read, and of `also` (files read before a host moved); with no text, take
+/// it out everywhere. Returns the files that could not be written.
+pub fn sync(
+    installed: &[App],
+    connected: &[App],
+    home: &Path,
+    text: Option<&str>,
+    also: &[PathBuf],
+    backup: &Backup<'_>,
+) -> Vec<Value> {
+    let targets = if text.is_some() {
+        targets(connected, home)
+    } else {
+        Vec::new()
+    };
+    let mut paths = targets.clone();
+    for path in existing(installed, home)
+        .into_iter()
+        .chain(also.iter().cloned())
+    {
+        if !paths.contains(&path) {
+            paths.push(path);
         }
     }
     paths
@@ -532,7 +549,7 @@ mod tests {
         };
         let connected = [claude, grok, codex];
         let text = chosen(&json!({"preset": "split"})).unwrap();
-        assert!(sync(&installed, &connected, h, Some(&text), &backup).is_empty());
+        assert!(sync(&installed, &connected, h, Some(&text), &[], &backup).is_empty());
         let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
         assert_eq!(
             claude_md,
@@ -566,9 +583,9 @@ mod tests {
 
         // Unchanged settings write nothing; turning it off restores every file as it was.
         backups.borrow_mut().clear();
-        assert!(sync(&installed, &connected, h, Some(&text), &backup).is_empty());
+        assert!(sync(&installed, &connected, h, Some(&text), &[], &backup).is_empty());
         assert!(backups.borrow().is_empty());
-        assert!(sync(&installed, &connected, h, None, &backup).is_empty());
+        assert!(sync(&installed, &connected, h, None, &[], &backup).is_empty());
         assert_eq!(
             std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
             own
@@ -578,19 +595,38 @@ mod tests {
         // Neither file exists yet: Grok would read the one created for Claude, so it gets no other.
         std::fs::remove_file(h.join(".claude/CLAUDE.md")).unwrap();
         std::fs::remove_file(h.join(".grok/AGENTS.md")).unwrap();
-        assert!(sync(&installed, &connected, h, Some(&text), &backup).is_empty());
+        assert!(sync(&installed, &connected, h, Some(&text), &[], &backup).is_empty());
         assert!(h.join(".claude/CLAUDE.md").is_file());
         assert!(!h.join(".grok/AGENTS.md").exists());
         // A lone marker is left for the user rather than guessed at.
         let broken = format!("mine\n{START}\nold\n");
         std::fs::write(h.join(".codex/AGENTS.md"), &broken).unwrap();
-        let failures = sync(&installed, &connected, h, Some(&text), &backup);
+        let failures = sync(&installed, &connected, h, Some(&text), &[], &backup);
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0]["path"], json!(h.join(".codex/AGENTS.md")));
         assert_eq!(
             std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap(),
             broken
         );
+
+        // Adding and removing the block leaves the user's own spacing as it was.
+        for own in ["我的规则\n\n\n", "我的规则\n", "我的规则\r\n"] {
+            let added = splice(own, Some("x")).unwrap();
+            assert_eq!(splice(&added, None).unwrap(), own);
+        }
+        // A file a moved host read before still loses its block.
+        let moved = h.join("old-root/AGENTS.md");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, format!("old\n\n{}\n", block("旧"))).unwrap();
+        sync(
+            &installed,
+            &connected,
+            h,
+            None,
+            std::slice::from_ref(&moved),
+            &backup,
+        );
+        assert_eq!(std::fs::read_to_string(&moved).unwrap(), "old\n");
 
         assert!(check_custom("<!-- AGENTNAVE:END -->").is_err());
         assert_eq!(chosen(&json!({"preset": "custom", "custom": "  "})), None);
