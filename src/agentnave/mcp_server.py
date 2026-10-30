@@ -120,7 +120,7 @@ def _read_excluded_providers() -> frozenset[str]:
     return excluded if host_provider is None else excluded | {host_provider}
 
 
-WAIT_SECONDS = 300
+WAIT_SECONDS = 240
 
 HOST = detect_host()
 EXCLUDED_PROVIDERS = _read_excluded_providers()
@@ -571,6 +571,8 @@ def update_payload(
     conversations: Conversations,
     invocation_id: str,
     update: InvocationResult | InvocationError | None,
+    *,
+    include_running_output: bool = True,
 ) -> InvocationPayload:
     """Final result, or a running snapshot that reports the given blocker."""
     if isinstance(update, InvocationResult):
@@ -596,7 +598,7 @@ def update_payload(
         if snapshot.last_activity_age_ms is not None:
             summary["age_ms"] = snapshot.last_activity_age_ms
         response["activity"] = summary
-    output, age = manager.recent_output(invocation_id)
+    output, age = manager.recent_output(invocation_id) if include_running_output else ("", None)
     if output and age is not None:
         response["output"] = output
         response["output_age_ms"] = age
@@ -930,13 +932,13 @@ async def wait(
         Field(description="false omits reply bodies and tails, including answers under review."),
     ] = True,
     wait_seconds: Annotated[
-        int | None,
+        Literal[0, 240] | None,
         Field(
-            ge=0,
-            le=300,
             description=(
-                "Longest wait in seconds, 300 when omitted; 0 returns at once, with the ready "
-                "handles or a running snapshot of each. Never stops the work."
+                "Omit for normal waiting (up to 240 seconds). Only 0 and 240 are accepted. "
+                "Use 0 for a specific progress or intervention check: it returns at once and "
+                "may include running reply tails. Ready results are still received normally. "
+                "Never stops the work."
             ),
         ),
     ] = None,
@@ -952,14 +954,16 @@ async def wait(
     *,
     ctx: Context[Runtime],
 ) -> WaitPayload:
-    """Wait up to wait_seconds (five minutes) for the first listed task or round to be ready.
+    """Wait up to 240 seconds for the first listed task or round to be ready.
 
     A task is ready when it finished or reports a CLI execution blocker (it keeps running;
     each blocker category wakes once). A round is ready when it finished, a seat reports a
     blocker, or answers wait for review (reason=review_needed, seat status pending_review).
     reason=ready returns every handle ready at that moment, in updates (tasks) and rounds;
     finished ones stay ready, so drop them from the next call. reason=wait_elapsed returns a
-    running snapshot of each, with the latest reply tail (at most 1000 characters) and its age.
+    running snapshot of each, with status and recent activity. Only explicit wait_seconds=0
+    includes running reply tails (at most 1000 characters each) and their age, subject to
+    include_output. After wait_elapsed, normally wait again without a separate 0-second check.
     A round returns each seat's final answer once; later payloads mark it output_returned, so
     reread it with read_conversation. Unknown, expired or repeated ids reject the whole call before waiting. This is
     request/response waiting, not a background subscription.
@@ -1022,6 +1026,7 @@ async def wait(
         if not invocation_ids and not round_ids:
             return {"reason": "nothing_pending", "updates": [], "rounds": []}
     elapsed = not ready_invocations and not ready_rounds
+    include_running_output = include_output and wait_seconds == 0
     updates: list[InvocationPayload] = []
     for handle in invocation_ids:
         if not elapsed and handle not in ready_invocations:
@@ -1029,7 +1034,15 @@ async def wait(
         update = ready_invocations.get(handle)
         if isinstance(update, InvocationResult):
             conversations.delivered_tasks.add(handle)
-        updates.append(update_payload(manager, conversations, handle, update))
+        updates.append(
+            update_payload(
+                manager,
+                conversations,
+                handle,
+                update,
+                include_running_output=include_running_output,
+            )
+        )
     rounds: list[RoundPayload] = []
     for handle in round_ids:
         if not elapsed and handle not in ready_rounds:
@@ -1044,6 +1057,7 @@ async def wait(
                 manager,
                 reason or "wait_elapsed",
                 include_output=include_output,
+                include_running_output=include_running_output,
                 deliver=not elapsed,
                 reviews=_review_map(conversations, round_),
                 entries=conversations.committed_entries(round_.group.id, round_.number),
@@ -1261,6 +1275,7 @@ def round_payload(
     reason: str,
     *,
     include_output: bool = True,
+    include_running_output: bool = True,
     deliver: bool = True,
     reviews: dict[str, Review | None] | None = None,
     entries: list[CommittedEntry] | None = None,
@@ -1299,7 +1314,11 @@ def round_payload(
                 if snapshot.last_activity_age_ms is not None:
                     summary["age_ms"] = snapshot.last_activity_age_ms
                 seat["activity"] = summary
-            output, age = manager.recent_output(run.invocation_id) if include_output else ("", None)
+            output, age = (
+                manager.recent_output(run.invocation_id)
+                if include_output and include_running_output
+                else ("", None)
+            )
             if output and age is not None:
                 seat["output"] = output
                 seat["output_age_ms"] = age

@@ -62,7 +62,7 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "    for _ in range(8):\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'working '}}}), flush=True)\n"
         "        time.sleep(0.05)\n"
-        "if prompt == 'blocker':\n"
+        "if prompt == 'blocker' or prompt.endswith('\\nblocker'):\n"
         "    for text in ['旧' * 1100, '新进展']:\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':text}}}), flush=True)\n"
         "    print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{'secret':'DO_NOT_RETURN'}}]}}), flush=True)\n"
@@ -70,7 +70,10 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "        print(json.dumps({'type':'system','subtype':'api_retry','error':'authentication_failed'}), flush=True)\n"
         "        time.sleep(0.05)\n"
         "    time.sleep(30)\n"
-        "if prompt == 'sleep' or prompt.endswith('take a nap'):\n"
+        "if prompt.endswith('take a nap'):\n"
+        "    print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'still working'}}}), flush=True)\n"
+        "    time.sleep(30)\n"
+        "if prompt == 'sleep':\n"
         "    time.sleep(30)\n"
         "if prompt == 'malformed usage':\n"
         '    print(\'{"type":"result","result":"MALFORMED USAGE",\' '
@@ -111,20 +114,18 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         invocation_id = _payload(started.structured_content)["invocation_id"]
         # A later dispatch lists the blocker without taking it from wait.
         blocked = {"id": invocation_id, "kind": "task", "status": "execution_blocked"}
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(10):
             while True:
-                other = _payload(
-                    (
-                        await client.call_tool(
-                            "start_agent",
-                            {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path)},
-                        )
-                    ).structured_content
+                other_result = await client.call_tool(
+                    "start_agent",
+                    {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path)},
                 )
+                assert not other_result.is_error, other_result.content
+                other = _payload(other_result.structured_content)
                 listed = cast(list[dict[str, object]], other.get("unreceived", []))
                 if any(blocked.items() <= item.items() for item in listed):
                     break
-                await asyncio.sleep(0.05)
+                await client.call_tool("wait", {"ids": [other["invocation_id"]]})
         async with asyncio.timeout(3):
             response = await client.call_tool("wait", {"ids": [invocation_id]})
         assert _payload(response.structured_content)["reason"] == "ready"
@@ -132,14 +133,28 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         assert payload["status"] == "running"
         assert payload["reason"] == "execution_blocked"
         assert _payload(payload["error"])["code"] == "authentication_failed"
-        assert payload["output"] == "旧" * 997 + "新进展"
+        assert "output" not in payload and "output_age_ms" not in payload
+        assert "kind" in _payload(payload["activity"])
         assert "DO_NOT_RETURN" not in str(payload)
         assert "provider_usage" not in payload
+        peek = _first(await client.call_tool("wait", {"ids": [invocation_id], "wait_seconds": 0}))
+        assert peek["output"] == "旧" * 997 + "新进展"
+        assert "DO_NOT_RETURN" not in str(peek)
+        hidden = _first(
+            await client.call_tool(
+                "wait", {"ids": [invocation_id], "wait_seconds": 0, "include_output": False}
+            )
+        )
+        assert "output" not in hidden and "output_age_ms" not in hidden
         monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.4)
         later = _first(await client.call_tool("wait", {"ids": [invocation_id]}))
         assert later["reason"] == "wait_elapsed"
-        assert later["output"] == payload["output"]
-        assert cast(int, later["output_age_ms"]) > cast(int, payload["output_age_ms"])
+        assert "output" not in later and "output_age_ms" not in later
+        later_peek = _first(
+            await client.call_tool("wait", {"ids": [invocation_id], "wait_seconds": 0})
+        )
+        assert later_peek["output"] == peek["output"]
+        assert cast(int, later_peek["output_age_ms"]) > cast(int, peek["output_age_ms"])
         cancelled = await client.call_tool("cancel", {"id": invocation_id})
         assert _payload(_payload(cancelled.structured_content)["invocation"])["status"] == (
             "cancelled"
@@ -160,7 +175,9 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert "timeout_seconds" not in start_properties
     wait_properties = _payload(tools["wait"].input_schema["properties"])
     assert set(wait_properties) == {"ids", "include_output", "wait_seconds", "manager_session_id"}
-    assert mcp_server.WAIT_SECONDS == 300
+    assert mcp_server.WAIT_SECONDS == 240
+    wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
+    assert wait_modes[0]["enum"] == [0, 240]
     cancel = tools["cancel"].annotations
     assert cancel is not None and cancel.destructive_hint is True
     for name in ("wait", "list", "list_members", "read_conversation"):
@@ -215,7 +232,9 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
 
     assert len(running_payloads) >= 2
     assert all(payload["reason"] == "wait_elapsed" for payload in running_payloads)
-    assert any("working" in str(payload.get("output", "")) for payload in running_payloads)
+    assert all(
+        "output" not in payload and "output_age_ms" not in payload for payload in running_payloads
+    )
     finished_payload = _first(finished)
     invocation_result = finished_payload
     assert started.is_error is False
@@ -257,7 +276,9 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
         assert [seat["status"] for seat in seats] == ["running", "running"]
         async with asyncio.timeout(10):
             while True:
-                waited = await client.call_tool("wait", {"ids": [started_payload["round_id"]]})
+                waited = await client.call_tool(
+                    "wait", {"ids": [started_payload["round_id"]], "wait_seconds": 240}
+                )
                 payload = _first(waited, "rounds")
                 if payload["status"] != "running":
                     break
@@ -289,6 +310,7 @@ async def test_mcp_round_snapshot_holds_back_finished_answers_until_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.05)
     async with Client(mcp) as client:
         started = await client.call_tool(
             "run_round",
@@ -312,14 +334,79 @@ async def test_mcp_round_snapshot_holds_back_finished_answers_until_delivery(
         round_id = _payload(_payload(started.structured_content)["round"])["round_id"]
         async with asyncio.timeout(10):
             while True:
-                waited = await client.call_tool("wait", {"ids": [round_id], "wait_seconds": 1})
+                waited = await client.call_tool("wait", {"ids": [round_id]})
                 snapshot = cast(list[dict[str, object]], _first(waited, "rounds")["seats"])
-                if snapshot[0]["status"] == "succeeded":
+                if snapshot[0]["status"] == "succeeded" and "activity" in snapshot[1]:
                     break
         assert "output" not in snapshot[0] and "output_returned" not in snapshot[0]
+        assert "output" not in snapshot[1] and "output_age_ms" not in snapshot[1]
+        peek = _first(
+            await client.call_tool("wait", {"ids": [round_id], "wait_seconds": 0}), "rounds"
+        )
+        peek_seats = cast(list[dict[str, object]], peek["seats"])
+        assert "output" not in peek_seats[0] and "output_returned" not in peek_seats[0]
+        assert peek_seats[1]["output"] == "still working"
+        hidden = _first(
+            await client.call_tool(
+                "wait", {"ids": [round_id], "wait_seconds": 0, "include_output": False}
+            ),
+            "rounds",
+        )
+        assert all(
+            "output" not in seat and "output_age_ms" not in seat
+            for seat in cast(list[dict[str, object]], hidden["seats"])
+        )
         cancelled = await client.call_tool("cancel", {"id": round_id})
         delivered = _payload(_payload(cancelled.structured_content)["round"])
         assert "HELLO" in str(cast(list[dict[str, object]], delivered["seats"])[0]["output"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_blocked_round_keeps_finished_answers_and_hides_running_tails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    async with Client(mcp) as client:
+        started = await client.call_tool(
+            "run_round",
+            {
+                "title": "Mixed states",
+                "cwd": str(tmp_path),
+                "members": [{"id": s, "provider": "claude"} for s in "ab"],
+                "seats": ["a", "b"],
+                "order": "serial",
+                "prompt": "hello",
+                "instructions": {"b": "blocker"},
+            },
+        )
+        round_id = _payload(_payload(started.structured_content)["round"])["round_id"]
+        async with asyncio.timeout(5):
+            response = await client.call_tool("wait", {"ids": [round_id]})
+        assert _payload(response.structured_content)["reason"] == "ready"
+        payload = _first(response, "rounds")
+        assert payload["status"] == "running"
+        finished, blocked = cast(list[dict[str, object]], payload["seats"])
+        assert finished["status"] == "succeeded" and "HELLO" in str(finished["output"])
+        assert blocked["status"] == "running"
+        assert _payload(blocked["error"])["code"] == "authentication_failed"
+        assert "activity" in blocked and "output" not in blocked and "output_age_ms" not in blocked
+        peek = _first(
+            await client.call_tool("wait", {"ids": [round_id], "wait_seconds": 0}), "rounds"
+        )
+        finished, blocked = cast(list[dict[str, object]], peek["seats"])
+        assert finished["output_returned"] is True and "output" not in finished
+        assert blocked["output"] == "旧" * 997 + "新进展"
+        await client.call_tool("cancel", {"id": round_id})
+
+
+@pytest.mark.asyncio
+async def test_mcp_rejects_arbitrary_wait_windows() -> None:
+    async with Client(mcp) as client:
+        for seconds in (1, 45, 300):
+            result = await client.call_tool("wait", {"ids": ["missing"], "wait_seconds": seconds})
+            assert result.is_error is True
+            assert "0" in str(result.content) and "240" in str(result.content)
+            assert "Unknown or expired id" not in str(result.content)
 
 
 @pytest.mark.asyncio
