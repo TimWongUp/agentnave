@@ -415,6 +415,18 @@ impl Hosts {
             })
             .collect()
     }
+    /// The boss apps installed here with their resolved roots, for the global rules list.
+    pub fn rule_apps(&self) -> Vec<crate::rules::App> {
+        self.registry()
+            .into_iter()
+            .filter(|host| self.detect(host).0)
+            .map(|host| crate::rules::App {
+                id: host.id,
+                label: host.label,
+                root: host.root.path,
+            })
+            .collect()
+    }
     fn detect(&self, host: &Host) -> (bool, &'static str, Option<PathBuf>) {
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
@@ -1155,17 +1167,8 @@ impl Hosts {
             // The MCP entry is already connected even if the following Skill write fails.
             self.manual_roots.insert(id.into());
             let skill_changed = operation == "connect" && self.ensure_skill(&host, true)?;
-            let state = host
-                .skill
-                .as_ref()
-                .map(|path| skill::state(path, &self.context.home, skill::MANAGER));
             let done = if skill_changed {
-                "已接入并自动安装或更新 Skill"
-            } else if state
-                .as_ref()
-                .is_some_and(|state| state["state"] == "external")
-            {
-                "已接入；外部管理的 Skill 保留"
+                "已接入并安装或更新 Skill"
             } else {
                 "已接入；Skill 已是最新"
             };
@@ -1261,7 +1264,8 @@ impl Hosts {
         install_missing: bool,
     ) -> Result<bool, String> {
         let state = skill::state(path, &self.context.home, embedded);
-        let missing = state["state"] == "missing";
+        // Another copy is the App's to replace, like a missing one.
+        let missing = state["state"] == "missing" || state["state"] == "external";
         let outdated = state["state"] == "app" && state["version"] != VERSION;
         if (missing && install_missing) || outdated {
             skill::install(
@@ -1303,10 +1307,9 @@ impl Hosts {
             return Err("请先修复 hosts.json".into());
         }
         let path = host.optional(name).ok_or("此宿主不支持安装 Skill")?;
-        let external = skill::state(&path, &self.context.home, embedded)["state"] == "external";
         let shared = !enabled && self.shared_wanted(host, name, &path);
         // Off removes before recording, so a failed removal leaves the switch on.
-        if !enabled && !external && !shared {
+        if !enabled && !shared {
             skill::remove(
                 &path,
                 &self.context.app,
@@ -1325,9 +1328,6 @@ impl Hosts {
         settings[host.id]["skills"][name] = json!(enabled);
         roots::save(&self.context, &settings)?;
         self.settings = settings;
-        if external {
-            return Ok("已记录；外部管理的副本保留，App 不改动".into());
-        }
         if shared {
             return Ok("已停用；另一宿主共用此目录且仍启用，副本保留".into());
         }

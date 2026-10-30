@@ -7,7 +7,6 @@
 const { h, $, load, post, installService, relTime } = AN;
 
 
-const KEEP_BACKUPS = 30;
 const STATUS = {
   available: ["可接入", "info"],
   connected: ["已接入", "ok"],
@@ -199,8 +198,8 @@ async function refreshAll() {
       (x) => before.has(x.id) && x.last_action?.at !== before.get(x.id),
     ).length;
     const parts = [
-      added.length && `发现新宿主 ${added.join("、")}`,
-      touched && `更新了 ${touched} 个宿主的条目或 Skill`,
+      added.length && `发现 ${added.join("、")}`,
+      touched && `更新了 ${touched} 个应用的条目或 Skill`,
     ].filter(Boolean);
     S.refreshResult = parts.length ? `检测完成：${parts.join("，")}。` : "检测完成，没有变化。";
     say(S.refreshResult);
@@ -249,7 +248,7 @@ function renderBanner() {
         "div.banner-content",
         {},
         h("strong", {}, "正在安装本机服务…"),
-        h("p", {}, "从 GitHub 安装，约需一分钟。可以先看看下面检测到的宿主。"),
+        h("p", {}, "从 GitHub 安装，约需一分钟。可以先看看下面检测到的应用。"),
       ),
       h("div.banner-actions", {}, spinBtn("安装中…", ".primary")),
     );
@@ -272,7 +271,7 @@ function renderBanner() {
     );
   } else if (!svc.installed) {
     const title = "请安装或更新本机服务";
-    const desc = "宿主统一通过 agentnave-mcp 启动 AgentNave，保存任务与协作历史。旧版服务需要先升级。";
+    const desc = "boss 统一通过 agentnave-mcp 启动 AgentNave，保存任务与协作历史。旧版服务需要先升级。";
     el.replaceChildren(
       h("div.banner-content", {}, h("strong", {}, title), h("p", {}, desc)),
       h(
@@ -302,7 +301,7 @@ function renderCallout() {
   const title =
     fresh.length === 1
       ? `新检测到 ${names}`
-      : `检测到 ${fresh.length} 个可接入的宿主`;
+      : `检测到 ${fresh.length} 个可接入的应用`;
   const sub =
     fresh.length === 1
       ? untested
@@ -337,7 +336,7 @@ function renderSummary() {
     h("span.sum-chip", {}, h("i.dot", { style: `--c:${color}` }), text);
   const attention = n("needs_attention");
   const kids = [
-    h("span", {}, h("strong", {}, String(hosts.length)), " 个宿主"),
+    h("span", {}, h("strong", {}, String(hosts.length)), " 个应用"),
   ];
   if (n("connected")) kids.push(chip("var(--run)", `${n("connected")} 已接入`));
   if (n("available"))
@@ -398,8 +397,8 @@ function renderBackups() {
       "span",
       {},
       b.config || b.skill
-        ? `备份：配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份，两类各保留最近 ${KEEP_BACKUPS} 份（每个被改写的文件各备份一份）`
-        : `备份：还没有备份（每次写入前自动备份，配置文件和 Skill 文件各保留最近 ${KEEP_BACKUPS} 份）`,
+        ? `备份：配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份`
+        : "备份：还没有",
     ),
     h("span.sep", { "aria-hidden": "true" }, "·"),
     pathRow(b.dir),
@@ -408,40 +407,17 @@ function renderBackups() {
 }
 
 // ---------------------------------------------------------------- host card
+// The App installs and updates the Skill with every connection, start, update and refresh, so a
+// connected app only shows the version, or why it could not be installed.
 function skillNode(host) {
   const s = host.skill;
-  if (s.state === "app") {
-    const old = s.version && S.appVersion && s.version !== S.appVersion;
-    return h(
-      "span",
-      {},
-      `App 管理 v${s.version}`,
-      old && h("span.sub", {}, `· 刷新检测时更新到 v${S.appVersion}`),
-    );
-  }
-  if (s.state === "external")
-    return h(
-      "span",
-      { title: s.path || null },
-      "由其他方式管理",
-      h("span.sub", {}, "· App 不会改动"),
-    );
+  if (s.state === "blocked")
+    return h("span", {}, h("span.warn-text", {}, "无法安装"), h("span.sub", {}, "· Skill 目录经过符号链接"));
   if (s.state === "manual")
-    return h(
-      "span",
-      {},
-      h("span.warn-text", {}, "无法自动安装"),
-      h("span.sub", {}, "· 该宿主的 Skill 目录尚未确定"),
-    );
-  const auto =
-    host.status === "connected" &&
-    host.entry === "agentnave";
-  return h(
-    "span",
-    {},
-    h("span.dim", {}, "未安装"),
-    auto && h("span.sub", {}, "· 刷新检测时自动安装"),
-  );
+    return h("span", {}, h("span.warn-text", {}, "无法安装"), h("span.sub", {}, "· 这个应用的 Skill 目录尚未确定"));
+  if (host.status !== "connected") return h("span.dim", {}, "接入时安装");
+  if (s.state === "app" && (!S.appVersion || s.version === S.appVersion)) return h("span", {}, `v${s.version}`);
+  return h("span.warn-text", {}, "未能安装，点「刷新检测」重试");
 }
 
 function entryNode(host) {
@@ -507,12 +483,7 @@ function advPanel(host) {
 
 function confirmBlock(host) {
   const orphan = host.status === "orphaned";
-  const skill =
-    host.skill.state === "app"
-      ? `由 App 安装的 Skill（v${host.skill.version}）会一并删除`
-      : host.skill.state === "external"
-        ? "该宿主的 Skill 由其他方式管理，不会改动"
-        : "";
+  const skill = ["app", "external"].includes(host.skill.state) ? "Skill 会一并删除" : "";
   const paths = (host.layers || []).filter((l) => l.scope !== "project" && l.has_entry).map((l) => shortPath(l.path));
   const where = `${(paths.length ? paths : [shortPath(host.config_path)]).join("、")} 里名为 agentnave 的条目`;
   const msg = orphan
@@ -585,9 +556,11 @@ function actionButtons(host) {
 // One line under the name: the state, then what matters most about it.
 function subLine(host, word) {
   const bits = [h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word)];
-  if (host.status === "connected" || host.status === "needs_attention") {
-    const skill = host.skill.state === "app" ? "Skill 由 App 管理" : host.skill.state === "external" ? "Skill 由其他方式管理" : "Skill 未安装";
-    bits.push(h("span.hc-fact", {}, skill));
+  if (host.status === "connected") {
+    // A Skill is only mentioned when it could not be installed.
+    const s = host.skill;
+    const current = s.state === "app" && (!S.appVersion || s.version === S.appVersion);
+    if (!current) bits.push(h("span.hc-fact.warn-text", {}, ["blocked", "manual"].includes(s.state) ? "Skill 无法安装" : "Skill 未能安装"));
   } else if (host.status === "available") {
     bits.push(h("span.hc-fact", {}, "本机已安装，还没有接入 AgentNave"));
   }
@@ -657,7 +630,7 @@ function buildCard(host) {
     main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
   // Only a needed reload is shown; synced, idle or undetectable connections need nothing.
   if (host.reload?.state === "required") {
-    const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || "重启宿主应用");
+    const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || "重启应用");
     const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
       h("div", {}, h("strong", {}, title), h("p", {}, detail)),
@@ -695,7 +668,7 @@ function renderCards() {
       h(
         "div.cards-empty",
         {},
-        h("strong", {}, "没有检测到受支持的宿主"),
+        h("strong", {}, "没有检测到可以当 boss 的应用"),
         "支持 Codex、Claude Code、CodeBuddy Code、WorkBuddy 桌面、Grok CLI、Antigravity、Pi、DeepSeek Harness、Hermes。安装其中任意一个后点“刷新检测”。",
       ),
     );
@@ -748,7 +721,7 @@ $("onboarding-reopen").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- boot
 (async function boot(attempt = 0) {
-  if (!$("pane-hosts").hidden) say("正在读取宿主状态…");
+  if (!$("pane-hosts").hidden) say("正在读取接入状态…");
   S.seen = loadSeen();
   S.firstRun = S.seen.size === 0;
   try {
@@ -760,11 +733,11 @@ $("onboarding-reopen").addEventListener("click", async () => {
     S.install.busy = status.service?.state === "installing";
     S.install.error = status.service?.state === "failed" ? status.service.error : null;
     setData(hosts);
-    if (!$("pane-hosts").hidden) say("宿主状态已读取。");
+    if (!$("pane-hosts").hidden) say("");
   } catch {
     // The tray answers 503 until its first host detection finishes; retry briefly before giving up.
     if (attempt < 10) { setTimeout(() => boot(attempt + 1), 1000); return; }
-    say("无法读取宿主状态，请稍后点“刷新检测”重试。", true);
+    say("无法读取接入状态，请稍后点“刷新检测”重试。", true);
     $("hosts-summary").replaceChildren(h("span.dim", {}, "读取失败"));
   }
 })();

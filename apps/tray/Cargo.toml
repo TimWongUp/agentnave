@@ -11,7 +11,9 @@ publish = false
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
+base64 = "0.22"
 dirs = "6"
+flate2 = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde_json = "1"
 tauri = { version = "2.12", features = ["tray-icon", "image-png", "macos-private-api"] }

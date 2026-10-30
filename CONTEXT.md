@@ -29,11 +29,11 @@ AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Clau
 
 ## 宿主（Host）
 
-调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于单任务的同类 Provider 排除与会话归属。
+调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于单任务的同类 Provider 排除与会话归属。App 设置中按其中的 boss 称呼：分区名「boss」，单个宿主称「应用」。
 
 ## 组员（Member）
 
-由 Provider CLI 与模型组成的配置身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。工作区内的运行身份是工位。
+由 Provider CLI 与模型组成的配置身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。工作区内的运行身份是工位。App 设置中称员工。
 
 ## 工位（Desk）
 
@@ -50,7 +50,7 @@ _Avoid_: 按 `(provider, model, role)` 合并的工位
 
 ## 模式（Mode）
 
-组员配置的适用范围：`task` 对应私聊，`discussion` 对应会议室席位；各模式分别限定可用组员并覆盖共享配置。App 中分别称「私聊」「会议」。
+组员配置的适用范围：`task` 对应私聊，`discussion` 对应会议室席位；各模式分别限定可用组员并覆盖共享配置。办公室中称「私聊」「会议」，App 设置中称「单独干活」「开会」。
 
 ## 私聊
 

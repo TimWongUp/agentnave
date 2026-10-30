@@ -1,9 +1,12 @@
-//! Only intact App copies are writable. Version marker alone never proves ownership.
+//! The App is the only manager of this service's Skills: any other copy at a Skill path, a link
+//! included, is moved whole into the App's backups and replaced. A version marker alone never proves an App copy; only a
+//! Skill folder reached through a linked parent is left alone, since writing there lands elsewhere.
 use super::{VERSION, backup};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 include!(concat!(env!("OUT_DIR"), "/manager_skill.rs"));
 /// One embedded Skill tree: the always-installed manager or the optional review gate.
@@ -79,8 +82,17 @@ pub(super) fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, Strin
     files(path, path, &mut found)?;
     Ok(found)
 }
+/// The folder holding a Skill: it must not be reached through a link; the Skill itself may be one.
+fn safe_parent(path: &Path, home: &Path) -> Result<(), String> {
+    super::transaction::safe_path(path.parent().ok_or("Skill 路径无效")?, home)
+}
+/// `missing`, `app` (an intact App copy), `external` (anything else, replaced by the next
+/// install) or `blocked` (reached through a linked folder; never written).
 pub(super) fn state(path: &Path, home: &Path, embedded: Files) -> Value {
-    if super::transaction::safe_path(path, home).is_err() {
+    if safe_parent(path, home).is_err() {
+        return json!({"state":"blocked", "path":path, "version":null});
+    }
+    if path.is_symlink() {
         return json!({"state":"external", "path":path, "version":null});
     }
     let marker = path.join(MARKER);
@@ -128,6 +140,8 @@ fn owned(path: &Path, version: &str, embedded: Files) -> bool {
                 .map(|(name, bytes)| (name.to_string(), hash(bytes)))
                 .collect()
 }
+/// Backs up an App copy file by file; its files are the App's own, so the shared budget of
+/// Skill backups may later drop them.
 fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), String> {
     for name in fingerprint(path)?
         .keys()
@@ -137,6 +151,33 @@ fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), Str
     }
     Ok(())
 }
+/// Moves anything else at a Skill path, a link included, into a folder of its own in the App's
+/// backups: nothing is copied, so a change made meanwhile is kept too; a folder is never one of
+/// the backup files evicted past the budget, and a new one never lands on an older one. Returns
+/// where it went.
+fn move_to_backups(path: &Path, app: &Path, id: &str, home: &Path) -> Result<PathBuf, String> {
+    let dir = app.join("backups");
+    super::transaction::safe_path(&dir, home)?;
+    fs::create_dir_all(&dir).map_err(|_| "无法创建备份目录")?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let name = path.file_name().unwrap_or_default();
+    let folder = dir.join(format!("{stamp:020}-skill-{id}-{}", name.to_string_lossy()));
+    fs::create_dir(&folder).map_err(|_| "无法创建备份目录")?;
+    let target = folder.join(name);
+    safe_parent(path, home)?;
+    if fs::rename(path, &target).is_err() {
+        let _ = fs::remove_dir(&folder);
+        return Err("无法把原有 Skill 移入备份目录，已保留".to_owned());
+    }
+    Ok(target)
+}
+/// Whether anything, a dangling link included, sits at a path.
+fn present(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
 pub(super) fn install(
     path: &Path,
     app: &Path,
@@ -145,12 +186,13 @@ pub(super) fn install(
     embedded: Files,
 ) -> Result<(), String> {
     let current = state(path, home, embedded);
-    if current["state"] == "external"
-        || (current["state"] == "app" && current["version"] == VERSION)
-    {
+    if current["state"] == "blocked" {
+        return Err("symlink_path:Skill 目录经过符号链接，请手动处理".into());
+    }
+    if current["state"] == "app" && current["version"] == VERSION {
         return Ok(());
     }
-    super::transaction::safe_path(path, home)?;
+    safe_parent(path, home)?;
     super::transaction::safe_path(&app.join("backups"), home)?;
     let parent = path.parent().ok_or("Skill 路径无效")?;
     fs::create_dir_all(parent).map_err(|_| "无法创建 Skill 目录")?;
@@ -172,22 +214,20 @@ pub(super) fn install(
     if state(&next, home, embedded)["state"] != "app" {
         return Err("Skill 写后校验失败".into());
     }
-    let previous = stage.path().join("previous");
-    if path.exists() {
-        if state(path, home, embedded)["state"] != "app" {
-            return Err("Skill 已被外部修改".into());
-        }
-        super::transaction::safe_path(path, home)?;
+    let mut previous = stage.path().join("previous");
+    if current["state"] == "app" {
         backup_tree(path, app, id, home)?;
-        super::transaction::safe_path(path, home)?;
-        if state(path, home, embedded)["state"] != "app" {
+        safe_parent(path, home)?;
+        if state(path, home, embedded) != current {
             return Err("conflict:Skill 在备份期间被其他方式修改，已保留".into());
         }
         fs::rename(path, &previous).map_err(|_| "无法暂存旧 Skill")?;
+    } else if present(path) {
+        previous = move_to_backups(path, app, id, home)?;
     }
     if fs::rename(&next, path).is_err() {
-        if previous.exists() && !path.exists() {
-            super::transaction::safe_path(path, home)?;
+        if present(&previous) && !present(path) {
+            safe_parent(path, home)?;
             fs::rename(&previous, path).map_err(|_| "Skill 更新失败且回滚失败")?;
         }
         return Err("Skill 更新失败，原目录已保留".into());
@@ -201,17 +241,20 @@ pub(super) fn remove(
     home: &Path,
     embedded: Files,
 ) -> Result<(), String> {
-    if state(path, home, embedded)["state"] != "app" {
+    let current = state(path, home, embedded);
+    if current["state"] == "missing" || current["state"] == "blocked" {
         return Ok(());
     }
-    super::transaction::safe_path(path, home)?;
+    if current["state"] != "app" {
+        return move_to_backups(path, app, id, home).map(|_| ());
+    }
     super::transaction::safe_path(&app.join("backups"), home)?;
     backup_tree(path, app, id, home)?;
-    super::transaction::safe_path(path, home)?;
-    if state(path, home, embedded)["state"] != "app" {
+    safe_parent(path, home)?;
+    if state(path, home, embedded) != current {
         return Err("conflict:Skill 在备份期间被其他方式修改，未移除".into());
     }
-    // A rename makes the managed directory disappear as one operation.
+    // A rename makes the directory disappear as one operation.
     let stage = tempfile::tempdir_in(path.parent().unwrap()).map_err(|_| "无法暂存 Skill")?;
     let moved: PathBuf = stage.path().join("removed");
     fs::rename(path, moved).map_err(|_| "无法移除 Skill")?;

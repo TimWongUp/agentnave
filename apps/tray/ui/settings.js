@@ -59,16 +59,6 @@ const PROVIDER_NAMES = {
   deepseek: "DeepSeek Harness",
   zcode: "ZCode",
 };
-const SOURCE_LABELS = {
-  "codex-cache": "Codex 缓存",
-  "zcode-config": "ZCode 配置",
-  command: "命令输出",
-  help: "帮助信息",
-  aliases: "别名配置",
-  catalog: "内置目录",
-  config: "dsh 配置",
-  none: "未检测到",
-};
 
 // Permission-related keywords for sensitive options
 const PERMISSION_KEYWORDS = [
@@ -98,7 +88,6 @@ let currentDoc = {
   modes: {},
 };
 let detected = {};
-let currentMode = "task"; // "task" | "discussion"
 let currentTab = "members"; // "members" | "skills" | "avatars" | "orchestration" | "hosts"
 let dirty = false;
 let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
@@ -116,7 +105,6 @@ let cliOptions = null; // cli-options.json settings by CLI; they hold for every 
 let cliOptionsError = null;
 let reviewSaves = 0; // Seats, tiers or CLI switches saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
-const openCards = new Set(); // CLI cards are folded to one summary line until opened
 let missingOpen = false; // The folded list of CLIs not installed here
 let appStatus = null;
 let installedService = null;
@@ -125,7 +113,6 @@ let statusPollTimer = null;
 const optionDrafts = new WeakMap();
 let operatedControl = null;
 let pendingDisable = null;
-let pendingRestrictOff = false; // Turning a mode's selection off waits for confirmation.
 
 // Determine mock mode
 const isMock = new URLSearchParams(location.search).has("mock");
@@ -200,9 +187,11 @@ const mockMembersData = {
           label: "gpt-6.1-sol",
           default: false,
           efforts: ["low", "medium", "high", "xhigh"],
+          effort: "medium",
         },
-        { id: "gpt-5.4-turbo", label: "gpt-5.4-turbo", default: false },
+        { id: "gpt-5.4-turbo", label: "gpt-5.4-turbo", default: false, effort: "low" },
       ],
+      native: { model: "gpt-6.1-sol", effort: "medium" },
       efforts: ["minimal", "low", "medium", "high", "xhigh"],
     },
     claude: {
@@ -215,6 +204,7 @@ const mockMembersData = {
         { id: "claude-3-7-sonnet", label: "claude-3-7-sonnet", default: true },
         { id: "claude-3-5-haiku", label: "claude-3-5-haiku", default: false },
       ],
+      native: { model: "claude-3-7-sonnet", effort: null },
       efforts: ["low", "medium", "high"],
     },
     codebuddy: {
@@ -343,7 +333,7 @@ async function setCliSwitch(provider, item, enabled) {
     await apiPostCliOptions({ version: 1, clis });
     cliOptions = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型的私聊和新开的会议都生效`);
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型单独干活和新开的会都生效`);
   } catch (err) {
     showNotice(`保存失败: ${err.message}`, true);
   } finally {
@@ -356,22 +346,14 @@ async function setCliSwitch(provider, item, enabled) {
 function renderCliSwitches(provider) {
   return (CLI_SWITCHES[provider] || []).map((item) => {
     const enabled = cliOptions?.[provider]?.[item.key] === true;
-    return el("div", { className: "cli-permission" },
-      el("label", { className: "cli-permission-head" },
-        el("span", { className: "cli-permission-label" }, item.label),
-        el("input", {
-          type: "checkbox",
-          role: "switch",
-          className: "switch-input",
-          dataset: { focusKey: `${provider}/cli/${item.key}` },
-          checked: enabled,
-          disabled: Boolean(cliOptionsError),
-          onChange: (e) => setCliSwitch(provider, item, e.target.checked),
-        })),
-      el("p", { className: "cli-permission-text" },
-        cliOptionsError
-          ? `${cliOptionsError}。修复或删除这个文件之前，派发会被拒绝。`
-          : `${enabled ? item.on : item.off} 对这个 CLI 的所有模型都生效，选完立即保存。`));
+    return el("label", { className: "member-switch", title: cliOptionsError || `${enabled ? item.on : item.off} 选完立即保存。` },
+      el("input", {
+        type: "checkbox",
+        dataset: { focusKey: `${provider}/cli/${item.key}` },
+        checked: enabled,
+        disabled: Boolean(cliOptionsError),
+        onChange: (e) => setCliSwitch(provider, item, e.target.checked),
+      }), textNode(item.label));
   });
 }
 
@@ -406,7 +388,7 @@ async function setPermissionTier(provider, tier) {
     await apiPostPermissions({ version: 1, clis });
     permissionTiers = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后派发的任务和新开的会议生效`);
+    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后单独干活和新开的会都生效`);
   } catch (err) {
     showNotice(`权限保存失败: ${err.message}`, true);
   } finally {
@@ -417,29 +399,15 @@ async function setPermissionTier(provider, tier) {
 }
 
 function renderPermission(provider) {
-  if (provider === "pi") {
-    return el("div", { className: "cli-permission" },
-      el("p", { className: "cli-permission-text" }, "权限：Pi 没有审批步骤，工具总是直接执行，不需要设置。"));
-  }
+  if (provider === "pi") return null;
   const tier = permissionTier(provider);
-  const name = PROVIDER_NAMES[provider];
-  return el("div", { className: "cli-permission" },
-    el("div", { className: "cli-permission-head" },
-      el("span", { className: "cli-permission-label" }, "派发时的权限"),
-      el("div", { className: "segment-control", role: "radiogroup", "aria-label": `${name} 派发时的权限` },
-        TIERS.map(([value, label]) => el("button", {
-          type: "button",
-          role: "radio",
-          className: `segment-btn${value === tier ? " active" : ""}`,
-          "aria-checked": String(value === tier),
-          dataset: { focusKey: `${provider}/tier/${value}` },
-          disabled: Boolean(permissionsError),
-          onClick: () => value !== tier && setPermissionTier(provider, value),
-        }, label)))),
-    el("p", { className: "cli-permission-text" },
-      permissionsError
-        ? `${permissionsError}。修复或删除这个文件之前，派发会被拒绝。`
-        : `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 私聊和新开的会议都按这一档，选完立即保存。`));
+  return el("label", { className: "member-tier", title: permissionsError || `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 选完立即保存。` },
+    textNode("权限"),
+    el("select", {
+      dataset: { focusKey: `${provider}/tier` },
+      disabled: Boolean(permissionsError),
+      onChange: (e) => setPermissionTier(provider, e.target.value),
+    }, TIERS.map(([value, label]) => el("option", { value, selected: value === tier }, label))));
 }
 
 async function apiPostMembers(doc) {
@@ -488,6 +456,8 @@ async function apiCheckUpdate(quiet = false) {
 }
 
 // Notice display
+// Settings name the two modes by what the employees do in them.
+const SCENES = { task: "单独干活", discussion: "开会" };
 function showNotice(msg, isError = false) {
   const notice = $("notice");
   notice.textContent = msg;
@@ -539,15 +509,10 @@ function countPermissionOptions() {
   return count;
 }
 
-// Check if any restricted mode has 0 enabled CLIs
-function hasEmptyRestrictedMode() {
-  if (!currentDoc.modes) return false;
-  for (const [mode, clisObj] of Object.entries(currentDoc.modes)) {
-    if (clisObj && typeof clisObj === "object" && Object.keys(clisObj).length === 0) {
-      return true;
-    }
-  }
-  return false;
+// The first scene that uses no CLI at all, if any.
+function emptyScene() {
+  return Object.entries(currentDoc.modes || {})
+    .find(([, selection]) => selection && typeof selection === "object" && !Object.keys(selection).length)?.[0];
 }
 
 function optionRows(config) {
@@ -602,7 +567,7 @@ function configurationErrors() {
     for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, "共享");
   }
   for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
-    const scope = mode === "task" ? "私聊" : "会议";
+    const scope = SCENES[mode];
     for (const [provider, selection] of Object.entries(providers)) {
       const models = currentDoc.clis?.[provider]?.models || {};
       for (const model of selection.models) {
@@ -620,7 +585,7 @@ function configurationErrors() {
     }
   }
   for (const [mode, providers] of Object.entries(currentDoc.defaults || {})) {
-    const scope = mode === "task" ? "私聊" : "会议";
+    const scope = SCENES[mode];
     for (const [provider, model] of Object.entries(providers)) {
       if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
     }
@@ -629,12 +594,12 @@ function configurationErrors() {
 }
 
 function updateControls() {
-  $("dirty-text").textContent = dirty ? "有未保存的修改" : "没有未保存的修改";
+  $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
   $("members-badge").hidden = !dirty;
   if (!dirty && !busy) leaveTarget = null;
   renderLeaveConfirm();
 
-  const emptyRestricted = hasEmptyRestrictedMode();
+  const emptyRestricted = emptyScene();
   const errors = configurationErrors();
   const canSave = !busy && dirty && !documentError && !emptyRestricted && errors.length === 0;
 
@@ -645,7 +610,7 @@ function updateControls() {
   // Feedback hints
   const feedback = $("save-feedback");
   if (emptyRestricted) {
-    feedback.textContent = "开启自选的场景至少启用一个 CLI，或关闭自选";
+    feedback.textContent = `${SCENES[emptyRestricted] || emptyRestricted}至少要用一个员工`;
     feedback.className = "save-feedback error";
     feedback.dataset.validation = "true";
   } else if (errors.length) {
@@ -683,16 +648,16 @@ function updateControls() {
 
 // Switch tabs
 function setTab(tab) {
-  if (tab === "updates") tab = "hosts"; // Preserve old update links.
+  if (tab === "updates") tab = "about"; // Preserve old update links.
   // Status lines belong to the tab that produced them.
   if (currentTab !== tab) showNotice("");
   currentTab = tab;
-  for (const id of ["members", "skills", "avatars", "orchestration", "hosts"]) {
+  for (const id of ["hosts", "members", "skills", "avatars", "orchestration", "about"]) {
     if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
     else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
-  if (tab === "hosts") loadStatus().then(checkIfStale);
+  if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "skills") window.AgentNaveSkills?.load();
   if (tab === "orchestration") {
     loadRuleFiles();
@@ -704,7 +669,7 @@ function setTab(tab) {
 let limitDoc = null;
 async function loadLimit() {
   if (!$("max-running").options.length) {
-    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, String(n)));
+    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? "8（默认）" : String(n)));
     $("max-running").value = "8";
   }
   try {
@@ -744,7 +709,8 @@ async function saveLimit() {
   }
 }
 
-// Orchestration preferences live in each host's own global rules; the App only opens them.
+// Orchestration preferences live in the boss apps' global rules, one row per file with every app
+// that reads it; the App only opens them.
 async function loadRuleFiles() {
   const list = $("rule-files");
   try {
@@ -752,7 +718,7 @@ async function loadRuleFiles() {
     if (!response.ok) throw new Error(`读取失败（${response.status}）`);
     const data = await response.json();
     list.replaceChildren(...data.files.map((file) => el("li", {},
-      el("span", { className: "rule-label" }, file.label),
+      el("span", { className: "rule-label" }, file.readers.join("、")),
       el("code", {}, file.path),
       file.exists
         ? el("button", { type: "button", onClick: () => openRuleFile(file) }, "打开")
@@ -767,7 +733,7 @@ async function openRuleFile(file) {
     const response = await fetch("/app/rules/open", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ id: file.id }),
+      body: JSON.stringify({ path: file.path }),
     });
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || `打开失败（${response.status}）`);
@@ -799,126 +765,19 @@ async function copyOrchestration() {
   setTimeout(() => { button.textContent = "复制推荐写法"; }, 2000);
 }
 
-// Switch mode
-function setMode(mode) {
-  if (currentMode === mode) return;
-  currentMode = mode;
-  pendingDisable = null;
-  pendingRestrictOff = false;
-  $("mode-task").classList.toggle("active", mode === "task");
-  $("mode-task").setAttribute("aria-checked", mode === "task" ? "true" : "false");
-  $("mode-discussion").classList.toggle("active", mode === "discussion");
-  $("mode-discussion").setAttribute("aria-checked", mode === "discussion" ? "true" : "false");
-  renderModeToolbar();
-  renderCards();
-}
+const SCENE_IDS = ["task", "discussion"];
+const OFF = "\u0000off"; // The model menu entry that stops a scene from using a CLI.
 
-// Check if mode is restricted
-function isModeRestricted(mode = currentMode) {
-  return Boolean(currentDoc.modes && (mode in currentDoc.modes));
-}
-
-function renderModeToolbar() {
-  const restricted = isModeRestricted();
-  const toggle = $("mode-restrict-toggle");
-  const hint = $("mode-restrict-hint");
-  if (toggle) toggle.checked = restricted;
-  if (hint) {
-    hint.textContent = restricted
-      ? "已开启：只允许使用下方启用的工具与模型，并可为本场景设置默认模型。关闭会保留已设置的默认模型，清除本场景的名单和专用设置。"
-      : "已关闭：不额外限制可用工具和模型，仍可为本场景设置各 CLI 的默认模型。开启后可逐项选择可用名单。";
-  }
-  const confirm = $("restrict-confirm");
-  if (confirm) {
-    confirm.hidden = !pendingRestrictOff;
-    const scene = currentMode === "task" ? "私聊" : "会议";
-    confirm.replaceChildren(...(pendingRestrictOff ? [
-      el("p", {}, `关闭后${scene}不再限制工具和模型：保留已设置的默认模型和共享设置，清除可用名单和${scene}专用设置。重新开启不会恢复名单和专用设置，默认模型沿用保留值，没设置的继续跟随 CLI 默认；点击“保存设置”后才生效。`),
-      el("div", { className: "btn-group" },
-        el("button", { type: "button", onClick: () => { pendingRestrictOff = false; renderModeToolbar(); $("mode-restrict-toggle").focus({ preventScroll: true }); } }, "保留开启"),
-        el("button", { type: "button", className: "danger", onClick: () => toggleModeRestricted(false, true) }, "确认关闭")),
-    ] : []));
-  }
-  $("mode-description").textContent = currentMode === "task"
-    ? "私聊：boss 把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。"
-    : "会议：多个 AI 助手围绕同一问题分别回答或轮流交流。两种场景的可用名单分别保存。";
-}
-
-function toggleModeRestricted(restricted, confirmed = false) {
-  pendingDisable = null;
-  if (!restricted && !confirmed) {
-    pendingRestrictOff = true;
-    renderModeToolbar();
-    return;
-  }
-  pendingRestrictOff = false;
-  if (!currentDoc.modes) currentDoc.modes = {};
-  // Default models survive the switch both ways; the allow-list and mode overrides do not (ADR-0021).
-  if (restricted) {
-    const kept = currentDoc.defaults?.[currentMode] || {};
-    currentDoc.modes[currentMode] = {};
-    // Pre-enable all installed CLIs with models: [] (unlimited models) and their default model
-    for (const p of PROVIDERS) {
-      if (detected[p]?.installed) {
-        const conf = { models: [], overrides: {} };
-        if (kept[p]) conf.default = kept[p];
-        currentDoc.modes[currentMode][p] = conf;
-      }
-    }
-    setKeptDefaults({});
-  } else {
-    const kept = {};
-    for (const [p, conf] of Object.entries(currentDoc.modes[currentMode] || {})) {
-      if (conf.default) kept[p] = conf.default;
-    }
-    delete currentDoc.modes[currentMode];
-    setKeptDefaults(kept);
-  }
-  incDocVersion();
-  renderModeToolbar();
-  renderCards();
-}
+const isRestricted = (scene) => Object.hasOwn(currentDoc.modes || {}, scene);
 
 // Default models of an unrestricted mode; an empty map leaves no `defaults` key behind.
-function setKeptDefaults(kept, mode = currentMode) {
+function setKeptDefaults(kept, mode) {
   if (Object.keys(kept).length) {
     currentDoc.defaults = { ...currentDoc.defaults, [mode]: kept };
   } else if (currentDoc.defaults) {
     delete currentDoc.defaults[mode];
     if (!Object.keys(currentDoc.defaults).length) delete currentDoc.defaults;
   }
-}
-
-function defaultModel(provider) {
-  return isModeRestricted()
-    ? currentDoc.modes[currentMode]?.[provider]?.default
-    : currentDoc.defaults?.[currentMode]?.[provider];
-}
-
-function isProviderEnabledInMode(provider) {
-  if (!isModeRestricted()) return true; // Unrestricted mode => all available
-  return Boolean(currentDoc.modes?.[currentMode]?.[provider]);
-}
-
-function toggleProviderInMode(provider, enabled, confirmed = false) {
-  if (!isModeRestricted()) return;
-  if (enabled) {
-    if (!currentDoc.modes[currentMode][provider]) {
-      currentDoc.modes[currentMode][provider] = { models: [], overrides: {} };
-    }
-  } else {
-    const previous = currentDoc.modes[currentMode][provider];
-    const hasSettings = previous && (previous.models?.length || previous.default || Object.keys(previous.overrides || {}).length);
-    if (hasSettings && !confirmed) {
-      pendingDisable = provider;
-      renderCards();
-      return;
-    }
-    delete currentDoc.modes[currentMode][provider];
-  }
-  pendingDisable = null;
-  incDocVersion();
-  renderCards();
 }
 
 // A model the App starts configuring keeps the CLI's own default effort until one is chosen (ADR-0028).
@@ -938,42 +797,22 @@ function nativeDefault(provider) {
   const native = detected[provider]?.native || {};
   return { model: native.model || null, effort: native.effort || null };
 }
-// What a call that names no model or effort runs, and whose choice each part is: the default
-// set here wins, else the CLI's own default, else the CLI decides without telling us.
-function fallback(provider) {
-  const native = nativeDefault(provider);
-  const chosen = defaultModel(provider);
-  const model = chosen || native.model;
-  const shared = currentDoc.clis?.[provider]?.models?.[model] || {};
-  const override = currentDoc.modes?.[currentMode]?.[provider]?.overrides?.[model];
-  const effort = override && Object.hasOwn(override, "effort") ? override.effort : shared.effort;
-  return {
-    model,
-    modelBy: chosen ? "app" : native.model ? "cli" : null,
-    effort: effort || native.effort,
-    effortBy: effort ? "app" : native.effort ? "cli" : null,
-  };
+
+// The level the CLI runs one model at when a call names none, if known.
+function cliEffort(provider, modelId) {
+  const listed = (detected[provider]?.models || []).find((m) => m.id === modelId);
+  if (listed?.effort) return listed.effort;
+  return modelId === nativeDefault(provider).model ? nativeDefault(provider).effort : null;
 }
-const CHOICE_BY = { app: "你设的默认", cli: "CLI 默认" };
-function needsExplicitModel(provider) {
-  return isModeRestricted() && currentDoc.modes[currentMode]?.[provider]?.models?.length > 0 && !defaultModel(provider);
-}
-function fallbackText(provider) {
-  if (needsExplicitModel(provider)) return "boss 必须指定模型，或在这里设为默认";
-  const { model, modelBy, effort, effortBy } = fallback(provider);
-  const modelPart = model ? `${model}（${CHOICE_BY[modelBy]}）` : "CLI 自己选的模型";
-  const effortPart = effort ? `档位 ${effort}（${CHOICE_BY[effortBy]}）` : "档位由 CLI 决定";
-  return `boss 不指定时用 ${modelPart} · ${effortPart}`;
-}
-const FALLBACK_HINT = "boss 指定的模型和档位优先；没指定时用你在这里设的默认；没设且允许任意模型时，才用 CLI 自己的默认（标着“CLI 默认”）。限制了模型名单却没设默认时，boss 必须指定模型。读不到 CLI 默认时，由 CLI 自己决定。";
 
 const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 // A model's effort levels from low to high: its own detected levels, else its CLI's, plus any
 // configured value a probe no longer lists.
 function effortLevels(provider, modelId) {
+  // A model's own list, even an empty one, is what its CLI offers; the CLI's list is the fallback.
   const own = (detected[provider]?.models || []).find((m) => m.id === modelId)?.efforts;
-  const detectedEfforts = Array.isArray(own) && own.length ? own : detected[provider]?.efforts || [];
+  const detectedEfforts = Array.isArray(own) ? own : detected[provider]?.efforts || [];
   const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
   const overrides = Object.values(currentDoc.modes || {})
     .map((providers) => providers?.[provider]?.overrides?.[modelId])
@@ -991,312 +830,338 @@ function effortLevels(provider, modelId) {
   return [...levels].sort((a, b) => rank(a) - rank(b));
 }
 
-function middleEffort(range) {
-  return range.length ? range[Math.floor((range.length - 1) / 2)] : undefined;
-}
-
-// The allowed efforts as a range bar after a model's default switch: two ends bound the
-// allowed levels (all of them when nothing is chosen), the round knob is the default effort.
-// Without a default the knob sits hollow on the middle level until the bar is touched.
-function renderEffortBar(provider, modelId) {
-  const levels = effortLevels(provider, modelId);
-  if (!levels.length) return null;
-  const overridden = isModelOverridden(provider, modelId);
-  const override = overridden ? currentDoc.modes[currentMode][provider].overrides[modelId] : null;
-  const shared = currentDoc.clis?.[provider]?.models?.[modelId] || {};
-  const pick = (key) => (override && Object.hasOwn(override, key) ? override[key] : shared[key]);
-  const efforts = Array.isArray(pick("efforts")) ? pick("efforts") : [];
-  const allowed = efforts.length ? levels.filter((level) => efforts.includes(level)) : levels;
-  const last = levels.length - 1;
-  const initial = {
-    lo: allowed.length ? levels.indexOf(allowed[0]) : 0,
-    hi: allowed.length ? levels.indexOf(allowed[allowed.length - 1]) : last,
-    def: levels.includes(pick("effort")) ? levels.indexOf(pick("effort")) : null,
-  };
-  const state = { ...initial };
-  const position = (index) => `${last ? (index / last) * 100 : 50}%`;
-  // Levels the default may take: the allowed ones, gaps included, until an end is moved.
-  const choices = () => {
-    const moved = state.lo !== initial.lo || state.hi !== initial.hi;
-    return levels.map((_, index) => index)
-      .filter((index) => index >= state.lo && index <= state.hi && (moved || allowed.includes(levels[index])));
-  };
-  const nearest = (index) => choices().reduce((best, choice) =>
-    (Math.abs(choice - index) < Math.abs(best - index) ? choice : best));
-  // Without a default the hollow knob shows the CLI's own effort, else the middle level.
-  const nativeEffort = nativeDefault(provider).effort;
-  const preset = () => state.def ?? (choices().includes(levels.indexOf(nativeEffort))
-    ? levels.indexOf(nativeEffort)
-    : middleEffort(choices()));
-
-  const fill = el("span", { className: "effort-fill" });
-  const ticks = levels.map((level) => el("span", { className: "effort-tick", title: level }));
-  const handle = (kind, label) => el("button", {
-    type: "button",
-    role: "slider",
-    className: `effort-handle effort-${kind}`,
-    dataset: { focusKey: `${provider}/${modelId}/effort-${kind}`, handle: kind },
-    "aria-label": `${modelId} ${label}`,
-    "aria-valuemin": "0",
-    "aria-valuemax": String(last),
-  });
-  const handles = { lo: handle("lo", "最低允许档位"), hi: handle("hi", "最高允许档位"), def: handle("def", "默认思考档位") };
-  const text = el("span", { className: "effort-text" });
-  const track = el("div", { className: "effort-track" }, fill, ...ticks, handles.lo, handles.hi, handles.def);
-  // Remove the field that actually supplies the effort. A mode override can fall back
-  // to a shared default; clearing a shared default also affects other inheriting modes.
-  const effortOverride = override && Object.hasOwn(override, "effort");
-  const sharedFallback = effortOverride && Object.hasOwn(shared, "effort");
-  const resetAllowed = !sharedFallback || !efforts.length || efforts.includes(shared.effort);
-  const reset = initial.def === null ? null : el("button", {
-    type: "button",
-    className: "effort-reset",
-    dataset: { focusKey: `${provider}/${modelId}/effort-reset` },
-    disabled: !resetAllowed,
-    title: sharedFallback
-      ? resetAllowed ? `取消本场景的默认档位，改用共享档位 ${shared.effort}` : `共享档位 ${shared.effort} 不在当前允许范围内，请先调整范围`
-      : effortOverride ? "清除本场景的默认档位，改用 CLI 默认" : "清除共享默认档位；所有继承共享设置的场景都会改用 CLI 默认",
-    onClick: () => {
-      delete (effortOverride ? override : currentDoc.clis[provider].models[modelId]).effort;
-      incDocVersion();
-      renderCards();
-    },
-  }, sharedFallback ? `改用共享档位 ${shared.effort}` : effortOverride ? "改回 CLI 默认" : "改回 CLI 默认（共享设置）");
-  const bar = el("div", { className: "effort-bar" }, track, text, ...(reset ? [reset] : []));
-
-  const paint = () => {
-    const def = preset();
-    fill.style.left = position(state.lo);
-    fill.style.width = `calc(${position(state.hi)} - ${position(state.lo)})`;
-    // A saved list with gaps keeps them until the range is moved.
-    const moved = state.lo !== initial.lo || state.hi !== initial.hi;
-    levels.forEach((level, index) => {
-      ticks[index].style.left = position(index);
-      ticks[index].classList.toggle("on", moved ? index >= state.lo && index <= state.hi : allowed.includes(level));
-    });
-    for (const [kind, index] of [["lo", state.lo], ["hi", state.hi], ["def", def]]) {
-      handles[kind].style.left = position(index);
-      handles[kind].setAttribute("aria-valuenow", String(index));
-      handles[kind].setAttribute("aria-valuetext", levels[index]);
-    }
-    handles.def.classList.toggle("preset", state.def === null);
-    const range = state.lo === 0 && state.hi === last
-      ? "全部档位"
-      : state.lo === state.hi ? levels[state.lo] : `${levels[state.lo]}–${levels[state.hi]}`;
-    text.textContent = `${range} · ${state.def === null ? (nativeEffort ? `CLI 默认 ${nativeEffort}` : "档位由 CLI 决定") : `默认 ${levels[def]}`}`;
-    bar.title = state.def === null
-      ? `你没有设默认档位：boss 不指定时${nativeEffort ? `用 CLI 默认 ${nativeEffort}` : "由 CLI 自己决定"}。点选或拖动圆点即设为你的默认。两端是允许 boss 使用的档位范围。`
-      : "两端是允许 boss 使用的档位范围，实心圆点是你设的默认档位：boss 不指定时用它。";
-  };
-  const move = (kind, index) => {
-    index = Math.max(0, Math.min(last, index));
-    if (kind === "lo") state.lo = Math.min(index, state.hi);
-    if (kind === "hi") state.hi = Math.max(index, state.lo);
-    if (kind === "def") state.def = nearest(index);
-    // Moving an end back to where it was restores the gaps and the saved default.
-    else if (state.def !== null) {
-      const back = state.lo === initial.lo && state.hi === initial.hi && initial.def !== null;
-      state.def = back ? initial.def : nearest(state.def);
-    }
-    paint();
-  };
-  // Touching the bar writes the shown default too, so a preset becomes the saved default.
-  const commit = () => {
-    ensureCliModel(provider, modelId);
-    const target = override || currentDoc.clis[provider].models[modelId];
-    if (state.lo !== initial.lo || state.hi !== initial.hi) {
-      target.efforts = state.lo === 0 && state.hi === last ? [] : levels.slice(state.lo, state.hi + 1);
-    }
-    target.effort = levels[preset()];
-    incDocVersion();
-    renderCards();
-  };
-  const indexAt = (x) => {
-    const box = track.getBoundingClientRect();
-    return last ? Math.round(((x - box.left) / box.width) * last) : 0;
-  };
-  track.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const index = indexAt(e.clientX);
-    const kind = e.target.dataset?.handle || (index < state.lo ? "lo" : index > state.hi ? "hi" : "def");
-    handles[kind].focus({ preventScroll: true });
-    track.setPointerCapture(e.pointerId);
-    move(kind, index);
-    const drag = (event) => move(kind, indexAt(event.clientX));
-    const drop = () => {
-      track.removeEventListener("pointermove", drag);
-      track.removeEventListener("pointerup", drop);
-      track.removeEventListener("pointercancel", drop);
-      commit();
-    };
-    track.addEventListener("pointermove", drag);
-    track.addEventListener("pointerup", drop);
-    track.addEventListener("pointercancel", drop);
-  });
-  for (const [kind, button] of Object.entries(handles)) {
-    button.addEventListener("keydown", (e) => {
-      const current = kind === "def" ? preset() : state[kind];
-      const steps = kind === "def" ? choices() : levels.map((_, index) => index);
-      const lower = steps.filter((index) => index < current).pop() ?? current;
-      const higher = steps.find((index) => index > current) ?? current;
-      const next = { ArrowLeft: lower, ArrowDown: lower, ArrowRight: higher, ArrowUp: higher, Home: steps[0], End: steps[steps.length - 1] }[e.key];
-      if (next === undefined) return;
-      e.preventDefault();
-      move(kind, next);
-      commit();
-    });
-  }
-  paint();
-  return bar;
-}
-
-// Model allowed in current mode
-function isModelAllowed(provider, modelId) {
-  if (!isModeRestricted()) return true;
-  const provConf = currentDoc.modes[currentMode]?.[provider];
-  if (!provConf) return false;
-  if (!Array.isArray(provConf.models) || provConf.models.length === 0) return true; // Empty models => unlimited
-  return provConf.models.includes(modelId);
-}
-
 function getAllModelIds(provider) {
-  const info = detected[provider] || {};
-  const detectedModels = info.models || [];
-  const configuredModels = Object.keys(currentDoc.clis?.[provider]?.models || {});
-  const modeModels = currentDoc.modes?.[currentMode]?.[provider]?.models || [];
-
-  const modelIdSet = new Set();
-  for (const m of detectedModels) modelIdSet.add(m.id);
-  for (const id of configuredModels) modelIdSet.add(id);
-  for (const id of modeModels) modelIdSet.add(id);
-  return Array.from(modelIdSet).filter((id) => typeof id === "string" && id.trim());
-}
-
-function toggleModelAllowed(provider, modelId, allowed) {
-  if (!isModeRestricted()) return;
-  const provConf = currentDoc.modes[currentMode]?.[provider];
-  if (!provConf) return;
-  ensureCliModel(provider, modelId);
-  if (!Array.isArray(provConf.models)) provConf.models = [];
-
-  if (allowed) {
-    if (!provConf.models.includes(modelId)) {
-      provConf.models.push(modelId);
-    }
-  } else {
-    // If only 1 model left, do not allow unchecking
-    const uniqueModels = Array.from(new Set(provConf.models));
-    if (uniqueModels.length <= 1 && uniqueModels.includes(modelId)) {
-      showNotice("至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”", true);
-      renderCards();
-      return;
-    }
-    provConf.models = provConf.models.filter((m) => m !== modelId);
-    // If unchecked, delete override in this mode and clear default if it was default
-    if (provConf.overrides) {
-      delete provConf.overrides[modelId];
-    }
-    if (provConf.default === modelId) {
-      delete provConf.default;
-    }
+  const ids = new Set((detected[provider]?.models || []).map((m) => m.id));
+  for (const id of Object.keys(currentDoc.clis?.[provider]?.models || {})) ids.add(id);
+  for (const selection of Object.values(currentDoc.modes || {})) {
+    for (const id of selection?.[provider]?.models || []) ids.add(id);
   }
-  incDocVersion();
-  renderCards();
+  return [...ids].filter((id) => typeof id === "string" && id.trim());
 }
 
-function toggleUnlimitedModels(provider, unlimited) {
-  if (!isModeRestricted()) return;
-  const provConf = currentDoc.modes[currentMode]?.[provider];
-  if (!provConf) return;
+// A scene's effort for one model: its override, else the shared level; "" follows the CLI.
+function sceneEffort(scene, provider, modelId) {
+  if (!modelId) return "";
+  const override = currentDoc.modes?.[scene]?.[provider]?.overrides?.[modelId];
+  if (override && Object.hasOwn(override, "effort")) return override.effort;
+  return currentDoc.clis?.[provider]?.models?.[modelId]?.effort || "";
+}
 
-  if (unlimited) {
-    provConf.models = [];
-  } else {
-    const allModelIds = getAllModelIds(provider);
-    if (allModelIds.length === 0) {
-      showNotice("列表中没有可用模型，请先添加模型", true);
-      renderCards();
-      return;
-    }
-    const currentChecked = Array.isArray(provConf.models)
-      ? provConf.models.filter((m) => allModelIds.includes(m))
-      : [];
-    if (currentChecked.length > 0) {
-      provConf.models = currentChecked;
-    } else {
-      // Pick default model, or first model in candidate list
-      const info = detected[provider] || {};
-      let targetModel = null;
-      if (provConf.default && allModelIds.includes(provConf.default)) {
-        targetModel = provConf.default;
-      } else {
-        const detectedDefault = info.models?.find((m) => m.default && allModelIds.includes(m.id))?.id;
-        targetModel = detectedDefault || allModelIds[0];
-      }
-      provConf.models = [targetModel];
-    }
-    for (const model of provConf.models) ensureCliModel(provider, model);
+// What one scene runs for one CLI: whether it is used, the default model ("" follows the CLI),
+// the models boss may pick (null: any), and the default model's effort ("" follows the CLI).
+function slot(scene, provider) {
+  const selection = isRestricted(scene) ? currentDoc.modes[scene][provider] : null;
+  const enabled = !isRestricted(scene) || Boolean(selection);
+  const model = (selection ? selection.default : currentDoc.defaults?.[scene]?.[provider]) || "";
+  const allowed = selection?.models?.length ? [...selection.models] : null;
+  const effort = enabled ? sceneEffort(scene, provider, model || nativeDefault(provider).model) : "";
+  return { enabled, model: enabled ? model : "", allowed, effort };
+}
+
+// Scenes that show the same model and effort, followed or chosen, need only one row.
+function shownSlot(scene, provider) {
+  const current = slot(scene, provider);
+  // A model list without a default runs nothing until one is chosen.
+  const model = current.model || (current.allowed ? "" : nativeDefault(provider).model) || "";
+  return { ...current, model, effort: current.effort || (model && cliEffort(provider, model)) || "" };
+}
+const splitCards = new Set(); // Cards split by hand while both scenes still match.
+const sceneOverrides = (scene, provider) => JSON.stringify(currentDoc.modes?.[scene]?.[provider]?.overrides || {});
+const isSplit = (provider) => splitCards.has(provider) ||
+  JSON.stringify(shownSlot("task", provider)) !== JSON.stringify(shownSlot("discussion", provider)) ||
+  sceneOverrides("task", provider) !== sceneOverrides("discussion", provider);
+
+// Installed CLIs, and ones a scene still names after they were removed.
+const known = (provider) => detected[provider]?.installed ||
+  SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider] || currentDoc.defaults?.[s]?.[provider]);
+
+// A scene names its CLIs only when it must (one is off, a model list or a scene-only effort):
+// every known CLI is listed with any model and keeps its default model (ADR-0021).
+function restrict(scene) {
+  if (isRestricted(scene)) return currentDoc.modes[scene];
+  const kept = currentDoc.defaults?.[scene] || {};
+  const selection = {};
+  for (const p of PROVIDERS) {
+    if (!known(p) && !kept[p]) continue;
+    selection[p] = { models: [], overrides: {} };
+    if (kept[p]) selection[p].default = kept[p];
   }
-  incDocVersion();
-  renderCards();
+  currentDoc.modes = { ...currentDoc.modes, [scene]: selection };
+  setKeptDefaults({}, scene);
+  return selection;
 }
 
-function setModelDefault(provider, modelId) {
-  if (!isModeRestricted()) {
-    const kept = { ...currentDoc.defaults?.[currentMode] };
-    ensureCliModel(provider, modelId);
-    if (kept[provider] === modelId) delete kept[provider];
-    else kept[provider] = modelId;
-    setKeptDefaults(kept);
-    incDocVersion();
-    renderCards();
+// A list that names every known CLI with any model and nothing scene-only says no more than
+// an open scene, which also takes CLIs installed later.
+function relax(scene, kept) {
+  const selection = currentDoc.modes?.[scene];
+  if (!selection) return;
+  const entries = Object.entries(selection);
+  const open = entries.every(([, c]) => !c.models?.length && !Object.keys(c.overrides || {}).length);
+  const all = PROVIDERS.every((p) => !kept.has(p) || selection[p]);
+  if (!entries.length || !open || !all) return;
+  delete currentDoc.modes[scene];
+  setKeptDefaults(Object.fromEntries(entries.filter(([, c]) => c.default).map(([p, c]) => [p, c.default])), scene);
+}
+
+// A model list needs a default model, so following the CLI pins the CLI's own model.
+function writeSlot(scene, provider, next) {
+  if (!next.enabled) {
+    delete restrict(scene)[provider];
     return;
   }
-  const provConf = currentDoc.modes[currentMode]?.[provider];
-  if (!provConf) return;
-  ensureCliModel(provider, modelId);
-  if (provConf.default === modelId) {
-    delete provConf.default;
+  const native = nativeDefault(provider).model;
+  const model = next.model || (next.allowed ? (next.allowed.includes(native) ? native : next.allowed[0]) : "");
+  if (next.allowed || isRestricted(scene)) {
+    const selection = restrict(scene);
+    const conf = (selection[provider] ||= { models: [], overrides: {} });
+    conf.models = next.allowed ? [...new Set([...next.allowed, model])] : [];
+    if (model) conf.default = model;
+    else delete conf.default;
   } else {
-    provConf.default = modelId;
-    // An empty list must stay empty: it means unlimited models.
-    if (provConf.models.length && !provConf.models.includes(modelId)) {
-      provConf.models.push(modelId);
-    }
+    const kept = { ...currentDoc.defaults?.[scene] };
+    if (model) kept[provider] = model;
+    else delete kept[provider];
+    setKeptDefaults(kept, scene);
   }
+  for (const m of [model, ...(next.allowed || [])]) if (m) ensureCliModel(provider, m);
+}
+
+// One model's effort in both scenes: shared when they agree, else a scene override. An override
+// cannot unset the shared level, so a scene that follows the CLI holds the shared one.
+function writeEfforts(provider, modelId, wants) {
+  if (!modelId) return;
+  ensureCliModel(provider, modelId);
+  const shared = currentDoc.clis[provider].models[modelId];
+  let base = wants.task === wants.discussion || !wants.task ? "task"
+    : !wants.discussion || isRestricted("task") ? "discussion" : "task";
+  const fits = (level) => !level || !shared.efforts?.length || shared.efforts.includes(level);
+  const other = base === "task" ? "discussion" : "task";
+  if (!fits(wants[base]) && fits(wants[other])) base = other;
+  // A level only a scene's own range has stays with the scenes.
+  const sharable = fits(wants[base]);
+  if (sharable && wants[base]) shared.effort = wants[base];
+  else if (sharable) delete shared.effort;
+  for (const scene of SCENE_IDS) {
+    if (wants[scene] !== wants[base] || !sharable) {
+      const conf = restrict(scene)[provider];
+      if (!conf) continue;
+      conf.overrides ||= {};
+      conf.overrides[modelId] = { ...conf.overrides[modelId], effort: wants[scene] };
+      continue;
+    }
+    const overrides = currentDoc.modes?.[scene]?.[provider]?.overrides;
+    if (!overrides?.[modelId]) continue;
+    delete overrides[modelId].effort;
+    if (!Object.keys(overrides[modelId]).length) delete overrides[modelId];
+  }
+}
+
+function edited() {
+  // Known before relaxing: opening one scene must not forget a CLI the other turned off.
+  const kept = new Set(PROVIDERS.filter(known));
+  for (const scene of SCENE_IDS) relax(scene, kept);
   incDocVersion();
   renderCards();
 }
 
-function isModelOverridden(provider, modelId) {
-  if (!isModeRestricted()) return false;
-  return Object.hasOwn(currentDoc.modes[currentMode]?.[provider]?.overrides || {}, modelId);
-}
-
-
-
-
-// Render 6 CLI cards
-// One line that says what a folded card allows, so the list can stay closed.
-function cardSummary(provider, isEnabled, modeRestricted, info) {
-  if (!modeRestricted) {
-    const detectedCount = info.models?.length ? `检测到 ${info.models.length} 个模型` : "";
-    const kept = defaultModel(provider);
-    return [detectedCount, fallbackText(provider), tierSummary(provider)].filter(Boolean).join(" · ");
+// Change one scene, or both while the card is not split.
+function changeSlot(provider, scene, change) {
+  const scenes = scene ? [scene] : SCENE_IDS;
+  // A joined card shows the private-task row, so both scenes take it.
+  const shown = slot(scene || "task", provider);
+  for (const s of scenes) {
+    const next = { ...shown, ...change };
+    writeSlot(s, provider, next);
+    if (Object.hasOwn(change, "effort")) {
+      const modelId = next.model || nativeDefault(provider).model;
+      const other = SCENE_IDS.find((o) => o !== s);
+      const follows = !scene || !slot(other, provider).enabled;
+      writeEfforts(provider, modelId, {
+        [s]: change.effort,
+        [other]: follows ? change.effort : sceneEffort(other, provider, modelId),
+      });
+    }
   }
-  if (!isEnabled) return "当前场景未启用";
-  const conf = currentDoc.modes[currentMode]?.[provider] || {};
-  const models = Array.isArray(conf.models) ? conf.models : [];
-  const scope = models.length === 0 ? "不限模型" : `${models.length} 个模型`;
-  return [scope, fallbackText(provider), tierSummary(provider)].filter(Boolean).join(" · ");
+  edited();
 }
 
-function tierSummary(provider) {
-  if (provider === "pi") return "";
-  return `权限：${TIERS.find(([t]) => t === permissionTier(provider))[1]}`;
+function setProviderEnabled(provider, enabled, confirmed = false) {
+  if (!enabled) {
+    const settings = SCENE_IDS.some((s) => {
+      const conf = currentDoc.modes?.[s]?.[provider];
+      return conf && (conf.models?.length || conf.default || Object.keys(conf.overrides || {}).length);
+    }) || SCENE_IDS.some((s) => currentDoc.defaults?.[s]?.[provider]);
+    if (settings && !confirmed) {
+      pendingDisable = provider;
+      return renderCards();
+    }
+  }
+  pendingDisable = null;
+  for (const scene of SCENE_IDS) {
+    if (!enabled) delete restrict(scene)[provider];
+    else if (isRestricted(scene)) currentDoc.modes[scene][provider] ||= { models: [], overrides: {} };
+  }
+  edited();
 }
 
+// Joining the scenes again gives meetings what private tasks have.
+function setSplit(provider, split) {
+  if (split) {
+    splitCards.add(provider);
+    return renderCards();
+  }
+  splitCards.delete(provider);
+  writeSlot("task", provider, slot("task", provider));
+  const task = slot("task", provider);
+  writeSlot("discussion", provider, task);
+  const overrides = currentDoc.modes?.task?.[provider]?.overrides || {};
+  const joined = task.enabled && Object.keys(overrides).length
+    ? restrict("discussion")[provider]
+    : currentDoc.modes?.discussion?.[provider];
+  if (joined) joined.overrides = structuredClone(overrides);
+  const modelId = task.model || nativeDefault(provider).model;
+  if (task.enabled) writeEfforts(provider, modelId, { task: task.effort, discussion: task.effort });
+  pickerOpen = null;
+  edited();
+}
+
+let pickerOpen = null; // "provider/scene" whose model list is open
+
+function slotRows(provider, scene, split) {
+  const current = slot(scene || "task", provider);
+  const key = `${provider}/${scene || "both"}`;
+  const native = nativeDefault(provider);
+  const all = getAllModelIds(provider);
+  if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : `${SCENES.task}、${SCENES.discussion}`);
+  const pick = (change) => changeSlot(provider, scene, change);
+  // Turning a CLI off for both scenes asks first when it drops settings.
+  const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
+
+  if (!current.enabled) {
+    return [el("div", { className: "member-row" }, label, el("div", { className: "member-line" },
+      el("select", {
+        className: "member-model",
+        dataset: { focusKey: `${key}/model` },
+        "aria-label": "默认模型",
+        onChange: (e) => pick({ enabled: true, model: e.target.value === native.model ? "" : e.target.value }),
+      }, el("option", { value: OFF, selected: true }, "不用"),
+      ...(native.model ? [] : [el("option", { value: "" }, "CLI 自己决定")]),
+      ...all.map((m) => el("option", { value: m }, m === native.model ? `${m}（CLI 当前设置）` : m))), el("span", { className: "member-reset-slot" })))];
+  }
+
+  const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
+  const model = current.model || (current.allowed ? "" : native.model) || "";
+  const options = [
+    el("option", { value: OFF }, "不用"),
+    ...(current.allowed && !model ? [el("option", { value: "", selected: true, disabled: true }, "选一个默认模型")]
+      : native.model ? [] : [el("option", { value: "", selected: !model }, "CLI 自己决定")]),
+    ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? `${m}（CLI 当前设置）` : m)),
+  ];
+  const modelLine = el("div", { className: "member-line" },
+    el("select", {
+      className: "member-model",
+      dataset: { focusKey: `${key}/model` },
+      "aria-label": "默认模型",
+      onChange: (e) => {
+        const value = e.target.value;
+        if (value === OFF) return off();
+        pick({ model: value === native.model && !current.allowed ? "" : value, effort: sceneEffort(scene || "task", provider, value || native.model) });
+      },
+    }, ...options),
+    current.model && native.model && current.model !== native.model
+      ? el("button", {
+        type: "button",
+        className: "member-reset",
+        dataset: { focusKey: `${key}/model-reset` },
+        title: `改回 CLI 当前设置（${native.model}）`,
+        "aria-label": "改回 CLI 当前设置",
+        onClick: () => pick({ model: "", effort: sceneEffort(scene || "task", provider, native.model) }),
+      }, "↺")
+      : el("span", { className: "member-reset-slot" }));
+
+  const conf = currentDoc.modes?.[scene || "task"]?.[provider]?.overrides?.[model];
+  // A scene's own range, even an empty one, replaces the shared one.
+  const range = (conf && Object.hasOwn(conf, "efforts") ? conf.efforts : currentDoc.clis?.[provider]?.models?.[model]?.efforts) || [];
+  const levels = model ? effortLevels(provider, model).filter((l) => !range.length || range.includes(l)) : [];
+  const cli = model ? cliEffort(provider, model) : null;
+  let effortLine = el("span");
+  if (!model) effortLine = el("span", { className: "member-muted" }, "CLI 自己决定");
+  else if (levels.length === 1) effortLine = el("span", { className: "member-muted" }, `只有 ${levels[0]} 一档`);
+  else if (levels.length > 1) {
+    const shown = current.effort || (levels.includes(cli) ? cli : null);
+    effortLine = el("div", { className: "member-line" },
+      el("div", { className: "segment-control member-efforts", role: "radiogroup", "aria-label": "思考档位" },
+        levels.map((level) => el("button", {
+          type: "button",
+          role: "radio",
+          className: `segment-btn${level === shown ? " active" : ""}`,
+          "aria-checked": String(level === shown),
+          title: level === cli ? "CLI 当前设置" : null,
+          dataset: { focusKey: `${key}/effort/${level}` },
+          onClick: () => pick({ effort: level === cli ? "" : level }),
+        }, level))),
+      !shown ? el("span", { className: "member-muted" }, "CLI 自己决定")
+        : current.effort && cli && levels.includes(cli) && current.effort !== cli
+          ? el("button", {
+            type: "button",
+            className: "member-reset",
+            dataset: { focusKey: `${key}/effort-reset` },
+            title: `改回 CLI 当前设置（${cli}）`,
+            "aria-label": "改回 CLI 当前设置",
+            onClick: () => pick({ effort: "" }),
+          }, "↺")
+          : null);
+  }
+
+  const open = pickerOpen === key;
+  const summary = current.allowed
+    ? `${offered.length} 个：${offered.slice(0, 3).join("、")}${offered.length > 3 ? " 等" : ""}`
+    : `全部 ${all.length} 个`;
+  const listButton = el("button", {
+    type: "button",
+    className: "member-list",
+    dataset: { focusKey: `${key}/list` },
+    title: "boss 可以选用的模型",
+    "aria-expanded": String(open),
+    onClick: () => { pickerOpen = open ? null : key; renderCards(); },
+  }, el("span", { className: "member-muted" }, "可选 "), textNode(summary), el("span", { className: "member-muted" }, open ? " ▴" : " ▾"));
+
+  const rows = [el("div", { className: "member-row" }, label, modelLine, listButton, effortLine)];
+  if (open) {
+    const toggle = (m, on) => {
+      const list = current.allowed || [];
+      const allowed = on ? [...list, m] : list.filter((x) => x !== m);
+      if (allowed.length) pick({ allowed });
+      else renderCards();
+    };
+    rows.push(el("div", { className: "member-picker" },
+      el("label", { className: "member-option member-option-all" },
+        el("input", {
+          type: "checkbox",
+          dataset: { focusKey: `${key}/all` },
+          checked: !current.allowed,
+          disabled: !all.length,
+          onChange: (e) => pick(e.target.checked
+            ? { allowed: null, model: current.model === native.model ? "" : current.model }
+            : { allowed: [model || all[0]] }),
+        }), textNode("全部模型（以后新出的也算）")),
+      ...all.map((m) => el("label", { className: "member-option" },
+        el("input", {
+          type: "checkbox",
+          dataset: { focusKey: `${key}/allow/${m}` },
+          checked: !current.allowed || current.allowed.includes(m),
+          disabled: !current.allowed || m === model,
+          onChange: (e) => toggle(m, e.target.checked),
+        }),
+        el("span", { className: "member-option-id" }, m),
+        m === model ? el("span", { className: "badge badge-muted" }, "默认") : null))));
+  }
+  return rows;
+}
+
+// One card per CLI: one row for both scenes, or one row each once split.
 function renderCards() {
   const container = $("cli-cards");
   // Build off-screen: emptying the live list first clamps the document scroll position.
@@ -1306,260 +1171,48 @@ function renderCards() {
   const focusKey = active?.dataset.focusKey;
   const anchorTop = focusKey ? active.getBoundingClientRect().top : null;
   const cards = document.createDocumentFragment();
-
-  const modeRestricted = isModeRestricted();
-  // Not installed and not on this scene's list: only named in the folded list at the end.
+  // Not installed and named by no scene or default: only in the folded list at the end.
   const missing = [];
 
   for (const provider of PROVIDERS) {
-    const info = detected[provider] || {
-      installed: false,
-      source: "none",
-      path: null,
-      error: null,
-      models: [],
-      efforts: [],
-    };
-    const isEnabled = isProviderEnabledInMode(provider);
-    if (!info.installed && !(modeRestricted && isEnabled)) {
+    const info = detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
+    const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
+    const listed = known(provider);
+    if (!info.installed && !listed) {
       missing.push(provider);
       continue;
     }
-    const card = el("div", {
-      className: `cli-card${info.installed ? "" : " uninstalled"}`,
-      dataset: { provider },
-    });
-
-    // Header
-    // An installed CLI shows its version beside the name instead of a badge.
-    const statusBadge = !info.installed
-      ? el("span", { className: "badge badge-bad" }, "未安装")
-      : info.version
-        ? null
-        : el("span", { className: "badge badge-run" }, "已安装");
-
-    const sourceLabel = SOURCE_LABELS[info.source] || info.source;
-    const sourceBadge = el("span", { className: "badge badge-muted" }, `来源: ${sourceLabel}`);
-
-    let enableControl;
-    if (!modeRestricted) {
-      enableControl = info.installed
-        ? el("span", { className: "badge badge-run" }, "未限制：默认可用")
-        : el("span", { className: "badge badge-muted" }, "未安装，暂不可用");
-    } else {
-      const enableCheckbox = el("input", {
-        type: "checkbox",
-        role: "switch",
-        className: "switch-input",
-        dataset: { focusKey: `${provider}/enabled` },
-        "aria-label": `在${currentMode === "task" ? "私聊" : "会议"}中使用 ${PROVIDER_NAMES[provider]}`,
-        checked: isEnabled,
-        onChange: (e) => toggleProviderInMode(provider, e.target.checked),
-      });
-      enableControl = el("label", {}, enableCheckbox, textNode(" 在此场景启用"));
-    }
-
-    const isOpen = openCards.has(provider);
-    const toggle = el(
-      "button",
-      {
-        type: "button",
-        className: "cli-toggle",
-        dataset: { focusKey: `${provider}/expand` },
-        "aria-expanded": String(isOpen),
-        onClick: () => {
-          if (isOpen) openCards.delete(provider);
-          else openCards.add(provider);
-          renderCards();
-        },
-      },
-      el("span", { className: "cli-chevron", "aria-hidden": "true" }),
-      el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, PROVIDER_NAMES[provider])),
-      el("span", { className: "cli-name" }, PROVIDER_NAMES[provider] || provider),
-      info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
-      el("span", { className: "cli-summary", title: FALLBACK_HINT }, cardSummary(provider, isEnabled, modeRestricted, info))
-    );
-    const header = el(
-      "div",
-      { className: "cli-header" },
-      el("div", { className: "cli-title-area" }, toggle, statusBadge, ...(isOpen ? [sourceBadge] : [])),
-      el("div", { className: "cli-enable-area" }, enableControl)
-    );
-    card.appendChild(header);
+    const name = PROVIDER_NAMES[provider] || provider;
+    const split = enabled && isSplit(provider);
+    const head = el("div", { className: "member-head" },
+      el("div", { className: "member-title" },
+        el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
+        el("span", { className: "cli-name" }, name),
+        info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
+        info.installed ? null : el("span", { className: "badge badge-bad" }, "未安装")),
+      el("div", { className: "member-end" },
+        el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": `${name} 的两个场景`, "aria-hidden": enabled ? null : "true" },
+          [[false, "一起设置"], [true, "分开设置"]].map(([value, text]) => el("button", {
+            type: "button",
+            role: "radio",
+            className: `segment-btn${value === split ? " active" : ""}`,
+            "aria-checked": String(value === split),
+            dataset: { focusKey: `${provider}/split/${value}` },
+            onClick: () => value !== split && setSplit(provider, value),
+          }, text))),
+        renderPermission(provider) || el("span")));
+    const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
-      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": `确认停用 ${PROVIDER_NAMES[provider]}` },
-        el("p", {}, `停用会清除 ${PROVIDER_NAMES[provider]} 在此场景的模型名单、默认模型和专用设置，共享设置保留。重新启用不会恢复；点击“保存设置”后才会生效。`),
+      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": `确认停用 ${name}` },
+        el("p", {}, `停用会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`),
         el("div", { className: "btn-group" },
           el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, "保留启用"),
-          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => toggleProviderInMode(provider, false, true) }, "确认停用"))));
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, "确认停用"))));
     }
-    if (!isOpen) {
-      cards.appendChild(card);
-      continue;
-    }
-
-    // Metadata
-    if (info.path || info.error) {
-      const metaRow = el("div", { className: "cli-meta-row" });
-      if (info.path) {
-        metaRow.appendChild(el("span", {}, `路径: ${info.path}`));
-      }
-      if (info.error) {
-        metaRow.appendChild(el("span", { className: "cli-error" }, `探测状态: ${info.error}`));
-      }
-      card.appendChild(metaRow);
-    }
-    card.appendChild(renderPermission(provider));
-    for (const row of renderCliSwitches(provider)) card.appendChild(row);
-
-    // Body
-    const body = el("div", {
-      className: `cli-body${isEnabled ? "" : " disabled"}`,
-    });
-
-    if (!isEnabled) {
-      body.appendChild(
-        el("p", { className: "cli-disabled-hint" }, "当前场景未启用该 CLI；启用后可配置允许调用的模型。")
-      );
-    } else {
-      const provConf = modeRestricted ? currentDoc.modes[currentMode]?.[provider] : null;
-      const isUnlimited = modeRestricted && Array.isArray(provConf?.models) && provConf.models.length === 0;
-
-      // Unlimited models toggle (only in restricted mode)
-      if (modeRestricted) {
-        const unlimitedBox = el("input", {
-          type: "checkbox",
-          role: "switch",
-          className: "switch-input",
-          dataset: { focusKey: `${provider}/unlimited` },
-          checked: isUnlimited,
-          onChange: (e) => toggleUnlimitedModels(provider, e.target.checked),
-        });
-        const unlimitedWrap = el(
-          "div",
-          { className: "cli-unlimited-wrap" },
-          el("label", { className: "cli-unlimited-label" }, unlimitedBox, textNode(" 允许使用这个工具支持的任意模型"))
-        );
-        body.appendChild(unlimitedWrap);
-      }
-
-      // Collect all models
-      const detectedModels = info.models || [];
-      const allModelIds = getAllModelIds(provider);
-
-      const modelList = el("div", { className: "model-list" });
-      const checkedCount = new Set(provConf?.models || []).size;
-
-      for (const modelId of allModelIds) {
-        const isDetected = detectedModels.some((m) => m.id === modelId);
-        // "已不在列表" only if CLI installed and source in command, codex-cache, help
-        const isStale =
-          !isDetected &&
-          info.installed &&
-          ["command", "codex-cache", "help"].includes(info.source);
-
-        const isAllowed = isModelAllowed(provider, modelId);
-        const isDefault = defaultModel(provider) === modelId;
-        const hasOverride = isModelOverridden(provider, modelId);
-
-        const isLastChecked =
-          modeRestricted &&
-          !isUnlimited &&
-          checkedCount === 1 &&
-          Array.isArray(provConf?.models) &&
-          provConf.models.includes(modelId);
-
-        const modelItem = el("div", {
-          className: `model-item${hasOverride ? " has-override" : ""}`,
-          dataset: { model: modelId },
-        });
-
-        // Model Checkbox
-        let checkInput;
-        if (modeRestricted) {
-          checkInput = el("input", {
-            type: "checkbox",
-            dataset: { focusKey: `${provider}/${modelId}/allowed` },
-            checked: isAllowed,
-            disabled: isUnlimited || isLastChecked,
-            onChange: (e) => toggleModelAllowed(provider, modelId, e.target.checked),
-          });
-        }
-
-        // Default Radio
-        const radioInput = el("input", {
-          type: "radio",
-          dataset: { focusKey: `${provider}/${modelId}/default` },
-          name: `default-${provider}-${currentMode}`,
-          checked: isDefault,
-          onClick: () => setModelDefault(provider, modelId),
-        });
-
-        const defaultLabel = el(
-          "label",
-          { className: `default-radio-wrap${isDefault ? " active" : ""}`, title: "设为你的默认：boss 不指定模型时用它，优先于 CLI 默认。再次点击取消；限制了模型名单时，取消后 boss 必须指定模型，否则跟随 CLI 默认" },
-          radioInput,
-          textNode("设为默认")
-        );
-
-        // Tags
-        const tags = [];
-        if (isStale) {
-          tags.push(el("span", { className: "badge badge-warning" }, "已不在列表"));
-        }
-        if (nativeDefault(provider).model === modelId) {
-          tags.push(el("span", { className: "badge", title: defaultModel(provider)
-            ? `CLI 自己的默认模型。你已把 ${defaultModel(provider)} 设为默认，所以 boss 不指定时不会用它`
-            : needsExplicitModel(provider) ? "CLI 自己的默认模型；当前限制了模型名单且没设默认，boss 仍必须指定模型"
-            : "CLI 自己的默认模型：你没有设默认，boss 不指定时就用它，这一行的档位设置也会生效" }, "CLI 默认"));
-        }
-
-
-        const controlsKids = [];
-        if (modeRestricted) {
-          const checkLabelAttrs = { className: "model-check-label" };
-          if (isLastChecked) {
-            checkLabelAttrs.title = "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”";
-          } else if (isUnlimited) {
-            checkLabelAttrs.title = "已允许任意模型。要逐个选择，请先关闭上方“允许使用这个工具支持的任意模型”";
-          }
-          controlsKids.push(
-            el("label", checkLabelAttrs, checkInput, el("span", { className: "model-id" }, modelId))
-          );
-        } else {
-          controlsKids.push(el("span", { className: "model-id" }, modelId));
-        }
-        const effortBar = renderEffortBar(provider, modelId);
-        controlsKids.push(defaultLabel, ...(effortBar ? [effortBar] : []), ...tags);
-
-        if (isLastChecked) {
-          controlsKids.push(
-            el(
-              "span",
-              {
-                className: "model-single-hint",
-                title: "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”",
-              },
-              "至少保留一个模型；要放开请打开“允许使用这个工具支持的任意模型”，要停用请关闭“在此场景启用”"
-            )
-          );
-        }
-
-        const row = el(
-          "div",
-          { className: "model-row" },
-          el("div", { className: "model-controls" }, ...controlsKids)
-        );
-        modelItem.appendChild(row);
-
-        modelList.appendChild(modelItem);
-      }
-
-      body.appendChild(modelList);
-
-    }
-
-    card.appendChild(body);
+    const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
+    for (const row of rows) card.appendChild(row);
+    if (enabled) for (const row of renderCliSwitches(provider)) card.appendChild(row);
+    if (info.error) card.appendChild(el("p", { className: "member-error" }, `读取模型列表失败：${info.error}`));
     cards.appendChild(card);
   }
 
@@ -1581,10 +1234,9 @@ function renderCards() {
   container.replaceChildren(cards);
   updateControls();
   if (focusKey) {
-    const replacement = [...container.querySelectorAll("[data-focus-key]")]
-      .find((control) => control.dataset.focusKey === focusKey)
-      || (focusKey.endsWith("-disable") ? [...container.querySelectorAll("[data-focus-key]")]
-        .find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/enabled`) : null);
+    const controls = [...container.querySelectorAll("[data-focus-key]")];
+    const replacement = controls.find((control) => control.dataset.focusKey === focusKey)
+      || (focusKey.endsWith("-disable") ? controls.find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/both/model`) : null);
     if (replacement && !replacement.disabled) {
       replacement.focus({ preventScroll: true });
       // A confirmation button returns focus to the switch, not its screen position.
@@ -1609,7 +1261,7 @@ const REVIEW_ROLES = [
   ["adversarial-verifier", "反证", "高风险改动修完后尝试推翻结论"],
 ];
 
-// Seats save on their own to review.json, so unsaved 执行者 edits stay unsaved. A picked model
+// Seats save on their own to review.json, so unsaved 员工 edits stay unsaved. A picked model
 // missing from that CLI's configured models is also added to the last saved members.json,
 // where the server looks for it.
 async function setReviewSeat(role, seat) {
@@ -1635,7 +1287,7 @@ async function setReviewSeat(role, seat) {
   updateControls();
   try {
     if (missing) {
-      if (documentError) throw new Error("配置文件有错误，请先在“执行者”里修复");
+      if (documentError) throw new Error("配置文件有错误，请先在“员工”里修复");
       await apiPostMembers(add(saved));
       savedSnapshot = JSON.stringify(saved);
       add(currentDoc);
@@ -1678,7 +1330,8 @@ function renderReviewSeats() {
     const pickCli = (next) => {
       if (!next) return setReviewSeat(role, null);
       const ids = getAllModelIds(next);
-      const model = ids.includes(fallback(next).model) ? fallback(next).model : ids[0];
+      const preferred = slot("task", next).model || nativeDefault(next).model;
+      const model = ids.includes(preferred) ? preferred : ids[0];
       setReviewSeat(role, { provider: next, model });
     };
     const pickModel = (model) => setReviewSeat(role, { provider, model });
@@ -1688,12 +1341,12 @@ function renderReviewSeats() {
     const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
-        !listed && el("small", { className: "review-warn" }, "私聊名单没有选中这个模型，评审时会改找其他 CLI")),
+        !listed && el("small", { className: "review-warn" }, "单独干活的名单没有选中这个模型，评审时会改找其他 CLI")),
       reviewSelect(`${role}/cli`, `${name}评审的 CLI`, provider, [["", "自动"], ...clis], pickCli),
       reviewSelect(`${role}/model`, `${name}评审的模型`, seat?.model || "",
         seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
       reviewSelect(`${role}/effort`, `${name}评审的思考档位`, seat?.effort || "",
-        seat ? [["", "组员默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
+        seat ? [["", "员工默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
     );
   });
   box.replaceChildren(...rows);
@@ -1701,7 +1354,7 @@ function renderReviewSeats() {
 }
 
 async function saveMembers() {
-  if (busy || !dirty || documentError || hasEmptyRestrictedMode()) return;
+  if (busy || !dirty || documentError || emptyScene()) return;
   const errors = configurationErrors();
   if (errors.length) {
     showNotice(errors[0].message, true);
@@ -1774,7 +1427,6 @@ async function refreshDetection(quiet = false) {
     if (fresh) {
       documentError = data.error || null;
       renderErrorBanner();
-      renderModeToolbar();
     }
     if (!quiet) showNotice("检测结果已刷新");
     else if (changed && currentTab === "members") showNotice("检测到工具或模型列表有变化，已自动刷新");
@@ -1803,12 +1455,11 @@ async function loadMembers() {
     documentError = data.error || null;
     takeReview(data);
     renderErrorBanner();
-    renderModeToolbar();
 
     if (documentError) {
       showNotice(`配置文件损坏: ${documentError}。当前只读，禁止保存。`, true);
     } else if (currentTab === "members") {
-      showNotice("已载入执行者与模型配置");
+      showNotice("");
     }
 
     renderCards();
@@ -1887,10 +1538,8 @@ function renderUpdates() {
   if (!serviceInfo) {
     $("service-version").textContent = installedService?.version ? `v${installedService.version}` : "—";
     serviceBadge.hidden = true;
-    serviceMsg.hidden = false;
-    serviceMsg.textContent = installedService?.installed
-      ? "本机服务已安装。各应用的实际连接状态，请查看下方宿主卡片。"
-      : "请在下方接入区安装本机服务。";
+    serviceMsg.hidden = Boolean(installedService?.installed);
+    serviceMsg.textContent = "请在 boss 分区安装本机服务。";
   } else {
     $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
     const isServiceOutdated =
@@ -1919,7 +1568,7 @@ function renderUpdates() {
       serviceBadge.className = "tag done";
       serviceBadge.textContent = "安装完成";
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "安装完成。下方会自动检测各宿主连接，无需仅因版本变化逐个重启。";
+      serviceMsg.textContent = "安装完成，无需仅因版本变化重启 boss 应用。";
     } else {
       serviceBadge.hidden = true;
       serviceMsg.hidden = true;
@@ -2066,18 +1715,10 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
 }, true);
 $("copy-orchestration").addEventListener("click", copyOrchestration);
 $("save-limit").addEventListener("click", saveLimit);
-const tabFromHash = () => ["hosts", "host-cards", "updates"].includes(location.hash.slice(1)) ? "hosts" : ["skills", "avatars", "orchestration"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "members";
+const tabFromHash = () => location.hash === "#updates" ? "about" : ["members", "skills", "avatars", "orchestration", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts";
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 
-for (const mode of ["task", "discussion"]) $("mode-" + mode).addEventListener("click", (e) => {
-  e.currentTarget.focus({ preventScroll: true });
-  setMode(mode);
-});
-$("mode-restrict-toggle").addEventListener("change", (e) => {
-  e.target.focus({ preventScroll: true });
-  toggleModeRestricted(e.target.checked);
-});
 $("refresh-detection").addEventListener("click", () => refreshDetection());
 window.addEventListener("focus", probeWhenStale);
 document.addEventListener("visibilitychange", probeWhenStale);
@@ -2107,8 +1748,9 @@ function renderLeaveConfirm() {
 }
 document.querySelector("header.bar").addEventListener("click", (e) => {
   const link = e.target.closest("a[href]");
-  // Moving between this page's sections keeps the edits; only leaving the page loses them.
-  if (!link || !(dirty || busy) || link.getAttribute("href").startsWith("/settings/")) return;
+  // The settings link points at this page; following it would reload and drop the edits.
+  if (link?.getAttribute("href") === "/settings/") return e.preventDefault();
+  if (!link || !(dirty || busy)) return;
   e.preventDefault();
   leaveTarget = link.href;
   if (currentTab !== "members") {

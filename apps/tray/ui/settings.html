@@ -21,14 +21,18 @@
     <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
     <nav class="nav" aria-label="主导航">
       <a draggable="false" href="/chat/">办公室</a>
-      <a draggable="false" id="nav-members" href="/settings/#members">执行者<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
-      <a draggable="false" id="nav-skills" href="/settings/#skills">技能</a>
-      <a draggable="false" id="nav-hosts" href="/settings/#hosts">接入<span id="hosts-badge" class="badge-dot" hidden></span><span id="update-badge" class="badge-dot" hidden></span></a>
-      <a draggable="false" id="nav-avatars" href="/settings/#avatars">头像</a>
-      <a draggable="false" id="nav-orchestration" href="/settings/#orchestration">编排</a>
+      <a draggable="false" href="/settings/" aria-current="page">设置</a>
     </nav>
 </header>
 <main>
+  <nav class="nav subnav" aria-label="设置分区">
+    <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
+    <a draggable="false" id="nav-members" href="#members">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
+    <a draggable="false" id="nav-skills" href="#skills">技能</a>
+    <a draggable="false" id="nav-avatars" href="#avatars">外观</a>
+    <a draggable="false" id="nav-orchestration" href="#orchestration">高级</a>
+    <a draggable="false" id="nav-about" href="#about">关于<span id="update-badge" class="badge-dot" hidden></span></a>
+  </nav>
 
   <div id="notice" role="status" aria-live="polite">正在读取设置…</div>
 
@@ -39,32 +43,8 @@
     </div>
   </div>
 
-  <!-- 分区 1：执行者与模型 -->
-  <section id="pane-members" class="tab-pane active" aria-labelledby="nav-members">
-    <div class="settings-guide">
-      <h2>选择 AI 助手和默认设置</h2>
-      <p>执行者是本机已安装的 AI 命令行工具（CLI），每个工具可以使用不同模型。先选择使用场景，再展开工具查看模型。</p>
-      <p>boss 是派发任务的 AI。它指定的模型和思考档位优先；没指定时用你在这里设的默认；没设且允许任意模型时，才用每个 CLI 自己的默认（标着“CLI 默认”）。限制了模型名单却没设默认时，boss 必须指定模型。</p>
-      <p>这里的修改需要点击底部“保存设置”，才会用于之后发起或继续的任务。</p>
-    </div>
-    <div class="members-toolbar">
-      <div class="mode-control">
-        <div class="segment-control" role="radiogroup" aria-label="使用场景">
-          <button id="mode-task" class="segment-btn active" role="radio" aria-checked="true" type="button">私聊</button>
-          <button id="mode-discussion" class="segment-btn" role="radio" aria-checked="false" type="button">会议</button>
-        </div>
-      </div>
-    </div>
-    <p id="mode-description" class="guidance">私聊：boss 把一项工作交给一个 AI 助手执行。两种场景的可用名单分别保存。</p>
-    <div class="mode-restrict-wrap setting-row">
-      <div class="setting-copy">
-        <label id="mode-restrict-title" for="mode-restrict-toggle">自选可用工具和模型</label>
-        <p id="mode-restrict-hint" class="mode-hint">关闭时不额外限制；开启后只允许使用下方选中的工具和模型。</p>
-      </div>
-      <input type="checkbox" role="switch" class="switch-input" id="mode-restrict-toggle" aria-describedby="mode-restrict-hint">
-    </div>
-    <div id="restrict-confirm" class="disable-confirm restrict-confirm" role="group" aria-label="确认关闭自选" hidden></div>
-
+  <!-- 分区：员工与模型 -->
+  <section id="pane-members" class="tab-pane" hidden aria-labelledby="nav-members">
     <!-- 6 个 Provider 卡片容器 -->
     <div id="cli-cards" class="cli-cards"></div>
 
@@ -74,7 +54,7 @@
       <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" hidden></div>
       <div class="save-bar-inner">
         <div class="save-bar-info">
-          <span id="dirty-text" class="dirty-label">设置已载入</span>
+          <span id="dirty-text" class="dirty-label"></span>
           <span id="permission-summary" class="permission-summary-tag" hidden></span>
           <span id="save-feedback" class="save-feedback"></span>
         </div>
@@ -87,16 +67,13 @@
   </section>
 
   <section id="pane-skills" class="tab-pane" hidden aria-labelledby="nav-skills">
-    <p class="guidance">这里是 AgentNave 推荐的协作写法，做成 Skill 供你选用：装到哪个宿主由你决定，装上后那里的 AI 会按它工作；不装不影响其他功能。点“查看写法”可以先看完整内容。</p>
     <div id="skill-list" class="skill-list" aria-live="polite"></div>
   </section>
 
   <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">
-    <p class="guidance">模型图标固定使用官方图标。每个模型家族的办公室小人可以换成自己的一套：选择一个文件夹，里面放 s、m、h 三个子文件夹，每张图按动作命名——idle、blink、working、speaking、review、done、sleep，s 和 m 另有 sad、walk-1、walk-2，共 27 张。全部为 WebP 正方形，s 为 266 像素、m 为 320、h 为 96，单张不超过 1 MB。选好后立即保存，仅保存在本机，恢复默认即换回原来的小人。</p>
     <div class="model-names setting-row">
       <div class="setting-copy">
         <h2>模型名称</h2>
-        <p class="mode-hint">办公室、菜单栏和对话里怎么写模型名。简短时去掉前面的供应商路径，例如 opencode-go/deepseek-v4.1-flash 写成 deepseek-v4.1-flash。立即生效。</p>
       </div>
       <div class="segment-control" role="radiogroup" aria-label="模型名称">
         <button id="model-names-short" class="segment-btn" role="radio" type="button">简短</button>
@@ -107,52 +84,61 @@
   </section>
 
   <section id="pane-orchestration" class="tab-pane" hidden aria-labelledby="nav-orchestration">
-    <p class="guidance">AgentNave 只提供调用方式，不规定主控怎么分工。想让主控按固定方式编排时，把偏好写进宿主的全局规则文件，例如何时开会、谁做评审、分歧讨论几轮。AgentNave 不会替你写入这些文件。</p>
     <div class="updates-panel">
       <div class="updates-card">
         <h2>同时运行上限</h2>
-        <p class="guidance">每个宿主连接最多同时运行几个 CLI（私聊任务与会议席位合计），超出时新的派发会被拒绝，由主控等待后再派。办公室也最多画这么多个工位，其余空闲工位归入「已优化」。</p>
         <div class="limit-row">
           <label for="max-running">上限</label>
           <select id="max-running"></select>
-          <span class="guidance">默认 8</span>
           <button id="save-limit" type="button">保存</button>
         </div>
       </div>
     </div>
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>推荐写法</h2>
-        <p class="guidance">可以按需删改后再贴入规则文件。</p>
+        <h2>编排偏好推荐写法</h2>
         <pre id="orchestration-template" class="orchestration-template">## AgentNave 编排偏好
 - 探索、规划和评审交给只读工位，实现交给可写工位，派发时用 access 标明（只是标记，实际权限看 CLI 原生设置）；评审不用实现工位本身，尽量换一个模型。
 - 实现工位按模块分角色，跨阶段传上次的 session_id 续接同一会话；探索结论和已定契约用 forward 转给它，不让它重新探索。
-- 并行实现各用独立 worktree 或互不重叠的文件，由主控合并与验收。
+- 并行实现各用独立 worktree 或互不重叠的文件，由 boss 合并与验收。
 - 方案取舍或分歧进会议室讨论：会议只出决定，不在会上改代码；分歧收敛默认最多 3 轮，会后把决定转给实现工位。
-- 每个结果都由主控验收，succeeded 不等于完成；失败或取消由主控决定是否重派。</pre>
+- 每个结果都由 boss 验收，succeeded 不等于完成；失败或取消由 boss 决定是否重派。</pre>
         <div class="btn-group"><button id="copy-orchestration" type="button">复制推荐写法</button></div>
       </div>
     </div>
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>宿主全局规则文件</h2>
-        <p class="guidance">以下是常见位置，具体以各 CLI 的文档为准。只能打开已存在的文件，不会自动创建。</p>
+        <h2>boss 全局规则文件</h2>
         <ul id="rule-files" class="rule-files"></ul>
       </div>
     </div>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden aria-labelledby="nav-hosts">
+    <div id="svc-banner" class="banner" hidden></div>
+
+    <div id="reload-notice" class="banner reload-notice" role="note" hidden>
+      <div class="banner-content">
+        <strong>有应用需要重新加载</strong>
+        <p><a href="#host-cards">按下方卡片的提示</a>重开或重连，完成后提示自动消除。</p>
+      </div>
+    </div>
+
+    <div id="new-callout" class="callout" hidden></div>
+
+    <div class="hosts-toolbar">
+      <div id="hosts-summary" class="hosts-summary" aria-live="polite"></div>
+      <span id="refresh-result" class="fine" role="status"></span>
+      <button id="refresh-hosts" type="button">刷新检测</button>
+    </div>
+    <div id="backups-line" class="backups-line"></div>
+    <div id="host-cards" class="host-cards"></div>
+  </section>
+
+  <section id="pane-about" class="tab-pane" hidden aria-labelledby="nav-about">
     <div class="updates-panel">
       <div class="updates-card">
         <h2>版本与更新</h2>
-        <p class="guidance">AgentNave 启动时和之后每天自动检查新版本，打开这一页时距上次检查超过一小时也会再查一次。发现新版本后，一个按钮同时更新 App 和本机服务。</p>
-        <div id="reload-notice" class="banner reload-notice" role="note" hidden>
-          <div class="banner-content">
-            <strong>有宿主需要重新加载</strong>
-            <p><a href="#host-cards">按下方卡片的提示</a>重开或重连，完成后提示自动消除。界面和服务内部更新无需重启宿主。</p>
-          </div>
-        </div>
         <div class="status-grid">
           <div class="status-item">
             <span class="status-label">AgentNave 托盘应用</span>
@@ -193,22 +179,6 @@
       </div>
     </div>
 
-    <div id="svc-banner" class="banner" hidden></div>
-
-    <div class="settings-guide">
-      <h2>宿主接入与生效</h2>
-      <p>“宿主”是派发任务的 AI 应用。App 自动找到本机装了哪些，由你决定在哪些里接入 AgentNave；接入前会备份原配置，其他条目不动。需要重新加载时行内会提示，没有提示就无需操作。</p>
-    </div>
-
-    <div id="new-callout" class="callout" hidden></div>
-
-    <div class="hosts-toolbar">
-      <div id="hosts-summary" class="hosts-summary" aria-live="polite"></div>
-      <span id="refresh-result" class="fine" role="status"></span>
-      <button id="refresh-hosts" type="button">刷新检测</button>
-    </div>
-    <div id="backups-line" class="backups-line"></div>
-    <div id="host-cards" class="host-cards"></div>
     <button id="onboarding-reopen" type="button">重新显示开始使用</button>
   </section>
 </main>
