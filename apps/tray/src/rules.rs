@@ -180,14 +180,30 @@ fn files(apps: &[App], home: &Path) -> Vec<(PathBuf, Vec<&'static str>)> {
     out
 }
 
-/// The files that carry the block: one per connected app, so each reads it once. Apps that read
-/// a single file choose first, and a file another app already carries covers every app reading it.
+/// Every file an app would read once it exists: an app that reads all it finds also reads a file
+/// written for another app.
+fn would_read(app: &App, home: &Path) -> Vec<PathBuf> {
+    let (first, candidates) = candidates(app, home);
+    if first {
+        return reads(app, home);
+    }
+    let candidates = candidates.iter();
+    candidates
+        .map(|path| on_disk(path).unwrap_or_else(|| path.clone()))
+        .collect()
+}
+
+/// The files that carry the block: one per connected app, so each reads it once. Apps that can
+/// read fewer files choose first, and a chosen file covers every app that would read it.
 fn targets(connected: &[App], home: &Path) -> Vec<PathBuf> {
-    let mut apps: Vec<Vec<PathBuf>> = connected.iter().map(|app| reads(app, home)).collect();
-    apps.sort_by_key(Vec::len);
+    let mut apps: Vec<_> = connected
+        .iter()
+        .map(|app| (reads(app, home), would_read(app, home)))
+        .collect();
+    apps.sort_by_key(|(_, covered)| covered.len());
     let mut chosen: Vec<PathBuf> = Vec::new();
-    for read in apps {
-        if !read.iter().any(|path| chosen.contains(path))
+    for (read, covered) in apps {
+        if !covered.iter().any(|path| chosen.contains(path))
             && let Some(path) = read.into_iter().next()
         {
             chosen.push(path);
@@ -200,17 +216,26 @@ fn block(text: &str) -> String {
     format!("{START}\n{text}\n{END}")
 }
 
-/// Where the block sits: from its start marker to the end of its end marker.
-fn find(content: &str) -> Option<(usize, usize)> {
-    let start = content.find(START)?;
-    let end = content[start..].find(END)? + start + END.len();
-    Some((start, end))
+/// Where the block sits: from its start marker to the end of its end marker. A lone or repeated
+/// marker is refused: taking whatever lies between them could swallow the user's own rules.
+fn find(content: &str) -> Result<Option<(usize, usize)>, String> {
+    let broken = || "AgentNave 标记不完整或重复，请打开文件手动修复".to_owned();
+    match (content.matches(START).count(), content.matches(END).count()) {
+        (0, 0) => Ok(None),
+        (1, 1) => {
+            let (start, end) = (content.find(START).unwrap(), content.find(END).unwrap());
+            (start < end)
+                .then_some(Some((start, end + END.len())))
+                .ok_or_else(broken)
+        }
+        _ => Err(broken()),
+    }
 }
 
 /// The content with the block replaced in place, added at the end, or removed with the blank
 /// lines around it.
-fn splice(content: &str, text: Option<&str>) -> String {
-    match (find(content), text) {
+fn splice(content: &str, text: Option<&str>) -> Result<String, String> {
+    Ok(match (find(content)?, text) {
         (Some((start, end)), Some(text)) => {
             format!("{}{}{}", &content[..start], block(text), &content[end..])
         }
@@ -223,10 +248,17 @@ fn splice(content: &str, text: Option<&str>) -> String {
                 (false, false) => format!("{before}\n\n{after}"),
             }
         }
-        (None, Some(text)) if content.trim().is_empty() => format!("{}\n", block(text)),
-        (None, Some(text)) => format!("{}\n\n{}\n", content.trim_end(), block(text)),
+        (None, Some(text)) => {
+            let gap = match content {
+                "" => "",
+                _ if content.ends_with("\n\n") => "",
+                _ if content.ends_with('\n') => "\n",
+                _ => "\n\n",
+            };
+            format!("{content}{gap}{}\n", block(text))
+        }
         (None, None) => content.into(),
-    }
+    })
 }
 
 /// Saves a copy of a rules file's bytes before it is rewritten.
@@ -247,7 +279,7 @@ fn write(path: &Path, home: &Path, text: Option<&str>, backup: &Backup) -> Resul
         None if text.is_none() => return Ok(false),
         None => "",
     };
-    let next = splice(content, text);
+    let next = splice(content, text)?;
     if next == content && original.is_some() {
         return Ok(false);
     }
@@ -280,12 +312,16 @@ fn write(path: &Path, home: &Path, text: Option<&str>, backup: &Backup) -> Resul
     if !reread(&original) {
         return Err("文件刚被其他程序改动，未写入".into());
     }
+    // A folder swapped for a link since the first check would send the rename elsewhere.
+    crate::hosts::check_path(path, home)
+        .map_err(|error| crate::hosts::message(&error).to_owned())?;
     tmp.persist(path).map_err(|_| "无法替换文件")?;
     Ok(true)
 }
 
-/// Put `text` in the block of every target file and take it out of every other file an installed
-/// app reads; with no text, take it out everywhere. Returns the files that could not be written.
+/// Put `text` in the block of every target file and take it out of every other rules file an
+/// installed app could read, including one it stopped reading; with no text, take it out
+/// everywhere. Returns the files that could not be written.
 pub fn sync(
     installed: &[App],
     connected: &[App],
@@ -299,9 +335,15 @@ pub fn sync(
         Vec::new()
     };
     let mut paths = targets.clone();
-    for (path, _) in files(installed, home) {
-        if !paths.contains(&path) {
-            paths.push(path);
+    for app in installed {
+        for path in candidates(app, home)
+            .1
+            .iter()
+            .filter_map(|path| on_disk(path))
+        {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
         }
     }
     paths
@@ -326,7 +368,7 @@ pub fn list(installed: &[App], connected: &[App], home: &Path, text: Option<&str
         .map(|(path, readers)| {
             let content = std::fs::read_to_string(&path).unwrap_or_default();
             let current = match (find(&content), text) {
-                (Some((start, end)), Some(text)) => content[start..end] == block(text),
+                (Ok(Some((start, end))), Some(text)) => content[start..end] == block(text),
                 _ => false,
             };
             json!({"path": path, "readers": readers, "exists": path.is_file(),
@@ -532,6 +574,23 @@ mod tests {
             own
         );
         assert!(!h.join(".codex/AGENTS.md").exists());
+
+        // Neither file exists yet: Grok would read the one created for Claude, so it gets no other.
+        std::fs::remove_file(h.join(".claude/CLAUDE.md")).unwrap();
+        std::fs::remove_file(h.join(".grok/AGENTS.md")).unwrap();
+        assert!(sync(&installed, &connected, h, Some(&text), &backup).is_empty());
+        assert!(h.join(".claude/CLAUDE.md").is_file());
+        assert!(!h.join(".grok/AGENTS.md").exists());
+        // A lone marker is left for the user rather than guessed at.
+        let broken = format!("mine\n{START}\nold\n");
+        std::fs::write(h.join(".codex/AGENTS.md"), &broken).unwrap();
+        let failures = sync(&installed, &connected, h, Some(&text), &backup);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["path"], json!(h.join(".codex/AGENTS.md")));
+        assert_eq!(
+            std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap(),
+            broken
+        );
 
         assert!(check_custom("<!-- AGENTNAVE:END -->").is_err());
         assert_eq!(chosen(&json!({"preset": "custom", "custom": "  "})), None);

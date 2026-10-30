@@ -443,8 +443,12 @@ impl Hosts {
     /// backing up each file first. Returns the files that could not be written.
     pub fn sync_rules(&self, text: Option<&str>) -> Vec<Value> {
         let (app, home) = (&self.context.app, &self.context.home);
+        // Named by the folder under home, so `AGENTS.md` copies of different apps stay apart.
         let backup = |path: &Path, bytes: &[u8]| {
-            backup_bytes(app, RULES_BACKUP, "rules", path, bytes, home)
+            let folder = path.parent().and_then(|dir| dir.strip_prefix(home).ok());
+            let folder = folder.map(|dir| dir.to_string_lossy().replace(['/', '\\'], "_"));
+            let id = folder.as_deref().unwrap_or("rules").trim_start_matches('.');
+            backup_bytes(app, RULES_BACKUP, id, path, bytes, home)
                 .map_err(|error| message(&error).to_owned())
         };
         crate::rules::sync(
