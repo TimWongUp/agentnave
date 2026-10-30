@@ -136,7 +136,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 会话改名使用同一把锁与同样的 Header 要求：`POST /app/conversations/rename` 接受 `{"id", "title"}`，标题去掉首尾空白后非空、不含控制字符，显示宽度最多 48 列；MCP 创建标题与 App 改名共用 Unicode 15.0 宽／全宽字符区间表，汉字等宽字符算 2 列，其他字符算 1 列。取锁后在一个事务内改写会话标题并递增 `rev`，同步改写摘要、导演视图与公开视图的标题，返回 `renamed`，持锁中返回 `in_use`。运行中的服务下次在锁内重读时采用新标题。MCP 不提供改名工具。
 
-编排偏好入口（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)）在设置页展示推荐模板，可复制；`GET /app/rules` 列出各宿主常见的用户级全局规则文件位置与是否存在，`POST /app/rules/open` 用系统默认文本编辑器打开已存在的文件。App 不创建、不写入这些文件，位置清单只是常见位置，以宿主文档为准。
+编排偏好入口（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)）在设置页展示推荐模板，可复制；`GET /app/rules` 按文件列出本机已装 boss 应用（按宿主页解析出的根目录）实际读取的用户级全局规则文件、读取它的全部应用与是否存在：Claude Code 读 `CLAUDE.md`；Codex 与 Pi 只读第一个存在的（Codex：`AGENTS.override.md`、`AGENTS.md`；Pi：`AGENTS.override.md`、`AGENTS.md`、`CLAUDE.md` 等）；CodeBuddy 与 WorkBuddy 读 `CODEBUDDY.md`；Grok 读 `AGENTS.md`，并按默认的 Claude 兼容读 `~/.claude/CLAUDE.md`；Antigravity 读 `~/.gemini` 与其 `config` 下的 `GEMINI.md`、`AGENTS.md`；dsh 读 `$DSH_HOME/AGENTS.md` 与共享的 `~/.agents/AGENTS.md`；ZCode 读 `AGENTS.md`；Hermes 读 `SOUL.md`。应用一个都没有时列出它通常的文件。`POST /app/rules/open` 只打开列表中已存在的文件，用系统默认文本编辑器；App 不创建、不写入这些文件。
 
 托盘是 `settings.json` 的唯一写入方：`GET /app/settings` 返回文档或默认值、是否已保存与错误原因，不写文件；`POST /app/settings` 要求 `X-AgentNave-Action: 1`，要求 `version` 为整数 1、`max_running` 为 1–32 的整数（缺失取 8），忽略未知键、只写入这两个键，整份校验后以同目录临时文件、sync 与 rename 原子写入；文件损坏时可直接保存合法值覆盖。服务端只读该文件，读取规则与托盘一致。
 

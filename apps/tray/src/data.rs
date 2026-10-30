@@ -315,11 +315,18 @@ impl Reader {
         }
         if path == "/app/rules" || path == "/app/rules/open" {
             let home = dirs::home_dir().unwrap_or_default();
+            let apps = self
+                .hosts
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_ref()
+                .map(crate::hosts::Hosts::rule_apps)
+                .unwrap_or_default();
             if path == "/app/rules" {
                 if method != "GET" {
                     return Response::error(405, "此路由只接受 GET");
                 }
-                return Response::json(&crate::rules::list(&home));
+                return Response::json(&crate::rules::list(&apps, &home));
             }
             if method != "POST" {
                 return Response::error(405, "此操作只接受 POST");
@@ -330,7 +337,11 @@ impl Reader {
             let Ok(payload) = serde_json::from_slice::<Value>(body) else {
                 return Response::error(400, "请求必须为 JSON");
             };
-            return match crate::rules::open(&home, payload["id"].as_str().unwrap_or_default()) {
+            return match crate::rules::open(
+                &apps,
+                &home,
+                payload["path"].as_str().unwrap_or_default(),
+            ) {
                 Ok(result) => Response::json(&result),
                 Err(error) => Response::error(400, &error),
             };

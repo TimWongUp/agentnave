@@ -709,7 +709,8 @@ async function saveLimit() {
   }
 }
 
-// Orchestration preferences live in each host's own global rules; the App only opens them.
+// Orchestration preferences live in the boss apps' global rules, one row per file with every app
+// that reads it; the App only opens them.
 async function loadRuleFiles() {
   const list = $("rule-files");
   try {
@@ -717,7 +718,7 @@ async function loadRuleFiles() {
     if (!response.ok) throw new Error(`读取失败（${response.status}）`);
     const data = await response.json();
     list.replaceChildren(...data.files.map((file) => el("li", {},
-      el("span", { className: "rule-label" }, file.label),
+      el("span", { className: "rule-label" }, file.readers.join("、")),
       el("code", {}, file.path),
       file.exists
         ? el("button", { type: "button", onClick: () => openRuleFile(file) }, "打开")
@@ -732,7 +733,7 @@ async function openRuleFile(file) {
     const response = await fetch("/app/rules/open", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ id: file.id }),
+      body: JSON.stringify({ path: file.path }),
     });
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || `打开失败（${response.status}）`);

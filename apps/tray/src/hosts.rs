@@ -415,6 +415,18 @@ impl Hosts {
             })
             .collect()
     }
+    /// The boss apps installed here with their resolved roots, for the global rules list.
+    pub fn rule_apps(&self) -> Vec<crate::rules::App> {
+        self.registry()
+            .into_iter()
+            .filter(|host| self.detect(host).0)
+            .map(|host| crate::rules::App {
+                id: host.id,
+                label: host.label,
+                root: host.root.path,
+            })
+            .collect()
+    }
     fn detect(&self, host: &Host) -> (bool, &'static str, Option<PathBuf>) {
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
