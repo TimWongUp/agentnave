@@ -21,7 +21,7 @@ has gone to the meeting room, and what everyone said.
 
 ## 🎬 Live demo
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss sends seven CLI teammates to the meeting room to answer in parallel, then take turns" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss sends seven CLI teammates to the meeting room for two parallel rounds, then the boss sums up" width="100%"></p>
 
 ## ✨ What it does
 
