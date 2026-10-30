@@ -158,20 +158,19 @@ impl Updates {
             return None;
         }
         let before = std::mem::replace(&mut state.phase, Phase::Checking);
-        state.step = None;
         drop(state);
         self.label(&Phase::Checking);
         Some(before)
     }
 
-    /// Decide and claim in one step. `upgrade` allows falling back to a service upgrade when no
-    /// app update is pending; `outdated` is whether the installed service is older.
+    /// Decide and claim the requested target in one step; app and service requests never
+    /// silently substitute each other. `outdated` is whether the installed service is older.
     fn claim(&self, upgrade: bool, outdated: bool) -> Claim {
         let mut state = self.lock();
         if state.busy() {
             return Claim::Busy;
         }
-        if let Some(update) = state.pending.take() {
+        if !upgrade && let Some(update) = state.pending.take() {
             state.phase = Phase::Installing(update.version.clone());
             state.enter("download");
             state.download = (0, None);
@@ -209,18 +208,26 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
         Err(error) => Err(error),
     };
     let updates = app.state::<Updates>();
-    if found.is_ok() {
-        *updates.checked.lock().unwrap() = Some(SystemTime::now());
-    }
+    // A failed silent check still counts as an attempt, so an offline cache is not
+    // checked again on every click. Explicit rechecks remain available.
+    *updates.checked.lock().unwrap() = Some(SystemTime::now());
     match found {
         Ok(Some(update)) => {
             let current = app.package_info().version.to_string();
             let notes = release_notes(update.body.as_deref(), &current, &update.version);
             updates.set(Phase::Available(update.version.clone()), Some(update));
-            updates.lock().notes = notes;
+            let mut state = updates.lock();
+            state.notes = notes;
+            state.step = None;
         }
-        Ok(None) => updates.set(Phase::Latest, None),
-        Err(error) if manual => updates.set(Phase::Failed(brief(&error.to_string())), None),
+        Ok(None) => {
+            updates.set(Phase::Latest, None);
+            updates.lock().step = None;
+        }
+        Err(error) if manual => {
+            updates.set(Phase::Failed(brief(&error.to_string())), None);
+            updates.lock().step = None;
+        }
         Err(_) => {
             let found = updates.lock().pending.take();
             let phase = if found.is_some() || matches!(before, Phase::Failed(_) | Phase::Latest) {
@@ -260,20 +267,25 @@ pub fn check_now(app: &AppHandle, manual: bool) -> Value {
     status(app)
 }
 
-/// `POST /app/update/apply`, sent once the page showed what a check found: install a found app
-/// update with its service (see `install`), otherwise upgrade an older service now. While a check,
-/// an install or a service upgrade is running it only reports the status.
-pub fn apply(app: &AppHandle) -> Value {
+/// Install the cached app update, or only upgrade the service with `?service=1`.
+/// The receipt distinguishes a new start (including a fast failure) from an old status.
+pub fn apply(app: &AppHandle, service_only: bool) -> Value {
     let outdated = service_for_app(app).is_object();
-    match app.state::<Updates>().claim(true, outdated) {
-        Claim::Install(update) => install(app, *update),
+    let started = match app.state::<Updates>().claim(service_only, outdated) {
+        Claim::Install(update) => {
+            install(app, *update);
+            true
+        }
         Claim::Upgrade => {
             let app = app.clone();
             thread::spawn(move || finish_upgrade(&app));
+            true
         }
-        Claim::Busy | Claim::Nothing => {}
-    }
-    status(app)
+        Claim::Busy | Claim::Nothing => false,
+    };
+    let mut value = status(app);
+    value["started"] = json!(started);
+    value
 }
 
 /// At start: note the version an update installed, and run the service upgrade an older app's

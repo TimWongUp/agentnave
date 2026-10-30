@@ -835,7 +835,7 @@
         done(status);
         const update = status.update;
         const service = status.service;
-        if (update?.state === "failed") {
+        if (!serviceOnly && update?.state === "failed") {
           running = false;
           if (update.step) return failure(update);
           throw new Error(update.error || "更新失败");
@@ -866,13 +866,8 @@
     try {
       if (serviceOnly) serviceProgress({});
       else progress({ update: { version, step: "download" } });
-      const status = await post("/app/update/apply");
-      // Another check or update holding the lock leaves this one unstarted. A fast end (failed or,
-      // for the service, done) still counts as started; `follow` reports it.
-      const started = serviceOnly
-        ? ["upgrading", "installing", "failed", "done"].includes(status.service?.state)
-        : ["installing", "failed"].includes(status.update?.state);
-      if (!started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
+      const status = await post(serviceOnly ? "/app/update/apply?service=1" : "/app/update/apply");
+      if (!status.started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
       return follow(status, serviceOnly);
     } catch (error) {
       running = false;
@@ -892,7 +887,7 @@
       const update = status?.update;
       if (update?.state === "installing") return follow(status, false);
       if (["upgrading", "installing"].includes(status?.service?.state)) return follow(status, true);
-      if (update?.state === "failed" && update.step && status.check_fresh) return failure(update);
+      if (update?.state === "failed" && update.step) return failure(update);
     }
     // Only a found update can stay if this check fails, so only that one may fail silently.
     const found = status?.update?.state === "available";

@@ -673,7 +673,12 @@ All checks passed!
   }
   async function post(path, body = {}) {
     if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
-    if (path === "/app/update/apply") {
+    if (path === "/app/update/apply?service=1") {
+      installedState = { state: "upgrading" };
+      setTimeout(() => { installedState = { state: "done", version: mockVersion }; }, 1500);
+      return { ...await p3Fetch("/app/status"), started: true };
+    }
+    if (path.split("?")[0] === "/app/update/apply") {
       // Walks the real steps: download, service, the App, then the restart. &fail=<step> stops there.
       const total = 43 * 1048576;
       const fail = q.get("fail");
@@ -697,7 +702,7 @@ All checks passed!
         updateOverride = { state: "none" };
         installedState = { state: "done", version: mockVersion };
       }, 11500));
-      return p3Fetch("/app/status");
+      return { ...await p3Fetch("/app/status"), started: true };
     }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }

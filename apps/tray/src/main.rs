@@ -118,6 +118,7 @@ fn main() {
             };
             let refresh = flag("refresh=1");
             let quiet = flag("quiet=1");
+            let service_only = flag("service=1");
             thread::spawn(move || {
                 let method = request.method().as_str();
                 let action = request
@@ -177,7 +178,9 @@ fn main() {
                     (_, "/app/update/check") => {
                         data::Response::json(&update::check_now(&app, !quiet))
                     }
-                    (_, "/app/update/apply") => data::Response::json(&update::apply(&app)),
+                    (_, "/app/update/apply") => {
+                        data::Response::json(&update::apply(&app, service_only))
+                    }
                     _ => reader.request(method, &path, action, request.body()),
                 };
                 let response = Response::builder()
