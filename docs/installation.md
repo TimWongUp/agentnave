@@ -568,3 +568,23 @@ the note and relevant conversation history, expanding the read when details are 
 
 See [v0.57.0 release notes](releases/v0.57.0.md) for this release and
 [v0.56.0 release notes](releases/v0.56.0.md) for earlier upgrade notes.
+
+## Uninstall
+
+For each target host, remove AgentNave's MCP registration and uninstall `agentnave-manager` through
+its Skill installer or deployment manager. Remove the shared runtime only after all hosts stop
+using it. These are separate operations; the MCP removal commands do not uninstall the Skill:
+
+```bash
+# Run the relevant commands for your configured hosts.
+codex mcp remove agentnave
+claude mcp remove --scope user agentnave
+uv tool uninstall agentnave
+```
+
+For other hosts, use their documented removal interface.
+Remove the companion Skill through its deployment manager, or remove only its installed directory
+or symlink, preserving user-authored additions. Uninstalling the runtime does not delete private
+history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
+Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
+configuration, sessions, and user projects remain owned by the user and providers.
