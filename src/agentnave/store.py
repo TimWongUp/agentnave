@@ -109,6 +109,7 @@ class TaskRecord(BaseModel):
     id: str
     provider: str
     model: str
+    effort: str | None = None
     reported_model: str | None = None
     cwd: str
     prompt: str

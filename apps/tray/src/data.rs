@@ -487,7 +487,12 @@ impl Reader {
             return Response::error(503, "宿主接入尚未初始化");
         };
         match path {
-            "/app/hosts" => Response::json(&hosts.snapshot()),
+            "/app/hosts" => {
+                if !crate::PREVIEW {
+                    hosts.remember_reloads();
+                }
+                Response::json(&hosts.snapshot())
+            }
             "/app/hosts/refresh" => Response::json(&hosts.refresh()),
             "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
             "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {
@@ -2453,12 +2458,55 @@ mod tests {
     }
 
     #[test]
+    fn desk_effort_follows_latest_call_without_rewriting_message_efforts() {
+        let dir = tempfile::tempdir().unwrap();
+        let reader = Reader::new(dir.path().to_path_buf());
+        for (id, hour, effort) in [
+            ("a", "01", Some("high")),
+            ("b", "02", Some("low")),
+            ("c", "03", None),
+        ] {
+            let mut task = task_snapshot(id, "succeeded", &format!("2099-01-01T{hour}:00:00Z"));
+            task["director"]["tasks"][0]["thread"] = json!("same-thread");
+            task["director"]["tasks"][0]["effort"] = json!(effort);
+            save(dir.path(), &task);
+            let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+            assert_eq!(chat["desks"].as_array().unwrap().len(), 1);
+            assert_eq!(chat["desks"][0]["model"], "m");
+            assert_eq!(chat["desks"][0]["effort"], json!(effort));
+            if let Some(effort) = effort {
+                assert!(
+                    chat["desks"][0]["handle"]
+                        .as_str()
+                        .unwrap()
+                        .contains(&format!("m · {effort}"))
+                );
+            }
+            let answers: Vec<_> = chat["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|m| m["speaker"]["role"] == "member")
+                .collect();
+            assert_eq!(answers[0]["speaker"]["effort"], "high");
+            if answers.len() > 1 {
+                assert_eq!(answers[1]["speaker"]["effort"], "low");
+            }
+            if answers.len() > 2 {
+                assert!(answers[2]["speaker"]["effort"].is_null());
+                assert_eq!(chat["desks"][0]["handle"], "@m·Codex");
+            }
+        }
+    }
+
+    #[test]
     fn office_messages_keep_identity_routes_and_review_id_when_published() {
         let dir = tempfile::tempdir().unwrap();
         let reader = Reader::new(dir.path().to_path_buf());
         let mut show = office_show("show", "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z");
         show["director"]["cwd"] = json!("/work/project-name");
         show["director"]["seats"][0]["model"] = json!("");
+        show["director"]["seats"][0]["effort"] = json!("high");
         show["director"]["seats"]
             .as_array_mut()
             .unwrap()
@@ -2482,7 +2530,7 @@ mod tests {
         assert_eq!(
             prompt["answering"],
             json!([
-                "@claude-opus-5-5·Claude Code·reviewer",
+                "@claude-opus-5-5 · high·Claude Code·reviewer",
                 "@CLI 默认模型·Claude Code·reviewer"
             ])
         );
@@ -2495,6 +2543,7 @@ mod tests {
         assert_eq!(instruction["to"][0]["handle"], prompt["answering"][0]);
         let answer = messages.iter().find(|m| m["status"] == "review").unwrap();
         assert_eq!(answer["text"], "answer");
+        assert_eq!(answer["speaker"]["effort"], "high");
         assert_eq!(answer["to"], json!([{"key": "@boss", "handle": "@boss"}]));
         assert_eq!(answer["reply_to"], prompt["id"]);
         assert_eq!(answer["speaker"]["handle"], prompt["answering"][0]);
@@ -2506,6 +2555,7 @@ mod tests {
             .unwrap();
         assert_eq!(desk["display_model"], "claude-opus-5-5");
         assert_eq!(desk["model_source"], "native");
+        assert_eq!(desk["effort"], "high");
         assert_eq!(
             chat["rooms"][0]["round"],
             json!({"number": 1, "order": "serial", "status": "review"})
@@ -2529,6 +2579,25 @@ mod tests {
         assert_eq!(answer2["visibility"], "public");
         assert_eq!(answer2["to"], json!([{"key": "@all", "handle": "@all"}]));
         assert_eq!(answer2["reply_to"], prompt["id"]);
+        assert_eq!(answer2["round"], 1);
+        assert_eq!(answer2["speaker"]["effort"], "high");
+        let remark = published["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "remark")
+            .unwrap();
+        assert!(remark["round"].is_null());
+        show["director"]["messages"].as_array_mut().unwrap().insert(0, json!({"kind":"host", "speaker":"@host", "round":0, "text":"opening", "time":"2098-12-31T23:59:59Z"}));
+        save(dir.path(), &show);
+        let legacy = state(&reader, &path);
+        let opening = legacy["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "opening")
+            .unwrap();
+        assert!(opening["round"].is_null());
     }
 
     #[test]

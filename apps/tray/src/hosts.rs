@@ -1,5 +1,6 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod config;
+mod processes;
 mod roots;
 mod skill;
 #[cfg(test)]
@@ -211,6 +212,7 @@ pub struct Hosts {
     manual_roots: HashSet<String>,
     detected_at: String,
     cached: Value,
+    processes: Mutex<processes::Probe>,
 }
 impl Hosts {
     #[cfg(test)]
@@ -236,6 +238,7 @@ impl Hosts {
             manual_roots: HashSet::new(),
             detected_at: timestamp(),
             cached: Value::Null,
+            processes: Mutex::default(),
         };
         hosts.cached = hosts.snapshot();
         hosts
@@ -700,11 +703,26 @@ impl Hosts {
             v.as_str()
                 .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
         };
-        // Without a live connection nothing holds the old entry or interface: the
-        // next connection starts after the change, which already counts as a reload (ADR-0022).
+        // A running host can still hold the configuration from before its first MCP connection.
         let idle = connections.is_empty() && !lingering;
+        let process = if idle && pending {
+            self.processes
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .state(&self.context, host.id)
+        } else {
+            processes::State::Unknown
+        };
+        let old_process = matches!(process, processes::State::Running(started)
+            if started > 0 && changed["at_ms"].as_u64().is_some_and(|at| started.saturating_mul(1000) <= at));
         let mut state = if idle {
-            "idle"
+            if old_process {
+                "required"
+            } else if pending && !matches!(process, processes::State::Stopped) {
+                "unverified"
+            } else {
+                "idle"
+            }
         } else if pending {
             "required"
         } else if manual {
@@ -713,7 +731,13 @@ impl Hosts {
             "unknown"
         };
         let mut reason = if idle {
-            "no_connection"
+            if old_process {
+                "host_running"
+            } else if state == "unverified" {
+                "unverified"
+            } else {
+                "no_connection"
+            }
         } else if pending {
             "config"
         } else {
@@ -785,6 +809,30 @@ impl Hosts {
         }
         json!({"state":state,"reason":reason,"token":token,"connections":connections.len(),"confirmed_at":confirmed["at"]})
     }
+    /// A new connection proves the current entry loaded; keep that proof once it closes.
+    pub(crate) fn remember_reloads(&mut self) {
+        let mut settings = self.settings.clone();
+        let mut proved = false;
+        for host in self.registry() {
+            let Some(token) = self.reload_token(&host) else {
+                continue;
+            };
+            let record = &self.settings[host.id];
+            if record["reload_changed"]["v"] != RELOAD_FORMAT
+                || record["reload_changed"]["token"] != token.as_str()
+                || record["reload_confirmed"]["token"] == token.as_str()
+                || self.reload_state(&host, &token)["state"] != "current"
+            {
+                continue;
+            }
+            settings[host.id]["reload_confirmed"] =
+                json!({"v":RELOAD_FORMAT,"token":token,"at":timestamp()});
+            proved = true;
+        }
+        if proved && roots::save(&self.context, &settings).is_ok() {
+            self.settings = settings;
+        }
+    }
     fn connection_root(&self, host: &Host) -> Option<PathBuf> {
         let entry = host.read().ok()?.entry?;
         let explicit = entry["env"]["AGENTNAVE_DATA_DIR"]
@@ -812,6 +860,10 @@ impl Hosts {
             }
             settings[host.id]["reload_observed"] = json!({"v":RELOAD_FORMAT,"token":token});
             if changed {
+                self.processes
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .invalidate();
                 settings[host.id]["reload_changed"] = json!({"v":RELOAD_FORMAT,"token":token,"at_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64});
             }
         }
@@ -860,6 +912,7 @@ impl Hosts {
         self.refresh_probed()
     }
     pub(crate) fn refresh_probed(&mut self) -> Value {
+        self.remember_reloads();
         let mut settings = self.settings.clone();
         for host in self.registry() {
             let state = self.state(&host);
@@ -1183,10 +1236,26 @@ impl Hosts {
                 self.settings = settings;
             }
         }
-        let text = result
+        let mut text = result
             .as_ref()
             .cloned()
             .unwrap_or_else(|e| message(e).into());
+        if ok
+            && operation == "connect"
+            && self
+                .reload_token(&host)
+                .is_some_and(|token| json!(token) != before_reload)
+        {
+            let reload = self.state(&host)["reload"].clone();
+            match reload["state"].as_str() {
+                Some("required") => text.push_str(&format!("；{}后生效", reload_hint(id))),
+                Some("unverified") => {
+                    text.push_str(&format!("；待确认生效，{}后再使用", reload_hint(id)))
+                }
+                Some("idle") => text.push_str("；下次启动宿主时生效"),
+                _ => {}
+            }
+        }
         self.failed.remove(id);
         self.record(id, result.map(|_| ()), &text);
         if ok {
@@ -1368,14 +1437,14 @@ fn trust_hint(id: &str) -> &'static str {
 }
 fn reload_hint(id: &str) -> &'static str {
     match id {
-        "codex" => "完整退出并重启 Codex 应用",
+        "codex" => "重启 Codex（桌面版需完整退出）",
         "claude" => "重启 Claude Code",
         "codebuddy" => "重启 CodeBuddy Code",
-        "workbuddy" => "重启 WorkBuddy",
+        "workbuddy" => "完整退出并重启 WorkBuddy",
         "grok" => "重启 Grok CLI",
-        "antigravity" => "重启 Antigravity",
+        "antigravity" => "重启 Antigravity（桌面版需完整退出）",
         "pi" => "重启 Pi",
-        "deepseek" => "重启 DeepSeek Harness",
+        "deepseek" => "重启 DeepSeek Harness（桌面版需完整退出）",
         "hermes" => "重启 Hermes 网关",
         "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",

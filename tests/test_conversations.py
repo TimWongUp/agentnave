@@ -747,6 +747,7 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
         assert saved_views["summary"]["status"] == "succeeded"
         assert saved_views["summary"]["updated"] >= saved_views["director"]["tasks"][0]["time"]
         assert saved_views["director"]["tasks"][0]["prompt"] == "one"
+        assert saved_views["director"]["tasks"][0]["effort"] == "high"
         assert saved_views["director"]["workbench_url"] == "/"
         assert saved_views["public"] is None
         resumed = await _call(
@@ -782,6 +783,7 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
         assert [task["status"] for task in tasks] == ["succeeded", "succeeded"]
         assert [task["manager_model"] for task in tasks] == ["gpt-6", "claude-opus-5"]
         assert tasks[0]["model"] == "test-model"
+        assert [task["effort"] for task in tasks] == ["high", None]
         sleeping = await _call(
             client,
             "start_agent",
@@ -2441,6 +2443,10 @@ async def test_studio_enforces_discussion_defaults_before_saving(
             seat["provider_options"]
             == {"model": "chosen", "effort": "high", "permission_mode": "auto"}
             for seat in saved["seats"]
+        )
+        assert all(
+            seat["effort"] == "high"
+            for seat in _views(data_root, str(show["group_id"]))["director"]["seats"]
         )
         assert (
             _views(data_root, str(show["group_id"]))["summary"]["manager_session"]

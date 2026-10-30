@@ -356,9 +356,9 @@ function renderSummary() {
     });
     kids.push(b);
   }
-  const reloads = hosts.filter((x) => x.reload?.state === "required").length;
+  const reloads = hosts.filter((x) => ["required", "unverified"].includes(x.reload?.state)).length;
   if (reloads) {
-    const b = h("button.sum-chip", { type: "button" }, `${reloads} 需要重新加载 ↓`);
+    const b = h("button.sum-chip", { type: "button" }, `${reloads} 待生效 ↓`);
     b.addEventListener("click", () => {
       const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload"));
       card?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -588,6 +588,7 @@ function buildCard(host) {
   // Only a host not yet connected can be untested: once its entry works it has been tried.
   const badges = [
     host.reload?.state === "required" && h("span.badge.badge-warning", {}, "需要重新加载"),
+    host.reload?.state === "unverified" && h("span.badge", {}, "待确认生效"),
     !host.tested && host.status === "available" &&
       h("span.badge.badge-muted", { title: "还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。" }, "未实测"),
     isNew && h("span.badge.badge-accent", {}, "新检测到"),
@@ -628,8 +629,8 @@ function buildCard(host) {
   else if (host.attention) main.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
   else if (last && open)
     main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
-  // Only a needed reload is shown; synced, idle or undetectable connections need nothing.
-  if (host.reload?.state === "required") {
+  // Configuration changes remain visible until the host stops or a new connection is observed.
+  if (["required", "unverified"].includes(host.reload?.state)) {
     const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || "重启应用");
     const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
@@ -655,7 +656,9 @@ function buildCard(host) {
 
 // Why a reload is required, given how this host restarts; all but a config change clear themselves.
 const RELOAD_REASONS = {
-  config: (hint) => ["接入配置已更新", `运行中的会话还是旧的：新开会话，或${hint}，提示会自动消除。`],
+  config: (hint) => ["接入配置已更新", `${hint}后生效，检测到新连接后自动消除提示。`],
+  host_running: (hint) => ["接入配置已更新", `检测到应用仍在运行，${hint}后生效。`],
+  unverified: (hint) => ["接入配置已更新", `尚未确认应用已加载新配置；${hint}后再使用。`],
   tools: (hint) => ["有连接仍在用旧工具接口", `重新连接 AgentNave MCP，或${hint}；完成后提示自动消除。`],
   relay: (hint) => ["有连接未能切换到新版服务", `这是 v0.31.0 之前启动的旧中继。重新连接 AgentNave MCP，或${hint}；会结束这条连接上运行中的任务。`],
   stale: (hint) => ["有连接长时间仍在用旧版服务", `通常是任务还在运行或结果未读取，处理完会自动切换。没有任务时，重新连接 AgentNave MCP，或${hint}。`],
