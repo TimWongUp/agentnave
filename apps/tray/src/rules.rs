@@ -242,10 +242,16 @@ fn splice(content: &str, text: Option<&str>) -> Result<String, String> {
         // Undo what adding it put around it: the newline after it and, at the end of the file, the
         // blank line before it. The user's own spacing stays.
         (Some((start, end)), None) => {
-            let after = content[end..].strip_prefix('\n').unwrap_or(&content[end..]);
+            // An editor may have saved the file with CRLF since.
+            let newline = |s: &str| ["\r\n", "\n"].into_iter().find(|n| s.ends_with(n));
+            let rest = &content[end..];
+            let after = ["\r\n", "\n"]
+                .into_iter()
+                .find_map(|n| rest.strip_prefix(n))
+                .unwrap_or(rest);
             let before = &content[..start];
-            let before = match before.strip_suffix('\n') {
-                Some(trimmed) if after.is_empty() && trimmed.ends_with('\n') => trimmed,
+            let before = match newline(before).map(|n| &before[..before.len() - n.len()]) {
+                Some(trimmed) if after.is_empty() && newline(trimmed).is_some() => trimmed,
                 _ => before,
             };
             format!("{before}{after}")
@@ -614,6 +620,12 @@ mod tests {
             let added = splice(own, Some("x")).unwrap();
             assert_eq!(splice(&added, None).unwrap(), own);
         }
+        let resaved = splice("我的规则\n", Some("x"))
+            .unwrap()
+            .replace('\n', "\r\n");
+        assert_eq!(splice(&resaved, None).unwrap(), "我的规则\r\n");
+        let alone = splice("", Some("x")).unwrap().replace('\n', "\r\n");
+        assert_eq!(splice(&alone, None).unwrap(), "");
         // A file a moved host read before still loses its block.
         let moved = h.join("old-root/AGENTS.md");
         std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
