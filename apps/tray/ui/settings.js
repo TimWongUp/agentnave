@@ -861,7 +861,8 @@ function slot(scene, provider) {
 // Scenes that show the same model and effort, followed or chosen, need only one row.
 function shownSlot(scene, provider) {
   const current = slot(scene, provider);
-  const model = current.model || nativeDefault(provider).model || "";
+  // A model list without a default runs nothing until one is chosen.
+  const model = current.model || (current.allowed ? "" : nativeDefault(provider).model) || "";
   return { ...current, model, effort: current.effort || (model && cliEffort(provider, model)) || "" };
 }
 const splitCards = new Set(); // Cards split by hand while both scenes still match.
@@ -1011,6 +1012,7 @@ function setSplit(provider, split) {
     return renderCards();
   }
   splitCards.delete(provider);
+  writeSlot("task", provider, slot("task", provider));
   const task = slot("task", provider);
   writeSlot("discussion", provider, task);
   const overrides = currentDoc.modes?.task?.[provider]?.overrides || {};
@@ -1168,13 +1170,13 @@ function renderCards() {
   const focusKey = active?.dataset.focusKey;
   const anchorTop = focusKey ? active.getBoundingClientRect().top : null;
   const cards = document.createDocumentFragment();
-  // Not installed and not listed by a scene: only named in the folded list at the end.
+  // Not installed and named by no scene or default: only in the folded list at the end.
   const missing = [];
 
   for (const provider of PROVIDERS) {
     const info = detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
     const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
-    const listed = SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider]);
+    const listed = known(provider);
     if (!info.installed && !listed) {
       missing.push(provider);
       continue;
