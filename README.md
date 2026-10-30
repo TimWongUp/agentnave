@@ -20,7 +20,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 ## 🎬 实机演示
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 派出 7 个 CLI 组员，在会议室里并联作答、串联接龙" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 派出 7 个 CLI 组员，在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
 
 ## ✨ 能做什么
 
