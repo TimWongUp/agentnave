@@ -88,12 +88,22 @@
 }
 
 /* Local avatar preferences. */
-.avatar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; margin: 14px 0 28px; }
-.avatar-editor { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
-.avatar-editor .avatar { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; }
-.avatar-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.avatar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; margin: 14px 0 28px; }
+.avatar-editor { display: flex; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.avatar-side { flex: 1; min-width: 0; display: grid; gap: 12px; }
+.avatar-name { display: flex; align-items: center; gap: 10px; }
+.avatar-editor .avatar { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; }
+.avatar-label { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.avatar-actions { display: flex; gap: 8px; }
 .avatar-editor button { flex: none; font-size: 12px; padding: 6px 9px; }
-.char-preview .head { display: block; width: 38px; height: 38px; border-radius: 27%; background: var(--line) no-repeat center / cover; }
+/* The office figure, standing still in its idle frame (the office's own rules live in chat.css). */
+.char-preview { flex: none; position: relative; width: 120px; height: 120px; border-radius: 10px; background: var(--hover); }
+.char-preview .fig, .char-preview .fig-a, .char-preview .fig-b, .char-preview .chain { position: absolute; inset: 0; }
+.char-preview .fig-b { isolation: isolate; }
+.char-preview .fig img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; display: none; }
+.char-preview .fig .s-idle { display: block; }
+.char-preview .fig .chain, .char-preview .fig img.devil-tail { z-index: -1; }
+.char-preview .fx { display: none; }
 
 /* Fixed control columns, with explanations kept beside the setting they describe. */
 .settings-page { overflow-anchor: none; }
@@ -105,6 +115,7 @@
 .subnav { margin: -8px 0 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .setting-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin: 0 0 12px; }
 .setting-copy { min-width: 0; }
+.setting-example { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
 .setting-copy label { font-weight: 600; color: var(--ink); cursor: pointer; }
 .settings-page input.switch-input { appearance: none; -webkit-appearance: none; display: inline-block; flex: 0 0 34px; width: 34px; height: 20px; margin: 0; padding: 2px; border: 0; border-radius: 20px; background: var(--muted); cursor: pointer; vertical-align: middle; }
 .settings-page input.switch-input::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0003; }

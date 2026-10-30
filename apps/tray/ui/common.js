@@ -185,7 +185,8 @@
 
   // ---- painted office art (ui/art, served at /art/) -----------------------------------------
   // Characters follow the model family, like the avatars; a model without a character of its own is
-  // the default newcomer. The CLI brand is never used to guess a model.
+  // the default newcomer. The CLI brand is never used to guess a model, except DeepSeek Harness:
+  // its boss and desks wear DeepSeek's character when their model is unknown or has none.
   const FAMILY_ART = { claude: "claude", gpt: "codex", deepseek: "deepseek", gemini: "gemini", glm: "glm", grok: "grok", qwen: "qwen",
     kimi: "kimi", minimax: "minimax", hunyuan: "hunyuan", doubao: "doubao", muse: "muse" };
   const STATES = ["idle", "blink", "working", "speaking", "review", "done", "sleep"];
@@ -210,7 +211,7 @@
     return loadCharacters();
   };
   const character = (provider, model) => {
-    const family = window.Avatars?.family(provider, model);
+    const family = window.Avatars?.family(provider, model) || (provider === "deepseek" ? "deepseek" : null);
     return replaced[family] ? `@${family}@${replaced[family]}` : FAMILY_ART[family] || "default";
   };
   // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
@@ -285,7 +286,7 @@
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
   // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. Mono marks sit on a dark tile.
-  const CLI_MARK = { claude: "", "claude-desktop": "", codex: "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "mono" };
+  const CLI_MARK = { claude: "", "claude-desktop": "", codex: "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "mono", zcode: "mono" };
   function cliMark(provider) {
     if (provider && window.Avatars?.custom("host", provider, "")) return Avatars.create("host", provider, "");
     if (!Object.hasOwn(CLI_MARK, provider)) return null;
