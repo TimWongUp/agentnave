@@ -6,6 +6,7 @@ mod skill;
 #[cfg(test)]
 mod tests;
 mod transaction;
+use crate::detect::executable;
 use config::{Document, Format};
 use roots::Root;
 pub(crate) use roots::Shell;
@@ -1607,16 +1608,6 @@ fn entry_kind(command: &str) -> &'static str {
         "agentnave-mcp" => "agentnave",
         _ => "other",
     }
-}
-fn executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-    }
-    #[cfg(not(unix))]
-    path.is_file()
 }
 fn timestamp() -> String {
     crate::update::rfc3339(SystemTime::now())
