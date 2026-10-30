@@ -865,11 +865,14 @@ function shownSlot(scene, provider) {
   return { ...current, model, effort: current.effort || (model && cliEffort(provider, model)) || "" };
 }
 const splitCards = new Set(); // Cards split by hand while both scenes still match.
+const sceneOverrides = (scene, provider) => JSON.stringify(currentDoc.modes?.[scene]?.[provider]?.overrides || {});
 const isSplit = (provider) => splitCards.has(provider) ||
-  JSON.stringify(shownSlot("task", provider)) !== JSON.stringify(shownSlot("discussion", provider));
+  JSON.stringify(shownSlot("task", provider)) !== JSON.stringify(shownSlot("discussion", provider)) ||
+  sceneOverrides("task", provider) !== sceneOverrides("discussion", provider);
 
 // Installed CLIs, and ones a scene still names after they were removed.
-const known = (provider) => detected[provider]?.installed || SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider]);
+const known = (provider) => detected[provider]?.installed ||
+  SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider] || currentDoc.defaults?.[s]?.[provider]);
 
 // A scene names its CLIs only when it must (one is off, a model list or a scene-only effort):
 // every known CLI is listed with any model and keeps its default model (ADR-0021).
@@ -887,14 +890,14 @@ function restrict(scene) {
   return selection;
 }
 
-// A list that names every installed CLI with any model and nothing scene-only says no more than
+// A list that names every known CLI with any model and nothing scene-only says no more than
 // an open scene, which also takes CLIs installed later.
-function relax(scene) {
+function relax(scene, kept) {
   const selection = currentDoc.modes?.[scene];
   if (!selection) return;
   const entries = Object.entries(selection);
   const open = entries.every(([, c]) => !c.models?.length && !Object.keys(c.overrides || {}).length);
-  const all = PROVIDERS.every((p) => !known(p) || selection[p]);
+  const all = PROVIDERS.every((p) => !kept.has(p) || selection[p]);
   if (!entries.length || !open || !all) return;
   delete currentDoc.modes[scene];
   setKeptDefaults(Object.fromEntries(entries.filter(([, c]) => c.default).map(([p, c]) => [p, c.default])), scene);
@@ -934,10 +937,12 @@ function writeEfforts(provider, modelId, wants) {
   const fits = (level) => !level || !shared.efforts?.length || shared.efforts.includes(level);
   const other = base === "task" ? "discussion" : "task";
   if (!fits(wants[base]) && fits(wants[other])) base = other;
-  if (wants[base]) shared.effort = wants[base];
-  else delete shared.effort;
+  // A level only a scene's own range has stays with the scenes.
+  const sharable = fits(wants[base]);
+  if (sharable && wants[base]) shared.effort = wants[base];
+  else if (sharable) delete shared.effort;
   for (const scene of SCENE_IDS) {
-    if (wants[scene] !== wants[base]) {
+    if (wants[scene] !== wants[base] || !sharable) {
       const conf = restrict(scene)[provider];
       if (!conf) continue;
       conf.overrides ||= {};
@@ -952,7 +957,9 @@ function writeEfforts(provider, modelId, wants) {
 }
 
 function edited() {
-  for (const scene of SCENE_IDS) relax(scene);
+  // Known before relaxing: opening one scene must not forget a CLI the other turned off.
+  const kept = new Set(PROVIDERS.filter(known));
+  for (const scene of SCENE_IDS) relax(scene, kept);
   incDocVersion();
   renderCards();
 }
@@ -1006,8 +1013,11 @@ function setSplit(provider, split) {
   splitCards.delete(provider);
   const task = slot("task", provider);
   writeSlot("discussion", provider, task);
-  const joined = currentDoc.modes?.discussion?.[provider];
-  if (joined) joined.overrides = structuredClone(currentDoc.modes?.task?.[provider]?.overrides || {});
+  const overrides = currentDoc.modes?.task?.[provider]?.overrides || {};
+  const joined = task.enabled && Object.keys(overrides).length
+    ? restrict("discussion")[provider]
+    : currentDoc.modes?.discussion?.[provider];
+  if (joined) joined.overrides = structuredClone(overrides);
   const modelId = task.model || nativeDefault(provider).model;
   if (task.enabled) writeEfforts(provider, modelId, { task: task.effort, discussion: task.effort });
   pickerOpen = null;
@@ -1040,7 +1050,7 @@ function slotRows(provider, scene, split) {
   }
 
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
-  const model = current.model || (offered.includes(native.model) || !current.allowed ? native.model : "") || "";
+  const model = current.model || (current.allowed ? "" : native.model) || "";
   const options = [
     el("option", { value: OFF }, "不用"),
     ...(current.allowed && !model ? [el("option", { value: "", selected: true, disabled: true }, "选一个默认模型")]
@@ -1119,7 +1129,9 @@ function slotRows(provider, scene, split) {
   if (open) {
     const toggle = (m, on) => {
       const list = current.allowed || [];
-      pick({ allowed: on ? [...list, m] : list.filter((x) => x !== m) });
+      const allowed = on ? [...list, m] : list.filter((x) => x !== m);
+      if (allowed.length) pick({ allowed });
+      else renderCards();
     };
     rows.push(el("div", { className: "member-picker" },
       el("label", { className: "member-option member-option-all" },

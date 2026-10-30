@@ -306,13 +306,18 @@ fn grok_default_effort(cache: &Value, model: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// CodeBuddy's config folder.
+fn codebuddy_dir() -> Option<PathBuf> {
+    match std::env::var_os("CODEBUDDY_CONFIG_DIR") {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => dirs::home_dir().map(|home| home.join(".codebuddy")),
+    }
+}
+
 /// CodeBuddy's `settings.json` in its config folder.
 fn codebuddy_settings() -> Option<Value> {
-    let dir = match std::env::var_os("CODEBUDDY_CONFIG_DIR") {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => dirs::home_dir()?.join(".codebuddy"),
-    };
-    serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).ok()?).ok()
+    let path = codebuddy_dir()?.join("settings.json");
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
 /// Pi's thinking levels, lowest first: a level a model lacks runs at the next one up it has,
@@ -664,26 +669,25 @@ fn probe_path(provider: &str, path: &Path) -> Value {
                 "codex" => configured_effort(provider, None, false),
                 _ => configured_effort(provider, Some(id), Some(id) == native.as_deref()),
             });
-            // CodeBuddy thinks only on request when `alwaysThinkingEnabled` is off.
+            // CodeBuddy thinks only on request when `alwaysThinkingEnabled` is off, whatever
+            // `reasoningEffort` says.
             let thinking_off = provider == "codebuddy"
-                && codebuddy_settings().is_some_and(|settings| {
-                    settings["alwaysThinkingEnabled"] == false
-                        && settings["reasoningEffort"].is_null()
-                });
+                && codebuddy_settings()
+                    .is_some_and(|settings| settings["alwaysThinkingEnabled"] == false);
             if thinking_off {
                 for listed in &mut models {
                     listed.as_object_mut().map(|entry| entry.remove("effort"));
                 }
             }
+            // A listed default model runs at its own level; one the listing lacks at the setting.
             let effort = match &native {
-                Some(id) => models
-                    .iter()
-                    .find(|listed| listed["id"] == id.as_str())
-                    .and_then(|listed| listed["effort"].as_str().map(str::to_owned))
-                    .or_else(|| {
-                        let setting = configured_effort(provider, Some(id), true);
-                        dsh_effort.clone().or(setting).filter(|_| !thinking_off)
-                    }),
+                Some(id) => match models.iter().find(|listed| listed["id"] == id.as_str()) {
+                    Some(listed) => listed["effort"].as_str().map(str::to_owned),
+                    None => dsh_effort
+                        .clone()
+                        .or_else(|| configured_effort(provider, Some(id), true))
+                        .filter(|_| !thinking_off),
+                },
                 None => dsh_effort.clone(),
             };
             json!({
@@ -946,7 +950,7 @@ fn grok_efforts(cache: &Value, model: &str) -> Option<Vec<String>> {
 /// (`~/.codebuddy/local_storage/*.info`: a JSON string of base64 gzip JSON): `supportedEfforts`
 /// and its default level, `defaultEffort` or `effort`.
 fn codebuddy_reasoning() -> Map<String, Value> {
-    let Some(dir) = dirs::home_dir().map(|home| home.join(".codebuddy/local_storage")) else {
+    let Some(dir) = codebuddy_dir().map(|dir| dir.join("local_storage")) else {
         return Map::new();
     };
     let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();

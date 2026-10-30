@@ -73,13 +73,20 @@ fn candidates(app: &App, home: &Path) -> (bool, Vec<PathBuf>) {
     }
 }
 
-/// A file under exactly this name: on a case-insensitive disk `Agents.md` is not also `AGENTS.md`.
-fn exists(path: &Path) -> bool {
-    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-        return false;
-    };
+/// The file a name opens, under the name it has on disk: on a case-insensitive disk `Agents.md`
+/// and `AGENTS.md` are one file, shown once as it is spelled.
+fn on_disk(path: &Path) -> Option<PathBuf> {
+    if !path.is_file() {
+        return None;
+    }
+    let (dir, name) = (path.parent()?, path.file_name()?.to_string_lossy());
     let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
-    path.is_file() && entries.into_iter().any(|entry| entry.file_name() == name)
+    let mut names: Vec<_> = entries.map(|entry| entry.file_name()).collect();
+    names.sort_by_key(|own| own.to_string_lossy() != name);
+    let own = names
+        .into_iter()
+        .find(|own| own.to_string_lossy().eq_ignore_ascii_case(&name));
+    Some(own.map_or_else(|| path.to_owned(), |own| dir.join(own)))
 }
 
 /// Each file an app actually reads, or its usual file when it has none yet.
@@ -87,21 +94,27 @@ fn files(apps: &[App], home: &Path) -> Vec<(PathBuf, Vec<&'static str>)> {
     let mut out: Vec<(PathBuf, Vec<&'static str>)> = Vec::new();
     for app in apps {
         let (first, candidates) = candidates(app, home);
-        let existing: Vec<&PathBuf> = candidates.iter().filter(|path| exists(path)).collect();
-        let read: Vec<&PathBuf> = match (first, existing.is_empty()) {
+        let mut existing: Vec<PathBuf> = Vec::new();
+        for path in candidates.iter().filter_map(|path| on_disk(path)) {
+            if !existing.contains(&path) {
+                existing.push(path);
+            }
+        }
+        let read: Vec<PathBuf> = match (first, existing.is_empty()) {
             (_, true) => candidates
                 .iter()
                 .find(|p| p.ends_with("AGENTS.md"))
                 .or(candidates.first())
                 .into_iter()
+                .cloned()
                 .collect(),
             (true, false) => existing.into_iter().take(1).collect(),
             (false, false) => existing,
         };
         for path in read {
-            match out.iter_mut().find(|(known, _)| known == path) {
+            match out.iter_mut().find(|(known, _)| *known == path) {
                 Some((_, readers)) => readers.push(app.label),
-                None => out.push((path.clone(), vec![app.label])),
+                None => out.push((path, vec![app.label])),
             }
         }
     }

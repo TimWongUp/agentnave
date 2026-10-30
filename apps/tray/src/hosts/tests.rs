@@ -1216,6 +1216,7 @@ fn skill_ownership_links_and_refresh_replace_other_copies_after_a_backup() {
             .map(|e| e.path())
             .filter(|p| p.to_string_lossy().contains("-skill-pi-agentnave-manager"))
             .any(|p| {
+                let p = p.join("agentnave-manager");
                 fs::read_to_string(p.join("SKILL.md")).ok().as_deref() == Some("external")
                     && (0..40).all(|n| p.join(format!("notes/{n}.md")).is_file())
             })

@@ -151,9 +151,10 @@ fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), Str
     }
     Ok(())
 }
-/// Moves anything else at a Skill path, a link included, into the App's backups as one entry:
-/// nothing is copied, so a change made meanwhile is kept too and no file budget evicts part of
-/// it. Returns where it went.
+/// Moves anything else at a Skill path, a link included, into a folder of its own in the App's
+/// backups: nothing is copied, so a change made meanwhile is kept too; a folder is never one of
+/// the backup files evicted past the budget, and a new one never lands on an older one. Returns
+/// where it went.
 fn move_to_backups(path: &Path, app: &Path, id: &str, home: &Path) -> Result<PathBuf, String> {
     let dir = app.join("backups");
     super::transaction::safe_path(&dir, home)?;
@@ -162,10 +163,15 @@ fn move_to_backups(path: &Path, app: &Path, id: &str, home: &Path) -> Result<Pat
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let target = dir.join(format!("{stamp:020}-skill-{id}-{name}"));
+    let name = path.file_name().unwrap_or_default();
+    let folder = dir.join(format!("{stamp:020}-skill-{id}-{}", name.to_string_lossy()));
+    fs::create_dir(&folder).map_err(|_| "无法创建备份目录")?;
+    let target = folder.join(name);
     safe_parent(path, home)?;
-    fs::rename(path, &target).map_err(|_| "无法把原有 Skill 移入备份目录，已保留")?;
+    if fs::rename(path, &target).is_err() {
+        let _ = fs::remove_dir(&folder);
+        return Err("无法把原有 Skill 移入备份目录，已保留".to_owned());
+    }
     Ok(target)
 }
 /// Whether anything, a dangling link included, sits at a path.
