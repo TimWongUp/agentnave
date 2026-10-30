@@ -414,17 +414,14 @@ function skillNode(host) {
     return h(
       "span",
       {},
-      `App 管理 v${s.version}`,
+      `v${s.version}`,
       old && h("span.sub", {}, `· 刷新检测时更新到 v${S.appVersion}`),
     );
   }
   if (s.state === "external")
-    return h(
-      "span",
-      { title: s.path || null },
-      "由其他方式管理",
-      h("span.sub", {}, "· App 不会改动"),
-    );
+    return h("span", {}, h("span.warn-text", {}, "待更新"), h("span.sub", {}, "· 刷新检测时更新"));
+  if (s.state === "blocked")
+    return h("span", {}, h("span.warn-text", {}, "无法安装"), h("span.sub", {}, "· Skill 目录经过符号链接"));
   if (s.state === "manual")
     return h(
       "span",
@@ -506,12 +503,7 @@ function advPanel(host) {
 
 function confirmBlock(host) {
   const orphan = host.status === "orphaned";
-  const skill =
-    host.skill.state === "app"
-      ? `由 App 安装的 Skill（v${host.skill.version}）会一并删除`
-      : host.skill.state === "external"
-        ? "这个应用的 Skill 由其他方式管理，不会改动"
-        : "";
+  const skill = ["app", "external"].includes(host.skill.state) ? "Skill 会一并删除" : "";
   const paths = (host.layers || []).filter((l) => l.scope !== "project" && l.has_entry).map((l) => shortPath(l.path));
   const where = `${(paths.length ? paths : [shortPath(host.config_path)]).join("、")} 里名为 agentnave 的条目`;
   const msg = orphan
@@ -585,8 +577,11 @@ function actionButtons(host) {
 function subLine(host, word) {
   const bits = [h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word)];
   if (host.status === "connected" || host.status === "needs_attention") {
-    const skill = host.skill.state === "app" ? "Skill 由 App 管理" : host.skill.state === "external" ? "Skill 由其他方式管理" : "Skill 未安装";
-    bits.push(h("span.hc-fact", {}, skill));
+    // Only a Skill that needs something is mentioned.
+    const s = host.skill;
+    const skill = s.state === "app" ? (S.appVersion && s.version !== S.appVersion ? "Skill 待更新" : "")
+      : s.state === "external" ? "Skill 待更新" : s.state === "blocked" ? "Skill 无法安装" : "Skill 未安装";
+    if (skill) bits.push(h("span.hc-fact", {}, skill));
   } else if (host.status === "available") {
     bits.push(h("span.hc-fact", {}, "本机已安装，还没有接入 AgentNave"));
   }

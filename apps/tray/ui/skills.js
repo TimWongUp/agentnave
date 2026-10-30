@@ -16,7 +16,7 @@ const SETTINGS = {
 };
 
 const why = (host, state) =>
-  state.state === "external" ? "由其他方式管理，App 不会改动"
+  state.state === "blocked" ? "Skill 目录经过符号链接，无法安装"
     : !state.enabled ? `点选为 ${host.label} 安装`
       : state.state === "app" ? "已安装，点选停用" : "已选，接入这个应用时自动安装";
 
@@ -25,11 +25,11 @@ function chip(skill, host) {
   const state = host.skills?.[skill.name];
   if (!state || state.state === "manual" || host.status === "orphaned") return null;
   const key = `${skill.name}/${host.id}`;
-  const external = state.state === "external";
-  const on = state.enabled && !external;
+  const blocked = state.state === "blocked";
+  const on = state.enabled && !blocked;
   const b = h("button.skill-chip", {
     type: "button", "data-focus-key": key, "aria-pressed": String(on), title: why(host, state),
-    disabled: external || S.busy.has(key),
+    disabled: blocked || S.busy.has(key),
   }, AN.hostTile ? AN.hostTile(host.id, host.label) : null, host.label,
     on && state.state !== "app" && h("small", {}, "待接入"));
   b.addEventListener("click", async () => {
@@ -50,7 +50,7 @@ function chip(skill, host) {
 
 function row(skill) {
   const chips = S.hosts.map((host) => chip(skill, host)).filter(Boolean);
-  const installed = S.hosts.filter((host) => host.skills?.[skill.name]?.enabled && host.skills[skill.name].state !== "external").length;
+  const installed = S.hosts.filter((host) => host.skills?.[skill.name]?.enabled && host.skills[skill.name].state !== "blocked").length;
   const open = S.open.has(skill.name);
   const reading = S.open.has(`${skill.name}/content`);
   const toggle = (key) => () => {
@@ -68,7 +68,7 @@ function row(skill) {
   return h("div.skill-row", { "data-open": String(open) }, head, open && h("div.skill-body", {},
     h("h3", {}, "安装到"),
     chips.length ? h("div.skill-chips", {}, chips) : h("p.guidance", {}, "还没有可安装的应用；在“boss”里接入后会出现在这里。"),
-    h("p.skill-hint", {}, "点选应用即安装或停用；灰色的由其他方式管理。新接入的应用会自动出现。"),
+    h("p.skill-hint", {}, "点选应用即安装或停用。新接入的应用会自动出现。"),
     SETTINGS[skill.name]?.(),
     more,
     reading && h("pre.skill-content", {}, skill.content),

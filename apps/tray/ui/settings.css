@@ -150,27 +150,36 @@
 .member-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px; overflow: visible; }
 .member-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 28px; }
 .member-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
-.member-end { display: inline-flex; align-items: center; gap: 14px; }
-.member-row { display: grid; grid-template-columns: 96px auto auto 1fr; align-items: center; gap: 12px; padding-left: 30px; }
+.member-end { display: grid; grid-template-columns: auto 150px; align-items: center; gap: 14px; }
+.member-hidden { visibility: hidden; }
+.member-row { display: grid; grid-template-columns: 96px 290px 180px minmax(0, 1fr); align-items: center; gap: 12px; padding-left: 30px; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
-.member-tier { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
-.member-tier select { font-size: 12.5px; padding: 4px 8px; min-width: 104px; }
+.member-tier { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.member-tier select { flex: 1; min-width: 0; font-size: 12.5px; padding: 4px 8px; }
 .member-switch { display: inline-flex; align-items: center; gap: 8px; padding-left: 30px; font-size: 12.5px; cursor: pointer; }
 .member-error { margin: 0; padding-left: 30px; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
 .member-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.member-model { font-size: 12.5px; padding: 5px 8px; max-width: 320px; }
+.member-row > .member-line:nth-child(2) { flex-wrap: nowrap; }
+.member-row > .member-line:nth-child(2) > select { flex: 1; min-width: 0; }
+.member-reset-slot { flex: none; width: 26px; }
+.member-model { font-size: 12.5px; padding: 5px 8px; }
 .member-efforts { justify-self: start; }
-.member-reset { padding: 0 7px; min-height: 24px; font-size: 13px; color: var(--muted); }
+.member-reset { flex: none; width: 26px; padding: 0; min-height: 24px; font-size: 13px; color: var(--muted); }
 .member-muted { color: var(--muted); font-size: 12px; }
-.member-list { justify-self: start; font-size: 12.5px; padding: 5px 10px; text-align: left; overflow-wrap: anywhere; }
+.member-list { width: 100%; font-size: 12.5px; padding: 5px 10px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .member-picker { margin: 0 0 4px 30px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
 .member-option { display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
 .member-option:has(input:disabled) { cursor: default; }
 .member-option-id { overflow-wrap: anywhere; }
 .member-option-all { grid-column: 1 / -1; font-weight: 600; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .member-card > .disable-confirm { margin: 0 -16px; border-top: 1px solid var(--line); }
+@media (max-width: 1000px) {
+  .member-row { grid-template-columns: 96px 250px 160px; }
+  .member-row > :nth-child(4) { grid-column: 2 / -1; }
+}
 @media (max-width: 700px) {
   .member-row { grid-template-columns: minmax(0, 1fr); padding-left: 0; gap: 8px; }
+  .member-row > :nth-child(4) { grid-column: auto; }
   .member-switch, .member-error { padding-left: 0; }
   .member-picker { margin-left: 0; }
 }

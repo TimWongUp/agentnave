@@ -1016,13 +1016,13 @@ function slotRows(provider, scene, split) {
   const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
 
   if (!current.enabled) {
-    return [el("div", { className: "member-row" }, label,
+    return [el("div", { className: "member-row" }, label, el("div", { className: "member-line" },
       el("select", {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
         "aria-label": "默认模型",
         onChange: (e) => pick({ enabled: true, model: e.target.value === OFF ? "" : e.target.value }),
-      }, el("option", { value: OFF, selected: true }, "不用"), ...all.map((m) => el("option", { value: m }, m))))];
+      }, el("option", { value: OFF, selected: true }, "不用"), ...all.map((m) => el("option", { value: m }, m))), el("span", { className: "member-reset-slot" })))];
   }
 
   const model = current.model || native.model || "";
@@ -1052,7 +1052,7 @@ function slotRows(provider, scene, split) {
         "aria-label": "改回 CLI 当前设置",
         onClick: () => pick({ model: "", effort: sceneEffort(scene || "task", provider, native.model) }),
       }, "↺")
-      : null);
+      : el("span", { className: "member-reset-slot" }));
 
   const conf = currentDoc.modes?.[scene || "task"]?.[provider]?.overrides?.[model];
   const range = conf?.efforts?.length ? conf.efforts : currentDoc.clis?.[provider]?.models?.[model]?.efforts || [];
@@ -1100,7 +1100,7 @@ function slotRows(provider, scene, split) {
     onClick: () => { pickerOpen = open ? null : key; renderCards(); },
   }, el("span", { className: "member-muted" }, "可选 "), textNode(summary), el("span", { className: "member-muted" }, open ? " ▴" : " ▾"));
 
-  const rows = [el("div", { className: "member-row" }, label, modelLine, effortLine, listButton)];
+  const rows = [el("div", { className: "member-row" }, label, modelLine, listButton, effortLine)];
   if (open) {
     const toggle = (m, on) => {
       const list = current.allowed || [];
@@ -1158,7 +1158,7 @@ function renderCards() {
         info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
         info.installed ? null : el("span", { className: "badge badge-bad" }, "未安装")),
       el("div", { className: "member-end" },
-        enabled ? el("div", { className: "segment-control", role: "radiogroup", "aria-label": `${name} 的两个场景` },
+        el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": `${name} 的两个场景`, "aria-hidden": enabled ? null : "true" },
           [[false, "一起设置"], [true, "分开设置"]].map(([value, text]) => el("button", {
             type: "button",
             role: "radio",
@@ -1166,8 +1166,8 @@ function renderCards() {
             "aria-checked": String(value === split),
             dataset: { focusKey: `${provider}/split/${value}` },
             onClick: () => value !== split && setSplit(provider, value),
-          }, text))) : null,
-        renderPermission(provider)));
+          }, text))),
+        renderPermission(provider) || el("span")));
     const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
       card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": `确认停用 ${name}` },

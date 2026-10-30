@@ -186,7 +186,7 @@ fn revision_unrelated_change_does_not_retry_failed_takeover() {
 
 #[test]
 #[cfg(unix)]
-fn external_skill_links_do_not_block_healthy_hosts_or_mcp_actions() {
+fn skill_links_are_replaced_and_linked_folders_left_without_blocking_mcp_actions() {
     for linked_parent in [false, true] {
         let (_temp, mut hosts) = fixture();
         let h = host(&hosts, "workbuddy");
@@ -208,7 +208,8 @@ fn external_skill_links_do_not_block_healthy_hosts_or_mcp_actions() {
         save(&outside.join("SKILL.md"), "externally managed");
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&outside, link).unwrap();
-        assert_eq!(hosts.state(&h)["skill"]["state"], "external");
+        let expected = if linked_parent { "blocked" } else { "external" };
+        assert_eq!(hosts.state(&h)["skill"]["state"], expected);
         assert_eq!(hosts.state(&h)["status"], "connected");
         assert!(hosts.state(&h)["attention"].is_null());
         hosts.refresh();
@@ -224,7 +225,10 @@ fn external_skill_links_do_not_block_healthy_hosts_or_mcp_actions() {
             true
         );
         assert!(h.read().unwrap().entry.is_some());
-        assert!(link.is_symlink());
+        // A linked Skill becomes the App's copy; a linked folder is never written through.
+        assert_eq!(link.is_symlink(), linked_parent);
+        let expected = if linked_parent { "blocked" } else { "app" };
+        assert_eq!(hosts.state(&h)["skill"]["state"], expected);
         assert_eq!(
             fs::read_to_string(outside.join("SKILL.md")).unwrap(),
             "externally managed"
@@ -1016,7 +1020,7 @@ fn shell_probe_is_whitelisted_cached_and_failed_probe_blocks_only_automatic_writ
 }
 
 #[test]
-fn optional_skill_switch_installs_only_when_on_and_leaves_external_copies() {
+fn optional_skill_switch_installs_when_on_and_removes_any_copy_when_off() {
     let (_temp, mut hosts) = fixture();
     let h = host(&hosts, "pi");
     let review = h.optional("agentnave-review").unwrap();
@@ -1048,9 +1052,13 @@ fn optional_skill_switch_installs_only_when_on_and_leaves_external_copies() {
     assert_eq!(state(&hosts)["state"], "missing");
 
     save(&review.join("SKILL.md"), "mine");
-    let kept = hosts.action("skill", &switch(false)).unwrap();
-    assert!(kept["message"].as_str().unwrap().contains("外部"));
-    assert_eq!(fs::read_to_string(review.join("SKILL.md")).unwrap(), "mine");
+    assert_eq!(state(&hosts)["state"], "external");
+    let off = hosts.action("skill", &switch(false)).unwrap();
+    assert_eq!(off["ok"], true);
+    assert_eq!(state(&hosts)["state"], "missing");
+    save(&review.join("SKILL.md"), "mine");
+    hosts.action("skill", &switch(true)).unwrap();
+    assert_eq!(state(&hosts)["state"], "app");
     let unknown = hosts
         .action("skill", &json!({"id":"pi","skill":"nope","enabled":true}))
         .unwrap();
@@ -1169,7 +1177,7 @@ fn connect_skill_failure_keeps_manual_root_for_refresh_retry() {
 }
 
 #[test]
-fn skill_ownership_links_and_refresh_version_update_preserve_external_content() {
+fn skill_ownership_links_and_refresh_replace_other_copies_after_a_backup() {
     let (_temp, mut hosts) = fixture();
     let h = host(&hosts, "pi");
     let path = h.skill.as_ref().unwrap();
@@ -1196,17 +1204,35 @@ fn skill_ownership_links_and_refresh_version_update_preserve_external_content() 
         skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
         "external"
     );
-    hosts.action("remove", &json!({"id":"pi"})).unwrap();
+    let backups_dir = hosts.context.app.join("backups");
+    let backups = || {
+        fs::read_dir(&backups_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("-skill-pi-SKILL.md-")
+            })
+            .any(|e| fs::read_to_string(e.path()).unwrap() == "external")
+    };
+    hosts.action("connect", &json!({"id":"pi"})).unwrap();
     assert_eq!(
-        fs::read_to_string(path.join("SKILL.md")).unwrap(),
-        "external"
+        skill::state(path, &hosts.context.home, skill::MANAGER)["state"],
+        "app"
     );
+    assert!(backups());
+    save(&path.join("SKILL.md"), "external");
+    hosts.action("remove", &json!({"id":"pi"})).unwrap();
+    assert!(!path.exists());
     #[cfg(unix)]
     {
         let other = host(&hosts, "claude");
         let link = other.skill.unwrap();
+        let outside = hosts.context.home.join("elsewhere");
+        save(&outside.join("SKILL.md"), "elsewhere");
         fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(path, &link).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
         skill::install(
             &link,
             &hosts.context.app,
@@ -1215,6 +1241,11 @@ fn skill_ownership_links_and_refresh_version_update_preserve_external_content() 
             skill::MANAGER,
         )
         .unwrap();
+        assert!(!link.is_symlink());
+        assert_eq!(
+            skill::state(&link, &hosts.context.home, skill::MANAGER)["state"],
+            "app"
+        );
         skill::remove(
             &link,
             &hosts.context.app,
@@ -1223,11 +1254,11 @@ fn skill_ownership_links_and_refresh_version_update_preserve_external_content() 
             skill::MANAGER,
         )
         .unwrap();
+        assert!(!link.exists());
         assert_eq!(
-            skill::state(&link, &hosts.context.home, skill::MANAGER)["state"],
-            "external"
+            fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+            "elsewhere"
         );
-        assert!(link.is_symlink());
     }
 }
 
