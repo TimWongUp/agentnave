@@ -876,7 +876,10 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
     save(&dir.join("new.json"), &receipt.to_string());
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
-    let file = fs::File::open(dir.join("new.json")).unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(dir.join("new.json"))
+        .unwrap();
     file.set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH))
         .unwrap();
     assert_eq!(hosts.state(&h)["reload"]["state"], "idle");

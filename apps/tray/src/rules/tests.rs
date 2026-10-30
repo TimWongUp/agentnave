@@ -53,8 +53,8 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     // Grok already reads Claude's file; ZCode has none yet, so its usual one comes last.
     assert!(row(".grok/AGENTS.md").is_none());
     assert_eq!(
-        rows.last().unwrap()["path"],
-        json!(h.join(".zcode/AGENTS.md"))
+        Path::new(rows.last().unwrap()["path"].as_str().unwrap()),
+        h.join(".zcode/AGENTS.md")
     );
     assert_eq!(rows.last().unwrap()["exists"], false);
 
