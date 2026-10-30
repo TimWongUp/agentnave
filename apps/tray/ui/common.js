@@ -286,7 +286,7 @@
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
   // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. Mono marks sit on a dark tile.
-  const CLI_MARK = { claude: "", "claude-desktop": "", codex: "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "mono" };
+  const CLI_MARK = { claude: "", "claude-desktop": "", codex: "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "mono", zcode: "mono" };
   function cliMark(provider) {
     if (provider && window.Avatars?.custom("host", provider, "")) return Avatars.create("host", provider, "");
     if (!Object.hasOwn(CLI_MARK, provider)) return null;

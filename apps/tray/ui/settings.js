@@ -1781,6 +1781,9 @@ loadStatus();
       button.classList.toggle("active", on);
       button.setAttribute("aria-checked", on ? "true" : "false");
     }
+    document.getElementById("model-names-example").textContent = full
+      ? "显示为 opencode-go/deepseek-v4.1-flash，带上前面的路由"
+      : "显示为 deepseek-v4.1-flash，省去前面的路由 opencode-go/";
   }
   for (const [key, button] of Object.entries(buttons))
     button.addEventListener("click", () => { AN.setFullModelNames(key === "full"); show(); });

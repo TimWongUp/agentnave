@@ -52,7 +52,7 @@
     const upload = h("button", { type: "button" }, "更换小人");
     const reset = h("button", { type: "button" }, "恢复默认");
     function update() {
-      face.replaceChildren(art.head(art.character("", family)));
+      face.replaceChildren(art.figure(art.character("", family), "m"));
       upload.disabled = busy;
       reset.disabled = busy || !replaced[family];
     }
@@ -67,7 +67,9 @@
     reset.addEventListener("click", () => run(() => send(family, new Blob([])), `${label} 已恢复默认小人`));
     refreshers.push(update);
     update();
-    row.append(Avatars.create("family", family, ""), h("span.avatar-label", {}, label), face, input, upload, reset);
+    row.append(face, h("div.avatar-side", {},
+      h("div.avatar-name", {}, Avatars.create("family", family, ""), h("span.avatar-label", {}, label)),
+      h("div.avatar-actions", {}, upload, reset)), input);
     return row;
   }
   const grid = h("div.avatar-grid");
