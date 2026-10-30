@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.55.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.56.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.55.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.56.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -541,24 +541,23 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.54.0 to v0.55.0
+### Upgrading from v0.55.0 to v0.56.0
 
 "Update all" updates the App, the runtime and App-managed Skills; for a host not connected through
-the App, replace its `agentnave-manager` and `agentnave-review` Skills with the complete v0.55.0
-directories. The orchestration presets, the rules writing and the interface changes ship in the
-App, so updating only the runtime does not bring them. The orchestration preset on the 「高级」
-page defaults to off, so upgrading leaves every global rules file untouched; choosing a preset
-writes a marked block into the user-level rules file each connected host reads, after backing the
-file up in the App's `backups/` folder. `orchestration.json` is created in the data root only when
-orchestration settings are first saved. The `list_members` and `run_round` tool descriptions
-changed: reload or restart each host the App marks as needing it. `members.json` keeps its
-structure, and history, member configuration and settings need no migration. Upgrading from
-v0.53.1 or earlier also brings the v0.54.0 changes, including the App taking over the Skill
-directories of connected hosts; see [v0.54.0 release notes](releases/v0.54.0.md). Upgrading from
-v0.52.0 or earlier also brings the v0.53.0 changes, including manual cleanup of an OpenCode host
-entry; see [v0.53.0 release notes](releases/v0.53.0.md). Upgrading from v0.45.0 or earlier also
-drops Gemini CLI as a host, which needs manual cleanup of its old entry; see
-[v0.46.0 release notes](releases/v0.46.0.md). See [v0.55.0 release notes](releases/v0.55.0.md).
+the App, replace its `agentnave-manager` and `agentnave-review` Skills with the complete v0.56.0
+directories. The runtime now applies the App's selected model and effort when `start_agent.role`
+names a matching review or Explorer/Worker seat and provider; explicit options still take priority.
+Refresh or reconnect hosts marked by the App so they load the updated tool and Skill instructions.
+
+The App shows download progress and each update step, keeps the failed step for retry, and reuses
+an update already found by a recent check. These improvements arrive with the new App, so the
+update from an older App uses that App's existing updater. Workspace chats now show the latest
+handover's release time, source and current boss (when recorded), and its plain-text note. A
+withdrawn handover clears its release time and note; no complete handover history is stored.
+
+History and member settings need no migration. For earlier upgrade changes, see
+[v0.55.0 release notes](releases/v0.55.0.md) and their linked prior releases.
+See [v0.56.0 release notes](releases/v0.56.0.md).
 
 ## Uninstall
 
