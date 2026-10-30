@@ -1763,10 +1763,12 @@ function renderUpdates() {
     if (updateInfo?.state === "checking") {
       progressText.textContent = "正在检查更新…";
     } else if (updateInfo?.state === "installing") {
+      const percent = updateInfo.total > 0 ? ` ${Math.min(100, Math.floor(updateInfo.downloaded / updateInfo.total * 100))}%` : "";
       progressText.textContent = {
-        service: "正在升级本机服务，约需一分钟…",
-        app: "正在安装 App，随后自动重启…",
-      }[updateInfo.step] || "正在下载新版 App…";
+        service: "正在更新本机服务，约需一分钟…",
+        app: "正在安装 App…",
+        restart: "正在重启并更新 Skill…",
+      }[updateInfo.step] || `正在下载 App 更新包${percent}…`;
     } else if (["upgrading", "installing"].includes(serviceInfo?.state)) {
       progressText.textContent = "正在安装或升级本机服务，约需一分钟…";
     }
@@ -1873,7 +1875,7 @@ document.addEventListener("visibilitychange", probeWhenStale);
 $("save-btn").addEventListener("click", saveMembers);
 
 $("btn-check-update").addEventListener("click", () => triggerCheckUpdate());
-// Updating goes through the shared dialog: it checks again and shows what changed first.
+// Updating goes through the shared dialog: it shows what changed first and then the progress.
 $("btn-apply-update").addEventListener("click", () => AN.updateFlow());
 $("btn-retry-update").addEventListener("click", () => AN.updateFlow());
 

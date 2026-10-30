@@ -280,7 +280,7 @@ function notice(title, detail, action, target, secondary) {
 function notices(status, offline) {
   const out = [];
   // Only what needs the user: a found update or its progress is the header's update button.
-  if (status?.update?.state === "failed") out.push(notice("更新失败", "检查网络后重试", "重试", "/app/update"));
+  if (status?.update?.state === "failed") out.push(notice("更新失败", status.update.error || "检查网络后重试", "重试", "/app/update"));
   if (status?.service?.state === "failed") out.push(notice("升级本机服务失败", status.service.error, "重试", "/app/upgrade-service", ["复制命令", "/app/copy-service-command"]));
   if (offline) out.push(notice("读取中断，正在重试", "下方显示的是最近一次成功读取的内容"));
   return out;
