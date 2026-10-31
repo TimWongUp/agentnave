@@ -93,6 +93,13 @@ fn identity(path: &str) -> Option<&'static str> {
 }
 
 fn agentnave(process: &Process) -> bool {
+    // The executable itself living in the tool environment cannot be spoofed by an argument.
+    if process
+        .exe()
+        .is_some_and(|path| tool_environment(&path.to_string_lossy()))
+    {
+        return true;
+    }
     process
         .cmd()
         .iter()
@@ -100,17 +107,21 @@ fn agentnave(process: &Process) -> bool {
         .any(|arg| agentnave_arg(&arg.to_string_lossy()))
 }
 
-/// Whether one command-line argument names this app's own server. The launcher, the tool
-/// environment it runs out of, and the Python module it imports all count: a dispatched CLI's
-/// parent chain must be recognized or the CLI looks like a host the user started.
+/// Whether a path is an executable inside this app's own installed environment.
+fn tool_environment(path: &str) -> bool {
+    path.replace('\\', "/").contains("/tools/agentnave/")
+}
+
+/// One command-line argument that names this app's server. Anchored on a whole path or on the
+/// exact `-c` source the supervisor generates, so a prompt that merely mentions the module does
+/// not turn its own process into "the app" and hide a real host.
 fn agentnave_arg(arg: &str) -> bool {
     let arg = arg.replace('\\', "/");
     matches!(name(&arg), "agentnave-mcp" | "agentnave-mcp.exe")
-        || arg.contains("/tools/agentnave/")
-        || arg.contains("/agentnave/supervisor.py")
-        || arg.contains("/agentnave/windows_supervisor.py")
-        || arg.contains("agentnave.mcp_server")
-        || arg.contains("/agentnave/mcp_server.py")
+        || arg.ends_with("/agentnave/supervisor.py")
+        || arg.ends_with("/agentnave/windows_supervisor.py")
+        || arg.ends_with("/agentnave/mcp_server.py")
+        || arg.starts_with("from agentnave.mcp_server")
 }
 
 fn dispatched(process: &Process, system: &System) -> bool {
@@ -204,32 +215,48 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::agentnave_arg;
+    use super::*;
 
     #[test]
-    fn a_dispatched_cli_is_recognized_through_its_agentnave_parent() {
+    fn our_own_server_and_supervisor_are_recognized() {
         for arg in [
             r"C:\Users\timwo\AppData\Roaming\io.github.timwongup.agentnave\service\0.58.0\tools\agentnave\Scripts\python.exe",
             r"C:\Users\timwo\.local\bin\agentnave-mcp.exe",
-            "from agentnave.mcp_server import main",
+            "from agentnave.mcp_server import main; main()",
             r"C:\x\agentnave\mcp_server.py",
             r"C:\x\agentnave\windows_supervisor.py",
         ] {
-            assert!(agentnave_arg(arg), "{arg}");
+            assert!(
+                agentnave_arg(arg) || tool_environment(arg),
+                "{arg} should be ours"
+            );
         }
     }
 
+    /// Only a whole path or the generated `-c` source counts. A prompt that merely mentions the
+    /// module must not turn the user's own host into "the app": that would hide a running host.
     #[test]
-    fn a_project_that_happens_to_be_named_agentnave_is_not_this_app() {
+    fn text_that_mentions_the_module_is_not_this_app() {
         for arg in [
             r"D:\code\agentnave",
             r"C:\Users\timwo\Documents\agentnave notes.md",
             r"C:\tools\other\python.exe",
+            "check agentnave.mcp_server in the tray",
+            r"see C:\x\tools\agentnave\Scripts\python.exe for details",
         ] {
             assert!(!agentnave_arg(arg), "{arg}");
         }
     }
-    use super::*;
+
+    /// Only the executable path decides the tool environment, so a prompt cannot claim it.
+    #[test]
+    fn the_tool_environment_is_matched_by_executable_path() {
+        assert!(tool_environment(
+            r"C:\Users\timwo\AppData\Roaming\io.github.timwongup.agentnave\service\0.58.0\tools\agentnave\Scripts\python.exe"
+        ));
+        assert!(!tool_environment(r"D:\code\agentnave"));
+        assert!(!tool_environment(r"C:\tools\other\python.exe"));
+    }
 
     #[test]
     fn host_paths_match_exact_executables_and_main_app_processes() {

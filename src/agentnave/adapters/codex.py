@@ -27,6 +27,9 @@ _DESKTOP_CODEX_PATHS = (
     "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     "~/Applications/Codex.app/Contents/Resources/codex",
+    # Windows keeps the CLI in a plugin app-server bundle, and copies it under a content hash.
+    "~/.codex/plugins/.plugin-appserver/codex.exe",
+    "~/AppData/Local/OpenAI/Codex/bin/*/codex.exe",
 )
 
 # Tool items carry full command/tool output; activity sees them, the retained result does not.
@@ -77,17 +80,13 @@ def _codex_executable() -> str:
 
 def _bundled_paths() -> tuple[str, ...]:
     """The CLI a Codex desktop app ships, where the app keeps it instead of on PATH."""
-    if sys.platform == "darwin":
-        return _DESKTOP_CODEX_PATHS
-    if os.name != "nt":
+    if sys.platform not in {"darwin", "win32"}:
         return ()
-    paths = [os.path.expanduser("~/.codex/plugins/.plugin-appserver/codex.exe")]
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        # The desktop app also keeps copies under a content hash, so no one path fits.
-        paths.extend(
-            sorted(glob.glob(os.path.join(local, "OpenAI", "Codex", "bin", "*", "codex.exe")))
-        )
+    paths: list[str] = []
+    for pattern in _DESKTOP_CODEX_PATHS:
+        expanded = os.path.expanduser(pattern)
+        # A content-hash directory has no fixed name; anything else is a literal path.
+        paths.extend(sorted(glob.glob(expanded)) if "*" in pattern else [expanded])
     return tuple(paths)
 
 
