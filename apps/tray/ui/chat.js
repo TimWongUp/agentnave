@@ -444,6 +444,37 @@ function recentlyActive(c) {
   const g = state.groupsData.find((x) => x.group === c.group);
   return !!g && Date.now() - AN.at(g.updated) < SLEEP_AFTER;
 }
+const MUGS = ["mug", "mug-saucer", "mug-cream", "mug-thermos", "mug-glass", "mug-cat"];
+const PLANTS = ["plant", "pot-succulent", "pot-cactus", "vase-tulip", "vase-daisy", "pot-pothos"];
+const BOSS_SET = {
+  claude: "claude",
+  "claude-desktop": "claude",
+  codex: "codex",
+  "codex-desktop": "codex",
+  antigravity: "agy",
+  agy: "agy",
+  deepseek: "deepseek",
+  grok: "grok",
+  codebuddy: "codebuddy",
+  workbuddy: "codebuddy",
+  zcode: "zcode",
+  pi: "pi",
+  hermes: "hermes",
+};
+function deskHash(s) {
+  let v = 2166136261;
+  for (let i = 0; i < s.length; i++) v = Math.imul(v ^ s.charCodeAt(i), 16777619);
+  return v >>> 0;
+}
+function dressBossSet(rec, host) {
+  const set = BOSS_SET[host] || "";
+  if (rec.bossSet === set) return;
+  rec.bossSet = set;
+  rec.chair.src = ART.url(`office/${set ? `boss-chair-${set}` : "chair"}.webp`);
+  rec.desk.src = ART.url(`office/${set ? `boss-desk-${set}` : "boss-desk"}.webp`);
+  rec.open.src = ART.url(`office/${set ? `boss-laptop-${set}` : "laptop"}.webp`);
+  rec.closed.src = ART.url(`office/${set ? `boss-laptop-closed-${set}` : "laptop-closed"}.webp`);
+}
 function createBoss() {
   const rec = {
     lid: h("span.lid"),
@@ -453,14 +484,17 @@ function createBoss() {
     st: h("div.st"),
     state: h("span.r"),
   };
+  rec.chair = img("l-chair", "chair");
   rec.desk = img("l-desk", "boss-desk");
+  rec.open = img("l-laptop.l-open", "laptop");
+  rec.closed = img("l-laptop.l-closed", "laptop-closed");
   rec.scene = h(
     "div.scene",
     {},
-    img("l-chair", "chair"),
+    rec.chair,
     rec.desk,
-    img("l-laptop.l-open", "laptop"),
-    img("l-laptop.l-closed", "laptop-closed"),
+    rec.open,
+    rec.closed,
     rec.lid,
   );
   // boss sits in the middle; recent chats on the left, meetings on the right
@@ -483,6 +517,7 @@ function createBoss() {
 function updateBoss(rec, c, n) {
   const model = bossModel(c);
   dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
+  dressBossSet(rec, c.host);
   dressLid(rec, c.app || c.host);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
@@ -585,12 +620,17 @@ function createDesk(d) {
       "仅开会",
     ),
   };
+  const idx = deskHash(d.key || "");
   rec.desk = img("l-desk", "desk");
+  rec.mug = img("l-desk", MUGS[idx % MUGS.length]);
+  rec.plant = img("l-desk", PLANTS[Math.floor(idx / MUGS.length) % PLANTS.length]);
   rec.scene = h(
     "div.scene",
     {},
     img("l-chair", "chair"),
     rec.desk,
+    rec.mug,
+    rec.plant,
     img("l-laptop.l-open", "laptop"),
     img("l-laptop.l-closed", "laptop-closed"),
     rec.lid,

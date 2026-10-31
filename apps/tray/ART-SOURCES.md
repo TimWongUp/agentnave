@@ -2,10 +2,12 @@
 
 `ui/art/` 下的角色立绘与办公室道具是为 AgentNave 原创设计的二次元 Q 版形象，2026 年 10 月由 Codex 的图像生成工具按统一规范绘制，再缩放为 WebP：
 
+**生图规范：新生成的立绘、部件和道具必须直接输出真透明底 PNG（带 alpha 通道），物件之外完全透明，收图时检查透明通道；不用白底、品红等色底事后抠图。** 以现有帧为底做局部编辑时同样要求透明底。
+
 - `s/<角色>/<状态>.webp`：工位尺寸立绘，与 `office/` 道具共用 1536×1200 舞台的同一锚点（椅子 → 角色 → 桌子 → 笔记本四层叠放）。
 - `m/<角色>/<状态>.webp`：中尺寸立绘（320px），原用于对话栏，现已不显示，保留备用。
 - `h/<角色>/<状态>.webp`：菜单栏圆形头像，按同一方框裁出头部（96px）。
-- `office/laptop-closed.webp`：非工作状态桌上合上的笔记本，按 `office/laptop.webp` 的配色和描边用脚本绘制，与其共用锚点；`office/desk.webp`、`office/boss-desk.webp` 的前挡板已镂空，露出桌下的腿和脚，并补画了两条后桌腿，前桌腿底部重画为直腿；`office/chair.webp` 补画了气杆、五星脚和轮子，桌下不再悬空。
+- `office/laptop-closed.webp`：非工作状态桌上合上的笔记本，按 `office/laptop.webp` 的配色和描边用脚本绘制，与其共用锚点；`office/desk.webp` 为通用光面工位桌，杯子（6 款 `mug*.webp`）和盆栽花瓶（6 款 `plant.webp`、`pot-*.webp`、`vase-*.webp`）拆为独立图层并按工位固定分配；9 套 Boss 桌椅与笔记本（`claude`、`codex`、`agy`、`deepseek`、`grok`、`codebuddy`、 `zcode`、`pi`、`hermes`，同品牌命令行与桌面端／WorkBuddy 共用）按宿主及对应角色立绘配套（整套含桌面摆件的办公桌 `boss-desk-<host>.webp`、配套老板椅 `boss-chair-<host>.webp`、配套开合笔记本 `boss-laptop-<host>.webp` 与 `boss-laptop-closed-<host>.webp`），桌面高度统一对齐 1536×1200 舞台，未识别宿主沿用默认 `office/chair.webp`、`office/boss-desk.webp` 与 `office/laptop*.webp`；`office/chair.webp` 补画了气杆、五星脚和轮子，桌下不再悬空。
 - `logo-default.svg`：没有专属标志的 CLI 在笔记本盖子上使用的默认终端标志。
 - `cli/<provider>.svg`：各 CLI 的标志，用在笔记本盖子、boss 工位和 CLI 徽章上，取自 LobeHub 开源图标库 `@lobehub/icons-static-svg@1.100.0`（MIT，商标归各自所有者），未改动：claude ← `claudecode-color.svg`、claude-desktop ← `claude-color.svg`（boss 在 Claude 桌面端的 Code 标签里时，照 magpie 用 Claude 应用标志；文件未改，界面按应用图标显示成橙底白色）、codex ← `codex-color.svg`、codex-desktop ← `openai.svg`（boss 在 Codex 桌面端时，桌面端随 ChatGPT 应用发布，用厂商标志，白底深色，与应用图标一致）、codebuddy ← `codebuddy-color.svg`、antigravity ← `antigravity-color.svg`（原文件靠模糊滤镜画渐变，托盘的 WebKit 里边缘发糊，所以渲染成 256px 透明 WebP 后包回 SVG）、grok ← `grok.svg`、pi ← `pi.svg`、deepseek ← `deepseek-color.svg`、workbuddy ← `workbuddy-color.svg`、hermes ← `hermesagent.svg`、zcode ← `zai.svg`（库里没有 Grok CLI、DeepSeek Harness 与 ZCode 专属标志，用厂商标志）。接入页的宿主图标按宿主 ID 取同一目录的文件。小人形象与模型头像按模型家族对应，不用 CLI 标志。
 

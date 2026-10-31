@@ -37,6 +37,10 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 - 接入为组员的 Provider CLI 必须同时接入为宿主（boss）；未经真实调用验收的宿主不接入。
 - 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
 
+## Art assets
+
+- 生成或修改托盘美术素材前先读 `apps/tray/ART-SOURCES.md`，新素材必须直接输出真透明底。
+
 ## Context change gate
 
 - 术语变化更新 `CONTEXT.md`；稳定所有权或接口边界变化更新 `docs/context/architecture.md`；难逆转且经过真实取舍的决定写 ADR。
