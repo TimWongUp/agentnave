@@ -308,6 +308,11 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
         {"permission_mode": "yolo"},
         ["permission_mode"],
     )
+    # Antigravity has no automatic reviewer worth dispatching under: auto runs it unasked too.
+    assert apply_member(None, "task", "antigravity", {}, frozenset(), permissions=tiers) == (
+        {"dangerously_skip_permissions": True},
+        ["dangerously_skip_permissions"],
+    )
     document = MemberFile.model_validate(
         {
             "version": 1,

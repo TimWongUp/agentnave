@@ -360,13 +360,17 @@ function renderCliSwitches(provider) {
 // What each tier means for each CLI when a task runs unattended; the server maps the tier to
 // that CLI's own options, "auto" unless the user picked "full". Pi has no approval step.
 const TIERS = [["auto", "自动"], ["full", "完全放开"]];
+// CLIs without a usable automatic reviewer: both tiers grant full access, so there is no choice.
+const FULL_ONLY = {
+  codebuddy: "CodeBuddy 的自动模式在派发时连查看目录都会拒绝，所以直接执行任何命令和改动。",
+  deepseek: "DeepSeek 没有自动审核，所以直接执行任何命令和改动。",
+  zcode: "ZCode 的 auto 模式尚未实现，所以直接执行任何命令和改动。",
+  antigravity: "Antigravity 派发时直接执行任何命令和改动。",
+};
 const TIER_TEXT = {
   auto: {
     any: "CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。",
     codex: "Codex 自动审核放行命令，读写限在工作目录内。",
-    codebuddy: "CodeBuddy 的自动模式在派发时连查看目录都会拒绝，所以这一档与「完全放开」相同。",
-    deepseek: "DeepSeek 没有自动审核，所以这一档与「完全放开」相同。",
-    zcode: "ZCode 的 auto 模式尚未实现，所以这一档与「完全放开」相同。",
   },
   full: {
     any: "不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。",
@@ -400,6 +404,9 @@ async function setPermissionTier(provider, tier) {
 
 function renderPermission(provider) {
   if (provider === "pi") return null;
+  if (FULL_ONLY[provider]) {
+    return el("span", { className: "member-tier", title: FULL_ONLY[provider] }, textNode("权限"), el("span", {}, "完全放开"));
+  }
   const tier = permissionTier(provider);
   return el("label", { className: "member-tier", title: permissionsError || `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 选完立即保存。` },
     textNode("权限"),
