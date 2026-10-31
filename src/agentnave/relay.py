@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, BinaryIO, cast
 from uuid import uuid4
 
+from agentnave.service_lease import hold
+
 type Fingerprint = tuple[tuple[str, int], ...]
 type Message = dict[str, Any]
 
@@ -63,7 +65,9 @@ def main() -> None:
         SESSION_ENV: uuid4().hex,
         STARTED_ENV: datetime.now(UTC).isoformat(),
     }
-    sys.exit(serve(command("agentnave.mcp_server"), env=env))
+    with hold():
+        result = serve(command("agentnave.mcp_server"), env=env)
+    sys.exit(result)
 
 
 def command(module: str) -> list[str]:

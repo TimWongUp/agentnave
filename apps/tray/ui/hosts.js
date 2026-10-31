@@ -548,6 +548,12 @@ function actionButtons(host) {
       ? spinBtn("重试中…", ".primary")
       : button("重试接入", ".primary", "connect", () => connect(host), dis || !svcOk));
   } else {
+    // A connected host whose entry names another launcher is still writable: the same connect
+    // path rewrites just the command and keeps the rest of the entry.
+    if (host.status === "connected" && host.launcher?.stale && svcOk)
+      out.push(busy === "connect"
+        ? spinBtn("切换中…", ".primary")
+        : button("改用新启动器", ".primary", "connect", () => connect(host), dis));
     out.push(askRemove(host.status === "connected" ? "移除" : "移除条目"));
   }
   return out;
@@ -620,6 +626,10 @@ function buildCard(host) {
     main.push(h("p.hc-orphan", {}, `本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`));
   if (host.shadowed_by)
     main.push(h("div.hc-note.info", {}, "项目级配置 ", h("code", {}, shortPath(host.shadowed_by)), " 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。"));
+  if (host.launcher?.stale)
+    main.push(h("div.hc-note.info", {},
+      "配置里的启动器仍是旧的 ", h("code", {}, shortPath(host.launcher.current || "")),
+      "；重新接入会把 command 改为 ", h("code", {}, shortPath(host.launcher.expected || ""))));
   const local = S.localErr.get(id);
   const last = host.last_action;
   if (local) main.push(h("div.hc-note.error", { role: "alert" }, local));
@@ -632,9 +642,14 @@ function buildCard(host) {
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
     const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || "重启应用");
+    // A host that never connected may be waiting for its own in-app trust prompt, which this App
+    // cannot click; saying so beats telling the user to restart it again.
+    const trust = host.reload.reason === "unverified" && !host.reload.connections
+      ? "；若该宿主从未连接过 AgentNave，可能需要在它的应用内确认信任「agentnave」后才会启动服务"
+      : "";
     const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
-      h("div", {}, h("strong", {}, title), h("p", {}, detail)),
+      h("div", {}, h("strong", {}, title), h("p", {}, detail + trust)),
       !auto && button("我已重新加载", "", "confirm-reload", () =>
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),

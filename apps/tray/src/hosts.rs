@@ -1,6 +1,9 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod config;
+#[cfg(all(test, windows, feature = "windows-live-tests"))]
+mod live_tests;
 mod processes;
+mod retention;
 mod roots;
 mod skill;
 mod split;
@@ -117,6 +120,43 @@ pub struct Context {
     pub applications: Vec<PathBuf>,
 }
 
+/// Where Hermes keeps `config.yaml`. Its Windows installer uses `%LOCALAPPDATA%\hermes` unless
+/// `HERMES_HOME` says otherwise; a redirected home keeps its own `.hermes`, so a caller that
+/// points at another profile never reads or writes this machine's real configuration.
+fn hermes_default(home: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if dirs::home_dir().as_deref() == Some(home) {
+        let installed = dirs::data_local_dir().map(|local| local.join("hermes"));
+        if let Some(dir) = installed.filter(|dir| dir.is_dir()) {
+            return dir;
+        }
+    }
+    home.join(".hermes")
+}
+/// Where an installed desktop app lives: `/Applications` and `~/Applications` on macOS, the
+/// per-user program directory and the shared ones on Windows.
+#[cfg(target_os = "macos")]
+fn applications(home: &Path) -> Vec<PathBuf> {
+    vec![PathBuf::from("/Applications"), home.join("Applications")]
+}
+#[cfg(windows)]
+fn applications(_home: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(local) = dirs::data_local_dir() {
+        dirs.push(local.join("Programs"));
+    }
+    for name in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(path) = std::env::var_os(name) {
+            dirs.push(PathBuf::from(path));
+        }
+    }
+    dirs
+}
+#[cfg(not(any(target_os = "macos", windows)))]
+fn applications(_home: &Path) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 impl Context {
     pub fn live(app: PathBuf) -> Self {
         let home = dirs::home_dir().unwrap_or_default();
@@ -133,7 +173,7 @@ impl Context {
             home.join(".volta/bin"),
         ]);
         Self {
-            applications: vec![PathBuf::from("/Applications"), home.join("Applications")],
+            applications: applications(&home),
             project: std::env::current_dir().unwrap_or_else(|_| home.clone()),
             home,
             app,
@@ -296,6 +336,11 @@ impl Hosts {
         })
     }
     fn launcher(&self) -> Option<PathBuf> {
+        // A versioned install names its own launcher; the shared uv tool directory is the
+        // legacy layout, kept for installs that predate it.
+        if let Some(path) = crate::update::active_launcher(&self.context.app) {
+            return Some(path);
+        }
         let name = "agentnave-mcp";
         let tools = self.tool_dirs()?.tools;
         if !crate::update::unified_service(&tools) {
@@ -313,6 +358,22 @@ impl Hosts {
         self.shell
             .as_ref()
             .map(|shell| ToolDirs::resolve(&self.context, shell))
+    }
+    /// What a connected host's entry points at, when a versioned install expects another
+    /// launcher. Rewriting someone else's hand-edited entry is worse than saying so.
+    fn launcher_note(&self, host: &Host) -> Value {
+        let Some(expected) = crate::update::active_launcher(&self.context.app) else {
+            return Value::Null;
+        };
+        let current = host.user_layers.iter().find_map(|path| {
+            let document = host.read_at(path).ok()?;
+            host.command(&document.entry?).map(str::to_owned)
+        });
+        let Some(current) = current else {
+            return Value::Null;
+        };
+        let stale = !same_path(&current, &expected);
+        json!({"stale":stale,"expected":expected.to_string_lossy(),"current":current})
     }
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
@@ -413,7 +474,7 @@ impl Hosts {
                 "Hermes",
                 "hermes",
                 Some("HERMES_HOME"),
-                h.join(".hermes"),
+                hermes_default(h),
                 "config.yaml",
                 Format::Yaml,
                 "mcp_servers",
@@ -539,6 +600,11 @@ impl Hosts {
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
         }
+        // A CLI that ships inside a desktop app is not on PATH; the same rules the member list
+        // uses resolve it (Codex and DeepSeek Harness both arrive this way on Windows).
+        if crate::detect::locate(host.binary).is_some() {
+            return (true, "path", None);
+        }
         let app = match host.boss {
             "claude" => Some("Claude.app"),
             "workbuddy" => Some("WorkBuddy.app"),
@@ -556,7 +622,34 @@ impl Hosts {
         }) {
             return (true, "app", Some(path));
         }
+        // Windows desktop apps install a program directory, or bundle their CLI inside one;
+        // neither is on PATH.
+        #[cfg(windows)]
+        if let Some(path) = self.bundle(host.id) {
+            return (true, "app", Some(path));
+        }
         (false, "config", None)
+    }
+    /// The desktop apps install a program directory. Only the ones known to ship an executable
+    /// are listed; adding a guess here would report a host as installed when it is not.
+    #[cfg(windows)]
+    fn bundle(&self, id: &str) -> Option<PathBuf> {
+        let relative = match id {
+            "deepseek" => "DeepSeek Harness/DeepSeek Harness.exe",
+            // WorkBuddy installs wherever the user chose (D:\Workbuddy here), and only its
+            // uninstall entry records that.
+            "workbuddy" => return crate::detect::uninstall_icon("WorkBuddy"),
+            _ => return None,
+        };
+        self.context
+            .applications
+            .iter()
+            .map(|dir| dir.join(relative))
+            .find(|path| path.is_file())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    fn bundle(&self, _id: &str) -> Option<PathBuf> {
+        None
     }
     fn command_state(&self, host: &Host, entry: &Value) -> &'static str {
         let Some(command) = host.command(entry) else {
@@ -726,7 +819,7 @@ impl Hosts {
         json!({"id":host.id,"boss":host.boss,"mark":host.id.split('@').next(),"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.boss, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
-            "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
+            "reload_hint":reload_hint(host.id),"launcher":self.launcher_note(host),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
     /// and release numbers do not change what a connection runs.
@@ -800,7 +893,8 @@ impl Hosts {
                 (age <= 20).then_some(value)
             })
             .collect();
-        let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
+        let env = crate::update::active_tools(&self.context.app)
+            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")));
         let installed = env.as_deref().and_then(crate::update::installed_version);
         let installed_at = env.as_deref().and_then(crate::update::installed_since);
         // A relay swaps to a new install within seconds once idle; much later it is stuck.
@@ -1011,9 +1105,10 @@ impl Hosts {
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {
-        let version = self
-            .tool_dirs()
-            .and_then(|dirs| crate::update::installed_version(&dirs.tools.join("agentnave")));
+        let version = crate::update::active_tools(&self.context.app)
+            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")))
+            .as_deref()
+            .and_then(crate::update::installed_version);
         json!({"installed":self.launcher().is_some(),"version":version,"command":crate::update::service_command()})
     }
     pub fn refresh(&mut self) -> Value {
@@ -1090,10 +1185,14 @@ impl Hosts {
                                 .as_object_mut()
                                 .ok_or("takeover_failed:env 必须为对象")?
                                 .insert("AGENTNAVE_HOST".into(), json!(host.boss));
-                            if let Some(command) = layer.command(desired)
+                            // A missing launcher is repointed, and so is an older version of our
+                            // own: after a versioned install the old directory still exists, so
+                            // "present" alone would leave every host on the previous service.
+                            if let Some(path) = self.launcher()
+                                && let Some(command) = layer.command(desired)
                                 && entry_kind(command) == "agentnave"
-                                && self.command_state(&layer, desired) == "missing"
-                                && let Some(path) = self.launcher()
+                                && (self.command_state(&layer, desired) == "missing"
+                                    || (own_launcher(command) && !same_path(command, &path)))
                             {
                                 layer.set_command(desired, &path);
                             }
@@ -1136,6 +1235,7 @@ impl Hosts {
             }
         }
         self.cached = self.snapshot();
+        self.prune_service_versions();
         self.cached.clone()
     }
     pub fn action(&mut self, operation: &str, payload: &Value) -> Result<Value, String> {
@@ -1581,6 +1681,31 @@ fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
         .as_object()
         .is_some_and(|servers| !servers.is_empty())
         .then_some(path)
+}
+/// Compare two launcher paths the way the platform does: Windows paths differ in case and
+/// separator spelling but name the same file, so a case-only mismatch must not read as "stale".
+/// A command that names one of this app's launchers, whatever version directory it lives in.
+fn own_launcher(command: &str) -> bool {
+    let value = command.replace('\\', "/");
+    value.contains("/agentnave-mcp")
+        && (value.contains("/service/") || value.contains("/tools/agentnave/"))
+}
+fn same_path(left: &str, right: &Path) -> bool {
+    let normalize = |value: &str| {
+        let value = value.replace('\\', "/");
+        let value = value.strip_prefix("//?/").unwrap_or(&value).to_owned();
+        let value = if cfg!(windows) {
+            value.to_lowercase()
+        } else {
+            value
+        };
+        // `\\?\UNC\srv\share` names the same place as `\\srv\share`; lower-casing comes first so
+        // the prefix matches whatever case the caller used.
+        value
+            .strip_prefix("unc/")
+            .map_or(value.clone(), |rest| format!("//{rest}"))
+    };
+    normalize(left) == normalize(&right.to_string_lossy())
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)

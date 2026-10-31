@@ -319,3 +319,41 @@ sleep 30 &
     assert_eq!(run(&lingering, &[]).unwrap(), "listed\n");
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+#[cfg(windows)]
+#[test]
+fn the_uninstall_entry_locates_the_desktop_app() {
+    // Not every machine has it installed; when it is, the registry must know where.
+    let Some(dir) = install_dir("DeepSeek Harness") else {
+        return;
+    };
+    assert!(dir.is_dir(), "{}", dir.display());
+    assert!(
+        dir.join("DeepSeek Harness.exe").is_file(),
+        "{}",
+        dir.display()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn the_bundled_cli_is_found_through_that_directory() {
+    if install_dir("DeepSeek Harness").is_none() {
+        return;
+    }
+    let path = desktop_binary("dsh").expect("bundled dsh");
+    assert!(path.is_file(), "{}", path.display());
+    assert!(path.to_string_lossy().ends_with("dsh.cmd"));
+}
+
+#[cfg(windows)]
+#[test]
+fn the_codex_desktop_apps_cli_is_found() {
+    // Skip when the desktop app is not installed; when it is, both its stable plugin copy and its
+    // content-hashed copies must resolve to a real file.
+    let Some(path) = codex_bundled() else {
+        return;
+    };
+    assert!(path.is_file(), "{}", path.display());
+    assert!(path.to_string_lossy().ends_with("codex.exe"));
+}
