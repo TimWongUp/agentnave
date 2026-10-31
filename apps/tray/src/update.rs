@@ -913,10 +913,15 @@ pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> R
     };
     let launcher = dirs.bin.join(name);
     let value = json!({"version": version, "bin": launcher.to_string_lossy()});
-    // Replace in one step: a truncated manifest would leave the hosts pointing at nothing.
-    let staging = base.join("active.json.tmp");
-    std::fs::write(&staging, value.to_string()).map_err(|error| error.to_string())?;
-    std::fs::rename(&staging, base.join("active.json")).map_err(|error| error.to_string())
+    // Replace in one step: a truncated manifest would leave the hosts pointing at nothing. A
+    // uniquely named staging file cannot collide with a scanner holding the old one.
+    let mut staging = tempfile::NamedTempFile::new_in(&base).map_err(|error| error.to_string())?;
+    std::io::Write::write_all(&mut staging, value.to_string().as_bytes())
+        .map_err(|error| error.to_string())?;
+    staging
+        .persist(base.join("active.json"))
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// A note with the upgrade command when the installed service is older than this app.

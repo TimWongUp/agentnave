@@ -2,7 +2,7 @@
 use super::{Context, IDS};
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
@@ -92,6 +92,26 @@ fn identity(path: &str) -> Option<&'static str> {
     }
 }
 
+/// The script a Windows `.cmd` shim launches. Without it the shim path never matches the
+/// `node.exe <script>.js` process that is actually running, so the host looks stopped.
+fn shim_script(shim: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(shim).ok()?;
+    let dir = shim.parent()?;
+    text.split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+        .filter_map(|token| {
+            let lower = token.to_lowercase();
+            if !(lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs")) {
+                return None;
+            }
+            let relative = token
+                .replace("%~dp0", "")
+                .replace("%dp0%", "")
+                .replace('\\', "/");
+            let path = dir.join(relative.trim_start_matches('/'));
+            Some(path.canonicalize().unwrap_or(path))
+        })
+        .next()
+}
 fn agentnave(process: &Process) -> bool {
     // The executable itself living in the tool environment cannot be spoofed by an argument.
     if process
@@ -141,17 +161,24 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
         return None;
     }
     // Resolve installed entry points so node/python CLIs with a generic script name also match.
-    let targets: HashMap<_, _> = IDS
-        .into_iter()
-        .filter_map(|id| {
-            let binary = match id {
-                "antigravity" => "agy",
-                "deepseek" => "dsh",
-                _ => id,
-            };
-            Some((context.find(binary)?.canonicalize().ok()?, id))
-        })
-        .collect();
+    let mut targets: HashMap<PathBuf, &'static str> = HashMap::new();
+    for id in IDS {
+        let binary = match id {
+            "antigravity" => "agy",
+            "deepseek" => "dsh",
+            _ => id,
+        };
+        let Some(found) = context.find(binary) else {
+            continue;
+        };
+        if let Ok(path) = found.canonicalize() {
+            targets.insert(path, id);
+        }
+        // Windows installs a CLI as a `.cmd` shim; the live process is `node <script>.js`.
+        if let Some(script) = shim_script(&found) {
+            targets.insert(script, id);
+        }
+    }
     let identify = |path: &Path| {
         targets
             .get(path)
@@ -217,6 +244,19 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_cmd_shim_points_at_the_script_that_is_actually_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("pi.cmd");
+        std::fs::write(
+            &shim,
+            "@ECHO off\nSETLOCAL\n\"%node%\" \"%~dp0pi-launcher.js\" %*\n",
+        )
+        .unwrap();
+        let script = dir.path().join("pi-launcher.js");
+        std::fs::write(&script, "").unwrap();
+        assert_eq!(shim_script(&shim), Some(script.canonicalize().unwrap()));
+    }
     #[test]
     fn our_own_server_and_supervisor_are_recognized() {
         for arg in [
