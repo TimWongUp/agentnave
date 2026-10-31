@@ -16,6 +16,7 @@ from typing import cast
 
 from agentnave.adapters.base import provider_bin_dirs
 from agentnave.host import NATIVE_SESSION_ENV
+from agentnave.windows_supervisor import server_identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +124,7 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
             str(status_path),
             str(ready_path),
             str(os.getpid()),
+            str(server_identity()),
             *argv,
             cwd=cwd,
             stdin=asyncio.subprocess.PIPE,
@@ -140,16 +142,43 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
         await _wait_windows_supervisor_ready(process, ready_path)
         return SupervisedProcess(process, completion)
     except BaseException:
-        # The provider may still be suspended outside its Job. Let assignment finish
-        # before terminating the supervisor, so closing the Job owns the whole tree.
-        await _wait_windows_supervisor_ready(process, ready_path)
-        if process.returncode is None:
-            with suppress(ProcessLookupError):
-                process.terminate()
-        await asyncio.gather(completion, return_exceptions=True)
+        cleanup = asyncio.create_task(_cancel_windows_startup(process, completion, ready_path))
+        # A second cancellation must not abandon ownership before Job assignment.
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
         raise
     finally:
         ready_path.unlink(missing_ok=True)
+
+
+async def _cancel_windows_startup(
+    process: asyncio.subprocess.Process,
+    completion: asyncio.Task[ProviderCompletion],
+    ready_path: Path,
+) -> None:
+    # The provider may still be suspended outside its Job. Wait for ownership first.
+    await _wait_windows_supervisor_ready(process, ready_path)
+    if process.returncode is None:
+        with suppress(ProcessLookupError):
+            process.terminate()
+    if process.stdin is not None:
+        process.stdin.close()
+    await asyncio.gather(
+        completion,
+        _discard_output(process.stdout),
+        _discard_output(process.stderr),
+        return_exceptions=True,
+    )
+
+
+async def _discard_output(stream: asyncio.StreamReader | None) -> None:
+    if stream is not None:
+        while await stream.read(65_536):
+            pass
 
 
 async def _wait_windows_supervisor_ready(

@@ -77,3 +77,17 @@ def test_server_death_ends_supervisor_and_provider_descendants(tmp_path: Path) -
         for handle in handles:
             kernel32.TerminateProcess(handle, 1)
             kernel32.CloseHandle(handle)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process identity")
+def test_reused_server_pid_does_not_launch_provider(tmp_path: Path) -> None:
+    marker = tmp_path / "unexpected-provider"
+    kind, code, message = windows_supervisor._run_provider(  # pyright: ignore[reportPrivateUsage]
+        [sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"],
+        tmp_path / "ready",
+        os.getpid(),
+        windows_supervisor.server_identity() + 1,
+    )
+    assert kind == "launch_error" and code is None
+    assert message and "PID was reused" in message
+    assert not marker.exists()
