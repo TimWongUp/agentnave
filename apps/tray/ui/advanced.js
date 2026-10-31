@@ -330,21 +330,26 @@ function seatSelects(key, name, seat, onSet) {
   if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
   const levels = seat?.model ? effortLevels(provider, seat.model) : [];
   if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
+  // A seat saves the level it runs at, as a member does.
+  const seatModel = (next, model) => {
+    const effort = savedEffort(next, model, sceneEffort("task", next, model));
+    return effort ? { provider: next, model, effort } : { provider: next, model };
+  };
   const pickCli = (next) => {
     if (!next) return onSet(null);
     const ids = getAllModelIds(next);
     const preferred = slot("task", next).model || nativeDefault(next).model;
-    const model = ids.includes(preferred) ? preferred : ids[0];
-    onSet({ provider: next, model });
+    onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0]));
   };
-  const pickModel = (model) => onSet({ provider, model });
-  const pickEffort = (effort) => onSet(effort ? { ...seat, effort } : { provider, model: seat.model });
+  const pickModel = (model) => onSet(seatModel(provider, model));
+  const pickEffort = (effort) => onSet({ ...seat, effort });
+  const efforts = !seat || !levels.length ? [["", "—"]]
+    : [...(seat.effort ? [] : [["", "选一个档位", true]]), ...levels.map((l) => [l, l])];
   return [
     reviewSelect(`${key}/cli`, `${name}的 CLI`, provider, [["", "自动"], ...clis], pickCli),
     reviewSelect(`${key}/model`, `${name}的模型`, seat?.model || "",
       seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
-    reviewSelect(`${key}/effort`, `${name}的思考档位`, seat?.effort || "",
-      seat ? [["", "员工默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
+    reviewSelect(`${key}/effort`, `${name}的思考档位`, seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
   ];
 }
 
@@ -356,13 +361,8 @@ function renderReviewSeats() {
   const shown = seatsShown();
   const rows = REVIEW_ROLES.map(([role, name, hint]) => {
     const seat = shown[role];
-    const provider = seat?.provider || "";
-    // A restricted private-task list that leaves this seat out makes the server report it unavailable.
-    const task = currentDoc.modes?.task;
-    const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
     return el("div", { className: "review-row" },
-      el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
-        !listed && el("small", { className: "review-warn" }, "单独干活的名单没有选中这个模型，评审时会改找其他 CLI")),
+      el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
       ...seatSelects(role, `${name}评审`, seat, (next) => setReviewSeat(role, next)));
   });
   box.replaceChildren(...rows);

@@ -92,7 +92,7 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0
 | `list_members`      | 读取 App 里设定的组员默认值，以及某个 CLI 支持的参数                 |
 | `handover`          | 把本聊天的整个工作区交给另一个老板聊天，或列出、认领等待接手的工作区 |
 
-没传的 model、effort 和 options 会套用 App 里的组员默认值，回执的 `defaults_applied` 会写明补了哪些；显式参数优先。
+没传的 model、effort 和 options 会套用 App 里的组员默认值，仍没有档位时按 CLI 自身设置的档位传入；回执的 `defaults_applied` 会写明补了哪些；显式参数优先。
 CLI 选择与参数见 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，审核、主持人发言、隔离席位和看板见[会话指南](docs/studio.md)，
 稳定接口与输出上限见[架构说明](docs/context/architecture.md)。
 

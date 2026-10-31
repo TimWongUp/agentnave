@@ -1175,16 +1175,8 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         (tmp_path / "review.json").write_text(
             json.dumps({"version": 1, "seats": {"correctness-reviewer": {**seat, "effort": "low"}}})
         )
-        stale = await client.call_tool(
-            "start_agent",
-            {
-                "provider": "claude",
-                "prompt": "ok",
-                "cwd": str(tmp_path),
-                "role": "correctness-reviewer",
-            },
-        )
-        assert stale.is_error and "'correctness-reviewer' seat" in str(stale.content)
+        # The seat is the user's pick for the role: the task members' effort range does not bind it.
+        assert (await start({}, role="correctness-reviewer"))["effort"] == "low"
         assert (await start({"model": "chosen", "effort": "medium"}, role="correctness-reviewer"))[
             "effort"
         ] == "medium"

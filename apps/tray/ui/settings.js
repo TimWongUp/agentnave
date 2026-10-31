@@ -590,6 +590,15 @@ function configurationErrors() {
       if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
     }
   }
+  // A chosen default model runs at a chosen level; only one left to the CLI may go without.
+  for (const scene of SCENE_IDS) {
+    for (const provider of PROVIDERS) {
+      const current = slot(scene, provider);
+      if (current.model && !current.effort && effortLevels(provider, current.model).length > 1) {
+        add(provider, current.model, SCENES[scene], "要选一个思考档位");
+      }
+    }
+  }
   return errors;
 }
 
@@ -770,6 +779,16 @@ function effortLevels(provider, modelId) {
     return index < 0 ? EFFORT_ORDER.length : index;
   };
   return [...levels].sort((a, b) => rank(a) - rank(b));
+}
+
+// The level a chosen model is saved with: the one wanted when it has it, else the CLI's current
+// one, else its only one; "" when it has no levels or none can be told, so the user picks.
+function savedEffort(provider, modelId, wanted) {
+  const levels = modelId ? effortLevels(provider, modelId) : [];
+  if (levels.includes(wanted)) return wanted;
+  const cli = cliEffort(provider, modelId);
+  if (levels.includes(cli)) return cli;
+  return levels.length === 1 ? levels[0] : "";
 }
 
 function getAllModelIds(provider) {
@@ -987,7 +1006,7 @@ function slotRows(provider, scene, split) {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
         "aria-label": "默认模型",
-        onChange: (e) => pick({ enabled: true, model: e.target.value === native.model ? "" : e.target.value }),
+        onChange: (e) => pick({ enabled: true, model: e.target.value, effort: savedEffort(provider, e.target.value || native.model, "") }),
       }, el("option", { value: OFF, selected: true }, "不用"),
       ...(native.model ? [] : [el("option", { value: "" }, "CLI 自己决定")]),
       ...all.map((m) => el("option", { value: m }, m === native.model ? `${m}（CLI 当前设置）` : m))), el("span", { className: "member-reset-slot" })))];
@@ -1009,7 +1028,8 @@ function slotRows(provider, scene, split) {
       onChange: (e) => {
         const value = e.target.value;
         if (value === OFF) return off();
-        pick({ model: value === native.model && !current.allowed ? "" : value, effort: sceneEffort(scene || "task", provider, value || native.model) });
+        const id = value || native.model;
+        pick({ model: value, effort: savedEffort(provider, id, sceneEffort(scene || "task", provider, id)) });
       },
     }, ...options),
     current.model && native.model && current.model !== native.model
@@ -1019,7 +1039,7 @@ function slotRows(provider, scene, split) {
         dataset: { focusKey: `${key}/model-reset` },
         title: `改回 CLI 当前设置（${native.model}）`,
         "aria-label": "改回 CLI 当前设置",
-        onClick: () => pick({ model: "", effort: sceneEffort(scene || "task", provider, native.model) }),
+        onClick: () => pick({ model: native.model, effort: savedEffort(provider, native.model, sceneEffort(scene || "task", provider, native.model)) }),
       }, "↺")
       : el("span", { className: "member-reset-slot" }));
 
@@ -1042,9 +1062,9 @@ function slotRows(provider, scene, split) {
           "aria-checked": String(level === shown),
           title: level === cli ? "CLI 当前设置" : null,
           dataset: { focusKey: `${key}/effort/${level}` },
-          onClick: () => pick({ effort: level === cli ? "" : level }),
+          onClick: () => pick({ effort: level }),
         }, level))),
-      !shown ? el("span", { className: "member-muted" }, "CLI 自己决定")
+      !shown ? el("span", { className: "member-muted" }, "选一个档位")
         : current.effort && cli && levels.includes(cli) && current.effort !== cli
           ? el("button", {
             type: "button",
@@ -1052,7 +1072,7 @@ function slotRows(provider, scene, split) {
             dataset: { focusKey: `${key}/effort-reset` },
             title: `改回 CLI 当前设置（${cli}）`,
             "aria-label": "改回 CLI 当前设置",
-            onClick: () => pick({ effort: "" }),
+            onClick: () => pick({ effort: cli }),
           }, "↺")
           : null);
   }

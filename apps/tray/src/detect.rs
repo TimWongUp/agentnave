@@ -97,23 +97,35 @@ pub fn detected(refresh: bool) -> Value {
 }
 
 /// Where the service reads each CLI's own default, so a call that names no model (and has no
-/// App default) still gets the settings saved for the model that CLI will run (ADR-0028).
+/// App default) still gets the settings saved for the model that CLI will run (ADR-0028), and
+/// a call that names no level passes the one the CLI would pick for its model (ADR-0042).
 pub const NATIVE_FILE: &str = "cli-defaults.json";
 
 /// The published defaults for one probe: a CLI whose probe failed keeps its last known entry,
-/// one that is not installed or names no default drops out.
+/// one that is not installed or knows neither a default model nor any model's level drops out.
 fn native_document(all: &Value, previous: &Value) -> Value {
     let mut clis = Map::new();
     for provider in PROVIDERS {
         let result = &all[provider];
         let entry = if result["installed"] == true && result["error"].is_null() {
-            json!({"model": result["native"]["model"], "effort": result["native"]["effort"]})
+            let efforts: Map<String, Value> = result["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|listed| {
+                    let effort = listed["effort"].as_str()?;
+                    Some((listed["id"].as_str()?.to_owned(), json!(effort)))
+                })
+                .collect();
+            json!({"model": result["native"]["model"], "effort": result["native"]["effort"],
+                "efforts": efforts})
         } else if result["installed"] == true {
             previous["clis"][provider].clone()
         } else {
             Value::Null
         };
-        if entry["model"].is_string() {
+        let has_efforts = entry["efforts"].as_object().is_some_and(|e| !e.is_empty());
+        if entry["model"].is_string() || has_efforts {
             clis.insert((*provider).to_owned(), entry);
         }
     }
@@ -233,7 +245,8 @@ fn configured(provider: &str) -> Option<String> {
 }
 
 /// The thinking level a CLI's own settings name for a model, if any: Codex `config.toml`
-/// `model_reasoning_effort`, Claude `settings.json` `effortLevel` (per model first), Pi
+/// `model_reasoning_effort`, Claude `settings.json` `env.CLAUDE_CODE_EFFORT_LEVEL` then
+/// `effortLevel` (per model first; the top one only for the models it applies to), Pi
 /// `modelThinkingLevels` then `defaultThinkingLevel`, CodeBuddy `reasoningEffort`, and Grok
 /// `config.toml` `[model.<id>] reasoning_effort`, then for its default model `[models]
 /// default_reasoning_effort` and the level its model cache marks (dsh's comes from its dump;
@@ -253,10 +266,17 @@ fn configured_effort(provider: &str, model: Option<&str>, native: bool) -> Optio
         "claude" => {
             let path = dir("CLAUDE_CONFIG_DIR", ".claude").join("settings.json");
             let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-            let per_model = model.map(|model| &value["modelSettings"][model]["effortLevel"]);
-            per_model
-                .and_then(Value::as_str)
-                .or_else(|| value["effortLevel"].as_str())?
+            // The env level outranks every saved one in each session it starts.
+            let name = model.map(|model| claude_name(model).unwrap_or_else(|| model.to_owned()));
+            let per_model = name.map(|name| &value["modelSettings"][name.as_str()]["effortLevel"]);
+            let top = model
+                .is_none_or(claude_reads_top)
+                .then(|| value["effortLevel"].as_str())
+                .flatten();
+            value["env"]["CLAUDE_CODE_EFFORT_LEVEL"]
+                .as_str()
+                .or_else(|| per_model.and_then(Value::as_str))
+                .or(top)?
                 .to_owned()
         }
         "pi" => {
@@ -294,6 +314,51 @@ fn configured_effort(provider: &str, model: Option<&str>, native: bool) -> Optio
     };
     let effort = effort.trim();
     (!effort.is_empty()).then(|| effort.to_owned())
+}
+
+/// The Claude models the top-level `effortLevel` still applies to: Opus 5.5 and every later or
+/// unknown Claude read only `modelSettings.<model>.effortLevel`; another vendor's model or an
+/// unresolved alias reads the top one.
+const CLAUDE_TOP_EFFORT: [&str; 13] = [
+    "claude-opus-4",
+    "claude-sonnet-4",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-fable-5-1",
+];
+
+/// The Claude model an ID names as `claude-<family>-<major>[-<minor>]`, a dated or dotted ID
+/// or a `[1m]` suffix included; None for an alias or another vendor's model.
+fn claude_name(model: &str) -> Option<String> {
+    let model = model.to_lowercase().replace('.', "-");
+    let model = model.split('[').next().unwrap_or_default();
+    let (_, rest) = model.split_once("claude-")?;
+    let mut parts = rest.split('-');
+    let family = parts
+        .next()
+        .filter(|family| ["opus", "sonnet", "haiku", "fable"].contains(family))?;
+    let digits = |part: &&str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    let major = parts.next().filter(digits)?;
+    let mut name = format!("claude-{family}-{major}");
+    if let Some(minor) = parts.next().filter(|part| digits(part) && part.len() <= 2) {
+        name.push('-');
+        name.push_str(minor);
+    }
+    Some(name)
+}
+
+/// An alias its picker did not resolve could be any model, so the level stays unknown.
+fn claude_reads_top(model: &str) -> bool {
+    !CLAUDE_ALIASES.contains(&model)
+        && claude_name(model).is_none_or(|name| CLAUDE_TOP_EFFORT.contains(&name.as_str()))
 }
 
 /// The reasoning effort Grok's model cache marks as default for one model.
@@ -667,10 +732,25 @@ fn probe_path(provider: &str, path: &Path) -> Value {
         Ok((source, models)) => {
             let native = native_model(&models, configured_model.as_deref());
             let mut models = models;
-            model_efforts(provider, &mut models, &efforts, |id| match provider {
-                "deepseek" => dsh_effort.clone(),
-                "codex" => configured_effort(provider, None, false),
-                _ => configured_effort(provider, Some(id), Some(id) == native.as_deref()),
+            let resolved: Vec<(String, String)> = models
+                .iter()
+                .filter_map(|listed| {
+                    Some((
+                        listed["id"].as_str()?.to_owned(),
+                        listed["resolved"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect();
+            model_efforts(provider, &mut models, &efforts, |id| {
+                let full = resolved
+                    .iter()
+                    .find(|(alias, _)| alias == id)
+                    .map_or(id, |(_, full)| full.as_str());
+                match provider {
+                    "deepseek" => dsh_effort.clone(),
+                    "codex" => configured_effort(provider, None, false),
+                    _ => configured_effort(provider, Some(full), Some(id) == native.as_deref()),
+                }
             });
             // CodeBuddy thinks only on request when `alwaysThinkingEnabled` is off, whatever
             // `reasoningEffort` says.
@@ -1049,6 +1129,10 @@ fn claude_picker(response: &Value) -> Vec<Value> {
                 Value::Array(levels) => Value::Array(levels.clone()),
                 _ => json!([]),
             };
+            // An alias such as `opus` keeps its per-model settings under the full ID.
+            if let Some(resolved) = entry["resolvedModel"].as_str().filter(|r| *r != id) {
+                listed["resolved"] = json!(resolved);
+            }
             Some(listed)
         })
         .collect()
