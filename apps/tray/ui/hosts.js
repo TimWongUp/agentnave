@@ -548,6 +548,12 @@ function actionButtons(host) {
       ? spinBtn("重试中…", ".primary")
       : button("重试接入", ".primary", "connect", () => connect(host), dis || !svcOk));
   } else {
+    // A connected host whose entry names another launcher is still writable: the same connect
+    // path rewrites just the command and keeps the rest of the entry.
+    if (host.status === "connected" && host.launcher?.stale && svcOk)
+      out.push(busy === "connect"
+        ? spinBtn("切换中…", ".primary")
+        : button("改用新启动器", ".primary", "connect", () => connect(host), dis));
     out.push(askRemove(host.status === "connected" ? "移除" : "移除条目"));
   }
   return out;
@@ -620,6 +626,10 @@ function buildCard(host) {
     main.push(h("p.hc-orphan", {}, `本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`));
   if (host.shadowed_by)
     main.push(h("div.hc-note.info", {}, "项目级配置 ", h("code", {}, shortPath(host.shadowed_by)), " 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。"));
+  if (host.launcher?.stale)
+    main.push(h("div.hc-note.info", {},
+      "配置里的启动器仍是旧的 ", h("code", {}, shortPath(host.launcher.current || "")),
+      "；重新接入会把 command 改为 ", h("code", {}, shortPath(host.launcher.expected || ""))));
   const local = S.localErr.get(id);
   const last = host.last_action;
   if (local) main.push(h("div.hc-note.error", { role: "alert" }, local));

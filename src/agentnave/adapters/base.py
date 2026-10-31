@@ -23,6 +23,11 @@ PROVIDER_BIN_DIRS = (
     "~/.npm-global/bin",
     "~/.volta/bin",
     "~/.cargo/bin",
+    # Windows: npm's global prefix, the per-user Node install (its `node` runs ZCode's
+    # bundle), and the installers that add their own bin directory.
+    "~/AppData/Roaming/npm",
+    "~/AppData/Local/Programs/nodejs",
+    "~/AppData/Local/ZCode/bin",
 )
 
 
@@ -40,14 +45,13 @@ def resolve_executable(name: str, preferred: Iterable[str] = ()) -> str:
     """Absolute provider path, or the bare name so launch reports it as missing.
 
     Resolution runs on every prepare, so installing or removing a CLI takes effect
-    on the next call. Windows keeps resolving the bare name inside its supervisor.
+    on the next call. Windows resolves `PATHEXT` suffixes itself, so the same fallback
+    finds `codex.cmd` and `codex.exe` there too.
     """
     for candidate in preferred:
         executable = shutil.which(os.path.expanduser(candidate))
         if executable is not None:
             return executable
-    if os.name == "nt":
-        return name
     executable = shutil.which(name)
     if executable is None:
         executable = shutil.which(name, path=os.pathsep.join(provider_bin_dirs()))

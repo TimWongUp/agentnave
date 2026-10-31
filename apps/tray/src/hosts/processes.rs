@@ -2,7 +2,7 @@
 use super::{Context, IDS};
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
@@ -92,16 +92,86 @@ fn identity(path: &str) -> Option<&'static str> {
     }
 }
 
+/// A comparable form of one path: Windows spells the same file many ways (`C:\x`, `c:/x`,
+/// `\\?\C:\x`, `\\?\UNC\server\share`), and a process argument rarely spells it the way
+/// `canonicalize` does, so both sides go through this before matching.
+fn path_key(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('\\', "/");
+    let value = value.strip_prefix("//?/").unwrap_or(&value).to_owned();
+    let value = if cfg!(windows) {
+        value.to_lowercase()
+    } else {
+        value
+    };
+    // `\\?\UNC\srv\share` names the same place as `\\srv\share`; lower-casing comes first so the
+    // prefix matches whatever case the caller used.
+    value
+        .strip_prefix("unc/")
+        .map_or(value.clone(), |rest| format!("//{rest}"))
+}
+fn shim_script(shim: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(shim).ok()?;
+    let dir = shim.parent()?;
+    // npm also launches extensionless scripts (CodeBuddy). Preserve spaces in quoted paths,
+    // resolve only shim-relative tokens, and reject the bundled node executable itself.
+    text.split(['"', '\''])
+        .chain(text.split_whitespace())
+        .find_map(|token| {
+            let lower = token.to_ascii_lowercase();
+            let offset = if lower.starts_with("%~dp0") || lower.starts_with("%dp0%") {
+                5
+            } else {
+                return None;
+            };
+            let relative = token[offset..].replace('\\', "/");
+            let path = dir.join(relative.trim_start_matches('/'));
+            if path.extension().is_some_and(|ext| {
+                ["exe", "cmd", "bat"]
+                    .iter()
+                    .any(|s| ext.eq_ignore_ascii_case(s))
+            }) || !path.is_file()
+            {
+                return None;
+            }
+            path.canonicalize().ok()
+        })
+}
 fn agentnave(process: &Process) -> bool {
-    process.cmd().iter().take(4).any(|arg| {
-        let arg = arg.to_string_lossy().replace('\\', "/");
-        matches!(name(&arg), "agentnave-mcp" | "agentnave-mcp.exe")
-            || arg.ends_with("/agentnave/supervisor.py")
-            || arg.ends_with("/agentnave/windows_supervisor.py")
-    })
+    // The executable itself living in the tool environment cannot be spoofed by an argument.
+    if process
+        .exe()
+        .is_some_and(|path| tool_environment(&path.to_string_lossy()))
+    {
+        return true;
+    }
+    process
+        .cmd()
+        .iter()
+        .take(6)
+        .any(|arg| agentnave_arg(&arg.to_string_lossy()))
+}
+
+/// Whether a path is an executable inside this app's own installed environment.
+fn tool_environment(path: &str) -> bool {
+    path.replace('\\', "/").contains("/tools/agentnave/")
+}
+
+/// One command-line argument that names this app's server. Anchored on a whole path or on the
+/// exact `-c` source the supervisor generates, so a prompt that merely mentions the module does
+/// not turn its own process into "the app" and hide a real host.
+fn agentnave_arg(arg: &str) -> bool {
+    let arg = arg.replace('\\', "/");
+    matches!(name(&arg), "agentnave-mcp" | "agentnave-mcp.exe")
+        || arg.ends_with("/agentnave/supervisor.py")
+        || arg.ends_with("/agentnave/windows_supervisor.py")
+        || arg.ends_with("/agentnave/mcp_server.py")
+        || arg.starts_with("from agentnave.mcp_server")
 }
 
 fn dispatched(process: &Process, system: &System) -> bool {
+    // This is a snapshot heuristic, not durable provenance: if a supervisor/ancestor exits
+    // before the snapshot (or the chain exceeds 64), an orphan CLI can look like a host.
+    // Never use this observation as an authorization or process-ownership boundary.
     let mut current = Some(process);
     for _ in 0..64 {
         let Some(process) = current else { break };
@@ -118,20 +188,28 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
         return None;
     }
     // Resolve installed entry points so node/python CLIs with a generic script name also match.
-    let targets: HashMap<_, _> = IDS
-        .into_iter()
-        .filter_map(|id| {
-            let binary = match id {
-                "antigravity" => "agy",
-                "deepseek" => "dsh",
-                _ => id,
-            };
-            Some((context.find(binary)?.canonicalize().ok()?, id))
-        })
-        .collect();
+    let mut targets: HashMap<String, &'static str> = HashMap::new();
+    for id in IDS {
+        let binary = match id {
+            "antigravity" => "agy",
+            "deepseek" => "dsh",
+            _ => id,
+        };
+        let Some(found) = context.find(binary) else {
+            continue;
+        };
+        targets.insert(path_key(&found), id);
+        if let Ok(path) = found.canonicalize() {
+            targets.insert(path_key(&path), id);
+        }
+        // Windows installs a CLI as a `.cmd` shim; the live process is `node <script>.js`.
+        if let Some(script) = shim_script(&found) {
+            targets.insert(path_key(&script), id);
+        }
+    }
     let identify = |path: &Path| {
         targets
-            .get(path)
+            .get(&path_key(path))
             .copied()
             .or_else(|| identity(&path.to_string_lossy()))
     };
@@ -191,33 +269,4 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn host_paths_match_exact_executables_and_main_app_processes() {
-        for (path, id) in [
-            (
-                "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
-                "deepseek",
-            ),
-            (
-                "C:\\Program Files\\DeepSeek Harness\\DeepSeek Harness.exe",
-                "deepseek",
-            ),
-            ("/Applications/Codex.app/Contents/MacOS/Codex", "codex"),
-            ("/home/a/.local/share/claude/versions/2.0.0", "claude"),
-            ("/usr/bin/agy", "antigravity"),
-            ("/usr/bin/dsh.js", "deepseek"),
-        ] {
-            assert_eq!(identity(path), Some(id), "{path}");
-        }
-        for path in [
-            "/tmp/codex-notes.txt",
-            "/Applications/DeepSeek Harness.app/Contents/Frameworks/DeepSeek Harness Helper.app/Contents/MacOS/DeepSeek Harness Helper",
-            "deepseek.example",
-        ] {
-            assert_eq!(identity(path), None, "{path}");
-        }
-    }
-}
+mod tests;
