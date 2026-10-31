@@ -333,6 +333,11 @@ impl Hosts {
         })
     }
     fn launcher(&self) -> Option<PathBuf> {
+        // A versioned install names its own launcher; the shared uv tool directory is the
+        // legacy layout, kept for installs that predate it.
+        if let Some(path) = crate::update::active_launcher(&self.context.app) {
+            return Some(path);
+        }
         let name = "agentnave-mcp";
         let tools = self.tool_dirs()?.tools;
         if !crate::update::unified_service(&tools) {

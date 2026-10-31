@@ -544,7 +544,11 @@ fn finish_upgrade(app: &AppHandle) {
     let outcome = (|| {
         let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
         let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
-        install_service(&uv, &dirs)?;
+        // Install beside the running service instead of over it; the active manifest then moves
+        // the hosts over, which takes effect when each host next starts its server.
+        let target = version_dirs(app, &dirs, VERSION).ok_or("无法定位应用数据目录")?;
+        install_service_version(&uv, &target, VERSION, None)?;
+        write_active(app, VERSION, &target)?;
         app.state::<crate::Tray>().reader.refresh_hosts();
         Ok(())
     })();
@@ -554,6 +558,7 @@ fn finish_upgrade(app: &AppHandle) {
     };
 }
 
+#[allow(dead_code)]
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
     install_service_version(uv, dirs, VERSION, None)
 }
@@ -808,7 +813,78 @@ fn service_dirs(app: &AppHandle) -> Option<ToolDirs> {
 }
 
 fn service_for_app(app: &AppHandle) -> Value {
+    // A versioned install is the truth once one exists; the shared uv tool directory is only
+    // the legacy fallback.
+    if let Some(version) = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|data| active_version(&data))
+    {
+        return outdated_note(version);
+    }
     service(&service_dirs(app).map(|dirs| dirs.tools))
+}
+
+/// The upgrade note for an installed version that is older than this app.
+fn outdated_note(installed: String) -> Value {
+    if parse(&installed) >= parse(VERSION) {
+        return Value::Null;
+    }
+    let command = format!("uv tool install --force --python 3.12 \"git+{REPOSITORY}@v{VERSION}\"");
+    json!({"state": "outdated", "version": installed, "error": null, "command": command})
+}
+
+/// The launcher the hosts' configs point at once a versioned install exists.
+pub(crate) fn active_launcher(app_data: &Path) -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(app_data.join("service").join("active.json")).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    let bin = PathBuf::from(value["bin"].as_str()?);
+    bin.is_file().then_some(bin)
+}
+
+/// The version the active manifest records, when its entry still exists.
+pub(crate) fn active_version(app_data: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(app_data.join("service").join("active.json")).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    let bin = PathBuf::from(value["bin"].as_str()?);
+    bin.is_file()
+        .then(|| value["version"].as_str().unwrap_or_default().to_owned())
+}
+
+/// This version's own tool and bin directories, so an upgrade never touches the files the
+/// running service executes (Windows refuses to remove them; POSIX would unlink them under it).
+pub(crate) fn version_dirs(app: &AppHandle, dirs: &ToolDirs, version: &str) -> Option<ToolDirs> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("service")
+        .join(version);
+    Some(ToolDirs {
+        home: dirs.home.clone(),
+        tools: root.join("tools"),
+        bin: root.join("bin"),
+        network: dirs.network.clone(),
+    })
+}
+
+/// Point the hosts at this install once it is complete.
+pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> Result<(), String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("service");
+    std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+    let name = if cfg!(windows) {
+        "agentnave-mcp.exe"
+    } else {
+        "agentnave-mcp"
+    };
+    let launcher = dirs.bin.join(name);
+    let value = json!({"version": version, "bin": launcher.to_string_lossy()});
+    std::fs::write(base.join("active.json"), value.to_string()).map_err(|error| error.to_string())
 }
 
 /// A note with the upgrade command when the installed service is older than this app.
