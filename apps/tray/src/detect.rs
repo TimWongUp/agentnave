@@ -892,6 +892,37 @@ fn registry(args: &[&str]) -> Vec<String> {
         .collect()
 }
 
+/// A CLI this app knows how to find, including the ones a desktop app bundles instead of
+/// putting on PATH.
+pub(crate) fn locate(name: &str) -> Option<PathBuf> {
+    find(name)
+}
+
+/// The executable an installed app's uninstall entry points at, for apps that install wherever
+/// the user chose and keep no other record (WorkBuddy points `DisplayIcon` at its exe).
+#[cfg(windows)]
+pub(crate) fn uninstall_icon(display_name: &str) -> Option<PathBuf> {
+    for root in UNINSTALL_ROOTS {
+        let Some(key) = uninstall_key(root, display_name) else {
+            continue;
+        };
+        if let Some(icon) = registry_value(&key, "DisplayIcon") {
+            let exe = icon.split(',').next().unwrap_or(&icon).trim();
+            let path = PathBuf::from(exe);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
+            let dir = PathBuf::from(dir);
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+    }
+    None
+}
+
 /// PATH for a probe: the CLI's own directory, then the inherited PATH, then the common
 /// directories, so `#!/usr/bin/env node` launchers work from an app started by the Finder
 /// without overriding the toolchain the inherited PATH selects.

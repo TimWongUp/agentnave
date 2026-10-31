@@ -117,6 +117,19 @@ pub struct Context {
     pub applications: Vec<PathBuf>,
 }
 
+/// Where Hermes keeps `config.yaml`. Its Windows installer uses `%LOCALAPPDATA%\hermes` unless
+/// `HERMES_HOME` says otherwise, which the Unix-style `~/.hermes` default would miss.
+fn hermes_default(home: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(local) = dirs::data_local_dir() {
+        let dir = local.join("hermes");
+        if dir.is_dir() {
+            return dir;
+        }
+    }
+    home.join(".hermes")
+}
+
 /// Where an installed desktop app lives: `/Applications` and `~/Applications` on macOS, the
 /// per-user program directory and the shared ones on Windows.
 #[cfg(target_os = "macos")]
@@ -437,7 +450,7 @@ impl Hosts {
                 "Hermes",
                 "hermes",
                 Some("HERMES_HOME"),
-                h.join(".hermes"),
+                hermes_default(h),
                 "config.yaml",
                 Format::Yaml,
                 "mcp_servers",
@@ -563,6 +576,11 @@ impl Hosts {
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
         }
+        // A CLI that ships inside a desktop app is not on PATH; the same rules the member list
+        // uses resolve it (Codex and DeepSeek Harness both arrive this way on Windows).
+        if crate::detect::locate(host.binary).is_some() {
+            return (true, "path", None);
+        }
         let app = match host.boss {
             "claude" => Some("Claude.app"),
             "workbuddy" => Some("WorkBuddy.app"),
@@ -578,12 +596,13 @@ impl Hosts {
                 .map(|p| p.join(name))
                 .find(|p| p.is_dir())
         }) {
-        // Windows desktop apps: a CLI bundled in the app, or an install directory the uninstall
-        // entry records, is not on PATH.
+            return (true, "app", Some(path));
+        }
+        // Windows desktop apps install a program directory, or bundle their CLI inside one;
+        // neither is on PATH.
         #[cfg(windows)]
         if let Some(path) = self.bundle(host.id) {
             return (true, "app", Some(path));
-        }            return (true, "app", Some(path));
         }
         (false, "config", None)
     }
@@ -593,6 +612,9 @@ impl Hosts {
     fn bundle(&self, id: &str) -> Option<PathBuf> {
         let relative = match id {
             "deepseek" => "DeepSeek Harness/DeepSeek Harness.exe",
+            // WorkBuddy installs wherever the user chose (D:\Workbuddy here), and only its
+            // uninstall entry records that.
+            "workbuddy" => return crate::detect::uninstall_icon("WorkBuddy"),
             _ => return None,
         };
         self.context
