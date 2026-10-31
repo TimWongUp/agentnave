@@ -118,18 +118,18 @@ pub struct Context {
 }
 
 /// Where Hermes keeps `config.yaml`. Its Windows installer uses `%LOCALAPPDATA%\hermes` unless
-/// `HERMES_HOME` says otherwise, which the Unix-style `~/.hermes` default would miss.
+/// `HERMES_HOME` says otherwise; a redirected home keeps its own `.hermes`, so a caller that
+/// points at another profile never reads or writes this machine's real configuration.
 fn hermes_default(home: &Path) -> PathBuf {
     #[cfg(windows)]
-    if let Some(local) = dirs::data_local_dir() {
-        let dir = local.join("hermes");
-        if dir.is_dir() {
+    if dirs::home_dir().as_deref() == Some(home) {
+        let installed = dirs::data_local_dir().map(|local| local.join("hermes"));
+        if let Some(dir) = installed.filter(|dir| dir.is_dir()) {
             return dir;
         }
     }
     home.join(".hermes")
 }
-
 /// Where an installed desktop app lives: `/Applications` and `~/Applications` on macOS, the
 /// per-user program directory and the shared ones on Windows.
 #[cfg(target_os = "macos")]
