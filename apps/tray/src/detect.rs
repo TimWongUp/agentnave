@@ -102,7 +102,7 @@ pub fn detected(refresh: bool) -> Value {
 pub const NATIVE_FILE: &str = "cli-defaults.json";
 
 /// The published defaults for one probe: a CLI whose probe failed keeps its last known entry,
-/// one that is not installed or names no default drops out.
+/// one that is not installed or knows neither a default model nor any model's level drops out.
 fn native_document(all: &Value, previous: &Value) -> Value {
     let mut clis = Map::new();
     for provider in PROVIDERS {
@@ -124,7 +124,8 @@ fn native_document(all: &Value, previous: &Value) -> Value {
         } else {
             Value::Null
         };
-        if entry["model"].is_string() {
+        let has_efforts = entry["efforts"].as_object().is_some_and(|e| !e.is_empty());
+        if entry["model"].is_string() || has_efforts {
             clis.insert((*provider).to_owned(), entry);
         }
     }
@@ -335,9 +336,10 @@ const CLAUDE_TOP_EFFORT: [&str; 13] = [
 ];
 
 /// The Claude model an ID names as `claude-<family>-<major>[-<minor>]`, a dated or dotted ID
-/// included; None for an alias or another vendor's model.
+/// or a `[1m]` suffix included; None for an alias or another vendor's model.
 fn claude_name(model: &str) -> Option<String> {
     let model = model.to_lowercase().replace('.', "-");
+    let model = model.split('[').next().unwrap_or_default();
     let (_, rest) = model.split_once("claude-")?;
     let mut parts = rest.split('-');
     let family = parts
@@ -353,8 +355,10 @@ fn claude_name(model: &str) -> Option<String> {
     Some(name)
 }
 
+/// An alias its picker did not resolve could be any model, so the level stays unknown.
 fn claude_reads_top(model: &str) -> bool {
-    claude_name(model).is_none_or(|name| CLAUDE_TOP_EFFORT.contains(&name.as_str()))
+    !CLAUDE_ALIASES.contains(&model)
+        && claude_name(model).is_none_or(|name| CLAUDE_TOP_EFFORT.contains(&name.as_str()))
 }
 
 /// The reasoning effort Grok's model cache marks as default for one model.
