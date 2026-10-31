@@ -100,14 +100,16 @@ fn identity(path: &str) -> Option<&'static str> {
 fn path_key(path: &Path) -> String {
     let value = path.to_string_lossy().replace('\\', "/");
     let value = value.strip_prefix("//?/").unwrap_or(&value).to_owned();
-    let value = value
-        .strip_prefix("unc/")
-        .map_or(value.clone(), |rest| format!("//{rest}"));
-    if cfg!(windows) {
+    let value = if cfg!(windows) {
         value.to_lowercase()
     } else {
         value
-    }
+    };
+    // `\\?\UNC\srv\share` names the same place as `\\srv\share`; lower-casing comes first so the
+    // prefix matches whatever case the caller used.
+    value
+        .strip_prefix("unc/")
+        .map_or(value.clone(), |rest| format!("//{rest}"))
 }
 fn shim_script(shim: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(shim).ok()?;

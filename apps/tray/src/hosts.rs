@@ -1690,14 +1690,16 @@ fn same_path(left: &str, right: &Path) -> bool {
     let normalize = |value: &str| {
         let value = value.replace('\\', "/");
         let value = value.strip_prefix("//?/").unwrap_or(&value).to_owned();
-        let value = value
-            .strip_prefix("unc/")
-            .map_or(value.clone(), |rest| format!("//{rest}"));
-        if cfg!(windows) {
+        let value = if cfg!(windows) {
             value.to_lowercase()
         } else {
             value
-        }
+        };
+        // `\\?\UNC\srv\share` names the same place as `\\srv\share`; lower-casing comes first so
+        // the prefix matches whatever case the caller used.
+        value
+            .strip_prefix("unc/")
+            .map_or(value.clone(), |rest| format!("//{rest}"))
     };
     normalize(left) == normalize(&right.to_string_lossy())
 }
