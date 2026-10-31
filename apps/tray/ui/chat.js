@@ -454,6 +454,12 @@ const BOSS_SET = {
   antigravity: "agy",
   agy: "agy",
   deepseek: "deepseek",
+  grok: "grok",
+  codebuddy: "codebuddy",
+  workbuddy: "codebuddy",
+  zcode: "zcode",
+  pi: "pi",
+  hermes: "hermes",
 };
 function deskHash(s) {
   let v = 2166136261;
