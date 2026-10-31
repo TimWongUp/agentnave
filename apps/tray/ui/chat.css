@@ -146,9 +146,6 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .lid { position: absolute; left: 50%; top: 55.17%; width: 8.5%; min-width: 10px; aspect-ratio: 1; transform: translate(-50%, -50%); z-index: 5; border-radius: 3px; overflow: hidden; pointer-events: none; }
 .lid > img { display: block; }
 .lid > * { width: 100% !important; height: 100% !important; border-radius: 3px !important; box-shadow: none !important; font-size: 7px !important; }
-/* the boss desk's top edge sits 9 units higher on the 1200-high stage */
-.boss-zone .l-laptop { top: 34.25%; }
-.boss-zone .lid { top: 54.42%; }
 .say { position: absolute; top: 2px; right: 4px; z-index: 6; max-width: 70%; padding: 3px 8px; border-radius: 10px 10px 10px 3px; background: var(--card-hover); color: var(--muted); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .say:empty { display: none; }
 [data-mood="speaking"] > .say, [data-mood="working"] > .say { background: var(--run); color: var(--bg); }
@@ -271,12 +268,13 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
    hair, so that side swings less (--reach) */
 .fig img.part.tail { z-index: -1; }
 .fig[data-char="gemini"] { --gentle: 0.5; }
-.fig[data-char="deepseek"] { --reach: 0.5; }
+.fig[data-char="deepseek"] { --gentle: 0.6; --reach: 0.5; }
 .fig:not(.walk) img.part.tail { --amp: 6deg; rotate: 0deg;
   animation: tail-sway 2.4s ease-in-out var(--phase, 0s) infinite alternate, tail-flick calc(var(--cycle, 7s) * 0.9) ease-out var(--phase, 0s) infinite; }
 [data-mood="working"] .fig:not(.walk) img.part.tail { --amp: 5deg; animation: tail-sway 0.6s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="speaking"] .fig:not(.walk) img.part.tail { --amp: 9deg; animation: tail-sway 0.8s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="done"] .fig:not(.walk) img.part.tail { --amp: 12deg; animation: tail-sway 0.3s ease-in-out var(--phase, 0s) infinite alternate; }
+[data-mood="done"] .fig[data-char="deepseek"]:not(.walk) img.part.tail { --amp: 6deg; }
 :is([data-mood="sleep"], [data-mood="failed"]) .fig:not(.walk) img.part.tail { --amp: 2deg; animation: tail-sway 4s ease-in-out var(--phase, 0s) infinite alternate; }
 @keyframes tail-sway { from { rotate: calc(-1 * var(--amp) * var(--gentle, 1)); } to { rotate: calc(var(--amp) * var(--gentle, 1) * var(--reach, 1)); } }
 @keyframes tail-flick {
@@ -287,11 +285,11 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
    about the centre of its own arc (parts.json), so it follows its own path. Both ends are cut off under
    the hair and the skirt, and the cuts show past about +5deg and -18deg. Asleep it hardly moves */
 .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 1; rotate: none;
-  animation: tail-slither 3.4s var(--phase, 0s) infinite; }
-[data-mood="working"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.7; animation-duration: 1.2s; }
-[data-mood="speaking"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.85; animation-duration: 1.7s; }
-[data-mood="done"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 1; animation-duration: 0.9s; }
-:is([data-mood="sleep"], [data-mood="failed"]) .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.25; animation-duration: 7s; }
+  animation: tail-slither 5.1s var(--phase, 0s) infinite; }
+[data-mood="working"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.7; animation-duration: 1.8s; }
+[data-mood="speaking"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.85; animation-duration: 2.6s; }
+[data-mood="done"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 1; animation-duration: 1.4s; }
+:is([data-mood="sleep"], [data-mood="failed"]) .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.25; animation-duration: 10s; }
 @keyframes tail-slither {
   0%, 10%, 100% { transform: rotate(calc(4deg * var(--k))); animation-timing-function: cubic-bezier(.45, 0, .15, 1); }
   42%, 56% { transform: rotate(calc(-16deg * var(--k))); animation-timing-function: cubic-bezier(.45, 0, .15, 1); }
