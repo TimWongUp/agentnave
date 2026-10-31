@@ -12,7 +12,7 @@
 
 - `start_agent` 的 `role` 是 agentnave-review 角色名，或 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`，并且 `provider` 是该工位的 CLI 时，服务在套用组员默认值之前补上工位的 `model`；工位设了档位且最终模型就是工位的模型时，再补上 `effort`。
 - 调用方显式传的 `model`、`effort` 优先。`provider` 不是该工位的 CLI（如 boss 按替换规则换了 CLI）时不套用。
-- 回执 `defaults_applied` 先列出「`<role>` seat」及补上的键。补上的值照常过组员白名单与档位校验，不合格时报错并说明来自该工位，提示显式传参覆盖，不静默换成别的模型。
+- 回执 `defaults_applied` 先列出「`<role>` seat」及补上的键。工位补上的模型和档位是用户为这个角色单独选的，不受「单独干活」的 CLI 名单、模型名单与档位范围约束（2026-11-01 修订，原先照常过这些校验，名单不含时工位不可用）；宿主排除、Adapter 选项校验与权限档位照常。boss 显式传的值仍按名单校验。
 - `review.json`、`orchestration.json` 缺失或损坏时不套用，由 `list_members` 报告。会议席位不套用。
 
 ## 取舍

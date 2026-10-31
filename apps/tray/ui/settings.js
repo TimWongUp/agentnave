@@ -1508,13 +1508,8 @@ function renderReviewSeats() {
   const focusKey = document.activeElement?.dataset?.focusKey;
   const rows = REVIEW_ROLES.map(([role, name, hint]) => {
     const seat = reviewSeats[role];
-    const provider = seat?.provider || "";
-    // A restricted private-task list that leaves this seat out makes the server report it unavailable.
-    const task = currentDoc.modes?.task;
-    const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
     return el("div", { className: "review-row" },
-      el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
-        !listed && el("small", { className: "review-warn" }, "单独干活的名单没有选中这个模型，评审时会改找其他 CLI")),
+      el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
       ...seatSelects(role, `${name}评审`, seat, (next) => setReviewSeat(role, next)));
   });
   box.replaceChildren(...rows);
