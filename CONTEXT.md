@@ -42,6 +42,8 @@ _Avoid_: 按 `(provider, model, role)` 合并的工位
 
 ## 同时运行上限
 
+App「员工」页显示为“同时工作的员工上限”。
+
 每个 AgentNave 服务同时运行的 CLI 进程数上限，私聊任务与会议席位合计；用户在 App 中设置（1–32，默认 8），存于数据根 `settings.json`。超出时新的任务或轮次被拒绝，并联轮按席位数计，串联轮计一个。办公室最多画出同样数量的工位。
 
 ## 已优化
@@ -97,7 +99,7 @@ _Avoid_: 丢弃
 
 ## 评审门控（Review Gate）
 
-可选 Skill `agentnave-review` 规定的代码评审流程：在创建或更新 PR、用户要求评审、合并到主分支前，由 boss 按失败风险定 R0–R3 级、派只读评审工位、裁决 findings 并留存记录。流程由调用方 Agent 执行，不进入运行时；用户在 App「技能」页按宿主开关安装该 Skill，默认关闭。
+可选 Skill `agentnave-review` 规定的代码评审流程：在创建或更新 PR、用户要求评审、合并到主分支前，由 boss 按失败风险定 R0–R3 级、派只读评审工位、裁决 findings 并留存记录。流程由调用方 Agent 执行，不进入运行时；用户在 App「高级」页按宿主选择并保存后安装该 Skill，默认关闭。
 _Avoid_: Review（专指会议答案的审核）
 
 ## 评审工位（Review Seat）
@@ -106,7 +108,7 @@ _Avoid_: Review（专指会议答案的审核）
 
 ## 编排档位（Orchestration Preset）
 
-用户在 App「高级」页选的编排规则：关闭、分工协作、并行复核或自定义，存于 `orchestration.json`。选定后 App 把正文写进每个已接入宿主读取的全局规则文件中 `<!-- AGENTNAVE:START -->` 与 `<!-- AGENTNAVE:END -->` 之间，每个应用一份；关闭即删掉这一段。规则只约束主对话 boss，服务不据此调度。
+用户在 App「高级」页按 boss 选定并保存的编排规则：关闭、分工协作、并行复核或自定义，存于 `orchestration.json`；读同一规则文件的 boss 共用一档，之后新接入的 boss 用单独选的默认档。保存后 App 把各自的正文写进每个已接入宿主读取的全局规则文件中 `<!-- AGENTNAVE:START -->` 与 `<!-- AGENTNAVE:END -->` 之间，每个应用一份；关闭即删掉这一段。规则只约束主对话 boss，服务不据此调度。
 _Avoid_: 编排引擎、调度
 
 ## Explorer／Worker

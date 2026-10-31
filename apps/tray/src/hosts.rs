@@ -491,6 +491,7 @@ impl Hosts {
             .into_iter()
             .filter(|host| self.detect(host).0)
             .map(|host| crate::rules::App {
+                key: host.id,
                 id: host.boss,
                 label: host.label,
                 root: host.root.path,
@@ -503,6 +504,7 @@ impl Hosts {
             .into_iter()
             .filter(|host| self.state(host)["status"] == "connected")
             .map(|host| crate::rules::App {
+                key: host.id,
                 id: host.boss,
                 label: host.label,
                 root: host.root.path,
@@ -511,7 +513,7 @@ impl Hosts {
     }
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
     /// backing up each file first. Returns the files that could not be written.
-    pub fn sync_rules(&self, text: Option<&str>, also: &[PathBuf]) -> Vec<Value> {
+    pub fn sync_rules(&self, document: &Value, also: &[PathBuf]) -> Vec<Value> {
         let (app, home) = (&self.context.app, &self.context.home);
         // Named by the folder under home, so `AGENTS.md` copies of different apps stay apart.
         let backup = |path: &Path, bytes: &[u8]| {
@@ -525,7 +527,7 @@ impl Hosts {
             &self.rule_apps(),
             &self.connected_rule_apps(),
             home,
-            text,
+            document,
             also,
             &backup,
         )
