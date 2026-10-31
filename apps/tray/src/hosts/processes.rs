@@ -93,12 +93,24 @@ fn identity(path: &str) -> Option<&'static str> {
 }
 
 fn agentnave(process: &Process) -> bool {
-    process.cmd().iter().take(4).any(|arg| {
-        let arg = arg.to_string_lossy().replace('\\', "/");
-        matches!(name(&arg), "agentnave-mcp" | "agentnave-mcp.exe")
-            || arg.ends_with("/agentnave/supervisor.py")
-            || arg.ends_with("/agentnave/windows_supervisor.py")
-    })
+    process
+        .cmd()
+        .iter()
+        .take(6)
+        .any(|arg| agentnave_arg(&arg.to_string_lossy()))
+}
+
+/// Whether one command-line argument names this app's own server. The launcher, the tool
+/// environment it runs out of, and the Python module it imports all count: a dispatched CLI's
+/// parent chain must be recognized or the CLI looks like a host the user started.
+fn agentnave_arg(arg: &str) -> bool {
+    let arg = arg.replace('\\', "/");
+    matches!(name(&arg), "agentnave-mcp" | "agentnave-mcp.exe")
+        || arg.contains("/tools/agentnave/")
+        || arg.contains("/agentnave/supervisor.py")
+        || arg.contains("/agentnave/windows_supervisor.py")
+        || arg.contains("agentnave.mcp_server")
+        || arg.contains("/agentnave/mcp_server.py")
 }
 
 fn dispatched(process: &Process, system: &System) -> bool {
@@ -192,6 +204,31 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
 
 #[cfg(test)]
 mod tests {
+    use super::agentnave_arg;
+
+    #[test]
+    fn a_dispatched_cli_is_recognized_through_its_agentnave_parent() {
+        for arg in [
+            r"C:\Users\timwo\AppData\Roaming\io.github.timwongup.agentnave\service\0.58.0\tools\agentnave\Scripts\python.exe",
+            r"C:\Users\timwo\.local\bin\agentnave-mcp.exe",
+            "from agentnave.mcp_server import main",
+            r"C:\x\agentnave\mcp_server.py",
+            r"C:\x\agentnave\windows_supervisor.py",
+        ] {
+            assert!(agentnave_arg(arg), "{arg}");
+        }
+    }
+
+    #[test]
+    fn a_project_that_happens_to_be_named_agentnave_is_not_this_app() {
+        for arg in [
+            r"D:\code\agentnave",
+            r"C:\Users\timwo\Documents\agentnave notes.md",
+            r"C:\tools\other\python.exe",
+        ] {
+            assert!(!agentnave_arg(arg), "{arg}");
+        }
+    }
     use super::*;
 
     #[test]
