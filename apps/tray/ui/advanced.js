@@ -52,24 +52,32 @@ function orchestrationWanted() {
   return usesCustom(wanted) || customTouched ? { ...wanted, custom: $("custom-text").value } : wanted;
 }
 const orchestrationChanged = () => Boolean(orchestration) && !orchestration.error && !sameJson(orchestrationWanted(), orchestration.document);
-const bossMode = (doc, key) => doc.apps?.[key] ?? doc.preset;
+// Bosses sharing a rules file have one mode: the first set among them, else the default.
+const bossMode = (doc, boss) => boss.keys.map((key) => doc.apps?.[key]).find(Boolean) ?? doc.preset;
+// The mode the page opens on: one the saved document uses, else the default.
+function savedView() {
+  const modes = orchestration.bosses.map((boss) => bossMode(orchestration.document, boss));
+  return modes.find((mode) => mode !== "off") || orchestration.document.preset;
+}
 
 async function loadOrchestration() {
-  const keep = orchestrationChanged();
   try {
-    if (isMock) orchestration = JSON.parse(JSON.stringify(mockOrchestration));
+    let loaded;
+    if (isMock) loaded = JSON.parse(JSON.stringify(mockOrchestration));
     else {
       const response = await fetch("/app/orchestration", { cache: "no-store" });
       if (!response.ok) throw new Error(`读取失败（${response.status}）`);
-      orchestration = await response.json();
+      loaded = await response.json();
     }
+    // Asked once the answer is in: an edit made while it was on its way stays.
+    const keep = orchestrationChanged();
+    orchestration = loaded;
     if (orchestration.error) showNotice(`${orchestration.error}；请先修复或删除这个文件`, true);
     if (!keep) {
       orchestrationDraft = null;
       customTouched = false;
       $("custom-text").value = orchestration.document.custom ?? "";
-      const modes = orchestration.bosses.map((boss) => bossMode(orchestration.document, boss.keys[0]));
-      orchestrationView = modes.find((mode) => mode !== "off") || orchestration.document.preset;
+      orchestrationView = savedView();
     }
   } catch (error) {
     orchestration = null;
@@ -113,6 +121,7 @@ function viewMode(mode) {
   }
   orchestrationView = mode;
   renderOrchestration();
+  renderAdvancedBar();
 }
 
 // A row's mode lives in `apps` only where it differs from `preset`.
@@ -134,7 +143,7 @@ function setBossMode(boss, mode) {
 // Rows keep the mode they had when the default for later bosses moves.
 function setDefaultMode(mode) {
   const shown = orchestrationShown();
-  const modes = Object.fromEntries(orchestration.bosses.flatMap((boss) => boss.keys).map((key) => [key, bossMode(shown, key)]));
+  const modes = Object.fromEntries(orchestration.bosses.flatMap((boss) => boss.keys.map((key) => [key, bossMode(shown, boss)])));
   orchestrationDraft = withModes(shown, mode, modes);
   renderOrchestration();
   advancedEdited();
@@ -163,7 +172,7 @@ function renderBossChips() {
   const saved = orchestration.document;
   box.replaceChildren(...orchestration.bosses.map((boss) => modeChip(`boss/${boss.keys[0]}`, boss.labels.join("、"),
     AN.hostTile ? AN.hostTile(boss.mark, boss.labels[0]) : null,
-    bossMode(shown, boss.keys[0]), bossMode(saved, boss.keys[0]), (mode) => setBossMode(boss, mode))),
+    bossMode(shown, boss), bossMode(saved, boss), (mode) => setBossMode(boss, mode))),
   modeChip("boss/later", "之后新接入的 boss", null, shown.preset, saved.preset, setDefaultMode));
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
 }
@@ -186,16 +195,17 @@ function renderOrchestration() {
     const active = button.dataset.preset === preset;
     button.classList.toggle("active", active);
     button.setAttribute("aria-checked", String(active));
-    button.disabled = !orchestration;
+    button.disabled = !orchestration || Boolean(orchestration.error);
   }
   $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
   renderBossChips();
   const text = orchestration?.presets[preset];
   $("orchestration-text").hidden = !text;
   $("orchestration-text").textContent = text || "";
-  $("orchestration-custom").hidden = preset !== "custom";
+  // A broken file cannot take edits: nothing here could be saved or discarded.
+  $("orchestration-custom").hidden = preset !== "custom" || Boolean(orchestration?.error);
   const roles = $("orchestration-roles");
-  roles.hidden = preset === "off";
+  roles.hidden = preset === "off" || Boolean(orchestration?.error);
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
     roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
@@ -402,6 +412,7 @@ function discardAdvanced() {
   orchestrationDraft = null;
   customTouched = false;
   $("custom-text").value = orchestration?.document.custom ?? "";
+  if (orchestration) orchestrationView = savedView();
   window.AgentNaveSkills?.discard();
   renderOrchestration();
   renderReviewSeats();

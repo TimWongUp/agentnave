@@ -282,4 +282,10 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
     assert!(!h.join(".claude/CLAUDE.md").exists());
     assert!(h.join(".codex/AGENTS.md").exists());
+
+    // Claude joining Grok's file later does not undo the mode already set on Grok.
+    let document = json!({"preset": "off", "apps": {"grok": "split"}});
+    assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
+    let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
+    assert!(claude.contains(SHARED));
 }

@@ -33,10 +33,12 @@ pub fn presets() -> Value {
     json!({"split": SHARED, "parallel": format!("{SHARED}{PARALLEL}")})
 }
 
-/// The mode a boss row is set to: its own, or the default that rows without one follow.
-fn mode_of<'a>(document: &'a Value, key: &str) -> &'a str {
-    document["apps"][key]
-        .as_str()
+/// The mode of apps sharing a file: the first set among them, or the default that rows without
+/// one follow.
+fn mode_of<'a>(document: &'a Value, group: &[&App]) -> &'a str {
+    group
+        .iter()
+        .find_map(|app| document["apps"][app.key].as_str())
         .or(document["preset"].as_str())
         .unwrap_or("off")
 }
@@ -223,7 +225,7 @@ fn targets(connected: &[&App], home: &Path) -> Vec<PathBuf> {
 }
 
 /// Connected apps that read one another's files, in `connected` order. One block reaches them all,
-/// so each group has one mode: that of its first app.
+/// so each group has one mode.
 fn groups<'a>(connected: &'a [App], home: &Path) -> Vec<Vec<&'a App>> {
     let mut groups: Vec<(Vec<usize>, Vec<PathBuf>)> = Vec::new();
     for (index, app) in connected.iter().enumerate() {
@@ -253,7 +255,7 @@ fn groups<'a>(connected: &'a [App], home: &Path) -> Vec<Vec<&'a App>> {
 fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
-        if let Some(text) = text_of(document, mode_of(document, group[0].key)) {
+        if let Some(text) = text_of(document, mode_of(document, &group)) {
             wanted.extend(
                 targets(&group, home)
                     .into_iter()

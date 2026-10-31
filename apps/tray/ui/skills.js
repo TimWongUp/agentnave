@@ -96,8 +96,8 @@ async function save() {
     try {
       const result = await post("/app/hosts/skill", { id: want.host.id, skill: want.skill, enabled: want.enabled });
       S.hosts = S.hosts.map((x) => (x.id === want.host.id ? result.host : x));
-      S.want.delete(key);
-      if (!result.ok) failures.push(`${want.host.label}：${result.message}`);
+      if (result.ok) S.want.delete(key);
+      else failures.push(`${want.host.label}：${result.message}`);
     } catch (e) {
       failures.push(`${want.host.label}：${e.message || "操作没有完成，请刷新核对"}`);
     }
