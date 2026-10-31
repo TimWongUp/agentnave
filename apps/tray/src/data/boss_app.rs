@@ -1,7 +1,8 @@
 //! Which app a Claude or Codex boss chats in. Each desktop app runs the same CLI as the terminal,
 //! so the host stays `claude` or `codex` and only the session's own records tell them apart: a
 //! Claude transcript's `entrypoint`, a Codex rollout's `originator`, and Claude Desktop's records
-//! of the CLI sessions it ran. magpie (`yetone/magpie`) reads them the same way.
+//! of the CLI sessions it ran. Claude's follow magpie (`yetone/magpie`), which reads the first
+//! `entrypoint` where a boss needs the latest; it reads no `originator`, measured here instead.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -19,6 +20,8 @@ pub(crate) const CODEX_CLI: &str = "codex-cli";
 
 /// How much of a transcript is searched at each end; a rollout's first line is its session_meta.
 const WINDOW: u64 = 256 * 1024;
+/// A Claude Desktop record larger than this is not read, as in magpie.
+const RECORD_LIMIT: u64 = 8 << 20;
 
 #[derive(Default)]
 pub(crate) struct Homes {
@@ -231,23 +234,28 @@ fn sweep(homes: &Homes) -> Found {
         files_at(&codex.join("archived_sessions"), 0, &mut rollout);
     }
     for data in &homes.desktop {
-        files_at(&data.join("claude-code-sessions"), 2, &mut |path| {
-            if file_name(path).starts_with("local_")
-                && let Ok(text) = fs::read_to_string(path)
-                && let Ok(record) = serde_json::from_str::<Value>(&text)
-            {
-                found.desktop.extend(
-                    desktop_session_ids(&record)
-                        .into_iter()
-                        .map(|id| boss_key("claude", id)),
-                );
-            }
-        });
+        for kind in ["claude-code-sessions", "local-agent-mode-sessions"] {
+            files_at(&data.join(kind), 2, &mut |path| {
+                let name = file_name(path);
+                if name.starts_with("local_")
+                    && name.ends_with(".json")
+                    && fs::metadata(path).is_ok_and(|file| file.len() <= RECORD_LIMIT)
+                    && let Ok(text) = fs::read_to_string(path)
+                    && let Ok(record) = serde_json::from_str::<Value>(&text)
+                {
+                    found.desktop.extend(
+                        desktop_session_ids(&record)
+                            .into_iter()
+                            .map(|id| boss_key("claude", id)),
+                    );
+                }
+            });
+        }
     }
     found
 }
 
-/// The CLI sessions Claude Desktop counts as one of its Code tab's chats.
+/// The CLI sessions Claude Desktop counts as one of its chats.
 fn desktop_session_ids(record: &Value) -> Vec<&str> {
     let mut ids: Vec<&str> = [
         "cliSessionId",
@@ -317,7 +325,7 @@ fn boss_key(host: &str, session: &str) -> String {
 }
 
 fn claude_app(entrypoint: &str) -> &'static str {
-    if entrypoint.starts_with("claude-desktop") {
+    if matches!(entrypoint, "claude-desktop" | "claude-desktop-3p") {
         CLAUDE_DESKTOP
     } else {
         CLAUDE_CLI

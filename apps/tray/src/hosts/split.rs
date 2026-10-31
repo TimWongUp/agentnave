@@ -5,7 +5,7 @@
 //! chosen per command, needs a row.
 use super::{Context, Format, Host, Spec};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -33,34 +33,79 @@ fn interned(text: String) -> &'static str {
     text
 }
 
-fn same_dir(a: &Path, b: &Path) -> bool {
-    let real = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
-    real(a) == real(b)
+fn real(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
-/// Every Codex folder under home, where they are made: a `codex` or `.codex` folder, or one
-/// folder down in such a folder (`~/.codex-profiles/work`), that holds a sign-in or sessions.
-pub(super) fn codex_homes(home: &Path) -> Vec<PathBuf> {
+/// Sorted, so a folder reached by two names keeps the same row from one look to the next.
+fn sorted(dir: &Path) -> Vec<PathBuf> {
+    let entries = fs::read_dir(dir).into_iter().flatten().flatten();
+    let mut paths: Vec<_> = entries.map(|entry| entry.path()).collect();
+    paths.sort();
+    paths
+}
+
+/// Codex's other folders, by magpie's `CodexHomes`, where they are made: in home and beside `main`,
+/// a `codex` or `.codex` folder, or one folder down in such a folder (`~/.codex-profiles/work`),
+/// that holds a sign-in or sessions.
+pub(super) fn codex_homes(home: &Path, main: &Path) -> Vec<PathBuf> {
     let holds = |dir: &Path| dir.join("auth.json").is_file() || dir.join("sessions").is_dir();
+    let mut seen = HashSet::from([real(main)]);
     let mut found = Vec::new();
-    for entry in fs::read_dir(home).into_iter().flatten().flatten() {
-        let name = entry.file_name().to_string_lossy().to_lowercase();
-        let dir = entry.path();
-        if !name.trim_start_matches('.').starts_with("codex") || !dir.is_dir() {
-            continue;
-        }
-        if holds(&dir) {
+    let mut add = |dir: PathBuf| {
+        if seen.insert(real(&dir)) {
             found.push(dir);
-            continue;
         }
-        for inner in fs::read_dir(&dir).into_iter().flatten().flatten() {
-            if holds(&inner.path()) {
-                found.push(inner.path());
+    };
+    let mut roots = vec![home.to_owned()];
+    roots.extend(
+        main.parent()
+            .filter(|beside| real(beside) != real(home))
+            .map(Path::to_owned),
+    );
+    for root in roots {
+        for dir in sorted(&root) {
+            let name = dir.file_name().unwrap_or_default().to_string_lossy();
+            let name = name.to_lowercase();
+            if !name.strip_prefix('.').unwrap_or(&name).starts_with("codex") || !dir.is_dir() {
+                continue;
+            }
+            if holds(&dir) {
+                add(dir);
+                continue;
+            }
+            for inner in sorted(&dir) {
+                if holds(&inner) {
+                    add(inner);
+                }
             }
         }
     }
-    found.sort();
     found
+}
+
+/// Claude Desktop is there if its app is, or, as magpie reads it off macOS and Linux, its folders.
+fn claude_desktop_here(context: &Context) -> bool {
+    let app = |dir: &PathBuf| dir.join("Claude.app").is_dir();
+    if context.applications.iter().any(app) {
+        return true;
+    }
+    if cfg!(windows) {
+        return false;
+    }
+    let config = if cfg!(target_os = "macos") {
+        context.home.join("Library/Application Support")
+    } else {
+        context
+            .env
+            .get("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .unwrap_or_else(|| context.home.join(".config"))
+    };
+    ["Claude", "Claude-3p"]
+        .iter()
+        .any(|name| config.join(name).is_dir())
 }
 
 pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -> Vec<Spec> {
@@ -70,11 +115,8 @@ pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -
     let default = home.join(".claude");
     // A variable the app itself was started with reaches Claude Desktop the same way.
     if !context.env.contains_key("CLAUDE_CONFIG_DIR")
-        && claude.is_some_and(|host| !same_dir(&host.root.path, &default))
-        && context
-            .applications
-            .iter()
-            .any(|dir| dir.join("Claude.app").is_dir())
+        && claude.is_some_and(|host| real(&host.root.path) != real(&default))
+        && claude_desktop_here(context)
     {
         rows.push((
             CLAUDE_DESKTOP,
@@ -87,11 +129,7 @@ pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -
             "mcpServers",
         ));
     }
-    let codex = hosts.iter().find(|host| host.id == "codex");
     for dir in codex_homes {
-        if codex.is_some_and(|host| same_dir(&host.root.path, dir)) {
-            continue;
-        }
         let folder = dir.strip_prefix(home).unwrap_or(dir).display().to_string();
         rows.push((
             interned(format!("codex@{folder}")),

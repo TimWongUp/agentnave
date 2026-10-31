@@ -1797,7 +1797,7 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
         "#!/bin/sh\nexit 99\n",
     );
     save(&home.join(".codex/auth.json"), "{}");
-    hosts.codex_homes = split::codex_homes(&home);
+    hosts.codex_homes = hosts.other_codex_homes();
     assert_eq!(hosts.registry().len(), IDS.len());
 
     let elsewhere = home.join("claude-work");
@@ -1808,7 +1808,7 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     save(&home.join(".codex-work/auth.json"), "{}");
     save(&home.join(".codex-profiles/side/sessions/x"), "");
     save(&home.join(".codex-backups/old/archive.tar.gz"), "");
-    hosts.codex_homes = split::codex_homes(&home);
+    hosts.codex_homes = hosts.other_codex_homes();
     assert_eq!(hosts.registry().len(), IDS.len() + 3);
     assert_eq!(
         host(&hosts, "claude").config,
@@ -1837,4 +1837,41 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     let homes = hosts.boss_homes();
     assert!(homes.claude.contains(&elsewhere) && homes.claude.contains(&home.join(".claude")));
     assert_eq!(homes.codex.len(), 3);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn claude_desktop_is_found_by_its_folder_without_the_app() {
+    let (_temp, mut hosts) = fixture();
+    let home = hosts.context.home.clone();
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        home.join("claude-work").display().to_string(),
+    )])));
+    assert_eq!(hosts.registry().len(), IDS.len());
+    let config = if cfg!(target_os = "macos") {
+        "Library/Application Support"
+    } else {
+        ".config"
+    };
+    fs::create_dir_all(home.join(config).join("Claude-3p")).unwrap();
+    assert_eq!(hosts.registry().len(), IDS.len() + 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_folders_beside_codex_home_count_once_each() {
+    let (temp, _hosts) = fixture();
+    let base = temp.path().canonicalize().unwrap();
+    let (home, data) = (base.join("home"), base.join("data"));
+    save(&data.join("main/auth.json"), "{}");
+    save(&data.join("codex-work/auth.json"), "{}");
+    save(&data.join("other/auth.json"), "{}");
+    save(&home.join(".codex/auth.json"), "{}");
+    std::os::unix::fs::symlink(data.join("codex-work"), home.join("codex-link")).unwrap();
+    std::os::unix::fs::symlink(data.join("main"), home.join("codex-main")).unwrap();
+    assert_eq!(
+        split::codex_homes(&home, &data.join("main")),
+        [home.join(".codex"), home.join("codex-link")]
+    );
 }

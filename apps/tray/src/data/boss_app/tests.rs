@@ -124,11 +124,19 @@ fn desktop_records_name_chats_whose_transcript_is_gone() {
     let connection = connection();
     let key = older_chat(&connection, "claude", CLAUDE_SESSION);
     let unknown = older_chat(&connection, "claude", CODEX_SESSION);
+    let cowork = "77777777-7777-7777-7777-777777777777";
+    write(
+        &data.join("local-agent-mode-sessions/account/org/local_y.json"),
+        &format!("{{\"sessionId\":\"local_y\",\"cliSessionId\":\"{cowork}\"}}"),
+    );
+    let cowork = older_chat(&connection, "claude", cowork);
     let found = BossApps::new().of(&connection, || Homes {
         desktop: vec![data],
         ..Homes::default()
     });
-    assert_eq!(found, vec![(key, CLAUDE_DESKTOP)]);
+    let mut known = vec![(key, CLAUDE_DESKTOP), (cowork, CLAUDE_DESKTOP)];
+    known.sort_unstable();
+    assert_eq!(found, known);
     assert!(!found.iter().any(|(workspace, _)| *workspace == unknown));
 }
 

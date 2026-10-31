@@ -270,7 +270,6 @@ impl Hosts {
     ) -> Self {
         let loaded = roots::load(&context);
         let settings_error = loaded.as_ref().err().cloned();
-        let codex_homes = split::codex_homes(&context.home);
         let mut hosts = Self {
             context,
             settings: loaded.unwrap_or_else(|_| json!({})),
@@ -281,13 +280,20 @@ impl Hosts {
             failures: HashMap::new(),
             failed: HashMap::new(),
             manual_roots: HashSet::new(),
-            codex_homes,
+            codex_homes: Vec::new(),
             detected_at: timestamp(),
             cached: Value::Null,
             processes: Mutex::default(),
         };
+        hosts.codex_homes = hosts.other_codex_homes();
         hosts.cached = hosts.snapshot();
         hosts
+    }
+    fn other_codex_homes(&self) -> Vec<PathBuf> {
+        let main = self.registry().into_iter().find(|host| host.id == "codex");
+        main.map_or_else(Vec::new, |host| {
+            split::codex_homes(&self.context.home, &host.root.path)
+        })
     }
     fn launcher(&self) -> Option<PathBuf> {
         let name = "agentnave-mcp";
@@ -1017,7 +1023,7 @@ impl Hosts {
         self.refresh_probed()
     }
     pub(crate) fn refresh_probed(&mut self) -> Value {
-        self.codex_homes = split::codex_homes(&self.context.home);
+        self.codex_homes = self.other_codex_homes();
         self.remember_reloads();
         let mut settings = self.settings.clone();
         for host in self.registry() {
@@ -1170,6 +1176,7 @@ impl Hosts {
             }
             roots::save(&self.context, &settings)?;
             self.settings = settings;
+            self.codex_homes = self.other_codex_homes();
             self.manual_roots.remove(id);
             if !path.is_null() {
                 self.manual_roots.insert(id.into());
