@@ -548,6 +548,12 @@ function actionButtons(host) {
       ? spinBtn("重试中…", ".primary")
       : button("重试接入", ".primary", "connect", () => connect(host), dis || !svcOk));
   } else {
+    // A connected host whose entry names another launcher is still writable: the same connect
+    // path rewrites just the command and keeps the rest of the entry.
+    if (host.status === "connected" && host.launcher?.stale && svcOk)
+      out.push(busy === "connect"
+        ? spinBtn("切换中…", ".primary")
+        : button("改用新启动器", ".primary", "connect", () => connect(host), dis));
     out.push(askRemove(host.status === "connected" ? "移除" : "移除条目"));
   }
   return out;
