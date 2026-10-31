@@ -208,8 +208,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood="speaking"] .fig:not(.walk) img.part:is(.ear-l, .ear-r) { --tilt: 7deg; animation: ear-wag 0.45s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="done"] .fig:not(.walk) img.part:is(.ear-l, .ear-r) { --tilt: 10deg; animation: ear-wag 0.22s ease-in-out var(--phase, 0s) infinite alternate; }
 @keyframes ear-flick {
-  0%, 74%, 100% { transform: none; } 78% { transform: rotate(calc(var(--dir) * 12deg)); }
-  82% { transform: rotate(calc(var(--dir) * -2deg)); } 86% { transform: rotate(calc(var(--dir) * 8deg)); } 91% { transform: none; }
+  0%, 74%, 91%, 100% { transform: rotate(0deg); } 78% { transform: rotate(calc(var(--dir) * 12deg)); }
+  82% { transform: rotate(calc(var(--dir) * -2deg)); } 86% { transform: rotate(calc(var(--dir) * 8deg)); }
 }
 @keyframes ear-wag { from { transform: rotate(calc(var(--dir) * -0.4 * var(--tilt))); } to { transform: rotate(calc(var(--dir) * var(--tilt))); } }
 /* bat wings sit behind the body and never stop flapping about their roots: an easy beat at rest,
