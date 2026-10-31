@@ -642,9 +642,14 @@ function buildCard(host) {
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
     const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || "重启应用");
+    // A host that never connected may be waiting for its own in-app trust prompt, which this App
+    // cannot click; saying so beats telling the user to restart it again.
+    const trust = host.reload.reason === "unverified" && !host.reload.connections
+      ? "；若该宿主从未连接过 AgentNave，可能需要在它的应用内确认信任「agentnave」后才会启动服务"
+      : "";
     const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
     main.push(h("div.hc-reload.hc-note.info", {},
-      h("div", {}, h("strong", {}, title), h("p", {}, detail)),
+      h("div", {}, h("strong", {}, title), h("p", {}, detail + trust)),
       !auto && button("我已重新加载", "", "confirm-reload", () =>
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),
