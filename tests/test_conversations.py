@@ -2995,3 +2995,115 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
             "forward",
             "task",
         ]
+
+
+@pytest.mark.asyncio
+async def test_finished_tasks_release_collectors_and_expired_message_mappings(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 0.05)
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        invocation, conversation, *_ = studio.start_task(
+            InvocationRequest("claude", "one", tmp_path), "Job", None
+        )
+        await asyncio.gather(*studio.collectors)
+        assert studio.task_message_id(invocation)
+        assert not studio.collectors
+        studio.delivered_tasks.add(invocation)
+        async with asyncio.timeout(2):
+            while studio.manager.list_invocations():
+                await asyncio.sleep(0.01)
+        assert not studio.task_invocations
+        assert not studio.delivered_tasks
+        assert _state(data_root, conversation)["tasks"][0]["output"]
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_delivered_round_releases_only_safely_saved_outputs(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    studio = Conversations(InvocationManager(), data_root)
+    save = Database.save
+    try:
+        record = studio.open_show(
+            "Reclaim",
+            tmp_path,
+            [GroupSeat(s, "claude", {}, tmp_path) for s in ("a", "b")],
+            review=True,
+            isolated=False,
+        )
+        round_ = studio.run(record.state.id, ["a"], "parallel", "go", {})
+        assert (await studio.wait(round_.id, 10))[1] == "review_needed"
+        result = round_.runs[0].result
+        assert result is not None and result.output
+        payload = mcp_server.round_payload(round_, studio.manager, "review_needed")
+        assert payload["seats"][0].get("output") == result.output
+        assert round_.runs[0].result == result  # still needed for review and commit
+
+        def failing_save(
+            self: Database, old: Conversation | None, new: Conversation, view: bytes | None
+        ) -> int:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Database, "save", failing_save)
+        await studio.cancel(round_.id)
+        mcp_server.round_payload(round_, studio.manager, "finished")
+        assert round_.runs[0].result == result  # retain it until the retry succeeds
+        monkeypatch.setattr(Database, "save", save)
+        await studio.close()
+        assert round_.runs[0].result is not None and not round_.runs[0].result.output
+        repeated = mcp_server.round_payload(round_, studio.manager, "finished")
+        assert repeated["seats"][0].get("output_returned")
+        assert repeated["seats"][0].get("session_id") == result.session_id
+        assert (await studio.wait(round_.id, 0))[0] is round_
+        saved = _state(data_root, record.state.id)
+        assert saved["rounds"][0]["seats"][0]["output"] == result.output
+        assert saved["rounds"][0]["seats"][0]["review"] == "private"
+    finally:
+        monkeypatch.setattr(Database, "save", save)
+        await studio.shutdown()
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_saved_round_keeps_unread_output_and_only_delivers_it_once(
+    tmp_path: Path, data_root: Path
+) -> None:
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        record = studio.open_show(
+            "Read once",
+            tmp_path,
+            [GroupSeat(s, "claude", {}, tmp_path) for s in ("a", "b")],
+            review=False,
+            isolated=False,
+        )
+        round_ = studio.run(record.state.id, ["a"], "parallel", "go", {})
+        await studio.wait(round_.id, 10)
+        result = round_.runs[0].result
+        assert result is not None and result.output
+        hidden = mcp_server.round_payload(round_, studio.manager, "finished", include_output=False)
+        assert "output" not in hidden["seats"][0]
+        assert round_.runs[0].result is result  # a status-only wait does not consume it
+        first = mcp_server.round_payload(round_, studio.manager, "finished")
+        assert first["seats"][0].get("output") == result.output
+        assert round_.runs[0].result is not None and not round_.runs[0].result.output
+        assert round_.runs[0].invocation_id is not None
+        assert (await studio.manager.wait(round_.runs[0].invocation_id)) is result
+        repeated = mcp_server.round_payload(
+            await studio.cancel(round_.id), studio.manager, "finished"
+        )
+        assert repeated["seats"][0].get("output_returned")
+        studio.post(record.state.id, "later")
+        assert (
+            _state(data_root, record.state.id)["rounds"][0]["seats"][0]["output"] == result.output
+        )
+    finally:
+        await studio.shutdown()
+        await studio.manager.shutdown()
+        await studio.close()

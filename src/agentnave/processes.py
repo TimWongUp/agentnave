@@ -52,7 +52,7 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
             pass_fds=(status_write,),
             env=provider_environment(argv),
         )
-    except Exception:
+    except BaseException:
         os.close(status_read)
         raise
     finally:
@@ -128,7 +128,7 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             env=provider_environment(argv),
         )
-    except Exception:
+    except BaseException:
         status_path.unlink(missing_ok=True)
         ready_path.unlink(missing_ok=True)
         raise
@@ -136,6 +136,15 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
     try:
         await _wait_windows_supervisor_ready(process, ready_path)
         return SupervisedProcess(process, completion)
+    except BaseException:
+        # The provider may still be suspended outside its Job. Let assignment finish
+        # before terminating the supervisor, so closing the Job owns the whole tree.
+        await _wait_windows_supervisor_ready(process, ready_path)
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.terminate()
+        await asyncio.gather(completion, return_exceptions=True)
+        raise
     finally:
         ready_path.unlink(missing_ok=True)
 
