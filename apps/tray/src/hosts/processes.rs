@@ -2,7 +2,7 @@
 use super::{Context, IDS};
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, Instant},
 };
 use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
@@ -109,7 +109,8 @@ fn path_key(path: &Path) -> String {
         .strip_prefix("unc/")
         .map_or(value.clone(), |rest| format!("//{rest}"))
 }
-fn shim_script(shim: &Path) -> Option<PathBuf> {
+#[cfg(windows)]
+fn shim_script(shim: &Path) -> Option<std::path::PathBuf> {
     let text = std::fs::read_to_string(shim).ok()?;
     let dir = shim.parent()?;
     // npm also launches extensionless scripts (CodeBuddy). Preserve spaces in quoted paths,
@@ -203,6 +204,7 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
             targets.insert(path_key(&path), id);
         }
         // Windows installs a CLI as a `.cmd` shim; the live process is `node <script>.js`.
+        #[cfg(windows)]
         if let Some(script) = shim_script(&found) {
             targets.insert(path_key(&script), id);
         }

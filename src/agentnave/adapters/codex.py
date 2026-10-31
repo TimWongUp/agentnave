@@ -27,7 +27,10 @@ _DESKTOP_CODEX_PATHS = (
     "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     "~/Applications/Codex.app/Contents/Resources/codex",
-    # Windows keeps the CLI in a plugin app-server bundle, and copies it under a content hash.
+)
+
+# Windows keeps the CLI in a plugin app-server bundle, and copies it under a content hash.
+_WINDOWS_DESKTOP_CODEX_PATHS = (
     "~/.codex/plugins/.plugin-appserver/codex.exe",
     "~/AppData/Local/OpenAI/Codex/bin/*/codex.exe",
 )
@@ -80,10 +83,10 @@ def _codex_executable() -> str:
 
 def _bundled_paths() -> tuple[str, ...]:
     """The CLI a Codex desktop app ships, where the app keeps it instead of on PATH."""
-    if sys.platform not in {"darwin", "win32"}:
-        return ()
+    by_platform = {"darwin": _DESKTOP_CODEX_PATHS, "win32": _WINDOWS_DESKTOP_CODEX_PATHS}
+    patterns = by_platform.get(sys.platform, ())
     paths: list[str] = []
-    for pattern in _DESKTOP_CODEX_PATHS:
+    for pattern in patterns:
         expanded = os.path.expanduser(pattern)
         # A content-hash directory has no fixed name; anything else is a literal path.
         paths.extend(sorted(glob.glob(expanded)) if "*" in pattern else [expanded])
