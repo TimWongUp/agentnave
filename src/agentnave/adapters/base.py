@@ -23,8 +23,10 @@ PROVIDER_BIN_DIRS = (
     "~/.npm-global/bin",
     "~/.volta/bin",
     "~/.cargo/bin",
-    # Windows: npm's global prefix and the installers that add their own bin directory.
+    # Windows: npm's global prefix, the per-user Node install (its `node` runs ZCode's
+    # bundle), and the installers that add their own bin directory.
     "~/AppData/Roaming/npm",
+    "~/AppData/Local/Programs/nodejs",
     "~/AppData/Local/ZCode/bin",
 )
 

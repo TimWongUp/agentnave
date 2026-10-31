@@ -39,6 +39,23 @@ def command() -> tuple[list[str], dict[str, str]]:
                     str(Path.home() / ".zcode/v2/provider_config.json"),
                 )
                 return [resolve_executable("node"), str(bundle), "app-server", "--stdio"], env
+    if os.name == "nt":
+        # The Windows installer keeps the same layout under its per-user program directory and
+        # adds no `zcode` command, so the bundle is the only entry point.
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            resources = Path(local) / "Programs/ZCode/resources"
+            bundle = resources / "glm/zcode.cjs"
+            if bundle.is_file():
+                env.setdefault(
+                    "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE",
+                    str(resources / "config/provider/zcode-builtin.json"),
+                )
+                env.setdefault(
+                    "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE",
+                    str(Path.home() / ".zcode/v2/provider_config.json"),
+                )
+                return [resolve_executable("node"), str(bundle), "app-server", "--stdio"], env
     return [executable, "app-server", "--stdio"], env
 
 
