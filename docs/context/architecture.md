@@ -66,7 +66,7 @@ macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环�
 
 STDIO MCP 是任务与协作的唯一控制接口，工具为 `start_agent`、`wait`、`cancel`、`list`、`list_members`、`run_round`、`decide_answers`、`handover` 与 `read_conversation`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。`wait` 与 `cancel` 同时接受任务 `invocation_id` 与轮次 `round_id`。中继空闲探测使用的 `list_invocations` 仍可调用，但不出现在工具列表中。全部 Tool 都发布输入与输出 JSON Schema，输入 Schema 声明 `additionalProperties: false`，未列出的参数整批拒绝、不静默丢弃；结构化结果另以去掉空值的紧凑 JSON 文本返回，不重复缩进与 null 字段；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 并显式传 `session_id` 完成。
 
-启动回复另含 provider、model、effort 与 `defaults_applied`，不重复 prompt。model 与 effort 回显套用默认值后的请求值，仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。新开会的 `run_round` 每席另返回 model、effort（未传且无默认时省略）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
+启动回复另含 provider、model、effort 与 `defaults_applied`，不重复 prompt。model 与 effort 回显套用默认值后的请求值；effort 在 App 默认值之后还会按 `cli-defaults.json` 的 CLI 自身默认档位补上（ADR-0041），仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。新开会的 `run_round` 每席另返回 model、effort（未传且无默认时省略）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
 
 AgentNave 不提供总运行时限；`start_agent` 不接受截止时间参数，也不根据运行时长终止调用。`wait` 的单次等待到期只返回运行状态，Manager 可继续等待或使用 `cancel` 显式停止任务。Provider 原生限制继续生效，AgentNave 不静默改写。
 

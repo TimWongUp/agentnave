@@ -28,7 +28,7 @@
 
 不审核（`review=false`）时，成功回答按并联／串联规则自动提交，历史照常保存。
 
-`start_agent` 使用 task 配置，会议每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建会议回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、会议与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
+`start_agent` 使用 task 配置，会议每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，仍无档位时按 App 探测到的 CLI 自身默认档位补上，记为 `effort (CLI default)`（[ADR-0041](adr/0041-pass-cli-default-effort.md)）；回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建会议回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、会议与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
 
 `wait(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，会议席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
 

@@ -100,8 +100,8 @@ configuration and native sessions stay with that CLI.
 | `list_members`      | Read the teammate defaults set in the App, and one CLI's options                          |
 | `handover`          | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
 
-Omitted model, effort and options use the teammate defaults set in the App, listed in `defaults_applied`; explicit
-parameters win. The [agentnave-manager Skill](skills/agentnave-manager/SKILL.md) covers CLI choice and options, the
+Omitted model, effort and options use the teammate defaults set in the App; a run still without an effort gets the
+CLI's own configured one. Both are listed in `defaults_applied`; explicit parameters win. The [agentnave-manager Skill](skills/agentnave-manager/SKILL.md) covers CLI choice and options, the
 [conversation guide](docs/studio.md) (in Chinese) covers review, host remarks, isolated seats and the dashboard, and
 [architecture](docs/context/architecture.md) lists the stable contracts and output limits.
 

@@ -397,6 +397,10 @@ def apply_permission(
         applied.append(key)
 
 
+# How defaults_applied names a level taken from the CLI's own settings, apart from App ones.
+CLI_EFFORT_APPLIED = "effort (CLI default)"
+
+
 def check_excluded(mode: Mode, provider: str, excluded: frozenset[str]) -> None:
     if mode == "task" and provider in excluded:
         raise ProviderExcludedError(f"Provider '{provider}' is excluded by this host")
@@ -425,19 +429,32 @@ def read_max_running() -> int:
     return value
 
 
-def cli_default_model(provider: str) -> str | None:
-    """The default model the App last detected for one CLI, if it published one."""
+def _field(value: object, key: str) -> object:
+    return cast(dict[str, object], value).get(key) if isinstance(value, dict) else None
+
+
+def _cli_defaults(provider: str) -> object:
+    """One CLI's entry in the defaults the App last detected; None when missing or broken."""
     root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
     try:
         document = json.loads((root / "cli-defaults.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    return _field(_field(document, "clis"), provider)
 
-    def field(value: object, key: str) -> object:
-        return cast(dict[str, object], value).get(key) if isinstance(value, dict) else None
 
-    model = field(field(field(document, "clis"), provider), "model")
+def cli_default_model(provider: str) -> str | None:
+    """The default model the App last detected for one CLI, if it published one."""
+    model = _field(_cli_defaults(provider), "model")
     return model if isinstance(model, str) and model else None
+
+
+def cli_default_effort(provider: str, model: str | None) -> str | None:
+    """The level the CLI's own settings run a model at, or its default model when none is
+    named, as the App last detected it (ADR-0041)."""
+    entry = _cli_defaults(provider)
+    effort = _field(entry, "effort") if model is None else _field(_field(entry, "efforts"), model)
+    return effort if isinstance(effort, str) and effort else None
 
 
 def _data_root() -> Path:
@@ -505,7 +522,31 @@ def apply_member(
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
+    if "effort" not in result:
+        add_cli_effort(document, mode, provider, result, applied)
     return result, applied
+
+
+def add_cli_effort(
+    document: MemberFile | None,
+    mode: Mode,
+    provider: ProviderName,
+    result: dict[str, ProviderOption],
+    applied: list[str],
+) -> None:
+    """Pass the level the CLI would pick by itself, so every run names and records one
+    (ADR-0041). A level the App does not allow for the model is left to the CLI."""
+    model = result.get("model")
+    effort = cli_default_effort(provider, str(model) if model is not None else None)
+    if effort is None:
+        return
+    if document is not None:
+        key = str(model) if model is not None else cli_default_model(provider) or ""
+        allowed = document.effective(mode, provider, key).efforts
+        if allowed and effort not in allowed:
+            return
+    result["effort"] = effort
+    applied.append(CLI_EFFORT_APPLIED)
 
 
 def role_seat(role: str | None) -> ReviewSeat | None:
