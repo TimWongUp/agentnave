@@ -1786,3 +1786,55 @@ fn zcode_fallback_servers_block_only_a_first_server() {
     .unwrap();
     assert_eq!(zcode_fallback(home, &own), None);
 }
+
+#[test]
+fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
+    let (_temp, mut hosts) = fixture();
+    let home = hosts.context.home.clone();
+    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    executable_file(
+        &hosts.context.search[0].join("codex"),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(&home.join(".codex/auth.json"), "{}");
+    hosts.codex_homes = split::codex_homes(&home);
+    assert_eq!(hosts.registry().len(), IDS.len());
+
+    let elsewhere = home.join("claude-work");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        elsewhere.display().to_string(),
+    )])));
+    save(&home.join(".codex-work/auth.json"), "{}");
+    save(&home.join(".codex-profiles/side/sessions/x"), "");
+    save(&home.join(".codex-backups/old/archive.tar.gz"), "");
+    hosts.codex_homes = split::codex_homes(&home);
+    assert_eq!(hosts.registry().len(), IDS.len() + 3);
+    assert_eq!(
+        host(&hosts, "claude").config,
+        elsewhere.join(".claude.json")
+    );
+
+    for (id, boss, config) in [
+        ("claude-desktop", "claude", home.join(".claude.json")),
+        (
+            "codex@.codex-work",
+            "codex",
+            home.join(".codex-work/config.toml"),
+        ),
+    ] {
+        let row = host(&hosts, id);
+        assert_eq!(row.config, config);
+        let result = hosts.action("connect", &json!({"id":id})).unwrap();
+        assert_eq!(result["ok"], true, "{id}: {result}");
+        assert_eq!(result["host"]["has_host_env"], true, "{id}: {result}");
+        assert_eq!(result["host"]["boss"], boss);
+        let entry = row.read().unwrap().entry.unwrap();
+        assert_eq!(entry["env"]["AGENTNAVE_HOST"], boss);
+    }
+    assert!(host(&hosts, "claude").read().unwrap().entry.is_none());
+
+    let homes = hosts.boss_homes();
+    assert!(homes.claude.contains(&elsewhere) && homes.claude.contains(&home.join(".claude")));
+    assert_eq!(homes.codex.len(), 3);
+}

@@ -3,6 +3,7 @@ mod config;
 mod processes;
 mod roots;
 mod skill;
+mod split;
 #[cfg(test)]
 mod tests;
 mod transaction;
@@ -184,6 +185,8 @@ pub fn skill_catalog() -> Value {
 struct Host {
     home: PathBuf,
     id: &'static str,
+    /// The host its connections run as: `id`, except for a row of `split`.
+    boss: &'static str,
     label: &'static str,
     binary: &'static str,
     root: Root,
@@ -217,6 +220,16 @@ impl Host {
         entry["command"] = json!(path);
     }
 }
+type Spec = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    PathBuf,
+    &'static str,
+    Format,
+    &'static str,
+);
 const IDS: [&str; 10] = [
     "codex",
     "claude",
@@ -240,6 +253,7 @@ pub struct Hosts {
     failures: HashMap<String, Value>,
     failed: HashMap<String, String>,
     manual_roots: HashSet<String>,
+    codex_homes: Vec<PathBuf>,
     detected_at: String,
     cached: Value,
     processes: Mutex<processes::Probe>,
@@ -256,6 +270,7 @@ impl Hosts {
     ) -> Self {
         let loaded = roots::load(&context);
         let settings_error = loaded.as_ref().err().cloned();
+        let codex_homes = split::codex_homes(&context.home);
         let mut hosts = Self {
             context,
             settings: loaded.unwrap_or_else(|_| json!({})),
@@ -266,6 +281,7 @@ impl Hosts {
             failures: HashMap::new(),
             failed: HashMap::new(),
             manual_roots: HashSet::new(),
+            codex_homes,
             detected_at: timestamp(),
             cached: Value::Null,
             processes: Mutex::default(),
@@ -397,56 +413,71 @@ impl Hosts {
                 "mcp_servers",
             ),
         ];
-        specs
-            .into_iter()
-            .map(|(id, label, binary, var, default, file, format, key)| {
-                let mut root = roots::resolve(
-                    &self.context,
-                    &self.settings,
-                    self.shell.as_ref(),
-                    id,
-                    var,
-                    default,
-                );
-                if self.manual_roots.contains(id) {
-                    root.confirmed = true;
-                }
-                let mut paths = vec![root.path.join(file)];
-                if id == "claude" && root.source == "default" {
-                    paths = vec![h.join(".claude.json")];
-                }
-                let mut unique = HashSet::new();
-                paths.retain(|p| unique.insert(p.clone()));
-                let config = paths
-                    .iter()
-                    .rev()
-                    .find(|p| {
-                        if safe_path(p, &self.context.home).is_err() {
-                            return p.exists() || p.is_symlink();
+        let build = |(id, label, binary, var, default, file, format, key): Spec| {
+            let boss = split::boss_of(id);
+            let mut root = roots::resolve(
+                &self.context,
+                &self.settings,
+                self.shell.as_ref(),
+                id,
+                var,
+                default,
+            );
+            if self.manual_roots.contains(id) {
+                root.confirmed = true;
+            }
+            let mut paths = vec![root.path.join(file)];
+            if boss == "claude" && root.source == "default" {
+                paths = vec![h.join(".claude.json")];
+            }
+            let mut unique = HashSet::new();
+            paths.retain(|p| unique.insert(p.clone()));
+            let config = paths
+                .iter()
+                .rev()
+                .find(|p| {
+                    if safe_path(p, &self.context.home).is_err() {
+                        return p.exists() || p.is_symlink();
+                    }
+                    fs::read_to_string(p).is_ok_and(|raw| {
+                        match Document::parse(&raw, format, key) {
+                            Ok(d) => d.entry.is_some(),
+                            Err(_) => true,
                         }
-                        fs::read_to_string(p).is_ok_and(|raw| {
-                            match Document::parse(&raw, format, key) {
-                                Ok(d) => d.entry.is_some(),
-                                Err(_) => true,
-                            }
-                        })
                     })
-                    .unwrap_or_else(|| paths.last().unwrap())
-                    .clone();
-                Host {
-                    home: self.context.home.clone(),
-                    id,
-                    label,
-                    binary,
-                    skill: Some(root.path.join("skills/agentnave-manager")),
-                    root,
-                    config,
-                    format,
-                    key,
-                    user_layers: paths,
-                }
-            })
-            .collect()
+                })
+                .unwrap_or_else(|| paths.last().unwrap())
+                .clone();
+            Host {
+                home: self.context.home.clone(),
+                id,
+                boss,
+                label,
+                binary,
+                skill: Some(root.path.join("skills/agentnave-manager")),
+                root,
+                config,
+                format,
+                key,
+                user_layers: paths,
+            }
+        };
+        let mut hosts: Vec<Host> = specs.into_iter().map(&build).collect();
+        let rows = split::rows(&self.context, &hosts, &self.codex_homes);
+        hosts.extend(rows.into_iter().map(&build));
+        hosts
+    }
+    /// Where this machine's Claude and Codex keep their sessions, every row's folder included.
+    pub(crate) fn boss_homes(&self) -> crate::data::boss_app::Homes {
+        let mut homes = crate::data::boss_app::Homes::desktop_data();
+        for host in self.registry() {
+            match host.boss {
+                "claude" => homes.claude.push(host.root.path),
+                "codex" => homes.codex.push(host.root.path),
+                _ => {}
+            }
+        }
+        homes
     }
     /// The boss apps installed here with their resolved roots, for the global rules list.
     pub fn rule_apps(&self) -> Vec<crate::rules::App> {
@@ -454,7 +485,7 @@ impl Hosts {
             .into_iter()
             .filter(|host| self.detect(host).0)
             .map(|host| crate::rules::App {
-                id: host.id,
+                id: host.boss,
                 label: host.label,
                 root: host.root.path,
             })
@@ -466,7 +497,7 @@ impl Hosts {
             .into_iter()
             .filter(|host| self.state(host)["status"] == "connected")
             .map(|host| crate::rules::App {
-                id: host.id,
+                id: host.boss,
                 label: host.label,
                 root: host.root.path,
             })
@@ -502,7 +533,8 @@ impl Hosts {
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
         }
-        let app = match host.id {
+        let app = match host.boss {
+            "claude" => Some("Claude.app"),
             "workbuddy" => Some("WorkBuddy.app"),
             "antigravity" => Some("Antigravity.app"),
             "deepseek" => Some("DeepSeek Harness.app"),
@@ -577,7 +609,7 @@ impl Hosts {
     fn layers(&self, host: &Host) -> Vec<Value> {
         let mut layers:Vec<_>=host.user_layers.iter().enumerate().map(|(i,p)|json!({"path":p,"scope":if i==0{"user"}else{"override"},"has_entry":host.read_at(p).is_ok_and(|d|d.entry.is_some())})).collect();
         for dir in self.context.project.ancestors() {
-            let relative: &[&str] = match host.id {
+            let relative: &[&str] = match host.boss {
                 "codex" => &[".codex/config.toml"],
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
                 "grok" => &[".grok/config.toml"],
@@ -595,7 +627,7 @@ impl Hosts {
                 break;
             }
         }
-        if host.id == "claude"
+        if host.boss == "claude"
             && safe_path(&host.config, &self.context.home).is_ok()
             && let Ok(raw) = fs::read_to_string(&host.config)
             && let Ok(value) = serde_json::from_str::<Value>(&raw)
@@ -614,7 +646,7 @@ impl Hosts {
         let command = entry.and_then(|e| host.command(e));
         let kind = command.map(entry_kind);
         let command_state = entry.map(|e| self.command_state(host, e));
-        let has_env = entry.is_some_and(|e| e["env"]["AGENTNAVE_HOST"] == host.id);
+        let has_env = entry.is_some_and(|e| e["env"]["AGENTNAVE_HOST"] == host.boss);
         let layers = self.layers(host);
         let has_entry = entry.is_some()
             || layers
@@ -685,9 +717,9 @@ impl Hosts {
         } else {
             json!({"state":"unknown"})
         };
-        json!({"id":host.id,"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
+        json!({"id":host.id,"boss":host.boss,"mark":host.id.split('@').next(),"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
-            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.id, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
+            "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.boss, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
             "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
@@ -755,7 +787,7 @@ impl Hosts {
                     return None;
                 }
                 let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-                if value["version"] != 1 || value["host"] != host.id {
+                if value["version"] != 1 || value["host"] != host.boss {
                     return None;
                 }
                 lingering |= age > 20;
@@ -782,7 +814,7 @@ impl Hosts {
             self.processes
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .state(&self.context, host.id)
+                .state(&self.context, host.boss)
         } else {
             processes::State::Unknown
         };
@@ -985,6 +1017,7 @@ impl Hosts {
         self.refresh_probed()
     }
     pub(crate) fn refresh_probed(&mut self) -> Value {
+        self.codex_homes = split::codex_homes(&self.context.home);
         self.remember_reloads();
         let mut settings = self.settings.clone();
         for host in self.registry() {
@@ -1050,7 +1083,7 @@ impl Hosts {
                             desired["env"]
                                 .as_object_mut()
                                 .ok_or("takeover_failed:env 必须为对象")?
-                                .insert("AGENTNAVE_HOST".into(), json!(host.id));
+                                .insert("AGENTNAVE_HOST".into(), json!(host.boss));
                             if let Some(command) = layer.command(desired)
                                 && entry_kind(command) == "agentnave"
                                 && self.command_state(&layer, desired) == "missing"
@@ -1069,7 +1102,7 @@ impl Hosts {
             match result {
                 Ok((changed, managed_entry)) => match self.ensure_skill(&host, managed_entry) {
                     Ok(skill_changed) if changed || skill_changed => {
-                        let text = format!("已接管条目或更新 Skill{}", trust_hint(host.id));
+                        let text = format!("已接管条目或更新 Skill{}", trust_hint(host.boss));
                         self.record(host.id, Ok(()), &text)
                     }
                     Ok(_) => {
@@ -1102,7 +1135,7 @@ impl Hosts {
     pub fn action(&mut self, operation: &str, payload: &Value) -> Result<Value, String> {
         let id = payload["id"]
             .as_str()
-            .filter(|id| IDS.contains(id))
+            .filter(|id| self.registry().iter().any(|host| host.id == *id))
             .ok_or("未知宿主 id")?;
         if operation == "root" {
             let path = payload.get("path").ok_or("缺少 path")?;
@@ -1264,7 +1297,7 @@ impl Hosts {
                         value["env"]
                             .as_object_mut()
                             .ok_or("write_failed:env 必须为对象")?
-                            .insert("AGENTNAVE_HOST".into(), json!(id));
+                            .insert("AGENTNAVE_HOST".into(), json!(host.boss));
                     } else {
                         if id == "zcode"
                             && let Some(fallback) = zcode_fallback(&self.context.home, &before)
@@ -1276,14 +1309,14 @@ impl Hosts {
                         }
                         desired = Some(if id == "deepseek" {
                             // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
-                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":id},"toolCallTimeoutMs":310_000})
+                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":host.boss},"toolCallTimeoutMs":310_000})
                         } else if id == "zcode" {
                             // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
-                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"timeoutMs":310000})
+                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss},"timeoutMs":310000})
                         } else if id == "hermes" {
-                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id},"enabled":true})
+                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss},"enabled":true})
                         } else {
-                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":id}})
+                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss}})
                         });
                     }
                 }
@@ -1509,9 +1542,10 @@ fn trust_hint(id: &str) -> &'static str {
     }
 }
 fn reload_hint(id: &str) -> &'static str {
-    match id {
+    match id.split('@').next().unwrap_or(id) {
         "codex" => "重启 Codex（桌面版需完整退出）",
         "claude" => "重启 Claude Code",
+        "claude-desktop" => "重启 Claude 桌面",
         "codebuddy" => "重启 CodeBuddy Code",
         "workbuddy" => "完整退出并重启 WorkBuddy",
         "grok" => "重启 Grok CLI",
