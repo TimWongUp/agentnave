@@ -217,6 +217,17 @@
   // Built-in characters may carry moving parts as layers of their own (<part>-<state>.webp): an
   // ahoge (tuft), cat ears (ear-l, ear-r), lop ears (lop-l, lop-r), bat wings (wing-l, wing-r), a whale tail, a two-piece devil tail, a hairpin pendant or a starburst halo. parts.json gives each frame's pivot at the part's root,
   // in percent of the frame, also as --ox/--oy for masks that must stay centred on it.
+  // A part in ROLLING is drawn as rings of itself about its pivot, reach (percent of the frame) wide in all,
+  // innermost on top: each ring fades out over the next, which runs on beneath it, so no seam shows.
+  const ROLLING = { codex: { tail: { rings: 8, reach: 24 } } };
+  function ringMask([x, y], { rings, reach }, ring) {
+    const corner = Math.hypot(Math.max(x, 100 - x), Math.max(y, 100 - y));
+    const stop = (at) => `${(at / corner * 100).toFixed(2)}%`;
+    const from = stop(reach * ring / rings), to = stop(reach * (ring + 1) / rings);
+    const end = ring === rings - 1 ? "#000 100%" : `transparent ${stop(reach * (ring + 1) / rings + 1.5)}`;
+    const mask = `radial-gradient(circle at ${x}% ${y}%, transparent ${from}, #000 ${from}, #000 ${to}, ${end})`;
+    return `-webkit-mask-image:${mask};mask-image:${mask};--i:${ring}`;
+  }
   const parts = fetch(artUrl("parts.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   // Some characters give off little sprites instead (notes, bubbles, leaves): emit.json names them and,
   // per frame, where they start in percent of the frame. The office mood sets how often; asleep, failed,
@@ -275,8 +286,14 @@
         // A "<part>-tip" bends about its own pivot inside a box that swings about its "<part>"'s pivot.
         const root = part.endsWith("-tip") ? all[name][part.slice(0, -4)] : null;
         for (const [state, [x, y]] of Object.entries(frames)) {
-          const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
-            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
+          const make = (kind = "", extra = "") => h(`img.part.${part}.s-${state}${kind}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
+            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%;${extra}` });
+          const rolling = !state.startsWith("walk") && ROLLING[name]?.[part];
+          if (rolling) {
+            for (let ring = rolling.rings - 1; ring >= 0; ring--) body.append(make(".band", ringMask([x, y], rolling, ring)));
+            continue;
+          }
+          const img = make();
           const pivot = root?.[state];
           body.append(pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img) : img);
         }
