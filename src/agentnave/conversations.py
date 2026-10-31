@@ -624,6 +624,18 @@ class Conversations(Groups):
                     del group.entries[-len(added) :]
                 raise
 
+    def retry(
+        self, group_id: str, seat_ids: list[str], *, manager_session_id: str | None = None
+    ) -> Round:
+        with self._writing(group_id):
+            self._group(group_id)
+            state = self.records[group_id].state
+            session = self._manager_session(manager_session_id)
+            if session is not None and session != state.manager_session:
+                raise ValueError(self._not_yours("Group", state.manager_session))
+            self._check_capacity(len(seat_ids))
+            return super().retry(group_id, seat_ids)
+
     def post(
         self,
         conversation_id: str,
@@ -1145,7 +1157,9 @@ class Conversations(Groups):
                 if run.result is not None:
                     seat.reported_model = run.result.reported_model or seat.reported_model
                 seat.output = run.result.output if run.result is not None else None
-                if run.result is not None and seat.finished is None:
+                if run.result is None:
+                    seat.finished = None  # a retried seat starts over
+                elif seat.finished is None:
                     seat.finished = now()
                 error = run.result.error if run.result is not None else run.launch_error
                 seat.error = f"{error.code}: {error.message}" if error is not None else None

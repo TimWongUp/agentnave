@@ -32,6 +32,8 @@ _TERMINAL: dict[InvocationStatus, SeatRunStatus] = {
     InvocationStatus.BLOCKED: "blocked",
     InvocationStatus.CANCELLED: "cancelled",
 }
+# Ended without an answer on its own, unlike a seat the manager cancelled.
+_LOST: tuple[SeatRunStatus, ...] = ("failed", "blocked")
 _PREAMBLE = (
     "You are one seat in a multi-agent collaboration coordinated by a manager agent. "
     "Entries with kind=task are the manager's shared tasks. Entries with kind=host are the "
@@ -106,6 +108,7 @@ class SeatRun:
     snapshot: int = 0
     blockers: list[InvocationError] = field(default_factory=lambda: [])
     reported_blockers: int = 0
+    reported_lost: bool = False
     output_returned: bool = False
 
 
@@ -133,6 +136,9 @@ class Round:
     error: str | None = None
     task: asyncio.Task[None] | None = None
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    # Parallel only: one task per launch; a retried seat adds another.
+    finishing: list[asyncio.Task[None]] = field(default_factory=lambda: [])
+    settled: bool = False  # every parallel seat ended, so no seat can start again
 
     @property
     def finished(self) -> bool:
@@ -142,6 +148,18 @@ class Round:
         # Replace the event so each waiter observes exactly the changes after it looked.
         self.changed.set()
         self.changed = asyncio.Event()
+
+    def unreported_lost(self) -> list[SeatRun]:
+        """Seats lost while others still work and no wait has said so. Once the others have
+        ended too, the round's own end reports them."""
+        if (
+            self.order != "parallel"
+            or self.settled
+            or self.cancelling
+            or not any(run.status in ("running", "pending") for run in self.runs)
+        ):
+            return []
+        return [run for run in self.runs if run.status in _LOST and not run.reported_lost]
 
 
 class Groups:
@@ -231,9 +249,40 @@ class Groups:
         round_.task = asyncio.create_task(self._drive(round_))
         return round_
 
+    def retry(self, group_id: str, seat_ids: list[str]) -> Round:
+        """Start lost seats of the running parallel round again from the same snapshot: nothing
+        is committed before every seat ended, so they still cannot see each other's answers."""
+        round_ = self._group(group_id).active
+        if round_ is None or round_.order != "parallel" or round_.cancelling or round_.settled:
+            raise ValueError(
+                "only a running parallel round can retry a seat; run it in a new round instead"
+            )
+        if not seat_ids or len(set(seat_ids)) != len(seat_ids):
+            raise ValueError("retry_seats must be a non-empty list without duplicates")
+        runs = {run.seat_id: run for run in round_.runs}
+        unknown = sorted(set(seat_ids) - set(runs))
+        if unknown:
+            raise ValueError("seats outside this round: " + ", ".join(unknown))
+        alive = sorted(item for item in seat_ids if runs[item].status not in _LOST)
+        if alive:
+            raise ValueError("only failed or blocked seats can retry: " + ", ".join(alive))
+        for item in seat_ids:
+            run = runs[item]
+            run.status = "pending"
+            run.invocation_id = None
+            run.result = None
+            run.launch_error = None
+            run.blockers = []
+            run.reported_blockers = 0
+            run.reported_lost = False
+            run.output_returned = False
+            self._launch(round_, run, run.snapshot)
+            round_.finishing.append(asyncio.create_task(self._finish(round_, run)))
+        return round_
+
     async def wait(self, round_id: str, timeout_seconds: float) -> tuple[Round, str | None]:
         """Return early when the round finishes, a running seat reports a new blocker,
-        or _ready reports another reason."""
+        a seat is lost while others still work, or _ready reports another reason."""
         round_ = self._round(round_id)
         deadline = time.monotonic() + timeout_seconds
         while not round_.finished:
@@ -246,6 +295,11 @@ class Groups:
                     blocked = True
             if blocked:
                 return round_, "execution_blocked"
+            lost = round_.unreported_lost()
+            if lost:
+                for run in lost:
+                    run.reported_lost = True
+                return round_, "seat_lost"
             reason = self._ready(round_)
             if reason is not None:
                 return round_, reason
@@ -302,13 +356,18 @@ class Groups:
 
     async def _drive(self, round_: Round) -> None:
         group = round_.group
-        finish_tasks: list[asyncio.Task[None]] = []
         try:
             if round_.order == "parallel":
-                finish_tasks = [
+                round_.finishing.extend(
                     asyncio.create_task(self._finish(round_, run)) for run in round_.runs
-                ]
-                await asyncio.gather(*finish_tasks)
+                )
+                awaited = 0
+                # A retry can add a task during the await; nothing awaits between the check
+                # and settled, so none slips in after it.
+                while awaited < len(round_.finishing):
+                    awaited = len(round_.finishing)
+                    await asyncio.gather(*round_.finishing)
+                round_.settled = True
                 approved = await self._approve(
                     round_, [run for run in round_.runs if run.status == "succeeded"]
                 )
@@ -331,9 +390,9 @@ class Groups:
                 logging.getLogger(__name__).exception("Unexpected round failure")
                 round_.error = "round_execution_failed: inspect server logs"
             round_.notify()
-            for task in finish_tasks:
+            for task in round_.finishing:
                 task.cancel()
-            await asyncio.gather(*finish_tasks, return_exceptions=True)
+            await asyncio.gather(*round_.finishing, return_exceptions=True)
             running = [run for run in round_.runs if run.status == "running"]
             results = await asyncio.gather(
                 *(self.manager.cancel(run.invocation_id) for run in running if run.invocation_id),
