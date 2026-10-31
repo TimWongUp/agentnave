@@ -89,8 +89,8 @@ type PermissionTier = Literal["auto", "full"]
 # The native options each App permission tier stands for, per CLI; a CLI without a saved tier
 # runs "auto", since a dispatched CLI cannot ask anyone and native defaults deny tool calls.
 # "auto" lets the CLI's own reviewer or classifier approve tool calls; CodeBuddy's auto denies
-# shell under -p and DeepSeek has no reviewer, so their auto grants full access. Pi has no
-# approval step.
+# shell under -p, and DeepSeek, ZCode and Antigravity have no usable reviewer, so their auto
+# grants full access and the App offers them no choice. Pi has no approval step.
 PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
     # ZCode's "auto" is reserved and rejects every tool; it has no automatic reviewer yet.
     "zcode": {"auto": {"permission_mode": "yolo"}, "full": {"permission_mode": "yolo"}},
@@ -107,7 +107,7 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
         "full": {"permission_mode": "bypassPermissions"},
     },
     "antigravity": {
-        "auto": {"mode": "auto"},
+        "auto": {"dangerously_skip_permissions": True},
         "full": {"dangerously_skip_permissions": True},
     },
     "codex": {
@@ -771,7 +771,10 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     else:
         for provider in cast(tuple[ProviderName, ...], get_args(ProviderName.__value__)):
             if provider in PERMISSION_TIERS:
-                permissions[provider] = saved.clis.get(provider, "auto") if saved else "auto"
+                tier = saved.clis.get(provider, "auto") if saved else "auto"
+                # A CLI whose auto is full access runs full whatever is saved.
+                tiers = PERMISSION_TIERS[provider]
+                permissions[provider] = "full" if tiers["auto"] == tiers["full"] else tier
     return MemberList(
         configured=document is not None,
         host=host.name,
