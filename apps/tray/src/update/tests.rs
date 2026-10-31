@@ -1,74 +1,7 @@
 use super::*;
 
 #[cfg(windows)]
-#[test]
-fn exclusive_windows_handle_keeps_manifest_valid() {
-    use std::os::windows::fs::OpenOptionsExt;
-    let directory = tempfile::tempdir().unwrap();
-    let target = directory.path().join("active.json");
-    let old = json!({"version":"0.57.0", "bin":"old"});
-    let new = json!({"version":"0.58.0", "bin":"new"});
-    write_active_manifest(directory.path(), &old).unwrap();
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(&target)
-        .unwrap();
-    assert!(write_active_manifest(directory.path(), &new).is_err());
-    drop(lock);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&std::fs::read(&target).unwrap()).unwrap(),
-        old
-    );
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
-    write_active_manifest(directory.path(), &new).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&std::fs::read(&target).unwrap()).unwrap(),
-        new
-    );
-}
-
-#[cfg(windows)]
-#[test]
-#[ignore = "PowerShell exclusively locks the real active.json; rewrites the same manifest"]
-fn windows_live_active_lock() {
-    use std::io::{BufRead, BufReader, Write};
-    use std::process::Stdio;
-    let base = dirs::data_dir()
-        .unwrap()
-        .join("io.github.timwongup.agentnave/service");
-    let target = base.join("active.json");
-    let original = std::fs::read(&target).unwrap();
-    let value: Value = serde_json::from_slice(&original).unwrap();
-    let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let mut child = Command::new(powershell)
-        .args(["-NoProfile", "-Command", "$f=[IO.File]::Open($env:AGENTNAVE_LOCK_TARGET,'Open','Read','None'); [Console]::WriteLine('locked'); [Console]::ReadLine() > $null; $f.Dispose()"])
-        .env("AGENTNAVE_LOCK_TARGET", &target)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-    let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    assert_eq!(line.trim(), "locked");
-    let result = write_active_manifest(&base, &value);
-    writeln!(child.stdin.take().unwrap(), "release").unwrap();
-    assert!(child.wait().unwrap().success());
-    println!("exclusive PowerShell handle result: {result:?}");
-    assert!(result.is_err());
-    assert_eq!(std::fs::read(&target).unwrap(), original);
-    assert!(
-        !base
-            .join(format!("active.{}.tmp", std::process::id()))
-            .exists()
-    );
-    write_active_manifest(&base, &value).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&std::fs::read(&target).unwrap()).unwrap(),
-        value
-    );
-    println!("pointer preserved; staging removed; retry after release succeeded");
-}
+mod manifest;
 
 #[test]
 fn notes_an_older_service() {

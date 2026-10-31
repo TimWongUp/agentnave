@@ -1,6 +1,6 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod config;
-#[cfg(all(test, windows))]
+#[cfg(all(test, windows, feature = "windows-live-tests"))]
 mod live_tests;
 mod processes;
 mod retention;

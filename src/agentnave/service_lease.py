@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
 if os.name == "nt":
@@ -17,7 +17,7 @@ else:
 
 
 @contextlib.contextmanager
-def hold(prefix: Path | None = None) -> Iterator[None]:
+def hold(prefix: Path | None = None) -> Generator[None]:
     """Keep this relay's original environment, including its future children, installed."""
     env = prefix or Path(sys.prefix)
     root = env.parent.parent

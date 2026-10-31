@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn installed_windows_shim_contents_resolve_in_a_clean_fixture() {
+    // Captured from the Windows validation machine; no installed CLI or user profile required.
+    for (name, contents, relative) in [
+        (
+            "codebuddy.cmd",
+            include_str!("fixtures/codebuddy.cmd"),
+            "node_modules/@tencent-ai/codebuddy-code/bin/codebuddy",
+        ),
+        ("pi.cmd", include_str!("fixtures/pi.cmd"), "pi-launcher.js"),
+    ] {
+        let dir = tempfile::Builder::new()
+            .prefix("real shim with spaces ")
+            .tempdir()
+            .unwrap();
+        let shim = dir.path().join(name);
+        let script = dir.path().join(relative);
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&shim, contents).unwrap();
+        std::fs::write(&script, "script").unwrap();
+        std::fs::write(dir.path().join("node.exe"), "node").unwrap();
+        assert_eq!(
+            shim_script(&shim),
+            Some(script.canonicalize().unwrap()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn npm_extensionless_script_and_spaces_are_preserved() {
     let dir = tempfile::tempdir().unwrap();
     let shim = dir.path().join("codebuddy.cmd");
@@ -14,9 +43,8 @@ fn npm_extensionless_script_and_spaces_are_preserved() {
     assert_eq!(shim_script(&shim), Some(script.canonicalize().unwrap()));
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "windows-live-tests"))]
 #[test]
-#[ignore = "reads installed shims and live process observations on the validation machine"]
 fn windows_live_shims() {
     let context = Context::live(
         dirs::data_dir()

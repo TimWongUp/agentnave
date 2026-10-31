@@ -38,9 +38,8 @@ with open(sys.argv[1], 'r+b') as lock:
             [sys.executable, "-c", script, str(lease)], check=False, timeout=10
         ).returncode
 
-    with hold(env):
-        with hold(env):  # Multiple simultaneous relays share the same version.
-            assert collect() == 2
+    with hold(env), hold(env):  # Multiple simultaneous relays share the same version.
+        assert collect() == 2
     assert collect() == 0
 
 
