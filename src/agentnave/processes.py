@@ -1,3 +1,6 @@
+# pyright cannot resolve the Windows-only `winreg` module on the Linux/macOS CI; the registry
+# lookup below is the only place it is used, and its unchecked values are narrowed by hand.
+# pyright: reportAttributeAccessIssue=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportMissingImports=false
 """Platform subprocess supervision and process-tree cleanup."""
 
 from __future__ import annotations
