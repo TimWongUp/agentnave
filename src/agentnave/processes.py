@@ -97,16 +97,19 @@ def _system_proxy(env: dict[str, str]) -> dict[str, str]:
     if any(name in env for name in ("HTTPS_PROXY", "https_proxy")):
         return {}
     try:
-        import winreg
+        # `winreg` only exists on Windows; pyright on the Linux/macOS CI cannot resolve it, so
+        # this block carries its own ignores rather than relaxing the file's type checks.
+        import winreg  # pyright: ignore[reportMissingImports]
 
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
+        key = winreg.OpenKey(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            winreg.HKEY_CURRENT_USER,  # pyright: ignore[reportAttributeAccessIssue]
             r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-        ) as key:
-            enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
+        )
+        with key:
+            enabled = winreg.QueryValueEx(key, "ProxyEnable")[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             if not enabled:
                 return {}
-            server, _ = winreg.QueryValueEx(key, "ProxyServer")
+            server = winreg.QueryValueEx(key, "ProxyServer")[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     except OSError:
         return {}
     if not isinstance(server, str) or not server:
