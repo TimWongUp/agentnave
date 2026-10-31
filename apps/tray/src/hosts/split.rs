@@ -50,13 +50,7 @@ fn sorted(dir: &Path) -> Vec<PathBuf> {
 /// that holds a sign-in or sessions.
 pub(super) fn codex_homes(home: &Path, main: &Path) -> Vec<PathBuf> {
     let holds = |dir: &Path| dir.join("auth.json").is_file() || dir.join("sessions").is_dir();
-    let mut seen = HashSet::from([real(main)]);
-    let mut found = Vec::new();
-    let mut add = |dir: PathBuf| {
-        if seen.insert(real(&dir)) {
-            found.push(dir);
-        }
-    };
+    let mut candidates = Vec::new();
     let mut roots = vec![home.to_owned()];
     roots.extend(
         main.parent()
@@ -71,17 +65,24 @@ pub(super) fn codex_homes(home: &Path, main: &Path) -> Vec<PathBuf> {
                 continue;
             }
             if holds(&dir) {
-                add(dir);
+                candidates.push(dir);
                 continue;
             }
             for inner in sorted(&dir) {
                 if holds(&inner) {
-                    add(inner);
+                    candidates.push(inner);
                 }
             }
         }
     }
-    found
+    // Prefer a writable physical path before deduplication can hide it behind an alias.
+    candidates.sort_by_key(|dir| {
+        dir.ancestors()
+            .any(|path| path != home && path.is_symlink())
+    });
+    let mut seen = HashSet::from([real(main)]);
+    candidates.retain(|dir| seen.insert(real(dir)));
+    candidates
 }
 
 /// Claude Desktop is there if its app is, or, as magpie reads it off macOS and Linux, its folders.

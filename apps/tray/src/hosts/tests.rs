@@ -1403,6 +1403,15 @@ fn config_and_skill_backups_are_each_bounded_at_thirty() {
     let (_temp, hosts) = fixture();
     let (app, home) = (&hosts.context.app, &hosts.context.home);
     let path = home.join("config");
+    backup_bytes(
+        app,
+        CONFIG_BACKUP,
+        "codex@/profiles\\work/side",
+        &path,
+        b"nested",
+        home,
+    )
+    .unwrap();
     // A file from before the split counts as a config backup.
     fs::create_dir_all(app.join("backups")).unwrap();
     fs::write(
@@ -1429,7 +1438,7 @@ fn config_and_skill_backups_are_each_bounded_at_thirty() {
     assert_eq!(skills.len(), 30);
     assert_eq!(fs::read_to_string(&skills[0]).unwrap(), "5");
     let configs = backup_paths(app, CONFIG_BACKUP);
-    assert_eq!(configs.len(), 6);
+    assert_eq!(configs.len(), 7);
     assert_eq!(fs::read_to_string(&configs[0]).unwrap(), "legacy");
 }
 
@@ -1822,7 +1831,15 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
             "codex",
             home.join(".codex-work/config.toml"),
         ),
+        (
+            "codex@.codex-profiles/side",
+            "codex",
+            home.join(".codex-profiles/side/config.toml"),
+        ),
     ] {
+        if id.starts_with("codex@") {
+            save(&config, "model = 'keep'\n");
+        }
         let row = host(&hosts, id);
         assert_eq!(row.config, config);
         let result = hosts.action("connect", &json!({"id":id})).unwrap();
@@ -1872,6 +1889,6 @@ fn codex_folders_beside_codex_home_count_once_each() {
     std::os::unix::fs::symlink(data.join("main"), home.join("codex-main")).unwrap();
     assert_eq!(
         split::codex_homes(&home, &data.join("main")),
-        [home.join(".codex"), home.join("codex-link")]
+        [home.join(".codex"), data.join("codex-work")]
     );
 }

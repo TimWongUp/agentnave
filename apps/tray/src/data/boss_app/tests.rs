@@ -154,3 +154,24 @@ fn only_known_codex_entries_are_named() {
     assert_eq!(claude_app("claude-desktop-3p"), CLAUDE_DESKTOP);
     assert_eq!(claude_app("sdk-cli"), CLAUDE_CLI);
 }
+
+#[test]
+fn a_startup_miss_is_retried_when_probed_roots_arrive() {
+    let dir = tempfile::tempdir().unwrap();
+    let codex = dir.path().join("codex-work");
+    write(
+        &codex.join(format!("sessions/2026/10/31/rollout-{CODEX_SESSION}.jsonl")),
+        "{\"payload\":{\"originator\":\"Codex Desktop\"}}\n",
+    );
+    let connection = connection();
+    let key = older_chat(&connection, "codex", CODEX_SESSION);
+    let apps = BossApps::new();
+    assert!(apps.of(&connection, Homes::default).is_empty());
+    assert_eq!(
+        apps.of(&connection, || Homes {
+            codex: vec![codex],
+            ..Homes::default()
+        }),
+        vec![(key, CODEX_DESKTOP)],
+    );
+}

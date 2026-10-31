@@ -23,7 +23,7 @@ const WINDOW: u64 = 256 * 1024;
 /// A Claude Desktop record larger than this is not read, as in magpie.
 const RECORD_LIMIT: u64 = 8 << 20;
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub(crate) struct Homes {
     pub claude: Vec<PathBuf>,
     pub codex: Vec<PathBuf>,
@@ -65,6 +65,7 @@ impl Homes {
 /// What a sweep of the session folders found, by boss key.
 #[derive(Default)]
 struct Found {
+    homes: Option<Homes>,
     transcripts: HashMap<String, PathBuf>,
     desktop: HashSet<String>,
     /// Bosses already looked for, so one whose records are gone costs a single sweep.
@@ -93,8 +94,8 @@ impl BossApps {
         }
     }
 
-    /// Every workspace whose boss's app is known; the rest are left out. `homes` is only asked
-    /// for when a boss has to be looked for.
+    /// Every workspace whose boss's app is known; the rest are left out. Resolve `homes`
+    /// when a boss has no saved transcript, so newly probed roots can invalidate a miss.
     pub fn of(
         &self,
         connection: &rusqlite::Connection,
@@ -138,11 +139,21 @@ impl BossApps {
             }
             missing.push(boss.key.clone());
         }
-        if missing.iter().all(|key| found.searched.contains(key)) {
+        if missing.is_empty() {
             return;
         }
-        let searched = std::mem::take(&mut found.searched);
-        *found = sweep(&homes());
+        let homes = homes();
+        let roots_changed = found.homes.as_ref() != Some(&homes);
+        if !roots_changed && missing.iter().all(|key| found.searched.contains(key)) {
+            return;
+        }
+        let searched = if roots_changed {
+            HashSet::new()
+        } else {
+            std::mem::take(&mut found.searched)
+        };
+        *found = sweep(&homes);
+        found.homes = Some(homes);
         found.searched = searched;
         found.searched.extend(missing);
     }

@@ -1730,6 +1730,7 @@ fn backup_bytes(
     let dir = app.join("backups");
     safe_path(&dir, home)?;
     fs::create_dir_all(&dir).map_err(|_| "无法创建备份目录")?;
+    let id = id.replace(['/', '\\', ':'], "_");
     let prefix = format!(
         "{:020}-{kind}-{id}-{}-",
         SystemTime::now()
