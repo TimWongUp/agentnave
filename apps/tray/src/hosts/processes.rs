@@ -268,6 +268,8 @@ mod tests {
             path_key(Path::new(r"D:\x\pi-launcher.js")),
             path_key(Path::new(r"\\?\D:\x\pi-launcher.js"))
         );
+        // Verbatim UNC only exists on Windows; elsewhere the same two strings differ by design.
+        #[cfg(windows)]
         assert_eq!(
             path_key(Path::new(r"\\?\UNC\srv\share\a.js")),
             path_key(Path::new(r"\\srv\share\a.js"))
