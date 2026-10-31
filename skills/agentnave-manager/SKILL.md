@@ -112,7 +112,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 ## 等待、验收与取消
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
-   终态和阻塞不会主动推送：派发后立刻调用阻塞的 `wait`（单任务带 `ids`，多个用收件箱），转去做别的事时也始终挂着一个；常规省略 `wait_seconds`，`wait_elapsed` 后直接再等，不例行补调 `0`。宿主把长调用转入后台的（如 Claude Code 超过 2 分钟），结束时会提醒 boss。`start_agent`／`run_round` 回执里的 `unreceived` 列出已结束、遇到阻塞或待审、但还没被 `wait`／`cancel` 取走的任务和轮次，见到就先用 `wait` 收取处理。
+   终态和阻塞不会主动推送，只能由 `wait` 收取：手头没有不依赖结果的工作时，派发后立刻单独调用阻塞的 `wait`（单任务带 `ids`，多个用收件箱）；有这类独立工作就先完成当前步骤，再立即单独调用 `wait`（同批其他工具通常要等 `wait` 返回才一起交回结果），并在结束本轮交付前收齐全部终态。常规省略 `wait_seconds`，`wait_elapsed` 后直接再等，不例行补调 `0`。调用已被宿主转入后台的，可继续做别的事，结束时按宿主提醒或句柄收取。`start_agent`／`run_round` 回执里的 `unreceived` 列出已结束、遇到阻塞或待审、但还没被 `wait`／`cancel` 取走的任务和轮次，见到就先用 `wait` 收取处理。
 2. `wait(ids)` 默认最多等 240 秒，`wait_seconds` 仅接受 `0`、`240`；任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。普通等待只带状态、耗时与最近活动，不带运行正文；仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 单独调用 `wait(wait_seconds=0)`，即时取得快照和可用正文尾部。`0` 遇到就绪项仍正常收取答案或阻塞，并非只读偷看；混合名单中存在就绪项时，未就绪项不会出现在回复中。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。
 4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部（每项最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席完成不单独唤醒等待；未就绪快照暂不交付该席完整答案，`0` 也不例外。终态、阻塞或待审就绪时沿用正常交付规则；`include_output=false` 同时关闭运行尾部和正式正文。

@@ -761,9 +761,10 @@ async def start_agent(
 ) -> TaskStartPayload:
     """Start one private CLI task and return its invocation_id; use wait for the result.
 
-    Ends are never pushed: call wait right after starting and keep one pending until the
-    result arrives, even while doing other work. unreceived lists your tasks and rounds that
-    ended, hit a blocker or await review but no wait or cancel has returned that yet.
+    Ends are never pushed; only wait receives them. Call wait right after starting, or right
+    after finishing current work that does not need the result, and receive every end before
+    finishing your turn. unreceived lists your tasks and rounds that ended, hit a blocker or
+    await review but no wait or cancel has returned that yet.
 
     The reply reports the requested model/effort, not the CLI's effective settings;
     defaults_applied lists App defaults, including each CLI's permission tier (auto unless
