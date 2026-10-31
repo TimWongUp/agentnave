@@ -313,6 +313,10 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
         {"dangerously_skip_permissions": True},
         ["dangerously_skip_permissions"],
     )
+    # The App shows such a CLI as full whatever was saved; one with a real choice keeps its tier.
+    listed = list_members(frozenset(), Host()).permissions
+    assert listed["antigravity"] == "full" and listed["zcode"] == "full"
+    assert listed["grok"] == "auto"
     document = MemberFile.model_validate(
         {
             "version": 1,
