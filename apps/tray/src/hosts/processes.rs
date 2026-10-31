@@ -94,6 +94,21 @@ fn identity(path: &str) -> Option<&'static str> {
 
 /// The script a Windows `.cmd` shim launches. Without it the shim path never matches the
 /// `node.exe <script>.js` process that is actually running, so the host looks stopped.
+/// A comparable form of one path: Windows spells the same file many ways (`C:\x`, `c:/x`,
+/// `\\?\C:\x`, `\\?\UNC\server\share`), and a process argument rarely spells it the way
+/// `canonicalize` does, so both sides go through this before matching.
+fn path_key(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('\\', "/");
+    let value = value.strip_prefix("//?/").unwrap_or(&value).to_owned();
+    let value = value
+        .strip_prefix("unc/")
+        .map_or(value.clone(), |rest| format!("//{rest}"));
+    if cfg!(windows) {
+        value.to_lowercase()
+    } else {
+        value
+    }
+}
 fn shim_script(shim: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(shim).ok()?;
     let dir = shim.parent()?;
@@ -161,7 +176,7 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
         return None;
     }
     // Resolve installed entry points so node/python CLIs with a generic script name also match.
-    let mut targets: HashMap<PathBuf, &'static str> = HashMap::new();
+    let mut targets: HashMap<String, &'static str> = HashMap::new();
     for id in IDS {
         let binary = match id {
             "antigravity" => "agy",
@@ -171,17 +186,18 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
         let Some(found) = context.find(binary) else {
             continue;
         };
+        targets.insert(path_key(&found), id);
         if let Ok(path) = found.canonicalize() {
-            targets.insert(path, id);
+            targets.insert(path_key(&path), id);
         }
         // Windows installs a CLI as a `.cmd` shim; the live process is `node <script>.js`.
         if let Some(script) = shim_script(&found) {
-            targets.insert(script, id);
+            targets.insert(path_key(&script), id);
         }
     }
     let identify = |path: &Path| {
         targets
-            .get(path)
+            .get(&path_key(path))
             .copied()
             .or_else(|| identity(&path.to_string_lossy()))
     };
@@ -244,6 +260,21 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_canonical_path_and_a_plain_one_look_the_same() {
+        assert_eq!(
+            path_key(Path::new(r"D:\x\pi-launcher.js")),
+            path_key(Path::new(r"\\?\D:\x\pi-launcher.js"))
+        );
+        assert_eq!(
+            path_key(Path::new(r"\\?\UNC\srv\share\a.js")),
+            path_key(Path::new(r"\\srv\share\a.js"))
+        );
+        assert_ne!(
+            path_key(Path::new(r"D:\a.js")),
+            path_key(Path::new(r"D:\b.js"))
+        );
+    }
     #[test]
     fn a_cmd_shim_points_at_the_script_that_is_actually_running() {
         let dir = tempfile::tempdir().unwrap();

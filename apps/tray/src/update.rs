@@ -913,15 +913,26 @@ pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> R
     };
     let launcher = dirs.bin.join(name);
     let value = json!({"version": version, "bin": launcher.to_string_lossy()});
-    // Replace in one step: a truncated manifest would leave the hosts pointing at nothing. A
-    // uniquely named staging file cannot collide with a scanner holding the old one.
-    let mut staging = tempfile::NamedTempFile::new_in(&base).map_err(|error| error.to_string())?;
-    std::io::Write::write_all(&mut staging, value.to_string().as_bytes())
-        .map_err(|error| error.to_string())?;
-    staging
-        .persist(base.join("active.json"))
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    // Replace in one step: a truncated manifest would leave the hosts pointing at nothing. The
+    // staging name is unique per process, and the swap is retried: on Windows a scanner holding
+    // the old file for a moment rejects the replace, which must not fail a finished install.
+    let staging = base.join(format!("active.{}.tmp", std::process::id()));
+    std::fs::write(&staging, value.to_string()).map_err(|error| error.to_string())?;
+    let target = base.join("active.json");
+    let mut last = None;
+    for attempt in 0..3 {
+        match std::fs::rename(&staging, &target) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                last = Some(error);
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&staging);
+    Err(last.map_or_else(|| "无法写入 active.json".into(), |error| error.to_string()))
 }
 
 /// A note with the upgrade command when the installed service is older than this app.
