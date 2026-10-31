@@ -202,10 +202,11 @@ function renderOrchestration() {
   const text = orchestration?.presets[preset];
   $("orchestration-text").hidden = !text;
   $("orchestration-text").textContent = text || "";
-  // A broken file cannot take edits: nothing here could be saved or discarded.
-  $("orchestration-custom").hidden = preset !== "custom" || Boolean(orchestration?.error);
+  // An unread or broken file cannot take edits: nothing here could be saved or discarded.
+  const editable = orchestration && !orchestration.error;
+  $("orchestration-custom").hidden = preset !== "custom" || !editable;
   const roles = $("orchestration-roles");
-  roles.hidden = preset === "off" || Boolean(orchestration?.error);
+  roles.hidden = preset === "off" || !editable;
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
     roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
