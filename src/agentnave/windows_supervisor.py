@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ctypes
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -186,13 +185,15 @@ def _configure_api() -> _Kernel32:
     return kernel32
 
 
-def _run_provider(argv: list[str], ready_path: Path) -> tuple[str, int | None, str | None]:
+def _run_provider(
+    argv: list[str], ready_path: Path, server_pid: int
+) -> tuple[str, int | None, str | None]:
     executable = shutil.which(argv[0])
     if executable is None:
         return "launch_error", None, f"provider executable not found: {argv[0]}"
     argv = [executable, *argv[1:]]
     kernel32 = _configure_api()
-    parent = cast(wintypes.HANDLE, kernel32.OpenProcess(_SYNCHRONIZE, False, os.getppid()))
+    parent = cast(wintypes.HANDLE, kernel32.OpenProcess(_SYNCHRONIZE, False, server_pid))
     if not parent:
         return "launch_error", None, _last_error()
     try:
@@ -273,12 +274,12 @@ def _run_with_parent(
 
 
 def main() -> int:
-    if sys.platform != "win32" or len(sys.argv) < 4:
+    if sys.platform != "win32" or len(sys.argv) < 5:
         return 2
     status_path = Path(sys.argv[1])
     ready_path = Path(sys.argv[2])
     try:
-        kind, returncode, message = _run_provider(sys.argv[3:], ready_path)
+        kind, returncode, message = _run_provider(sys.argv[4:], ready_path, int(sys.argv[3]))
         payload: dict[str, object] = {"kind": kind}
         if returncode is not None:
             payload["returncode"] = returncode

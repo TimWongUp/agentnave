@@ -115,11 +115,14 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
     ready_path.unlink()
     try:
         process = await asyncio.create_subprocess_exec(
-            sys.executable,
+            # This stdlib-only helper needs a real process, not a venv redirector
+            # whose PID would hide the supervisor from termination and parent waits.
+            getattr(sys, "_base_executable", None) or sys.executable,
             "-I",
             str(Path(__file__).with_name("windows_supervisor.py")),
             str(status_path),
             str(ready_path),
+            str(os.getpid()),
             *argv,
             cwd=cwd,
             stdin=asyncio.subprocess.PIPE,

@@ -25,12 +25,14 @@ def test_server_death_ends_supervisor_and_provider_descendants(tmp_path: Path) -
         "time.sleep(60)"
     )
     server = (
-        "import json,os,subprocess,sys,time; "
-        f"p = subprocess.Popen([sys.executable, '-I', {windows_supervisor.__file__!r}, "
-        f"{str(tmp_path / 'status.json')!r}, {str(tmp_path / 'ready')!r}, "
-        f"sys.executable, '-c', {provider!r}]); "
-        f"open({str(service_pids)!r}, 'w').write(json.dumps([os.getpid(), p.pid])); "
-        "time.sleep(60)"
+        "import asyncio,json,os,sys\n"
+        "from pathlib import Path\n"
+        "from agentnave.processes import spawn_process\n"
+        "async def main():\n"
+        f"    run = await spawn_process((sys.executable, '-c', {provider!r}), Path({str(tmp_path)!r}))\n"
+        f"    Path({str(service_pids)!r}).write_text(json.dumps([os.getpid(), run.process.pid]))\n"
+        "    await asyncio.sleep(60)\n"
+        "asyncio.run(main())\n"
     )
     kernel32 = windows_supervisor._configure_api()  # pyright: ignore[reportPrivateUsage]
     handles: list[wintypes.HANDLE] = []
