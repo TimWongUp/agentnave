@@ -401,14 +401,23 @@ fn upgrade_service_to(
     archive: Option<&[u8]>,
 ) -> Result<(), String> {
     let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请稍后重试")?;
-    let Some(installed) = installed_version(&dirs.tools.join("agentnave")) else {
+    let current = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|data| active_version(&data))
+        .or_else(|| installed_version(&dirs.tools.join("agentnave")));
+    let Some(installed) = current else {
         return Ok(());
     };
     if parse(&installed) >= parse(version) {
         return Ok(());
     }
     let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或在终端运行升级命令")?;
-    install_service_version(&uv, &dirs, version, archive)?;
+    // The same versioned layout as a manual upgrade, or hosts would keep the old active version.
+    let target = version_dirs(app, &dirs, version).ok_or("无法定位应用数据目录")?;
+    install_service_version(&uv, &target, version, archive)?;
+    write_active(app, version, &target)?;
     app.state::<crate::Tray>().reader.refresh_hosts();
     Ok(())
 }
@@ -837,19 +846,27 @@ fn outdated_note(installed: String) -> Value {
 
 /// The launcher the hosts' configs point at once a versioned install exists.
 pub(crate) fn active_launcher(app_data: &Path) -> Option<PathBuf> {
+    active_entry(app_data).map(|(_, bin)| bin)
+}
+
+/// The active version and its launcher, only when both the launcher and the tool environment
+/// behind it are still there. A half-removed install must not read as "installed".
+fn active_entry(app_data: &Path) -> Option<(String, PathBuf)> {
     let raw = std::fs::read_to_string(app_data.join("service").join("active.json")).ok()?;
     let value: Value = serde_json::from_str(&raw).ok()?;
+    let version = value["version"].as_str()?.to_owned();
     let bin = PathBuf::from(value["bin"].as_str()?);
-    bin.is_file().then_some(bin)
+    let env = app_data
+        .join("service")
+        .join(&version)
+        .join("tools")
+        .join("agentnave");
+    (bin.is_file() && installed_version(&env).is_some()).then_some((version, bin))
 }
 
 /// The version the active manifest records, when its entry still exists.
 pub(crate) fn active_version(app_data: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(app_data.join("service").join("active.json")).ok()?;
-    let value: Value = serde_json::from_str(&raw).ok()?;
-    let bin = PathBuf::from(value["bin"].as_str()?);
-    bin.is_file()
-        .then(|| value["version"].as_str().unwrap_or_default().to_owned())
+    active_entry(app_data).map(|(version, _)| version)
 }
 
 /// This version's own tool and bin directories, so an upgrade never touches the files the
@@ -884,7 +901,10 @@ pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> R
     };
     let launcher = dirs.bin.join(name);
     let value = json!({"version": version, "bin": launcher.to_string_lossy()});
-    std::fs::write(base.join("active.json"), value.to_string()).map_err(|error| error.to_string())
+    // Replace in one step: a truncated manifest would leave the hosts pointing at nothing.
+    let staging = base.join("active.json.tmp");
+    std::fs::write(&staging, value.to_string()).map_err(|error| error.to_string())?;
+    std::fs::rename(&staging, base.join("active.json")).map_err(|error| error.to_string())
 }
 
 /// A note with the upgrade command when the installed service is older than this app.
