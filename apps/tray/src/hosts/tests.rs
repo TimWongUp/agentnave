@@ -2,6 +2,8 @@ use super::*;
 use crate::data::Reader;
 use tempfile::TempDir;
 
+mod versioned;
+
 fn fixture() -> (TempDir, Hosts) {
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path().canonicalize().unwrap();

@@ -39,11 +39,31 @@ def command() -> tuple[list[str], dict[str, str]]:
                     str(Path.home() / ".zcode/v2/provider_config.json"),
                 )
                 return [resolve_executable("node"), str(bundle), "app-server", "--stdio"], env
+    if os.name == "nt":
+        # The Windows installer keeps the same layout under its per-user program directory and
+        # adds no `zcode` command, so the bundle is the only entry point.
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            resources = Path(local) / "Programs/ZCode/resources"
+            bundle = resources / "glm/zcode.cjs"
+            if bundle.is_file():
+                env.setdefault(
+                    "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE",
+                    str(resources / "config/provider/zcode-builtin.json"),
+                )
+                env.setdefault(
+                    "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE",
+                    str(Path.home() / ".zcode/v2/provider_config.json"),
+                )
+                return [resolve_executable("node"), str(bundle), "app-server", "--stdio"], env
     return [executable, "app-server", "--stdio"], env
 
 
 def emit(event: dict[str, Any]) -> None:
-    print(json.dumps(event, ensure_ascii=False), flush=True)
+    # `print` writes through the Windows locale codec (cp936 here), which turns a Chinese
+    # answer into replacement characters. Every other adapter writes UTF-8 bytes; do the same.
+    sys.stdout.buffer.write(json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
 
 
 class Connection:
@@ -257,7 +277,7 @@ def run(request: dict[str, Any]) -> int:
 
 def main() -> None:
     try:
-        code = run(json.load(sys.stdin))
+        code = run(json.loads(sys.stdin.buffer.read().decode("utf-8")))
     except (OSError, ValueError, RuntimeError) as exc:
         emit({"type": "error", "message": str(exc)})
         code = 1

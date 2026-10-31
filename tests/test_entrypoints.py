@@ -441,7 +441,13 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
         starts: list[dict[str, object]] = []
         for prompt in ("sleep", "private task text"):
             started = await client.call_tool(
-                "start_agent", {"provider": "claude", "prompt": prompt, "cwd": str(tmp_path)}
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": prompt,
+                    "cwd": str(tmp_path),
+                    "manager_model": "test-manager",
+                },
             )
             starts.append(_payload(started.structured_content))
         sleeping, finished = (start["invocation_id"] for start in starts)

@@ -10,6 +10,7 @@ mod hosts;
 mod manage;
 mod members;
 mod onboarding;
+mod proxy;
 mod rules;
 mod settings;
 mod stage;
@@ -102,6 +103,7 @@ struct Tray {
 }
 
 fn main() {
+    proxy::apply();
     let reader = Arc::new(Reader::new(data::data_root()));
     let served = reader.clone();
     let app = tauri::Builder::default()
