@@ -28,6 +28,26 @@ _DESKTOP_DSH_PATHS = (
     "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
     "~/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
 )
+
+
+def _bundled_paths() -> tuple[str, ...]:
+    """The CLI the DeepSeek Harness desktop app ships, under its install directory."""
+    if sys.platform == "darwin":
+        return _DESKTOP_DSH_PATHS
+    if os.name != "nt":
+        return ()
+    relative = os.path.join("resources", "runtime", "cli", "bin", "dsh.cmd")
+    paths: list[str] = []
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        paths.append(os.path.join(local, "Programs", "DeepSeek Harness", relative))
+    for var in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(var)
+        if root:
+            paths.append(os.path.join(root, "DeepSeek Harness", relative))
+    return tuple(paths)
+
+
 _PERMISSION_MODES = ("read-only", "workspace-write", "danger-full-access")
 # Headless disables the GUI credential store; these rows are the documented restore.
 _STORED_CREDENTIAL_ROWS = ("credentials", "authorization", "deepseek-account")
@@ -84,7 +104,10 @@ def profile_routes(executable: str) -> tuple[tuple[str, str] | None, dict[str, s
             [executable, "--profile", "headless", "--dump-config"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            text=True,
+            # dsh writes UTF-8; `text=True` alone would decode with the Windows locale (GBK on a
+            # Chinese system) and the reader thread would hand back no output at all.
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
@@ -92,7 +115,7 @@ def profile_routes(executable: str) -> tuple[tuple[str, str] | None, dict[str, s
         return None, {}
     if result.returncode != 0:
         return None, {}
-    dump = result.stdout
+    dump = result.stdout or ""
     found: dict[str, str] = {}
     routes: dict[str, str] = {}
     inside = providers = False
@@ -146,7 +169,7 @@ class DeepSeekAdapter:
     _options = ("model", "effort", "provider", "permission_mode", "stored_credentials")
 
     def executable(self) -> str:
-        return resolve_executable("dsh", _DESKTOP_DSH_PATHS if sys.platform == "darwin" else ())
+        return resolve_executable("dsh", _bundled_paths())
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         """Return the --patch overlay rows; dsh exposes these settings only as profile rows."""

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import glob
 import json
+import os
 import re
 import sys
 
@@ -70,7 +72,23 @@ def _skip_oversized_line(head: bytes) -> bool:
 
 def _codex_executable() -> str:
     # Desktop bundles stay ahead of PATH and the common install directories.
-    return resolve_executable("codex", _DESKTOP_CODEX_PATHS if sys.platform == "darwin" else ())
+    return resolve_executable("codex", _bundled_paths())
+
+
+def _bundled_paths() -> tuple[str, ...]:
+    """The CLI a Codex desktop app ships, where the app keeps it instead of on PATH."""
+    if sys.platform == "darwin":
+        return _DESKTOP_CODEX_PATHS
+    if os.name != "nt":
+        return ()
+    paths = [os.path.expanduser("~/.codex/plugins/.plugin-appserver/codex.exe")]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        # The desktop app also keeps copies under a content hash, so no one path fits.
+        paths.extend(
+            sorted(glob.glob(os.path.join(local, "OpenAI", "Codex", "bin", "*", "codex.exe")))
+        )
+    return tuple(paths)
 
 
 class CodexAdapter:
