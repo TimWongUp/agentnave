@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-10-15
 - `wait_any`、`wait_agent` 与 `wait_round` 由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 合并为 `wait`，就绪子集语义不变。
+- 轮次新增的 `seat_lost` 就绪原因见 [ADR-0039](0039-retry-lost-seat-within-round.md)。
 
 ## 背景
 
