@@ -8,7 +8,7 @@
 | --- | --- |
 | `start_agent` | 私聊任务，结果只回给 boss；另接受 `title`、`conversation_id`、`role`、`access` 与 `forward`，自动保存为私有任务会话，默认开新线程，传 `session_id` 续接原线程；`access` 只记录 |
 | `run_round` | 不带 `group_id` 时用 `title`、2–7 个 `members`、`cwd`（可选 `review`、`isolated`）开会，返回的 `group_id` 就是会话 ID；带 `seats` 跑一轮，不带 `seats` 发主持人发言；`forward` 把已完成消息转入会议室 |
-| `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；审核会议中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
+| `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；某席失败或受阻而其他席仍在跑时返回一次 `seat_lost`（不交付答案，可用 `run_round` 的 `retry_seats` 在本轮补跑）；审核会议中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
 | `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |
 | `list`、`read_conversation` | 列出句柄与会话并启动看板；按 App 的方式读回一个会话的最终消息 |
 | `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |

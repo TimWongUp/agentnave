@@ -12,6 +12,38 @@ from agentnave import process_info
 from agentnave.process_info import _ProcessInfo  # pyright: ignore[reportPrivateUsage]
 
 
+def test_session_copied_between_project_folders_reads_the_live_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host, session_file, session_model
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    session = "01a14d5a-d23d-7263-b50d-ca6b5ac429dd"
+
+    def transcript(project: str, model: str, modified: int) -> Path:
+        path = tmp_path / "projects" / project / f"{session}.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": {"model": model},
+                }
+            )
+            + "\n"
+        )
+        os.utime(path, (modified, modified))
+        return path
+
+    transcript("a-stale-worktree", "stale-model", 1_000)
+    live = transcript("main", "live-model", 2_000)
+    transcript("z-stale-worktree", "other-stale-model", 1_500)
+
+    assert session_model(Host("claude"), session) == "live-model"
+    assert session_file(Host("claude"), session) == live
+
+
 def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -237,6 +237,7 @@ class InvocationManager:
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
         self._closed = False
+        self.on_forget: Callable[[str], None] | None = None
         # Lock directory shared by every server on one data root; None claims in-process only.
         self.session_locks: Path | None = None
 
@@ -491,6 +492,8 @@ class InvocationManager:
                 if record.cleanup_handle is not None:
                     record.cleanup_handle.cancel()
                 del self._records[invocation_id]
+                if self.on_forget is not None:
+                    self.on_forget(invocation_id)
                 removed += 1
         return removed
 

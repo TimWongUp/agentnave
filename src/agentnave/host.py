@@ -131,10 +131,11 @@ def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
         pattern, marker = f"*/{native_id}/chat_history.jsonl", b'"model_id"'
     else:
         return None
-    paths = list(root.glob(pattern))
-    if len(paths) != 1 or not paths[0].resolve().is_relative_to(root.resolve()):
+    paths = [path for path in root.glob(pattern) if path.resolve().is_relative_to(root.resolve())]
+    if not paths:
         return None
-    return paths[0], marker
+    # A chat moved between worktrees leaves a stale copy in the old project's folder.
+    return max(paths, key=lambda path: path.stat().st_mtime_ns), marker
 
 
 def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str | None:

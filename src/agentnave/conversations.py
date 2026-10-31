@@ -204,11 +204,11 @@ class Conversations(Groups):
         manager.session_locks = self.root / "native-session-locks"
         self.records: dict[str, Record] = {}
         self.unavailable: list[Unavailable] = []
-        self.invocations: dict[str, set[str]] = {}
         self.running_tasks: dict[str, str] = {}  # task id -> invocation id
         # invocation id -> (conversation id, task id), for message ids in wait receipts.
         self.task_invocations: dict[str, tuple[str, str]] = {}
-        self.collectors: list[asyncio.Task[None]] = []
+        manager.on_forget = self._forget_invocation
+        self.collectors: set[asyncio.Task[None]] = set()
         self.dashboard: Dashboard | None = None
         self.tokens: dict[str, tuple[str, str]] = {}  # conversation id -> public, director
         self._published: dict[str, Conversation] = {}  # the state each dashboard view shows
@@ -311,6 +311,8 @@ class Conversations(Groups):
                     # Ended (its driver only saves and notifies now): replies stay readable, and
                     # the group's history is not kept alive with them.
                     round_.group = Group(round_.group.id, round_.group.cwd, {})
+                    round_.outputs_persisted = True
+                    round_.release_delivered_outputs()
                 self._completed_rounds[round_id] = self._rounds.pop(round_id)
                 self.reviews.pop(round_id, None)
 
@@ -335,6 +337,10 @@ class Conversations(Groups):
             if value[0] != conversation_id
         }
         self._unpublish(conversation_id)
+
+    def _forget_invocation(self, invocation_id: str) -> None:
+        self.task_invocations.pop(invocation_id, None)
+        self.delivered_tasks.discard(invocation_id)
 
     def _round(self, round_id: str) -> Round:
         if round_id in self._completed_rounds:
@@ -623,6 +629,18 @@ class Conversations(Groups):
                 if added and group.entries[-len(added) :] == added:
                     del group.entries[-len(added) :]
                 raise
+
+    def retry(
+        self, group_id: str, seat_ids: list[str], *, manager_session_id: str | None = None
+    ) -> Round:
+        with self._writing(group_id):
+            self._group(group_id)
+            state = self.records[group_id].state
+            session = self._manager_session(manager_session_id)
+            if session is not None and session != state.manager_session:
+                raise ValueError(self._not_yours("Group", state.manager_session))
+            self._check_capacity(len(seat_ids))
+            return super().retry(group_id, seat_ids)
 
     def post(
         self,
@@ -1020,13 +1038,12 @@ class Conversations(Groups):
                 raise
             native_lock = None  # the run releases it when it ends
             started = True
-            self.invocations.setdefault(record.state.id, set()).add(invocation_id)
             self.running_tasks[task.id] = invocation_id
             self.task_invocations[invocation_id] = (record.state.id, task.id)
             self._publish(record)
-            self.collectors.append(
-                asyncio.create_task(self._collect(record, task.id, invocation_id))
-            )
+            collector = asyncio.create_task(self._collect(record, task.id, invocation_id))
+            self.collectors.add(collector)
+            collector.add_done_callback(self.collectors.discard)
             return TaskStart(invocation_id, record.state.id, declared)
         finally:
             try:
@@ -1145,7 +1162,9 @@ class Conversations(Groups):
                 if run.result is not None:
                     seat.reported_model = run.result.reported_model or seat.reported_model
                 seat.output = run.result.output if run.result is not None else None
-                if run.result is not None and seat.finished is None:
+                if run.result is None:
+                    seat.finished = None  # a retried seat starts over
+                elif seat.finished is None:
                     seat.finished = now()
                 error = run.result.error if run.result is not None else run.launch_error
                 seat.error = f"{error.code}: {error.message}" if error is not None else None
@@ -1446,6 +1465,7 @@ class Conversations(Groups):
                 self.dashboard.close()
             for record in self.records.values():
                 record.release()
+            self.manager.on_forget = None
             self.db.close()
 
 

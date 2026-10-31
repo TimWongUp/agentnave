@@ -17,6 +17,7 @@ AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agent
 
 - **审核**（`review=true`）：成功回答先待审，`wait` 以 `reason=review_needed` 提前返回，席位状态为 `pending_review`。读取正文后用 `decide_answers(round_id, {seat_id: "publish"|"private"})` 决定；并联轮全部决定后一次提交，串联轮决定后才轮到下一席。`private` 的回答只在 boss 与该席之间：其他席位看不到，原文保留，App 显示为该席对 boss 的未公开回复；该席下一轮会被告知它的回答没有公开。有待审回答时不能开新轮次或发主持人发言；`cancel` 或服务退出时未决回答按不公开处理。只能公开或不公开原文，不改写答案；需要重答就不公开后再开一轮。
 - **隔离**（`isolated=true`）：仅在用户明确要求工具层面限制访问，并同时要求服务准备独立席位目录时启用。每席使用服务准备的独立空目录并启用 `restricted_tools`，只能指定 `model`、`effort`（Pi 另可 `provider`）；调用方 `cwd` 被忽略。会议室（隔离与否）都可加入宿主被排除的 CLI；排除项只约束 `start_agent`。需要读代码或改文件的协作不要隔离。
+- **补跑失败席位**：并联轮还在跑时，等 `seat_lost` 或看到席位 `failed`、`blocked`，排除原因后调用 `run_round(group_id, retry_seats=[席位])`。它沿用本轮的输入和私密指令，仍看不到其他席位本轮的答案，答案记入本轮，线程绑定在该席位上。全员结束后这一轮就不能补跑，也不能用于串联轮：在新一轮点名该席，它以新线程补读全部会议记录，包括其他席位的答案；要保持独立时用私密指令说明。
 - **主持人**：`run_round(group_id, prompt)` 不带 `seats` 时，在轮次之间发一条公开发言，所有席位下一轮作为数据收到。私密信息放 `instructions`，不要写进公开任务或主持人发言。
 
 回执保持简短：主持人发言返回条目的 `message_id`，审核返回已保存决定、剩余待审、实际提交的席位和轮次 `status`，失败时另含 `error`。`status=finished` 已完成提交，可直接开始下一轮；`running` 或 `review` 继续 `wait`。
