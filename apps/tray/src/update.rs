@@ -16,6 +16,9 @@ use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+mod cleanup;
+pub(crate) use cleanup::prune;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Automatic checks run at start and then once a day; the menu can check at any time.
 pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -417,6 +420,7 @@ fn upgrade_service_to(
     // The same versioned layout as a manual upgrade, or hosts would keep the old active version.
     let target = version_dirs(app, &dirs, version).ok_or("无法定位应用数据目录")?;
     install_service_version(&uv, &target, version, archive)?;
+    cleanup::register(&target.tools.join("agentnave"));
     write_active(app, version, &target)?;
     app.state::<crate::Tray>().reader.refresh_hosts();
     Ok(())
@@ -557,6 +561,7 @@ fn finish_upgrade(app: &AppHandle) {
         // the hosts over, which takes effect when each host next starts its server.
         let target = version_dirs(app, &dirs, VERSION).ok_or("无法定位应用数据目录")?;
         install_service_version(&uv, &target, VERSION, None)?;
+        cleanup::register(&target.tools.join("agentnave"));
         write_active(app, VERSION, &target)?;
         app.state::<crate::Tray>().reader.refresh_hosts();
         Ok(())
@@ -913,6 +918,10 @@ pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> R
     };
     let launcher = dirs.bin.join(name);
     let value = json!({"version": version, "bin": launcher.to_string_lossy()});
+    write_active_manifest(&base, &value)
+}
+
+fn write_active_manifest(base: &Path, value: &Value) -> Result<(), String> {
     // Replace in one step: a truncated manifest would leave the hosts pointing at nothing. The
     // staging name is unique per process, and the swap is retried: on Windows a scanner holding
     // the old file for a moment rejects the replace, which must not fail a finished install.

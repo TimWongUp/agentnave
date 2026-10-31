@@ -1,6 +1,9 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod config;
+#[cfg(all(test, windows))]
+mod live_tests;
 mod processes;
+mod retention;
 mod roots;
 mod skill;
 mod split;
@@ -1232,6 +1235,7 @@ impl Hosts {
             }
         }
         self.cached = self.snapshot();
+        self.prune_service_versions();
         self.cached.clone()
     }
     pub fn action(&mut self, operation: &str, payload: &Value) -> Result<Value, String> {

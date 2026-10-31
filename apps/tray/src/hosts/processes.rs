@@ -92,8 +92,6 @@ fn identity(path: &str) -> Option<&'static str> {
     }
 }
 
-/// The script a Windows `.cmd` shim launches. Without it the shim path never matches the
-/// `node.exe <script>.js` process that is actually running, so the host looks stopped.
 /// A comparable form of one path: Windows spells the same file many ways (`C:\x`, `c:/x`,
 /// `\\?\C:\x`, `\\?\UNC\server\share`), and a process argument rarely spells it the way
 /// `canonicalize` does, so both sides go through this before matching.
@@ -114,20 +112,29 @@ fn path_key(path: &Path) -> String {
 fn shim_script(shim: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(shim).ok()?;
     let dir = shim.parent()?;
-    text.split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-        .filter_map(|token| {
-            let lower = token.to_lowercase();
-            if !(lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs")) {
+    // npm also launches extensionless scripts (CodeBuddy). Preserve spaces in quoted paths,
+    // resolve only shim-relative tokens, and reject the bundled node executable itself.
+    text.split(['"', '\''])
+        .chain(text.split_whitespace())
+        .find_map(|token| {
+            let lower = token.to_ascii_lowercase();
+            let offset = if lower.starts_with("%~dp0") || lower.starts_with("%dp0%") {
+                5
+            } else {
+                return None;
+            };
+            let relative = token[offset..].replace('\\', "/");
+            let path = dir.join(relative.trim_start_matches('/'));
+            if path.extension().is_some_and(|ext| {
+                ["exe", "cmd", "bat"]
+                    .iter()
+                    .any(|s| ext.eq_ignore_ascii_case(s))
+            }) || !path.is_file()
+            {
                 return None;
             }
-            let relative = token
-                .replace("%~dp0", "")
-                .replace("%dp0%", "")
-                .replace('\\', "/");
-            let path = dir.join(relative.trim_start_matches('/'));
-            Some(path.canonicalize().unwrap_or(path))
+            path.canonicalize().ok()
         })
-        .next()
 }
 fn agentnave(process: &Process) -> bool {
     // The executable itself living in the tool environment cannot be spoofed by an argument.
@@ -162,6 +169,9 @@ fn agentnave_arg(arg: &str) -> bool {
 }
 
 fn dispatched(process: &Process, system: &System) -> bool {
+    // This is a snapshot heuristic, not durable provenance: if a supervisor/ancestor exits
+    // before the snapshot (or the chain exceeds 64), an orphan CLI can look like a host.
+    // Never use this observation as an authorization or process-ownership boundary.
     let mut current = Some(process);
     for _ in 0..64 {
         let Some(process) = current else { break };
@@ -259,104 +269,4 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_canonical_path_and_a_plain_one_look_the_same() {
-        assert_eq!(
-            path_key(Path::new(r"D:\x\pi-launcher.js")),
-            path_key(Path::new(r"\\?\D:\x\pi-launcher.js"))
-        );
-        // Verbatim UNC only exists on Windows; elsewhere the same two strings differ by design.
-        #[cfg(windows)]
-        assert_eq!(
-            path_key(Path::new(r"\\?\UNC\srv\share\a.js")),
-            path_key(Path::new(r"\\srv\share\a.js"))
-        );
-        assert_ne!(
-            path_key(Path::new(r"D:\a.js")),
-            path_key(Path::new(r"D:\b.js"))
-        );
-    }
-    #[test]
-    fn a_cmd_shim_points_at_the_script_that_is_actually_running() {
-        let dir = tempfile::tempdir().unwrap();
-        let shim = dir.path().join("pi.cmd");
-        std::fs::write(
-            &shim,
-            "@ECHO off\nSETLOCAL\n\"%node%\" \"%~dp0pi-launcher.js\" %*\n",
-        )
-        .unwrap();
-        let script = dir.path().join("pi-launcher.js");
-        std::fs::write(&script, "").unwrap();
-        assert_eq!(shim_script(&shim), Some(script.canonicalize().unwrap()));
-    }
-    #[test]
-    fn our_own_server_and_supervisor_are_recognized() {
-        for arg in [
-            r"C:\Users\timwo\AppData\Roaming\io.github.timwongup.agentnave\service\0.58.0\tools\agentnave\Scripts\python.exe",
-            r"C:\Users\timwo\.local\bin\agentnave-mcp.exe",
-            "from agentnave.mcp_server import main; main()",
-            r"C:\x\agentnave\mcp_server.py",
-            r"C:\x\agentnave\windows_supervisor.py",
-        ] {
-            assert!(
-                agentnave_arg(arg) || tool_environment(arg),
-                "{arg} should be ours"
-            );
-        }
-    }
-
-    /// Only a whole path or the generated `-c` source counts. A prompt that merely mentions the
-    /// module must not turn the user's own host into "the app": that would hide a running host.
-    #[test]
-    fn text_that_mentions_the_module_is_not_this_app() {
-        for arg in [
-            r"D:\code\agentnave",
-            r"C:\Users\timwo\Documents\agentnave notes.md",
-            r"C:\tools\other\python.exe",
-            "check agentnave.mcp_server in the tray",
-            r"see C:\x\tools\agentnave\Scripts\python.exe for details",
-        ] {
-            assert!(!agentnave_arg(arg), "{arg}");
-        }
-    }
-
-    /// Only the executable path decides the tool environment, so a prompt cannot claim it.
-    #[test]
-    fn the_tool_environment_is_matched_by_executable_path() {
-        assert!(tool_environment(
-            r"C:\Users\timwo\AppData\Roaming\io.github.timwongup.agentnave\service\0.58.0\tools\agentnave\Scripts\python.exe"
-        ));
-        assert!(!tool_environment(r"D:\code\agentnave"));
-        assert!(!tool_environment(r"C:\tools\other\python.exe"));
-    }
-
-    #[test]
-    fn host_paths_match_exact_executables_and_main_app_processes() {
-        for (path, id) in [
-            (
-                "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
-                "deepseek",
-            ),
-            (
-                "C:\\Program Files\\DeepSeek Harness\\DeepSeek Harness.exe",
-                "deepseek",
-            ),
-            ("/Applications/Codex.app/Contents/MacOS/Codex", "codex"),
-            ("/home/a/.local/share/claude/versions/2.0.0", "claude"),
-            ("/usr/bin/agy", "antigravity"),
-            ("/usr/bin/dsh.js", "deepseek"),
-        ] {
-            assert_eq!(identity(path), Some(id), "{path}");
-        }
-        for path in [
-            "/tmp/codex-notes.txt",
-            "/Applications/DeepSeek Harness.app/Contents/Frameworks/DeepSeek Harness Helper.app/Contents/MacOS/DeepSeek Harness Helper",
-            "deepseek.example",
-        ] {
-            assert_eq!(identity(path), None, "{path}");
-        }
-    }
-}
+mod tests;
