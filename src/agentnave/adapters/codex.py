@@ -83,12 +83,8 @@ def _codex_executable() -> str:
 
 def _bundled_paths() -> tuple[str, ...]:
     """The CLI a Codex desktop app ships, where the app keeps it instead of on PATH."""
-    if sys.platform == "darwin":
-        patterns = _DESKTOP_CODEX_PATHS
-    elif sys.platform == "win32":
-        patterns = _WINDOWS_DESKTOP_CODEX_PATHS
-    else:
-        return ()
+    by_platform = {"darwin": _DESKTOP_CODEX_PATHS, "win32": _WINDOWS_DESKTOP_CODEX_PATHS}
+    patterns = by_platform.get(sys.platform, ())
     paths: list[str] = []
     for pattern in patterns:
         expanded = os.path.expanduser(pattern)

@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(windows)]
 #[test]
 fn installed_windows_shim_contents_resolve_in_a_clean_fixture() {
     // Captured from the Windows validation machine; no installed CLI or user profile required.
@@ -29,6 +30,7 @@ fn installed_windows_shim_contents_resolve_in_a_clean_fixture() {
     }
 }
 
+#[cfg(windows)]
 #[test]
 fn npm_extensionless_script_and_spaces_are_preserved() {
     let dir = tempfile::tempdir().unwrap();
@@ -85,6 +87,7 @@ fn a_canonical_path_and_a_plain_one_look_the_same() {
         path_key(Path::new(r"D:\b.js"))
     );
 }
+#[cfg(windows)]
 #[test]
 fn a_cmd_shim_points_at_the_script_that_is_actually_running() {
     let dir = tempfile::tempdir().unwrap();
