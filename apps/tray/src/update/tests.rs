@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(windows)]
+mod manifest;
+
 #[test]
 fn notes_an_older_service() {
     let tools = tempfile::tempdir().unwrap();
@@ -33,6 +36,9 @@ fn a_found_update_is_used_for_a_day() {
     assert!(!check_fresh(Some(now - FOUND_FOR), now));
 }
 
+// `sleep` and `sh` come from Git for Windows on a CI runner, not from the OS; a plain Windows
+// machine has neither, so the timeout path is covered on POSIX only.
+#[cfg(unix)]
 #[test]
 fn a_command_over_its_limit_is_stopped_and_reported() {
     let mut slow = Command::new("sleep");

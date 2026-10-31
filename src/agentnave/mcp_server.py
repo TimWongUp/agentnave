@@ -28,6 +28,7 @@ from agentnave.conversations import (
 from agentnave.core import InvocationManager
 from agentnave.group import GroupSeat, Round
 from agentnave.host import detect_host, host_session_id
+from agentnave.manager_identity import model_warnings, session_id_hint
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
@@ -96,8 +97,12 @@ type ManagerSessionId = Annotated[
         max_length=200,
         description=(
             "Current manager chat/session ID, shared by all tasks and groups in that chat. "
-            "Use the host's real session ID when available; otherwise generate one UUID once "
-            "for this manager chat and keep reusing it. A different chat needs a different ID. "
+            "Read the host's real session ID from context or shell before generating any ID. "
+            "Codex: read CODEX_THREAD_ID (PowerShell: $env:CODEX_THREAD_ID; "
+            "POSIX: printenv CODEX_THREAD_ID). Pass that exact value so the App can read "
+            "the boss model. A failed shell command is not evidence that no native ID exists. "
+            "Only when the host exposes no native ID, generate one UUID once for this chat "
+            "and keep reusing it. A different chat needs a different ID. "
             "Never use the CLI name, MCP connection ID, or subagent session_id. "
             "Required by start_agent and run_round, and by handover to hand over or take over, "
             "unless AGENTNAVE_HOST_SESSION_ID is injected for this chat or the host gives this "
@@ -348,6 +353,7 @@ class ShowRunPayload(TypedDict):
     entries: NotRequired[list[CommittedEntryPayload]]  # a host remark posted without seats
     round: NotRequired[RoundPayload]
     unreceived: NotRequired[list[UnreceivedPayload]]
+    warnings: NotRequired[list[str]]
 
 
 class ConversationSummary(TypedDict):
@@ -419,10 +425,7 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
         and arguments.get("manager_session_id") is None
         and not (host_session_id(HOST) or "").strip()
     ):
-        problems.append(
-            f"{name} needs manager_session_id: pass this manager chat's session ID (or one "
-            "UUID generated once for this chat) on every call so its history stays together."
-        )
+        problems.append(f"{name} needs manager_session_id. " + session_id_hint(HOST))
     if problems:
         raise ToolError(" ".join(problems) + " Nothing was started. Correct and retry.")
 
@@ -473,6 +476,9 @@ mcp = _Server(
     instructions=(
         "AgentNave launches local CLI subagents and saves their history. Use the "
         "agentnave-manager Skill for CLI usage and model selection. "
+        "Before start_agent or run_round, read this chat's native session ID and pass it as "
+        "manager_session_id every time. Codex: read CODEX_THREAD_ID in the shell; do not "
+        "invent a UUID when the shell fails. The App needs the real ID to read the boss model. "
         "start_agent runs a private task whose result returns only to you; run_round opens a "
         "saved meeting and runs rounds whose answers seats share automatically. wait and cancel "
         "take task invocation_ids and round_ids; list shows handles, saved conversations and "
@@ -839,6 +845,9 @@ async def start_agent(
         "conversation_id": started.conversation_id,
         "access": started.access,
     }
+    conversations = _conversations(ctx)
+    message = conversations.records[started.conversation_id].state.tasks[-1]
+    warnings = model_warnings(conversations.host, message)
     if access != "read":
         sharing = [
             listing.invocation_id
@@ -848,10 +857,12 @@ async def start_agent(
             and listing.invocation_id != started.invocation_id
         ]
         if sharing:
-            payload["warnings"] = [
+            warnings.append(
                 f"{len(sharing)} other CLI run(s) active in this cwd ({', '.join(sharing)}); "
                 "parallel writers need separate worktrees. Declare access=read for read-only work."
-            ]
+            )
+    if warnings:
+        payload["warnings"] = warnings
     unreceived = _unreceived(_conversations(ctx), manager_session_id)
     if unreceived:
         payload["unreceived"] = unreceived
@@ -1399,6 +1410,14 @@ def _add_started(
         reviews=_review_map(conversations, round_),
         entries=conversations.committed_entries(round_.group.id, round_.number),
     )
+    message = next(
+        entry
+        for entry in reversed(round_.group.entries)
+        if entry.kind == "task" and entry.round == round_.number
+    )
+    warnings = model_warnings(conversations.host, message)
+    if warnings:
+        payload["warnings"] = warnings
     unreceived = _unreceived(conversations, manager_session_id)
     if unreceived:
         payload["unreceived"] = unreceived
@@ -1658,6 +1677,9 @@ async def run_round(
             )
             index = len(conversations.records[group_id].state.entries) - 1
             entry = conversations.records[group_id].state.entries[index]
+            warnings = model_warnings(conversations.host, entry)
+            if warnings:
+                payload["warnings"] = warnings
             payload["entries"] = [
                 {
                     "message_id": entry_message_id(group_id, index),

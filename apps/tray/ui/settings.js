@@ -88,7 +88,7 @@ let currentDoc = {
   modes: {},
 };
 let detected = {};
-let currentTab = "members"; // "members" | "skills" | "avatars" | "orchestration" | "hosts"
+let currentTab = "members"; // "members" | "avatars" | "advanced" | "hosts" | "about"
 let dirty = false;
 let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
 let savedVersion = 0;
@@ -473,8 +473,8 @@ function markSaved(snapshot = JSON.stringify(currentDoc)) {
 // Unsaved means the document differs from the saved one, or an edit left an option draft
 // that cannot be written yet.
 function refreshDirty() {
-  dirty = docVersion !== savedVersion &&
-    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0);
+  dirty = limitChanged() || (docVersion !== savedVersion &&
+    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0));
 }
 
 function incDocVersion() {
@@ -605,8 +605,9 @@ function configurationErrors() {
 function updateControls() {
   $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
   $("members-badge").hidden = !dirty;
-  if (!dirty && !busy) leaveTarget = null;
+  if (!unsaved() && !busy) leaveTarget = null;
   renderLeaveConfirm();
+  renderAdvancedBar();
 
   const emptyRestricted = emptyScene();
   const errors = configurationErrors();
@@ -655,27 +656,12 @@ function updateControls() {
   }
 }
 
-// Switch tabs
-function setTab(tab) {
-  if (tab === "updates") tab = "about"; // Preserve old update links.
-  // Status lines belong to the tab that produced them.
-  if (currentTab !== tab) showNotice("");
-  currentTab = tab;
-  for (const id of ["hosts", "members", "skills", "avatars", "orchestration", "about"]) {
-    if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
-    else $("nav-" + id).removeAttribute("aria-current");
-    $("pane-" + id).hidden = tab !== id;
-  }
-  if (tab === "about") loadStatus().then(checkIfStale);
-  if (tab === "skills") window.AgentNaveSkills?.load();
-  if (tab === "orchestration") {
-    loadOrchestration();
-    loadLimit();
-  }
-}
-
-// The running limit lives in settings.json, read by the service before each start.
+// The running limit: settings.json, read by the service before each start. Saved with 员工; its
+// draft is the menu itself.
 let limitDoc = null;
+const limitSaved = () => limitDoc?.max_running ?? 8;
+const limitChanged = () => Boolean($("max-running").options.length) && Number($("max-running").value) !== limitSaved();
+
 async function loadLimit() {
   if (!$("max-running").options.length) {
     for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? "8（默认）" : String(n)));
@@ -685,202 +671,48 @@ async function loadLimit() {
     const response = await fetch("/app/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(`读取失败（${response.status}）`);
     const data = await response.json();
+    const keep = limitChanged();
     limitDoc = data.settings;
-    $("max-running").value = String(data.settings.max_running);
+    if (!keep) $("max-running").value = String(data.settings.max_running);
     if (data.error) showNotice(`${data.error}；保存会用当前值覆盖`, true);
   } catch (error) {
-    showNotice(`无法读取同时运行上限：${error.message}`, true);
+    showNotice(`无法读取同时工作的员工上限：${error.message}`, true);
   }
+  refreshDirty();
+  updateControls();
 }
 
 async function saveLimit() {
   const value = Number($("max-running").value);
-  if (!Number.isInteger(value) || value < 1 || value > 32) {
-    showNotice("同时运行上限必须为 1–32 的整数", true);
-    return;
-  }
-  const button = $("save-limit");
-  button.disabled = true;
-  try {
-    const response = await fetch("/app/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || `保存失败（${response.status}）`);
-    limitDoc = { version: 1, max_running: value };
-    showNotice(`已保存：同时最多运行 ${value} 个`);
-  } catch (error) {
-    showNotice(`未能保存：${error.message}`, true);
-  } finally {
-    button.disabled = false;
-  }
+  const response = await fetch("/app/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+    body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || `同时工作的员工上限保存失败（${response.status}）`);
+  limitDoc = { version: 1, max_running: value };
 }
 
-// Orchestration lives in orchestration.json: a preset (or the user's own text) the App writes
-// into the connected boss apps' global rules, and the Explorer and Worker seats boss reads from
-// list_members. The rules files are listed one row per file with every app that reads it.
-const ORCHESTRATION_EFFECTS = {
-  off: "不写入全局规则，boss 按自己的习惯派发。",
-  split: "写入已接入应用的全局规则：boss 未被点名也会把探索、规划、评审交给 Explorer，实现交给 Worker，会用到它们的额度。",
-  parallel: "在分工协作之外，互不依赖的步骤会同时派给多个 Worker，实现后再换一个 Explorer 复核，额度用得更多。",
-  custom: "写入你自己的规则，起始内容是选自定义前的档位。",
-};
-const ORCHESTRATION_ROLES = [
-  ["explorer", "easy", "Explorer · 简单", "只读：探索、规划、评审"],
-  ["explorer", "hard", "Explorer · 困难", "只读：探索、规划、评审"],
-  ["worker", "easy", "Worker · 简单", "可写：实现"],
-  ["worker", "hard", "Worker · 困难", "可写：实现"],
-];
-let orchestration = null; // { document, error, presets, files } from GET /app/orchestration.
-const mockOrchestration = {
-  document: { version: 1, preset: "split" },
-  error: null,
-  presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行复核的规则" },
-  files: [
-    { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
-    { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },
-  ],
-};
+const unsaved = () => dirty || advancedChanges().length > 0;
 
-async function loadOrchestration() {
-  try {
-    if (isMock) orchestration = JSON.parse(JSON.stringify(mockOrchestration));
-    else {
-      const response = await fetch("/app/orchestration", { cache: "no-store" });
-      if (!response.ok) throw new Error(`读取失败（${response.status}）`);
-      orchestration = await response.json();
-    }
-    if (orchestration.error) showNotice(`${orchestration.error}；请先修复或删除这个文件`, true);
-    $("custom-text").value = orchestration.document.custom ?? "";
-  } catch (error) {
-    orchestration = null;
-    showNotice(`无法读取编排设置：${error.message}`, true);
+// Switch tabs
+function setTab(tab) {
+  if (tab === "updates") tab = "about"; // Preserve old update links.
+  // Status lines belong to the tab that produced them.
+  if (currentTab !== tab) showNotice("");
+  currentTab = tab;
+  for (const id of ["hosts", "members", "avatars", "advanced", "about"]) {
+    if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
+    else $("nav-" + id).removeAttribute("aria-current");
+    $("pane-" + id).hidden = tab !== id;
   }
-  renderOrchestration();
-}
-
-async function saveOrchestration(document, done) {
-  if (!orchestration || orchestration.error) return;
-  if (busy) {
-    showNotice("正在保存，请稍后再选", true);
-    return renderOrchestration();
-  }
-  busy = true;
-  updateControls();
-  $("save-custom").disabled = true;
-  try {
-    let data = { files: orchestration.files, failures: [] };
-    if (!isMock) {
-      const response = await fetch("/app/orchestration", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-        body: JSON.stringify(document),
-      });
-      data = await response.json().catch(() => ({}));
-      if (!response.ok || data.error) throw new Error(data.error || `保存失败（${response.status}）`);
-    }
-    orchestration.document = document;
-    orchestration.files = data.files;
-    const failed = data.failures || [];
-    if (failed.length) showNotice(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, true);
-    else showNotice(done);
-  } catch (error) {
-    showNotice(`编排设置保存失败：${error.message}`, true);
-  } finally {
-    busy = false;
-    updateControls();
-  }
-  renderOrchestration();
-}
-
-function pickPreset(preset) {
-  const document = { ...orchestration.document, preset };
-  // The editor starts from the preset the user leaves, and keeps its text once written; what it
-  // shows is always what gets written.
-  if (preset === "custom") {
-    const from = orchestration.document.preset;
-    if (!document.custom?.trim()) document.custom = orchestration.presets[from === "off" ? "split" : from];
-    $("custom-text").value = document.custom;
-  }
-  saveOrchestration(document, preset === "off" ? "已关闭编排，已从全局规则中移除" : "已保存，并写入已接入应用的全局规则");
-}
-
-function saveCustom() {
-  if (!$("custom-text").value.trim()) return showNotice("自定义规则不能为空；不想写入时选「关闭」", true);
-  saveOrchestration({ ...orchestration.document, preset: "custom", custom: $("custom-text").value }, "自定义规则已保存并写入");
-}
-
-async function setOrchestrationSeat(role, difficulty, seat) {
-  const seats = { ...(orchestration.document[role] || {}) };
-  if (seat) seats[difficulty] = seat;
-  else delete seats[difficulty];
-  const document = { ...orchestration.document, [role]: seats };
-  if (!Object.keys(seats).length) delete document[role];
-  if (seat && !(await listSeatModel(seat))) return renderOrchestration();
-  saveOrchestration(document, "已保存");
-}
-
-function renderOrchestration() {
-  const preset = orchestration?.document.preset || "off";
-  for (const button of $("orchestration-presets").querySelectorAll("button")) {
-    const active = button.dataset.preset === preset;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-checked", String(active));
-    button.disabled = !orchestration || Boolean(orchestration.error);
-  }
-  $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
-  const text = orchestration?.presets[preset];
-  $("orchestration-text").hidden = !text;
-  $("orchestration-text").textContent = text || "";
-  $("orchestration-custom").hidden = preset !== "custom";
-  $("save-custom").disabled = busy || preset !== "custom";
-  const roles = $("orchestration-roles");
-  roles.hidden = preset === "off";
-  if (!roles.hidden) {
-    const focusKey = document.activeElement?.dataset?.focusKey;
-    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
-      const seat = orchestration.document[role]?.[difficulty];
-      return el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next)));
-    }));
-    if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
-  }
-  renderRuleFiles();
-}
-
-function renderRuleFiles() {
-  const list = $("rule-files");
-  if (!orchestration) return list.replaceChildren();
-  const on = orchestration.document.preset !== "off";
-  list.replaceChildren(...orchestration.files.map((file) => {
-    const state = !on || !file.target ? null
-      : file.current ? ["written", "已写入"]
-        : file.blocked ? ["failed", "经过符号链接，无法写入"] : ["failed", "未写入"];
-    return el("li", {},
-      el("span", { className: "rule-label" }, file.readers.join("、")),
-      el("code", {}, file.path),
-      state && el("span", { className: `rule-state ${state[0]}` }, state[1]),
-      file.exists
-        ? el("button", { type: "button", onClick: () => openRuleFile(file) }, "打开")
-        : el("span", { className: "rule-missing" }, "未找到"));
-  }));
-}
-
-async function openRuleFile(file) {
-  try {
-    const response = await fetch("/app/rules/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ path: file.path }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || `打开失败（${response.status}）`);
-    showNotice(data.message);
-  } catch (error) {
-    showNotice(error.message, true);
+  if (tab === "about") loadStatus().then(checkIfStale);
+  if (tab === "members") loadLimit();
+  if (tab === "advanced") {
+    window.AgentNaveSkills?.load();
+    loadOrchestration();
+    loadLimit();
   }
 }
 
@@ -1538,8 +1370,11 @@ async function saveMembers() {
   const saving = JSON.stringify(currentDoc);
 
   try {
-    await apiPostMembers(JSON.parse(saving));
-    savedSnapshot = saving;
+    if (saving !== savedSnapshot) {
+      await apiPostMembers(JSON.parse(saving));
+      savedSnapshot = saving;
+    }
+    if (limitChanged()) await saveLimit();
     refreshDirty();
     feedback.textContent = "设置已保存 · 参数是否有效以 boss 读取时的校验为准";
     feedback.className = "save-feedback success";
@@ -1548,6 +1383,7 @@ async function saveMembers() {
     feedback.textContent = `保存失败: ${err.message}`;
     feedback.className = "save-feedback error";
     showNotice(err.message, true);
+    refreshDirty();
   } finally {
     busy = false;
     updateControls();
@@ -1883,14 +1719,9 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
   operatedControl = e.target.closest("[data-focus-key]");
   queueMicrotask(() => { operatedControl = null; });
 }, true);
-for (const button of $("orchestration-presets").querySelectorAll("button")) {
-  button.addEventListener("click", () => {
-    if (button.dataset.preset !== orchestration?.document.preset) pickPreset(button.dataset.preset);
-  });
-}
-$("save-custom").addEventListener("click", saveCustom);
-$("save-limit").addEventListener("click", saveLimit);
-const tabFromHash = () => location.hash === "#updates" ? "about" : ["members", "skills", "avatars", "orchestration", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts";
+bindAdvanced();
+const OLD_TABS = { "#updates": "about", "#skills": "advanced", "#orchestration": "advanced" }; // Preserve old links.
+const tabFromHash = () => OLD_TABS[location.hash] || (["members", "avatars", "advanced", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 
@@ -1898,6 +1729,13 @@ $("refresh-detection").addEventListener("click", () => refreshDetection());
 window.addEventListener("focus", probeWhenStale);
 document.addEventListener("visibilitychange", probeWhenStale);
 $("save-btn").addEventListener("click", saveMembers);
+$("max-running").addEventListener("change", () => {
+  const feedback = $("save-feedback");
+  feedback.textContent = "";
+  feedback.className = "save-feedback";
+  refreshDirty();
+  updateControls();
+});
 
 $("btn-check-update").addEventListener("click", () => triggerCheckUpdate());
 // Updating goes through the shared dialog: it shows what changed first and then the progress.
@@ -1906,7 +1744,10 @@ $("btn-retry-update").addEventListener("click", () => AN.updateFlow());
 
 // The app's web view does not show beforeunload prompts, so hold back in-app navigation.
 function renderLeaveConfirm() {
-  const box = $("leave-confirm");
+  const box = $(currentTab === "advanced" ? "advanced-leave-confirm" : "leave-confirm");
+  const other = $(currentTab === "advanced" ? "leave-confirm" : "advanced-leave-confirm");
+  other.hidden = true;
+  other.replaceChildren();
   box.hidden = !leaveTarget;
   if (!leaveTarget) return box.replaceChildren();
   if (box.childElementCount) return;
@@ -1917,6 +1758,7 @@ function renderLeaveConfirm() {
       el("button", { type: "button", className: "danger", onClick: () => {
         const target = leaveTarget;
         dirty = false;
+        discardAdvanced();
         location.href = target;
       } }, "放弃修改并离开")));
   stay.focus({ preventScroll: true });
@@ -1925,18 +1767,20 @@ document.querySelector("header.bar").addEventListener("click", (e) => {
   const link = e.target.closest("a[href]");
   // The settings link points at this page; following it would reload and drop the edits.
   if (link?.getAttribute("href") === "/settings/") return e.preventDefault();
-  if (!link || !(dirty || busy)) return;
+  if (!link || !(unsaved() || busy)) return;
   e.preventDefault();
   leaveTarget = link.href;
-  if (currentTab !== "members") {
-    setTab("members");
-    history.replaceState(null, "", "#members");
+  // The confirmation sits in the save bar of the page holding the edits.
+  const tab = dirty || !advancedChanges().length ? "members" : "advanced";
+  if (currentTab !== tab) {
+    setTab(tab);
+    history.replaceState(null, "", `#${tab}`);
   }
   renderLeaveConfirm();
 }, true);
 
 window.addEventListener("beforeunload", (e) => {
-  if (dirty || busy) {
+  if (unsaved() || busy) {
     e.preventDefault();
     e.returnValue = "";
   }

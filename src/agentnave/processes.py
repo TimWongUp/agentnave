@@ -1,3 +1,6 @@
+# pyright cannot resolve the Windows-only `winreg` module on the Linux/macOS CI; the registry
+# lookup below is the only place it is used, and its unchecked values are narrowed by hand.
+# pyright: reportAttributeAccessIssue=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportMissingImports=false
 """Platform subprocess supervision and process-tree cleanup."""
 
 from __future__ import annotations
@@ -75,6 +78,7 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     for name in NATIVE_SESSION_ENV.values():
         env.pop(name, None)
     if os.name == "nt":
+        env.update(_system_proxy(env))
         return env
     inherited = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
     leading = [os.path.dirname(argv[0])] if argv and os.path.isabs(argv[0]) else []
@@ -84,6 +88,40 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
             path.append(entry)
     env["PATH"] = os.pathsep.join(path)
     return env
+
+
+def _system_proxy(env: dict[str, str]) -> dict[str, str]:
+    """The Windows system proxy, for CLIs that only read `HTTPS_PROXY`.
+
+    Windows keeps its proxy in the registry, where only WinINET clients look. Go and Node
+    CLIs connect directly instead and then wait out a network timeout: Antigravity lists no
+    models at all behind a proxy until these variables are set.
+    """
+    if any(name in env for name in ("HTTPS_PROXY", "https_proxy")):
+        return {}
+    try:
+        # `winreg` only exists on Windows; pyright on the Linux/macOS CI cannot resolve it, so
+        # this block carries its own ignores rather than relaxing the file's type checks.
+        import winreg  # pyright: ignore[reportMissingImports]
+
+        key = winreg.OpenKey(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            winreg.HKEY_CURRENT_USER,  # pyright: ignore[reportAttributeAccessIssue]
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+        )
+        with key:
+            enabled = winreg.QueryValueEx(key, "ProxyEnable")[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            if not enabled:
+                return {}
+            server = winreg.QueryValueEx(key, "ProxyServer")[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    except OSError:
+        return {}
+    if not isinstance(server, str) or not server:
+        return {}
+    parts = dict(part.split("=", 1) for part in server.split(";") if "=" in part)
+    entry = parts.get("https") or parts.get("http") or server.split(";")[0]
+    if "://" not in entry:
+        entry = f"http://{entry}"
+    return {"HTTPS_PROXY": entry, "HTTP_PROXY": entry}
 
 
 async def terminate_process_tree(

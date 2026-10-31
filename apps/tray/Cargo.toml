@@ -7,6 +7,10 @@ edition = "2024"
 rust-version = "1.90"
 publish = false
 
+[features]
+# Explicit local validation: reads installed hosts/shims and locks the real service pointer.
+windows-live-tests = []
+
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import glob
 import json
+import os
 import re
 import sys
 
@@ -25,6 +27,12 @@ _DESKTOP_CODEX_PATHS = (
     "~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     "~/Applications/Codex.app/Contents/Resources/codex",
+)
+
+# Windows keeps the CLI in a plugin app-server bundle, and copies it under a content hash.
+_WINDOWS_DESKTOP_CODEX_PATHS = (
+    "~/.codex/plugins/.plugin-appserver/codex.exe",
+    "~/AppData/Local/OpenAI/Codex/bin/*/codex.exe",
 )
 
 # Tool items carry full command/tool output; activity sees them, the retained result does not.
@@ -70,7 +78,19 @@ def _skip_oversized_line(head: bytes) -> bool:
 
 def _codex_executable() -> str:
     # Desktop bundles stay ahead of PATH and the common install directories.
-    return resolve_executable("codex", _DESKTOP_CODEX_PATHS if sys.platform == "darwin" else ())
+    return resolve_executable("codex", _bundled_paths())
+
+
+def _bundled_paths() -> tuple[str, ...]:
+    """The CLI a Codex desktop app ships, where the app keeps it instead of on PATH."""
+    by_platform = {"darwin": _DESKTOP_CODEX_PATHS, "win32": _WINDOWS_DESKTOP_CODEX_PATHS}
+    patterns = by_platform.get(sys.platform, ())
+    paths: list[str] = []
+    for pattern in patterns:
+        expanded = os.path.expanduser(pattern)
+        # A content-hash directory has no fixed name; anything else is a literal path.
+        paths.extend(sorted(glob.glob(expanded)) if "*" in pattern else [expanded])
+    return tuple(paths)
 
 
 class CodexAdapter:
@@ -131,9 +151,12 @@ class CodexAdapter:
         if request.session_id is not None:
             argv.append("resume")
         argv.append("--json")
+        # Always allowed outside a Git repository: a dispatched task's cwd is chosen by the boss
+        # and may not be a repo, and Codex otherwise refuses to run at all.
+        argv.append("--skip-git-repo-check")
         if discussion:
             # Keep native auth and persistence, but omit user MCP/config and local read tools.
-            argv.extend(("--ignore-user-config", "--skip-git-repo-check"))
+            argv.append("--ignore-user-config")
             for feature in ("shell_tool", "unified_exec", "view_image", "apps", "multi_agent"):
                 argv.extend(("--disable", feature))
             for setting in (

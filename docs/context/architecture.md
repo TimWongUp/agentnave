@@ -66,7 +66,7 @@ macOS／Linux 启动 Provider 时，只在传给 supervisor 与 Provider 的环�
 
 STDIO MCP 是任务与协作的唯一控制接口，工具为 `start_agent`、`wait`、`cancel`、`list`、`list_members`、`run_round`、`decide_answers`、`handover` 与 `read_conversation`；`agentnave-mcp` 只负责为 MCP Host 启动 server 进程。`wait` 与 `cancel` 同时接受任务 `invocation_id` 与轮次 `round_id`。中继空闲探测使用的 `list_invocations` 仍可调用，但不出现在工具列表中。全部 Tool 都发布输入与输出 JSON Schema，输入 Schema 声明 `additionalProperties: false`，未列出的参数整批拒绝、不静默丢弃；结构化结果另以去掉空值的紧凑 JSON 文本返回，不重复缩进与 null 字段；可由 Manager 修正的请求错误使用 MCP Tool error 返回重试指引，Provider 执行终态使用结构化 Invocation Result。继续 Provider 对话通过新的 `start_agent` 并显式传 `session_id` 完成。
 
-启动回复另含 provider、model、effort 与 `defaults_applied`，不重复 prompt。model 与 effort 回显套用默认值后的请求值；effort 在 App 默认值之后还会按 `cli-defaults.json` 的 CLI 自身默认档位补上（ADR-0041），仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。新开会的 `run_round` 每席另返回 model、effort（未传且无默认时省略）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
+启动回复另含 provider、model、effort 与 `defaults_applied`，不重复 prompt。model 与 effort 回显套用默认值后的请求值；effort 在 App 默认值之后还会按 `cli-defaults.json` 的 CLI 自身默认档位补上（ADR-0042），仍省略时显示“继承原生设置”；`defaults_applied` 列出实际补齐的键名，无则空列表。新开会的 `run_round` 每席另返回 model、effort（未传且无默认时省略）与 `defaults_applied`。这些字段不证明 Provider 实际生效的设置；等待与取消回复不重复启动参数。
 
 AgentNave 不提供总运行时限；`start_agent` 不接受截止时间参数，也不根据运行时长终止调用。`wait` 的单次等待到期只返回运行状态，Manager 可继续等待或使用 `cancel` 显式停止任务。Provider 原生限制继续生效，AgentNave 不静默改写。
 
@@ -152,7 +152,7 @@ ZCode 工位由同一 supervisor 拥有的 Python 桥接进程启动原生 `app-
 
 办公室、托盘和对话中的组员模型名后显示本次调用已保存的努力档位（如 `gpt-6.1-sol · high`）。普通任务分别保存每次派发的 `effort`，会议席位取已保存的 `provider_options.effort`；包含调用方显式值和服务已套用的 App 默认值，不声称是 CLI 原生回报的实际档位。工位显示最新调用的档位，历史消息保留当次值；缺失时省略，不用当前 CLI 默认设置回填旧记录。努力档位不改变工位身份、模型 ID 或头像选择。
 
-窗口顶部导航只有办公室与设置两项，右上角在有更新时显示一键更新按钮；设置页内按 boss（宿主接入）、员工（组员）、技能、外观、高级、关于（版本与更新）分区，未带分区链接时打开 boss；旧 `#updates` 链接打开「关于」。接入变更判断比较实际用户级 MCP 条目，不比较 Skill 的任何部分（Agent 使用时从磁盘读取 Skill，更新后无需重开）；连接观测另负责接口和运行服务的判断。App 偏好记录带 `v:4` 的内容观察、变更与手动确认；更早格式的记录（含 Skill 摘要）一律忽略。已知接入配置变化且有变化前建立的活跃连接时提示重新加载；一百五十秒内都没有刷新的连接观测时，再只读检测当前用户的宿主进程：仍有变更前启动的宿主就提示该宿主的重启方式，已停止则为 idle，下次启动加载；进程不可确认、启动时间未知或只有变更后启动的进程但未收到加载回执时，显示待确认生效，不声称工具已加载。仅在接入配置有待生效变更时显示此类待确认状态；同步、空闲和等待切换不另加说明。进程观测至多每五秒刷新一次，不保存命令行或环境，排除 AgentNave 派出的进程树；进程存在不证明聊天已获得工具。切换服务时心跳最长暂停约 105 秒，不算断连，暂停中的连接也不让提醒自动消除。手动确认不能盖过仍使用旧接口的活跃连接。
+窗口顶部导航只有办公室与设置两项，右上角在有更新时显示一键更新按钮；设置页内按 boss（宿主接入）、员工（组员与同时运行上限）、外观、高级（技能、编排，只在按保存设置后写入）、关于（版本与更新）分区，未带分区链接时打开 boss；旧 `#updates` 链接打开「关于」，旧 `#skills`、`#orchestration` 链接打开「高级」。接入变更判断比较实际用户级 MCP 条目，不比较 Skill 的任何部分（Agent 使用时从磁盘读取 Skill，更新后无需重开）；连接观测另负责接口和运行服务的判断。App 偏好记录带 `v:4` 的内容观察、变更与手动确认；更早格式的记录（含 Skill 摘要）一律忽略。已知接入配置变化且有变化前建立的活跃连接时提示重新加载；一百五十秒内都没有刷新的连接观测时，再只读检测当前用户的宿主进程：仍有变更前启动的宿主就提示该宿主的重启方式，已停止则为 idle，下次启动加载；进程不可确认、启动时间未知或只有变更后启动的进程但未收到加载回执时，显示待确认生效，不声称工具已加载。仅在接入配置有待生效变更时显示此类待确认状态；同步、空闲和等待切换不另加说明。进程观测至多每五秒刷新一次，不保存命令行或环境，排除 AgentNave 派出的进程树；进程存在不证明聊天已获得工具。切换服务时心跳最长暂停约 105 秒，不算断连，暂停中的连接也不让提醒自动消除。手动确认不能盖过仍使用旧接口的活跃连接。
 
 中继只在宿主成功获取非空完整 `tools/list` 后，于有效数据根的 `connections/` 原子写入私有观测：宿主、连接起始时间、运行服务版本、运行工具定义摘要与已向宿主成功转发的工具定义摘要。每五秒刷新，连接关闭删除；中继首次写入时清除一小时以上未刷新的观测，这些通常是已退出中继的遗留；仍在运行但长时间暂停的中继若被误删，下次刷新会重建；不保存原始工具定义、提示词、环境或凭据。空或不完整的工具列表不创建连接观测。切换后内部探测新工具列表，仅版本变化且接口一致时不要求重启；接口不同且协商旧版有状态协议时，中继声明并发送工具变更通知。2026-07-28 及后续协议需要订阅，当前中继不合成订阅或向未订阅客户端主动通知。
 
@@ -168,11 +168,13 @@ ZCode 用户级配置为 `~/.zcode/cli/config.json` 中的 `mcp.servers.agentnav
 
 十个宿主均由 App 定点编辑：JSON/JSONC 保留非目标区间，TOML 使用 toml_edit，Hermes 保留未知 YAML 块原文，DeepSeek Harness 只增删家目录补丁列表中自己的 `insert` 项。读取字节和哈希，在内存编辑并同目录暂存；替换前重读比对，变化则基于最新内容重做，最多三次。替换前备份至 App 自有数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份（拆分前的旧备份按配置计）。不是 App 副本而被整体移走的 Skill 各占 backups/ 下一个子目录，不计入份数、不被清理。写后重新解析、校验非目标语义不变，仅当正式文件仍等于本次写入字节才恢复原快照，否则保留新内容并报 conflict。替换前比对与原子 rename 仍有极短竞态窗口，不声称跨应用完整事务。layers 返回用户层与项目层；移除用户层条目并备份，项目层不写。
 
-构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「技能」页列出说明与完整写法，按宿主开关安装，默认关闭，开关存于 `hosts.json` 的 `skills`；开启时已接入则立即安装，否则下次接入时安装，关闭即移除该路径上的副本（共用同一目录的宿主仍有一方开启时保留），移除宿主条目时两者一并移除。评审工位存于独立的 `review.json`，经 `POST /app/review` 保存，不进入 `members.json`。Skill 为 missing/app/external/blocked/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的才是 App 副本，external 是路径上的其他内容（包括符号链接）。本服务的 Skill 只由 App 管理：接入及刷新时把旧版 App 副本与 external 一并换成当前副本，关闭开关或移除宿主时同样删除 external；App 副本写入或删除前逐个备份文件并重查内容未变，external 则整体重命名进备份目录（符号链接只移走链接本身，整目录备份不计入份数上限）（[ADR-0036](../adr/0036-app-owns-service-skills.md)）。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
+构建时嵌入完整同版本 agentnave-manager 与 agentnave-review。可选 Skill 在 App「高级」页列出说明与完整写法，按宿主选择并保存后安装，默认关闭，开关存于 `hosts.json` 的 `skills`；保存开启时已接入则立即安装，否则下次接入时安装，关闭即移除该路径上的副本（共用同一目录的宿主仍有一方开启时保留），移除宿主条目时两者一并移除。评审工位存于独立的 `review.json`，经 `POST /app/review` 保存，不进入 `members.json`。Skill 为 missing/app/external/blocked/manual，manual 的 path 为 null；只有版本标记和内容清单匹配的才是 App 副本，external 是路径上的其他内容（包括符号链接）。本服务的 Skill 只由 App 管理：接入及刷新时把旧版 App 副本与 external 一并换成当前副本，关闭开关或移除宿主时同样删除 external；App 副本写入或删除前逐个备份文件并重查内容未变，external 则整体重命名进备份目录（符号链接只移走链接本身，整目录备份不计入份数上限）（[ADR-0036](../adr/0036-app-owns-service-skills.md)）。Hermes 不能安全识别的 YAML 结构拒绝写入并提示手动处理。
 
 GET /app/hosts、GET /app/onboarding 只读，不创建目录、不探测 shell。宿主操作 POST /app/hosts/connect|remove|root|confirm-reload 返回 {host, ok, message}，刷新返回完整列表。所有写操作要求 X-AgentNave-Action: 1，包括安装本机服务、打开备份目录、关闭和重开引导。POST /app/service/install 立即返回，复用 uv 安装并以 GET /app/status 的 service.state=installing|done|failed 展示进度，不发起 Provider 会话。引导按完整 launcher、缓存中的 connected 宿主、已保存的组员设置、带 manager_session 的保存会话计算；关闭标记位于 App 自有数据目录。MCP 服务端不导入宿主写入能力，不新增监听端口、IPC 或 Provider 调用。
 
 ### boss 模型与头像
+
+工具参数说明和缺参错误引导调用方先读取宿主原生聊天 ID（Codex 为 shell 中的 `CODEX_THREAD_ID`），只有宿主确实不提供时才生成归属 UUID。派发或主持人发言保存的 boss 消息若原生模型和声明模型均缺失，回执以 `warnings` 提示 App 无法识别模型及修正方式，不拒绝已接受的任务，也不自动重派或猜测模型。
 
 `start_agent`、`run_round` 的可选 `manager_model` 保存调用方声明的本次 boss 模型；`manager_reported_model` 独立保存从精确原生 session 读取的模型，展示时优先使用后者。Codex 取对应 rollout 的 `turn_context.payload.model`，Claude 取对应 transcript 的主会话 `assistant.message.model`，Pi 取会话文件里 assistant 消息的 `responseModel`（缺省用 `model`），CodeBuddy（WorkBuddy 默认读 `~/.workbuddy`）取 `projects/*/<id>.jsonl` 里 assistant 消息的 `providerData.model`，Grok 取会话目录 `chat_history.jsonl` 的 assistant `model_id`，Antigravity 取桌面版或 agy CLI 对话库 `gen_metadata` 的 protobuf 字段 3.28，Hermes 取 `state.db` 的 `sessions.model`，ZCode 按 `sess_...` ID 读取其只读会话数据库中最新 assistant 消息的 `modelId`。只在调用时读取匹配原生 ID 的会话记录，选最近一轮，SQLite 只读打开，不读取全局模型默认值；无原生 ID、文件不可读或不支持的宿主保持未知。原始 boss session ID 仅保留在当前服务内存，磁盘只存归属哈希，以及为交接记录的该 boss 原生会话文件路径（按同样的宿主规则找到时，ADR-0033）；重启后由调用方沿用 `manager_session_id` 才能继续原生识别。每条消息独立保存，不把后来模型回填到旧消息。原生记录和调用方声明均不证明转发商实际后端，也不控制 Provider 参数。
 

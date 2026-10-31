@@ -319,24 +319,28 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     let top = object(document, ORCHESTRATION_FILE)?;
     only(
         top,
-        &["version", "preset", "custom", "explorer", "worker"],
+        &["version", "preset", "custom", "apps", "explorer", "worker"],
         ORCHESTRATION_FILE,
     )?;
     if document["version"].as_u64() != Some(1) {
         return Err(format!("{ORCHESTRATION_FILE} 的 version 必须为 1"));
-    }
-    if !document["preset"]
-        .as_str()
-        .is_some_and(|preset| crate::rules::PRESETS.contains(&preset))
-    {
-        return Err("编排档位无效".into());
     }
     match top.get("custom") {
         None => {}
         Some(Value::String(text)) => crate::rules::check_custom(text)?,
         Some(_) => return Err("自定义编排必须为文本".into()),
     }
-    if document["preset"] == "custom"
+    let mut modes = vec![&document["preset"]];
+    if let Some(apps) = top.get("apps") {
+        modes.extend(object(apps, "apps")?.values());
+    }
+    if !modes.iter().all(|mode| {
+        mode.as_str()
+            .is_some_and(|mode| crate::rules::PRESETS.contains(&mode))
+    }) {
+        return Err("编排档位无效".into());
+    }
+    if modes.iter().any(|mode| *mode == "custom")
         && !document["custom"]
             .as_str()
             .is_some_and(|text| !text.trim().is_empty())

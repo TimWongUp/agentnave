@@ -77,6 +77,7 @@ fn routes_serve_views_and_reject_everything_else() {
         "/manage/manage.css",
         "/settings/",
         "/settings/settings.js",
+        "/settings/advanced.js",
         "/settings/settings.css",
         "/chat/",
         "/chat/missing-group",

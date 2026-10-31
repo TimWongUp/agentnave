@@ -16,6 +16,9 @@ use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+mod cleanup;
+pub(crate) use cleanup::prune;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Automatic checks run at start and then once a day; the menu can check at any time.
 pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -401,14 +404,24 @@ fn upgrade_service_to(
     archive: Option<&[u8]>,
 ) -> Result<(), String> {
     let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请稍后重试")?;
-    let Some(installed) = installed_version(&dirs.tools.join("agentnave")) else {
+    let current = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|data| active_version(&data))
+        .or_else(|| installed_version(&dirs.tools.join("agentnave")));
+    let Some(installed) = current else {
         return Ok(());
     };
     if parse(&installed) >= parse(version) {
         return Ok(());
     }
     let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或在终端运行升级命令")?;
-    install_service_version(&uv, &dirs, version, archive)?;
+    // The same versioned layout as a manual upgrade, or hosts would keep the old active version.
+    let target = version_dirs(app, &dirs, version).ok_or("无法定位应用数据目录")?;
+    install_service_version(&uv, &target, version, archive)?;
+    cleanup::register(&target.tools.join("agentnave"));
+    write_active(app, version, &target)?;
     app.state::<crate::Tray>().reader.refresh_hosts();
     Ok(())
 }
@@ -544,7 +557,12 @@ fn finish_upgrade(app: &AppHandle) {
     let outcome = (|| {
         let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
         let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
-        install_service(&uv, &dirs)?;
+        // Install beside the running service instead of over it; the active manifest then moves
+        // the hosts over, which takes effect when each host next starts its server.
+        let target = version_dirs(app, &dirs, VERSION).ok_or("无法定位应用数据目录")?;
+        install_service_version(&uv, &target, VERSION, None)?;
+        cleanup::register(&target.tools.join("agentnave"));
+        write_active(app, VERSION, &target)?;
         app.state::<crate::Tray>().reader.refresh_hosts();
         Ok(())
     })();
@@ -554,6 +572,7 @@ fn finish_upgrade(app: &AppHandle) {
     };
 }
 
+#[allow(dead_code)]
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
     install_service_version(uv, dirs, VERSION, None)
 }
@@ -790,6 +809,13 @@ fn find_uv() -> Option<PathBuf> {
         candidates.push(home.join(".local").join("bin").join(name));
         candidates.push(home.join(".cargo").join("bin").join(name));
     }
+    // The winget package links uv here. A desktop app started before that PATH entry existed
+    // inherits a PATH without it, so the install step would claim uv is missing.
+    #[cfg(windows)]
+    if let Some(local) = dirs::data_local_dir() {
+        candidates.push(local.join("Microsoft/WinGet/Links").join(name));
+        candidates.push(local.join("Programs/uv").join(name));
+    }
     candidates.push(PathBuf::from("/opt/homebrew/bin").join(name));
     candidates.push(PathBuf::from("/usr/local/bin").join(name));
     candidates.into_iter().find(|path| path.is_file())
@@ -801,7 +827,121 @@ fn service_dirs(app: &AppHandle) -> Option<ToolDirs> {
 }
 
 fn service_for_app(app: &AppHandle) -> Value {
+    // A versioned install is the truth once one exists; the shared uv tool directory is only
+    // the legacy fallback.
+    if let Some(version) = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|data| active_version(&data))
+    {
+        return outdated_note(version);
+    }
     service(&service_dirs(app).map(|dirs| dirs.tools))
+}
+
+/// The upgrade note for an installed version that is older than this app.
+fn outdated_note(installed: String) -> Value {
+    if parse(&installed) >= parse(VERSION) {
+        return Value::Null;
+    }
+    let command = format!("uv tool install --force --python 3.12 \"git+{REPOSITORY}@v{VERSION}\"");
+    json!({"state": "outdated", "version": installed, "error": null, "command": command})
+}
+
+/// The launcher the hosts' configs point at once a versioned install exists.
+pub(crate) fn active_launcher(app_data: &Path) -> Option<PathBuf> {
+    active_entry(app_data).map(|(_, bin)| bin)
+}
+
+/// The active version and its launcher, only when both the launcher and the tool environment
+/// behind it are still there. A half-removed install must not read as "installed".
+fn active_entry(app_data: &Path) -> Option<(String, PathBuf)> {
+    let raw = std::fs::read_to_string(app_data.join("service").join("active.json")).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    let version = value["version"].as_str()?.to_owned();
+    let bin = PathBuf::from(value["bin"].as_str()?);
+    let env = app_data
+        .join("service")
+        .join(&version)
+        .join("tools")
+        .join("agentnave");
+    (bin.is_file() && installed_version(&env).is_some()).then_some((version, bin))
+}
+
+/// The version the active manifest records, when its entry still exists.
+/// The active version's tool environment, when the versioned install is complete. Callers that
+/// report a service version must read this, not the legacy shared directory.
+pub(crate) fn active_tools(app_data: &Path) -> Option<PathBuf> {
+    active_entry(app_data).map(|(version, _)| {
+        app_data
+            .join("service")
+            .join(version)
+            .join("tools")
+            .join("agentnave")
+    })
+}
+
+pub(crate) fn active_version(app_data: &Path) -> Option<String> {
+    active_entry(app_data).map(|(version, _)| version)
+}
+
+/// This version's own tool and bin directories, so an upgrade never touches the files the
+/// running service executes (Windows refuses to remove them; POSIX would unlink them under it).
+pub(crate) fn version_dirs(app: &AppHandle, dirs: &ToolDirs, version: &str) -> Option<ToolDirs> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("service")
+        .join(version);
+    Some(ToolDirs {
+        home: dirs.home.clone(),
+        tools: root.join("tools"),
+        bin: root.join("bin"),
+        network: dirs.network.clone(),
+    })
+}
+
+/// Point the hosts at this install once it is complete.
+pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> Result<(), String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("service");
+    std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+    let name = if cfg!(windows) {
+        "agentnave-mcp.exe"
+    } else {
+        "agentnave-mcp"
+    };
+    let launcher = dirs.bin.join(name);
+    let value = json!({"version": version, "bin": launcher.to_string_lossy()});
+    write_active_manifest(&base, &value)
+}
+
+fn write_active_manifest(base: &Path, value: &Value) -> Result<(), String> {
+    // Replace in one step: a truncated manifest would leave the hosts pointing at nothing. The
+    // staging name is unique per process, and the swap is retried: on Windows a scanner holding
+    // the old file for a moment rejects the replace, which must not fail a finished install.
+    let staging = base.join(format!("active.{}.tmp", std::process::id()));
+    std::fs::write(&staging, value.to_string()).map_err(|error| error.to_string())?;
+    let target = base.join("active.json");
+    let mut last = None;
+    for attempt in 0..3 {
+        match std::fs::rename(&staging, &target) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                last = Some(error);
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&staging);
+    Err(last.map_or_else(|| "无法写入 active.json".into(), |error| error.to_string()))
 }
 
 /// A note with the upgrade command when the installed service is older than this app.

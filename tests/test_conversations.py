@@ -1724,6 +1724,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
             "run_round",
             {"group_id": show["group_id"], "prompt": "PRIVATE-HISTORY-" * 200},
         )
+        assert "Boss model unavailable" in str(posted.pop("warnings"))
         assert posted == {
             "group_id": show["group_id"],
             "entries": [{"message_id": f"{show['group_id']}:e:0", "kind": "host", "round": 0}],

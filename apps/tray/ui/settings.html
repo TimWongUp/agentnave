@@ -12,6 +12,7 @@
 <script src="/chat/common.js" defer></script>
 <script src="/chat/mock.js" defer></script>
 <script src="./avatar-settings.js" defer></script>
+<script src="./advanced.js" defer></script>
 <script src="./settings.js" defer></script>
 <script src="./hosts.js" defer></script>
 <script src="./skills.js" defer></script>
@@ -28,9 +29,8 @@
   <nav class="nav subnav" aria-label="设置分区">
     <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
     <a draggable="false" id="nav-members" href="#members">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
-    <a draggable="false" id="nav-skills" href="#skills">技能</a>
     <a draggable="false" id="nav-avatars" href="#avatars">外观</a>
-    <a draggable="false" id="nav-orchestration" href="#orchestration">高级</a>
+    <a draggable="false" id="nav-advanced" href="#advanced">高级<span id="advanced-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
     <a draggable="false" id="nav-about" href="#about">关于<span id="update-badge" class="badge-dot" hidden></span></a>
   </nav>
 
@@ -45,6 +45,14 @@
 
   <!-- 分区：员工与模型 -->
   <section id="pane-members" class="tab-pane" hidden aria-labelledby="nav-members">
+    <div class="model-names setting-row running-limit">
+      <div class="setting-copy">
+        <h2><label for="max-running">同时工作的员工上限</label></h2>
+        <p class="setting-example">到上限后，boss 要等有员工做完才能再派任务</p>
+      </div>
+      <select id="max-running"></select>
+    </div>
+
     <!-- 6 个 Provider 卡片容器 -->
     <div id="cli-cards" class="cli-cards"></div>
 
@@ -66,10 +74,6 @@
     </aside>
   </section>
 
-  <section id="pane-skills" class="tab-pane" hidden aria-labelledby="nav-skills">
-    <div id="skill-list" class="skill-list" aria-live="polite"></div>
-  </section>
-
   <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">
     <div class="model-names setting-row">
       <div class="setting-copy">
@@ -84,15 +88,11 @@
     <div id="avatar-settings" aria-live="polite"></div>
   </section>
 
-  <section id="pane-orchestration" class="tab-pane" hidden aria-labelledby="nav-orchestration">
+  <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>同时运行上限</h2>
-        <div class="limit-row">
-          <label for="max-running">上限</label>
-          <select id="max-running"></select>
-          <button id="save-limit" type="button">保存</button>
-        </div>
+        <h2>技能</h2>
+        <div id="skill-list" class="skill-list" aria-live="polite"></div>
       </div>
     </div>
     <div class="updates-panel">
@@ -105,11 +105,12 @@
           <button class="segment-btn" role="radio" type="button" data-preset="custom">自定义</button>
         </div>
         <p id="orchestration-effect" class="fine orchestration-effect"></p>
+        <h3 class="orchestration-apply">应用到</h3>
+        <div id="orchestration-bosses" class="skill-chips orchestration-bosses"></div>
         <div id="orchestration-roles" class="review-grid orchestration-roles" hidden></div>
         <pre id="orchestration-text" class="orchestration-template" hidden></pre>
         <div id="orchestration-custom" class="orchestration-custom" hidden>
           <textarea id="custom-text" aria-label="自定义编排规则" spellcheck="false"></textarea>
-          <div class="btn-group"><button id="save-custom" class="primary" type="button">保存并写入</button></div>
         </div>
       </div>
     </div>
@@ -119,6 +120,20 @@
         <ul id="rule-files" class="rule-files"></ul>
       </div>
     </div>
+
+    <aside class="sticky-save-bar">
+      <div id="advanced-leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" hidden></div>
+      <div class="save-bar-inner">
+        <div class="save-bar-info">
+          <span id="advanced-dirty" class="dirty-label"></span>
+          <span id="advanced-feedback" class="save-feedback"></span>
+        </div>
+        <div class="save-bar-actions">
+          <button id="advanced-discard" type="button" disabled>放弃修改</button>
+          <button id="advanced-save" class="primary" type="button" disabled>保存设置</button>
+        </div>
+      </div>
+    </aside>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden aria-labelledby="nav-hosts">

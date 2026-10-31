@@ -33,6 +33,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 
+Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv CODEX_THREAD_ID`，把读出的原值作为 `manager_session_id`。读取命令失败不代表宿主没有原生 ID，应修复读取方式或从可信宿主上下文取得，不能为了通过缺参校验临时编 UUID；编出的 ID 对应不到原生聊天，App 无法据此识别 boss 模型。回执的 `warnings` 若报告 boss 模型不可读，核对原生 ID 和宿主接入配置；已启动的任务继续 `wait`，不重复派发。
+
 可信宿主上下文（如系统提示）写明当前模型 ID 时作为 `manager_model` 传入，未知才省略，不从 CLI 默认配置或组员模型猜测。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
 
 ## 工位、续接与转发

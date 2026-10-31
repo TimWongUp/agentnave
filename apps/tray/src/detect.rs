@@ -98,7 +98,7 @@ pub fn detected(refresh: bool) -> Value {
 
 /// Where the service reads each CLI's own default, so a call that names no model (and has no
 /// App default) still gets the settings saved for the model that CLI will run (ADR-0028), and
-/// a call that names no level passes the one the CLI would pick for its model (ADR-0041).
+/// a call that names no level passes the one the CLI would pick for its model (ADR-0042).
 pub const NATIVE_FILE: &str = "cli-defaults.json";
 
 /// The published defaults for one probe: a CLI whose probe failed keeps its last known entry,
@@ -796,7 +796,13 @@ fn expand(entry: &str) -> Option<PathBuf> {
 
 fn common_dirs() -> Vec<PathBuf> {
     if cfg!(windows) {
-        return Vec::new();
+        // npm's global prefix. `codex`, and the npm install of `pi` and `codebuddy`, land there as
+        // `.cmd` shims; a desktop app started before that PATH entry existed would miss them.
+        return dirs::data_dir()
+            .map(|roaming| roaming.join("npm"))
+            .filter(|dir| dir.is_dir())
+            .into_iter()
+            .collect();
     }
     COMMON_DIRS
         .iter()
@@ -833,6 +839,10 @@ fn find(name: &str) -> Option<PathBuf> {
     {
         return Some(path);
     }
+    #[cfg(windows)]
+    if let Some(path) = desktop_binary(name) {
+        return Some(path);
+    }
     let names: Vec<String> = if cfg!(windows) {
         ["exe", "cmd", "bat"]
             .iter()
@@ -846,6 +856,151 @@ fn find(name: &str) -> Option<PathBuf> {
         .chain(common_dirs())
         .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
         .find(|path| executable(path))
+}
+
+/// A CLI that ships inside a desktop app instead of going on PATH.
+#[cfg(windows)]
+fn desktop_binary(name: &str) -> Option<PathBuf> {
+    match name {
+        // The DeepSeek Harness desktop app keeps its CLI under its install directory.
+        "dsh" => bundled_in_app("DeepSeek Harness", "resources/runtime/cli/bin/dsh.cmd"),
+        // The Codex desktop app installs the whole CLI too.
+        "codex" => codex_bundled(),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn bundled_in_app(app: &str, relative: &str) -> Option<PathBuf> {
+    let dir = install_dir(app).or_else(|| {
+        // The uninstall entry is the answer; the default per-user location is the fallback.
+        let local = dirs::data_local_dir()?;
+        Some(local.join("Programs").join(app))
+    })?;
+    let path = dir.join(relative);
+    executable(&path).then_some(path)
+}
+
+/// The Codex desktop app ships `codex.exe` twice: a stable copy it hands to plugins, and the
+/// app's own copies under `%LOCALAPPDATA%\OpenAI\Codex\bin\<content hash>`, which cannot be
+/// spelled out. Prefer the stable copy and fall back to the newest hash directory.
+#[cfg(windows)]
+fn codex_bundled() -> Option<PathBuf> {
+    if let Some(home) = dirs::home_dir() {
+        let stable = home.join(".codex/plugins/.plugin-appserver/codex.exe");
+        if executable(&stable) {
+            return Some(stable);
+        }
+    }
+    let bin = dirs::data_local_dir()?.join("OpenAI/Codex/bin");
+    let mut found: Vec<PathBuf> = std::fs::read_dir(bin)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path().join("codex.exe"))
+        .filter(|path| executable(path))
+        .collect();
+    found.sort_by_key(|path| path.metadata().and_then(|meta| meta.modified()).ok());
+    found.pop()
+}
+
+/// Where an app installed itself, according to the uninstall entry Windows keeps for it.
+#[cfg(windows)]
+fn install_dir(display_name: &str) -> Option<PathBuf> {
+    for root in UNINSTALL_ROOTS {
+        let Some(key) = uninstall_key(root, display_name) else {
+            continue;
+        };
+        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
+            let dir = PathBuf::from(dir);
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+        // Electron apps often leave `InstallLocation` out but point `DisplayIcon` at their exe.
+        if let Some(icon) = registry_value(&key, "DisplayIcon") {
+            let exe = icon.split(',').next().unwrap_or(&icon).trim();
+            if let Some(parent) = Path::new(exe).parent() {
+                return Some(parent.to_path_buf());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+const UNINSTALL_ROOTS: [&str; 3] = [
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+];
+
+/// The key whose data mentions `needle`: the uninstall tree is searched by value, since the key
+/// names are GUIDs.
+#[cfg(windows)]
+fn uninstall_key(root: &str, needle: &str) -> Option<String> {
+    registry(&["query", root, "/s", "/f", needle, "/d"])
+        .into_iter()
+        .find(|line| line.trim_start().starts_with("HKEY_"))
+        .map(|line| line.trim().to_owned())
+}
+
+#[cfg(windows)]
+fn registry_value(key: &str, name: &str) -> Option<String> {
+    registry(&["query", key, "/v", name])
+        .into_iter()
+        .find_map(|line| {
+            let line = line.trim_start().strip_prefix(name)?;
+            let (_, rest) = line.split_once("    REG_")?;
+            let (_, value) = rest.split_once("    ")?;
+            Some(value.trim().to_owned())
+        })
+}
+
+#[cfg(windows)]
+fn registry(args: &[&str]) -> Vec<String> {
+    use std::os::windows::process::CommandExt;
+    let Ok(output) = std::process::Command::new("reg")
+        .args(args)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A CLI this app knows how to find, including the ones a desktop app bundles instead of
+/// putting on PATH.
+pub(crate) fn locate(name: &str) -> Option<PathBuf> {
+    find(name)
+}
+
+/// The executable an installed app's uninstall entry points at, for apps that install wherever
+/// the user chose and keep no other record (WorkBuddy points `DisplayIcon` at its exe).
+#[cfg(windows)]
+pub(crate) fn uninstall_icon(display_name: &str) -> Option<PathBuf> {
+    for root in UNINSTALL_ROOTS {
+        let Some(key) = uninstall_key(root, display_name) else {
+            continue;
+        };
+        if let Some(icon) = registry_value(&key, "DisplayIcon") {
+            let exe = icon.split(',').next().unwrap_or(&icon).trim();
+            let path = PathBuf::from(exe);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
+            let dir = PathBuf::from(dir);
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+    }
+    None
 }
 
 /// PATH for a probe: the CLI's own directory, then the inherited PATH, then the common

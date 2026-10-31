@@ -451,7 +451,7 @@ def cli_default_model(provider: str) -> str | None:
 
 def cli_default_effort(provider: str, model: str | None) -> str | None:
     """The level the CLI's own settings run a model at, or its default model when none is
-    named, as the App last detected it (ADR-0041)."""
+    named, as the App last detected it (ADR-0042)."""
     entry = _cli_defaults(provider)
     effort = _field(entry, "effort") if model is None else _field(_field(entry, "efforts"), model)
     return effort if isinstance(effort, str) and effort else None
@@ -535,7 +535,7 @@ def add_cli_effort(
     applied: list[str],
 ) -> None:
     """Pass the level the CLI would pick by itself, so every run names and records one
-    (ADR-0041). A level the App does not allow for the model is left to the CLI."""
+    (ADR-0042). A level the App does not allow for the model is left to the CLI."""
     model = result.get("model")
     effort = cli_default_effort(provider, str(model) if model is not None else None)
     if effort is None:
