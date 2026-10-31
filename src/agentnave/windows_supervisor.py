@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,9 @@ from typing import Protocol, cast
 
 _CREATE_SUSPENDED = 0x00000004
 _INFINITE = 0xFFFFFFFF
+_SYNCHRONIZE = 0x00100000
+_WAIT_OBJECT_0 = 0
+_WAIT_TIMEOUT = 258
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _STARTF_USESTDHANDLES = 0x00000100
@@ -98,6 +102,9 @@ class _WinFunction(Protocol):
 
 
 class _Kernel32(Protocol):
+    GetProcessTimes: _WinFunction
+    OpenProcess: _WinFunction
+    WaitForMultipleObjects: _WinFunction
     CreateJobObjectW: _WinFunction
     SetInformationJobObject: _WinFunction
     CreateProcessW: _WinFunction
@@ -132,6 +139,23 @@ def _configure_api() -> _Kernel32:
         ctypes.WinDLL,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
     )
     kernel32 = cast(_Kernel32, load_library("kernel32", use_last_error=True))
+    kernel32.GetProcessTimes.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    )
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForMultipleObjects.argtypes = (
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.BOOL,
+        wintypes.DWORD,
+    )
+    kernel32.WaitForMultipleObjects.restype = wintypes.DWORD
     kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
     kernel32.SetInformationJobObject.argtypes = (
@@ -171,12 +195,55 @@ def _configure_api() -> _Kernel32:
     return kernel32
 
 
-def _run_provider(argv: list[str], ready_path: Path) -> tuple[str, int | None, str | None]:
+def _creation_time(kernel32: _Kernel32, process: wintypes.HANDLE) -> int:
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not kernel32.GetProcessTimes(
+        process,
+        ctypes.byref(created),
+        ctypes.byref(exited),
+        ctypes.byref(kernel),
+        ctypes.byref(user),
+    ):
+        raise OSError(_last_error())
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
+
+
+def server_identity() -> int:
+    """Capture the live service identity before launching its supervisor."""
+    kernel32 = _configure_api()
+    process = cast(wintypes.HANDLE, kernel32.OpenProcess(0x1000, False, os.getpid()))
+    if not process:
+        raise OSError(_last_error())
+    try:
+        return _creation_time(kernel32, process)
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def _run_provider(
+    argv: list[str], ready_path: Path, server_pid: int, server_created: int
+) -> tuple[str, int | None, str | None]:
     executable = shutil.which(argv[0])
     if executable is None:
         return "launch_error", None, f"provider executable not found: {argv[0]}"
     argv = [executable, *argv[1:]]
     kernel32 = _configure_api()
+    parent = cast(wintypes.HANDLE, kernel32.OpenProcess(_SYNCHRONIZE | 0x1000, False, server_pid))
+    if not parent:
+        return "launch_error", None, _last_error()
+    try:
+        if _creation_time(kernel32, parent) != server_created:
+            return "launch_error", None, "server PID was reused before provider startup"
+        return _run_with_parent(kernel32, parent, argv, ready_path)
+    finally:
+        kernel32.CloseHandle(parent)
+
+
+def _run_with_parent(
+    kernel32: _Kernel32, parent: wintypes.HANDLE, argv: list[str], ready_path: Path
+) -> tuple[str, int | None, str | None]:
+    if kernel32.WaitForSingleObject(parent, 0) != _WAIT_TIMEOUT:
+        return "launch_error", None, "server exited before provider startup"
     job = cast(wintypes.HANDLE, kernel32.CreateJobObjectW(None, None))
     if not job:
         return "launch_error", None, _last_error()
@@ -222,7 +289,14 @@ def _run_provider(argv: list[str], ready_path: Path) -> tuple[str, int | None, s
                 message = _last_error()
                 kernel32.TerminateProcess(process_info.process, 1)
                 return "launch_error", None, message
-            kernel32.WaitForSingleObject(process_info.process, _INFINITE)
+            # A real process handle stays tied to this service instance after it dies.
+            # Parent first: if both signal together, close the Job and leave no children.
+            handles = (wintypes.HANDLE * 2)(parent, process_info.process)
+            outcome = kernel32.WaitForMultipleObjects(2, handles, False, _INFINITE)
+            if outcome == _WAIT_OBJECT_0:
+                return "supervisor_error", None, "server exited while provider was running"
+            if outcome != _WAIT_OBJECT_0 + 1:
+                return "supervisor_error", None, _last_error()
             returncode = wintypes.DWORD()
             if not kernel32.GetExitCodeProcess(process_info.process, ctypes.byref(returncode)):
                 return "supervisor_error", None, _last_error()
@@ -237,12 +311,14 @@ def _run_provider(argv: list[str], ready_path: Path) -> tuple[str, int | None, s
 
 
 def main() -> int:
-    if sys.platform != "win32" or len(sys.argv) < 4:
+    if sys.platform != "win32" or len(sys.argv) < 6:
         return 2
     status_path = Path(sys.argv[1])
     ready_path = Path(sys.argv[2])
     try:
-        kind, returncode, message = _run_provider(sys.argv[3:], ready_path)
+        kind, returncode, message = _run_provider(
+            sys.argv[5:], ready_path, int(sys.argv[3]), int(sys.argv[4])
+        )
         payload: dict[str, object] = {"kind": kind}
         if returncode is not None:
             payload["returncode"] = returncode

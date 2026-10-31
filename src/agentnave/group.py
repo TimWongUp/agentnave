@@ -7,7 +7,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -136,6 +136,7 @@ class Round:
     error: str | None = None
     task: asyncio.Task[None] | None = None
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    outputs_persisted: bool = False
     # Parallel only: one task per launch; a retried seat adds another.
     finishing: list[asyncio.Task[None]] = field(default_factory=lambda: [])
     settled: bool = False  # every parallel seat ended, so no seat can start again
@@ -143,6 +144,14 @@ class Round:
     @property
     def finished(self) -> bool:
         return self.task is not None and self.task.done()
+
+    def release_delivered_outputs(self) -> None:
+        """A detached, saved round keeps receipt metadata, not delivered answer bodies."""
+        if not self.outputs_persisted:
+            return
+        for run in self.runs:
+            if run.output_returned and run.result is not None and run.result.output:
+                run.result = replace(run.result, output="")
 
     def notify(self) -> None:
         # Replace the event so each waiter observes exactly the changes after it looked.

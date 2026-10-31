@@ -1368,6 +1368,7 @@ def round_payload(
                 seat["status"] = "pending_review"
             elif review == "private":
                 seat["status"] = "private"
+    round_.release_delivered_outputs()
     return payload
 
 

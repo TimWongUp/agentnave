@@ -76,11 +76,11 @@ AgentNave 不提供总运行时限；`start_agent` 不接受截止时间参数�
 
 运行中回复提供最新原生活动；`wait` 仅在显式 `wait_seconds=0` 时附带公开回复尾部（每项最多 1000 字符）及其年龄，普通等待不返回运行正文和 `output_age_ms`。此规则同时用于私聊任务与会议运行席位；终态、阻塞原因与待审答案照常交付，`include_output=false` 仍关闭全部正文。其他工具和看板的输出不变。正文独立保留，不因后续工具事件消失；相同正文可能在不同等待中重复，无游标、分页或独立读取工具。只增加有界进程内尾部，不长期保存运行中的输出尾部。活动不返回原始事件名、工具调用 ID、工具参数/结果或推理正文；公开正文可能含任务数据，不提供自动脱敏保证。终态 `output` 保全最终回答，不应用中间正文长度限制；每次调用的保留 stdout 上限为 1 MiB（含必要协议数据），stderr 为 64 KiB，按字节计；采用事件过滤的 Provider 另沿用每条 8 MiB 的解析缓冲上限，工具／图片事件过滤后不累积保存，不占回复预算。超限返回 `output_limit_exceeded` 并终止进程树，不静默截断为成功。回复软预算由 Manager 在派发任务时安排，不能由容量推断模型上下文是否足够；长产物由有文件工具的 CLI 显式落盘并返回摘要与路径，服务不自动转存或传输附件。宿主超时限制由 Manager 尊重，无等待请求时不主动推送。
 
-Invocation 状态只存在于当前进程内。macOS／Linux 的每次 Invocation 由一个专用 supervisor 持续占有 POSIX 进程组，Provider 正常终止后也先清理该组再回收 supervisor，避免旧 PGID 被复用。Windows 的专用 supervisor 创建 kill-on-close Job Object，将 Provider 挂起创建、加入 Job 后再恢复；Provider 结束时关闭 Job 以清理后代，取消或 supervisor 丢失时也由句柄关闭终止整棵 Job 进程树。MCP server 退出时会尽力终止仍活跃的 supervisor；POSIX supervisor 另每秒检查父进程，服务被强杀而父进程改变时自行终止整个进程组，不留无人回收的 Provider；重启后旧 Invocation 句柄不可恢复。Provider 自己持久化的 Session 不受此限制。
+Invocation 状态只存在于当前进程内。macOS／Linux 的每次 Invocation 由一个专用 supervisor 持续占有 POSIX 进程组，Provider 正常终止后也先清理该组再回收 supervisor，避免旧 PGID 被复用。Windows 的专用 supervisor 创建 kill-on-close Job Object，将 Provider 挂起创建、加入 Job 后再恢复；Provider 结束时关闭 Job 以清理后代，取消或 supervisor 丢失时也由句柄关闭终止整棵 Job 进程树。MCP server 退出时会尽力终止仍活跃的 supervisor；POSIX supervisor 另每秒检查父进程，服务被强杀而父进程改变时自行终止整个进程组；Windows supervisor 由基础解释器直接运行以避开虚拟环境的重定向启动器，在启动 Provider 前按服务显式传入的 PID 取得其进程句柄，同时等待服务与 Provider，服务退出时关闭 Job，回收其中的进程树；重启后旧 Invocation 句柄不可恢复。Provider 自己持久化的 Session 不受此限制。
 
 AgentNave 不是沙箱或同用户恶意进程隔离边界。POSIX 上已获得命令执行权限的 Provider 或工具可以主动创建新 OS session、杀死 supervisor，或以其他方式脱离普通进程组；发生可检测的 supervisor 丢失时返回 `supervision_lost`，但不能安全地对可能已被复用的旧 PGID 继续发信号。Windows Job Object 提供进程树所有权，但不隔离同一用户账户下的其他资源；Job 分配不被当前宿主环境允许时以 `launch_error` 失败，不降级为无树级所有权的启动。是否允许 Provider 命令由其原生权限机制和 Manager 决定；需要抵抗恶意同用户进程时，应在 AgentNave 外使用降权、容器或平台级资源域。
 
-终态 Invocation 的内存记录在调用结束七天后自动清理，包括尚未读取的结果；重复读取不延长保留期，活跃调用不清理。Manager 应在过期前保留最终回答与原生 session_id，过期句柄的等待与取消返回 Tool error。清理不删除 Provider 原生会话、协作组已接收的回答或会话历史。
+终态 Invocation 的内存记录在调用结束七天后自动清理，包括尚未读取的结果；重复读取不延长保留期，活跃调用不清理。Manager 应在过期前保留最终回答与原生 session_id，过期句柄的等待与取消返回 Tool error。清理同步移除对应私聊的消息映射与已交付标记，不删除 Provider 原生会话、协作组已接收的回答或会话历史。已结束且成功落盘的轮次在回复交付后释放句柄持有的回复正文引用，保留句柄和回执元信息；未读、待审或尚未落盘的回复继续保留，已落盘的正文仍可从历史读取。
 
 ## Provider Adapter
 
