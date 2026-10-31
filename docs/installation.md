@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.57.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.58.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.57.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.58.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -549,25 +549,26 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.56.0 to v0.57.0
+### Upgrading from v0.57.0 to v0.58.0
 
-Update the App and its paired runtime and Skills together. The App now bundles the
-matching runtime wheel and reuses detected proxy and uv mirror settings. Reconnect
-or restart the host after updating to refresh its tool schema and Skills.
+Update the App and its paired runtime and Skills together, then reconnect the host
+so it discovers the new `run_round(retry_seats=...)` schema and waiting guidance.
 
-`wait_seconds` now accepts only `0` and `240`; omit it for normal waiting.
-Normal waits return running status and activity without reply tails. Use `0` only
-for a specific progress or intervention check; it may return up to 1000 characters
-of public reply tail per running task or seat. Final answers, blockers and answers
-awaiting review keep their existing delivery rules. Do not routinely follow every
-elapsed wait with a zero-second check. Hosts with shorter tool-call timeouts must
-resolve that host limit; arbitrary shorter wait windows are no longer accepted.
+A failed seat in an active parallel round now wakes `wait` with `reason=seat_lost`.
+The receipt reports status and errors without delivering answers or running tails.
+Use `run_round(group_id=..., retry_seats=[...])` before all seats finish to restart
+failed or blocked seats against the same round snapshot. Serial and completed
+rounds require a new round instead. Normal waits still omit `wait_seconds`.
 
-History, member settings and credentials need no migration. Handover now prioritizes
-the note and relevant conversation history, expanding the read when details are missing.
+The App distinguishes desktop and terminal bosses from session records and shows
+separate connection rows when they use separate configuration folders. Source
+labels are best-effort and do not change the underlying host or scheduling.
 
-See [v0.57.0 release notes](releases/v0.57.0.md) for this release and
-[v0.56.0 release notes](releases/v0.56.0.md) for earlier upgrade notes.
+History, member settings and credentials need no migration. This release also
+reclaims finished-task references and improves supervisor shutdown cleanup.
+
+See [v0.58.0 release notes](releases/v0.58.0.md) for this release and
+[v0.57.0 release notes](releases/v0.57.0.md) for earlier upgrade notes.
 
 ## Uninstall
 
