@@ -853,7 +853,7 @@ function renderOffice(c, ctx, n, newGroup) {
       h(
         "div.zone-empty",
         {},
-        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时运行上限的空闲工位归入「已优化」。",
+        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时工作的员工上限的空闲工位归入「已优化」。",
       ),
     );
   if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));

@@ -345,8 +345,9 @@ impl Reader {
             Ok(document) => (document, Value::Null),
             Err(error) => (json!({"version": 1, "preset": "off"}), json!(error)),
         };
+        let rules = self.rule_files();
         Response::json(&json!({"document": document, "error": error,
-            "presets": crate::rules::presets(), "files": self.rule_files()["files"]}))
+            "presets": crate::rules::presets(), "files": rules["files"], "bosses": rules["bosses"]}))
     }
 
     fn save_orchestration(&self, payload: &Value) -> Response {
@@ -362,8 +363,9 @@ impl Reader {
             .map(|hosts| self.sync_rules(hosts, &[]))
             .unwrap_or_default();
         drop(guard);
+        let rules = self.rule_files();
         Response::json(&json!({"saved": true, "failures": failures,
-            "files": self.rule_files()["files"]}))
+            "files": rules["files"], "bosses": rules["bosses"]}))
     }
 
     fn delete_conversations(&self, payload: &Value) -> Response {
@@ -431,19 +433,16 @@ impl Reader {
     }
 
     /// The orchestration rules the saved settings put in the boss apps' rules files, if any.
-    fn rules_text(&self) -> Option<String> {
-        crate::members::read_orchestration(&self.root)
-            .ok()
-            .and_then(|document| crate::rules::chosen(&document))
-    }
-
     /// Bring the orchestration block in line with the settings and the connected apps. A broken
     /// orchestration.json leaves the files alone; a preview build never writes them.
     fn sync_rules(&self, hosts: &crate::hosts::Hosts, also: &[std::path::PathBuf]) -> Vec<Value> {
-        if crate::PREVIEW || crate::members::read_orchestration(&self.root).is_err() {
+        if crate::PREVIEW {
             return Vec::new();
         }
-        hosts.sync_rules(self.rules_text().as_deref(), also)
+        match crate::members::read_orchestration(&self.root) {
+            Ok(document) => hosts.sync_rules(&document, also),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// The global rules files with whether each carries the current orchestration block.
@@ -454,7 +453,9 @@ impl Reader {
             .as_ref()
             .map(|hosts| (hosts.rule_apps(), hosts.connected_rule_apps()))
             .unwrap_or_default();
-        crate::rules::list(&installed, &connected, &home, self.rules_text().as_deref())
+        let document = crate::members::read_orchestration(&self.root)
+            .unwrap_or_else(|_| json!({"preset": "off"}));
+        crate::rules::list(&installed, &connected, &home, &document)
     }
 
     pub(crate) fn tool_dirs(&self) -> Option<crate::hosts::ToolDirs> {
@@ -727,6 +728,10 @@ impl Reader {
                 "avatar-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/avatar-settings.js").to_vec(),
+                ),
+                "advanced.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/advanced.js").to_vec(),
                 ),
                 "settings.js" => {
                     Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec())

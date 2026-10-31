@@ -5,6 +5,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     let home = tempfile::tempdir().unwrap();
     let h = home.path();
     let app = |id, label, root: &str| App {
+        key: id,
         id,
         label,
         root: h.join(root),
@@ -27,7 +28,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
         std::fs::create_dir_all(h.join(file).parent().unwrap()).unwrap();
         std::fs::write(h.join(file), "rules").unwrap();
     }
-    let listed = list(&apps, &[], h, None);
+    let listed = list(&apps, &[], h, &json!({"preset": "off"}));
     let rows = listed["files"].as_array().unwrap();
     let row = |file: &str| {
         rows.iter()
@@ -74,7 +75,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     )
     .unwrap();
     std::fs::write(h.join(".grok/Agents.md"), "rules").unwrap();
-    let listed = list(&apps, &[], h, None);
+    let listed = list(&apps, &[], h, &json!({"preset": "off"}));
     let readers = |file: &str| {
         let rows = listed["files"].as_array().unwrap();
         let row = rows
@@ -93,6 +94,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let base = home.path().canonicalize().unwrap();
     let h = base.as_path();
     let app = |id, label, root: &str| App {
+        key: id,
         id,
         label,
         root: h.join(root),
@@ -121,8 +123,9 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         Ok(())
     };
     let connected = [claude, grok, codex];
-    let text = chosen(&json!({"preset": "split"})).unwrap();
-    assert!(sync(&installed, &connected, h, Some(&text), &[], &backup).is_empty());
+    let split = json!({"preset": "split"});
+    let text = text_of(&split, "split").unwrap();
+    assert!(sync(&installed, &connected, h, &split, &[], &backup).is_empty());
     let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert_eq!(
         claude_md,
@@ -138,7 +141,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             .unwrap()
             .contains(START)
     );
-    let listed = list(&installed, &connected, h, Some(&text));
+    let listed = list(&installed, &connected, h, &split);
     let current: Vec<_> = listed["files"]
         .as_array()
         .unwrap()
@@ -156,9 +159,19 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
 
     // Unchanged settings write nothing; turning it off restores every file as it was.
     backups.borrow_mut().clear();
-    assert!(sync(&installed, &connected, h, Some(&text), &[], &backup).is_empty());
+    assert!(sync(&installed, &connected, h, &split, &[], &backup).is_empty());
     assert!(backups.borrow().is_empty());
-    assert!(sync(&installed, &connected, h, None, &[], &backup).is_empty());
+    assert!(
+        sync(
+            &installed,
+            &connected,
+            h,
+            &json!({"preset": "off"}),
+            &[],
+            &backup
+        )
+        .is_empty()
+    );
     assert_eq!(
         std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
         own
@@ -168,13 +181,13 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     // Neither file exists yet: Grok would read the one created for Claude, so it gets no other.
     std::fs::remove_file(h.join(".claude/CLAUDE.md")).unwrap();
     std::fs::remove_file(h.join(".grok/AGENTS.md")).unwrap();
-    assert!(sync(&installed, &connected, h, Some(&text), &[], &backup).is_empty());
+    assert!(sync(&installed, &connected, h, &split, &[], &backup).is_empty());
     assert!(h.join(".claude/CLAUDE.md").is_file());
     assert!(!h.join(".grok/AGENTS.md").exists());
     // A lone marker is left for the user rather than guessed at.
     let broken = format!("mine\n{START}\nold\n");
     std::fs::write(h.join(".codex/AGENTS.md"), &broken).unwrap();
-    let failures = sync(&installed, &connected, h, Some(&text), &[], &backup);
+    let failures = sync(&installed, &connected, h, &split, &[], &backup);
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0]["path"], json!(h.join(".codex/AGENTS.md")));
     assert_eq!(
@@ -201,12 +214,72 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         &installed,
         &connected,
         h,
-        None,
+        &json!({"preset": "off"}),
         std::slice::from_ref(&moved),
         &backup,
     );
     assert_eq!(std::fs::read_to_string(&moved).unwrap(), "old\n");
 
     assert!(check_custom("<!-- AGENTNAVE:END -->").is_err());
-    assert_eq!(chosen(&json!({"preset": "custom", "custom": "  "})), None);
+    assert_eq!(text_of(&json!({"custom": "  "}), "custom"), None);
+}
+
+#[test]
+fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
+    let home = tempfile::tempdir().unwrap();
+    let h = &home.path().canonicalize().unwrap();
+    let app = |id, label, root: &str| App {
+        key: id,
+        id,
+        label,
+        root: h.join(root),
+    };
+    let apps = [
+        app("claude", "Claude Code", ".claude"),
+        app("codex", "Codex", ".codex"),
+        app("grok", "Grok", ".grok"),
+        app("zcode", "ZCode", ".zcode"),
+    ];
+    let backup = |_: &Path, _: &[u8]| Ok(());
+    let document = json!({"version": 1, "preset": "off", "custom": "我的规则",
+        "apps": {"claude": "split", "grok": "parallel", "codex": "custom"}});
+    assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
+
+    // Grok reads Claude's file, so it runs on the first app's mode rather than a second block.
+    let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
+    assert!(claude.contains(SHARED) && !claude.contains(PARALLEL));
+    assert!(!h.join(".grok/AGENTS.md").exists());
+    let codex = std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap();
+    assert!(codex.contains("我的规则") && !codex.contains(SHARED));
+    // ZCode has no mode of its own and follows the default.
+    assert!(!h.join(".zcode/AGENTS.md").exists());
+
+    let listed = list(&apps, &apps, h, &document);
+    assert_eq!(
+        listed["bosses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|boss| boss["labels"].clone())
+            .collect::<Vec<_>>(),
+        [
+            json!(["Claude Code", "Grok"]),
+            json!(["Codex"]),
+            json!(["ZCode"])
+        ]
+    );
+    for row in listed["files"].as_array().unwrap() {
+        assert_eq!(row["target"], row["current"], "{row}");
+    }
+
+    let valid = crate::members::validate_orchestration;
+    assert!(valid(&document).is_ok());
+    assert!(valid(&json!({"version": 1, "preset": "off", "apps": {"codex": "fast"}})).is_err());
+    assert!(valid(&json!({"version": 1, "preset": "off", "apps": {"codex": "custom"}})).is_err());
+
+    // Turning one boss off leaves the other's block alone.
+    let document = json!({"preset": "off", "custom": "我的规则", "apps": {"codex": "custom"}});
+    assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
+    assert!(!h.join(".claude/CLAUDE.md").exists());
+    assert!(h.join(".codex/AGENTS.md").exists());
 }

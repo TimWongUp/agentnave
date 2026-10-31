@@ -33,9 +33,17 @@ pub fn presets() -> Value {
     json!({"split": SHARED, "parallel": format!("{SHARED}{PARALLEL}")})
 }
 
-/// The text the saved orchestration settings put in the rules files, if any.
-pub fn chosen(document: &Value) -> Option<String> {
-    match document["preset"].as_str()? {
+/// The mode a boss row is set to: its own, or the default that rows without one follow.
+fn mode_of<'a>(document: &'a Value, key: &str) -> &'a str {
+    document["apps"][key]
+        .as_str()
+        .or(document["preset"].as_str())
+        .unwrap_or("off")
+}
+
+/// The text a mode puts in the rules files, if any.
+fn text_of(document: &Value, mode: &str) -> Option<String> {
+    match mode {
         "split" => Some(SHARED.into()),
         "parallel" => Some(format!("{SHARED}{PARALLEL}")),
         "custom" => Some(document["custom"].as_str()?.trim())
@@ -59,6 +67,8 @@ pub fn check_custom(text: &str) -> Result<(), String> {
 
 /// One installed boss app: its id, its name and its own root folder (as the host page resolves it).
 pub struct App {
+    /// The boss row, which has its own mode; rows of one app share `id`.
+    pub key: &'static str,
     pub id: &'static str,
     pub label: &'static str,
     pub root: PathBuf,
@@ -195,7 +205,7 @@ fn would_read(app: &App, home: &Path) -> Vec<PathBuf> {
 
 /// The files that carry the block: one per connected app, so each reads it once. Apps that can
 /// read fewer files choose first, and a chosen file covers every app that would read it.
-fn targets(connected: &[App], home: &Path) -> Vec<PathBuf> {
+fn targets(connected: &[&App], home: &Path) -> Vec<PathBuf> {
     let mut apps: Vec<_> = connected
         .iter()
         .map(|app| (reads(app, home), would_read(app, home)))
@@ -210,6 +220,48 @@ fn targets(connected: &[App], home: &Path) -> Vec<PathBuf> {
         }
     }
     chosen
+}
+
+/// Connected apps that read one another's files, in `connected` order. One block reaches them all,
+/// so each group has one mode: that of its first app.
+fn groups<'a>(connected: &'a [App], home: &Path) -> Vec<Vec<&'a App>> {
+    let mut groups: Vec<(Vec<usize>, Vec<PathBuf>)> = Vec::new();
+    for (index, app) in connected.iter().enumerate() {
+        let mut merged = (vec![index], would_read(app, home));
+        merged.1.extend(reads(app, home));
+        groups.retain(|(members, paths)| {
+            let apart = !paths.iter().any(|path| merged.1.contains(path));
+            if !apart {
+                merged.0.extend(members);
+                merged.1.extend(paths.iter().cloned());
+            }
+            apart
+        });
+        groups.push(merged);
+    }
+    groups.sort_by_key(|(members, _)| members.iter().min().copied());
+    groups
+        .into_iter()
+        .map(|(mut members, _)| {
+            members.sort_unstable();
+            members.into_iter().map(|index| &connected[index]).collect()
+        })
+        .collect()
+}
+
+/// The text each file that carries the block should hold.
+fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
+    let mut wanted = Vec::new();
+    for group in groups(connected, home) {
+        if let Some(text) = text_of(document, mode_of(document, group[0].key)) {
+            wanted.extend(
+                targets(&group, home)
+                    .into_iter()
+                    .map(|path| (path, text.clone())),
+            );
+        }
+    }
+    wanted
 }
 
 fn block(text: &str) -> String {
@@ -344,23 +396,19 @@ pub fn existing(installed: &[App], home: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// Put `text` in the block of every target file and take it out of every other rules file an
-/// installed app could read, and of `also` (files read before a host moved); with no text, take
-/// it out everywhere. Returns the files that could not be written.
+/// Put each boss's mode in the block of its target files and take the block out of every other
+/// rules file an installed app could read, and of `also` (files read before a host moved).
+/// Returns the files that could not be written.
 pub fn sync(
     installed: &[App],
     connected: &[App],
     home: &Path,
-    text: Option<&str>,
+    document: &Value,
     also: &[PathBuf],
     backup: &Backup<'_>,
 ) -> Vec<Value> {
-    let targets = if text.is_some() {
-        targets(connected, home)
-    } else {
-        Vec::new()
-    };
-    let mut paths = targets.clone();
+    let wanted = wanted(connected, home, document);
+    let mut paths: Vec<PathBuf> = wanted.iter().map(|(path, _)| path.clone()).collect();
     for path in existing(installed, home)
         .into_iter()
         .chain(also.iter().cloned())
@@ -372,34 +420,39 @@ pub fn sync(
     paths
         .iter()
         .filter_map(|path| {
-            let wanted = text.filter(|_| targets.contains(path));
-            write(path, home, wanted, backup)
+            let text = wanted.iter().find(|(known, _)| known == path);
+            write(path, home, text.map(|(_, text)| text.as_str()), backup)
                 .err()
                 .map(|error| json!({"path": path, "error": error}))
         })
         .collect()
 }
 
-pub fn list(installed: &[App], connected: &[App], home: &Path, text: Option<&str>) -> Value {
-    let targets = if text.is_some() {
-        targets(connected, home)
-    } else {
-        Vec::new()
-    };
+pub fn list(installed: &[App], connected: &[App], home: &Path, document: &Value) -> Value {
+    let wanted = wanted(connected, home, document);
     let files: Vec<Value> = files(installed, home)
         .into_iter()
         .map(|(path, readers)| {
             let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let text = wanted.iter().find(|(known, _)| *known == path);
             let current = match (find(&content), text) {
-                (Ok(Some((start, end))), Some(text)) => content[start..end] == block(text),
+                (Ok(Some((start, end))), Some((_, text))) => content[start..end] == block(text),
                 _ => false,
             };
             json!({"path": path, "readers": readers, "exists": path.is_file(),
-                "target": targets.contains(&path), "current": current,
+                "target": text.is_some(), "current": current,
                 "blocked": crate::hosts::check_path(&path, home).is_err()})
         })
         .collect();
-    json!({ "files": files })
+    let bosses: Vec<Value> = groups(connected, home)
+        .into_iter()
+        .map(|group| {
+            json!({"keys": group.iter().map(|app| app.key).collect::<Vec<_>>(),
+                "labels": group.iter().map(|app| app.label).collect::<Vec<_>>(),
+                "mark": group[0].id})
+        })
+        .collect();
+    json!({ "files": files, "bosses": bosses })
 }
 
 /// Open one listed, existing rules file in the system's text editor; a missing one is not created.
@@ -425,9 +478,17 @@ pub fn open(apps: &[App], home: &Path, path: &str) -> Result<Value, String> {
         .arg(&path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|_| format!("无法打开 {}", path.display()))?;
+        .stderr(std::process::Stdio::null());
+    let failed = || format!("无法打开 {}", path.display());
+    // `open` returns at once and says whether it worked; the others stay until the editor closes.
+    #[cfg(target_os = "macos")]
+    command
+        .status()
+        .ok()
+        .filter(std::process::ExitStatus::success)
+        .ok_or_else(failed)?;
+    #[cfg(not(target_os = "macos"))]
+    command.spawn().map_err(|_| failed())?;
     Ok(json!({"ok": true, "message": format!("已打开 {}", path.display())}))
 }
 
