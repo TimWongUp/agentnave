@@ -134,6 +134,55 @@ fn save(root: &Path, value: &Value) {
 }
 
 #[test]
+fn codex_bosses_are_named_by_the_app_their_rollout_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let bosses = [
+        ("s-dddddddddddddddddddddddddddddddd", "Codex Desktop"),
+        ("s-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "codex-tui"),
+        ("s-ffffffffffffffffffffffffffffffff", "codex_vscode"),
+    ];
+    for (workspace, _) in bosses {
+        let mut item = task_snapshot(&workspace[2..10], "succeeded", "2026-10-15T00:00:00Z");
+        item["summary"]["manager_session"] = json!(workspace);
+        item["summary"]["host"] = json!("codex");
+        save(dir.path(), &item);
+    }
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    for (workspace, originator) in bosses {
+        let file = dir.path().join(format!("{originator}.jsonl"));
+        fs::write(
+            &file,
+            format!("{{\"payload\":{{\"originator\":\"{originator}\"}}}}\n"),
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspaces (id, owner, owner_host, owner_file) \
+                     VALUES (?1, ?1, 'codex', ?2)",
+                rusqlite::params![workspace, file.to_str().unwrap()],
+            )
+            .unwrap();
+    }
+    let reader = Reader::new(dir.path().to_path_buf());
+    let shown = |id: &str| {
+        let chat = state(&reader, &format!("/app/chats/{id}"));
+        (chat["app"].clone(), chat["label"].clone())
+    };
+    assert_eq!(
+        shown("s-dddddddddddddddddddddddddddddddd"),
+        (json!("codex-desktop"), json!("Codex 桌面"))
+    );
+    assert_eq!(
+        shown("s-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+        (Value::Null, json!("Codex CLI"))
+    );
+    assert_eq!(
+        shown("s-ffffffffffffffffffffffffffffffff"),
+        (Value::Null, json!("Codex"))
+    );
+}
+
+#[test]
 fn chats_separate_host_sessions_and_do_not_merge_legacy_connections() {
     let dir = tempfile::tempdir().unwrap();
     for (id, session) in [
@@ -250,7 +299,8 @@ fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
     assert_eq!(groups["groups"][0]["title"], "任务 b");
     assert_eq!(groups["groups"][0]["title_id"], "b");
     assert_eq!(groups["groups"][0]["project"], "newer-project");
-    assert_eq!(groups["groups"][0]["label"], "Claude Code");
+    // No record says which app this boss runs in, so neither name is claimed.
+    assert_eq!(groups["groups"][0]["label"], "Claude");
     let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
     assert_eq!(chat["members"].as_array().unwrap().len(), 1);
     assert_eq!(chat["members"][0]["conversation"], "b");

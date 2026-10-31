@@ -208,8 +208,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood="speaking"] .fig:not(.walk) img.part:is(.ear-l, .ear-r) { --tilt: 7deg; animation: ear-wag 0.45s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="done"] .fig:not(.walk) img.part:is(.ear-l, .ear-r) { --tilt: 10deg; animation: ear-wag 0.22s ease-in-out var(--phase, 0s) infinite alternate; }
 @keyframes ear-flick {
-  0%, 74%, 100% { transform: none; } 78% { transform: rotate(calc(var(--dir) * 12deg)); }
-  82% { transform: rotate(calc(var(--dir) * -2deg)); } 86% { transform: rotate(calc(var(--dir) * 8deg)); } 91% { transform: none; }
+  0%, 74%, 91%, 100% { transform: rotate(0deg); } 78% { transform: rotate(calc(var(--dir) * 12deg)); }
+  82% { transform: rotate(calc(var(--dir) * -2deg)); } 86% { transform: rotate(calc(var(--dir) * 8deg)); }
 }
 @keyframes ear-wag { from { transform: rotate(calc(var(--dir) * -0.4 * var(--tilt))); } to { transform: rotate(calc(var(--dir) * var(--tilt))); } }
 /* bat wings sit behind the body and never stop flapping about their roots: an easy beat at rest,
@@ -266,20 +266,35 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @keyframes devil-droop-b { from { transform: rotate(6deg); } to { transform: rotate(9deg); } }
 /* a whale tail sits behind the body and sways about its root: a lazy swish with a flick now and
    then at rest, a quick wag while working, a wider one while speaking, happy slaps when done, barely
-   stirring asleep or sad; walking frames step it with the body. The dragon's and the cat's tails
-   move the same way at half the swing (--gentle) */
+   stirring asleep or sad; walking frames step it with the body. The cat's tail moves the same way at
+   half the swing (--gentle). Past about 8deg outward the whale tail's cut edge shows from behind its
+   hair, so that side swings less (--reach) */
 .fig img.part.tail { z-index: -1; }
-.fig:is([data-char="codex"], [data-char="gemini"]) { --gentle: 0.5; }
+.fig[data-char="gemini"] { --gentle: 0.5; }
+.fig[data-char="deepseek"] { --reach: 0.5; }
 .fig:not(.walk) img.part.tail { --amp: 6deg; rotate: 0deg;
   animation: tail-sway 2.4s ease-in-out var(--phase, 0s) infinite alternate, tail-flick calc(var(--cycle, 7s) * 0.9) ease-out var(--phase, 0s) infinite; }
 [data-mood="working"] .fig:not(.walk) img.part.tail { --amp: 5deg; animation: tail-sway 0.6s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="speaking"] .fig:not(.walk) img.part.tail { --amp: 9deg; animation: tail-sway 0.8s ease-in-out var(--phase, 0s) infinite alternate; }
 [data-mood="done"] .fig:not(.walk) img.part.tail { --amp: 12deg; animation: tail-sway 0.3s ease-in-out var(--phase, 0s) infinite alternate; }
 :is([data-mood="sleep"], [data-mood="failed"]) .fig:not(.walk) img.part.tail { --amp: 2deg; animation: tail-sway 4s ease-in-out var(--phase, 0s) infinite alternate; }
-@keyframes tail-sway { from { rotate: calc(-1 * var(--amp) * var(--gentle, 1)); } to { rotate: calc(var(--amp) * var(--gentle, 1)); } }
+@keyframes tail-sway { from { rotate: calc(-1 * var(--amp) * var(--gentle, 1)); } to { rotate: calc(var(--amp) * var(--gentle, 1) * var(--reach, 1)); } }
 @keyframes tail-flick {
   0%, 80%, 100% { transform: none; } 84% { transform: rotate(calc(-12deg * var(--gentle, 1))); }
-  88% { transform: rotate(calc(7deg * var(--gentle, 1))); } 92% { transform: rotate(calc(-3deg * var(--gentle, 1))); } 96% { transform: none; }
+  88% { transform: rotate(calc(7deg * var(--gentle, 1) * var(--reach, 1))); } 92% { transform: rotate(calc(-3deg * var(--gentle, 1))); } 96% { transform: none; }
+}
+/* the dragon's tail slides along itself like a snake, out and back with a pause at each end: it turns
+   about the centre of its own arc (parts.json), so it follows its own path. Both ends are cut off under
+   the hair and the skirt, and the cuts show past about +5deg and -18deg. Asleep it hardly moves */
+.fig[data-char="codex"]:not(.walk) img.part.tail { --k: 1; rotate: none;
+  animation: tail-slither 3.4s var(--phase, 0s) infinite; }
+[data-mood="working"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.7; animation-duration: 1.2s; }
+[data-mood="speaking"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.85; animation-duration: 1.7s; }
+[data-mood="done"] .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 1; animation-duration: 0.9s; }
+:is([data-mood="sleep"], [data-mood="failed"]) .fig[data-char="codex"]:not(.walk) img.part.tail { --k: 0.25; animation-duration: 7s; }
+@keyframes tail-slither {
+  0%, 10%, 100% { transform: rotate(calc(4deg * var(--k))); animation-timing-function: cubic-bezier(.45, 0, .15, 1); }
+  42%, 56% { transform: rotate(calc(-16deg * var(--k))); animation-timing-function: cubic-bezier(.45, 0, .15, 1); }
 }
 /* lop ears hang soft from their roots: a slow, lazy sway that skews more than it turns, so the tip
    trails like cloth, and now and then an ear lifts a little and drops back under its own weight,

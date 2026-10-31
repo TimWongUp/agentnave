@@ -453,7 +453,7 @@ function advPanel(host) {
     [
       "AGENTNAVE_HOST",
       host.has_host_env
-        ? h("span", {}, `已设置（${host.id}）`)
+        ? h("span", {}, `已设置（${host.boss}）`)
         : h(
             "span.dim",
             {},
@@ -609,7 +609,7 @@ function buildCard(host) {
     h(
       "div.hc-line",
       {},
-      h("span.hc-icon", { "aria-hidden": "true" }, AN.hostTile(id, host.label)),
+      h("span.hc-icon", { "aria-hidden": "true" }, AN.hostTile(host.mark || id, host.label)),
       h("div.hc-id", {},
         h("div.hc-title", {}, h("h3.hc-name", { id: `name-${id}` }, host.label), ...badges),
         subLine(host, word)),

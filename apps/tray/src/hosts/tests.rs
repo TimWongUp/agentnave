@@ -1403,6 +1403,15 @@ fn config_and_skill_backups_are_each_bounded_at_thirty() {
     let (_temp, hosts) = fixture();
     let (app, home) = (&hosts.context.app, &hosts.context.home);
     let path = home.join("config");
+    backup_bytes(
+        app,
+        CONFIG_BACKUP,
+        "codex@/profiles\\work/side",
+        &path,
+        b"nested",
+        home,
+    )
+    .unwrap();
     // A file from before the split counts as a config backup.
     fs::create_dir_all(app.join("backups")).unwrap();
     fs::write(
@@ -1429,7 +1438,7 @@ fn config_and_skill_backups_are_each_bounded_at_thirty() {
     assert_eq!(skills.len(), 30);
     assert_eq!(fs::read_to_string(&skills[0]).unwrap(), "5");
     let configs = backup_paths(app, CONFIG_BACKUP);
-    assert_eq!(configs.len(), 6);
+    assert_eq!(configs.len(), 7);
     assert_eq!(fs::read_to_string(&configs[0]).unwrap(), "legacy");
 }
 
@@ -1785,4 +1794,105 @@ fn zcode_fallback_servers_block_only_a_first_server() {
     )
     .unwrap();
     assert_eq!(zcode_fallback(home, &own), None);
+}
+
+#[test]
+fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
+    let (_temp, mut hosts) = fixture();
+    let home = hosts.context.home.clone();
+    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    executable_file(
+        &hosts.context.search[0].join("codex"),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(&home.join(".codex/auth.json"), "{}");
+    hosts.codex_homes = hosts.other_codex_homes();
+    assert_eq!(hosts.registry().len(), IDS.len());
+
+    let elsewhere = home.join("claude-work");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        elsewhere.display().to_string(),
+    )])));
+    save(&home.join(".codex-work/auth.json"), "{}");
+    save(&home.join(".codex-profiles/side/sessions/x"), "");
+    save(&home.join(".codex-backups/old/archive.tar.gz"), "");
+    hosts.codex_homes = hosts.other_codex_homes();
+    assert_eq!(hosts.registry().len(), IDS.len() + 3);
+    assert_eq!(
+        host(&hosts, "claude").config,
+        elsewhere.join(".claude.json")
+    );
+
+    let nested_id = format!(
+        "codex@{}",
+        Path::new(".codex-profiles").join("side").display()
+    );
+    for (id, boss, config) in [
+        ("claude-desktop", "claude", home.join(".claude.json")),
+        (
+            "codex@.codex-work",
+            "codex",
+            home.join(".codex-work/config.toml"),
+        ),
+        (
+            nested_id.as_str(),
+            "codex",
+            home.join(".codex-profiles/side/config.toml"),
+        ),
+    ] {
+        if id.starts_with("codex@") {
+            save(&config, "model = 'keep'\n");
+        }
+        let row = host(&hosts, id);
+        assert_eq!(row.config, config);
+        let result = hosts.action("connect", &json!({"id":id})).unwrap();
+        assert_eq!(result["ok"], true, "{id}: {result}");
+        assert_eq!(result["host"]["has_host_env"], true, "{id}: {result}");
+        assert_eq!(result["host"]["boss"], boss);
+        let entry = row.read().unwrap().entry.unwrap();
+        assert_eq!(entry["env"]["AGENTNAVE_HOST"], boss);
+    }
+    assert!(host(&hosts, "claude").read().unwrap().entry.is_none());
+
+    let homes = hosts.boss_homes();
+    assert!(homes.claude.contains(&elsewhere) && homes.claude.contains(&home.join(".claude")));
+    assert_eq!(homes.codex.len(), 3);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn claude_desktop_is_found_by_its_folder_without_the_app() {
+    let (_temp, mut hosts) = fixture();
+    let home = hosts.context.home.clone();
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        home.join("claude-work").display().to_string(),
+    )])));
+    assert_eq!(hosts.registry().len(), IDS.len());
+    let config = if cfg!(target_os = "macos") {
+        "Library/Application Support"
+    } else {
+        ".config"
+    };
+    fs::create_dir_all(home.join(config).join("Claude-3p")).unwrap();
+    assert_eq!(hosts.registry().len(), IDS.len() + 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_folders_beside_codex_home_count_once_each() {
+    let (temp, _hosts) = fixture();
+    let base = temp.path().canonicalize().unwrap();
+    let (home, data) = (base.join("home"), base.join("data"));
+    save(&data.join("main/auth.json"), "{}");
+    save(&data.join("codex-work/auth.json"), "{}");
+    save(&data.join("other/auth.json"), "{}");
+    save(&home.join(".codex/auth.json"), "{}");
+    std::os::unix::fs::symlink(data.join("codex-work"), home.join("codex-link")).unwrap();
+    std::os::unix::fs::symlink(data.join("main"), home.join("codex-main")).unwrap();
+    assert_eq!(
+        split::codex_homes(&home, &data.join("main")),
+        [home.join(".codex"), data.join("codex-work")]
+    );
 }

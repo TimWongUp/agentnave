@@ -1,6 +1,6 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use serde_json::{Value, json};
@@ -26,7 +26,6 @@ fn label(host: Option<&str>) -> &str {
     match host {
         Some("codex") => "Codex",
         Some("claude") => "Claude Code",
-        Some("claude-desktop") => "Claude 桌面",
         Some("codebuddy") => "CodeBuddy",
         Some("workbuddy") => "WorkBuddy",
         Some("grok") => "Grok",
@@ -434,7 +433,7 @@ struct Group {
     host: Option<String>,
     handover: Handover,
     /// The boss chats in Claude Desktop's Code tab: shown as its own app, still the `claude` host.
-    desktop: bool,
+    app: Option<&'static str>,
     updated: String,
     at: i64,
     title: String,
@@ -458,6 +457,23 @@ struct Group {
     include_messages: bool,
 }
 
+/// The mark and name of a Claude or Codex boss, by the app its session records name (see
+/// `data::boss_app`); neither name is claimed for a boss whose app is unknown.
+fn boss_name(
+    host: Option<&str>,
+    app: Option<&str>,
+) -> (Option<&'static str>, Option<&'static str>) {
+    use crate::data::boss_app::{CLAUDE_CLI, CLAUDE_DESKTOP, CODEX_CLI, CODEX_DESKTOP};
+    match (host, app) {
+        (Some("claude"), Some(CLAUDE_DESKTOP)) => (Some(CLAUDE_DESKTOP), Some("Claude 桌面")),
+        (Some("claude"), Some(CLAUDE_CLI)) => (None, Some("Claude Code")),
+        (Some("claude"), _) => (None, Some("Claude")),
+        (Some("codex"), Some(CODEX_DESKTOP)) => (Some(CODEX_DESKTOP), Some("Codex 桌面")),
+        (Some("codex"), Some(CODEX_CLI)) => (None, Some("Codex CLI")),
+        _ => (None, None),
+    }
+}
+
 impl Group {
     fn new(id: String) -> Self {
         Self {
@@ -466,7 +482,7 @@ impl Group {
             latest_end: None,
             host: None,
             handover: Handover::default(),
-            desktop: false,
+            app: None,
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
@@ -490,7 +506,7 @@ impl Group {
     fn manager_label(&self) -> &str {
         match self.host.as_deref() {
             None if self.id.starts_with("c-") => "未记录 boss",
-            host => label(host),
+            host => boss_name(host, self.app).1.unwrap_or(label(host)),
         }
     }
 
@@ -499,12 +515,8 @@ impl Group {
             Some(host) if self.handover.changed => (Some(host.as_str()), label(Some(host))),
             _ => (self.host.as_deref(), self.manager_label()),
         };
-        let (app, label) = match host {
-            Some("claude") if self.desktop => {
-                (Some("claude-desktop"), label(Some("claude-desktop")))
-            }
-            _ => (None, name),
-        };
+        let (app, named) = boss_name(host, self.app);
+        let label = named.unwrap_or(name);
         let handover = if self.handover.pending {
             Some("pending")
         } else {
@@ -1229,7 +1241,7 @@ pub(crate) fn respond(
     data_exists: bool,
     limit: usize,
     handovers: &HashMap<String, Handover>,
-    desktop: &HashSet<String>,
+    apps: &HashMap<String, &'static str>,
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let (requested, focus) = match requested {
@@ -1264,7 +1276,7 @@ pub(crate) fn respond(
         if let Some(handover) = handovers.get(&group.id) {
             group.handover = handover.clone();
         }
-        group.desktop = desktop.contains(&group.id);
+        group.app = apps.get(&group.id).copied();
     }
     // Work going on first, then unhandled failures, then the most recent; never empty while history exists.
     let tier = |status: &str| match status {
