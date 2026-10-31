@@ -356,6 +356,22 @@ impl Hosts {
             .as_ref()
             .map(|shell| ToolDirs::resolve(&self.context, shell))
     }
+    /// What a connected host's entry points at, when a versioned install expects another
+    /// launcher. Rewriting someone else's hand-edited entry is worse than saying so.
+    fn launcher_note(&self, host: &Host) -> Value {
+        let Some(expected) = crate::update::active_launcher(&self.context.app) else {
+            return Value::Null;
+        };
+        let current = host.user_layers.iter().find_map(|path| {
+            let document = host.read_at(path).ok()?;
+            host.command(&document.entry?).map(str::to_owned)
+        });
+        let Some(current) = current else {
+            return Value::Null;
+        };
+        let stale = Path::new(&current) != expected;
+        json!({"stale":stale,"expected":expected.to_string_lossy(),"current":current})
+    }
     fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
         let specs = [
@@ -800,7 +816,7 @@ impl Hosts {
         json!({"id":host.id,"boss":host.boss,"mark":host.id.split('@').next(),"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.boss, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
-            "reload_hint":reload_hint(host.id),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
+            "reload_hint":reload_hint(host.id),"launcher":self.launcher_note(host),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})
     }
     /// Only the MCP entries a relay starts from matter. Agents read the Skill from disk on use,
     /// and release numbers do not change what a connection runs.

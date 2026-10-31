@@ -620,6 +620,10 @@ function buildCard(host) {
     main.push(h("p.hc-orphan", {}, `本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`));
   if (host.shadowed_by)
     main.push(h("div.hc-note.info", {}, "项目级配置 ", h("code", {}, shortPath(host.shadowed_by)), " 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。"));
+  if (host.launcher?.stale)
+    main.push(h("div.hc-note.info", {},
+      "配置里的启动器仍是旧的 ", h("code", {}, shortPath(host.launcher.current || "")),
+      "；重新接入会把 command 改为 ", h("code", {}, shortPath(host.launcher.expected || ""))));
   const local = S.localErr.get(id);
   const last = host.last_action;
   if (local) main.push(h("div.hc-note.error", { role: "alert" }, local));
