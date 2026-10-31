@@ -790,6 +790,13 @@ fn find_uv() -> Option<PathBuf> {
         candidates.push(home.join(".local").join("bin").join(name));
         candidates.push(home.join(".cargo").join("bin").join(name));
     }
+    // The winget package links uv here. A desktop app started before that PATH entry existed
+    // inherits a PATH without it, so the install step would claim uv is missing.
+    #[cfg(windows)]
+    if let Some(local) = dirs::data_local_dir() {
+        candidates.push(local.join("Microsoft/WinGet/Links").join(name));
+        candidates.push(local.join("Programs/uv").join(name));
+    }
     candidates.push(PathBuf::from("/opt/homebrew/bin").join(name));
     candidates.push(PathBuf::from("/usr/local/bin").join(name));
     candidates.into_iter().find(|path| path.is_file())

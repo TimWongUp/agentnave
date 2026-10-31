@@ -117,6 +117,30 @@ pub struct Context {
     pub applications: Vec<PathBuf>,
 }
 
+/// Where an installed desktop app lives: `/Applications` and `~/Applications` on macOS, the
+/// per-user program directory and the shared ones on Windows.
+#[cfg(target_os = "macos")]
+fn applications(home: &Path) -> Vec<PathBuf> {
+    vec![PathBuf::from("/Applications"), home.join("Applications")]
+}
+#[cfg(windows)]
+fn applications(_home: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(local) = dirs::data_local_dir() {
+        dirs.push(local.join("Programs"));
+    }
+    for name in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(path) = std::env::var_os(name) {
+            dirs.push(PathBuf::from(path));
+        }
+    }
+    dirs
+}
+#[cfg(not(any(target_os = "macos", windows)))]
+fn applications(_home: &Path) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 impl Context {
     pub fn live(app: PathBuf) -> Self {
         let home = dirs::home_dir().unwrap_or_default();
@@ -133,7 +157,7 @@ impl Context {
             home.join(".volta/bin"),
         ]);
         Self {
-            applications: vec![PathBuf::from("/Applications"), home.join("Applications")],
+            applications: applications(&home),
             project: std::env::current_dir().unwrap_or_else(|_| home.clone()),
             home,
             app,
@@ -554,9 +578,32 @@ impl Hosts {
                 .map(|p| p.join(name))
                 .find(|p| p.is_dir())
         }) {
+        // Windows desktop apps: a CLI bundled in the app, or an install directory the uninstall
+        // entry records, is not on PATH.
+        #[cfg(windows)]
+        if let Some(path) = self.bundle(host.id) {
             return (true, "app", Some(path));
+        }            return (true, "app", Some(path));
         }
         (false, "config", None)
+    }
+    /// The desktop apps install a program directory. Only the ones known to ship an executable
+    /// are listed; adding a guess here would report a host as installed when it is not.
+    #[cfg(windows)]
+    fn bundle(&self, id: &str) -> Option<PathBuf> {
+        let relative = match id {
+            "deepseek" => "DeepSeek Harness/DeepSeek Harness.exe",
+            _ => return None,
+        };
+        self.context
+            .applications
+            .iter()
+            .map(|dir| dir.join(relative))
+            .find(|path| path.is_file())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    fn bundle(&self, _id: &str) -> Option<PathBuf> {
+        None
     }
     fn command_state(&self, host: &Host, entry: &Value) -> &'static str {
         let Some(command) = host.command(entry) else {
