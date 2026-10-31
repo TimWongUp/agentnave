@@ -1824,6 +1824,10 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
         elsewhere.join(".claude.json")
     );
 
+    let nested_id = format!(
+        "codex@{}",
+        Path::new(".codex-profiles").join("side").display()
+    );
     for (id, boss, config) in [
         ("claude-desktop", "claude", home.join(".claude.json")),
         (
@@ -1832,7 +1836,7 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
             home.join(".codex-work/config.toml"),
         ),
         (
-            "codex@.codex-profiles/side",
+            nested_id.as_str(),
             "codex",
             home.join(".codex-profiles/side/config.toml"),
         ),
