@@ -540,7 +540,11 @@ def test_unreceived_lists_a_seat_blocker_until_a_wait_reports_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: Path) -> None:
+@pytest.mark.parametrize("failed_first", [False, True])
+async def test_review_receipt_does_not_wait_for_the_next_serial_seat(
+    tmp_path: Path, failed_first: bool
+) -> None:
+    seats = ["lost", "a", "b"] if failed_first else ["a", "b"]
     async with Client(mcp) as client:
         show = await _open(
             client,
@@ -548,19 +552,24 @@ async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: P
                 "title": "Serial",
                 "cwd": str(tmp_path),
                 "review": True,
-                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+                "seats": [{"id": seat, "provider": "claude"} for seat in seats],
             },
         )
         started = await _run(
             client,
             {
                 "group_id": show["group_id"],
-                "seats": ["a", "b"],
+                "seats": seats,
+                "instructions": {"lost": "FAIL_TASK"} if failed_first else {},
                 "order": "serial",
                 "prompt": "go",
             },
         )
-        assert (await _wait(client, started["round_id"]))["reason"] == "review_needed"
+        reviewed = await _wait(client, started["round_id"])
+        if reviewed["reason"] == "execution_blocked":
+            reviewed = await _wait(client, started["round_id"])
+        assert reviewed["reason"] == "review_needed"
+        assert next(run for run in _seats(reviewed) if run["seat_id"] == "a")["output"]
         first = await asyncio.wait_for(
             _call(
                 client,
@@ -582,7 +591,8 @@ async def test_review_receipt_does_not_wait_for_the_next_serial_seat(tmp_path: P
                 "decisions": {"b": "private"},
             },
         )
-        assert last["status"] == "finished" and last["committed"] == ["a"]
+        assert last["status"] == "finished"
+        assert last["committed"] == (["lost", "a"] if failed_first else ["a"])
         # The receipt is sufficient to post again immediately.
         await _call(client, "run_round", {"group_id": show["group_id"], "prompt": "next"})
 
@@ -2856,7 +2866,7 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
             {
                 "title": "Retry",
                 "cwd": str(tmp_path),
-                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b", "c")],
             },
         )
         group_id = show["group_id"]
@@ -2865,9 +2875,9 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
                 client,
                 {
                     "group_id": group_id,
-                    "seats": ["a", "b"],
+                    "seats": ["a", "b", "c"],
                     "prompt": "q",
-                    "instructions": {"a": "FAIL_ONCE", "b": "SLEEP"},
+                    "instructions": {"a": "FAIL_ONCE", "c": "SLEEP"},
                 },
             )
         )["round_id"]
@@ -2881,8 +2891,14 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
         again = await _call(client, "wait", {"ids": [round_id], "wait_seconds": 0})
         assert again["reason"] == "wait_elapsed"
 
+        for _ in range(500):
+            if _state(data_root, group_id)["rounds"][0]["seats"][1]["status"] == "succeeded":
+                break
+            await asyncio.sleep(0.02)
+        assert _state(data_root, group_id)["rounds"][0]["seats"][1]["status"] == "succeeded"
         retried = await _run(client, {"group_id": group_id, "retry_seats": ["a"]})
         assert retried["round_id"] == round_id and retried["round"] == 1
+        assert all("output" not in run for run in _seats(retried))
         seat = _state(data_root, group_id)["rounds"][0]["seats"][0]
         for _ in range(500):
             if seat["status"] != "running":
@@ -2892,16 +2908,18 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
         assert seat["status"] == "succeeded" and seat["finished"] and not seat["error"]
         assert not [e for e in _state(data_root, group_id)["entries"] if e["kind"] == "answer"]
 
-        await _cancel(client, _seats(woken)[1]["invocation_id"])
+        await _cancel(client, _seats(woken)[2]["invocation_id"])
         ended = await _wait(client, round_id)
         assert ended["status"] == "finished"
+        assert _seats(ended)[1]["output"]
         assert "FAIL_ONCE" in str(_seen(_seats(ended)[0])["prompt"])
         saved = _state(data_root, group_id)
         assert saved["sessions"]["a"]["session_id"]
         assert [(e["round"], e["kind"], e["seat"]) for e in saved["entries"]] == [
             (1, "task", None),
             (1, "answer", "a"),
-            (1, "absent", "b"),
+            (1, "answer", "b"),
+            (1, "absent", "c"),
         ]
 
 

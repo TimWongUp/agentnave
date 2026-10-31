@@ -1056,6 +1056,9 @@ async def wait(
         if not elapsed and handle not in ready_rounds:
             continue
         round_, reason = ready_rounds.get(handle) or (conversations.round(handle), None)
+        reviews = _review_map(conversations, round_)
+        if reason == "seat_lost" and "pending" in reviews.values():
+            reason = "review_needed"  # the round reached review after the lost-seat wake
         if round_.finished and not elapsed:
             # One ending just after the window closed is delivered by the next wait as ready.
             conversations.delivered_rounds.add(handle)
@@ -1065,10 +1068,10 @@ async def wait(
                 manager,
                 reason or "wait_elapsed",
                 include_output=include_output,
-                include_running_output=include_running_output,
+                include_running_output=include_running_output and reason != "seat_lost",
                 # A round that ended right after seat_lost woke this wait is delivered in full.
                 deliver=not elapsed and (round_.finished or reason != "seat_lost"),
-                reviews=_review_map(conversations, round_),
+                reviews=reviews,
                 entries=conversations.committed_entries(round_.group.id, round_.number),
             )
         )
@@ -1389,6 +1392,8 @@ def _add_started(
         round_,
         conversations.manager,
         "started",
+        deliver=False,
+        include_running_output=False,
         reviews=_review_map(conversations, round_),
         entries=conversations.committed_entries(round_.group.id, round_.number),
     )

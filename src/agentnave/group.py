@@ -152,7 +152,12 @@ class Round:
     def unreported_lost(self) -> list[SeatRun]:
         """Seats lost while others still work and no wait has said so. Once the others have
         ended too, the round's own end reports them."""
-        if self.cancelling or not any(run.status in ("running", "pending") for run in self.runs):
+        if (
+            self.order != "parallel"
+            or self.settled
+            or self.cancelling
+            or not any(run.status in ("running", "pending") for run in self.runs)
+        ):
             return []
         return [run for run in self.runs if run.status in _LOST and not run.reported_lost]
 
