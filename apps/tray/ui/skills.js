@@ -30,7 +30,7 @@ function chip(skill, host) {
   const b = h("button.skill-chip", {
     type: "button", "data-focus-key": key, "aria-pressed": String(on), title: why(host, state),
     disabled: blocked || S.busy.has(key),
-  }, AN.hostTile ? AN.hostTile(host.id, host.label) : null, host.label,
+  }, AN.hostTile ? AN.hostTile(host.mark || host.id, host.label) : null, host.label,
     on && state.state !== "app" && h("small", {}, "待接入"));
   b.addEventListener("click", async () => {
     S.busy.add(key);

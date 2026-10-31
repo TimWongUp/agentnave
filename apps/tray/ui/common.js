@@ -285,12 +285,13 @@
     return fig;
   }
   const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
-  // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. Mono marks sit on a dark tile.
-  const CLI_MARK = { claude: "", "claude-desktop": "", codex: "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "mono", zcode: "mono" };
+  // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. The value is its tile, if any;
+  // a desktop app's mark takes the colours of its app icon.
+  const CLI_MARK = { claude: "", "claude-desktop": "claude-tile", codex: "", "codex-desktop": "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "", zcode: "mono" };
   function cliMark(provider) {
     if (provider && window.Avatars?.custom("host", provider, "")) return Avatars.create("host", provider, "");
     if (!Object.hasOwn(CLI_MARK, provider)) return null;
-    return h(`span.avatar.cli-mark${CLI_MARK[provider] ? ".mono" : ""}`, { "aria-hidden": "true" },
+    return h(`span.avatar.cli-mark${CLI_MARK[provider] ? `.${CLI_MARK[provider]}` : ""}`, { "aria-hidden": "true" },
       h("img", { src: artUrl(`cli/${provider}.svg`), alt: "", draggable: "false" }));
   }
   // The laptop lid shows the CLI the desk runs in; the figure at it is the model.
@@ -298,8 +299,8 @@
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
   const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", zcode: "ZCode" };
   const cliName = (provider) => CLI[provider] || provider || "";
-  // The boss tile and CLI badges show the CLI's mark, or its initial. A boss in Claude Desktop's Code tab
-  // keeps the claude host and passes its app, claude-desktop, for the mark.
+  // The boss tile and CLI badges show the CLI's mark, or its initial. A boss in a desktop app keeps the
+  // claude or codex host and passes its app, claude-desktop or codex-desktop, for the mark.
   const hostTile = (host, label) => cliMark(host) || h("span.host-letter", {}, (label || cliName(host) || "?").slice(0, 1));
   // Model names drop the routing prefix ("opencode-go/deepseek-v4.1-flash" -> "deepseek-v4.1-flash")
   // unless the user chose full names in Settings; shared by every window through localStorage.
