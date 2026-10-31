@@ -24,4 +24,4 @@ Claude 和 Codex 都有桌面端和单独的 CLI。用户要在工作区里分�
 - 未传原生会话 ID 的旧工作区，对话记录也已不在时，永远无法判断。
 - 桌面端也能在自己的设置里改 `CLAUDE_CONFIG_DIR`，App 读不到这项设置；此时接入页以为它还在默认目录。
 - 桌面端丢弃 `CLAUDE_CONFIG_DIR` 来自 macOS 版 Claude 2026-10 的代码，继承 shell 变量是在 macOS 版 Codex 上比较其他变量得出的，Windows、Linux 未实测。`codex-tui` 只在 Codex 0.161.0 实测。
-- Claude 桌面端的聊天模式读 `claude_desktop_config.json`，配置不共用，按本决定应单独成行；它是新的宿主，要经真实调用验收，不在本决定内落地。
+- Claude 桌面端的聊天模式读 `claude_desktop_config.json`，用户决定不把它接成宿主，接入页不为它分行。
