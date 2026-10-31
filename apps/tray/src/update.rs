@@ -865,6 +865,18 @@ fn active_entry(app_data: &Path) -> Option<(String, PathBuf)> {
 }
 
 /// The version the active manifest records, when its entry still exists.
+/// The active version's tool environment, when the versioned install is complete. Callers that
+/// report a service version must read this, not the legacy shared directory.
+pub(crate) fn active_tools(app_data: &Path) -> Option<PathBuf> {
+    active_entry(app_data).map(|(version, _)| {
+        app_data
+            .join("service")
+            .join(version)
+            .join("tools")
+            .join("agentnave")
+    })
+}
+
 pub(crate) fn active_version(app_data: &Path) -> Option<String> {
     active_entry(app_data).map(|(version, _)| version)
 }

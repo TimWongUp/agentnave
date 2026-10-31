@@ -369,7 +369,7 @@ impl Hosts {
         let Some(current) = current else {
             return Value::Null;
         };
-        let stale = Path::new(&current) != expected;
+        let stale = !same_path(&current, &expected);
         json!({"stale":stale,"expected":expected.to_string_lossy(),"current":current})
     }
     fn registry(&self) -> Vec<Host> {
@@ -890,7 +890,8 @@ impl Hosts {
                 (age <= 20).then_some(value)
             })
             .collect();
-        let env = self.tool_dirs().map(|dirs| dirs.tools.join("agentnave"));
+        let env = crate::update::active_tools(&self.context.app)
+            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")));
         let installed = env.as_deref().and_then(crate::update::installed_version);
         let installed_at = env.as_deref().and_then(crate::update::installed_since);
         // A relay swaps to a new install within seconds once idle; much later it is stuck.
@@ -1101,9 +1102,10 @@ impl Hosts {
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {
-        let version = self
-            .tool_dirs()
-            .and_then(|dirs| crate::update::installed_version(&dirs.tools.join("agentnave")));
+        let version = crate::update::active_tools(&self.context.app)
+            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")))
+            .as_deref()
+            .and_then(crate::update::installed_version);
         json!({"installed":self.launcher().is_some(),"version":version,"command":crate::update::service_command()})
     }
     pub fn refresh(&mut self) -> Value {
@@ -1180,10 +1182,14 @@ impl Hosts {
                                 .as_object_mut()
                                 .ok_or("takeover_failed:env 必须为对象")?
                                 .insert("AGENTNAVE_HOST".into(), json!(host.boss));
-                            if let Some(command) = layer.command(desired)
+                            // A missing launcher is repointed, and so is an older version of our
+                            // own: after a versioned install the old directory still exists, so
+                            // "present" alone would leave every host on the previous service.
+                            if let Some(path) = self.launcher()
+                                && let Some(command) = layer.command(desired)
                                 && entry_kind(command) == "agentnave"
-                                && self.command_state(&layer, desired) == "missing"
-                                && let Some(path) = self.launcher()
+                                && (self.command_state(&layer, desired) == "missing"
+                                    || (own_launcher(command) && !same_path(command, &path)))
                             {
                                 layer.set_command(desired, &path);
                             }
@@ -1671,6 +1677,26 @@ fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
         .as_object()
         .is_some_and(|servers| !servers.is_empty())
         .then_some(path)
+}
+/// Compare two launcher paths the way the platform does: Windows paths differ in case and
+/// separator spelling but name the same file, so a case-only mismatch must not read as "stale".
+/// A command that names one of this app's launchers, whatever version directory it lives in.
+fn own_launcher(command: &str) -> bool {
+    let value = command.replace('\\', "/");
+    value.contains("/agentnave-mcp")
+        && (value.contains("/service/") || value.contains("/tools/agentnave/"))
+}
+fn same_path(left: &str, right: &Path) -> bool {
+    let normalize = |value: &str| {
+        let value = value.replace('\\', "/");
+        let value = value.strip_prefix("//?/").unwrap_or(&value).to_owned();
+        if cfg!(windows) {
+            value.to_lowercase()
+        } else {
+            value
+        }
+    };
+    normalize(left) == normalize(&right.to_string_lossy())
 }
 fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)
