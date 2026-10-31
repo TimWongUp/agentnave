@@ -60,7 +60,10 @@ def command() -> tuple[list[str], dict[str, str]]:
 
 
 def emit(event: dict[str, Any]) -> None:
-    print(json.dumps(event, ensure_ascii=False), flush=True)
+    # `print` writes through the Windows locale codec (cp936 here), which turns a Chinese
+    # answer into replacement characters. Every other adapter writes UTF-8 bytes; do the same.
+    sys.stdout.buffer.write(json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
 
 
 class Connection:
@@ -274,7 +277,7 @@ def run(request: dict[str, Any]) -> int:
 
 def main() -> None:
     try:
-        code = run(json.load(sys.stdin))
+        code = run(json.loads(sys.stdin.buffer.read().decode("utf-8")))
     except (OSError, ValueError, RuntimeError) as exc:
         emit({"type": "error", "message": str(exc)})
         code = 1
