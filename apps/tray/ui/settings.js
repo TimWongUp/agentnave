@@ -88,7 +88,7 @@ let currentDoc = {
   modes: {},
 };
 let detected = {};
-let currentTab = "members"; // "members" | "skills" | "avatars" | "orchestration" | "hosts"
+let currentTab = "members"; // "members" | "avatars" | "advanced" | "hosts" | "about"
 let dirty = false;
 let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
 let savedVersion = 0;
@@ -480,8 +480,8 @@ function markSaved(snapshot = JSON.stringify(currentDoc)) {
 // Unsaved means the document differs from the saved one, or an edit left an option draft
 // that cannot be written yet.
 function refreshDirty() {
-  dirty = docVersion !== savedVersion &&
-    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0);
+  dirty = limitChanged() || (docVersion !== savedVersion &&
+    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0));
 }
 
 function incDocVersion() {
@@ -597,14 +597,24 @@ function configurationErrors() {
       if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
     }
   }
+  // A chosen default model runs at a chosen level; only one left to the CLI may go without.
+  for (const scene of SCENE_IDS) {
+    for (const provider of PROVIDERS) {
+      const current = slot(scene, provider);
+      if (current.model && !current.effort && effortLevels(provider, current.model).length > 1) {
+        add(provider, current.model, SCENES[scene], "要选一个思考档位");
+      }
+    }
+  }
   return errors;
 }
 
 function updateControls() {
   $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
   $("members-badge").hidden = !dirty;
-  if (!dirty && !busy) leaveTarget = null;
+  if (!unsaved() && !busy) leaveTarget = null;
   renderLeaveConfirm();
+  renderAdvancedBar();
 
   const emptyRestricted = emptyScene();
   const errors = configurationErrors();
@@ -653,27 +663,12 @@ function updateControls() {
   }
 }
 
-// Switch tabs
-function setTab(tab) {
-  if (tab === "updates") tab = "about"; // Preserve old update links.
-  // Status lines belong to the tab that produced them.
-  if (currentTab !== tab) showNotice("");
-  currentTab = tab;
-  for (const id of ["hosts", "members", "skills", "avatars", "orchestration", "about"]) {
-    if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
-    else $("nav-" + id).removeAttribute("aria-current");
-    $("pane-" + id).hidden = tab !== id;
-  }
-  if (tab === "about") loadStatus().then(checkIfStale);
-  if (tab === "skills") window.AgentNaveSkills?.load();
-  if (tab === "orchestration") {
-    loadOrchestration();
-    loadLimit();
-  }
-}
-
-// The running limit lives in settings.json, read by the service before each start.
+// The running limit: settings.json, read by the service before each start. Saved with 员工; its
+// draft is the menu itself.
 let limitDoc = null;
+const limitSaved = () => limitDoc?.max_running ?? 8;
+const limitChanged = () => Boolean($("max-running").options.length) && Number($("max-running").value) !== limitSaved();
+
 async function loadLimit() {
   if (!$("max-running").options.length) {
     for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? "8（默认）" : String(n)));
@@ -683,202 +678,48 @@ async function loadLimit() {
     const response = await fetch("/app/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(`读取失败（${response.status}）`);
     const data = await response.json();
+    const keep = limitChanged();
     limitDoc = data.settings;
-    $("max-running").value = String(data.settings.max_running);
+    if (!keep) $("max-running").value = String(data.settings.max_running);
     if (data.error) showNotice(`${data.error}；保存会用当前值覆盖`, true);
   } catch (error) {
-    showNotice(`无法读取同时运行上限：${error.message}`, true);
+    showNotice(`无法读取同时工作的员工上限：${error.message}`, true);
   }
+  refreshDirty();
+  updateControls();
 }
 
 async function saveLimit() {
   const value = Number($("max-running").value);
-  if (!Number.isInteger(value) || value < 1 || value > 32) {
-    showNotice("同时运行上限必须为 1–32 的整数", true);
-    return;
-  }
-  const button = $("save-limit");
-  button.disabled = true;
-  try {
-    const response = await fetch("/app/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || `保存失败（${response.status}）`);
-    limitDoc = { version: 1, max_running: value };
-    showNotice(`已保存：同时最多运行 ${value} 个`);
-  } catch (error) {
-    showNotice(`未能保存：${error.message}`, true);
-  } finally {
-    button.disabled = false;
-  }
+  const response = await fetch("/app/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+    body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || `同时工作的员工上限保存失败（${response.status}）`);
+  limitDoc = { version: 1, max_running: value };
 }
 
-// Orchestration lives in orchestration.json: a preset (or the user's own text) the App writes
-// into the connected boss apps' global rules, and the Explorer and Worker seats boss reads from
-// list_members. The rules files are listed one row per file with every app that reads it.
-const ORCHESTRATION_EFFECTS = {
-  off: "不写入全局规则，boss 按自己的习惯派发。",
-  split: "写入已接入应用的全局规则：boss 未被点名也会把探索、规划、评审交给 Explorer，实现交给 Worker，会用到它们的额度。",
-  parallel: "在分工协作之外，互不依赖的步骤会同时派给多个 Worker，实现后再换一个 Explorer 复核，额度用得更多。",
-  custom: "写入你自己的规则，起始内容是选自定义前的档位。",
-};
-const ORCHESTRATION_ROLES = [
-  ["explorer", "easy", "Explorer · 简单", "只读：探索、规划、评审"],
-  ["explorer", "hard", "Explorer · 困难", "只读：探索、规划、评审"],
-  ["worker", "easy", "Worker · 简单", "可写：实现"],
-  ["worker", "hard", "Worker · 困难", "可写：实现"],
-];
-let orchestration = null; // { document, error, presets, files } from GET /app/orchestration.
-const mockOrchestration = {
-  document: { version: 1, preset: "split" },
-  error: null,
-  presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行复核的规则" },
-  files: [
-    { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
-    { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },
-  ],
-};
+const unsaved = () => dirty || advancedChanges().length > 0;
 
-async function loadOrchestration() {
-  try {
-    if (isMock) orchestration = JSON.parse(JSON.stringify(mockOrchestration));
-    else {
-      const response = await fetch("/app/orchestration", { cache: "no-store" });
-      if (!response.ok) throw new Error(`读取失败（${response.status}）`);
-      orchestration = await response.json();
-    }
-    if (orchestration.error) showNotice(`${orchestration.error}；请先修复或删除这个文件`, true);
-    $("custom-text").value = orchestration.document.custom ?? "";
-  } catch (error) {
-    orchestration = null;
-    showNotice(`无法读取编排设置：${error.message}`, true);
+// Switch tabs
+function setTab(tab) {
+  if (tab === "updates") tab = "about"; // Preserve old update links.
+  // Status lines belong to the tab that produced them.
+  if (currentTab !== tab) showNotice("");
+  currentTab = tab;
+  for (const id of ["hosts", "members", "avatars", "advanced", "about"]) {
+    if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
+    else $("nav-" + id).removeAttribute("aria-current");
+    $("pane-" + id).hidden = tab !== id;
   }
-  renderOrchestration();
-}
-
-async function saveOrchestration(document, done) {
-  if (!orchestration || orchestration.error) return;
-  if (busy) {
-    showNotice("正在保存，请稍后再选", true);
-    return renderOrchestration();
-  }
-  busy = true;
-  updateControls();
-  $("save-custom").disabled = true;
-  try {
-    let data = { files: orchestration.files, failures: [] };
-    if (!isMock) {
-      const response = await fetch("/app/orchestration", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-        body: JSON.stringify(document),
-      });
-      data = await response.json().catch(() => ({}));
-      if (!response.ok || data.error) throw new Error(data.error || `保存失败（${response.status}）`);
-    }
-    orchestration.document = document;
-    orchestration.files = data.files;
-    const failed = data.failures || [];
-    if (failed.length) showNotice(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, true);
-    else showNotice(done);
-  } catch (error) {
-    showNotice(`编排设置保存失败：${error.message}`, true);
-  } finally {
-    busy = false;
-    updateControls();
-  }
-  renderOrchestration();
-}
-
-function pickPreset(preset) {
-  const document = { ...orchestration.document, preset };
-  // The editor starts from the preset the user leaves, and keeps its text once written; what it
-  // shows is always what gets written.
-  if (preset === "custom") {
-    const from = orchestration.document.preset;
-    if (!document.custom?.trim()) document.custom = orchestration.presets[from === "off" ? "split" : from];
-    $("custom-text").value = document.custom;
-  }
-  saveOrchestration(document, preset === "off" ? "已关闭编排，已从全局规则中移除" : "已保存，并写入已接入应用的全局规则");
-}
-
-function saveCustom() {
-  if (!$("custom-text").value.trim()) return showNotice("自定义规则不能为空；不想写入时选「关闭」", true);
-  saveOrchestration({ ...orchestration.document, preset: "custom", custom: $("custom-text").value }, "自定义规则已保存并写入");
-}
-
-async function setOrchestrationSeat(role, difficulty, seat) {
-  const seats = { ...(orchestration.document[role] || {}) };
-  if (seat) seats[difficulty] = seat;
-  else delete seats[difficulty];
-  const document = { ...orchestration.document, [role]: seats };
-  if (!Object.keys(seats).length) delete document[role];
-  if (seat && !(await listSeatModel(seat))) return renderOrchestration();
-  saveOrchestration(document, "已保存");
-}
-
-function renderOrchestration() {
-  const preset = orchestration?.document.preset || "off";
-  for (const button of $("orchestration-presets").querySelectorAll("button")) {
-    const active = button.dataset.preset === preset;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-checked", String(active));
-    button.disabled = !orchestration || Boolean(orchestration.error);
-  }
-  $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
-  const text = orchestration?.presets[preset];
-  $("orchestration-text").hidden = !text;
-  $("orchestration-text").textContent = text || "";
-  $("orchestration-custom").hidden = preset !== "custom";
-  $("save-custom").disabled = busy || preset !== "custom";
-  const roles = $("orchestration-roles");
-  roles.hidden = preset === "off";
-  if (!roles.hidden) {
-    const focusKey = document.activeElement?.dataset?.focusKey;
-    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
-      const seat = orchestration.document[role]?.[difficulty];
-      return el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next)));
-    }));
-    if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
-  }
-  renderRuleFiles();
-}
-
-function renderRuleFiles() {
-  const list = $("rule-files");
-  if (!orchestration) return list.replaceChildren();
-  const on = orchestration.document.preset !== "off";
-  list.replaceChildren(...orchestration.files.map((file) => {
-    const state = !on || !file.target ? null
-      : file.current ? ["written", "已写入"]
-        : file.blocked ? ["failed", "经过符号链接，无法写入"] : ["failed", "未写入"];
-    return el("li", {},
-      el("span", { className: "rule-label" }, file.readers.join("、")),
-      el("code", {}, file.path),
-      state && el("span", { className: `rule-state ${state[0]}` }, state[1]),
-      file.exists
-        ? el("button", { type: "button", onClick: () => openRuleFile(file) }, "打开")
-        : el("span", { className: "rule-missing" }, "未找到"));
-  }));
-}
-
-async function openRuleFile(file) {
-  try {
-    const response = await fetch("/app/rules/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ path: file.path }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || `打开失败（${response.status}）`);
-    showNotice(data.message);
-  } catch (error) {
-    showNotice(error.message, true);
+  if (tab === "about") loadStatus().then(checkIfStale);
+  if (tab === "members") loadLimit();
+  if (tab === "advanced") {
+    window.AgentNaveSkills?.load();
+    loadOrchestration();
+    loadLimit();
   }
 }
 
@@ -945,6 +786,16 @@ function effortLevels(provider, modelId) {
     return index < 0 ? EFFORT_ORDER.length : index;
   };
   return [...levels].sort((a, b) => rank(a) - rank(b));
+}
+
+// The level a chosen model is saved with: the one wanted when it has it, else the CLI's current
+// one, else its only one; "" when it has no levels or none can be told, so the user picks.
+function savedEffort(provider, modelId, wanted) {
+  const levels = modelId ? effortLevels(provider, modelId) : [];
+  if (levels.includes(wanted)) return wanted;
+  const cli = cliEffort(provider, modelId);
+  if (levels.includes(cli)) return cli;
+  return levels.length === 1 ? levels[0] : "";
 }
 
 function getAllModelIds(provider) {
@@ -1162,7 +1013,7 @@ function slotRows(provider, scene, split) {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
         "aria-label": "默认模型",
-        onChange: (e) => pick({ enabled: true, model: e.target.value === native.model ? "" : e.target.value }),
+        onChange: (e) => pick({ enabled: true, model: e.target.value, effort: savedEffort(provider, e.target.value || native.model, "") }),
       }, el("option", { value: OFF, selected: true }, "不用"),
       ...(native.model ? [] : [el("option", { value: "" }, "CLI 自己决定")]),
       ...all.map((m) => el("option", { value: m }, m === native.model ? `${m}（CLI 当前设置）` : m))), el("span", { className: "member-reset-slot" })))];
@@ -1184,7 +1035,8 @@ function slotRows(provider, scene, split) {
       onChange: (e) => {
         const value = e.target.value;
         if (value === OFF) return off();
-        pick({ model: value === native.model && !current.allowed ? "" : value, effort: sceneEffort(scene || "task", provider, value || native.model) });
+        const id = value || native.model;
+        pick({ model: value, effort: savedEffort(provider, id, sceneEffort(scene || "task", provider, id)) });
       },
     }, ...options),
     current.model && native.model && current.model !== native.model
@@ -1194,7 +1046,7 @@ function slotRows(provider, scene, split) {
         dataset: { focusKey: `${key}/model-reset` },
         title: `改回 CLI 当前设置（${native.model}）`,
         "aria-label": "改回 CLI 当前设置",
-        onClick: () => pick({ model: "", effort: sceneEffort(scene || "task", provider, native.model) }),
+        onClick: () => pick({ model: native.model, effort: savedEffort(provider, native.model, sceneEffort(scene || "task", provider, native.model)) }),
       }, "↺")
       : el("span", { className: "member-reset-slot" }));
 
@@ -1217,9 +1069,9 @@ function slotRows(provider, scene, split) {
           "aria-checked": String(level === shown),
           title: level === cli ? "CLI 当前设置" : null,
           dataset: { focusKey: `${key}/effort/${level}` },
-          onClick: () => pick({ effort: level === cli ? "" : level }),
+          onClick: () => pick({ effort: level }),
         }, level))),
-      !shown ? el("span", { className: "member-muted" }, "CLI 自己决定")
+      !shown ? el("span", { className: "member-muted" }, "选一个档位")
         : current.effort && cli && levels.includes(cli) && current.effort !== cli
           ? el("button", {
             type: "button",
@@ -1227,7 +1079,7 @@ function slotRows(provider, scene, split) {
             dataset: { focusKey: `${key}/effort-reset` },
             title: `改回 CLI 当前设置（${cli}）`,
             "aria-label": "改回 CLI 当前设置",
-            onClick: () => pick({ effort: "" }),
+            onClick: () => pick({ effort: cli }),
           }, "↺")
           : null);
   }
@@ -1367,142 +1219,6 @@ function renderCards() {
 }
 
 // Save members.json with race version checking
-// agentnave-review roles, in the order the Skill grades them; saved in members.json `review`.
-const REVIEW_ROLES = [
-  ["correctness-reviewer", "正确性", "每次评审必派：行为、回归、边界"],
-  ["architecture-reviewer", "架构", "职责、耦合、公开接口"],
-  ["security-reviewer", "安全", "信任边界、授权、数据流"],
-  ["performance-reviewer", "性能", "热路径、规模、资源"],
-  ["test-reliability-reviewer", "测试可靠性", "测试能否护住行为"],
-  ["simplicity-reviewer", "简化", "多余的复杂度"],
-  ["specialist-reviewer", "专项", "其他明确的专业领域"],
-  ["adversarial-verifier", "反证", "高风险改动修完后尝试推翻结论"],
-];
-
-// A picked model missing from that CLI's configured models is added to the last saved
-// members.json, where the server looks for it; unsaved 员工 edits stay unsaved.
-async function listSeatModel(seat) {
-  const add = (doc) => {
-    doc.clis ||= {};
-    doc.clis[seat.provider] ||= { models: {} };
-    doc.clis[seat.provider].models ||= {};
-    doc.clis[seat.provider].models[seat.model] ||= {};
-    return doc;
-  };
-  // Until 员工 is read there is nothing to add to: an empty document would replace the file.
-  if (!savedSnapshot && !documentError) {
-    showNotice("员工配置还在读取，请稍后再选", true);
-    return false;
-  }
-  const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
-  if (Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model)) return true;
-  if (documentError) {
-    showNotice("配置文件有错误，请先在“员工”里修复", true);
-    return false;
-  }
-  if (busy) {
-    showNotice("正在保存，请稍后再选", true);
-    return false;
-  }
-  busy = true;
-  updateControls();
-  try {
-    await apiPostMembers(add(saved));
-    savedSnapshot = JSON.stringify(saved);
-    add(currentDoc);
-    refreshDirty();
-    return true;
-  } catch (err) {
-    showNotice(`无法把 ${seat.model} 加入员工：${err.message}`, true);
-    return false;
-  } finally {
-    busy = false;
-    updateControls();
-  }
-}
-
-// Seats save on their own to review.json.
-async function setReviewSeat(role, seat) {
-  if (reviewError) return showNotice(`${reviewError}；请先修复或删除这个文件`, true);
-  // One write at a time: a write built on a stale saved document would undo the other one.
-  if (busy) {
-    showNotice("正在保存，请稍后再选", true);
-    return renderReviewSeats();
-  }
-  const seats = { ...reviewSeats };
-  if (seat) seats[role] = seat;
-  else delete seats[role];
-  if (seat && !(await listSeatModel(seat))) return renderReviewSeats();
-  busy = true;
-  updateControls();
-  try {
-    await apiPostReview({ version: 1, seats });
-    reviewSeats = seats;
-    reviewSaves += 1;
-    showNotice("评审工位已保存");
-  } catch (err) {
-    showNotice(`评审工位保存失败: ${err.message}`, true);
-  } finally {
-    busy = false;
-    updateControls();
-  }
-  renderReviewSeats();
-}
-
-function reviewSelect(key, label, value, options, onPick, disabled = false) {
-  return el("select", {
-    dataset: { focusKey: key }, "aria-label": label, disabled,
-    onChange: (e) => onPick(e.target.value),
-  }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
-}
-
-// A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-function seatSelects(key, name, seat, onSet) {
-  const provider = seat?.provider || "";
-  const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
-    .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : "（没有可选模型）"), !getAllModelIds(p).length && p !== provider]);
-  const models = provider ? getAllModelIds(provider) : [];
-  if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
-  const levels = seat?.model ? effortLevels(provider, seat.model) : [];
-  if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
-  const pickCli = (next) => {
-    if (!next) return onSet(null);
-    const ids = getAllModelIds(next);
-    const preferred = slot("task", next).model || nativeDefault(next).model;
-    const model = ids.includes(preferred) ? preferred : ids[0];
-    onSet({ provider: next, model });
-  };
-  const pickModel = (model) => onSet({ provider, model });
-  const pickEffort = (effort) => onSet(effort ? { ...seat, effort } : { provider, model: seat.model });
-  return [
-    reviewSelect(`${key}/cli`, `${name}的 CLI`, provider, [["", "自动"], ...clis], pickCli),
-    reviewSelect(`${key}/model`, `${name}的模型`, seat?.model || "",
-      seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
-    reviewSelect(`${key}/effort`, `${name}的思考档位`, seat?.effort || "",
-      seat ? [["", "员工默认档位"], ...levels.map((l) => [l, l])] : [["", "—"]], pickEffort, !seat || !levels.length),
-  ];
-}
-
-// One row per role.
-function renderReviewSeats() {
-  const box = $("review-seats");
-  if (!box) return;
-  const focusKey = document.activeElement?.dataset?.focusKey;
-  const rows = REVIEW_ROLES.map(([role, name, hint]) => {
-    const seat = reviewSeats[role];
-    const provider = seat?.provider || "";
-    // A restricted private-task list that leaves this seat out makes the server report it unavailable.
-    const task = currentDoc.modes?.task;
-    const listed = !seat || !task || (task[provider] && (!task[provider].models?.length || task[provider].models.includes(seat.model)));
-    return el("div", { className: "review-row" },
-      el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint),
-        !listed && el("small", { className: "review-warn" }, "单独干活的名单没有选中这个模型，评审时会改找其他 CLI")),
-      ...seatSelects(role, `${name}评审`, seat, (next) => setReviewSeat(role, next)));
-  });
-  box.replaceChildren(...rows);
-  if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
-}
-
 async function saveMembers() {
   if (busy || !dirty || documentError || emptyScene()) return;
   const errors = configurationErrors();
@@ -1520,8 +1236,11 @@ async function saveMembers() {
   const saving = JSON.stringify(currentDoc);
 
   try {
-    await apiPostMembers(JSON.parse(saving));
-    savedSnapshot = saving;
+    if (saving !== savedSnapshot) {
+      await apiPostMembers(JSON.parse(saving));
+      savedSnapshot = saving;
+    }
+    if (limitChanged()) await saveLimit();
     refreshDirty();
     feedback.textContent = "设置已保存 · 参数是否有效以 boss 读取时的校验为准";
     feedback.className = "save-feedback success";
@@ -1530,6 +1249,7 @@ async function saveMembers() {
     feedback.textContent = `保存失败: ${err.message}`;
     feedback.className = "save-feedback error";
     showNotice(err.message, true);
+    refreshDirty();
   } finally {
     busy = false;
     updateControls();
@@ -1865,14 +1585,9 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
   operatedControl = e.target.closest("[data-focus-key]");
   queueMicrotask(() => { operatedControl = null; });
 }, true);
-for (const button of $("orchestration-presets").querySelectorAll("button")) {
-  button.addEventListener("click", () => {
-    if (button.dataset.preset !== orchestration?.document.preset) pickPreset(button.dataset.preset);
-  });
-}
-$("save-custom").addEventListener("click", saveCustom);
-$("save-limit").addEventListener("click", saveLimit);
-const tabFromHash = () => location.hash === "#updates" ? "about" : ["members", "skills", "avatars", "orchestration", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts";
+bindAdvanced();
+const OLD_TABS = { "#updates": "about", "#skills": "advanced", "#orchestration": "advanced" }; // Preserve old links.
+const tabFromHash = () => OLD_TABS[location.hash] || (["members", "avatars", "advanced", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 
@@ -1880,6 +1595,13 @@ $("refresh-detection").addEventListener("click", () => refreshDetection());
 window.addEventListener("focus", probeWhenStale);
 document.addEventListener("visibilitychange", probeWhenStale);
 $("save-btn").addEventListener("click", saveMembers);
+$("max-running").addEventListener("change", () => {
+  const feedback = $("save-feedback");
+  feedback.textContent = "";
+  feedback.className = "save-feedback";
+  refreshDirty();
+  updateControls();
+});
 
 $("btn-check-update").addEventListener("click", () => triggerCheckUpdate());
 // Updating goes through the shared dialog: it shows what changed first and then the progress.
@@ -1888,7 +1610,10 @@ $("btn-retry-update").addEventListener("click", () => AN.updateFlow());
 
 // The app's web view does not show beforeunload prompts, so hold back in-app navigation.
 function renderLeaveConfirm() {
-  const box = $("leave-confirm");
+  const box = $(currentTab === "advanced" ? "advanced-leave-confirm" : "leave-confirm");
+  const other = $(currentTab === "advanced" ? "leave-confirm" : "advanced-leave-confirm");
+  other.hidden = true;
+  other.replaceChildren();
   box.hidden = !leaveTarget;
   if (!leaveTarget) return box.replaceChildren();
   if (box.childElementCount) return;
@@ -1899,6 +1624,7 @@ function renderLeaveConfirm() {
       el("button", { type: "button", className: "danger", onClick: () => {
         const target = leaveTarget;
         dirty = false;
+        discardAdvanced();
         location.href = target;
       } }, "放弃修改并离开")));
   stay.focus({ preventScroll: true });
@@ -1907,18 +1633,20 @@ document.querySelector("header.bar").addEventListener("click", (e) => {
   const link = e.target.closest("a[href]");
   // The settings link points at this page; following it would reload and drop the edits.
   if (link?.getAttribute("href") === "/settings/") return e.preventDefault();
-  if (!link || !(dirty || busy)) return;
+  if (!link || !(unsaved() || busy)) return;
   e.preventDefault();
   leaveTarget = link.href;
-  if (currentTab !== "members") {
-    setTab("members");
-    history.replaceState(null, "", "#members");
+  // The confirmation sits in the save bar of the page holding the edits.
+  const tab = dirty || !advancedChanges().length ? "members" : "advanced";
+  if (currentTab !== tab) {
+    setTab(tab);
+    history.replaceState(null, "", `#${tab}`);
   }
   renderLeaveConfirm();
 }, true);
 
 window.addEventListener("beforeunload", (e) => {
-  if (dirty || busy) {
+  if (unsaved() || busy) {
     e.preventDefault();
     e.returnValue = "";
   }

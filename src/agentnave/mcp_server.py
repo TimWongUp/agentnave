@@ -807,6 +807,7 @@ async def start_agent(
             EXCLUDED_PROVIDERS,
             permissions=read_permissions(),
             cli_options=read_cli_options(),
+            seat=frozenset(seat_applied),
         )
         if seat_applied:
             defaults_applied = [f"{(role or '').strip()} seat", *seat_applied, *defaults_applied]

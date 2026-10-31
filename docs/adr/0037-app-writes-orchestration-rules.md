@@ -1,6 +1,6 @@
 # ADR-0037：App 写入编排规则，Explorer 与 Worker 分简单、困难两档
 
-- 状态：已接受
+- 状态：已接受（「高级」页只选一档、对所有宿主生效的部分由 [ADR-0041](0041-orchestration-mode-per-boss.md) 取代）
 - 日期：2026-10-30
 - 取代 [ADR-0024](0024-consolidated-tools-and-private-review.md) 中“App 只给可复制模板、不创建或写入全局规则文件”的条款；为 [ADR-0029](0029-settings-without-free-text.md) 增加唯一的手填例外。不改变 [ADR-0031](0031-prompt-only-orchestration.md)：编排仍只靠规则文字约束 boss，服务不加调度。
 

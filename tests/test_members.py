@@ -20,6 +20,7 @@ from agentnave.members import (
     read_members,
     read_permissions,
 )
+from agentnave.models import ProviderOption
 
 
 def test_member_structure_references_and_effective_overrides() -> None:
@@ -182,6 +183,48 @@ def test_without_a_model_the_cli_default_model_keeps_its_saved_settings(
         {"model": "grok-4.6"},
         [],
     )
+
+
+def test_a_call_without_a_level_passes_the_cli_default_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "grok": {
+                        "model": "grok-4.7",
+                        "effort": "high",
+                        "efforts": {"grok-4.7": "high", "grok-4.6": "medium"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def effort(options: dict[str, ProviderOption], document: MemberFile | None = None) -> object:
+        result, applied = apply_member(document, "task", "grok", options, frozenset())
+        assert ("effort (CLI default)" in applied) == (
+            result.get("effort") != options.get("effort")
+        )
+        return result.get("effort")
+
+    assert effort({}) == "high"
+    assert effort({"model": "grok-4.6"}) == "medium"
+    # An explicit level wins; an unknown model or a level the App disallows stays unset.
+    assert effort({"effort": "low"}) == "low"
+    assert effort({"model": "other"}) is None
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {"grok": {"models": {"grok-4.6": {"efforts": ["low"]}}}},
+            "modes": {},
+        }
+    )
+    assert effort({"model": "grok-4.6"}, document) is None
 
 
 def test_cached_native_model_does_not_transfer_execution_permissions(

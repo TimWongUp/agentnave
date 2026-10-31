@@ -181,12 +181,31 @@ fn command_listings_are_parsed_from_their_fixed_formats() {
     // Claude's own picker and Pi's levels, as the CLIs answer over stdin.
     let initialize = json!({"type": "control_response", "response": {"response": {"models": [
             {"value": "default", "displayName": "Default", "supportedEffortLevels": ["low"]},
-            {"value": "opus", "displayName": "Opus 5.5", "supportedEffortLevels": ["low", "max"]},
+            {"value": "opus", "resolvedModel": "claude-opus-5-5", "displayName": "Opus 5.5",
+             "supportedEffortLevels": ["low", "max"]},
             {"value": "claude-haiku-4-5", "displayName": "Haiku 4.5"}]}}});
     let picker = claude_picker(&initialize);
     assert_eq!(ids(&picker), ["opus", "claude-haiku-4-5"]);
     assert_eq!(picker[0]["efforts"], json!(["low", "max"]));
     assert_eq!(picker[1]["efforts"], json!([]));
+    assert_eq!(picker[0]["resolved"], "claude-opus-5-5");
+    assert!(picker[1]["resolved"].is_null());
+    assert_eq!(
+        claude_name("claude-haiku-4-5-20251001").as_deref(),
+        Some("claude-haiku-4-5")
+    );
+    assert_eq!(
+        claude_name("anthropic/claude-opus-4.6").as_deref(),
+        Some("claude-opus-4-6")
+    );
+    assert_eq!(claude_name("opus"), None);
+    assert_eq!(
+        claude_name("claude-opus-5-5[1m]").as_deref(),
+        Some("claude-opus-5-5")
+    );
+    assert!(!claude_reads_top("opus"));
+    assert!(claude_reads_top("claude-opus-5") && claude_reads_top("glm-5.3"));
+    assert!(!claude_reads_top("claude-opus-5-5") && !claude_reads_top("claude-sonnet-6"));
     assert_eq!(pi_levels(&json!({"reasoning": false})), ["off"]);
     assert_eq!(
         pi_levels(&json!({"reasoning": true})),
@@ -217,14 +236,19 @@ fn published_defaults_keep_a_failed_probe_and_drop_what_is_gone() {
             "pi": {"model": "old/pi", "effort": null}}});
     let all = json!({
             "codex": {"installed": true, "error": null,
-                      "native": {"model": "gpt-6.1-sol", "effort": "medium"}},
+                      "native": {"model": "gpt-6.1-sol", "effort": "medium"},
+                      "models": [{"id": "gpt-6.1-sol", "effort": "medium"}, {"id": "gpt-x"}]},
             "claude": {"installed": true, "error": null, "native": {"model": null, "effort": null}},
+            "codebuddy": {"installed": true, "error": null, "native": {"model": null, "effort": null},
+                          "models": [{"id": "glm-5.3", "effort": "high"}]},
             "grok": {"installed": true, "error": "超时", "native": {"model": null, "effort": null}},
             "pi": {"installed": false, "error": null, "native": {"model": null, "effort": null}}});
     assert_eq!(
         native_document(&all, &previous),
         json!({"version": 1, "clis": {
-                "codex": {"model": "gpt-6.1-sol", "effort": "medium"},
+                "codex": {"model": "gpt-6.1-sol", "effort": "medium",
+                          "efforts": {"gpt-6.1-sol": "medium"}},
+                "codebuddy": {"model": null, "effort": null, "efforts": {"glm-5.3": "high"}},
                 "grok": {"model": "grok-4.6", "effort": "high"}}})
     );
     let root = tempfile::tempdir().unwrap();

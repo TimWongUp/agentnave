@@ -9,7 +9,7 @@
 ## Implementation boundaries
 
 - AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，发行包 `agentnave` 只提供 `agentnave-mcp` 一个入口。统一核心负责 CLI 子代理、保存的并联／串联协作轮次、任务历史、可选审核、主持人发言与按需只读看板；App 负责接入、组员配置、展示与历史清理。不再提供无历史核心模式（ADR-0016）。入口先启动只用标准库的中继，由它运行真正服务，安装变化且空闲时换用新进程；保存的协作组不固定旧进程。单向编排通过统一派发指令约束：子代理完成任务后回报 Manager，不再调用 AgentNave；不检测嵌套或据此禁用工具（ADR-0031）。规划、角色、模型、轮次编排、审核判断、综合、重试与 worktree 仍由调用方 Manager 决定，不提供面向人的 CLI。
-- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；除协议必需参数与调用方显式参数外，只允许套用用户在 AgentNave App 中设定、且在回执中注明的组员默认值，以及 `role` 指明的评审或 Explorer／Worker 工位的模型和档位（ADR-0038）；唯一例外是 DeepSeek 官方路由在未显式指定时恢复 DeepSeek Harness App 已存的认证（ADR-0027）。`restricted_tools=true` 是显式受限配置；普通 Invocation 不继承此配置。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自服务按 CLI 套用的权限档位（缺省「自动」，用户可在 App 改为「完全放开」；CLI 没有可用的自动审核时「自动」即完全放开，见 ADR-0032）、用户在 App 中设定的默认 options，或用户本轮明确要求；boss 不得自行追加。权限档位与 App 权限默认值也会在续接时套用，并在回执中注明。
+- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；除协议必需参数与调用方显式参数外，只允许套用用户在 AgentNave App 中设定、且在回执中注明的组员默认值，以及 `role` 指明的评审或 Explorer／Worker 工位的模型和档位（ADR-0038）；仍无档位时由服务按 App 探测到的 CLI 自身默认档位兜底，回执注明（ADR-0042）；唯一例外是 DeepSeek 官方路由在未显式指定时恢复 DeepSeek Harness App 已存的认证（ADR-0027）。`restricted_tools=true` 是显式受限配置；普通 Invocation 不继承此配置。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自服务按 CLI 套用的权限档位（缺省「自动」，用户可在 App 改为「完全放开」；CLI 没有可用的自动审核时「自动」即完全放开，见 ADR-0032）、用户在 App 中设定的默认 options，或用户本轮明确要求；boss 不得自行追加。权限档位与 App 权限默认值也会在续接时套用，并在回执中注明。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程树内的活跃进程做 best-effort 清理，不引入跨重启恢复。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。
 - macOS／Linux 使用专用 POSIX 进程组 supervisor；Windows 使用挂起创建并先加入
@@ -36,6 +36,10 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 - 真实 CLI 标准套件：`uv run python scripts/real_suite.py [--duration 秒] [--providers ...]`，用各 CLI 的便宜模型覆盖服务各模式并持续运行（默认 10 分钟），会消耗配额，执行前同样需要授权；加 `--real-history` 写入真实历史，可在托盘和看板实时查看，标题用可读名称，工位角色为 `real-suite` 以便识别测试数据，事后在 App 清理；宿主自己的 CLI 不会被 `start_agent` 派发，需要覆盖它时从普通终端运行。
 - 接入为组员的 Provider CLI 必须同时接入为宿主（boss）；未经真实调用验收的宿主不接入。
 - 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
+
+## Art assets
+
+- 生成或修改托盘美术素材前先读 `apps/tray/ART-SOURCES.md`，新素材必须直接输出真透明底。
 
 ## Context change gate
 

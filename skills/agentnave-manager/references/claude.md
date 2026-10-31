@@ -1,8 +1,8 @@
 # Claude Code
 
-App 中配置了组员时以 `list_members` 为准，超出模式范围会被拒绝。
+通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
-`provider: "claude"`；默认 `provider_options`：
+`provider: "claude"`；用户点名时的写法示例：
 
 ```json
 {"model": "claude-opus-5-5", "effort": "medium"}

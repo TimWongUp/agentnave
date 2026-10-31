@@ -28,7 +28,7 @@
 
 不审核（`review=false`）时，成功回答按并联／串联规则自动提交，历史照常保存。
 
-`start_agent` 使用 task 配置，会议每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建会议回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、会议与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
+`start_agent` 使用 task 配置，会议每席使用 discussion 配置。未传 model／effort／其他 options 时套用 App 中的组员默认值，仍无档位时按 App 探测到的 CLI 自身默认档位补上，记为 `effort (CLI default)`（[ADR-0042](adr/0042-pass-cli-default-effort.md)）；回执 `defaults_applied` 列出补齐的键；显式参数优先，但模式模型名单与生效努力档位范围仍强制执行；模型名单非空、没有默认模型且调用方未传 model 时，拒绝并列出允许模型。续接同样现读并套用默认值。创建会议回执的各席另含 model、effort（未配置时省略）与 `defaults_applied`。模式缺失表示不限制，空模式对象表示禁止全部席位；宿主排除集合不限制 discussion，但 discussion 的组员名单仍生效。配置损坏时任务、会议与AgentNave Provider 查询都直接返回 App 修复错误，不提示修改调用参数。`show_permitted` 每次现读 discussion 是否允许该 CLI；文件缺失或 discussion 不受限时为 true。
 
 `wait(include_output=false)` 可只读状态，省略回答与运行尾部；默认 true 保持返回正文，待审或已结束的答案均能再次读取。审核只控制条目公开，不回滚文件修改或清除作者原生记忆。同一服务内，会议席位与普通任务不能同时续接同一 Provider 的同一原生会话。轮次驱动或写盘失败时，轮次状态为 failed 并附 error，不等同于正常编排结束的 finished。
 
@@ -99,11 +99,11 @@
 
 模型图标固定为 LobeHub 官方图标。内置小人为 AI 生成；GPT 白龙娘与 DeepSeek 蓝色鲸鱼女仆的形象设定参考社区二创（上善无形、ZipZipPipe），豆包按其官方头像形象做画风适配。设置页「外观」可为每个模型家族换一套办公室小人：选择含 `s`、`m`、`h` 子文件夹的文件夹，按动作命名的 27 张 WebP（s 266、m 320、h 96 像素正方形，单张不超过 1 MB）须齐全且尺寸相符，托盘校验后整套替换保存到数据根 `characters/<家族>/`，恢复默认即删除；办公室与菜单栏面板共用。早期版本保存在 `avatars.json` 的家族、指定模型图片不再显示，CLI 标志的覆盖仍读取。
 
-设置页「高级」选编排档位（关闭、分工协作、并行复核、自定义），选定后 App 把规则写进已接入宿主读取的全局规则文件中 AgentNave 标记的一段，块外内容不动，关闭即删除；同页为 Explorer 与 Worker 各选简单、困难两档的 CLI 与模型。下方按文件列出本机已装 boss 应用实际读取的全局规则文件（同一文件被多个应用读取时一行写出全部应用，如 Grok 默认也读 `~/.claude` 下的规则文件）、是否已写入，可用默认编辑器打开已存在的文件（[ADR-0037](adr/0037-app-writes-orchestration-rules.md)）。
+设置页「高级」按 boss 选编排档位（关闭、分工协作、并行复核、自定义；读同一规则文件的 boss 共用一档），按保存设置后 App 把规则写进已接入宿主读取的全局规则文件中 AgentNave 标记的一段，块外内容不动，关闭即删除；同页为 Explorer 与 Worker 各选简单、困难两档的 CLI 与模型。下方按文件列出本机已装 boss 应用实际读取的全局规则文件（同一文件被多个应用读取时一行写出全部应用，如 Grok 默认也读 `~/.claude` 下的规则文件）、是否已写入，可用默认编辑器打开已存在的文件（[ADR-0037](adr/0037-app-writes-orchestration-rules.md)）。
 
 会话没有结束状态；托盘清理仍受会话锁与待审状态保护。Rust 在会话的 `locks/<会话ID>.lock` 上取得与 Python AgentNave相同的 OS 锁（探针冲突最多重试约 1 秒），锁内重新读取状态；有待审回答拒绝删除。取得锁但磁盘仍标 running 的轮次／任务视为崩溃残留，可清理。删除数据库中的会话及其消息、轮次、任务与视图，保留锁文件与席位目录；不删除 Provider 原生会话。删除无法撤销。确认后若宿主开始工作或出现待审，仍会分别返回“正在被某个宿主使用”或“有待审回答”，也可能返回记录已不存在或数据库错误；删除在一个事务内完成，失败可刷新后重试。浏览器看板保持只读。见 [ADR-0012](adr/0012-tray-conversation-cleanup.md)。
 
-“设置…”在主窗口打开托盘专属设置页，与办公室在页头互相链接。设置页维护数据根下的组员配置 `members.json`：每个 CLI 一张卡，一行同时设好单独干活和开会的默认模型、该模型的档位和可选模型，需要时打开「单独干活和开会分开设置」各设一行（[ADR-0035](adr/0035-member-cards-one-row-per-cli.md)）。设置页面向普通用户，只提供选择与拖动，不提供手填输入：模型只能从 CLI 列出的模型中选，其他参数、说明和按模式覆盖不再在 App 中编辑，已有的值继续生效（[ADR-0029](adr/0029-settings-without-free-text.md)）。服务只读且每次现读，不创建缺失文件。App 不替用户写默认模型或档位：没有设置时使用 CLI 自身的默认值，设置页直接写出探测到的 CLI 当前模型与档位（[ADR-0028](adr/0028-follow-cli-default-model.md)）。页面会列出本机每个 CLI 是否安装、所在路径和它列出的模型，每个模型只给该 CLI 为它提供的努力档位（[ADR-0034](adr/0034-models-and-efforts-from-each-cli.md)）：Codex 读取其模型缓存，Grok、Antigravity 运行各自的列举命令，Claude 与 Pi 分别用初始化请求和 RPC 取回自己的模型选单，CodeBuddy 读取帮助中的支持列表；探测不调用模型，每个命令最多 45 秒，结果在应用运行期间缓存；设置页打开或回到前台时（距上次探测 30 秒以上）自动重新探测，也可手动刷新。探测失败时只显示已配置的模型。
+“设置…”在主窗口打开托盘专属设置页，与办公室在页头互相链接。设置页维护数据根下的组员配置 `members.json`：每个 CLI 一张卡，一行同时设好单独干活和开会的默认模型、该模型的档位和可选模型，需要时打开「单独干活和开会分开设置」各设一行（[ADR-0035](adr/0035-member-cards-one-row-per-cli.md)）。设置页面向普通用户，只提供选择与拖动，不提供手填输入：模型只能从 CLI 列出的模型中选，其他参数、说明和按模式覆盖不再在 App 中编辑，已有的值继续生效（[ADR-0029](adr/0029-settings-without-free-text.md)）。服务只读且每次现读，不创建缺失文件。没有选默认模型时临时使用 CLI 自身的默认值，设置页写出探测到的 CLI 当前模型与档位（[ADR-0028](adr/0028-follow-cli-default-model.md)）；选了模型就同时写入档位，预选 CLI 当前档位，有多档却没选时报错（[ADR-0042](adr/0042-pass-cli-default-effort.md)）。页面会列出本机每个 CLI 是否安装、所在路径和它列出的模型，每个模型只给该 CLI 为它提供的努力档位（[ADR-0034](adr/0034-models-and-efforts-from-each-cli.md)）：Codex 读取其模型缓存，Grok、Antigravity 运行各自的列举命令，Claude 与 Pi 分别用初始化请求和 RPC 取回自己的模型选单，CodeBuddy 读取帮助中的支持列表；探测不调用模型，每个命令最多 45 秒，结果在应用运行期间缓存；设置页打开或回到前台时（距上次探测 30 秒以上）自动重新探测，也可手动刷新。探测失败时只显示已配置的模型。
 
 保存通过带操作请求头的 POST 原子替换 `members.json`。Rust 只校验结构与引用（未知字段、引用未配置的模型、默认模型或默认 effort 不在允许范围），参数是否有效以服务端 Adapter 校验为准；文件损坏时显示错误并禁止页面保存，需先修复文件再重新读取。设置页整份保存，外部编辑后请重新读取；并发编辑以最后一次保存为准。见 [ADR-0014](adr/0014-tray-members-and-one-click-update.md)。
 
