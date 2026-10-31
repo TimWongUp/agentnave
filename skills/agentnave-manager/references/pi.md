@@ -1,6 +1,6 @@
 # Pi Coding Agent
 
-App 中配置了组员时以 `list_members` 为准，超出模式范围会被拒绝。
+通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
 `provider: "pi"`；未配置 App 默认值且省略模型和 effort 时沿用 Pi 原生设置，不指定默认模型。
 用户选择模型时传 `model`（可用 `provider/model`）；选择思考等级时传 `effort`，映射为 `--thinking`，支持 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。

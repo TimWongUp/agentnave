@@ -76,7 +76,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## CLI 与模型
 
-用户未点名时先 `list_members`，按该模式的组员与说明选择；`model`、`effort` 等 CLI 设置放在 `provider_options` 里，写在顶层会被拒绝；未传时服务套用 App 默认值，仍无档位时传 CLI 自身设置的档位，并在 `defaults_applied` 注明。首次调用某 CLI 前用 `list_members(provider=...)` 核对允许状态和支持参数并复用结果，它不检查安装、登录。
+用户未点名 CLI 时先 `list_members`，按该模式的组员与说明选 CLI 或工位，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数，它不检查安装、登录。
 
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 
