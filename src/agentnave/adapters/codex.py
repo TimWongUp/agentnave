@@ -148,9 +148,12 @@ class CodexAdapter:
         if request.session_id is not None:
             argv.append("resume")
         argv.append("--json")
+        # Always allowed outside a Git repository: a dispatched task's cwd is chosen by the boss
+        # and may not be a repo, and Codex otherwise refuses to run at all.
+        argv.append("--skip-git-repo-check")
         if discussion:
             # Keep native auth and persistence, but omit user MCP/config and local read tools.
-            argv.extend(("--ignore-user-config", "--skip-git-repo-check"))
+            argv.append("--ignore-user-config")
             for feature in ("shell_tool", "unified_exec", "view_image", "apps", "multi_agent"):
                 argv.extend(("--disable", feature))
             for setting in (

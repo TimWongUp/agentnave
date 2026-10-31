@@ -292,6 +292,7 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
         "exec",
         "resume",
         "--json",
+        "--skip-git-repo-check",
         "--model",
         "gpt-5.6-sol",
         "--config",
@@ -311,7 +312,7 @@ def test_codex_adapter_does_not_supply_model_defaults(
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
     prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
 
-    assert prepared.argv == ("codex", "exec", "--json", "-")
+    assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="macOS bundle selection uses POSIX executability")
@@ -327,7 +328,15 @@ def test_codex_adapter_prefers_executable_desktop_bundle(
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(unavailable), str(desktop)))
 
     prepared = CodexAdapter().prepare(request(tmp_path, "codex", session_id="session-1"))
-    assert prepared.argv == (str(desktop), "exec", "resume", "--json", "session-1", "-")
+    assert prepared.argv == (
+        str(desktop),
+        "exec",
+        "resume",
+        "--json",
+        "--skip-git-repo-check",
+        "session-1",
+        "-",
+    )
 
     desktop.unlink()
     assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
