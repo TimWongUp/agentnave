@@ -76,8 +76,9 @@ static DRIPPING: AtomicBool = AtomicBool::new(false);
 /// installs. Only its own WebView storage (display settings) is kept, under its own identifier.
 pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
 
-/// What a preview build refuses: every request that could change files, except moving its window
-/// and checking for an update, which only asks the release feed.
+/// What a preview build refuses: every request that could change files, except moving its window,
+/// checking for an update, which only asks the release feed, and opening a rules file in the
+/// user's editor, which changes nothing by itself.
 fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
@@ -86,6 +87,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
             "/app/window/drag"
                 | "/app/window/zoom"
                 | "/app/update/check"
+                | "/app/rules/open"
                 | "/app/theme/system"
                 | "/app/theme/light"
                 | "/app/theme/dark"
@@ -726,6 +728,7 @@ mod tests {
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
         assert!(!preview_refuses(true, "POST", "/app/update/check"));
+        assert!(!preview_refuses(true, "POST", "/app/rules/open"));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
     }
 
