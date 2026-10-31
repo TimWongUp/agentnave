@@ -57,6 +57,9 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "assert 'Do not call AgentNave tools' in prompt.split('\\n\\nAssigned task:\\n', 1)[0]\n"
         "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
+        "if 'FAIL_ONCE' in prompt and not os.path.exists('failed-once'):\n"
+        "    open('failed-once', 'w').close()\n"
+        "    prompt += 'FAIL_TASK'\n"
         "if 'FAIL_TASK' in prompt:\n"
         "    print(json.dumps({'type': 'result', 'is_error': True, 'session_id': 'failed',\n"
         "                      'errors': 'workspace routing discovery timed out'}))\n"
@@ -509,7 +512,7 @@ def test_unreceived_lists_a_seat_blocker_until_a_wait_reports_it() -> None:
         blockers=[InvocationError("provider_blocked", "waiting")],
         reported_blockers=0,
     )
-    round_ = SimpleNamespace(finished=False, runs=[run])
+    round_ = SimpleNamespace(finished=False, runs=[run], unreported_lost=list)
 
     def inbox(_session: str | None) -> tuple[list[str], list[str]]:
         return [], ["r1"]
@@ -2841,6 +2844,65 @@ async def test_forward_rejects_pending_discarded_and_absent_entries(
             if entry["kind"] == "absent"
         )
         assert "absent entry" in await rejected(client, str(absent["message_id"]))
+
+
+@pytest.mark.asyncio
+async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
+    tmp_path: Path, data_root: Path
+) -> None:
+    async with Client(mcp) as client:
+        show = await _open(
+            client,
+            {
+                "title": "Retry",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        group_id = show["group_id"]
+        round_id = (
+            await _run(
+                client,
+                {
+                    "group_id": group_id,
+                    "seats": ["a", "b"],
+                    "prompt": "q",
+                    "instructions": {"a": "FAIL_ONCE", "b": "SLEEP"},
+                },
+            )
+        )["round_id"]
+
+        woken = await _wait(client, round_id)
+        if woken["reason"] == "execution_blocked":  # the error line can precede the exit
+            woken = await _wait(client, round_id)
+        assert woken["reason"] == "seat_lost" and woken["status"] == "running"
+        failed = _seats(woken)[0]
+        assert failed["status"] == "failed" and "output" not in failed
+        again = await _call(client, "wait", {"ids": [round_id], "wait_seconds": 0})
+        assert again["reason"] == "wait_elapsed"
+
+        retried = await _run(client, {"group_id": group_id, "retry_seats": ["a"]})
+        assert retried["round_id"] == round_id and retried["round"] == 1
+        seat = _state(data_root, group_id)["rounds"][0]["seats"][0]
+        for _ in range(500):
+            if seat["status"] != "running":
+                break
+            await asyncio.sleep(0.02)
+            seat = _state(data_root, group_id)["rounds"][0]["seats"][0]
+        assert seat["status"] == "succeeded" and seat["finished"] and not seat["error"]
+        assert not [e for e in _state(data_root, group_id)["entries"] if e["kind"] == "answer"]
+
+        await _cancel(client, _seats(woken)[1]["invocation_id"])
+        ended = await _wait(client, round_id)
+        assert ended["status"] == "finished"
+        assert "FAIL_ONCE" in str(_seen(_seats(ended)[0])["prompt"])
+        saved = _state(data_root, group_id)
+        assert saved["sessions"]["a"]["session_id"]
+        assert [(e["round"], e["kind"], e["seat"]) for e in saved["entries"]] == [
+            (1, "task", None),
+            (1, "answer", "a"),
+            (1, "absent", "b"),
+        ]
 
 
 @pytest.mark.asyncio

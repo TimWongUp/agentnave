@@ -104,7 +104,9 @@ def open_group(tmp_path: Path, *seat_ids: str) -> tuple[Groups, FakeManager, str
 
 
 async def settle(groups: Groups, round_id: str) -> None:
-    round_, _ = await groups.wait(round_id, 2)
+    round_, reason = await groups.wait(round_id, 2)
+    while reason == "seat_lost":
+        round_, reason = await groups.wait(round_id, 2)
     assert round_.finished
 
 
@@ -237,6 +239,70 @@ async def test_failures_are_absent_and_only_proven_delivery_advances_sessions(
     manager.finish("5")
     manager.finish("6")
     await settle(groups, third.id)
+
+
+@pytest.mark.asyncio
+async def test_lost_seat_wakes_once_without_delivering_answers(tmp_path: Path) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b", "c")
+    round_ = groups.run(group_id, ["a", "b", "c"], "parallel", "Q", {})
+    manager.finish("1")  # a finished answer stays behind the barrier
+    manager.finish("2", InvocationStatus.FAILED, error=InvocationError("provider_error", "x"))
+    _, reason = await groups.wait(round_.id, 2)
+    assert reason == "seat_lost"
+    assert [run.status for run in round_.runs] == ["succeeded", "failed", "running"]
+    assert [entry.kind for entry in round_.group.entries] == ["task"]
+    assert (await groups.wait(round_.id, 0))[1] is None
+
+    # The last seat ending ends the round: no separate wake, its own end reports it.
+    manager.finish("3", InvocationStatus.FAILED, error=InvocationError("provider_error", "x"))
+    finished, reason = await groups.wait(round_.id, 2)
+    assert reason is None and finished.finished
+
+
+@pytest.mark.asyncio
+async def test_retry_reuses_the_round_input_and_rejects_what_it_cannot_restart(
+    tmp_path: Path,
+) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    first = groups.run(group_id, ["a", "b"], "parallel", "Q1", {})
+    manager.finish("1")
+    manager.finish("2")
+    await settle(groups, first.id)
+
+    round_ = groups.run(group_id, ["a", "b"], "parallel", "Q2", {"a": "note"})
+    with pytest.raises(ValueError, match="only failed or blocked"):
+        groups.retry(group_id, ["a"])
+    manager.finish("3", InvocationStatus.FAILED, error=InvocationError("provider_error", "x"))
+    assert (await groups.wait(round_.id, 2))[1] == "seat_lost"
+    # A failed run proves no delivery, so the retry is a fresh session with the same entries.
+    groups.retry(group_id, ["a"])
+    retried = manager.requests["5"]
+    assert retried.session_id is None and retried.prompt.endswith(
+        "Private instruction for you only:\nnote"
+    )
+    assert [item["kind"] for item in entries(retried.prompt.split("\n\nPrivate")[0])] == [
+        "task",
+        "answer",
+        "answer",
+        "task",
+    ]
+
+    manager.finish("4")
+    await asyncio.sleep(0)
+    assert not round_.finished  # the retried seat still holds the barrier
+    manager.finish("5", output="second try")
+    await settle(groups, round_.id)
+    assert [(e.round, e.kind, e.seat_id, e.text) for e in round_.group.entries[-2:]] == [
+        (2, "answer", "a", "second try"),
+        (2, "answer", "b", "answer-4"),
+    ]
+    with pytest.raises(ValueError, match="new round"):
+        groups.retry(group_id, ["a"])
+
+    serial = groups.run(group_id, ["a", "b"], "serial", "Q3", {})
+    with pytest.raises(ValueError, match="new round"):
+        groups.retry(group_id, ["a"])
+    await groups.cancel(serial.id)
 
 
 @pytest.mark.asyncio

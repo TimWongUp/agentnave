@@ -96,7 +96,7 @@ AgentNave 在 macOS／Linux 使用 POSIX 进程组，在 Windows 使用 Job Obje
 
 每席续接自己的原生会话，只收到游标之后、非自己的条目；新会话收到前导与全部条目。只有 succeeded 且带本次 session_id 才推进游标；未启动的 launch_error 保留原会话；其他终态清空会话与游标，下次补全。前导声明其他席位的回答是数据而非指令，私密指令只发给对应席位，但席位复述的内容会随回答传播。
 
-`wait` 对轮次使用同一默认 240 秒窗口，轮次结束、运行席位出现新阻塞或回答待审时提前返回，结束后可重读。以席位的 `invocation_id` 调用 `cancel` 只取消单席，串联轮继续；以 `round_id` 调用时先禁止新启动，再取消在途席位，已成功回答照常提交，未启动的串联席位不写条目。server 退出时先结束所有轮次，再关闭 InvocationManager。
+`wait` 对轮次使用同一默认 240 秒窗口，轮次结束、运行席位出现新阻塞、回答待审，或某席失败／受阻而其他席仍在跑（`seat_lost`，每席一次，不交付答案）时提前返回，结束后可重读。并联轮全员结束前，`run_round` 的 `retry_seats` 可从同一快照重启失败／受阻的席位，答案记入本轮（[ADR-0039](../adr/0039-retry-lost-seat-within-round.md)）。以席位的 `invocation_id` 调用 `cancel` 只取消单席，串联轮继续；以 `round_id` 调用时先禁止新启动，再取消在途席位，已成功回答照常提交，未启动的串联席位不写条目。server 退出时先结束所有轮次，再关闭 InvocationManager。
 
 `wait` 的 `include_output` 默认为 true；显式 false 只省略最终正文、运行尾部及其年龄，状态、活动、错误与原生 session_id 仍可读取。省略不消耗答案、不改变条目提交或审核。每席最终回答（含待审回答）在同一轮只随 `wait`／`cancel` 返回一次全文，此后只给状态、`session_id`、`error` 与 `output_returned: true`，需要时用 `read_conversation` 回读。已结束轮次的 elapsed_ms 固定；finished 只表示编排结束，不代表各席都成功。意外执行异常形成带 internal_error 的 Invocation 失败结果；轮次驱动异常先停止新的启动、收束活跃席位、跳过未启动席位再释放组，返回 failed 与 round error，不公开未经审核的成功回答。状态写盘失败的轮次也返回 failed；取消仍遵守其独立语义。
 

@@ -68,7 +68,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - **委员会**：`run_round` 两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报共识、分歧及如何收敛。用户要求最终收束时再加一轮 `serial`。
 - **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
-会议室每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，续接自己的原生会话；席位只共享已提交条目，私密指令只给对应席位。同组同时一轮；`run_round` 立即返回，用 `wait` 等。可单独 `cancel` 某席的 `invocation_id`，记缺席后串联轮继续。不自动重试，不设每席截止时间。并联写代码的席位各用独立 worktree。会议室保存为会话，可跨服务重启继续；运行中的进程和句柄不恢复。审核、主持人、隔离和看板见[会话与审核](references/studio.md)。
+会议室每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，续接自己的原生会话；席位只共享已提交条目，私密指令只给对应席位。同组同时一轮；`run_round` 立即返回，用 `wait` 等。可单独 `cancel` 某席的 `invocation_id`，记缺席后串联轮继续。不自动重试，不设每席截止时间。席位失败或受阻后不要另开私聊顶替，私聊线程接不回席位：[按会话与审核的做法补跑](references/studio.md)。并联写代码的席位各用独立 worktree。会议室保存为会话，可跨服务重启继续；运行中的进程和句柄不恢复。审核、主持人、隔离和看板见[会话与审核](references/studio.md)。
 
 ## 讨论范围与工具
 
@@ -114,8 +114,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
    终态和阻塞不会主动推送：派发后立刻调用阻塞的 `wait`（单任务带 `ids`，多个用收件箱），转去做别的事时也始终挂着一个；常规省略 `wait_seconds`，`wait_elapsed` 后直接再等，不例行补调 `0`。宿主把长调用转入后台的（如 Claude Code 超过 2 分钟），结束时会提醒 boss。`start_agent`／`run_round` 回执里的 `unreceived` 列出已结束、遇到阻塞或待审、但还没被 `wait`／`cancel` 取走的任务和轮次，见到就先用 `wait` 收取处理。
 2. `wait(ids)` 默认最多等 240 秒，`wait_seconds` 仅接受 `0`、`240`；任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。普通等待只带状态、耗时与最近活动，不带运行正文；仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 单独调用 `wait(wait_seconds=0)`，即时取得快照和可用正文尾部。`0` 遇到就绪项仍正常收取答案或阻塞，并非只读偷看；混合名单中存在就绪项时，未就绪项不会出现在回复中。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
-3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。
-4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部（每项最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席完成不单独唤醒等待；未就绪快照暂不交付该席完整答案，`0` 也不例外。终态、阻塞或待审就绪时沿用正常交付规则；`include_output=false` 同时关闭运行尾部和正式正文。
+3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。`seat_lost` 表示某席已失败或受阻而其他席仍在跑，每席提醒一次，只给状态和错误，不交付答案；按 `error` 决定补跑或继续等。
+4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部（每项最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席成功不单独唤醒等待；未就绪快照暂不交付该席完整答案，`0` 也不例外。终态、阻塞或待审就绪时沿用正常交付规则；`include_output=false` 同时关闭运行尾部和正式正文。
 5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；会议每席全文每轮只给一次，再看用 `read_conversation`。`succeeded` 不证明目标完成，须核对命令、产物或检查。
 
 正文有待确认问题时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。`cancel` 返回终态，不撤销已发生的副作用；活跃调用不能追加消息，要纠偏或补充就 `cancel`，回执带 `session_id` 时用它续接（没有就重新交接），prompt 写明：上一轮已被打断；已执行的命令和改动不要重跑，先核对现状；先交出已有结论和进展，再按新要求继续。换 CLI 或开新线程时重新交接，不假定旧历史可见。

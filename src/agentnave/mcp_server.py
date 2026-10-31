@@ -220,11 +220,11 @@ class UnreceivedPayload(TypedDict):
     id: str
     kind: Literal["task", "round"]
     # a task's end status or execution_blocked; a round's finished, failed, cancelled,
-    # review_needed or execution_blocked
+    # review_needed, execution_blocked or seat_lost
     status: str
     error: NotRequired[
         InvocationErrorPayload
-    ]  # the oldest unread blocker of a running task or seat
+    ]  # the oldest unread blocker of a running task or seat, or a lost seat's error
 
 
 class TaskStartPayload(InvocationPayload):
@@ -618,8 +618,8 @@ def _unknown_handle(handle: str) -> ToolError:
 def _unreceived(
     conversations: Conversations, manager_session_id: str | None
 ) -> list[UnreceivedPayload]:
-    """Ended tasks and rounds whose end no wait or cancel has returned yet, and running tasks
-    with a blocker no wait has returned. A dispatch reply lists them so a boss busy with other
+    """Ended tasks and rounds whose end no wait or cancel has returned yet, and running work
+    with a blocker or lost seat no wait has returned. A dispatch reply lists them so a boss busy with other
     work still learns of them; wait receives them."""
     tasks, rounds = conversations.inbox(manager_session_id)
     ended = {
@@ -663,6 +663,12 @@ def _unreceived(
                     "error": {"code": blocked[0].code, "message": blocked[0].message},
                 }
             )
+        elif lost := round_.unreported_lost():
+            item: UnreceivedPayload = {"id": handle, "kind": "round", "status": "seat_lost"}
+            error = lost[0].result.error if lost[0].result else lost[0].launch_error
+            if error is not None:
+                item["error"] = {"code": error.code, "message": error.message}
+            found.append(item)
     return found
 
 
@@ -958,7 +964,9 @@ async def wait(
 
     A task is ready when it finished or reports a CLI execution blocker (it keeps running;
     each blocker category wakes once). A round is ready when it finished, a seat reports a
-    blocker, or answers wait for review (reason=review_needed, seat status pending_review).
+    blocker, answers wait for review (reason=review_needed, seat status pending_review), or a
+    seat failed or blocked while others still work (reason=seat_lost, once per seat; answers
+    stay held back until the round is delivered; run_round retry_seats can start it again).
     reason=ready returns every handle ready at that moment, in updates (tasks) and rounds;
     finished ones stay ready, so drop them from the next call. reason=wait_elapsed returns a
     running snapshot of each, with status and recent activity. Only explicit wait_seconds=0
@@ -1058,7 +1066,8 @@ async def wait(
                 reason or "wait_elapsed",
                 include_output=include_output,
                 include_running_output=include_running_output,
-                deliver=not elapsed,
+                # A round that ended right after seat_lost woke this wait is delivered in full.
+                deliver=not elapsed and (round_.finished or reason != "seat_lost"),
                 reviews=_review_map(conversations, round_),
                 entries=conversations.committed_entries(round_.group.id, round_.number),
             )
@@ -1370,6 +1379,43 @@ def _review_map(conversations: Conversations, round_: Round) -> dict[str, Review
     }
 
 
+def _add_started(
+    payload: ShowRunPayload,
+    conversations: Conversations,
+    round_: Round,
+    manager_session_id: str | None,
+) -> None:
+    payload["round"] = round_payload(
+        round_,
+        conversations.manager,
+        "started",
+        reviews=_review_map(conversations, round_),
+        entries=conversations.committed_entries(round_.group.id, round_.number),
+    )
+    unreceived = _unreceived(conversations, manager_session_id)
+    if unreceived:
+        payload["unreceived"] = unreceived
+
+
+def _retry_seats(
+    conversations: Conversations,
+    group_id: str,
+    seat_ids: list[str],
+    manager_session_id: str | None,
+) -> ShowRunPayload:
+    try:
+        round_ = conversations.retry(group_id, seat_ids, manager_session_id=manager_session_id)
+    except KeyError as exc:
+        raise ToolError("Unknown group_id; use list.") from exc
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, (SettingsFileError, CapacityError)):
+            raise ToolError(str(exc)) from exc
+        raise _rejected(exc) from exc
+    payload: ShowRunPayload = {"group_id": group_id}
+    _add_started(payload, conversations, round_, manager_session_id)
+    return payload
+
+
 def _open_show(
     conversations: Conversations,
     title: str,
@@ -1523,6 +1569,17 @@ async def run_round(
             )
         ),
     ] = False,
+    retry_seats: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Failed or blocked seats of this meeting's running parallel round to start "
+                "again: same input, still blind to other answers, and the answer joins this "
+                "round. Pass only with group_id. Once the round ended, name them in a new round "
+                "(they then see its answers)."
+            )
+        ),
+    ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
@@ -1545,6 +1602,11 @@ async def run_round(
     restricts tools; it is not an OS sandbox.
     """
     conversations = _conversations(ctx)
+    if retry_seats is not None:
+        extras = (prompt, seats, instructions, forward, title, members, cwd, review, isolated)
+        if group_id is None or any(extras):
+            raise ToolError("retry_seats takes only group_id. Correct the arguments and retry.")
+        return _retry_seats(conversations, group_id, retry_seats, manager_session_id)
     new = group_id is None
     if new:
         if not title or not title.strip() or not members:
@@ -1617,16 +1679,7 @@ async def run_round(
         if isinstance(exc, (SettingsFileError, CapacityError)):
             raise ToolError(str(exc)) from exc
         raise _rejected(exc) from exc
-    payload["round"] = round_payload(
-        round_,
-        conversations.manager,
-        "started",
-        reviews=_review_map(conversations, round_),
-        entries=conversations.committed_entries(group_id, round_.number),
-    )
-    unreceived = _unreceived(conversations, manager_session_id)
-    if unreceived:
-        payload["unreceived"] = unreceived
+    _add_started(payload, conversations, round_, manager_session_id)
     return payload
 
 
