@@ -585,18 +585,18 @@ configuration, sessions, and user projects remain owned by the user and provider
 
 1. 直接 `uv tool install`（使用系统代理，若已配置）
 2. 失败则 `--offline`（依赖 wheel 已在 uv 缓存里时可用，常见于升级）
-3. 仍失败则用清华镜像重试一次（`UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`）
+3. 仍失败且没有显式指定软件源时，用清华镜像重试一次（`UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`）；已有软件源设置时保留原源并报告失败，不自动换源。
 
 也可以在启动宿主前自行设置 `UV_DEFAULT_INDEX` 或 `HTTPS_PROXY`，这两种都会被继承。
 
-**升级服务不依赖网络**：只要本机装过一次，依赖已经在 uv 缓存里，升级走第 2 步即可离线完成。
+依赖 wheel 已在 uv 缓存里时，升级可通过第 2 步离线完成；缓存缺失或新版本需要尚未缓存的依赖时，仍需联网。
 
 App 自身的自动更新从 GitHub Releases 下载，国内通常需要代理。
 ### 自动更新源
 
-App 的自动更新默认**先走国内镜像**，再走 GitHub：每次检查依次尝试 `ghfast.top`、`gh-proxy.com`，
-最后才直连 `github.com`。命中镜像时，清单里指向 GitHub 的安装包地址也会经同一前缀改写，所以
-下载安装包同样不走 GitHub。全部失败才报告检查失败。
+App 的自动更新默认先直连 GitHub；直连失败后，依次尝试 `ghfast.top`、`gh-proxy.com`。
+命中镜像时，清单里指向 GitHub 的安装包地址也会经同一前缀改写，所以下载安装包同样不走 GitHub。
+全部失败才报告检查失败。
 
 用户不需要配置任何东西。高级用法：设置 `AGENTNAVE_UPDATE_ENDPOINT` 可指定自己的清单地址，
 它会排在最前面；清单格式与 Tauri updater 一致，签名必须与 `tauri.conf.json` 的 `pubkey` 配对。

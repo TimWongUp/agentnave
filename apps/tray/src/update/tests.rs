@@ -199,7 +199,7 @@ fn the_mirror_retry_changes_only_the_index_and_leaves_the_original_alone() {
         bin: PathBuf::from("/bin"),
         network: BTreeMap::new(),
     };
-    let mirrored = with_mirror(&dirs);
+    let mirrored = with_mirror(&dirs).unwrap();
     assert_eq!(
         mirrored.network.get("UV_DEFAULT_INDEX").map(String::as_str),
         Some(MIRROR_INDEX)
@@ -208,6 +208,21 @@ fn the_mirror_retry_changes_only_the_index_and_leaves_the_original_alone() {
         dirs.network.is_empty(),
         "the caller's directories stay untouched"
     );
+    for key in [
+        "UV_DEFAULT_INDEX",
+        "UV_INDEX",
+        "UV_INDEX_URL",
+        "UV_EXTRA_INDEX_URL",
+        "PIP_INDEX_URL",
+        "PIP_EXTRA_INDEX_URL",
+    ] {
+        let mut configured = dirs.clone();
+        configured
+            .network
+            .insert(key.into(), "https://packages.example/simple".into());
+        assert!(with_mirror(&configured).is_none(), "must preserve {key}");
+        assert_eq!(configured.network[key], "https://packages.example/simple");
+    }
 }
 
 #[test]

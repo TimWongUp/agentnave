@@ -230,7 +230,7 @@ fn update_override() -> Option<tauri::Url> {
     tauri::Url::parse(trimmed).ok()
 }
 
-/// Manifests to try, mainland-friendly first: an explicit override, then each mirror, then GitHub.
+/// Manifests to try: an explicit override, then GitHub, then each mirror.
 /// The mirror prefix is kept so the installer URL read from that manifest can be rewritten too.
 fn update_endpoints() -> Vec<(Option<&'static str>, tauri::Url)> {
     let mut endpoints = Vec::new();
@@ -681,12 +681,28 @@ pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> 
 }
 
 /// The same directories with uv's dependency index pointed at a reachable mirror.
-fn with_mirror(dirs: &ToolDirs) -> ToolDirs {
+fn with_mirror(dirs: &ToolDirs) -> Option<ToolDirs> {
+    if [
+        "UV_DEFAULT_INDEX",
+        "UV_INDEX",
+        "UV_INDEX_URL",
+        "UV_EXTRA_INDEX_URL",
+        "PIP_INDEX_URL",
+        "PIP_EXTRA_INDEX_URL",
+    ]
+    .iter()
+    .any(|key| {
+        dirs.network
+            .get(*key)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        return None;
+    }
     let mut mirrored = dirs.clone();
     mirrored
         .network
         .insert("UV_DEFAULT_INDEX".into(), MIRROR_INDEX.into());
-    mirrored
+    Some(mirrored)
 }
 
 fn install_service_version(
@@ -738,10 +754,16 @@ fn install_service_version(
         }
         // Dependencies still missing from the cache: the direct index was unreachable, so try a
         // mirror before giving up. This is the only path that needs the network.
+        let Some(mirrored) = with_mirror(dirs) else {
+            return Err(format!(
+                "{}（已保留指定的软件源，请检查其网络或依赖配置）",
+                online.unwrap_err()
+            ));
+        };
         if run(
             uv,
             &["tool", "install", "--force", "--python", "3.12", source],
-            &with_mirror(dirs),
+            &mirrored,
         )
         .is_ok()
         {
