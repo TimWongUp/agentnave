@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.59.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.59.1` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.59.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.59.1`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -549,32 +549,15 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.58.0 to v0.59.0
+### Upgrading from v0.59.0 to v0.59.1
 
-Update the App and its paired runtime and Skills together, then reconnect the host
-so it picks up the revised guidance: a boss now passes `model` and `effort` only when
-the user names them.
+Update the App and its paired runtime and Skills together. This release reorganizes
+code and project documents only: tool schemas, receipts, permission tiers and saved
+files keep their meaning, so hosts need no reconnect and history, member settings and
+credentials need no migration.
 
-When a call ends with no effort after App defaults, seats and permission tiers, the
-service fills in the CLI's own default level from `cli-defaults.json` and reports
-`effort (CLI default)` in `defaults_applied`. Older settings that saved an empty level
-keep working; the settings page asks for a level the next time they are saved.
-
-Antigravity's default permission tier changes from `--mode auto` to
-`--dangerously-skip-permissions`. Antigravity, CodeBuddy, DeepSeek and ZCode no longer
-offer a permission choice, and `list_members` reports them as `full`. Pass a permission
-option explicitly only when the user asks to keep native permissions for a call.
-
-Seats the user picks in the App are no longer limited by the private-task member lists.
-Host exclusions still apply, and values a boss passes explicitly are still checked.
-
-The App's Advanced settings now hold skills, review seats and orchestration as drafts
-until 保存设置. `orchestration.json` gains an optional `apps` field for per-boss modes;
-existing files keep their meaning. History, member settings and credentials need no
-migration.
-
-See [v0.59.0 release notes](releases/v0.59.0.md) for this release and
-[v0.58.0 release notes](releases/v0.58.0.md) for earlier upgrade notes.
+See [v0.59.1 release notes](releases/v0.59.1.md) for this release and
+[v0.59.0 release notes](releases/v0.59.0.md) for earlier upgrade notes.
 
 ## Uninstall
 
