@@ -19,6 +19,10 @@
   }
   const $ = (id) => document.getElementById(id);
 
+  // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
+  // on Windows, whose WebView2 has no custom schemes. Both are the App; a browser preview is neither.
+  const inApp = () => location.protocol === "agentnave:" || location.hostname === "agentnave.localhost";
+
   async function load(path) {
     const m = mock();
     if (m) return m.fetch(path);
@@ -145,7 +149,7 @@
     const choice = themeChoice();
     document.documentElement.dataset.theme = choice === "system" ? (lightQuery.matches ? "light" : "dark") : choice;
     document.querySelectorAll("[data-theme-choice]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice)));
-    if (location.protocol === "agentnave:" && nativeTheme !== choice) {
+    if (inApp() && nativeTheme !== choice) {
       nativeTheme = choice;
       fetch(`/app/theme/${choice}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
     }
@@ -219,13 +223,10 @@
   }
 
   document.querySelector("header.bar")?.append(h("div.bar-end", {}, themeSwitch()));
-  // The top bar is the window's title bar on every platform (only the agentnave: scheme is the App).
+  // The top bar is the window's title bar, but only when the page is the App's own (see inApp).
   // Each system keeps its own window buttons: macOS draws traffic lights at the left of the bar,
   // Windows has no title bar to put them in, so the bar carries Windows' caption buttons at the
   // right. Either way the bar drags the window and zooms it on double-click.
-  // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
-  // on Windows, whose WebView2 has no custom schemes.
-  const inApp = () => location.protocol === "agentnave:" || location.hostname === "agentnave.localhost";
   const bar = document.querySelector("header.bar");
   if (bar && inApp()) {
     const shell = shellOS();
