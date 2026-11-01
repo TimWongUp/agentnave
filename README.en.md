@@ -163,6 +163,12 @@ Contributions are welcome through GitHub Issues and pull requests; see [CONTRIBU
 workflow and validation requirements. Do not report security vulnerabilities in a public Issue: follow
 [SECURITY.md](SECURITY.md) to use the repository's private reporting channel.
 
+## 🙏 Acknowledgements
+
+Viewing sessions from the tray, and reading Claude and Codex session records to tell which app a boss
+chats in, follow approaches from [magpie](https://github.com/yetone/magpie). CLI icons come from
+[LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT).
+
 ## 📄 License
 
 AgentNave is licensed under the [MIT License](LICENSE).
