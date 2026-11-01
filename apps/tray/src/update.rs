@@ -623,26 +623,34 @@ fn install_service_version(
             &["tool", "install", "--force", "--python", "3.12", source],
             dirs,
         );
-        if online.is_err()
-            && installed_version(&dirs.tools.join("agentnave")).is_some()
-            && run(
-                uv,
-                &[
-                    "tool",
-                    "install",
-                    "--force",
-                    "--offline",
-                    "--python",
-                    "3.12",
-                    source,
-                ],
-                dirs,
-            )
-            .is_ok()
+        if online.is_ok() {
+            return Ok(());
+        }
+        // The wheel is embedded but its dependency (`mcp`) is not, so an offline upgrade relies on
+        // the wheels the previous install already put in uv's cache. Retry offline for any target
+        // directory, not just a re-install of the same version, or a machine without a network
+        // could never move to a new version.
+        if run(
+            uv,
+            &[
+                "tool",
+                "install",
+                "--force",
+                "--offline",
+                "--python",
+                "3.12",
+                source,
+            ],
+            dirs,
+        )
+        .is_ok()
         {
             return Ok(());
         }
-        return online;
+        return Err(format!(
+            "{}（首次安装需要联网下载依赖；离线升级要求 uv 缓存里已有上一版装好的依赖）",
+            online.unwrap_err()
+        ));
     }
     let source = format!("git+{REPOSITORY}@v{version}");
     run(
