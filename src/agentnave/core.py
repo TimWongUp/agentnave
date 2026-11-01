@@ -48,6 +48,16 @@ _SENSITIVE_DIAGNOSTIC = re.compile(
 _OUTPUT_LIMIT_ERROR = InvocationError(
     "output_limit_exceeded", "provider output exceeded the AgentNave capture limit"
 )
+# A provider that keeps reporting retries without producing output is stuck (a network fault
+# Codex retries forever); stop it instead of letting the invocation run with no end.
+_RETRY_STALL_SECONDS = 300.0
+# A single retry followed by silence is a recovered provider, not a stuck one: the streak only
+# counts while retries keep arriving.
+_RETRY_STALL_QUIET_SECONDS = 60.0
+_RETRY_STALL_ERROR = InvocationError(
+    "provider_error",
+    "the provider kept retrying without producing output for 5 minutes; the invocation was stopped",
+)
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "failed", "error", "errored"})
@@ -67,6 +77,9 @@ class _InvocationRecord:
     last_event_at: float | None = None
     last_activity: ProviderActivity | None = None
     last_activity_at: float | None = None
+    # When the current run of "retrying" activity began, so a stuck provider can be timed out.
+    retry_since: float | None = None
+    retry_at: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
     pending_attention: deque[InvocationError] = field(
@@ -124,6 +137,14 @@ class _InvocationRecord:
                 )
             self.last_activity = activity
             self.last_activity_at = self.last_event_at
+            if activity.kind == "retry":
+                self.retry_since = _retry_streak_start(
+                    self.retry_since, self.retry_at, self.last_event_at
+                )
+                self.retry_at = self.last_event_at
+            else:
+                self.retry_since = None
+                self.retry_at = None
 
     def take_update(self) -> InvocationResult | InvocationError | None:
         """Return the final result, else consume the oldest unread blocker."""
@@ -141,6 +162,29 @@ class _InvocationRecord:
 class _CapturedStream:
     data: bytes
     exceeded: bool
+
+
+def _retry_streak_start(since: float | None, last: float | None, now: float) -> float:
+    """When the current run of retries began.
+
+    A run that already went quiet is over: a retry arriving after more than the quiet window
+    starts a new one, so a second unrelated hiccup is not counted as the first one continuing.
+    """
+    if since is None or (last is not None and now - last > _RETRY_STALL_QUIET_SECONDS):
+        return now
+    return since
+
+
+async def _stall_guard(record: _InvocationRecord, interval: float = 15.0) -> None:
+    """Complete once the provider has been retrying without output for too long."""
+    while True:
+        await asyncio.sleep(interval)
+        since, last = record.retry_since, record.retry_at
+        if since is None or last is None:
+            continue
+        now = time.monotonic()
+        if now - since >= _RETRY_STALL_SECONDS and now - last <= _RETRY_STALL_QUIET_SECONDS:
+            return
 
 
 @dataclass(slots=True)
@@ -548,6 +592,7 @@ class InvocationManager:
             completion_task = supervised.completion
             cancel_task = asyncio.create_task(record.cancel_event.wait())
             exceeded_task = asyncio.create_task(output_exceeded.wait())
+            stall_task = asyncio.create_task(_stall_guard(record))
             tasks.extend(
                 (
                     stdout_task,
@@ -556,20 +601,24 @@ class InvocationManager:
                     completion_task,
                     cancel_task,
                     exceeded_task,
+                    stall_task,
                 )
             )
 
             done, _ = await asyncio.wait(
-                (completion_task, cancel_task, exceeded_task),
+                (completion_task, cancel_task, exceeded_task, stall_task),
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            # A guard that fires in the same tick as a real signal must not mask it: the guard
+            # only ends a run that would otherwise keep going. Cancellation and a provider that
+            # already exited are outcomes, so they are settled before the stall error.
             if exceeded_task in done and output_exceeded.is_set():
                 terminal = InvocationStatus.FAILED
                 error = _OUTPUT_LIMIT_ERROR
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")
-            else:
+            elif completion_task in done:
                 completion = completion_task.result()
                 if completion.kind == "exit" and completion.returncode is not None:
                     provider_returncode = completion.returncode
@@ -585,6 +634,11 @@ class InvocationManager:
                         ),
                         completion.message or "provider supervisor failed",
                     )
+            else:
+                # The stall guard is the only trigger left, and the provider had not exited:
+                # stop it as the retry policy did before the guard existed.
+                terminal = InvocationStatus.FAILED
+                error = _RETRY_STALL_ERROR
 
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)

@@ -7,10 +7,12 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from agentnave import core
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codex import CodexAdapter
@@ -18,9 +20,13 @@ from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
+    _RETRY_STALL_QUIET_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    _RETRY_STALL_SECONDS,  # pyright: ignore[reportPrivateUsage]
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
     _read_limited,  # pyright: ignore[reportPrivateUsage]
+    _retry_streak_start,  # pyright: ignore[reportPrivateUsage]
+    _stall_guard,  # pyright: ignore[reportPrivateUsage]
 )
 from agentnave.models import (
     InvocationError,
@@ -136,6 +142,15 @@ class FakeAdapter(ClaudeAdapter):
                 f"import pathlib,sys,time; time.sleep({delay}); "
                 f"sys.stdout.write({wire!r}); sys.stdout.flush(); "
                 f"pathlib.Path({str(written)!r}).touch(); time.sleep(30)"
+            )
+        elif request.prompt == "retry_then_exit":
+            wire = (
+                json.dumps({"type": "system", "subtype": "api_retry", "error": "server_error"})
+                + "\n"
+            )
+            code = (
+                f"import sys; sys.stdout.write({wire!r}); "
+                "sys.stdout.write('completed'); sys.stdout.flush()"
             )
         elif request.prompt == "streaming_message":
             events = [
@@ -705,7 +720,6 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
 async def test_output_limit_found_while_draining_after_exit_still_fails(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave import core
 
     original = core._read_limited  # pyright: ignore[reportPrivateUsage]
 
@@ -773,8 +787,6 @@ async def test_output_limit_diagnostics_preserve_session_and_redact_tail(
 
     monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
     if stream == "stderr":
-        from agentnave import core
-
         original = core._read_limited  # pyright: ignore[reportPrivateUsage]
 
         async def reader_holds_pipe(*args: Any, **kwargs: Any) -> Any:
@@ -815,7 +827,6 @@ async def test_output_limit_diagnostics_preserve_session_and_redact_tail(
 async def test_supervisor_still_owns_process_group_when_cleanup_starts(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave import core
 
     observed_returncodes: list[int | None] = []
     original = core.terminate_process_tree
@@ -1096,3 +1107,121 @@ for line in sys.stdin:
         assert failure.error is not None and "authentication required" in failure.error.message
     finally:
         await manager.shutdown()
+
+
+def _stall_ready_with_every_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Arm a stall guard that finishes in the same wait tick as the real trigger.
+
+    The guard is what the retry policy would produce; holding it on a gate until the wait
+    has already seen the cancel or the exit reproduces the interleaving where both futures
+    are ready when the manager looks at them.
+    """
+    gate = asyncio.Event()
+    real_wait = asyncio.wait
+
+    async def armed_guard(_record: object) -> None:
+        await gate.wait()
+
+    async def wait_with_armed_guard(futures: Any, **kwargs: Any) -> Any:
+        futures = tuple(futures)
+        done, pending = await real_wait(futures, **kwargs)
+        if len(futures) != 4:
+            return done, pending
+        gate.set()
+        await real_wait((futures[3],))
+        return {*done, futures[3]}, pending - {futures[3]}
+
+    monkeypatch.setattr(core, "_stall_guard", armed_guard)
+    monkeypatch.setattr(core.asyncio, "wait", wait_with_armed_guard)
+
+
+@pytest.mark.asyncio
+async def test_completed_provider_wins_when_the_stall_guard_fires_in_the_same_tick(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stall_ready_with_every_signal(monkeypatch)
+    manager = InvocationManager()
+    invocation = manager.start(InvocationRequest("claude", "retry_then_exit", tmp_path))
+    try:
+        result = await manager.wait(invocation)
+        assert result is not None
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert result.output.endswith("completed")
+        assert result.session_id == "provider-session"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancel_wins_when_the_stall_guard_fires_in_the_same_tick(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stall_ready_with_every_signal(monkeypatch)
+    manager = InvocationManager()
+    invocation = manager.start(InvocationRequest("claude", "sleep", tmp_path))
+    try:
+        result = await manager.cancel(invocation)
+        assert result.status is InvocationStatus.CANCELLED
+        assert result.error is not None and result.error.code == "cancelled"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_stall_guard_that_fires_before_the_provider_exits_still_fails(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def stalled_guard(_record: object) -> None:
+        return
+
+    monkeypatch.setattr(core, "_stall_guard", stalled_guard)
+    manager = InvocationManager()
+    invocation = manager.start(InvocationRequest("claude", "sleep", tmp_path))
+    try:
+        result = await manager.wait(invocation)
+        assert result is not None and result.status is InvocationStatus.FAILED
+        assert result.error is not None and result.error.code == "provider_error"
+    finally:
+        await manager.shutdown()
+
+
+def test_a_provider_that_keeps_retrying_is_stopped_after_the_window() -> None:
+    stuck = SimpleNamespace(
+        retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1,
+        retry_at=time.monotonic(),
+    )
+    asyncio.run(asyncio.wait_for(_stall_guard(cast(Any, stuck), interval=0.01), timeout=2))
+
+
+def test_a_recovered_provider_is_not_stopped() -> None:
+    # One retry long ago, then silence: the provider recovered, so the streak is over.
+    once = time.monotonic() - _RETRY_STALL_SECONDS - 1
+    recovered = SimpleNamespace(retry_since=once, retry_at=once)
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            asyncio.wait_for(
+                _stall_guard(cast(Any, recovered), interval=0.01),
+                timeout=0.2,
+            )
+        )
+
+
+def test_a_quiet_provider_is_not_stopped() -> None:
+    idle = SimpleNamespace(retry_since=None, retry_at=None)
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            asyncio.wait_for(
+                _stall_guard(cast(Any, idle), interval=0.01),
+                timeout=0.2,
+            )
+        )
+
+
+def test_a_retry_after_a_quiet_gap_starts_a_new_streak() -> None:
+    quiet = _RETRY_STALL_QUIET_SECONDS
+    # First retry ever.
+    assert _retry_streak_start(None, None, 100.0) == 100.0
+    # Still inside the window: the same streak continues.
+    assert _retry_streak_start(10.0, 90.0, 100.0) == 10.0
+    # Silent for longer than the window: this is a new run.
+    assert _retry_streak_start(10.0, 100.0 - quiet - 1, 100.0) == 100.0
