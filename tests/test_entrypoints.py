@@ -112,6 +112,26 @@ async def _start_and_wait(client: Client, **arguments: object) -> dict[str, obje
 
 
 @pytest.mark.asyncio
+async def test_resumed_access_stays_with_the_duty_it_was_declared_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    root.mkdir()
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
+    from agentnave.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        await _start_and_wait(
+            client, provider="claude", cwd=str(tmp_path), role="出计划", access="read"
+        )
+        same = await _start_and_wait(client, session_id="session-e2e")
+        assert same["access"] == "read"
+        changed = await _start_and_wait(client, session_id="session-e2e", role="按计划实现")
+        assert changed["access"] is None
+
+
+@pytest.mark.asyncio
 async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_values_win(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -141,7 +161,8 @@ async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_va
         assert inherited["provider"] == "claude"
         assert inherited["model"] == "chosen" and inherited["access"] == "write"
         assert set(cast(list[str], inherited["defaults_applied"])) >= {
-            f"{key} (session_id history)" for key in ("provider", "cwd", "role", "seat", "access")
+            *(f"{key} (session_id history)" for key in ("provider", "cwd", "role", "seat")),
+            "access (worker-easy seat)",
         }
         alternate = tmp_path / "alternate"
         alternate.mkdir()
@@ -1401,11 +1422,15 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         inferred = await start({}, role="实现参数推断", seat="worker-easy", provider=None)
         assert inferred["provider"] == "claude" and inferred["access"] == "write"
         assert "provider (worker-easy seat)" in cast(list[str], inferred["defaults_applied"])
-        review = await start({}, role="correctness-reviewer", provider=None, access="write")
-        assert review["access"] == "write"
-        assert "access (correctness-reviewer seat)" not in cast(
-            list[str], review["defaults_applied"]
+        review = await start({}, role="correctness-reviewer", provider=None)
+        assert review["access"] == "read"
+        assert "access (correctness-reviewer seat)" in cast(list[str], review["defaults_applied"])
+        contradiction = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy", "access": "read"},
         )
+        assert contradiction.is_error
+        assert "worker-easy declares access=write" in str(contradiction.content)
         # The current host's off override suppresses role defaults without deleting saved seats.
         from agentnave.host import Host
 

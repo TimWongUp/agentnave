@@ -69,6 +69,14 @@ def latest_session_task(
     )[2]
 
 
+def role_access(role: str | None) -> Literal["read", "write"] | None:
+    """The access a known duty carries: Explorers and reviewers read, Workers write."""
+    name = (role or "").strip()
+    if name in get_args(OrchestrationRole.__value__):
+        return "write" if name.startswith("worker-") else "read"
+    return "read" if name in get_args(ReviewRole.__value__) else None
+
+
 @dataclass
 class StartArguments:
     provider: ProviderName | None
@@ -79,13 +87,16 @@ class StartArguments:
     defaults: list[str] = field(default_factory=lambda: [])
 
     def inherit(self, task: TaskRecord) -> None:
+        # Access belongs to the duty: a thread given a new role or seat does not keep the old one.
+        same_duty = self.role in (None, task.role) and self.seat in (None, task.seat)
         self.provider = self._inherited(
             self.provider, cast(ProviderName, task.provider), "provider"
         )
         self.cwd = self._inherited(self.cwd, task.cwd, "cwd")
         self.role = self._inherited(self.role, task.role, "role")
         self.seat = self._inherited(self.seat, cast(OrchestrationRole | None, task.seat), "seat")
-        self.access = self._inherited(self.access, task.access, "access")
+        if same_duty and self.access is None and role_access(self.seat or self.role) is None:
+            self.access = self._inherited(None, task.access, "access")
 
     def _inherited[T](self, explicit: T | None, saved: T | None, key: str) -> T | None:
         if explicit is not None or saved is None:
@@ -106,13 +117,16 @@ class StartArguments:
                 )
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
+        implied = role_access(name)
+        if implied is None:
+            return
         if self.access is None:
-            if name in get_args(OrchestrationRole.__value__):
-                self.access = "write" if name.startswith("worker-") else "read"
-            elif name in get_args(ReviewRole.__value__):
-                self.access = "read"
-            if self.access is not None:
-                self.defaults.append(f"access ({name} seat)")
+            self.access = implied
+            self.defaults.append(f"access ({name} seat)")
+        elif self.access != implied:
+            raise ValueError(
+                f"{name} declares access={implied}; omit access or pick a matching seat"
+            )
 
 
 def resolve_start(

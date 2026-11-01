@@ -18,7 +18,7 @@ const SHARED: &str = "## AgentNave 编排偏好
 - Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一，取 `list_members` 的 `orchestration`：`native` 工位交给宿主自带子代理并尽量用该模型，其余派发时 `seat` 用 `explorer-easy`、`explorer-hard`、`worker-easy` 或 `worker-hard`，省略 `provider`、`access` 和模型，服务按 App 工位补齐；`role` 写具体职责，新任务必传 `cwd`。没有工位时按任务组员选，都不可用时自己做。
 - 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；小事自己做。
 - 探索、规划、评审派 Explorer，prompt 写明不改文件；实现派 Worker。评审不交给原来的 Worker，尽量换模型。
-- 同一组文件同一时间只有一个 Worker 在写；同一职责续接传 `session_id`，服务继承省略的 CLI、目录、职责、工位和访问等级；换职责时显式覆盖并给自足简报。
+- 同一组文件同一时间只有一个 Worker 在写；同一职责续接只传 `session_id`，其余由服务继承；换职责时传新的 `role` 或 `seat` 并给自足简报。
 - 评审按风险定级；启用 agentnave-review 时，评审的定级和选工位都按它，不用 Explorer。
 - `succeeded` 不等于完成，boss 核对产物后验收；失败或取消时先核对现状，再决定续接、重派还是收尾。";
 
