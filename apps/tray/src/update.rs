@@ -41,6 +41,10 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const FOUND_FOR: Duration = EVERY;
 /// The updater sets no limit of its own, and the update dialog cannot be closed while it runs.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// The dependency index used for the retry that follows a failed direct install. PyPI is slow or
+/// unreachable from mainland China, where the first install is otherwise impossible.
+const MIRROR_INDEX: &str = "https://pypi.tuna.tsinghua.edu.cn/simple";
+
 /// `uv tool install` fetches from GitHub without a limit of its own.
 const SERVICE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Long enough to read the last step before the window goes away.
@@ -600,6 +604,15 @@ pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> 
     install_service_version(uv, dirs, VERSION, None)
 }
 
+/// The same directories with uv's dependency index pointed at a reachable mirror.
+fn with_mirror(dirs: &ToolDirs) -> ToolDirs {
+    let mut mirrored = dirs.clone();
+    mirrored
+        .network
+        .insert("UV_DEFAULT_INDEX".into(), MIRROR_INDEX.into());
+    mirrored
+}
+
 fn install_service_version(
     uv: &Path,
     dirs: &ToolDirs,
@@ -647,8 +660,19 @@ fn install_service_version(
         {
             return Ok(());
         }
+        // Dependencies still missing from the cache: the direct index was unreachable, so try a
+        // mirror before giving up. This is the only path that needs the network.
+        if run(
+            uv,
+            &["tool", "install", "--force", "--python", "3.12", source],
+            &with_mirror(dirs),
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
         return Err(format!(
-            "{}（首次安装需要联网下载依赖；离线升级要求 uv 缓存里已有上一版装好的依赖）",
+            "{}（首次安装需要联网下载依赖：直连与镜像均失败，可设置 UV_DEFAULT_INDEX 或使用代理）",
             online.unwrap_err()
         ));
     }

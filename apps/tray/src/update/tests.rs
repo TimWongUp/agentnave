@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 #[cfg(windows)]
 mod manifest;
@@ -188,4 +189,23 @@ fn a_service_at_or_above_this_build_is_left_alone() {
     assert!(!should_install(Some("0.60.0"), "0.59.1"));
     assert!(should_install(Some("0.58.0"), "0.59.1"));
     assert!(should_install(None, "0.59.1"));
+}
+
+#[test]
+fn the_mirror_retry_changes_only_the_index_and_leaves_the_original_alone() {
+    let dirs = ToolDirs {
+        home: PathBuf::from("/home/u"),
+        tools: PathBuf::from("/tools"),
+        bin: PathBuf::from("/bin"),
+        network: BTreeMap::new(),
+    };
+    let mirrored = with_mirror(&dirs);
+    assert_eq!(
+        mirrored.network.get("UV_DEFAULT_INDEX").map(String::as_str),
+        Some(MIRROR_INDEX)
+    );
+    assert!(
+        dirs.network.is_empty(),
+        "the caller's directories stay untouched"
+    );
 }

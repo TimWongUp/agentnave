@@ -578,3 +578,17 @@ or symlink, preserving user-authored additions. Uninstalling the runtime does no
 history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
 Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
 configuration, sessions, and user projects remain owned by the user and providers.
+
+## 中国大陆网络
+
+本机服务是单独安装的 Python 运行时。首次安装需要从 PyPI 下载依赖（`mcp` 等），这一步在直连 PyPI 很慢或不通的网络里会失败。App 的处理顺序是：
+
+1. 直接 `uv tool install`（使用系统代理，若已配置）
+2. 失败则 `--offline`（依赖 wheel 已在 uv 缓存里时可用，常见于升级）
+3. 仍失败则用清华镜像重试一次（`UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`）
+
+也可以在启动宿主前自行设置 `UV_DEFAULT_INDEX` 或 `HTTPS_PROXY`，这两种都会被继承。
+
+**升级服务不依赖网络**：只要本机装过一次，依赖已经在 uv 缓存里，升级走第 2 步即可离线完成。
+
+App 自身的自动更新从 GitHub Releases 下载，国内通常需要代理。
