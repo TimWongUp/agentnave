@@ -150,7 +150,7 @@ function renderDirectory(c, ctx) {
   setAttr(el.drawer, "aria-label", "boss 的对话");
   const key = JSON.stringify([
     c.group, ART.version(),
-    c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.doing]),
+    c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.detail, m.doing]),
     [...ctx.rooms.values()].map((r) => [r.id, r.title, r.status, r.pending_review]),
     [...ctx.desks.values()].map((d) => [d.key, deskName(d)]),
     c.omitted,
