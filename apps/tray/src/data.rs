@@ -360,9 +360,10 @@ impl Reader {
             return Response::error(400, &error);
         }
         let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(hosts) = guard.as_ref() {
-            document["effective_apps"] = hosts.effective_apps(&document);
-        }
+        document["effective_apps"] = guard
+            .as_ref()
+            .map(|hosts| hosts.effective_apps(&document))
+            .unwrap_or_else(|| json!({}));
         if let Err(error) = crate::members::save_orchestration(&self.root, &document) {
             return Response::error(500, &error);
         }

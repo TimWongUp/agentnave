@@ -76,12 +76,15 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
     document["effective_apps"] = {"codex": "off", "codex@work": "split", "grok": "parallel"}
     check(codex, False)
     check(Host("codex", "env", "codex@work"), True)
-    check(Host("grok", "env"), True)
+    check(Host("grok", "env", "grok"), True)
     check(claude, False)  # no connected row in the resolved map
     document["effective_apps"] = {"codex": "split", "codex@work": "off"}
     check(codex, False)  # an old connection cannot borrow a different account's mode
     check(Host("codex", "env", "codex"), True)
     check(Host("codex", "env", "codex@work"), False)
+    document["effective_apps"] = {"codex": "split"}
+    check(codex, False)  # another account may be missing because its repair failed
+    check(Host("codex", "env", "codex"), True)
     document["effective_apps"] = {}
     check(codex, False)
     # Turning orchestration off preserves the saved picks for the next enable.

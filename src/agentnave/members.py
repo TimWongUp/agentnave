@@ -203,17 +203,9 @@ class OrchestrationFile(BaseModel):
     def enabled(self, host: Host) -> bool:
         key = host.app_id or host.name or ""
         if self.effective_apps is not None:
-            # An old connection has no row identity. Never borrow a default row's mode
-            # when the same CLI also has another account; reconnect to identify it.
-            if (
-                host.app_id is None
-                and host.name
-                and any(
-                    row.startswith(f"{host.name}@")
-                    or (host.name == "claude" and row == "claude-desktop")
-                    for row in self.effective_apps
-                )
-            ):
+            # Old connections cannot prove which row started them, including rows whose
+            # config repair failed. Reconnect rather than borrow the default row's mode.
+            if host.app_id is None:
                 return False
             return self.effective_apps.get(key, "off") != "off"
         return self.apps.get(key, self.preset) != "off"
