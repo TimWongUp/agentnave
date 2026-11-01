@@ -209,3 +209,18 @@ fn the_mirror_retry_changes_only_the_index_and_leaves_the_original_alone() {
         "the caller's directories stay untouched"
     );
 }
+
+#[test]
+fn the_default_mirrors_come_before_github() {
+    if update_override().is_some() {
+        // An explicit endpoint takes the first slot by design; this test covers the default order.
+        return;
+    }
+    let urls: Vec<String> = update_endpoints()
+        .into_iter()
+        .map(|(_, url)| url.to_string())
+        .collect();
+    assert!(urls.len() >= 3, "{urls:?}");
+    assert!(urls[0].starts_with(UPDATE_MIRRORS[0]), "{urls:?}");
+    assert_eq!(urls.last().map(String::as_str), Some(MANIFEST));
+}

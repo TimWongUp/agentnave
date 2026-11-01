@@ -210,9 +210,17 @@ impl Updates {
     }
 }
 
-/// An update manifest to use instead of the bundled endpoint. Releases live on GitHub, which is
-/// slow or unreachable from mainland China; pointing this at a mirror makes updates usable there.
-fn update_endpoint() -> Option<tauri::Url> {
+/// The manifest every release publishes.
+const MANIFEST: &str =
+    "https://github.com/TimWongUp/agentnave/releases/latest/download/latest.json";
+
+/// Public mirrors that serve GitHub release files where GitHub itself does not answer. Each
+/// takes the full GitHub URL as a path, so the manifest and the installer it points at both work.
+const UPDATE_MIRRORS: [&str; 2] = ["https://ghfast.top/", "https://gh-proxy.com/"];
+
+/// An explicit manifest to use before the mirrors. Advanced overrides only; the default path
+/// needs no configuration.
+fn update_override() -> Option<tauri::Url> {
     let value = std::env::var("AGENTNAVE_UPDATE_ENDPOINT").ok()?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -221,20 +229,66 @@ fn update_endpoint() -> Option<tauri::Url> {
     tauri::Url::parse(trimmed).ok()
 }
 
-async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
-    let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
-    if let Some(proxy) = updater_proxy(&app) {
-        builder = builder.proxy(proxy);
+/// Manifests to try, mainland-friendly first: an explicit override, then each mirror, then GitHub.
+/// The mirror prefix is kept so the installer URL read from that manifest can be rewritten too.
+fn update_endpoints() -> Vec<(Option<&'static str>, tauri::Url)> {
+    let mut endpoints = Vec::new();
+    if let Some(override_url) = update_override() {
+        endpoints.push((None, override_url));
     }
-    // `endpoints` consumes the builder, so pick the shape once instead of trying and backing out.
-    let builder = match update_endpoint() {
-        Some(endpoint) => builder.endpoints(vec![endpoint]),
-        None => Ok(builder),
-    };
-    let found = match builder.and_then(|builder| builder.build()) {
-        Ok(updater) => updater.check().await,
-        Err(error) => Err(error),
-    };
+    let direct = tauri::Url::parse(MANIFEST).ok();
+    for mirror in UPDATE_MIRRORS {
+        if let Ok(url) = tauri::Url::parse(&format!("{mirror}{MANIFEST}")) {
+            endpoints.push((Some(mirror), url));
+        }
+    }
+    if let Some(direct) = direct {
+        endpoints.push((None, direct));
+    }
+    endpoints
+}
+
+/// Rewrite an installer URL through the mirror that served its manifest.
+fn proxied(prefix: &str, url: &tauri::Url) -> Option<tauri::Url> {
+    tauri::Url::parse(&format!("{prefix}{url}")).ok()
+}
+
+async fn check_across_endpoints(
+    app: &AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let mut last_error: Option<String> = None;
+    for (prefix, endpoint) in update_endpoints() {
+        let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
+        if let Some(proxy) = updater_proxy(app) {
+            builder = builder.proxy(proxy);
+        }
+        let Ok(builder) = builder.endpoints(vec![endpoint]) else {
+            continue;
+        };
+        let built = builder.build();
+        match built {
+            Ok(updater) => match updater.check().await {
+                Ok(Some(mut update)) => {
+                    // The manifest travels through the mirror, but the installer it names is still
+                    // a GitHub URL, so route that through the same prefix.
+                    if let Some(prefix) = prefix
+                        && let Some(url) = proxied(prefix, &update.download_url)
+                    {
+                        update.download_url = url;
+                    }
+                    return Ok(Some(update));
+                }
+                Ok(None) => return Ok(None),
+                Err(error) => last_error = Some(error.to_string()),
+            },
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "没有可用的更新源".into()))
+}
+
+async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
+    let found = check_across_endpoints(&app).await;
     let updates = app.state::<Updates>();
     // A failed silent check still counts as an attempt, so an offline cache is not
     // checked again on every click. Explicit rechecks remain available.

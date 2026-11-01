@@ -592,15 +592,11 @@ configuration, sessions, and user projects remain owned by the user and provider
 **升级服务不依赖网络**：只要本机装过一次，依赖已经在 uv 缓存里，升级走第 2 步即可离线完成。
 
 App 自身的自动更新从 GitHub Releases 下载，国内通常需要代理。
+### 自动更新源
 
-### 自建更新源
+App 的自动更新默认**先走国内镜像**，再走 GitHub：每次检查依次尝试 `ghfast.top`、`gh-proxy.com`，
+最后才直连 `github.com`。命中镜像时，清单里指向 GitHub 的安装包地址也会经同一前缀改写，所以
+下载安装包同样不走 GitHub。全部失败才报告检查失败。
 
-App 的自动更新默认从 GitHub Releases 取清单。国内访问不到时，可以把清单地址指到镜像：
-
-```
-AGENTNAVE_UPDATE_ENDPOINT=https://你的镜像/latest.json
-```
-
-清单格式与 Tauri updater 一致（`version`、`notes`、`pubkey`、`platforms`），其中各平台的 `url`
-指向安装包本身；签名必须用与 `tauri.conf.json` 里 `pubkey` 配对的私钥。设置后无效的 URL 会被忽略、
-继续用内置源。
+用户不需要配置任何东西。高级用法：设置 `AGENTNAVE_UPDATE_ENDPOINT` 可指定自己的清单地址，
+它会排在最前面；清单格式与 Tauri updater 一致，签名必须与 `tauri.conf.json` 的 `pubkey` 配对。
