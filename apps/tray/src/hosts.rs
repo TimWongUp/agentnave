@@ -1371,6 +1371,11 @@ impl Hosts {
                         skill::MANAGER,
                     )?;
                 }
+                for (name, embedded) in skill::REQUIRED {
+                    if let Some(path) = host.optional(name) {
+                        skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                    }
+                }
                 for (name, embedded) in skill::OPTIONAL {
                     if let Some(path) = host.optional(name)
                         && !self.shared_wanted(&host, name, &path)
@@ -1521,13 +1526,20 @@ impl Hosts {
             },
         )
     }
-    /// Installs the manager Skill, and each optional Skill the user switched on; App copies of
-    /// all of them are updated to this release.
+    /// Installs the manager Skill and those required beside it, and each optional Skill the user
+    /// switched on; App copies of all of them are updated to this release.
     fn ensure_skill(&self, host: &Host, install_missing: bool) -> Result<bool, String> {
         let Some(path) = &host.skill else {
             return Ok(false);
         };
         let mut changed = self.ensure_one(host, path, skill::MANAGER, install_missing)?;
+        // A host connected before a required Skill existed has the manager and lacks that Skill.
+        let connected = skill::state(path, &self.context.home, skill::MANAGER)["state"] == "app";
+        for (name, embedded) in skill::REQUIRED {
+            if let Some(path) = host.optional(name) {
+                changed |= self.ensure_one(host, &path, embedded, install_missing || connected)?;
+            }
+        }
         for (name, embedded) in skill::OPTIONAL {
             if let Some(path) = host.optional(name) {
                 let wanted = install_missing && self.skill_wanted(host.id, name);

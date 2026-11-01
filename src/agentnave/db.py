@@ -120,6 +120,7 @@ class Database:
                         connection.rollback()
                         raise
                     connection.execute("COMMIT")
+                _add_workspace_columns(connection)
             except BaseException:
                 connection.close()
                 raise
@@ -272,17 +273,21 @@ class Database:
         file: str | None,
         note: str | None,
         released: str,
+        title: str | None = None,
+        cwd: str | None = None,
     ) -> None:
         """Mark the boss's own workspace as waiting for another boss."""
         with self._write() as connection:
             cursor = connection.execute(
                 "INSERT INTO workspaces (id, owner, owner_host, owner_file, pending, note, "
-                "released) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT (id) DO UPDATE SET "
+                "released, title, cwd) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) "
+                "ON CONFLICT (id) DO UPDATE SET "
                 "pending = 1, note = excluded.note, released = excluded.released, "
                 "owner_host = excluded.owner_host, "
-                "owner_file = coalesce(excluded.owner_file, owner_file) "
+                "owner_file = coalesce(excluded.owner_file, owner_file), "
+                "title = coalesce(excluded.title, title), cwd = coalesce(excluded.cwd, cwd) "
                 "WHERE owner = excluded.owner",
-                (workspace_id, boss, host, file, note, released),
+                (workspace_id, boss, host, file, note, released, title, cwd),
             )
             if cursor.rowcount != 1:
                 raise ValueError("this workspace was just taken over by another boss")
@@ -297,9 +302,10 @@ class Database:
                 raise ValueError(f"workspace {workspace_id} is not waiting for a new boss")
             if before.owner != boss:
                 current, away = _resolve(connection, boss)
-                if (
-                    away is None
-                    and connection.execute(
+                own = _workspace(connection, "id", current)
+                if away is None and (
+                    (own is not None and own.title and _handed_over(own))
+                    or connection.execute(
                         "SELECT 1 FROM conversations WHERE manager_session = ? LIMIT 1",
                         (current,),
                     ).fetchone()
@@ -323,9 +329,11 @@ class Database:
                         (before.owner, workspace_id),
                     )
             else:
+                # Only a withdrawal clears the note: asking again keeps what the boss took over.
                 connection.execute(
-                    "UPDATE workspaces SET pending = 0, note = NULL, released = NULL, owner_host = ?, "
-                    "owner_file = coalesce(?, owner_file) WHERE id = ?",
+                    "UPDATE workspaces SET note = CASE pending WHEN 1 THEN NULL ELSE note END, "
+                    "released = CASE pending WHEN 1 THEN NULL ELSE released END, pending = 0, "
+                    "owner_host = ?, owner_file = coalesce(?, owner_file) WHERE id = ?",
                     (host, file, workspace_id),
                 )
             after = _workspace(connection, "id", workspace_id)
@@ -381,6 +389,24 @@ class Workspace(NamedTuple):
     released: str | None
     previous_host: str | None
     previous_file: str | None
+    title: str | None
+    cwd: str | None
+
+
+def _add_workspace_columns(connection: sqlite3.Connection) -> None:
+    """A database an older server created lacks them; older servers ignore them."""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
+    if {"title", "cwd"} <= columns:
+        return
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
+        for column in {"title", "cwd"} - columns:
+            connection.execute(f"ALTER TABLE workspaces ADD COLUMN {column} TEXT")
+    except BaseException:
+        connection.rollback()
+        raise
+    connection.execute("COMMIT")
 
 
 def _row(row: tuple[object, ...]) -> Workspace:
@@ -393,6 +419,11 @@ def _workspace(connection: sqlite3.Connection, column: str, value: str) -> Works
         f"SELECT {', '.join(Workspace._fields)} FROM workspaces WHERE {column} = ?", (value,)
     ).fetchone()
     return None if row is None else _row(row)
+
+
+def _handed_over(row: Workspace) -> bool:
+    """Whether the App shows this workspace's handover: the same rule as the tray's."""
+    return bool(row.pending) or row.owner != row.id or row.previous_host is not None
 
 
 def _resolve(connection: sqlite3.Connection, boss: str) -> tuple[str, Workspace | None]:

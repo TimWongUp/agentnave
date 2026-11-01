@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Sequence
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -42,6 +44,45 @@ def test_session_copied_between_project_folders_reads_the_live_transcript(
 
     assert session_model(Host("claude"), session) == "live-model"
     assert session_file(Host("claude"), session) == live
+
+
+def test_session_file_finds_each_kind_of_host_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host, boss_key, session_file, shared_session_id
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+
+    session = "session-0123456789abcdef0123456789abcdef0123"
+    old = tmp_path / "dsh/sessions/--work--" / session / "session.jsonl"
+    new = old.with_name("session.v4.jsonl.zstd")
+    old.parent.mkdir(parents=True)
+    old.write_text("")
+    os.utime(old, (1, 1))
+    new.write_text("")
+    assert session_file(Host("deepseek"), session) == new
+
+    native = "0123abcd-0000-4000-8000-000000000000"
+    transcript = (
+        tmp_path / ".gemini/antigravity-cli/brain" / native
+        / ".system_generated/logs/transcript_full.jsonl"
+    )  # fmt: skip
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("")
+    assert session_file(Host("antigravity"), native) == transcript
+
+    database = tmp_path / "hermes/state.db"
+    database.parent.mkdir()
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("CREATE TABLE sessions (id TEXT)")
+        db.execute("INSERT INTO sessions VALUES ('chat')")
+    assert session_file(Host("hermes"), "chat") == database
+    assert session_file(Host("hermes"), "absent") is None
+    assert shared_session_id("hermes", boss_key("hermes", "chat")) == "chat"
+    assert shared_session_id("hermes", boss_key("hermes", "absent")) is None
 
 
 def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(

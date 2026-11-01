@@ -1270,6 +1270,30 @@ fn refresh_installs_missing_skill_only_for_managed_host_entry() {
 }
 
 #[test]
+fn refresh_adds_a_required_skill_to_a_host_connected_before_it_existed() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "pi");
+    let (name, embedded) = skill::REQUIRED[0];
+    let required = h.optional(name).unwrap();
+    let state =
+        |hosts: &Hosts| skill::state(&required, &hosts.context.home, embedded)["state"].clone();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+
+    // The manager is an App copy but the host entry is not the App's, as after an update.
+    skill::install(
+        h.skill.as_ref().unwrap(),
+        &hosts.context.app,
+        "pi",
+        &hosts.context.home,
+        skill::MANAGER,
+    )
+    .unwrap();
+    assert_eq!(state(&hosts), "missing");
+    hosts.refresh();
+    assert_eq!(state(&hosts), "app");
+}
+
+#[test]
 #[cfg(unix)]
 fn connect_skill_failure_keeps_manual_root_for_refresh_retry() {
     let (_temp, mut hosts) = fixture();

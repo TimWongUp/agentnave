@@ -29,7 +29,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 - 🔍 **先审再公开**：开了审核，每条回答由老板决定公开还是留作私聊，不公开的回答其他席位看不到
 - 🏢 **托盘小办公室**：工位、会议室、对话记录一目了然，旧工作区可以一键清理
 - 🧠 **原生会话照旧**：每个 CLI 用自己的登录、配置和原生会话，保留 `session_id`，之后能接着聊
-- 🤝 **换个聊天接着干**：`handover` 把整个工作区交给另一个老板聊天接手
+- 🤝 **换个聊天接着干**：对老板说「转交这个会话」，到新聊天说「接手」；额度用完写不了交接文档，也能让新老板接手那个宿主的会话
 
 ## 👀 谁当老板，谁当组员
 
@@ -57,7 +57,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 1. 到 [Releases](https://github.com/TimWongUp/agentnave/releases/latest) 下载 `AgentNave_<版本>_universal.dmg`，拖进「应用程序」。
 2. 打开 App，按「开始使用」走完四步：**安装本机服务 → 接入一个宿主 → 设置组员 → 在宿主里派一次任务**。
-   接入宿主时，App 会顺便装好配套的 `agentnave-manager` Skill。
+   接入宿主时，App 会顺便装好配套的 `agentnave-manager` 和 `agentnave-handover` Skill。
 3. 回到宿主里说一句试试：
 
    ```text
@@ -72,7 +72,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.59.1"
 ```
 
-然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，再做验证。
+然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager](skills/agentnave-manager/SKILL.md) 和 [agentnave-handover](skills/agentnave-handover/SKILL.md) Skill，再做验证。
 安装指南本来就是写给 Agent 看的，可以直接交给你的 Agent，让它照着检查和安装。
 可选的 [agentnave-review Skill](skills/agentnave-review/SKILL.md) 是一道按风险分级的 PR／合并评审门，评审工位也由 AgentNave 派出去的只读 CLI 担任。
 

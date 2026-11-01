@@ -217,12 +217,38 @@ const Actions = (() => {
     for (const id of picked) if (!state.groupsData.some((g) => g.group === id)) picked.delete(id);
     await refresh();
   }
+  // A workspace with no conversation exists only as its handover, with nothing else to delete.
+  async function forgetGroups(ids) {
+    const answer = await ask({
+      title: ids.length > 1 ? `删除 ${ids.length} 个只有 boss 的工作区？` : `删除工作区“${groupName(ids[0])}”？`,
+      body: [
+        ids.length > 1 && h("ul.act-list", {}, ids.map((id) => h("li", {}, groupName(id)))),
+        h("p.act-note", {}, "交接文档会一起删除，删除后不能恢复；各 CLI 自己的会话文件不受影响。"),
+      ].filter(Boolean),
+      buttons: [{ label: "取消" }, { label: "删除", danger: true, primary: true, value: "delete" }],
+    });
+    if (!answer) return;
+    try {
+      const results = await Promise.all(ids.map((group) => AN.post("/app/workspaces/forget", { group })));
+      const failed = results.filter((r) => r.status !== "deleted");
+      if (failed.length) say(`${failed.length} 个工作区未删除：${failed[0].message}`, true);
+      else say(`已删除 ${ids.length} 个工作区`);
+    } catch (error) {
+      say(`删除没有完成：${error.message}。刷新后核对再试。`, true);
+    }
+    await refresh();
+  }
   async function removeGroups(ids) {
-    let all;
-    try { all = await conversations(); } catch (error) { say(`无法读取会话：${error.message}`, true); return; }
-    const set = new Set(ids);
-    const what = ids.length > 1 ? ` ${ids.length} 个工作区` : `工作区“${groupName(ids[0])}”`;
-    await remove(ids.map(groupName), all.filter((i) => set.has(i.group)), what);
+    const empty = ids.filter((id) => !state.groupsData.find((g) => g.group === id)?.conversations);
+    const used = ids.filter((id) => !empty.includes(id));
+    if (empty.length) await forgetGroups(empty);
+    if (used.length) {
+      let all;
+      try { all = await conversations(); } catch (error) { say(`无法读取会话：${error.message}`, true); return; }
+      const set = new Set(used);
+      const what = used.length > 1 ? ` ${used.length} 个工作区` : `工作区“${groupName(used[0])}”`;
+      await remove(used.map(groupName), all.filter((i) => set.has(i.group)), what);
+    }
     for (const id of ids) picked.delete(id);
     renderList();
     if (ids.includes(state.selected) && !state.groupsData.some((g) => g.group === state.selected)) go("/chat/");

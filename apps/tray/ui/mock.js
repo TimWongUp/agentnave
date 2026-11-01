@@ -578,6 +578,8 @@ All checks passed!
     const { members, status } = summaryOf(g, w);
     return {
       group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status,
+      handover: q.get("handover") || null,
+      took_over: q.get("handover") === "changed" ? `${label(g)} 接手了 Claude Code` : null,
       conversations: g.convs
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
         .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),

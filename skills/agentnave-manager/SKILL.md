@@ -29,7 +29,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值，App 靠它读出 boss 模型。本聊天首次调用前在 shell 里取一次宿主会话 ID：Claude Code `$CLAUDE_CODE_SESSION_ID`、Codex `$CODEX_THREAD_ID`、Antigravity `$ANTIGRAVITY_CONVERSATION_ID`、CodeBuddy 与 WorkBuddy `$CODEBUDDY_SESSION_ID`、Grok `$GROK_SESSION_ID`、Pi `$PI_SESSION_ID`、DeepSeek Harness `$DSH_SESSION_ID`、Hermes `$HERMES_SESSION_ID`；其他宿主用上下文明确给出的会话 ID，都没有才生成一次 UUID 并沿用。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它时服务先用按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再用 Claude Code 随 MCP 进程给出的 `CLAUDE_CODE_SESSION_ID`；该值在 `/clear` 等不重启 MCP 的切换后可能是旧聊天的，所以仍要每次显式传入；都没有时服务拒绝调用。
 
-只在用户要求交接或接手时用 `handover`，不在新聊天里主动去查：交出时带 `release=true` 和交接说明（按参数说明写：交接原因、下一步重点、建议加载的 Skill，已有材料只给出处，不含密钥），再请用户在任意宿主开新聊天接手。接手方认领后先读交接说明和可用的老 boss 会话文件尾部，用 `read_conversation` 回读相关会话；说明缺失、不全或未决事项不清楚时，从近期历史扩大回读，确认目标、约束和下一步后再续用。
+用户要求转交或接手会话时，按 `agentnave-handover` Skill 做，不在新聊天里主动查待接手。
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 

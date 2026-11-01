@@ -5,6 +5,7 @@ fn main() {
     let mut source = String::new();
     for (constant, name) in [
         ("FILES", "agentnave-manager"),
+        ("HANDOVER_FILES", "agentnave-handover"),
         ("REVIEW_FILES", "agentnave-review"),
     ] {
         let root = skills.join(name);
@@ -85,7 +86,11 @@ fn write_embedded_wheel(skills: &std::path::Path) {
     for (rel, path) in pkg_files {
         entries.push((format!("agentnave/{rel}"), std::fs::read(path).unwrap()));
     }
-    for skill in ["agentnave-manager", "agentnave-review"] {
+    for skill in [
+        "agentnave-manager",
+        "agentnave-handover",
+        "agentnave-review",
+    ] {
         let root = skills.join(skill);
         let mut files = Vec::new();
         collect(&root, &root, &mut files);

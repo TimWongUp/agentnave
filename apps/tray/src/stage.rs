@@ -426,6 +426,9 @@ pub(crate) struct Handover {
     pub note: Option<String>,
     pub released: Option<String>,
     pub previous_host: Option<String>,
+    /// Name the boss gave when handing over, for a workspace with no conversation to name it.
+    pub title: Option<String>,
+    pub cwd: Option<String>,
 }
 
 struct Group {
@@ -502,6 +505,19 @@ impl Group {
         }
     }
 
+    /// A workspace a boss opened by handing over: only that boss, no desks or conversations yet.
+    fn only_boss(id: String, handover: &Handover) -> Self {
+        let mut group = Self::new(id);
+        group.host.clone_from(&handover.host);
+        group.title = handover.title.clone().unwrap_or_default();
+        group.project_name = handover.cwd.as_deref().and_then(project_name);
+        if let Some(released) = &handover.released {
+            group.updated.clone_from(released);
+            group.at = timestamp(released).unwrap_or_default();
+        }
+        group
+    }
+
     /// Conversations saved before hosts were recorded have neither host nor manager session.
     fn manager_label(&self) -> &str {
         match self.host.as_deref() {
@@ -516,14 +532,21 @@ impl Group {
             _ => (self.host.as_deref(), self.manager_label()),
         };
         let (app, named) = boss_name(host, self.app);
+        let previous = self
+            .handover
+            .previous_host
+            .as_deref()
+            .map(|host| label(Some(host)))
+            .unwrap_or("这个工作区");
         let label = named.unwrap_or(name);
         let handover = if self.handover.pending {
             Some("pending")
         } else {
             self.handover.changed.then_some("changed")
         };
+        let took_over = (handover == Some("changed")).then(|| format!("{label} 接手了 {previous}"));
         json!({"group": self.id, "host": host, "app": app, "label": label, "handover": handover,
-            "project": self.project_name, "title": self.title,
+            "took_over": took_over, "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
@@ -1270,11 +1293,21 @@ pub(crate) fn respond(
             .or_insert_with(|| Group::new(id))
             .add(snapshot, index);
     }
+    for (id, handover) in handovers {
+        if handover.title.is_some() && valid_id(id) && !groups.contains_key(id) {
+            groups.insert(id.clone(), Group::only_boss(id.clone(), handover));
+        }
+    }
     let mut groups: Vec<_> = groups.into_values().collect();
     for group in &mut groups {
         group.project(&snapshots, false);
         if let Some(handover) = handovers.get(&group.id) {
             group.handover = handover.clone();
+            if group.first_title.is_none()
+                && let Some(title) = &handover.title
+            {
+                group.title.clone_from(title);
+            }
         }
         group.app = apps.get(&group.id).copied();
     }

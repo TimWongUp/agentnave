@@ -6,6 +6,8 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -2120,6 +2122,87 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
             },
         )
         assert unknown_again.is_error and "needs manager_session_id" in str(unknown_again.content)
+
+
+@pytest.mark.asyncio
+async def test_handover_opens_a_workspace_for_a_chat_that_never_dispatched(
+    data_root: Path, tmp_path: Path
+) -> None:
+    async with Client(mcp) as client:
+        release = {"release": True, "manager_session_id": "chat-a"}
+        for partial in ({}, {"title": "Ship"}, {"title": " ", "cwd": str(tmp_path)}):
+            unnamed = await client.call_tool("handover", {**release, **partial})
+            assert unnamed.is_error and "pass title and cwd" in str(unnamed.content)
+        released = await _call(
+            client, "handover", {**release, "note": "next", "title": "Ship", "cwd": str(tmp_path)}
+        )
+        workspace = released["workspace_id"]
+        waiting = cast(list[dict[str, object]], (await _call(client, "handover", {}))["waiting"])
+        assert [(w["workspace_id"], w["title"], w["cwd"], w["conversations"]) for w in waiting] == [
+            (workspace, "Ship", str(tmp_path), 0)
+        ]
+
+        claimed = await _call(
+            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+        )
+        assert claimed["status"] == "claimed" and claimed["note"] == "next"
+        assert claimed["conversations"] == []
+        # Asking again, as after a context reset, keeps the note.
+        again = await _call(
+            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+        )
+        assert again["note"] == "next"
+        # Taking over another workspace must not cost this one its note.
+        other = await _call(
+            client,
+            "handover",
+            {"release": True, "title": "Other", "cwd": str(tmp_path), "manager_session_id": "chat-c"},
+        )  # fmt: skip
+        busy = await client.call_tool(
+            "handover", {"workspace_id": other["workspace_id"], "manager_session_id": "chat-b"}
+        )
+        assert busy.is_error and "already leads" in str(busy.content)
+
+        # A withdrawn row is out of sight in the App, so it must not hold this chat back.
+        withdrawn = await _call(
+            client, "handover", {"workspace_id": other["workspace_id"], "manager_session_id": "chat-c"}
+        )  # fmt: skip
+        assert withdrawn["status"] == "withdrawn"
+        third = await _call(
+            client,
+            "handover",
+            {"release": True, "title": "Third", "cwd": str(tmp_path), "manager_session_id": "chat-d"},
+        )  # fmt: skip
+        taken = await _call(
+            client, "handover", {"workspace_id": third["workspace_id"], "manager_session_id": "chat-c"}
+        )  # fmt: skip
+        assert taken["status"] == "claimed"
+
+        task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        await _wait_task(client, task["invocation_id"])
+        assert _state(data_root, task["conversation_id"])["manager_session"] == workspace
+
+
+def test_only_one_boss_wins_a_claim_race(data_root: Path) -> None:
+    Database(data_root).release("w", "w", "claude", None, "note", "2026-11-01T00:00:00Z", "T")
+    start = threading.Barrier(4)
+
+    def claim(boss: str) -> str | None:
+        start.wait()
+        try:
+            Database(data_root).claim("w", boss, "codex", None)
+        except ValueError:
+            return None
+        return boss
+
+    with ThreadPoolExecutor(4) as pool:
+        winners = [boss for boss in pool.map(claim, ("a", "b", "c", "d")) if boss]
+    row = Database(data_root).workspace("w")
+    assert len(winners) == 1 and row is not None and row.owner == winners[0]
 
 
 @pytest.mark.asyncio

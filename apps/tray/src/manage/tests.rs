@@ -69,6 +69,50 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
     assert_eq!(delete(root.path(), "newly-finished")["status"], "deleted");
 }
 
+#[test]
+fn a_workspace_with_only_a_boss_stays_until_it_is_deleted_itself() {
+    let root = tempfile::tempdir().unwrap();
+    let only_boss = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let used = "s-cccccccccccccccccccccccccccccccc";
+    fixture(root.path(), "gone");
+    set(
+        root.path(),
+        "UPDATE tasks SET status = 'succeeded' WHERE conversation_id = ?1",
+        "gone",
+    );
+    set(
+        root.path(),
+        "UPDATE conversations SET manager_session = ?1 WHERE id = 'gone'",
+        used,
+    );
+    for id in [only_boss, used] {
+        set(
+            root.path(),
+            "INSERT INTO workspaces (id, owner, pending, title) VALUES (?1, ?1, 1, '发版')",
+            id,
+        );
+    }
+    let rows = || -> Vec<String> {
+        crate::db::read(root.path())
+            .unwrap()
+            .unwrap()
+            .prepare("SELECT id FROM workspaces")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+
+    // Deleting another workspace's last conversation removes that workspace, not this one.
+    assert_eq!(delete(root.path(), "gone")["status"], "deleted");
+    assert_eq!(rows(), [only_boss]);
+    assert_eq!(handover(root.path(), only_boss)["status"], "waiting");
+    assert_eq!(forget(root.path(), only_boss)["status"], "deleted");
+    assert!(rows().is_empty());
+    assert_eq!(forget(root.path(), only_boss)["status"], "missing");
+}
+
 /// A saved conversation with a running task, its view, and an isolated seat's files.
 fn fixture(root: &Path, id: &str) {
     crate::db::put(

@@ -181,7 +181,7 @@ def _director(
         "storage": storage,
         "refresh_error": refresh_error,
         "created": state.created,
-        "cwd": state.tasks[-1].cwd if state.kind == "task" and state.tasks else state.cwd,
+        "cwd": conversation_cwd(state),
     }
     if state.kind == "task":
         tasks = [
@@ -247,6 +247,10 @@ def _director(
         }
     )
     return data
+
+
+def conversation_cwd(state: Conversation) -> str | None:
+    return state.tasks[-1].cwd if state.kind == "task" and state.tasks else state.cwd
 
 
 def timeline(

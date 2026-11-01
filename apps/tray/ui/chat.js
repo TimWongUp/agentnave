@@ -32,6 +32,7 @@ const {
   hostTile,
   deskName,
   chatName,
+  shownName,
   chatPlace,
   activities,
 } = AN;
@@ -249,7 +250,7 @@ function createItem(g) {
 function updateItem(rec, g) {
   const [word, tone] = pick(GROUP, AN.ongoing(g.status));
   const on = g.group === state.selected;
-  const name = chatName(g);
+  const name = shownName(g);
   setClass(
     rec.el,
     `gi ${colorClass(g.color)} tone-${tone}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
@@ -276,9 +277,9 @@ function updateItem(rec, g) {
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
 }
-// A workspace waiting for, or taken over by, another boss (ADR-0033).
+// A workspace taken over by another boss (ADR-0033).
 function handoverWord(g) {
-  return { pending: "待接手 · ", changed: "boss 已更换 · " }[g.handover] || "";
+  return g.handover === "changed" ? "boss 已更换 · " : "";
 }
 function renderList() {
   const groups = state.groupsData;
@@ -425,8 +426,8 @@ function renderHead(c, n) {
     );
   }
   const t = state.head;
-  setText(t.title, chatName(c));
-  setText(t.sub, `${handoverWord(c)}boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  setText(t.title, shownName(c));
+  setText(t.sub, `boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
   t.run.hidden = !n.running && !n.review;
   setText(t.run, n.running ? `${n.running} 个在工作` : "会议进行中");
 }
@@ -526,11 +527,11 @@ function updateBoss(rec, c, n) {
     rec.st,
     n.running ? `等 ${n.running} 个回复` : n.review ? "会议进行中" : "空闲",
   );
-  setText(rec.state, model ? model : "");
+  setText(rec.state, [c.took_over, model].filter(Boolean).join(" · "));
   setAttr(
     el.boss,
     "aria-label",
-    `boss 办公室，${rec.st.textContent}，查看全部消息`,
+    `boss 办公室，${c.took_over ? `${c.took_over}，` : ""}${rec.st.textContent}，查看全部消息`,
   );
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }

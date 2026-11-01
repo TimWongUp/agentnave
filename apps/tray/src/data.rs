@@ -329,6 +329,14 @@ impl Reader {
                 Response::json(&crate::manage::handover(&self.root, group))
             });
         }
+        if path == "/app/workspaces/forget" {
+            return post(method, action, body, |payload| {
+                let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
+                    return Response::error(400, "需要有效的工作区 ID");
+                };
+                Response::json(&crate::manage::forget(&self.root, group))
+            });
+        }
         if path == "/app/conversations/delete" {
             return post(method, action, body, |payload| {
                 self.delete_conversations(&payload)
@@ -1020,13 +1028,18 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
 /// its creator; none before a server added the table.
 fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
+    // This connection reads only, so it cannot add what an older server's database lacks.
+    let labels = match crate::db::workspace_has(connection, "title") {
+        Ok(true) => "title, cwd",
+        _ => "NULL, NULL",
+    };
     let rows = connection
-        .prepare(
+        .prepare(&format!(
             "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending, \
-             note, released, previous_host \
+             note, released, previous_host, {labels} \
              FROM workspaces WHERE pending = 1 OR owner != id OR previous_host IS NOT NULL \
              ORDER BY id",
-        )
+        ))
         .and_then(|mut statement| {
             statement
                 .query_map([], |row| {
@@ -1039,6 +1052,8 @@ fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Ha
                             note: row.get(4)?,
                             released: row.get(5)?,
                             previous_host: row.get(6)?,
+                            title: row.get(7)?,
+                            cwd: row.get(8)?,
                         },
                     ))
                 })?

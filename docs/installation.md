@@ -419,8 +419,8 @@ entry. Check `agentnave-manager` in both user and project scopes, its source/rel
   copy that shadows it. Changes to a shared source also affect every host linked to that source.
 
 If installing manually, set `AGENTNAVE_SKILLS_DIR` to the absolute Skill directory supported by
-that host and desired scope. The installed `agentnave` wheel already bundles `skills/agentnave-manager`
-and `skills/agentnave-review`, so you can locate the bundled source directly from the runtime's
+that host and desired scope. The installed `agentnave` wheel already bundles `skills/agentnave-manager`,
+`skills/agentnave-handover` and `skills/agentnave-review`, so you can locate the bundled source directly from the runtime's
 Python environment (or fall back to a shallow checkout of the selected release tag):
 
 ```bash
@@ -437,7 +437,7 @@ else
 fi
 ```
 
-Then copy the Skill if missing, or leave identical content unchanged. Differing content is
+Then copy the two required Skills if missing, or leave identical content unchanged. Differing content is
 reported for the update procedure instead of being overwritten:
 
 ```bash
@@ -447,21 +447,23 @@ reported for the update procedure instead of being overwritten:
     /*) ;;
     *) echo "Use an absolute Skill directory" >&2; exit 1 ;;
   esac
-  test -f "$AGENTNAVE_SOURCE/skills/agentnave-manager/SKILL.md"
-  test -d "$AGENTNAVE_SOURCE/skills/agentnave-manager/references"
-  if test -e "$AGENTNAVE_SKILLS_DIR/agentnave-manager" ||
-     test -L "$AGENTNAVE_SKILLS_DIR/agentnave-manager"; then
-    if test -d "$AGENTNAVE_SKILLS_DIR/agentnave-manager" &&
-       diff -qr "$AGENTNAVE_SOURCE/skills/agentnave-manager" \
-         "$AGENTNAVE_SKILLS_DIR/agentnave-manager" >/dev/null; then
-      echo "Reuse existing agentnave-manager Skill"
-      exit 0
+  for skill in agentnave-manager agentnave-handover; do
+    test -f "$AGENTNAVE_SOURCE/skills/$skill/SKILL.md"
+    test -d "$AGENTNAVE_SOURCE/skills/$skill/references"
+    if test -e "$AGENTNAVE_SKILLS_DIR/$skill" ||
+       test -L "$AGENTNAVE_SKILLS_DIR/$skill"; then
+      if test -d "$AGENTNAVE_SKILLS_DIR/$skill" &&
+         diff -qr "$AGENTNAVE_SOURCE/skills/$skill" \
+           "$AGENTNAVE_SKILLS_DIR/$skill" >/dev/null; then
+        echo "Reuse existing $skill Skill"
+        continue
+      fi
+      echo "Existing $skill Skill differs or is broken; inspect before updating" >&2
+      exit 1
     fi
-    echo "Existing Skill differs or is broken; inspect before updating" >&2
-    exit 1
-  fi
-  mkdir -p "$AGENTNAVE_SKILLS_DIR"
-  cp -R "$AGENTNAVE_SOURCE/skills/agentnave-manager" "$AGENTNAVE_SKILLS_DIR/"
+    mkdir -p "$AGENTNAVE_SKILLS_DIR"
+    cp -R "$AGENTNAVE_SOURCE/skills/$skill" "$AGENTNAVE_SKILLS_DIR/"
+  done
 )
 ```
 
@@ -490,7 +492,7 @@ After registration or upgrade:
 2. Restart the server/session and confirm `start_agent`, `wait`, `cancel`, `list`,
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
    visible (9 total).
-   Confirm the host also discovers `agentnave-manager` in the intended
+   Confirm the host also discovers `agentnave-manager` and `agentnave-handover` in the intended
    scope and can read its eight referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
@@ -538,7 +540,7 @@ uv tool install --force --python 3.12 \
 
 Then update the Skill from that same tag through its installer or deployment manager. For a manual
 copy, stage the new Skill outside the discovered directory, preserve user-authored additions, and
-replace only the existing `agentnave-manager` tree, including `references/`; do not merge new files
+replace only the existing `agentnave-manager` and `agentnave-handover` trees, including `references/`; do not merge new files
 over old files and leave stale references behind. A managed symlink is updated through its source
 registration, without deleting the source directory, then repeat step 5. Agents read the updated
 Skill from disk on use, so a Skill update needs no restart. The launcher relays switch to a
@@ -561,8 +563,8 @@ See [v0.59.1 release notes](releases/v0.59.1.md) for this release and
 
 ## Uninstall
 
-For each target host, remove AgentNave's MCP registration and uninstall `agentnave-manager` through
-its Skill installer or deployment manager. Remove the shared runtime only after all hosts stop
+For each target host, remove AgentNave's MCP registration and uninstall `agentnave-manager` and
+`agentnave-handover` through its Skill installer or deployment manager. Remove the shared runtime only after all hosts stop
 using it. These are separate operations; the MCP removal commands do not uninstall the Skill:
 
 ```bash
