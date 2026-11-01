@@ -54,6 +54,7 @@ from agentnave.members import (
     CapacityError,
     CLIOptionsFileError,
     MemberFileError,
+    OrchestrationRole,
     PermissionFileError,
     ProviderExcludedError,
     ProviderName,
@@ -75,6 +76,12 @@ from agentnave.models import (
     ProviderOption,
 )
 from agentnave.store import Record, Review
+from agentnave.task_start import (
+    StartArguments,
+    add_write_warning,
+    apply_task_defaults,
+    resolve_start,
+)
 
 type ManagerModel = Annotated[
     str | None,
@@ -539,10 +546,6 @@ def _unreceived(
     ),
 )
 async def start_agent(
-    provider: Annotated[
-        ProviderName,
-        Field(description="CLI requested by the user, not a model ID. " + PROVIDER_SELECTION),
-    ],
     prompt: Annotated[
         str,
         Field(
@@ -550,10 +553,26 @@ async def start_agent(
             description="Complete task, context, constraints, and expected output; the CLI does not inherit this conversation.",
         ),
     ],
+    provider: Annotated[
+        ProviderName | None,
+        Field(
+            description=(
+                "CLI requested by the user, not a model ID. Omit to inherit from session_id "
+                "history or select the App seat's CLI; native seats require the host's "
+                "built-in subagent. " + PROVIDER_SELECTION
+            )
+        ),
+    ] = None,
     cwd: Annotated[
-        str,
-        Field(min_length=1, description="Absolute existing directory where the subagent runs."),
-    ],
+        str | None,
+        Field(
+            min_length=1,
+            description=(
+                "Absolute existing directory where the subagent runs. Required for a new task; "
+                "omitted on resume, inherits the native session's latest task directory."
+            ),
+        ),
+    ] = None,
     session_id: Annotated[
         str | None,
         Field(
@@ -561,6 +580,8 @@ async def start_agent(
             description=(
                 "To continue a specific native conversation, use the session_id returned by a "
                 "finished invocation of the same provider; never use an invocation_id here. "
+                "Omitted provider, cwd, role, seat and access inherit its latest saved task; "
+                "explicit values win. Unknown or ambiguous history needs provider and cwd. "
                 "Omitted, the task starts a new native thread: a new desk in the App."
             ),
         ),
@@ -595,13 +616,26 @@ async def start_agent(
         Field(
             description=(
                 "Optional label shown on this task's desk; 1–40 characters after trimming, no "
-                "newlines or control characters. Blank or omitted means no label. Each native "
-                "thread is its own desk, whatever its role. An agentnave-review role (e.g. "
-                "correctness-reviewer) or explorer-easy, explorer-hard, worker-easy, "
-                "worker-hard also brings the model and effort the user picked for that seat in "
-                "the App when provider is the seat's CLI (Explorer/Worker only when this host's "
-                "orchestration is enabled); explicit options win, and "
-                "defaults_applied names the seat."
+                "newlines or control characters. Blank clears the label; omitted inherits on "
+                "resume, otherwise means no label. Each native "
+                "thread is its own desk, whatever its role. Name what this desk does in words "
+                "the user can read. An agentnave-review role (e.g. correctness-reviewer) also "
+                "brings the model and effort the user picked for that seat in the App when "
+                "provider is the seat's CLI, and selects that CLI when provider is omitted; "
+                "explicit options win, and defaults_applied names "
+                "the seat."
+            )
+        ),
+    ] = None,
+    seat: Annotated[
+        OrchestrationRole | None,
+        Field(
+            description=(
+                "The Explorer or Worker difficulty this task takes. Brings the model and effort "
+                "the user picked for that seat in the App when provider is the seat's CLI and "
+                "this host's orchestration is enabled; explicit options win, and "
+                "defaults_applied names the seat. Selects the seat's CLI if provider is omitted. "
+                "Inherited on resume when omitted. Never shown; role stays the desk's label."
             )
         ),
     ] = None,
@@ -617,7 +651,14 @@ async def start_agent(
             )
         ),
     ] = None,
-    access: Annotated[Literal["read", "write"] | None, Field(description=ACCESS)] = None,
+    access: Annotated[
+        Literal["read", "write"] | None,
+        Field(
+            description=ACCESS
+            + " Omitted on resume, inherits the latest task; otherwise Explorer/review seats "
+            "default to read and Worker seats to write. Explicit values always win."
+        ),
+    ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
@@ -631,8 +672,9 @@ async def start_agent(
     await review but no wait or cancel has returned that yet.
 
     The reply reports the requested model/effort, not the CLI's effective settings;
-    defaults_applied lists App defaults, including each CLI's permission tier (auto unless
-    the user picked full in the App); other omitted settings inherit the native CLI.
+    defaults_applied lists inherited arguments and App defaults, including each CLI's
+    permission tier (auto unless the user picked full in the App); other omitted settings
+    inherit the native CLI.
     Each task starts a new native thread unless session_id continues one; a resumed native
     session joins its open conversation. CLI runs active at once (tasks plus seats) are
     limited by the App's setting, 8 by default; beyond it the call is rejected until some finish. The task and its final
@@ -650,19 +692,26 @@ async def start_agent(
         )
     seat_applied: list[str] = []
     try:
-        options, seat_applied = apply_seat(role_seat(role, HOST), provider, provider_options or {})
-        options, defaults_applied = apply_member(
-            read_members(),
-            "task",
-            provider,
-            options,
-            EXCLUDED_PROVIDERS,
-            permissions=read_permissions(),
-            cli_options=read_cli_options(),
-            seat=frozenset(seat_applied),
+        arguments = resolve_start(
+            StartArguments(provider, cwd, role, seat, access),
+            _conversations(ctx),
+            HOST,
+            session_id,
+            manager_session_id,
         )
-        if seat_applied:
-            defaults_applied = [f"{(role or '').strip()} seat", *seat_applied, *defaults_applied]
+    except (ValueError, OSError) as exc:
+        raise ToolError(str(exc)) from exc
+    provider, cwd = arguments.provider, arguments.cwd
+    assert provider is not None and cwd is not None
+    role, seat, access = arguments.role, arguments.seat, arguments.access
+    seat_name = seat or role
+    try:
+        options, seat_applied = apply_seat(
+            role_seat(seat_name, HOST), provider, provider_options or {}
+        )
+        options, defaults_applied = apply_task_defaults(
+            provider, seat_name, options, seat_applied, EXCLUDED_PROVIDERS
+        )
         request = InvocationRequest(
             provider=provider,
             prompt=prompt,
@@ -678,6 +727,7 @@ async def start_agent(
             manager_model=manager_model,
             manager_session_id=manager_session_id,
             role=role,
+            seat=seat,
             forward=forward,
             access=access,
         )
@@ -687,33 +737,21 @@ async def start_agent(
         error = invocation_request_error(provider, exc)
         if seat_applied:
             raise ToolError(
-                f"{error} App defaults applied: {(role or '').strip()!r} seat "
+                f"{error} App defaults applied: {(seat_name or '').strip()!r} seat "
                 f"({', '.join(seat_applied)})."
             ) from exc
         raise error from exc
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
     payload: TaskStartPayload = {
-        **started_payload(started.invocation_id, request, defaults_applied),
+        **started_payload(started.invocation_id, request, [*defaults_applied, *arguments.defaults]),
         "conversation_id": started.conversation_id,
         "access": started.access,
     }
     conversations = _conversations(ctx)
     message = conversations.records[started.conversation_id].state.tasks[-1]
     warnings = model_warnings(conversations.host, message)
-    if access != "read":
-        sharing = [
-            listing.invocation_id
-            for listing in manager.list_invocations()
-            if listing.status is None
-            and listing.cwd == request.cwd
-            and listing.invocation_id != started.invocation_id
-        ]
-        if sharing:
-            warnings.append(
-                f"{len(sharing)} other CLI run(s) active in this cwd ({', '.join(sharing)}); "
-                "parallel writers need separate worktrees. Declare access=read for read-only work."
-            )
+    add_write_warning(warnings, manager, request, started.invocation_id, access)
     if warnings:
         payload["warnings"] = warnings
     unreceived = _unreceived(_conversations(ctx), manager_session_id)
