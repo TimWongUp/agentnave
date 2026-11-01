@@ -315,6 +315,8 @@
   const deskName = (d) => [modelName(d.display_model || d.model) || "CLI 默认模型", d.effort].filter(Boolean).join(" · ");
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
+  // The title a reader sees: a workspace waiting for a new boss says so until one takes it over.
+  const shownName = (g) => (g.handover === "pending" ? `「待接手」${chatName(g)}` : chatName(g));
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
   // Cut long labels to n characters (by code point) with an ellipsis.
   const clip = (text, n) => { const chars = [...text]; return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text; };
@@ -335,7 +337,7 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();
 
 

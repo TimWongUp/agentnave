@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import itertools
 import json
 import os
@@ -32,7 +31,14 @@ from agentnave.group import (
     SeatRun,
     SeatState,
 )
-from agentnave.host import Host, detect_host, host_session_id, session_file, session_model
+from agentnave.host import (
+    Host,
+    boss_key,
+    detect_host,
+    host_session_id,
+    session_file,
+    session_model,
+)
 from agentnave.members import CapacityError, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
 from agentnave.store import (
@@ -358,8 +364,7 @@ class Conversations(Groups):
         if not raw.strip() or len(raw) > 200:
             raise ValueError("manager_session_id must contain 1–200 non-blank characters")
         # Namespace true chat identities separately from old per-connection UUIDs.
-        identity = json.dumps([self.host.name, raw], ensure_ascii=False).encode()
-        return "s-" + hashlib.sha256(identity).hexdigest()[:32], raw
+        return boss_key(self.host.name, raw), raw
 
     def _manager_session(self, session_id: str | None, *, strict: bool = True) -> str | None:
         """The workspace the calling boss writes (ADR-0033). Strictly, a boss whose workspace
@@ -423,22 +428,42 @@ class Conversations(Groups):
             key=lambda record: (record.state.created, record.state.id),
         )
 
-    def release(self, session_id: str | None, note: str | None) -> tuple[str, int]:
-        """Mark the calling boss's workspace as waiting for another boss; its conversations."""
+    def release(
+        self,
+        session_id: str | None,
+        note: str | None,
+        title: str | None = None,
+        cwd: str | None = None,
+    ) -> tuple[str, int]:
+        """Mark the calling boss's workspace as waiting for another boss; its conversations.
+
+        A chat that never dispatched gets a workspace now, which title and cwd then describe.
+        """
         boss = self._boss(session_id)
         workspace = self._manager_session(session_id)
         if boss is None or workspace is None:
             raise ValueError("handover needs manager_session_id for this boss chat")
+        if cwd is not None and not Path(cwd).is_absolute():
+            raise ValueError("handover cwd must be an absolute directory")
         records = self._workspace_records(workspace)
-        if not records:
-            raise ValueError("this boss chat has no saved conversations to hand over")
-        self.db.release(workspace, boss[0], self.host.name, self._boss_file(boss[1]), note, now())
+        row = self.db.workspace(workspace)
+        title = title.strip() if title else None
+        if records:
+            title, cwd = None, None
+        elif not (title or (row and row.title)) or not (cwd or (row and row.cwd)):
+            raise ValueError("this boss chat has no conversations yet: pass title and cwd")
+        self.db.release(
+            workspace, boss[0], self.host.name, self._boss_file(boss[1]), note, now(), title, cwd
+        )
         return workspace, len(records)
 
     def waiting(self) -> list[tuple[Workspace, list[Record]]]:
-        """Workspaces waiting for a new boss, with their conversations, oldest first."""
+        """Workspaces waiting for a new boss, with their conversations, oldest first.
+
+        A row with neither conversations nor a title of its own lost its last conversation.
+        """
         found = [(item, self._workspace_records(item.id)) for item in self.db.waiting()]
-        return [(item, records) for item, records in found if records]
+        return [(item, records) for item, records in found if records or item.title]
 
     def claim(
         self, session_id: str | None, workspace_id: str
@@ -448,7 +473,8 @@ class Conversations(Groups):
         if boss is None:
             raise ValueError("handover needs manager_session_id for this boss chat")
         records = self._workspace_records(workspace_id)
-        if not records:
+        row = self.db.workspace(workspace_id)
+        if not records and (row is None or not row.title):
             raise ValueError(f"workspace {workspace_id} has no saved conversations")
         before, after = self.db.claim(
             workspace_id, boss[0], self.host.name, self._boss_file(boss[1])

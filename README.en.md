@@ -30,7 +30,7 @@ has gone to the meeting room, and what everyone said.
 - 🔍 **Review before sharing**: with review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer
 - 🏢 **A cozy tray office**: desks, the meeting room and every conversation at a glance, with one-click cleanup of old workspaces
 - 🧠 **Native sessions stay native**: each CLI keeps its own login, configuration and native session; its `session_id` is kept so you can continue later
-- 🤝 **Hand over to another chat**: `handover` passes a whole workspace to another boss chat
+- 🤝 **Hand over to another chat**: tell the boss to hand this chat over, then say take over in a new chat; if quota ran out before a note could be written, the new boss can take over that host's session
 
 ## 👀 Who can be the boss, who can be a teammate
 
@@ -60,7 +60,7 @@ install or sign in to CLIs for you.
 1. Download `AgentNave_<version>_universal.dmg` from [Releases](https://github.com/TimWongUp/agentnave/releases/latest)
    and drag it into Applications.
 2. Open the App and follow the four 开始使用 (Get started) steps: **install the local service → connect a host → set up
-   teammates → send a task from the host**. Connecting a host also installs the companion `agentnave-manager` Skill.
+   teammates → send a task from the host**. Connecting a host also installs the companion `agentnave-manager` and `agentnave-handover` Skills.
 3. Back in your host, try:
 
    ```text
@@ -78,7 +78,7 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0
 ```
 
 Then follow the [installation guide](docs/installation.md) to register the MCP server, install the
-[agentnave-manager Skill](skills/agentnave-manager/SKILL.md) and verify both. The guide is written for Agents, so you
+[agentnave-manager](skills/agentnave-manager/SKILL.md) and [agentnave-handover](skills/agentnave-handover/SKILL.md) Skills and verify both. The guide is written for Agents, so you
 can hand it straight to yours and let it check and install. The optional
 [agentnave-review Skill](skills/agentnave-review/SKILL.md) adds a risk-graded review gate for PRs and merges, staffed by
 read-only reviewer CLIs that AgentNave dispatches.

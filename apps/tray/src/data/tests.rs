@@ -577,6 +577,69 @@ fn show_chats_keep_private_history_after_new_rounds() {
     assert_eq!(state(&reader, &path)["messages"], first["messages"]);
 }
 
+/// A workspace row with a title and no conversation, as a boss that never dispatched leaves it.
+fn only_boss_row(root: &Path) {
+    crate::db::put(root, "other", &json!({}), &json!({}));
+    let connection = crate::db::write(root).unwrap().unwrap();
+    connection.execute("DELETE FROM conversations", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, owner_host, pending, note, released, title, cwd) \
+             VALUES (?1, ?1, 'codex', 1, '下一步', '2026-01-02T00:00:00Z', '发版', '/work/agentnave')",
+            [MANAGER],
+        )
+        .unwrap();
+}
+
+#[test]
+fn workspace_with_only_a_boss_shows_its_title_and_handover_note() {
+    let dir = tempfile::tempdir().unwrap();
+    only_boss_row(dir.path());
+    let reader = Reader::new(dir.path().to_path_buf());
+
+    let list = state(&reader, "/app/chats");
+    let group = &list["groups"][0];
+    assert_eq!(group["group"], MANAGER);
+    assert_eq!(group["title"], "发版");
+    assert_eq!(group["project"], "agentnave");
+    assert_eq!(group["handover"], "pending");
+    assert_eq!(group["conversations"], 0);
+
+    let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+    let message = chat["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(message["kind"], "handover");
+    assert_eq!(message["detail"], "下一步");
+
+    let stage = state(&reader, "/app/stage");
+    assert_eq!(stage["managers"][0]["group"], MANAGER);
+}
+
+#[test]
+fn handover_marks_survive_a_database_without_the_title_column() {
+    let dir = tempfile::tempdir().unwrap();
+    save(
+        dir.path(),
+        &task_snapshot("handover-task", "succeeded", "2026-01-01T00:00:00Z"),
+    );
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE workspaces DROP COLUMN title; ALTER TABLE workspaces DROP COLUMN cwd;",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, pending) VALUES (?1, ?1, 1)",
+            [MANAGER],
+        )
+        .unwrap();
+    let reader = Reader::new(dir.path().to_path_buf());
+    assert_eq!(
+        state(&reader, "/app/chats")["groups"][0]["handover"],
+        "pending"
+    );
+}
+
 #[test]
 fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
     let dir = tempfile::tempdir().unwrap();
@@ -623,6 +686,8 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
             .iter()
             .all(|t| t["kind"].is_string())
     );
+    assert_eq!(waiting["took_over"], Value::Null);
+    assert_eq!(claimed["took_over"], "Codex 接手了 Claude Code");
     let message = claimed["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(message["text"], "Claude Code 交出工作区，Codex 已接手");
     assert_eq!(claimed["omitted"], 0);

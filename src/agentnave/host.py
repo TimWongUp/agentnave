@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -50,6 +52,9 @@ class Host:
         return self.name
 
 
+_HERMES_SESSIONS = "sessions"
+_ZCODE_SESSIONS = "session"
+
 # Hosts that start each chat's MCP server with that chat's native session ID in its environment.
 # Codex passes MCP servers only a fixed variable allowlist, so its thread ID never arrives here.
 NATIVE_SESSION_ENV = {"claude": "CLAUDE_CODE_SESSION_ID"}
@@ -70,16 +75,86 @@ def host_session_id(host: Host) -> str | None:
     return os.environ.get(name, "").strip() or None
 
 
+def boss_key(host: str | None, session_id: str) -> str:
+    """A boss chat's key on disk: a hash, so its native session ID alone is never stored."""
+    identity = json.dumps([host, session_id], ensure_ascii=False).encode()
+    return "s-" + hashlib.sha256(identity).hexdigest()[:32]
+
+
 def session_file(host: Host, session_id: str | None) -> Path | None:
-    """This native session's own transcript file, when the host keeps one we can find."""
-    native_id = _native_id(session_id)
-    if native_id is None:
+    """Where this native session's records are: its own file, or the database a host shares."""
+    if session_id is None:
         return None
     try:
+        if host.name == "deepseek":
+            return _deepseek_file(session_id)
+        if host.name == "hermes":
+            return _shared_file(_hermes_database(), _HERMES_SESSIONS, session_id)
+        if host.name == "zcode":
+            return _shared_file(zcode_database(), _ZCODE_SESSIONS, session_id)
+        native_id = _native_id(session_id)
+        if native_id is None:
+            return None
+        if host.name == "antigravity":
+            return _antigravity_file(native_id)
         found = _transcript(host, native_id)
-    except (OSError, ValueError, RuntimeError):  # as in session_model: an unknown home, a loop
+    except (OSError, sqlite3.Error, ValueError, RuntimeError):
+        # As in session_model: an unknown home, a loop, a database in use.
         return None
     return None if found is None else found[0]
+
+
+def shared_session_id(host: str | None, key: str) -> str | None:
+    """The session behind a boss key, for a host whose sessions share one database."""
+    try:
+        if host == "hermes":
+            database, sessions = _hermes_database(), _HERMES_SESSIONS
+        elif host == "zcode":
+            database, sessions = zcode_database(), _ZCODE_SESSIONS
+        else:
+            return None
+        if not database.is_file():
+            return None
+        with closing(_read_only(database)) as db:
+            for (session,) in db.execute(f"SELECT id FROM {sessions}"):  # noqa: S608
+                if isinstance(session, str) and boss_key(host, session) == key:
+                    return session
+    except (OSError, sqlite3.Error, ValueError, RuntimeError):
+        return None
+    return None
+
+
+def _deepseek_file(session_id: str) -> Path | None:
+    if not re.fullmatch(r"session-[0-9a-fA-F-]{36}", session_id):
+        return None
+    root = _home("DSH_HOME", ".dsh") / "sessions"
+    # The file of an older format stays behind when a session is carried over.
+    files = [
+        path
+        for path in root.glob(f"*/{session_id}/session*.jsonl*")
+        if path.suffix in (".jsonl", ".zstd") and path.resolve().is_relative_to(root.resolve())
+    ]
+    return max(files, key=lambda path: path.stat().st_mtime_ns) if files else None
+
+
+def _antigravity_file(native_id: str) -> Path | None:
+    root = Path.home() / ".gemini"
+    for folder in ("antigravity", "antigravity-cli"):
+        path = root / folder / "brain" / native_id / ".system_generated/logs/transcript_full.jsonl"
+        if path.is_file():
+            return path
+    return None
+
+
+def _shared_file(database: Path, sessions: str, session_id: str) -> Path | None:
+    if not database.is_file():
+        return None
+    with closing(_read_only(database)) as db:
+        found = db.execute(
+            f"SELECT 1 FROM {sessions} WHERE id = ?",  # noqa: S608
+            (session_id,),
+        ).fetchone()
+    return database if found else None
 
 
 def session_model(
@@ -212,7 +287,7 @@ def _antigravity_model(native_id: str) -> str | None:
 def _hermes_model(session_id: str) -> str | None:
     if not re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{4,32}", session_id):
         return None
-    path = _home("HERMES_HOME", ".hermes") / "state.db"
+    path = _hermes_database()
     if not path.is_file():
         return None
     with closing(_read_only(path)) as db:
@@ -220,16 +295,14 @@ def _hermes_model(session_id: str) -> str | None:
     return clean_model(row[0]) if row is not None else None
 
 
+def _hermes_database() -> Path:
+    return _home("HERMES_HOME", ".hermes") / "state.db"
+
+
 def _zcode_model(session_id: str, since: datetime | None) -> str | None:
     if not re.fullmatch(r"(?:sess_[0-9a-fA-F-]{36}|session_[0-9a-fA-F]{32})", session_id):
         return None
-    path = Path.home() / ".zcode/cli/db/db.sqlite"
-    config_path = Path.home() / ".zcode/cli/config.json"
-    if config_path.is_file():
-        config = parse_json_object(config_path.read_text()) or {}
-        override = object_dict(config.get("storage")).get("sessionDbPath")
-        if isinstance(override, str) and override:
-            path = Path(override).expanduser()
+    path = zcode_database()
     if not path.is_file():
         return None
     with closing(_read_only(path)) as db:
@@ -243,6 +316,16 @@ def _zcode_model(session_id: str, since: datetime | None) -> str | None:
             if message.get("role") == "assistant":
                 return clean_model(message.get("modelId"))
     return None
+
+
+def zcode_database() -> Path:
+    config_path = Path.home() / ".zcode/cli/config.json"
+    if config_path.is_file():
+        config = parse_json_object(config_path.read_text()) or {}
+        override = object_dict(config.get("storage")).get("sessionDbPath")
+        if isinstance(override, str) and override:
+            return Path(override).expanduser()
+    return Path.home() / ".zcode/cli/db/db.sqlite"
 
 
 def _home(variable: str, default: str) -> Path:

@@ -215,8 +215,9 @@ pub fn delete(root: &Path, id: &str) -> Value {
     let deleted = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .and_then(|transaction| {
+            let group = conversation_group(&transaction, id)?;
             transaction.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
-            forget_emptied(&transaction)?;
+            forget_emptied(&transaction, group.as_deref())?;
             transaction.commit()
         });
     match deleted {
@@ -225,15 +226,61 @@ pub fn delete(root: &Path, id: &str) -> Value {
     }
 }
 
+fn conversation_group(connection: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT manager_session FROM conversations WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map(Option::flatten)
+}
+
 /// Drop the handover of a workspace whose last conversation is gone, so its bosses are free
-/// again (ADR-0033). A database an older server created may lack the tables.
-fn forget_emptied(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
-    connection.execute_batch(
+/// again (ADR-0033). Other workspaces a boss opened by handing over never had a conversation
+/// to lose, so they stay while the App shows them.
+fn forget_emptied(connection: &Connection, emptied: Option<&str>) -> rusqlite::Result<()> {
+    crate::db::add_handover_schema(connection)?;
+    connection.execute(
         "DELETE FROM workspaces WHERE NOT EXISTS \
-         (SELECT 1 FROM conversations WHERE manager_session = workspaces.id); \
-         DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces);",
-    )
+         (SELECT 1 FROM conversations WHERE manager_session = workspaces.id) \
+         AND (id IS ?1 OR title IS NULL \
+         OR NOT (pending = 1 OR owner != id OR previous_host IS NOT NULL))",
+        [emptied],
+    )?;
+    connection.execute(
+        "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Delete a workspace that has no conversation, which only exists as its handover row.
+pub fn forget(root: &Path, group: &str) -> Value {
+    let connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return result(group, "missing", "工作区已不存在"),
+        Err(e) => return result(group, "error", &e),
+    };
+    let deleted = connection
+        .execute(
+            "DELETE FROM workspaces WHERE id = ?1 AND NOT EXISTS \
+             (SELECT 1 FROM conversations WHERE manager_session = ?1)",
+            [group],
+        )
+        .and_then(|rows| {
+            connection.execute(
+                "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)",
+                [],
+            )?;
+            Ok(rows)
+        });
+    match deleted {
+        Ok(0) => result(group, "missing", "工作区有会话或已不存在，刷新后再试"),
+        Ok(_) => result(group, "deleted", "已删除工作区"),
+        Err(e) => result(group, "error", &format!("删除失败：{e}")),
+    }
 }
 
 /// A workspace keyed by a boss chat; legacy identities have none.
@@ -254,16 +301,16 @@ pub fn handover(root: &Path, group: &str) -> Value {
         Err(e) => return result(group, "error", &e),
     };
     let marked = (|| -> rusqlite::Result<bool> {
+        crate::db::add_handover_schema(&connection)?;
         let found: bool = connection.query_row(
-            "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?1)",
+            "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?1) \
+             OR EXISTS (SELECT 1 FROM workspaces WHERE id = ?1 AND title IS NOT NULL)",
             [group],
             |row| row.get(0),
         )?;
         if !found {
             return Ok(false);
         }
-        // A database an older server created may still lack the table.
-        connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
         connection.execute(
             "INSERT INTO workspaces (id, owner, owner_host, pending, released) \
              VALUES (?1, ?1, (SELECT host FROM conversations WHERE manager_session = ?1 \
@@ -368,12 +415,13 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
                 return Ok(false);
             }
         }
+        let group = conversation_group(&transaction, anchor).map_err(|e| e.to_string())?;
         for id in &expected {
             transaction
                 .execute("DELETE FROM conversations WHERE id = ?1", [id])
                 .map_err(|e| e.to_string())?;
         }
-        forget_emptied(&transaction).map_err(|e| e.to_string())?;
+        forget_emptied(&transaction, group.as_deref()).map_err(|e| e.to_string())?;
         transaction.commit().map_err(|e| e.to_string())?;
         Ok(true)
     })();

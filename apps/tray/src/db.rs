@@ -55,6 +55,31 @@ pub fn write(root: &Path) -> Result<Option<Connection>, String> {
     Ok(Some(connection))
 }
 
+/// Whether the workspaces table has a column; older servers' databases lack the newer ones.
+pub fn workspace_has(connection: &Connection, column: &str) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('workspaces') WHERE name = ?1)",
+        [column],
+        |row| row.get(0),
+    )
+}
+
+/// A database an older server created may lack the handover tables and columns.
+pub fn add_handover_schema(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
+    for column in ["title", "cwd"] {
+        if !workspace_has(connection, column)?
+            && let Err(error) = connection
+                .execute_batch(&format!("ALTER TABLE workspaces ADD COLUMN {column} TEXT"))
+            // A server may have added it first, which is all this wanted.
+            && !workspace_has(connection, column)?
+        {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 /// Build the servers' database for tests, from the same schema file Python uses.
 #[cfg(test)]
 pub fn create(root: &Path) -> Connection {

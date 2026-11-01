@@ -121,6 +121,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; color: var(--faint); }
 .zone-h .r { margin-left: auto; letter-spacing: 0; font-weight: 550; }
 .zone-h .r.run { color: var(--run); }
+.boss-zone .zone-h .r { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .zone-count { margin-left: 2px; color: var(--muted); letter-spacing: 0; }
 .zone-empty { grid-column: 1 / -1; padding: 22px 14px; border-radius: 14px; border: 1.5px dashed var(--line-strong); text-align: center; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
 

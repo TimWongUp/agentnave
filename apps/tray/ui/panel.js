@@ -6,7 +6,7 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, chatPlace, activities, dozing, ongoing, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
@@ -143,7 +143,7 @@ function updateBlock(rec, m) {
   const desks = m.desks || [], rooms = m.rooms || [];
   const n = running(m);
   const [word] = pick(GROUP, ongoing(m.status));
-  const name = chatName(m);
+  const name = shownName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
   tile(rec, m);
   setClass(rec.presence, m.live ? "presence on" : "presence");
@@ -217,7 +217,7 @@ function createQuiet() {
 function updateQuiet(rec, m) {
   const desks = m.desks || [];
   setAttr(rec.el, "href", href(`/chat/${m.group}`));
-  const name = chatName(m);
+  const name = shownName(m);
   setAttr(rec.el, "title", `${name} · ${chatPlace(m)} · ${pick(GROUP, m.status)[0]} · ${relTime(m.updated)}`);
   setText(rec.name, name);
   const key = desks.slice(0, 5).map(deskChar).join();
