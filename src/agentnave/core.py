@@ -48,6 +48,13 @@ _SENSITIVE_DIAGNOSTIC = re.compile(
 _OUTPUT_LIMIT_ERROR = InvocationError(
     "output_limit_exceeded", "provider output exceeded the AgentNave capture limit"
 )
+# A provider that keeps reporting retries without producing output is stuck (a network fault
+# Codex retries forever); stop it instead of letting the invocation run with no end.
+_RETRY_STALL_SECONDS = 300.0
+_RETRY_STALL_ERROR = InvocationError(
+    "provider_error",
+    "the provider kept retrying without producing output for 5 minutes; the invocation was stopped",
+)
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "failed", "error", "errored"})
@@ -67,6 +74,8 @@ class _InvocationRecord:
     last_event_at: float | None = None
     last_activity: ProviderActivity | None = None
     last_activity_at: float | None = None
+    # When the current run of "retrying" activity began, so a stuck provider can be timed out.
+    retry_since: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
     pending_attention: deque[InvocationError] = field(
@@ -124,6 +133,11 @@ class _InvocationRecord:
                 )
             self.last_activity = activity
             self.last_activity_at = self.last_event_at
+            if activity.kind == "retry":
+                if self.retry_since is None:
+                    self.retry_since = self.last_event_at
+            else:
+                self.retry_since = None
 
     def take_update(self) -> InvocationResult | InvocationError | None:
         """Return the final result, else consume the oldest unread blocker."""
@@ -141,6 +155,15 @@ class _InvocationRecord:
 class _CapturedStream:
     data: bytes
     exceeded: bool
+
+
+async def _stall_guard(record: _InvocationRecord, interval: float = 15.0) -> None:
+    """Complete once the provider has been retrying without output for too long."""
+    while True:
+        await asyncio.sleep(interval)
+        since = record.retry_since
+        if since is not None and time.monotonic() - since >= _RETRY_STALL_SECONDS:
+            return
 
 
 @dataclass(slots=True)
@@ -548,6 +571,7 @@ class InvocationManager:
             completion_task = supervised.completion
             cancel_task = asyncio.create_task(record.cancel_event.wait())
             exceeded_task = asyncio.create_task(output_exceeded.wait())
+            stall_task = asyncio.create_task(_stall_guard(record))
             tasks.extend(
                 (
                     stdout_task,
@@ -556,16 +580,20 @@ class InvocationManager:
                     completion_task,
                     cancel_task,
                     exceeded_task,
+                    stall_task,
                 )
             )
 
             done, _ = await asyncio.wait(
-                (completion_task, cancel_task, exceeded_task),
+                (completion_task, cancel_task, exceeded_task, stall_task),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if exceeded_task in done and output_exceeded.is_set():
                 terminal = InvocationStatus.FAILED
                 error = _OUTPUT_LIMIT_ERROR
+            elif stall_task in done:
+                terminal = InvocationStatus.FAILED
+                error = _RETRY_STALL_ERROR
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")

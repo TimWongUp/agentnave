@@ -7,10 +7,12 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from agentnave import core
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codex import CodexAdapter
@@ -18,9 +20,11 @@ from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
+    _RETRY_STALL_SECONDS,  # pyright: ignore[reportPrivateUsage]
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
     _read_limited,  # pyright: ignore[reportPrivateUsage]
+    _stall_guard,  # pyright: ignore[reportPrivateUsage]
 )
 from agentnave.models import (
     InvocationError,
@@ -705,7 +709,6 @@ async def test_output_limit_terminates_provider_without_unbounded_capture(
 async def test_output_limit_found_while_draining_after_exit_still_fails(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave import core
 
     original = core._read_limited  # pyright: ignore[reportPrivateUsage]
 
@@ -773,8 +776,6 @@ async def test_output_limit_diagnostics_preserve_session_and_redact_tail(
 
     monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
     if stream == "stderr":
-        from agentnave import core
-
         original = core._read_limited  # pyright: ignore[reportPrivateUsage]
 
         async def reader_holds_pipe(*args: Any, **kwargs: Any) -> Any:
@@ -815,7 +816,6 @@ async def test_output_limit_diagnostics_preserve_session_and_redact_tail(
 async def test_supervisor_still_owns_process_group_when_cleanup_starts(
     tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave import core
 
     observed_returncodes: list[int | None] = []
     original = core.terminate_process_tree
@@ -1096,3 +1096,19 @@ for line in sys.stdin:
         assert failure.error is not None and "authentication required" in failure.error.message
     finally:
         await manager.shutdown()
+
+
+def test_a_provider_that_keeps_retrying_is_stopped_after_the_window() -> None:
+    stuck = SimpleNamespace(retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1)
+    asyncio.run(asyncio.wait_for(_stall_guard(cast(Any, stuck), interval=0.01), timeout=2))
+
+
+def test_a_quiet_provider_is_not_stopped() -> None:
+    idle = SimpleNamespace(retry_since=None)
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            asyncio.wait_for(
+                _stall_guard(cast(Any, idle), interval=0.01),
+                timeout=0.2,
+            )
+        )
