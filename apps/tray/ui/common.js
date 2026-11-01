@@ -167,16 +167,74 @@
   lightQuery.addEventListener("change", applyTheme);
   addEventListener("storage", (e) => e.key === THEME_KEY && applyTheme());
   applyTheme();
+
+  // Which system the App runs on; the bar draws the window buttons that system would.
+  function shellOS() {
+    const ua = navigator.userAgent;
+    if (/Windows/i.test(ua)) return "windows";
+    if (/Mac OS X|Macintosh/i.test(ua)) return "macos";
+    return "linux";
+  }
+
+  // The caption buttons Windows would draw at the right end of its title bar: minimize, maximize
+  // or restore, close. They are the title bar's buttons rather than page buttons, so hovering one
+  // never starts a window drag, and the close button turns red under the pointer like the system's.
+  function captionButtons(topBar, act) {
+    const glyph = (d, cls) => {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", "0 0 10 10");
+      svg.setAttribute("aria-hidden", "true");
+      if (cls) svg.setAttribute("class", cls);
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", d);
+      svg.append(path);
+      return svg;
+    };
+    const button = (cls, title, ...kids) =>
+      h(`button.win-btn.${cls}`, { type: "button", title, "aria-label": title }, ...kids);
+    // Each glyph fills its 10-unit box (the bar is 48px, half again the system's 32px title bar):
+    // a dash as wide as the system's, a square the same measure, and a cross that reads at arm's
+    // length instead of the specks a 10px box draws at this height.
+    const minimize = button("win-min", "最小化", glyph("M1 5h8"));
+    const maximize = button("win-max", "最大化",
+      glyph("M1.5 1.5h7v7h-7z", "maximize"), glyph("M1.5 3.5h5v5h-5zM3.5 3.5V1.5h5v5H6.5", "restore"));
+    const close = button("win-close", "关闭", glyph("M1.5 1.5l7 7M8.5 1.5l-7 7"));
+    minimize.addEventListener("click", () => act("/app/window/minimize"));
+    maximize.addEventListener("click", () => act("/app/window/zoom"));
+    close.addEventListener("click", () => act("/app/window/close"));
+    // The maximize button reads as restore whenever the window is maximized, however it got there.
+    let timer = 0;
+    const syncMaximized = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        fetch("/app/window/state").then((r) => (r.ok ? r.json() : null))
+          .then((state) => { if (state) document.documentElement.classList.toggle("maximized", !!state.maximized); })
+          .catch(() => {});
+      }, 120);
+    };
+    addEventListener("resize", syncMaximized);
+    syncMaximized();
+    (topBar.querySelector(".bar-end") || topBar).append(h("div.win-ctl", {}, minimize, maximize, close));
+  }
+
   document.querySelector("header.bar")?.append(h("div.bar-end", {}, themeSwitch()));
-  // On macOS the window has no title bar of its own (only the agentnave: scheme is the Mac App):
-  // the top bar leaves room for the window buttons, drags the window, and zooms on double-click.
+  // The top bar is the window's title bar on every platform (only the agentnave: scheme is the App).
+  // Each system keeps its own window buttons: macOS draws traffic lights at the left of the bar,
+  // Windows has no title bar to put them in, so the bar carries Windows' caption buttons at the
+  // right. Either way the bar drags the window and zooms it on double-click.
+  // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
+  // on Windows, whose WebView2 has no custom schemes.
+  const inApp = () => location.protocol === "agentnave:" || location.hostname === "agentnave.localhost";
   const bar = document.querySelector("header.bar");
-  if (bar && location.protocol === "agentnave:") {
-    document.documentElement.classList.add("titlebar");
+  if (bar && inApp()) {
+    const shell = shellOS();
+    document.documentElement.classList.add("titlebar", `os-${shell}`);
     const blank = (e) => e.button === 0 && !e.target.closest("a, button, input, select, label, textarea");
     const act = (path) => fetch(path, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
     bar.addEventListener("mousedown", (e) => { if (blank(e) && e.detail === 1) act("/app/window/drag"); });
     bar.addEventListener("dblclick", (e) => { if (blank(e)) act("/app/window/zoom"); });
+    if (shell === "windows") captionButtons(bar, act);
   }
   // Painted art pauses with the window: a hidden window runs no animation at all.
   const syncPaused = () => document.documentElement.classList.toggle("paused", document.hidden);

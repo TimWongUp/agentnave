@@ -56,8 +56,32 @@ p { margin: 0; }
 }
 /* One viewport-wide header for chat, management and settings. */
 .bar { position: sticky; top: 0; z-index: 200; flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
-/* The Mac App's window buttons sit at the left of the bar. */
-.titlebar .bar { padding-left: 88px; -webkit-user-select: none; user-select: none; }
+/* The bar is the title bar: it holds the window buttons and selects nothing on a drag. */
+.titlebar .bar { -webkit-user-select: none; user-select: none; }
+/* macOS draws its traffic lights at the left of the bar; Windows has none to leave room for. */
+.titlebar.os-macos .bar { padding-left: 88px; }
+/* Windows' caption buttons sit at the window's own corner, beside the bar: the page keeps the last
+   strip free for its scrollbar, which a title bar covers anyway, so they are pinned there instead
+   of ending with the bar. The bar leaves their width free, and the page drops its own scrollbar:
+   a native title bar covers that strip, while a page scrollbar draws straight through it and would
+   leave the buttons stopping short of the corner. The pages still scroll with the wheel, and macOS
+   already fades its scrollbars out this way. */
+.titlebar.os-windows { scrollbar-gutter: auto; scrollbar-width: none; }
+.titlebar.os-windows::-webkit-scrollbar { width: 0; height: 0; }
+.titlebar.os-windows .bar { padding-right: 154px; }
+.win-ctl { position: fixed; top: 0; right: 0; width: 144px; height: 48px; display: flex; background: var(--bg); border-bottom: 1px solid var(--line); }
+/* Windows' caption buttons: as tall as the bar, flush with the corner like the system's. The system
+   draws 10px glyphs in a 32px title bar; this bar is 48px, so the same 10px read as specks and the
+   glyphs are drawn at 12px — a little larger than the system's, well short of the bar's own height
+   (14px looked like a media player's oversized buttons). */
+.win-btn { width: 48px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink); display: grid; place-items: center; }
+.win-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1; }
+.win-btn .restore { display: none; }
+.maximized .win-btn .restore { display: block; }
+.maximized .win-btn .maximize { display: none; }
+.win-btn:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.win-btn:active { background: color-mix(in srgb, var(--ink) 15%, transparent); }
+.win-close:hover, .win-close:active { background: #c42b1c; color: #fff; }
 .bar a { white-space: nowrap; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .nav { display: flex; gap: 2px; }
 .nav a { padding: 5px 12px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 550; }
