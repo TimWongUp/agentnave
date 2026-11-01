@@ -143,6 +143,15 @@ class FakeAdapter(ClaudeAdapter):
                 f"sys.stdout.write({wire!r}); sys.stdout.flush(); "
                 f"pathlib.Path({str(written)!r}).touch(); time.sleep(30)"
             )
+        elif request.prompt == "retry_then_exit":
+            wire = (
+                json.dumps({"type": "system", "subtype": "api_retry", "error": "server_error"})
+                + "\n"
+            )
+            code = (
+                f"import sys; sys.stdout.write({wire!r}); "
+                "sys.stdout.write('completed'); sys.stdout.flush()"
+            )
         elif request.prompt == "streaming_message":
             events = [
                 {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": text}}}
@@ -1096,6 +1105,82 @@ for line in sys.stdin:
         assert failure is not None and failure.status is InvocationStatus.BLOCKED
         assert failure.output == "answer" and failure.session_id
         assert failure.error is not None and "authentication required" in failure.error.message
+    finally:
+        await manager.shutdown()
+
+
+def _stall_ready_with_every_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Arm a stall guard that finishes in the same wait tick as the real trigger.
+
+    The guard is what the retry policy would produce; holding it on a gate until the wait
+    has already seen the cancel or the exit reproduces the interleaving where both futures
+    are ready when the manager looks at them.
+    """
+    gate = asyncio.Event()
+    real_wait = asyncio.wait
+
+    async def armed_guard(_record: object) -> None:
+        await gate.wait()
+
+    async def wait_with_armed_guard(futures: Any, **kwargs: Any) -> Any:
+        futures = tuple(futures)
+        done, pending = await real_wait(futures, **kwargs)
+        if len(futures) != 4:
+            return done, pending
+        gate.set()
+        await real_wait((futures[3],))
+        return {*done, futures[3]}, pending - {futures[3]}
+
+    monkeypatch.setattr(core, "_stall_guard", armed_guard)
+    monkeypatch.setattr(core.asyncio, "wait", wait_with_armed_guard)
+
+
+@pytest.mark.asyncio
+async def test_completed_provider_wins_when_the_stall_guard_fires_in_the_same_tick(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stall_ready_with_every_signal(monkeypatch)
+    manager = InvocationManager()
+    invocation = manager.start(InvocationRequest("claude", "retry_then_exit", tmp_path))
+    try:
+        result = await manager.wait(invocation)
+        assert result is not None
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert result.output.endswith("completed")
+        assert result.session_id == "provider-session"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancel_wins_when_the_stall_guard_fires_in_the_same_tick(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stall_ready_with_every_signal(monkeypatch)
+    manager = InvocationManager()
+    invocation = manager.start(InvocationRequest("claude", "sleep", tmp_path))
+    try:
+        result = await manager.cancel(invocation)
+        assert result.status is InvocationStatus.CANCELLED
+        assert result.error is not None and result.error.code == "cancelled"
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_stall_guard_that_fires_before_the_provider_exits_still_fails(
+    tmp_path: Path, fake_adapter: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def stalled_guard(_record: object) -> None:
+        return
+
+    monkeypatch.setattr(core, "_stall_guard", stalled_guard)
+    manager = InvocationManager()
+    invocation = manager.start(InvocationRequest("claude", "sleep", tmp_path))
+    try:
+        result = await manager.wait(invocation)
+        assert result is not None and result.status is InvocationStatus.FAILED
+        assert result.error is not None and result.error.code == "provider_error"
     finally:
         await manager.shutdown()
 

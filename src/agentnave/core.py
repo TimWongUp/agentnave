@@ -609,16 +609,16 @@ class InvocationManager:
                 (completion_task, cancel_task, exceeded_task, stall_task),
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            # A guard that fires in the same tick as a real signal must not mask it: the guard
+            # only ends a run that would otherwise keep going. Cancellation and a provider that
+            # already exited are outcomes, so they are settled before the stall error.
             if exceeded_task in done and output_exceeded.is_set():
                 terminal = InvocationStatus.FAILED
                 error = _OUTPUT_LIMIT_ERROR
-            elif stall_task in done:
-                terminal = InvocationStatus.FAILED
-                error = _RETRY_STALL_ERROR
             elif cancel_task in done and record.cancel_event.is_set():
                 terminal = InvocationStatus.CANCELLED
                 error = InvocationError("cancelled", "invocation was cancelled")
-            else:
+            elif completion_task in done:
                 completion = completion_task.result()
                 if completion.kind == "exit" and completion.returncode is not None:
                     provider_returncode = completion.returncode
@@ -634,6 +634,11 @@ class InvocationManager:
                         ),
                         completion.message or "provider supervisor failed",
                     )
+            else:
+                # The stall guard is the only trigger left, and the provider had not exited:
+                # stop it as the retry policy did before the guard existed.
+                terminal = InvocationStatus.FAILED
+                error = _RETRY_STALL_ERROR
 
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)
