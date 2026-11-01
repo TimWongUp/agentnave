@@ -313,13 +313,22 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
 }
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
-/// "custom": text, "explorer": {"easy" | "hard": seat}, "worker": {...}}`. The App writes the
-/// chosen rules into the boss apps' global rules; the server reads only the role seats.
+/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "explorer": {"easy" | "hard":
+/// seat}, "worker": {...}}`. The App writes the chosen rules into the boss apps' global rules and
+/// `effective_apps`, every connected row's mode as its group applies it, for the server.
 pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     let top = object(document, ORCHESTRATION_FILE)?;
     only(
         top,
-        &["version", "preset", "custom", "apps", "explorer", "worker"],
+        &[
+            "version",
+            "preset",
+            "custom",
+            "apps",
+            "effective_apps",
+            "explorer",
+            "worker",
+        ],
         ORCHESTRATION_FILE,
     )?;
     if document["version"].as_u64() != Some(1) {
@@ -331,8 +340,10 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         Some(_) => return Err("自定义编排必须为文本".into()),
     }
     let mut modes = vec![&document["preset"]];
-    if let Some(apps) = top.get("apps") {
-        modes.extend(object(apps, "apps")?.values());
+    for key in ["apps", "effective_apps"] {
+        if let Some(apps) = top.get(key) {
+            modes.extend(object(apps, key)?.values());
+        }
     }
     if !modes.iter().all(|mode| {
         mode.as_str()

@@ -236,6 +236,23 @@ struct Host {
     key: &'static str,
     user_layers: Vec<PathBuf>,
 }
+/// The variables a connection runs with: the host its service acts as, and the row it came from.
+fn host_env(host: &Host) -> Value {
+    json!({"AGENTNAVE_HOST": host.boss, "AGENTNAVE_HOST_APP": host.id})
+}
+/// Add the connection's variables to an entry, keeping its other ones.
+fn set_host_env(entry: &mut Value, host: &Host, code: &str) -> Result<(), String> {
+    if entry.get("env").is_none() {
+        entry["env"] = json!({});
+    }
+    let env = entry["env"]
+        .as_object_mut()
+        .ok_or(format!("{code}:env 必须为对象"))?;
+    if let Value::Object(wanted) = host_env(host) {
+        env.extend(wanted);
+    }
+    Ok(())
+}
 impl Host {
     /// Optional Skills sit beside the manager Skill in the same skills folder.
     fn optional(&self, name: &str) -> Option<PathBuf> {
@@ -593,6 +610,10 @@ impl Hosts {
             &backup,
         )
     }
+    /// Every connected row's mode as the rules files apply it, kept in orchestration.json.
+    pub fn effective_apps(&self, document: &Value) -> Value {
+        crate::rules::effective(&self.connected_rule_apps(), &self.context.home, document)
+    }
     /// The rules files the installed apps could read now, kept across a root change so the
     /// files left behind lose their block too.
     pub fn rule_paths(&self) -> Vec<PathBuf> {
@@ -747,7 +768,9 @@ impl Hosts {
         let command = entry.and_then(|e| host.command(e));
         let kind = command.map(entry_kind);
         let command_state = entry.map(|e| self.command_state(host, e));
-        let has_env = entry.is_some_and(|e| e["env"]["AGENTNAVE_HOST"] == host.boss);
+        let has_env = entry.is_some_and(|e| {
+            e["env"]["AGENTNAVE_HOST"] == host.boss && e["env"]["AGENTNAVE_HOST_APP"] == host.id
+        });
         let layers = self.layers(host);
         let has_entry = entry.is_some()
             || layers
@@ -1180,13 +1203,7 @@ impl Hosts {
                             let Some(desired) = latest.as_mut() else {
                                 return Ok(());
                             };
-                            if desired.get("env").is_none() {
-                                desired["env"] = json!({});
-                            }
-                            desired["env"]
-                                .as_object_mut()
-                                .ok_or("takeover_failed:env 必须为对象")?
-                                .insert("AGENTNAVE_HOST".into(), json!(host.boss));
+                            set_host_env(desired, &host, "takeover_failed")?;
                             // A missing launcher is repointed, and so is an older version of our
                             // own: after a versioned install the old directory still exists, so
                             // "present" alone would leave every host on the previous service.
@@ -1400,13 +1417,7 @@ impl Hosts {
                 "connect" => {
                     if let Some(value) = desired.as_mut() {
                         host.set_command(value, &path);
-                        if value.get("env").is_none() {
-                            value["env"] = json!({});
-                        }
-                        value["env"]
-                            .as_object_mut()
-                            .ok_or("write_failed:env 必须为对象")?
-                            .insert("AGENTNAVE_HOST".into(), json!(host.boss));
+                        set_host_env(value, &host, "write_failed")?;
                     } else {
                         if id == "zcode"
                             && let Some(fallback) = zcode_fallback(&self.context.home, &before)
@@ -1418,14 +1429,14 @@ impl Hosts {
                         }
                         desired = Some(if id == "deepseek" {
                             // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
-                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":host.boss},"toolCallTimeoutMs":310_000})
+                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":host_env(&host),"toolCallTimeoutMs":310_000})
                         } else if id == "zcode" {
                             // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
-                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss},"timeoutMs":310000})
+                            json!({"type":"stdio","command":path,"args":[],"env":host_env(&host),"timeoutMs":310000})
                         } else if id == "hermes" {
-                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss},"enabled":true})
+                            json!({"command":path,"args":[],"env":host_env(&host),"enabled":true})
                         } else {
-                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss}})
+                            json!({"command":path,"args":[],"env":host_env(&host)})
                         });
                     }
                 }

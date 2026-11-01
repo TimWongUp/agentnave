@@ -478,6 +478,8 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
         let original = h.read().unwrap();
         let result = hosts.action("connect", &json!({"id":id})).unwrap();
         assert_eq!(result["ok"], true, "{id}: {result}");
+        let env = h.read().unwrap().entry.unwrap()["env"].clone();
+        assert_eq!(env["AGENTNAVE_HOST_APP"], id, "{id}");
         if id == "deepseek" {
             // dsh would otherwise cut `wait` off after 60 s.
             assert_eq!(
@@ -907,10 +909,17 @@ fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
         h.set_command(&mut entry, &old);
         entry["args"] = json!(["--keep"]);
         entry["env"]["CUSTOM"] = json!("preserve");
+        // A connection made before rows were named lacks the row; refreshing adds it back.
+        entry["env"]
+            .as_object_mut()
+            .unwrap()
+            .remove("AGENTNAVE_HOST_APP");
         entry["disabled"] = json!(true);
         entry["allowedTools"] = json!(["wait_agent"]);
         save(&h.config, &before.render(Some(&entry)).unwrap());
+        assert_eq!(hosts.state(&h)["has_host_env"], false, "{id}");
         let mut expected = entry;
+        expected["env"]["AGENTNAVE_HOST_APP"] = json!(id);
         h.set_command(&mut expected, &hosts.launcher().unwrap());
         hosts.refresh();
         let after = h.read().unwrap();
@@ -1854,8 +1863,15 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
         assert_eq!(result["host"]["boss"], boss);
         let entry = row.read().unwrap().entry.unwrap();
         assert_eq!(entry["env"]["AGENTNAVE_HOST"], boss);
+        assert_eq!(entry["env"]["AGENTNAVE_HOST_APP"], id);
     }
     assert!(host(&hosts, "claude").read().unwrap().entry.is_none());
+    // The server reads each row's mode under the row, not the CLI it runs as.
+    let effective = hosts.effective_apps(&json!({"version": 1, "preset": "split"}));
+    assert_eq!(effective["claude-desktop"], "split");
+    assert_eq!(effective["codex@.codex-work"], "split");
+    assert_eq!(effective[nested_id.as_str()], "split");
+    assert!(effective.get("claude").is_none());
 
     let homes = hosts.boss_homes();
     assert!(homes.claude.contains(&elsewhere) && homes.claude.contains(&home.join(".claude")));
@@ -1896,5 +1912,45 @@ fn codex_folders_beside_codex_home_count_once_each() {
     assert_eq!(
         split::codex_homes(&home, &data.join("main")),
         [home.join(".codex"), data.join("codex-work")]
+    );
+}
+
+#[test]
+fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
+    let (_temp, mut hosts) = fixture();
+    for id in ["claude", "grok", "codex"] {
+        let h = host(&hosts, id);
+        executable_file(
+            &hosts.context.search[0].join(h.binary),
+            "#!/bin/sh\nexit 99\n",
+        );
+        assert_eq!(
+            hosts.action("connect", &json!({"id":id})).unwrap()["ok"],
+            true
+        );
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let reader = crate::data::Reader::new(directory.path().to_path_buf());
+    reader.use_hosts(hosts);
+    // Grok reads Claude's rules, so both run on Grok's mode; Codex follows the default.
+    let document = json!({"version": 1, "preset": "off", "apps": {"grok": "split"},
+        "effective_apps": {"codex": "parallel", "gone": "custom"}});
+    let body = serde_json::to_vec(&document).unwrap();
+    let saved = reader.request("POST", "/app/orchestration", Some("1"), &body);
+    assert_eq!(saved.status, 200);
+    let read = reader.request("GET", "/app/orchestration", None, b"");
+    let read: Value = serde_json::from_slice(&read.body).unwrap();
+    assert_eq!(
+        read["document"]["effective_apps"],
+        json!({"claude": "split", "grok": "split", "codex": "off"})
+    );
+    // A row that leaves takes its mode with it.
+    let removed = reader.request("POST", "/app/hosts/remove", Some("1"), br#"{"id":"codex"}"#);
+    assert_eq!(removed.status, 200);
+    let read = reader.request("GET", "/app/orchestration", None, b"");
+    let read: Value = serde_json::from_slice(&read.body).unwrap();
+    assert_eq!(
+        read["document"]["effective_apps"],
+        json!({"claude": "split", "grok": "split"})
     );
 }

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "preset": "off",
+  "apps": {
+    "grok": "split",
+    "codex@.codex-work": "parallel"
+  },
+  "effective_apps": {
+    "claude": "split",
+    "grok": "split",
+    "codex": "off",
+    "codex@.codex-work": "parallel"
+  }
+}

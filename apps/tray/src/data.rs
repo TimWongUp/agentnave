@@ -351,13 +351,21 @@ impl Reader {
     }
 
     fn save_orchestration(&self, payload: &Value) -> Response {
-        if let Err(error) = crate::members::validate_orchestration(payload) {
+        // The modes each row runs on are worked out here, never taken from the page.
+        let mut document = payload.clone();
+        if let Some(fields) = document.as_object_mut() {
+            fields.remove("effective_apps");
+        }
+        if let Err(error) = crate::members::validate_orchestration(&document) {
             return Response::error(400, &error);
         }
-        if let Err(error) = crate::members::save_orchestration(&self.root, payload) {
+        let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(hosts) = guard.as_ref() {
+            document["effective_apps"] = hosts.effective_apps(&document);
+        }
+        if let Err(error) = crate::members::save_orchestration(&self.root, &document) {
             return Response::error(500, &error);
         }
-        let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
         let failures = guard
             .as_ref()
             .map(|hosts| self.sync_rules(hosts, &[]))
@@ -404,6 +412,11 @@ impl Reader {
         shell
     }
 
+    #[cfg(test)]
+    pub(crate) fn use_hosts(&self, hosts: crate::hosts::Hosts) {
+        *self.hosts.lock().unwrap() = Some(hosts);
+    }
+
     pub fn configure_hosts(&self, context: crate::hosts::Context, shell: crate::hosts::Shell) {
         let mut guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
         *guard = Some(crate::hosts::Hosts::from_probe(
@@ -432,17 +445,27 @@ impl Reader {
         }
     }
 
-    /// The orchestration rules the saved settings put in the boss apps' rules files, if any.
-    /// Bring the orchestration block in line with the settings and the connected apps. A broken
-    /// orchestration.json leaves the files alone; a preview build never writes them.
+    /// Bring the orchestration block and the modes the server reads per row in line with the
+    /// settings and the connected apps. A broken orchestration.json leaves the files alone; a
+    /// preview build never writes them.
     fn sync_rules(&self, hosts: &crate::hosts::Hosts, also: &[std::path::PathBuf]) -> Vec<Value> {
         if crate::PREVIEW {
             return Vec::new();
         }
-        match crate::members::read_orchestration(&self.root) {
-            Ok(document) => hosts.sync_rules(&document, also),
-            Err(_) => Vec::new(),
+        let Ok(mut document) = crate::members::read_orchestration(&self.root) else {
+            return Vec::new();
+        };
+        let mut failures = Vec::new();
+        let effective = hosts.effective_apps(&document);
+        if document.get("effective_apps") != Some(&effective) {
+            document["effective_apps"] = effective;
+            if let Err(error) = crate::members::save_orchestration(&self.root, &document) {
+                failures
+                    .push(json!({"path": self.root.join("orchestration.json"), "error": error}));
+            }
         }
+        failures.extend(hosts.sync_rules(&document, also));
+        failures
     }
 
     /// The global rules files with whether each carries the current orchestration block.
