@@ -45,7 +45,7 @@ fn sorted(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// Codex's other folders, by magpie's `CodexHomes`, where they are made: in home and beside `main`,
+/// Codex's other folders, where they are made: in home and beside `main`,
 /// a `codex` or `.codex` folder, or one folder down in such a folder (`~/.codex-profiles/work`),
 /// that holds a sign-in or sessions.
 pub(super) fn codex_homes(home: &Path, main: &Path) -> Vec<PathBuf> {
@@ -85,7 +85,7 @@ pub(super) fn codex_homes(home: &Path, main: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-/// Claude Desktop is there if its app is, or, as magpie reads it off macOS and Linux, its folders.
+/// Claude Desktop is there if its app is, or, on macOS and Linux, its folders.
 fn claude_desktop_here(context: &Context) -> bool {
     let app = |dir: &PathBuf| dir.join("Claude.app").is_dir();
     if context.applications.iter().any(app) {

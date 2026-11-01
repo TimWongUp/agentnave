@@ -146,6 +146,10 @@ uv run pytest
 欢迎通过 GitHub Issue 和 Pull Request 参与，开发流程和验证要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 安全漏洞请不要发公开 Issue，按 [SECURITY.md](SECURITY.md) 走仓库的私密报告渠道。
 
+## 🙏 致谢
+
+托盘查看会话的思路，以及读取 Claude、Codex 会话记录判断 boss 所在应用的做法，参考了 [magpie](https://github.com/yetone/magpie)。CLI 图标来自 [LobeHub Icons](https://github.com/lobehub/lobe-icons)（MIT）。
+
 ## 📄 许可证
 
 AgentNave 以 [MIT 许可证](LICENSE)发布。

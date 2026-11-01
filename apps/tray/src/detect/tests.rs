@@ -77,7 +77,7 @@ fn each_model_runs_at_the_clis_setting_where_offered_else_its_own_level() {
 fn dsh_dump_names_the_composed_default_model() {
     let dump = "# == base\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n\
             \x20   model: deepseek-flash\n# == user\n- id: agent-default-model\n  config:\n\
-            \x20   provider: magpie\n    model: 'gw/v4''s'\n- id: jobs\n  config:\n    model: other\n";
+            \x20   provider: gateway\n    model: 'gw/v4''s'\n- id: jobs\n  config:\n    model: other\n";
     assert_eq!(dsh_default(dump, "model").as_deref(), Some("gw/v4's"));
     assert_eq!(dsh_default(dump, "reasoningEffort"), None);
     assert_eq!(dsh_default("- id: jobs\n", "model"), None);
@@ -130,11 +130,11 @@ fn command_listings_are_parsed_from_their_fixed_formats() {
     assert_eq!(models[0]["label"], "Gemini 3.8 Flash (High)");
 
     let pi = "provider     model                 context  max-out  thinking  images\n\
-            magpie       codex/gpt-5.6-luna    272K     128K     yes       yes\n\
+            gateway       codex/gpt-5.6-luna    272K     128K     yes       yes\n\
             opencode-go  glm-5.3               1M       131.1K   yes       no\n";
     assert_eq!(
         ids(&pi_models(pi)),
-        ["magpie/codex/gpt-5.6-luna", "opencode-go/glm-5.3"]
+        ["gateway/codex/gpt-5.6-luna", "opencode-go/glm-5.3"]
     );
     assert!(pi_models("No models available\n").is_empty());
 
