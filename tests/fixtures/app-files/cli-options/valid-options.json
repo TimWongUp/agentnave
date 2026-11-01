@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "clis": {
+    "codex": {
+      "skip_git_repo_check": true
+    },
+    "pi": {
+      "provider": "zai"
+    }
+  }
+}

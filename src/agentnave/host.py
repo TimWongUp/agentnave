@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Literal, get_args
 from uuid import UUID
 
-from agentnave.adapters.base import model_from_event, object_dict, parse_json_object
+from agentnave.adapters.base import clean_model, object_dict, parse_json_object
+from agentnave.adapters.claude import assistant_model
+from agentnave.adapters.pi import message_model
 from agentnave.process_info import read_process_argv, read_process_parent
 
 type HostName = Literal[
@@ -172,15 +174,15 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
             if event.get("type") == "turn_context":
                 value = object_dict(event.get("payload")).get("model")
         elif host.name == "claude":
-            value = model_from_event("claude", event)
+            value = assistant_model(event)
         elif host.name in {"codebuddy", "workbuddy"}:
             if event.get("role") == "assistant":
                 value = object_dict(event.get("providerData")).get("model")
         elif host.name == "pi":
-            value = model_from_event("pi", {"type": "message_end", "message": event.get("message")})
+            value = message_model(object_dict(event.get("message")))
         elif event.get("type") == "assistant":
             value = event.get("model_id")
-        if (model := _clean_model(value)) is not None:
+        if (model := clean_model(value)) is not None:
             return model
     return None
 
@@ -202,7 +204,7 @@ def _antigravity_model(native_id: str) -> str | None:
                         continue
                     for inner, value in _proto_fields(step):
                         if inner == 28:
-                            return _clean_model(value.decode("utf-8", "replace"))
+                            return clean_model(value.decode("utf-8", "replace"))
         return None
     return None
 
@@ -215,7 +217,7 @@ def _hermes_model(session_id: str) -> str | None:
         return None
     with closing(_read_only(path)) as db:
         row = db.execute("SELECT model FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    return _clean_model(row[0]) if row is not None else None
+    return clean_model(row[0]) if row is not None else None
 
 
 def _zcode_model(session_id: str, since: datetime | None) -> str | None:
@@ -239,7 +241,7 @@ def _zcode_model(session_id: str, since: datetime | None) -> str | None:
         for (raw,) in rows:
             message = parse_json_object(raw) or {}
             if message.get("role") == "assistant":
-                return _clean_model(message.get("modelId"))
+                return clean_model(message.get("modelId"))
     return None
 
 
@@ -289,20 +291,6 @@ def _varint(data: bytes, index: int) -> tuple[int, int]:
         shift += 7
         if byte < 0x80:
             return value, index
-
-
-def _clean_model(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    model = value.strip()
-    if (
-        model
-        and model not in {"unknown", "<synthetic>"}
-        and len(model) <= 200
-        and model.isprintable()
-    ):
-        return model
-    return None
 
 
 def _lines_from_end(

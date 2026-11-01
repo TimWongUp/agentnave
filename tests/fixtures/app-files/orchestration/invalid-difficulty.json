@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "preset": "off",
+  "worker": {
+    "medium": {
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high"
+    }
+  }
+}

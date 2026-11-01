@@ -8,12 +8,15 @@ import uuid
 from pathlib import Path
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    clean_model,
     error_summary,
     failure_status,
     normalized_usage,
+    object_dict,
     option_args,
     parse_json_lines,
     parse_json_object,
@@ -46,7 +49,7 @@ def _last_text_block(events: list[dict[str, object]]) -> str:
     return "".join(current) or last
 
 
-class GrokAdapter:
+class GrokAdapter(AdapterHooks):
     name = "grok"
     _options = {
         "model": "--model",
@@ -110,6 +113,12 @@ class GrokAdapter:
             capture_line=_capture_line,
             session_id=session_id,
         )
+
+    def event_model(self, event: dict[str, object]) -> str | None:
+        # Grok reports no model per message; its final usage lists every model it called.
+        # Only a single entry is unambiguous: subagents may add other models.
+        usage = object_dict(event.get("modelUsage")) if event.get("type") == "end" else {}
+        return clean_model(next(iter(usage))) if len(usage) == 1 else None
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")

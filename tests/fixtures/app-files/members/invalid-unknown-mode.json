@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "clis": {
+    "codex": {
+      "models": {
+        "gpt-6.1-sol": {
+          "efforts": [
+            "medium",
+            "high"
+          ],
+          "effort": "high",
+          "options": {
+            "skip_git_repo_check": true,
+            "budget": 2.5
+          },
+          "notes": "多文件实现"
+        },
+        "gpt-6-luna": {}
+      }
+    },
+    "claude": {
+      "models": {
+        "opus": {}
+      }
+    }
+  },
+  "modes": {
+    "task": {
+      "codex": {
+        "models": [
+          "gpt-6.1-sol"
+        ],
+        "default": "gpt-6.1-sol",
+        "overrides": {
+          "gpt-6.1-sol": {
+            "effort": "medium"
+          }
+        }
+      },
+      "claude": {
+        "models": []
+      }
+    },
+    "review": {}
+  },
+  "defaults": {
+    "discussion": {
+      "claude": "opus"
+    }
+  }
+}

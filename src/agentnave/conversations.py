@@ -18,7 +18,7 @@ from typing import Literal, NamedTuple
 from uuid import uuid4
 
 from agentnave import views
-from agentnave.adapters.antigravity import write_restricted_profile
+from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
 from agentnave.dashboard import Dashboard
 from agentnave.db import Database, Workspace
@@ -499,8 +499,7 @@ class Conversations(Groups):
                 directory.mkdir(parents=True, mode=0o700)
                 for seat in seats:
                     seat.cwd.mkdir(parents=True, mode=0o700)
-                    if seat.provider == "antigravity":
-                        write_restricted_profile(seat.cwd)
+                    get_adapter(seat.provider).prepare_seat(seat.cwd)
             group = self.open(cwd, seats, conversation_id)
             state = Conversation(
                 id=conversation_id,

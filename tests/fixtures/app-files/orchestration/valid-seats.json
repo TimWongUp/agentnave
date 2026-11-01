@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "preset": "split",
+  "explorer": {
+    "easy": {
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high"
+    }
+  },
+  "worker": {
+    "hard": {
+      "provider": "claude",
+      "model": "opus"
+    }
+  }
+}

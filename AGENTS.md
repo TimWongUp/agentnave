@@ -43,7 +43,7 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 
 ## Context change gate
 
-- 术语变化更新 `CONTEXT.md`；稳定所有权或接口边界变化更新 `docs/context/architecture.md`；难逆转且经过真实取舍的决定写 ADR。
+- 术语变化更新 `CONTEXT.md`；所有权、模块依赖方向或安全边界变化时更新 `docs/context/architecture.md`，只写边界与合同要点，不写参数、字段、路由、文件路径或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
 - 精确实现、临时路线、分支、commit、测试输出和实时运行状态不写入长期上下文。
 
 ## Version releases

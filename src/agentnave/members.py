@@ -347,38 +347,32 @@ class CLIOptionsFile(StrictModel):
         return self
 
 
-def read_cli_options() -> CLIOptionsFile | None:
+def data_root() -> Path:
+    """Where the App keeps its settings and the server its history."""
+    return Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+
+
+def _read_app_file[T: BaseModel](name: str, model: type[T], error: type[ValueError]) -> T | None:
+    """One App settings file of the data root; None when missing. A broken file raises `error`
+    with the App repair hint, never a fallback that would run with other settings."""
     try:
-        content = (_data_root() / "cli-options.json").read_text(encoding="utf-8")
+        content = (data_root() / name).read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
-        raise CLIOptionsFileError(
-            f"Unable to read cli-options.json: {exc}. Repair it in the AgentNave App."
-        ) from exc
+        raise error(f"Unable to read {name}: {exc}. Repair it in the AgentNave App.") from exc
     try:
-        return CLIOptionsFile.model_validate_json(content)
+        return model.model_validate_json(content)
     except ValueError as exc:
-        raise CLIOptionsFileError(
-            f"Invalid cli-options.json: {exc}. Repair it in the AgentNave App."
-        ) from exc
+        raise error(f"Invalid {name}: {exc}. Repair it in the AgentNave App.") from exc
+
+
+def read_cli_options() -> CLIOptionsFile | None:
+    return _read_app_file("cli-options.json", CLIOptionsFile, CLIOptionsFileError)
 
 
 def read_permissions() -> PermissionFile | None:
-    try:
-        content = (_data_root() / "permissions.json").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        raise PermissionFileError(
-            f"Unable to read permissions.json: {exc}. Repair it in the AgentNave App."
-        ) from exc
-    try:
-        return PermissionFile.model_validate_json(content)
-    except ValueError as exc:
-        raise PermissionFileError(
-            f"Invalid permissions.json: {exc}. Repair it in the AgentNave App."
-        ) from exc
+    return _read_app_file("permissions.json", PermissionFile, PermissionFileError)
 
 
 def apply_permission(
@@ -417,9 +411,8 @@ def check_excluded(mode: Mode, provider: str, excluded: frozenset[str]) -> None:
 
 def read_max_running() -> int:
     """The App's limit on CLI runs (tasks plus seats) this server keeps active at once."""
-    root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
     try:
-        document = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        document = json.loads((data_root() / "settings.json").read_text(encoding="utf-8"))
     except FileNotFoundError:
         return DEFAULT_MAX_RUNNING
     except (OSError, ValueError) as exc:
@@ -444,9 +437,8 @@ def _field(value: object, key: str) -> object:
 
 def _cli_defaults(provider: str) -> object:
     """One CLI's entry in the defaults the App last detected; None when missing or broken."""
-    root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
     try:
-        document = json.loads((root / "cli-defaults.json").read_text(encoding="utf-8"))
+        document = json.loads((data_root() / "cli-defaults.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return _field(_field(document, "clis"), provider)
@@ -466,26 +458,8 @@ def cli_default_effort(provider: str, model: str | None) -> str | None:
     return effort if isinstance(effort, str) and effort else None
 
 
-def _data_root() -> Path:
-    return Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
-
-
 def read_members() -> MemberFile | None:
-    root = _data_root()
-    try:
-        content = (root / "members.json").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        raise MemberFileError(
-            f"Unable to read members.json: {exc}. Repair it in the AgentNave App."
-        ) from exc
-    try:
-        return MemberFile.model_validate_json(content)
-    except ValueError as exc:
-        raise MemberFileError(
-            f"Invalid members.json: {exc}. Repair it in the AgentNave App."
-        ) from exc
+    return _read_app_file("members.json", MemberFile, MemberFileError)
 
 
 def add_cli_options(
@@ -568,15 +542,14 @@ def role_seat(role: str | None) -> ReviewSeat | None:
     role = (role or "").strip()
     try:
         if role in get_args(ReviewRole.__value__):
-            content = (_data_root() / "review.json").read_text(encoding="utf-8")
-            return ReviewFile.model_validate_json(content).seats.get(cast(ReviewRole, role))
+            review = _read_app_file("review.json", ReviewFile, MemberFileError)
+            return review.seats.get(cast(ReviewRole, role)) if review else None
         if role in get_args(OrchestrationRole.__value__):
             kind, difficulty = role.split("-")
-            content = (_data_root() / "orchestration.json").read_text(encoding="utf-8")
-            roles = OrchestrationFile.model_validate_json(content)
-            seats = roles.explorer if kind == "explorer" else roles.worker
+            roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+            seats = (roles.explorer if kind == "explorer" else roles.worker) if roles else {}
             return seats.get(cast(Difficulty, difficulty))
-    except (OSError, ValueError):
+    except MemberFileError:
         return None
     return None
 
@@ -741,27 +714,20 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error = None
     try:
-        content = (_data_root() / "review.json").read_text(encoding="utf-8")
-        review = _review_status(
-            ReviewFile.model_validate_json(content).seats, modes["task"], excluded, host
-        )
-    except FileNotFoundError:
-        pass
-    except (OSError, ValueError) as exc:
-        review_error = f"Invalid review.json: {exc}. Repair it in the AgentNave App."
+        if saved_review := _read_app_file("review.json", ReviewFile, MemberFileError):
+            review = _review_status(saved_review.seats, modes["task"], excluded, host)
+    except MemberFileError as exc:
+        review_error = str(exc)
     orchestration = OrchestrationStatus()
     orchestration_error = None
     try:
-        content = (_data_root() / "orchestration.json").read_text(encoding="utf-8")
-        roles = OrchestrationFile.model_validate_json(content)
-        orchestration = OrchestrationStatus(
-            explorer=_review_status(roles.explorer, modes["task"], excluded, host),
-            worker=_review_status(roles.worker, modes["task"], excluded, host),
-        )
-    except FileNotFoundError:
-        pass
-    except (OSError, ValueError) as exc:
-        orchestration_error = f"Invalid orchestration.json: {exc}. Repair it in the AgentNave App."
+        if roles := _read_app_file("orchestration.json", OrchestrationFile, MemberFileError):
+            orchestration = OrchestrationStatus(
+                explorer=_review_status(roles.explorer, modes["task"], excluded, host),
+                worker=_review_status(roles.worker, modes["task"], excluded, host),
+            )
+    except MemberFileError as exc:
+        orchestration_error = str(exc)
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error = None
     try:

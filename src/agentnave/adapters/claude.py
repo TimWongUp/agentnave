@@ -8,9 +8,11 @@ from collections.abc import Callable
 from typing import cast
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    clean_model,
     error_summary,
     failure_status,
     normalized_usage,
@@ -74,7 +76,21 @@ def _result_capture() -> Callable[[bytes], bytes]:
     return capture
 
 
-class ClaudeAdapter:
+def assistant_model(event: dict[str, object]) -> str | None:
+    """The main assistant's model; a subagent's messages carry parent_tool_use_id."""
+    if event.get("parent_tool_use_id") is not None:
+        return None
+    kind = event.get("type")
+    if kind == "assistant":
+        return clean_model(object_dict(event.get("message")).get("model"))
+    if kind == "stream_event":
+        nested = object_dict(event.get("event"))
+        if nested.get("type") == "message_start":
+            return clean_model(object_dict(nested.get("message")).get("model"))
+    return None
+
+
+class ClaudeAdapter(AdapterHooks):
     name = "claude"
     executable = "claude"
     _options = {
@@ -115,6 +131,9 @@ class ClaudeAdapter:
         return PreparedCommand(
             tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
         )
+
+    def event_model(self, event: dict[str, object]) -> str | None:
+        return assistant_model(event)
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")

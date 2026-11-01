@@ -8,6 +8,7 @@ import os
 import shutil
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -93,6 +94,27 @@ class ProviderAdapter(Protocol):
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
+    def event_model(self, event: dict[str, object]) -> str | None: ...
+
+    def session_model(self, session_id: str | None, *, since: datetime) -> str | None: ...
+
+    def prepare_seat(self, directory: Path) -> None: ...
+
+
+class AdapterHooks:
+    """What most CLIs do not need: the defaults of the optional ProviderAdapter hooks."""
+
+    def event_model(self, event: dict[str, object]) -> str | None:
+        """The main assistant's model named by one native stream event."""
+        return None
+
+    def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
+        """The model a finished run used, read from the CLI's own files when it streams none."""
+        return None
+
+    def prepare_seat(self, directory: Path) -> None:
+        """Prepare a dedicated, empty seat directory before restricted runs use it."""
+
 
 def brief(value: object, limit: int = 512) -> str | None:
     """Bound only explicitly selected public fields; never stringify arbitrary payloads."""
@@ -128,38 +150,13 @@ def object_dict(value: object) -> dict[str, object]:
     return {str(key): item for key, item in mapping.items()}
 
 
-def model_from_event(provider: str, event: dict[str, object]) -> str | None:
-    """Read native model identity only from known top-level protocol fields."""
-    value: object = None
-    kind = event.get("type")
-    if provider in ("claude", "codebuddy") and event.get("parent_tool_use_id") is None:
-        if kind == "assistant":
-            value = object_dict(event.get("message")).get("model")
-        elif kind == "stream_event":
-            nested = object_dict(event.get("event"))
-            if nested.get("type") == "message_start":
-                value = object_dict(nested.get("message")).get("model")
-    elif provider == "grok" and kind == "end":
-        # Grok reports no model per message; its final usage lists every model it called.
-        # Only a single entry is unambiguous: subagents may add other models.
-        usage = object_dict(event.get("modelUsage"))
-        if len(usage) == 1:
-            value = next(iter(usage))
-    elif provider == "pi" and kind == "message_end":
-        message = object_dict(event.get("message"))
-        if message.get("role") == "assistant":
-            value = message.get("responseModel") or message.get("model")
-    elif provider == "zcode" and kind == "model":
-        value = event.get("model")
-    if (
-        isinstance(value, str)
-        and value.strip()
-        and value.strip() not in {"<synthetic>", "unknown"}
-        and len(value) <= 200
-        and all(c.isprintable() for c in value)
-    ):
-        return value.strip()
-    return None
+def clean_model(value: object) -> str | None:
+    """A model name fit to show: printable, bounded, and not a placeholder."""
+    # A control character anywhere rejects the value rather than being stripped away.
+    if not isinstance(value, str) or len(value) > 200 or not value.isprintable():
+        return None
+    model = value.strip()
+    return model if model and model not in {"unknown", "<synthetic>"} else None
 
 
 def normalized_usage(payload: dict[str, object]) -> dict[str, int | float]:

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "seats": {
+    "correctness-reviewer": {
+      "provider": "codex",
+      "model": " ",
+      "effort": "high"
+    }
+  }
+}

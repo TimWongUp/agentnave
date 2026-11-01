@@ -41,6 +41,7 @@ from agentnave.members import (
     SettingsFileError,
     apply_member,
     apply_seat,
+    data_root,
     read_cli_options,
     read_members,
     read_permissions,
@@ -377,8 +378,7 @@ class ListPayload(TypedDict):
 class Runtime:
     def __init__(self) -> None:
         self.manager = InvocationManager()
-        root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
-        self.conversations = Conversations(self.manager, root, host=HOST)
+        self.conversations = Conversations(self.manager, data_root(), host=HOST)
 
 
 @asynccontextmanager
