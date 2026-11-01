@@ -75,6 +75,7 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     """
     env = dict(os.environ)
     env.pop("AGENTNAVE_HOST_SESSION_ID", None)
+    env.pop("AGENTNAVE_HOST_APP", None)
     for name in NATIVE_SESSION_ENV.values():
         env.pop(name, None)
     if os.name == "nt":

@@ -30,6 +30,7 @@ type ReviewRole = Literal[
     "adversarial-verifier",
 ]
 type Difficulty = Literal["easy", "hard"]
+type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
 # Task roles naming an Explorer or Worker difficulty in orchestration.json.
 type OrchestrationRole = Literal["explorer-easy", "explorer-hard", "worker-easy", "worker-hard"]
 
@@ -188,14 +189,26 @@ class ReviewFile(StrictModel):
 
 
 class OrchestrationFile(BaseModel):
-    """orchestration.json: the CLI and model the user picked for each Explorer and Worker
-    difficulty. The App also keeps its rule preset there, which the server does not read."""
+    """App-owned rule modes and saved Explorer/Worker seats; only enabled hosts use seats."""
 
     model_config = ConfigDict(extra="ignore")
 
     version: int = Field(ge=1, le=1)
+    preset: OrchestrationPreset = "off"
+    apps: dict[str, OrchestrationPreset] = {}
+    effective_apps: dict[str, OrchestrationPreset] | None = None
     explorer: dict[Difficulty, ReviewSeat] = {}
     worker: dict[Difficulty, ReviewSeat] = {}
+
+    def enabled(self, host: Host) -> bool:
+        key = host.app_id or host.name or ""
+        if self.effective_apps is not None:
+            # Old connections cannot prove which row started them, including rows whose
+            # config repair failed. Reconnect rather than borrow the default row's mode.
+            if host.app_id is None:
+                return False
+            return self.effective_apps.get(key, "off") != "off"
+        return self.apps.get(key, self.preset) != "off"
 
 
 class MemberFile(StrictModel):
@@ -535,7 +548,7 @@ def add_cli_effort(
     applied.append(CLI_EFFORT_APPLIED)
 
 
-def role_seat(role: str | None) -> ReviewSeat | None:
+def role_seat(role: str | None, host: Host) -> ReviewSeat | None:
     """The App seat a task role names: an agentnave-review role from review.json, or an
     Explorer/Worker difficulty from orchestration.json. A missing or broken file names none;
     list_members reports it."""
@@ -547,7 +560,11 @@ def role_seat(role: str | None) -> ReviewSeat | None:
         if role in get_args(OrchestrationRole.__value__):
             kind, difficulty = role.split("-")
             roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
-            seats = (roles.explorer if kind == "explorer" else roles.worker) if roles else {}
+            seats = (
+                (roles.explorer if kind == "explorer" else roles.worker)
+                if roles and roles.enabled(host)
+                else {}
+            )
             return seats.get(cast(Difficulty, difficulty))
     except MemberFileError:
         return None
@@ -603,6 +620,7 @@ class ReviewSeatStatus(StrictModel):
 
 
 class OrchestrationStatus(StrictModel):
+    enabled: bool = False
     explorer: dict[Difficulty, ReviewSeatStatus] = {}
     worker: dict[Difficulty, ReviewSeatStatus] = {}
 
@@ -721,8 +739,11 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     orchestration = OrchestrationStatus()
     orchestration_error = None
     try:
-        if roles := _read_app_file("orchestration.json", OrchestrationFile, MemberFileError):
+        if (
+            roles := _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+        ) and roles.enabled(host):
             orchestration = OrchestrationStatus(
+                enabled=True,
                 explorer=_review_status(roles.explorer, modes["task"], excluded, host),
                 worker=_review_status(roles.worker, modes["task"], excluded, host),
             )

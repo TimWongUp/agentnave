@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "preset": "off",
+  "effective_apps": {
+    "codex": "fast"
+  }
+}

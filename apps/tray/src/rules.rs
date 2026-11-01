@@ -251,6 +251,17 @@ fn groups<'a>(connected: &'a [App], home: &Path) -> Vec<Vec<&'a App>> {
         .collect()
 }
 
+/// The mode each connected row runs on once its group shares one, `off` included, for the server
+/// to read by row.
+pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
+    let mut modes = serde_json::Map::new();
+    for group in groups(connected, home) {
+        let mode = mode_of(document, &group);
+        modes.extend(group.iter().map(|app| (app.key.to_owned(), json!(mode))));
+    }
+    Value::Object(modes)
+}
+
 /// The text each file that carries the block should hold.
 fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();

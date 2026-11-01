@@ -129,6 +129,8 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         async with asyncio.timeout(3):
             response = await client.call_tool("wait", {"ids": [invocation_id]})
         assert _payload(response.structured_content)["reason"] == "ready"
+        assert _payload(response.structured_content)["pending_ids"] == [invocation_id]
+        assert _payload(response.structured_content)["all_finished"] is False
         payload = _first(response)
         assert payload["status"] == "running"
         assert payload["reason"] == "execution_blocked"
@@ -1146,7 +1148,14 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
         )
         (tmp_path / "orchestration.json").write_text(
-            json.dumps({"version": 1, "worker": {"easy": seat}, "explorer": {"hard": seat}})
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {"easy": seat},
+                    "explorer": {"hard": seat},
+                }
+            )
         )
         seated = await start({}, role="correctness-reviewer")
         assert seated["effort"] == "high"
@@ -1166,6 +1175,25 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "permission_mode",
         ]
         assert (await start({}, role="explorer-easy"))["defaults_applied"] == applied
+        # The current host's off override suppresses role defaults without deleting saved seats.
+        from agentnave.host import Host
+
+        monkeypatch.setattr(mcp_server, "HOST", Host("grok", "env"))
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "apps": {"grok": "off"},
+                    "worker": {"easy": seat},
+                    "explorer": {"hard": seat},
+                }
+            )
+        )
+        disabled = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert disabled["orchestration"] == {"enabled": False, "explorer": {}, "worker": {}}
+        assert (await start({}, role="worker-easy"))["defaults_applied"] == applied
+        assert (await start({}, role="explorer-hard"))["defaults_applied"] == applied
         (tmp_path / "review.json").write_text(
             json.dumps(
                 {"version": 1, "seats": {"correctness-reviewer": {**seat, "provider": "codex"}}}

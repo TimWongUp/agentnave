@@ -2,6 +2,7 @@
 mod config;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]
 mod live_tests;
+mod orchestration;
 mod processes;
 mod retention;
 mod roots;
@@ -12,6 +13,7 @@ mod tests;
 mod transaction;
 use crate::detect::executable;
 use config::{Document, Format};
+use orchestration::{host_env, set_host_env};
 use roots::Root;
 pub(crate) use roots::Shell;
 use serde_json::{Value, json};
@@ -743,7 +745,9 @@ impl Hosts {
         let command = entry.and_then(|e| host.command(e));
         let kind = command.map(entry_kind);
         let command_state = entry.map(|e| self.command_state(host, e));
-        let has_env = entry.is_some_and(|e| e["env"]["AGENTNAVE_HOST"] == host.boss);
+        let has_env = entry.is_some_and(|e| {
+            e["env"]["AGENTNAVE_HOST"] == host.boss && e["env"]["AGENTNAVE_HOST_APP"] == host.id
+        });
         let layers = self.layers(host);
         let has_entry = entry.is_some()
             || layers
@@ -1176,13 +1180,7 @@ impl Hosts {
                             let Some(desired) = latest.as_mut() else {
                                 return Ok(());
                             };
-                            if desired.get("env").is_none() {
-                                desired["env"] = json!({});
-                            }
-                            desired["env"]
-                                .as_object_mut()
-                                .ok_or("takeover_failed:env 必须为对象")?
-                                .insert("AGENTNAVE_HOST".into(), json!(host.boss));
+                            set_host_env(desired, &host, "takeover_failed")?;
                             // A missing launcher is repointed, and so is an older version of our
                             // own: after a versioned install the old directory still exists, so
                             // "present" alone would leave every host on the previous service.
@@ -1401,13 +1399,7 @@ impl Hosts {
                 "connect" => {
                     if let Some(value) = desired.as_mut() {
                         host.set_command(value, &path);
-                        if value.get("env").is_none() {
-                            value["env"] = json!({});
-                        }
-                        value["env"]
-                            .as_object_mut()
-                            .ok_or("write_failed:env 必须为对象")?
-                            .insert("AGENTNAVE_HOST".into(), json!(host.boss));
+                        set_host_env(value, &host, "write_failed")?;
                     } else {
                         if id == "zcode"
                             && let Some(fallback) = zcode_fallback(&self.context.home, &before)
@@ -1419,14 +1411,14 @@ impl Hosts {
                         }
                         desired = Some(if id == "deepseek" {
                             // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
-                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":{"AGENTNAVE_HOST":host.boss},"toolCallTimeoutMs":310_000})
+                            json!({"serverName":"agentnave","transport":"stdio","command":path,"env":host_env(&host),"toolCallTimeoutMs":310_000})
                         } else if id == "zcode" {
                             // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
-                            json!({"type":"stdio","command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss},"timeoutMs":310000})
+                            json!({"type":"stdio","command":path,"args":[],"env":host_env(&host),"timeoutMs":310000})
                         } else if id == "hermes" {
-                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss},"enabled":true})
+                            json!({"command":path,"args":[],"env":host_env(&host),"enabled":true})
                         } else {
-                            json!({"command":path,"args":[],"env":{"AGENTNAVE_HOST":host.boss}})
+                            json!({"command":path,"args":[],"env":host_env(&host)})
                         });
                     }
                 }

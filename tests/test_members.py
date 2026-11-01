@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -24,6 +25,7 @@ from agentnave.members import (
     read_max_running,
     read_members,
     read_permissions,
+    role_seat,
 )
 from agentnave.models import ProviderOption
 
@@ -37,6 +39,56 @@ APP_MODELS: dict[
     "permissions": PermissionFile,
     "cli-options": CLIOptionsFile,
 }
+
+
+def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    seat = {"provider": "claude", "model": "sonnet"}
+    path = tmp_path / "orchestration.json"
+    document: dict[str, Any] = {
+        "version": 1,
+        "preset": "off",
+        "explorer": {"easy": seat},
+        "worker": {"hard": seat},
+    }
+
+    def check(host: Host, enabled: bool) -> None:
+        path.write_text(json.dumps(document))
+        status = list_members(frozenset(), host).orchestration
+        assert status.enabled is enabled
+        assert bool(status.explorer) is enabled
+        assert bool(status.worker) is enabled
+        assert (role_seat("explorer-easy", host) is not None) is enabled
+        assert (role_seat("worker-hard", host) is not None) is enabled
+
+    codex, claude = Host("codex", "env"), Host("claude", "env")
+    check(codex, False)
+    document["apps"] = {"codex": "split"}
+    check(codex, True)
+    check(claude, False)
+    document["preset"] = "parallel"
+    document["apps"] = {"codex": "off"}
+    check(codex, False)
+    check(claude, True)
+    # The App's resolved groups win over individual raw choices, and accounts stay separate.
+    document["effective_apps"] = {"codex": "off", "codex@work": "split", "grok": "parallel"}
+    check(codex, False)
+    check(Host("codex", "env", "codex@work"), True)
+    check(Host("grok", "env", "grok"), True)
+    check(claude, False)  # no connected row in the resolved map
+    document["effective_apps"] = {"codex": "split", "codex@work": "off"}
+    check(codex, False)  # an old connection cannot borrow a different account's mode
+    check(Host("codex", "env", "codex"), True)
+    check(Host("codex", "env", "codex@work"), False)
+    document["effective_apps"] = {"codex": "split"}
+    check(codex, False)  # another account may be missing because its repair failed
+    check(Host("codex", "env", "codex"), True)
+    document["effective_apps"] = {}
+    check(codex, False)
+    # Turning orchestration off preserves the saved picks for the next enable.
+    assert json.loads(path.read_text())["worker"]["hard"] == seat
 
 
 @pytest.mark.parametrize(
