@@ -20,6 +20,7 @@ from typing import IO
 
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
+from agentnave.locks import lock_file
 from agentnave.models import (
     InvocationError,
     InvocationListing,
@@ -207,28 +208,6 @@ SUBAGENT_INSTRUCTIONS = (
     "to the calling manager. Do not call AgentNave tools or use AgentNave to delegate further "
     "work. If blocked, report the blocker to the manager."
 )
-
-
-def lock_file(path: Path, busy_message: str) -> IO[bytes]:
-    """Acquire a nonblocking OS lock; close the returned handle to release it."""
-    lock = path.open("a+b")
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            if lock.tell() == 0:
-                lock.write(b"0")
-                lock.flush()
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        lock.close()
-        raise ValueError(busy_message) from None
-    return lock
 
 
 class InvocationManager:

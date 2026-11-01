@@ -29,13 +29,12 @@ from agentnave.group import (
     Groups,
     GroupSeat,
     Round,
-    RoundOrder,
     SeatRun,
     SeatState,
 )
 from agentnave.host import Host, detect_host, host_session_id, session_file, session_model
 from agentnave.members import CapacityError, read_max_running
-from agentnave.models import InvocationRequest
+from agentnave.models import InvocationRequest, RoundOrder
 from agentnave.store import (
     Conversation,
     EntryRecord,

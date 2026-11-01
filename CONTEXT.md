@@ -25,7 +25,7 @@ _Avoid_: 迁移、合并工作区
 
 ## Provider
 
-AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent 与 DeepSeek Harness。
+AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness 与 ZCode。
 
 ## 宿主（Host）
 

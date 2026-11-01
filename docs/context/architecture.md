@@ -12,7 +12,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree、保留策略或 TUI。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree、保留策略或 TUI。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
 
 ## 进程与模块
 
@@ -34,7 +34,7 @@ AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree�
 
 - Adapter 只加协议必需参数。其余参数只能来自调用方显式值、用户在 App 中设定且在回执 `defaults_applied` 注明的默认值，或 `role` 指明的评审、Explorer／Worker 工位（[ADR-0038](../adr/0038-role-applies-app-seat.md)）。仍无档位时，服务按 App 探测到的 CLI 自身默认档位兜底（[ADR-0042](../adr/0042-pass-cli-default-effort.md)）。唯一例外是 DeepSeek 官方路由恢复已存认证（[ADR-0027](../adr/0027-deepseek-official-route-stored-credentials.md)）。
 - 显式值优先；超出 App 允许范围时拒绝，不替换为别的模型或档位。默认值在服务入口统一套用，不下沉到 Adapter（[ADR-0013](../adr/0013-members-defaults-and-host-identity.md)、[ADR-0021](../adr/0021-keep-default-models-when-unrestricted.md)、[ADR-0028](../adr/0028-follow-cli-default-model.md)）。
-- 权限类参数只来自按 CLI 的权限档位（缺省「自动」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加（[ADR-0032](../adr/0032-cli-permission-tiers.md)）。
+- 权限类参数只来自按 CLI 的权限档位（缺省「自动」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加；档位与 App 默认值在续接时同样套用并在回执注明（[ADR-0032](../adr/0032-cli-permission-tiers.md)）。
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
 
 ## Provider Adapter
