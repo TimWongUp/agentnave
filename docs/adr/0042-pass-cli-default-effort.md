@@ -13,7 +13,7 @@
 - **App 是来源**：设置页给有可选档位的模型（默认模型、评审与 Explorer／Worker 工位）选定模型时同时写入档位，预选 CLI 当前档位，只有一档的自动写入；选中值等于 CLI 当前设置也照写，不再存空。没有可选档位的模型（如 Antigravity，档位写在模型 ID 里）不写。选了默认模型却没有档位、而模型有多档时，设置页报错并要求选一档。
 - **boss 不挑模型**：用户没点名模型或档位时，boss 不传 `model`、`effort`，由服务按 App 设置传入；`list_members` 只用来选 CLI 和工位。用户点名时再传。
 - **CLI 默认值兜底**：调用在套用 App 默认值、工位与权限档位后仍无 effort 时（App 没配模型、用户点名了未配置的模型、旧配置未补档位），服务按 `cli-defaults.json` 补上：App 每次探测后在各 CLI 条目里写出 `efforts: {<模型 ID>: <档位>}`（该 CLI 不传档位时对这个模型实际用的档位；读不到的不写，文件仍是版本 1），指定了模型取 `efforts.<模型>`，未指定取 CLI 默认模型的 `effort`。补上的值写进记录，回执 `defaults_applied` 注明 `effort (CLI default)`；不在 App 为该模型设的可选档位里时不补。服务没有模型目录，判断不了哪些模型没有档位，所以未配置的模型不因缺档位报错。
-- **读得准**：Claude 读 `settings.json` 的 `env.CLAUDE_CODE_EFFORT_LEVEL`（优先），再按完整 ID 读 `modelSettings.<模型>.effortLevel`；选单给的别名（`opus`）用 `initialize` 返回的 `resolvedModel` 换成完整 ID。顶层 `effortLevel` 只对 Claude Code 仍读取它的模型生效（Opus 5 与 Fable 5.1 及更早，另加其他厂商的模型），清单与 magpie 一致。读不到就不补、不猜：dsh 未写 `reasoningEffort`、ZCode 3.14、Claude 未设档位的模型。
+- **读得准**：Claude 读 `settings.json` 的 `env.CLAUDE_CODE_EFFORT_LEVEL`（优先），再按完整 ID 读 `modelSettings.<模型>.effortLevel`；选单给的别名（`opus`）用 `initialize` 返回的 `resolvedModel` 换成完整 ID。顶层 `effortLevel` 只对 Claude Code 仍读取它的模型生效（Opus 5 与 Fable 5.1 及更早，另加其他厂商的模型）。读不到就不补、不猜：dsh 未写 `reasoningEffort`、ZCode 3.14、Claude 未设档位的模型。
 - 看板只读记录里的档位。
 
 ## 取舍

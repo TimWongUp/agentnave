@@ -1,8 +1,8 @@
 //! Which app a Claude or Codex boss chats in. Each desktop app runs the same CLI as the terminal,
 //! so the host stays `claude` or `codex` and only the session's own records tell them apart: a
 //! Claude transcript's `entrypoint`, a Codex rollout's `originator`, and Claude Desktop's records
-//! of the CLI sessions it ran. Claude's follow magpie (`yetone/magpie`), which reads the first
-//! `entrypoint` where a boss needs the latest; it reads no `originator`, measured here instead.
+//! of the CLI sessions it ran. A boss shows where it chats now, so Claude's latest `entrypoint`
+//! counts, not its first; the Codex `originator` values were measured here.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -20,7 +20,7 @@ pub(crate) const CODEX_CLI: &str = "codex-cli";
 
 /// How much of a transcript is searched at each end; a rollout's first line is its session_meta.
 const WINDOW: u64 = 256 * 1024;
-/// A Claude Desktop record larger than this is not read, as in magpie.
+/// A Claude Desktop record larger than this is not read.
 const RECORD_LIMIT: u64 = 8 << 20;
 
 #[derive(Default, PartialEq, Eq)]
