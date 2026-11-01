@@ -2,6 +2,7 @@
 mod config;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]
 mod live_tests;
+mod orchestration;
 mod processes;
 mod retention;
 mod roots;
@@ -12,6 +13,7 @@ mod tests;
 mod transaction;
 use crate::detect::executable;
 use config::{Document, Format};
+use orchestration::{host_env, set_host_env};
 use roots::Root;
 pub(crate) use roots::Shell;
 use serde_json::{Value, json};
@@ -235,23 +237,6 @@ struct Host {
     format: Format,
     key: &'static str,
     user_layers: Vec<PathBuf>,
-}
-/// The variables a connection runs with: the host its service acts as, and the row it came from.
-fn host_env(host: &Host) -> Value {
-    json!({"AGENTNAVE_HOST": host.boss, "AGENTNAVE_HOST_APP": host.id})
-}
-/// Add the connection's variables to an entry, keeping its other ones.
-fn set_host_env(entry: &mut Value, host: &Host, code: &str) -> Result<(), String> {
-    if entry.get("env").is_none() {
-        entry["env"] = json!({});
-    }
-    let env = entry["env"]
-        .as_object_mut()
-        .ok_or(format!("{code}:env 必须为对象"))?;
-    if let Value::Object(wanted) = host_env(host) {
-        env.extend(wanted);
-    }
-    Ok(())
 }
 impl Host {
     /// Optional Skills sit beside the manager Skill in the same skills folder.
@@ -609,10 +594,6 @@ impl Hosts {
             also,
             &backup,
         )
-    }
-    /// Every connected row's mode as the rules files apply it, kept in orchestration.json.
-    pub fn effective_apps(&self, document: &Value) -> Value {
-        crate::rules::effective(&self.connected_rule_apps(), &self.context.home, document)
     }
     /// The rules files the installed apps could read now, kept across a root change so the
     /// files left behind lose their block too.
