@@ -1,6 +1,9 @@
 //! A desk in the office: one native session and what its calls have shown.
 use super::*;
 
+/// Microseconds, as in `timestamp`; the same half hour after which an idle desk reads as resting.
+const FAILURE_SETTLES_AFTER: i64 = 30 * 60 * 1_000_000;
+
 /// A desk seen in one workspace: one native session (a private thread or a show seat), with
 /// the labels of its latest call and its history.
 #[derive(Default)]
@@ -153,6 +156,14 @@ impl Desk {
                 _ => "idle",
             }
         }
+    }
+
+    /// A failure nobody needs to act on stops standing out once the office has moved on from it.
+    pub(super) fn failure_settled(&self, now: i64) -> bool {
+        self.status() == "failed"
+            && self
+                .last
+                .is_some_and(|last| now - last > FAILURE_SETTLES_AFTER)
     }
 
     pub(super) fn value(&self, host: Option<&str>) -> Value {

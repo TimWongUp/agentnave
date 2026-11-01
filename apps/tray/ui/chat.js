@@ -248,7 +248,9 @@ function createItem(g) {
   return rec;
 }
 function updateItem(rec, g) {
-  const [word, tone] = pick(GROUP, AN.ongoing(g.status));
+  // A failure asks nothing of the user, so the list does not call it out.
+  const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
+  const [word, tone] = pick(GROUP, shown);
   const on = g.group === state.selected;
   const name = shownName(g);
   setClass(
@@ -273,7 +275,7 @@ function updateItem(rec, g) {
   );
   setText(rec.time, relTime(g.updated));
   setText(rec.prev, g.preview);
-  rec.pill.hidden = g.status === "idle";
+  rec.pill.hidden = shown === "idle";
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
 }

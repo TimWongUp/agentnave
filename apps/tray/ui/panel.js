@@ -142,7 +142,6 @@ function updateBlock(rec, m) {
   rec.data = m;
   const desks = m.desks || [], rooms = m.rooms || [];
   const n = running(m);
-  const [word] = pick(GROUP, ongoing(m.status));
   const name = shownName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
   tile(rec, m);
@@ -152,7 +151,7 @@ function updateBlock(rec, m) {
   setAttr(rec.boss, "title", `${m.label} 里的 boss${m.project ? ` · ${m.project}` : ""}`);
   setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
   setText(rec.project, name);
-  const [bsTone, bsText] = n ? ["run", `${n} 个在工作`] : urgent(m.status) ? ["run", "会议进行中"] : m.status === "failed" ? ["bad", word] : ["", "空闲"];
+  const [bsTone, bsText] = n ? ["run", `${n} 个在工作`] : urgent(m.status) ? ["run", "会议进行中"] : ["", "空闲"];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
   setText(rec.time, relTime(m.updated));
@@ -162,7 +161,7 @@ function updateBlock(rec, m) {
   // there are FOLD_AT or more, and the busy ones lead so the fold never hides what is going on.
   const byKey = new Map(desks.map((d) => [d.key, d]));
   const awake = desks.filter((d) => brief(d).mood !== "sleep");
-  const busy = (d) => ["working", "meeting", "failed"].includes(brief(d).mood);
+  const busy = (d) => ["working", "meeting"].includes(brief(d).mood);
   const ordered = [...awake.filter(busy), ...awake.filter((d) => !busy(d))];
   for (const key of rec.cellRecs.keys()) if (!ordered.some((d) => d.key === key)) rec.cellRecs.delete(key);
   const folded = awake.length >= FOLD_AT && !state.expanded.has(m.group);
@@ -241,8 +240,7 @@ function announce(m, d, s) {
 let lastState = "";
 function renderState(data) {
   const { running } = data.counts;
-  const failed = data.managers.some((m) => m.status === "failed");
-  const pills = [running ? ["run", `${running} 个在工作`] : failed ? ["bad", "有失败"] : ["idle", "空闲"]];
+  const pills = [running ? ["run", `${running} 个在工作`] : ["idle", "空闲"]];
   const key = JSON.stringify(pills);
   if (key === lastState) return;
   lastState = key;
@@ -318,9 +316,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------- refresh
-// A boss with work going on or a failure gets a card; the rest fold to the end. With none of those,
+// A boss with work going on gets a card; the rest fold to the end. With none of those,
 // the most recent office (the service lists them most relevant first) stays a card.
-const busy = (m) => urgent(m.status) || m.live || m.status === "failed";
+const busy = (m) => urgent(m.status) || m.live;
 function render(data) {
   renderState(data);
   const lead = data.managers.some(busy) ? null : data.managers[0]?.group;
