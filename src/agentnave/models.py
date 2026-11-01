@@ -1,4 +1,4 @@
-"""Stable request and result contracts for one provider invocation."""
+"""Stable request and result contracts: one provider invocation, and the round orders."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal
 
 type ProviderOption = str | int | float | bool
+type RoundOrder = Literal["parallel", "serial"]
 
 
 class InvocationStatus(StrEnum):

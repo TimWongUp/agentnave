@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "seats": {
+    "correctness-reviewer": {
+      "provider": "gemini",
+      "model": "gpt-6.1-sol",
+      "effort": "high"
+    }
+  }
+}

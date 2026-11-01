@@ -19,9 +19,9 @@ from agentnave.models import (
     InvocationResult,
     InvocationStatus,
     ProviderOption,
+    RoundOrder,
 )
 
-type RoundOrder = Literal["parallel", "serial"]
 type SeatRunStatus = Literal[
     "pending", "running", "succeeded", "failed", "blocked", "cancelled", "not_started"
 ]

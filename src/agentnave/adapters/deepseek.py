@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
@@ -164,7 +165,7 @@ def _capture_line(line: bytes) -> bytes:
     return b""
 
 
-class DeepSeekAdapter:
+class DeepSeekAdapter(AdapterHooks):
     name = "deepseek"
     _options = ("model", "effort", "provider", "permission_mode", "stored_credentials")
 

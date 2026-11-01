@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "clis": {
+    "codex": {
+      "model": "gpt-6.1-sol"
+    }
+  }
+}

@@ -8,19 +8,58 @@ from pydantic import ValidationError
 
 from agentnave.host import Host
 from agentnave.members import (
+    CLIOptionsFile,
     CLIOptionsFileError,
     MemberFile,
     MemberFileError,
+    OrchestrationFile,
     PermissionFile,
     PermissionFileError,
     ProviderExcludedError,
+    ReviewFile,
+    SettingsFileError,
     apply_member,
     list_members,
     read_cli_options,
+    read_max_running,
     read_members,
     read_permissions,
 )
 from agentnave.models import ProviderOption
+
+APP_FILES = Path(__file__).parent / "fixtures" / "app-files"
+APP_MODELS: dict[
+    str, type[MemberFile | ReviewFile | OrchestrationFile | PermissionFile | CLIOptionsFile]
+] = {
+    "members": MemberFile,
+    "review": ReviewFile,
+    "orchestration": OrchestrationFile,
+    "permissions": PermissionFile,
+    "cli-options": CLIOptionsFile,
+}
+
+
+@pytest.mark.parametrize(
+    "sample", sorted(APP_FILES.glob("*/*.json")), ids=lambda path: f"{path.parent.name}/{path.stem}"
+)
+def test_app_file_samples_agree_with_the_tray(
+    sample: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tray checks the same samples (apps/tray/src/members/tests.rs), so a file the App
+    saves is one the server reads, and one the App refuses the server refuses too."""
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+
+    def check() -> object:
+        if sample.parent.name == "settings":
+            (tmp_path / "settings.json").write_bytes(sample.read_bytes())
+            return read_max_running()
+        return APP_MODELS[sample.parent.name].model_validate_json(sample.read_bytes())
+
+    if sample.stem.startswith("valid-"):
+        check()
+    else:
+        with pytest.raises((ValidationError, SettingsFileError)):
+            check()
 
 
 def test_member_structure_references_and_effective_overrides() -> None:

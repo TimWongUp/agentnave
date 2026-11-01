@@ -7,9 +7,11 @@ import re
 from typing import cast
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    clean_model,
     error_summary,
     failure_status,
     normalized_usage,
@@ -71,7 +73,14 @@ def _capture_line(line: bytes) -> bytes:
     return json.dumps(kept).encode() + b"\n"
 
 
-class PiAdapter:
+def message_model(message: dict[str, object]) -> str | None:
+    """The model that served an assistant message, not the one requested."""
+    if message.get("role") != "assistant":
+        return None
+    return clean_model(message.get("responseModel") or message.get("model"))
+
+
+class PiAdapter(AdapterHooks):
     name = "pi"
     _options = {
         "model": "--model",
@@ -111,6 +120,11 @@ class PiAdapter:
             capture_line=_capture_line,
             skip_oversized_line=lambda head: head.startswith(_SKIPPABLE_OVERSIZED),
         )
+
+    def event_model(self, event: dict[str, object]) -> str | None:
+        if event.get("type") != "message_end":
+            return None
+        return message_model(object_dict(event.get("message")))
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         kind = event.get("type")

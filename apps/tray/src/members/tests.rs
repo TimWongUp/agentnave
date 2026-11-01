@@ -286,3 +286,37 @@ fn a_missing_document_stays_missing_so_every_cli_keeps_its_own_default() {
     assert_eq!(document_state(root), (empty(), Value::Null));
     assert!(!root.join(FILE).exists());
 }
+
+/// The samples the server checks too (tests/test_members.py): what the App saves, the server
+/// reads, and a file the App refuses the server refuses as well.
+#[test]
+fn app_file_samples_agree_with_the_server() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/app-files");
+    let mut checked = 0;
+    for kind in fs::read_dir(&root).unwrap() {
+        let kind = kind.unwrap().path();
+        let name = kind.file_name().unwrap().to_string_lossy().into_owned();
+        let check: fn(&Value) -> Result<(), String> = match name.as_str() {
+            "members" => validate,
+            "review" => validate_review,
+            "orchestration" => validate_orchestration,
+            "permissions" => validate_permissions,
+            "cli-options" => validate_cli_options,
+            "settings" => |document| crate::settings::validate(document).map(drop),
+            other => panic!("no check for {other} samples"),
+        };
+        for sample in fs::read_dir(&kind).unwrap() {
+            let sample = sample.unwrap().path();
+            let stem = sample.file_stem().unwrap().to_string_lossy().into_owned();
+            let document: Value = serde_json::from_slice(&fs::read(&sample).unwrap()).unwrap();
+            let result = check(&document);
+            assert_eq!(
+                result.is_ok(),
+                stem.starts_with("valid-"),
+                "{name}/{stem}: {result:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
+}

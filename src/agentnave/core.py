@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import IO
 
 from agentnave.adapters import ProviderAdapter, get_adapter
-from agentnave.adapters.base import PreparedCommand, model_from_event, parse_json_object
+from agentnave.adapters.base import PreparedCommand, parse_json_object
+from agentnave.locks import lock_file
 from agentnave.models import (
     InvocationError,
     InvocationListing,
@@ -84,7 +85,7 @@ class _InvocationRecord:
         if event is None:
             return
         self.last_event_at = time.monotonic()
-        self.reported_model = model_from_event(self.request.provider, event) or self.reported_model
+        self.reported_model = adapter.event_model(event) or self.reported_model
         activity = adapter.activity(event)
         if activity is not None:
             code = activity.blocking_error
@@ -207,28 +208,6 @@ SUBAGENT_INSTRUCTIONS = (
     "to the calling manager. Do not call AgentNave tools or use AgentNave to delegate further "
     "work. If blocked, report the blocker to the manager."
 )
-
-
-def lock_file(path: Path, busy_message: str) -> IO[bytes]:
-    """Acquire a nonblocking OS lock; close the returned handle to release it."""
-    lock = path.open("a+b")
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            if lock.tell() == 0:
-                lock.write(b"0")
-                lock.flush()
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        lock.close()
-        raise ValueError(busy_message) from None
-    return lock
 
 
 class InvocationManager:
@@ -508,17 +487,9 @@ class InvocationManager:
     ) -> InvocationResult:
         try:
             result = await self._run(record, adapter, prepared)
-            reported = record.reported_model
-            if reported is None and record.request.provider == "codex":
-                from agentnave.host import Host, session_model
-
-                reported = session_model(
-                    Host("codex"), result.session_id, since=record.started_wall_at
-                )
-            elif reported is None and record.request.provider == "antigravity":
-                from agentnave.adapters.antigravity import session_model as agy_model
-
-                reported = agy_model(result.session_id, since=record.started_wall_at)
+            reported = record.reported_model or adapter.session_model(
+                result.session_id, since=record.started_wall_at
+            )
             record.reported_model = reported
             return replace(result, reported_model=reported)
         except Exception:

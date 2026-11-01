@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "preset": "off",
+  "explorer": {
+    "easy": {
+      "provider": "codex",
+      "model": "",
+      "effort": "high"
+    }
+  }
+}

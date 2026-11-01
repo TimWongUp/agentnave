@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "seats": {
+    "correctness-reviewer": {
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high"
+    },
+    "security-reviewer": {
+      "provider": "claude",
+      "model": "opus"
+    }
+  }
+}

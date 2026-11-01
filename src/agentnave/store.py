@@ -13,10 +13,9 @@ from typing import IO, TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
-from agentnave.core import lock_file
-from agentnave.group import RoundOrder
 from agentnave.host import HostName, HostSource, RetiredHostName
-from agentnave.models import ProviderOption
+from agentnave.locks import lock_file
+from agentnave.models import ProviderOption, RoundOrder
 
 if TYPE_CHECKING:
     from agentnave.db import Database

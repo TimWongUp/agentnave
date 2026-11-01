@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
@@ -125,7 +126,7 @@ def write_restricted_profile(directory: Path) -> None:
         stream.write(_DISCUSSION_AGENT)
 
 
-class AntigravityAdapter:
+class AntigravityAdapter(AdapterHooks):
     name = "antigravity"
     _options = {
         "model": "--model",
@@ -171,6 +172,12 @@ class AntigravityAdapter:
                 )
             )
         return PreparedCommand(tuple(argv), request.cwd, prompt, capture_line=_result_capture())
+
+    def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
+        return session_model(session_id, since=since)
+
+    def prepare_seat(self, directory: Path) -> None:
+        write_restricted_profile(directory)
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("event")

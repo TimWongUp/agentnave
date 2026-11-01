@@ -20,31 +20,30 @@ from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.deepseek import DeepSeekAdapter
 from agentnave.adapters.grok import GrokAdapter
+from agentnave.adapters.pi import PiAdapter
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderOption
 from agentnave.processes import provider_environment
 
 
 def test_native_models_do_not_attribute_child_or_usage_models_to_main_assistant() -> None:
     assistant: dict[str, object] = {"type": "assistant", "message": {"model": "main"}}
-    assert base.model_from_event("claude", assistant) == "main"
-    assert base.model_from_event("codebuddy", assistant) == "main"
-    assert base.model_from_event("claude", {**assistant, "parent_tool_use_id": "child"}) is None
+    assert ClaudeAdapter().event_model(assistant) == "main"
+    assert CodeBuddyAdapter().event_model(assistant) == "main"
+    assert ClaudeAdapter().event_model({**assistant, "parent_tool_use_id": "child"}) is None
     for model in ("unknown", "<synthetic>", "", "\nsecret"):
         assert (
-            base.model_from_event("claude", {"type": "assistant", "message": {"model": model}})
-            is None
+            ClaudeAdapter().event_model({"type": "assistant", "message": {"model": model}}) is None
         )
-    assert base.model_from_event("claude", {"type": "result", "modelUsage": {"child": {}}}) is None
+    assert ClaudeAdapter().event_model({"type": "result", "modelUsage": {"child": {}}}) is None
     grok_end: dict[str, object] = {"type": "end", "modelUsage": {"grok-4.7-build": {}}}
-    assert base.model_from_event("grok", grok_end) == "grok-4.7-build"
-    assert base.model_from_event("grok", {"type": "end", "modelUsage": {"a": {}, "b": {}}}) is None
+    assert GrokAdapter().event_model(grok_end) == "grok-4.7-build"
+    assert GrokAdapter().event_model({"type": "end", "modelUsage": {"a": {}, "b": {}}}) is None
     assert (
-        base.model_from_event("claude", {"type": "system", "subtype": "init", "model": "selected"})
+        ClaudeAdapter().event_model({"type": "system", "subtype": "init", "model": "selected"})
         is None
     )
     assert (
-        base.model_from_event(
-            "pi",
+        PiAdapter().event_model(
             {
                 "type": "message_end",
                 "message": {"role": "assistant", "model": "requested", "responseModel": "served"},
@@ -53,8 +52,8 @@ def test_native_models_do_not_attribute_child_or_usage_models_to_main_assistant(
         == "served"
     )
     assert (
-        base.model_from_event(
-            "pi", {"type": "message_end", "message": {"role": "toolResult", "model": "tool-model"}}
+        PiAdapter().event_model(
+            {"type": "message_end", "message": {"role": "toolResult", "model": "tool-model"}}
         )
         is None
     )

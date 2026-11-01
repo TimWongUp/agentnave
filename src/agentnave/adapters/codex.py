@@ -7,8 +7,10 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
@@ -93,7 +95,7 @@ def _bundled_paths() -> tuple[str, ...]:
     return tuple(paths)
 
 
-class CodexAdapter:
+class CodexAdapter(AdapterHooks):
     name = "codex"
     _options = {
         "model",
@@ -178,6 +180,12 @@ class CodexAdapter:
             capture_line=_capture_line,
             skip_oversized_line=_skip_oversized_line,
         )
+
+    def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
+        # Codex streams no model; its session file records each turn's.
+        from agentnave.host import Host, session_model
+
+        return session_model(Host("codex"), session_id, since=since)
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")

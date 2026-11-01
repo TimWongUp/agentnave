@@ -8,9 +8,11 @@ from pathlib import Path
 from uuid import uuid4
 
 from agentnave.adapters.base import (
+    AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
     brief,
+    clean_model,
     error_summary,
     failure_status,
     normalized_usage,
@@ -26,7 +28,7 @@ def _capture_line(line: bytes) -> bytes:
     return line + b"\n" if event and event.get("type") in {"session", "result", "error"} else b""
 
 
-class ZcodeAdapter:
+class ZcodeAdapter(AdapterHooks):
     name = "zcode"
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
@@ -56,6 +58,9 @@ class ZcodeAdapter:
             session_id=session_id,
             capture_line=_capture_line,
         )
+
+    def event_model(self, event: dict[str, object]) -> str | None:
+        return clean_model(event.get("model")) if event.get("type") == "model" else None
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         kind = event.get("type")

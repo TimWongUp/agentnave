@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "clis": {
+    "codex": "full",
+    "claude": "auto"
+  }
+}
