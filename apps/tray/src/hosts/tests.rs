@@ -1932,6 +1932,13 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
     let directory = tempfile::tempdir().unwrap();
     let reader = crate::data::Reader::new(directory.path().to_path_buf());
     reader.use_hosts(hosts);
+    assert_eq!(
+        reader
+            .request("POST", "/app/hosts/refresh", Some("1"), b"")
+            .status,
+        200
+    );
+    assert!(!directory.path().join("orchestration.json").exists());
     // Grok reads Claude's rules, so both run on Grok's mode; Codex follows the default.
     let document = json!({"version": 1, "preset": "off", "apps": {"grok": "split"},
         "effective_apps": {"codex": "parallel", "gone": "custom"}});

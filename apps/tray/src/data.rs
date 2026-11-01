@@ -457,7 +457,9 @@ impl Reader {
         };
         let mut failures = Vec::new();
         let effective = hosts.effective_apps(&document);
-        if document.get("effective_apps") != Some(&effective) {
+        if self.root.join("orchestration.json").is_file()
+            && document.get("effective_apps") != Some(&effective)
+        {
             document["effective_apps"] = effective;
             if let Err(error) = crate::members::save_orchestration(&self.root, &document) {
                 failures
