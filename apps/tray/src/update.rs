@@ -305,7 +305,12 @@ pub fn resume(app: &AppHandle) {
     if let Some(version) = take_updated(&dir) {
         app.state::<Updates>().lock().updated = Some((version, Instant::now()));
     }
-    if take_marker(&dir) && service_for_app(app).is_object() {
+    // The service is a separate artifact the hosts start, so it follows the App on every start
+    // instead of waiting for a click. A versioned install makes that safe: the running service
+    // keeps its own directory, and hosts move over when they next start.
+    // A stale marker from an older app still gets consumed here.
+    let _marked = take_marker(&dir);
+    if service_for_app(app).is_object() {
         upgrade_service(app);
     }
 }
