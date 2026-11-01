@@ -552,6 +552,14 @@ pub(crate) fn rfc3339(at: SystemTime) -> String {
 }
 
 /// Install this release's service with uv.
+/// Whether this build's service still has to be installed over what is active.
+///
+/// Re-read under the claim: another path may have installed the same or a newer version while
+/// this one was still deciding, and reinstalling a running version would touch live files.
+fn should_install(current: Option<&str>, target: &str) -> bool {
+    current.is_none_or(|version| parse(version) < parse(target))
+}
+
 pub fn upgrade_service(app: &AppHandle) {
     if app.state::<Updates>().claim_upgrade() {
         finish_upgrade(app);
@@ -560,6 +568,16 @@ pub fn upgrade_service(app: &AppHandle) {
 
 fn finish_upgrade(app: &AppHandle) {
     let outcome = (|| {
+        // The decision was made outside the claim; make it again now that this path owns the
+        // install, so a concurrent upgrade to the same or a newer version is left alone.
+        let current = app
+            .path()
+            .app_data_dir()
+            .ok()
+            .and_then(|data| active_version(&data));
+        if !should_install(current.as_deref(), VERSION) {
+            return Ok(());
+        }
         let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
         let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
         // Install beside the running service instead of over it; the active manifest then moves

@@ -179,3 +179,13 @@ fn extracts_embedded_wheel_from_gzip_archive_and_parses_proxy() {
         Some("socks5://127.0.0.1:7890")
     );
 }
+
+#[test]
+fn a_service_at_or_above_this_build_is_left_alone() {
+    // The claim is taken after the version check, so the second read decides: a version already
+    // installed by another path must not be reinstalled over its running files.
+    assert!(!should_install(Some("0.59.1"), "0.59.1"));
+    assert!(!should_install(Some("0.60.0"), "0.59.1"));
+    assert!(should_install(Some("0.58.0"), "0.59.1"));
+    assert!(should_install(None, "0.59.1"));
+}
