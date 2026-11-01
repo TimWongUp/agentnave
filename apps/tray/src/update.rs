@@ -33,7 +33,8 @@ const UPGRADE_MARKER: &str = "upgrade-service-after-restart";
 /// The version an update installed, read once by its first start to say so.
 const UPDATED_MARKER: &str = "updated-to";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
-const CHECK_WAIT: Duration = Duration::from_secs(60);
+/// Three endpoints are tried in series, so the wait has to cover all of their timeouts.
+const CHECK_WAIT: Duration = Duration::from_secs(120);
 /// Bounds the update check request.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 /// A found update is used as it is for this long, the same as the automatic checks' interval;
@@ -236,14 +237,15 @@ fn update_endpoints() -> Vec<(Option<&'static str>, tauri::Url)> {
     if let Some(override_url) = update_override() {
         endpoints.push((None, override_url));
     }
-    let direct = tauri::Url::parse(MANIFEST).ok();
+    // GitHub first: it is the only source we control, and a mirror answering "no update" must not
+    // be able to hide a release. Mirrors only cover machines where GitHub does not answer.
+    if let Ok(direct) = tauri::Url::parse(MANIFEST) {
+        endpoints.push((None, direct));
+    }
     for mirror in UPDATE_MIRRORS {
         if let Ok(url) = tauri::Url::parse(&format!("{mirror}{MANIFEST}")) {
             endpoints.push((Some(mirror), url));
         }
-    }
-    if let Some(direct) = direct {
-        endpoints.push((None, direct));
     }
     endpoints
 }
@@ -279,9 +281,11 @@ async fn check_across_endpoints(
                     return Ok(Some(update));
                 }
                 Ok(None) => return Ok(None),
-                Err(error) => last_error = Some(error.to_string()),
+                // Keep the first failure: it is usually the source the user configured, and the
+                // later ones only say "this mirror is unreachable too".
+                Err(error) => last_error = last_error.or(Some(error.to_string())),
             },
-            Err(error) => last_error = Some(error.to_string()),
+            Err(error) => last_error = last_error.or(Some(error.to_string())),
         }
     }
     Err(last_error.unwrap_or_else(|| "没有可用的更新源".into()))
@@ -471,7 +475,9 @@ fn install(app: &AppHandle, mut update: Update) {
                 thread::sleep(RESTART_NOTE);
                 app.restart();
             }
-            Err(error) => updates.set(Phase::Failed(error), Some(update)),
+            // Drop the cached update: its download URL was rewritten for the source that just
+            // failed, so retrying would hit the same one instead of re-checking.
+            Err(error) => updates.set(Phase::Failed(error), None),
         }
     });
 }
@@ -1132,7 +1138,7 @@ fn installed_metadata(env: &Path) -> Option<PathBuf> {
     None
 }
 
-fn parse(version: &str) -> Vec<u64> {
+pub(crate) fn parse(version: &str) -> Vec<u64> {
     version
         .split('.')
         .map(|part| part.parse().unwrap_or(0))
