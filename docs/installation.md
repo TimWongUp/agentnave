@@ -592,3 +592,15 @@ configuration, sessions, and user projects remain owned by the user and provider
 **升级服务不依赖网络**：只要本机装过一次，依赖已经在 uv 缓存里，升级走第 2 步即可离线完成。
 
 App 自身的自动更新从 GitHub Releases 下载，国内通常需要代理。
+
+### 自建更新源
+
+App 的自动更新默认从 GitHub Releases 取清单。国内访问不到时，可以把清单地址指到镜像：
+
+```
+AGENTNAVE_UPDATE_ENDPOINT=https://你的镜像/latest.json
+```
+
+清单格式与 Tauri updater 一致（`version`、`notes`、`pubkey`、`platforms`），其中各平台的 `url`
+指向安装包本身；签名必须用与 `tauri.conf.json` 里 `pubkey` 配对的私钥。设置后无效的 URL 会被忽略、
+继续用内置源。

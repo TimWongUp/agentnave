@@ -210,12 +210,28 @@ impl Updates {
     }
 }
 
+/// An update manifest to use instead of the bundled endpoint. Releases live on GitHub, which is
+/// slow or unreachable from mainland China; pointing this at a mirror makes updates usable there.
+fn update_endpoint() -> Option<tauri::Url> {
+    let value = std::env::var("AGENTNAVE_UPDATE_ENDPOINT").ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    tauri::Url::parse(trimmed).ok()
+}
+
 async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
     let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
     if let Some(proxy) = updater_proxy(&app) {
         builder = builder.proxy(proxy);
     }
-    let found = match builder.build() {
+    // `endpoints` consumes the builder, so pick the shape once instead of trying and backing out.
+    let builder = match update_endpoint() {
+        Some(endpoint) => builder.endpoints(vec![endpoint]),
+        None => Ok(builder),
+    };
+    let found = match builder.and_then(|builder| builder.build()) {
         Ok(updater) => updater.check().await,
         Err(error) => Err(error),
     };
