@@ -86,6 +86,8 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
             path,
             "/app/window/drag"
                 | "/app/window/zoom"
+                | "/app/window/minimize"
+                | "/app/window/close"
                 | "/app/update/check"
                 | "/app/rules/open"
                 | "/app/theme/system"
@@ -96,6 +98,40 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
 
 /// The main window with the update dialog: a fresh check, what changed, then a confirmed update.
 const UPDATE_PAGE: &str = "/chat/?check-update";
+
+/// What the page's top bar asks of its window. The bar is the title bar on every platform, so it
+/// moves, zooms, minimizes and closes the window the way the system's own title bar would.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowAction {
+    Drag,
+    Zoom,
+    Minimize,
+    Close,
+}
+
+impl WindowAction {
+    /// The action a request names, or `None` for any other path.
+    fn of(path: &str) -> Option<Self> {
+        Some(match path {
+            "/app/window/drag" => Self::Drag,
+            "/app/window/zoom" => Self::Zoom,
+            "/app/window/minimize" => Self::Minimize,
+            "/app/window/close" => Self::Close,
+            _ => return None,
+        })
+    }
+
+    fn run(self, window: &WebviewWindow) {
+        let done = match self {
+            Self::Drag => window.start_dragging(),
+            Self::Zoom if window.is_maximized().unwrap_or(false) => window.unmaximize(),
+            Self::Zoom => window.maximize(),
+            Self::Minimize => window.minimize(),
+            Self::Close => window.close(),
+        };
+        let _ = done;
+    }
+}
 
 struct Tray {
     reader: Arc<Reader>,
@@ -134,22 +170,29 @@ fn main() {
                         data::Response::error(403, "预览版只读：请在正式版里保存改动")
                     }
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
-                    // The top bar moves and zooms its window, as a native title bar would.
-                    ("POST", "/app/window/drag" | "/app/window/zoom") if action == Some("1") => {
-                        match app.get_webview_window(&label) {
-                            Some(window) if path.ends_with("drag") => {
-                                let _ = window.start_dragging();
+                    // Whether the page's maximize button should read as maximize or restore.
+                    ("GET", "/app/window/state") => {
+                        let maximized = app
+                            .get_webview_window(&label)
+                            .and_then(|window| window.is_maximized().ok())
+                            .unwrap_or(false);
+                        data::Response::json(&serde_json::json!({ "maximized": maximized }))
+                    }
+                    // The top bar moves, zooms, minimizes and closes its window, as a native title
+                    // bar would; the main window draws no title bar of its own.
+                    (
+                        "POST",
+                        "/app/window/drag"
+                        | "/app/window/zoom"
+                        | "/app/window/minimize"
+                        | "/app/window/close",
+                    ) if action == Some("1") => {
+                        match (WindowAction::of(&path), app.get_webview_window(&label)) {
+                            (Some(step), Some(window)) => {
+                                step.run(&window);
                                 data::Response::json(&serde_json::json!({"ok": true}))
                             }
-                            Some(window) => {
-                                let _ = if window.is_maximized().unwrap_or(false) {
-                                    window.unmaximize()
-                                } else {
-                                    window.maximize()
-                                };
-                                data::Response::json(&serde_json::json!({"ok": true}))
-                            }
-                            None => data::Response::error(404, "找不到窗口"),
+                            _ => data::Response::error(404, "找不到窗口"),
                         }
                     }
                     // Native appearance (the panel's glass, window buttons) follows the page's theme.
@@ -670,6 +713,10 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
         .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+    // Windows has no overlay title bar: drop its frame and let the same bar carry Windows' own
+    // caption buttons at its right end.
+    #[cfg(windows)]
+    let builder = builder.decorations(false);
     let built = builder
         .on_navigation(allowed)
         .on_new_window(move |target, _| {
@@ -727,9 +774,39 @@ mod tests {
         }
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
+        assert!(!preview_refuses(true, "POST", "/app/window/minimize"));
+        assert!(!preview_refuses(true, "POST", "/app/window/close"));
         assert!(!preview_refuses(true, "POST", "/app/update/check"));
         assert!(!preview_refuses(true, "POST", "/app/rules/open"));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
+    }
+
+    #[test]
+    fn the_top_bar_asks_for_window_actions_by_path() {
+        assert_eq!(
+            WindowAction::of("/app/window/drag"),
+            Some(WindowAction::Drag)
+        );
+        assert_eq!(
+            WindowAction::of("/app/window/zoom"),
+            Some(WindowAction::Zoom)
+        );
+        assert_eq!(
+            WindowAction::of("/app/window/minimize"),
+            Some(WindowAction::Minimize)
+        );
+        assert_eq!(
+            WindowAction::of("/app/window/close"),
+            Some(WindowAction::Close)
+        );
+        for path in [
+            "/app/window/state",
+            "/app/window/",
+            "/app/status",
+            "/window/drag",
+        ] {
+            assert_eq!(WindowAction::of(path), None, "{path}");
+        }
     }
 
     #[test]

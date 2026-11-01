@@ -2,8 +2,9 @@
 
 The mark is tray.svg's one-stroke N with its dot. On macOS 26 the icon follows the system
 appearance: a black N on a light square in light mode, a white N on a dark square in dark mode.
-That pair lives in AppIcon.icon (Icon Composer) and is compiled into Assets.car; icon.icns,
-icon.ico and the PNGs carry the light version for older macOS, Windows and the bundler.
+That pair lives in AppIcon.icon (Icon Composer) and is compiled into Assets.car; icon.icns and the
+PNGs carry the light version for older macOS and the bundler. Windows gets icon.ico, which keeps
+the square but fills the canvas with it: Explorer and the taskbar have no icon grid of their own.
 
 Run with `python3 icons/app_icon.py` on macOS with Xcode 26 or later: AppKit draws the SVGs,
 actool compiles the catalog and iconutil packs the icns. CI only copies Assets.car, so its
@@ -35,6 +36,8 @@ MARK = """<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" vie
 # The flat icon draws its own square (an 824 body inset by 100, corners of 185) with a faint rim
 # so the light square stays visible on a light desktop.
 SQUARE = f'<rect x="100" y="100" width="824" height="824" rx="185" fill="{LIGHT}" stroke="#d2d2d7" stroke-width="2"/>'
+# Windows gets its own .ico: the same square filling all but a hair of the canvas (see `windows`).
+WINDOWS_BODY = 984
 
 # Icon Composer draws the square itself; only its fill and the glyph image change with appearance.
 ICON_JSON = {
@@ -75,6 +78,20 @@ for i in stride(from: 1, to: a.count, by: 2) {
 """
 
 
+def windows(big: Image.Image) -> Image.Image:
+    """The same square sized for Windows, whose taskbar draws app marks up to the canvas edge.
+
+    Apple's grid leaves the 824 body inside a 1024 canvas; Windows has no such grid, and a square
+    that small reads as a shrunken icon beside Explorer and browsers. Keep a hair of margin for
+    the rounded corners and let the square, and the N in it, fill the rest.
+    """
+    body = big.crop((100, 100, 924, 924)).resize((WINDOWS_BODY, WINDOWS_BODY), Image.LANCZOS)
+    canvas = Image.new("RGBA", big.size, (0, 0, 0, 0))
+    offset = (big.width - WINDOWS_BODY) // 2
+    canvas.paste(body, (offset, offset))
+    return canvas
+
+
 def main() -> None:
     catalog = HERE / "AppIcon.icon"
     (catalog / "Assets").mkdir(parents=True, exist_ok=True)
@@ -105,7 +122,7 @@ def main() -> None:
             ("icon.png", 512),
         ):
             big.resize((size, size), Image.LANCZOS).save(HERE / name)
-        big.save(HERE / "icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 256)])
+        windows(big).save(HERE / "icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 256)])
         iconset = t / "icon.iconset"
         iconset.mkdir()
         for size in (16, 32, 128, 256, 512):
