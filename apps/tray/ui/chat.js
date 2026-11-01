@@ -1349,7 +1349,7 @@ function createMessage(m) {
     const id = rec.id;
     if (state.expanded.has(id)) state.expanded.delete(id);
     else state.expanded.add(id);
-    applyFold(rec);
+    applyFolds([rec]);
   });
   rec.el = h(
     "article.msg",
@@ -1479,18 +1479,29 @@ function updateMessage(rec, m, ctx, id) {
 }
 // Fold: clamp by CSS, show the button only when the content really overflows. Discarded answers
 // start folded whatever their length.
-function applyFold(rec) {
-  if (!rec.more || !rec.el.isConnected || !rec.el.offsetParent) return;
-  const open = state.expanded.has(rec.id);
-  rec.bub.classList.toggle("fold", !open);
-  const overflows = rec.bub.scrollHeight > FOLD_PX + 6; // scrollHeight ignores the clamp
-  rec.more.hidden = !overflows;
-  rec.more.textContent = open ? "收起" : "展开全文";
-  rec.more.setAttribute("aria-expanded", open ? "true" : "false");
-  rec.bub.classList.toggle("fold", !open && overflows);
+function applyFolds(records) {
+  // Keep geometry reads together: alternating styles and scrollHeight for each message
+  // forces the browser to lay out the whole conversation again for every bubble.
+  const visible = [...records]
+    .filter((rec) => rec.more && rec.el.isConnected && rec.el.offsetParent)
+    .map((rec) => ({ rec, open: state.expanded.has(rec.id) }));
+  for (const { rec, open } of visible)
+    rec.bub.classList.toggle("fold", !open);
+  const measured = visible.map(({ rec, open }) => ({
+    rec,
+    open,
+    overflows: rec.bub.scrollHeight > FOLD_PX + 6, // ignores the clamp
+  }));
+  for (const { rec, open, overflows } of measured) {
+    rec.more.hidden = !overflows;
+    rec.more.textContent = open ? "收起" : "展开全文";
+    rec.more.setAttribute("aria-expanded", open ? "true" : "false");
+    rec.bub.classList.toggle("fold", !open && overflows);
+    rec.dirty = false;
+  }
 }
 function measureAll() {
-  for (const rec of state.nodes.values()) if (rec.more) applyFold(rec);
+  applyFolds(state.nodes.values());
 }
 
 // ---------------------------------------------------------------- conversation column
@@ -1741,11 +1752,7 @@ function renderConv(c, ctx) {
     el.inner,
     [...keep].map((id) => state.nodes.get(id).el),
   );
-  for (const rec of state.nodes.values())
-    if (rec.dirty) {
-      rec.dirty = false;
-      applyFold(rec);
-    }
+  applyFolds([...state.nodes.values()].filter((rec) => rec.dirty));
 
   if (follow) {
     el.tl.scrollTop = el.tl.scrollHeight;
