@@ -9,7 +9,7 @@
 ## Implementation boundaries
 
 - AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，只提供 `agentnave-mcp` 一个入口，不提供面向人的 CLI；服务、App、Manager 与 Provider CLI 的所有权划分见 `docs/context/architecture.md`。规划、角色、模型、轮次编排、审核判断、综合、重试与 worktree 由调用方 Manager 决定。
-- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；参数只能来自协议必需、调用方显式或回执注明的 App 默认值，权限类参数另受权限档位约束，boss 不得自行追加，完整来源规则见 `docs/context/architecture.md` 的「参数与默认值」。Provider 专属行为放进 Adapter 及其钩子，核心与历史层不按 Provider 名分支。
+- Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；参数只能来自协议必需、调用方显式或回执注明的 App 默认值，权限类参数另受权限档位约束，boss 不得自行追加，要点见 `docs/context/architecture.md` 的「参数与默认值」，细则见 ADR-0028、ADR-0032。Provider 专属的协议、解析与模型回读放进 Adapter 及其钩子，核心与历史层不按 Provider 名分支；默认值与权限档位映射仍在服务入口套用，不下沉到 Adapter；Adapter 不在模块级导入 `agentnave.host`。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程树内的活跃进程做 best-effort 清理，不引入跨重启恢复。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。
 - macOS／Linux 使用专用 POSIX 进程组 supervisor；Windows 使用挂起创建并先加入
@@ -43,7 +43,7 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 
 ## Context change gate
 
-- 术语变化更新 `CONTEXT.md`；所有权、模块依赖方向或安全边界变化时更新 `docs/context/architecture.md`，只写边界与合同要点，不写参数、字段、路由、文件路径或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
+- 术语变化更新 `CONTEXT.md`；所有权、模块依赖方向、安全边界或跨进程／跨语言合同（中继与服务、服务与托盘、两端共用的数据根文件）变化时更新 `docs/context/architecture.md`，只写边界与合同要点，可以写数据根文件名及其写入方，不写参数、字段、路由或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
 - 精确实现、临时路线、分支、commit、测试输出和实时运行状态不写入长期上下文。
 
 ## Version releases
