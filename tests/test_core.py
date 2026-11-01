@@ -20,6 +20,7 @@ from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
+    _RETRY_STALL_QUIET_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_SECONDS,  # pyright: ignore[reportPrivateUsage]
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
@@ -1099,12 +1100,30 @@ for line in sys.stdin:
 
 
 def test_a_provider_that_keeps_retrying_is_stopped_after_the_window() -> None:
-    stuck = SimpleNamespace(retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1)
+    stuck = SimpleNamespace(
+        retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1,
+        retry_at=time.monotonic(),
+    )
     asyncio.run(asyncio.wait_for(_stall_guard(cast(Any, stuck), interval=0.01), timeout=2))
 
 
+def test_a_recovered_provider_is_not_stopped() -> None:
+    # One retry long ago, then silence: the provider recovered, so the streak is over.
+    recovered = SimpleNamespace(
+        retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1,
+        retry_at=time.monotonic() - _RETRY_STALL_QUIET_SECONDS - 1,
+    )
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            asyncio.wait_for(
+                _stall_guard(cast(Any, recovered), interval=0.01),
+                timeout=0.2,
+            )
+        )
+
+
 def test_a_quiet_provider_is_not_stopped() -> None:
-    idle = SimpleNamespace(retry_since=None)
+    idle = SimpleNamespace(retry_since=None, retry_at=None)
     with pytest.raises(TimeoutError):
         asyncio.run(
             asyncio.wait_for(

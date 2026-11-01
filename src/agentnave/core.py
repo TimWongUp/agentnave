@@ -51,6 +51,9 @@ _OUTPUT_LIMIT_ERROR = InvocationError(
 # A provider that keeps reporting retries without producing output is stuck (a network fault
 # Codex retries forever); stop it instead of letting the invocation run with no end.
 _RETRY_STALL_SECONDS = 300.0
+# A single retry followed by silence is a recovered provider, not a stuck one: the streak only
+# counts while retries keep arriving.
+_RETRY_STALL_QUIET_SECONDS = 60.0
 _RETRY_STALL_ERROR = InvocationError(
     "provider_error",
     "the provider kept retrying without producing output for 5 minutes; the invocation was stopped",
@@ -76,6 +79,7 @@ class _InvocationRecord:
     last_activity_at: float | None = None
     # When the current run of "retrying" activity began, so a stuck provider can be timed out.
     retry_since: float | None = None
+    retry_at: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
     pending_attention: deque[InvocationError] = field(
@@ -136,8 +140,10 @@ class _InvocationRecord:
             if activity.kind == "retry":
                 if self.retry_since is None:
                     self.retry_since = self.last_event_at
+                self.retry_at = self.last_event_at
             else:
                 self.retry_since = None
+                self.retry_at = None
 
     def take_update(self) -> InvocationResult | InvocationError | None:
         """Return the final result, else consume the oldest unread blocker."""
@@ -161,8 +167,11 @@ async def _stall_guard(record: _InvocationRecord, interval: float = 15.0) -> Non
     """Complete once the provider has been retrying without output for too long."""
     while True:
         await asyncio.sleep(interval)
-        since = record.retry_since
-        if since is not None and time.monotonic() - since >= _RETRY_STALL_SECONDS:
+        since, last = record.retry_since, record.retry_at
+        if since is None or last is None:
+            continue
+        now = time.monotonic()
+        if now - since >= _RETRY_STALL_SECONDS and now - last <= _RETRY_STALL_QUIET_SECONDS:
             return
 
 
