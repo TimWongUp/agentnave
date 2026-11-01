@@ -66,10 +66,10 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 ### 方式二：手动安装（Windows / Linux，或不装 App）
 
-当前配套版本是 **`v0.59.1`**，运行时和 Skill 都要从这个 tag 安装：
+当前配套版本是 **`v0.60.0`**，运行时和 Skill 都要从这个 tag 安装：
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.59.1"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.60.0"
 ```
 
 然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager](skills/agentnave-manager/SKILL.md) 和 [agentnave-handover](skills/agentnave-handover/SKILL.md) Skill，再做验证。

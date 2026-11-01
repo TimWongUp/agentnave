@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.59.1` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.60.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.59.1`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.60.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -551,15 +551,22 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading from v0.59.0 to v0.59.1
+### Upgrading to v0.60.0
 
-Update the App and its paired runtime and Skills together. This release reorganizes
-code and project documents only: tool schemas, receipts, permission tiers and saved
-files keep their meaning, so hosts need no reconnect and history, member settings and
-credentials need no migration.
+Update the App, paired runtime and complete Skills together, including the new
+`agentnave-handover` Skill. App-managed installations add the required Skill automatically.
 
-See [v0.59.1 release notes](releases/v0.59.1.md) for this release and
-[v0.59.0 release notes](releases/v0.59.0.md) for earlier upgrade notes.
+Reconnect MCP after the App repairs host registrations: this release changes tool receipts
+and adds a connection-row identity. Old connections without that identity do not borrow another
+account's Explorer/Worker settings. Custom registrations must carry the matching App row ID
+in `AGENTNAVE_HOST_APP`; App-managed registrations supply it automatically.
+
+History adds handover metadata on demand; credentials and member selections need no migration.
+Update both components together: older processes can discard handover markers for workspaces
+that contain only a boss and no conversations during the upgrade window.
+
+See [v0.60.0 release notes](releases/v0.60.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v0.59.1.md).
 
 ## Uninstall
 
@@ -587,7 +594,7 @@ configuration, sessions, and user projects remain owned by the user and provider
 
 1. 直接 `uv tool install`（使用系统代理，若已配置）
 2. 失败则 `--offline`（依赖 wheel 已在 uv 缓存里时可用，常见于升级）
-3. 仍失败且没有显式指定软件源时，用清华镜像重试一次（`UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`）；已有软件源设置时保留原源并报告失败，不自动换源。
+3. 仍失败且没有显式指定软件源时，用清华镜像重试一次（`UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`）；已有 UV/PIP 软件源环境变量设置时保留原源并报告失败，不自动换源。
 
 也可以在启动宿主前自行设置 `UV_DEFAULT_INDEX` 或 `HTTPS_PROXY`，这两种都会被继承。
 
