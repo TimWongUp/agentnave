@@ -44,6 +44,20 @@ pub(super) const NETWORK_VARIABLES: &[&str] = &[
 ];
 pub(crate) type Shell = Result<BTreeMap<String, String>, String>;
 
+/// Windows environment names are case-insensitive even after copying them into a map.
+pub(super) fn env_value<'a>(values: &'a BTreeMap<String, String>, key: &str) -> Option<&'a String> {
+    values.get(key).or_else(|| {
+        if cfg!(windows) {
+            values
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(key))
+                .map(|(_, value)| value)
+        } else {
+            None
+        }
+    })
+}
+
 pub(super) fn probe(context: &Context) -> Shell {
     // Windows has no login shell: the app's own environment is already the user's.
     if cfg!(windows) {

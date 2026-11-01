@@ -42,9 +42,7 @@ fn effective_env<'a>(
     shell: Option<&'a Shell>,
     var: &str,
 ) -> Option<(&'a str, &'static str)> {
-    context
-        .env
-        .get(var)
+    roots::env_value(&context.env, var)
         .filter(|p| Path::new(p).is_absolute())
         .map(|v| (v.as_str(), "env"))
         .or_else(|| {
@@ -88,9 +86,7 @@ impl ToolDirs {
             .unwrap_or_else(|| context.home.join(".local/bin"));
         let mut network = BTreeMap::new();
         for &var in roots::NETWORK_VARIABLES {
-            let found = context
-                .env
-                .get(var)
+            let found = roots::env_value(&context.env, var)
                 .filter(|v| !v.is_empty() && !v.contains('\n'))
                 .or_else(|| {
                     shell

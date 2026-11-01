@@ -301,6 +301,25 @@ fn service_detection_and_connect_share_shell_tool_directory_resolution() {
 }
 
 #[test]
+fn index_environment_names_follow_the_platform_case_rules() {
+    let (_temp, mut hosts) = fixture();
+    hosts.context.env.insert(
+        "uv_default_index".into(),
+        "https://packages.example/simple".into(),
+    );
+    let dirs = ToolDirs::resolve(&hosts.context, &Ok(BTreeMap::new()));
+    let expected = if cfg!(windows) {
+        Some("https://packages.example/simple")
+    } else {
+        None
+    };
+    assert_eq!(
+        dirs.network.get("UV_DEFAULT_INDEX").map(String::as_str),
+        expected
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn upgrade_directory_snapshot_is_available_while_host_configuration_blocks() {
     use std::os::unix::fs::OpenOptionsExt;
