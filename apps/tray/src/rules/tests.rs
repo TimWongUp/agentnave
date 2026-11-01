@@ -125,7 +125,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let connected = [claude, grok, codex];
     let split = json!({"preset": "split"});
     let text = text_of(&split, "split").unwrap();
-    assert!(sync(&installed, &connected, h, &split, &[], &backup).is_empty());
+    assert!(sync(&installed, &connected, h, &split, &[], &backup, false).is_empty());
     let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert_eq!(
         claude_md,
@@ -159,7 +159,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
 
     // Unchanged settings write nothing; turning it off restores every file as it was.
     backups.borrow_mut().clear();
-    assert!(sync(&installed, &connected, h, &split, &[], &backup).is_empty());
+    assert!(sync(&installed, &connected, h, &split, &[], &backup, false).is_empty());
     assert!(backups.borrow().is_empty());
     assert!(
         sync(
@@ -168,7 +168,8 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             h,
             &json!({"preset": "off"}),
             &[],
-            &backup
+            &backup,
+            false
         )
         .is_empty()
     );
@@ -181,13 +182,13 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     // Neither file exists yet: Grok would read the one created for Claude, so it gets no other.
     std::fs::remove_file(h.join(".claude/CLAUDE.md")).unwrap();
     std::fs::remove_file(h.join(".grok/AGENTS.md")).unwrap();
-    assert!(sync(&installed, &connected, h, &split, &[], &backup).is_empty());
+    assert!(sync(&installed, &connected, h, &split, &[], &backup, false).is_empty());
     assert!(h.join(".claude/CLAUDE.md").is_file());
     assert!(!h.join(".grok/AGENTS.md").exists());
     // A lone marker is left for the user rather than guessed at.
     let broken = format!("mine\n{START}\nold\n");
     std::fs::write(h.join(".codex/AGENTS.md"), &broken).unwrap();
-    let failures = sync(&installed, &connected, h, &split, &[], &backup);
+    let failures = sync(&installed, &connected, h, &split, &[], &backup, false);
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0]["path"], json!(h.join(".codex/AGENTS.md")));
     assert_eq!(
@@ -217,6 +218,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         &json!({"preset": "off"}),
         std::slice::from_ref(&moved),
         &backup,
+        false,
     );
     assert_eq!(std::fs::read_to_string(&moved).unwrap(), "old\n");
 
@@ -243,7 +245,7 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     let backup = |_: &Path, _: &[u8]| Ok(());
     let document = json!({"version": 1, "preset": "off", "custom": "我的规则",
         "apps": {"claude": "split", "grok": "parallel", "codex": "custom"}});
-    assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
+    assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
 
     // Grok reads Claude's file, so it runs on the first app's mode rather than a second block.
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
@@ -279,13 +281,50 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
 
     // Turning one boss off leaves the other's block alone.
     let document = json!({"preset": "off", "custom": "我的规则", "apps": {"codex": "custom"}});
-    assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
+    assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
     assert!(!h.join(".claude/CLAUDE.md").exists());
     assert!(h.join(".codex/AGENTS.md").exists());
 
     // Claude joining Grok's file later does not undo the mode already set on Grok.
     let document = json!({"preset": "off", "apps": {"grok": "split"}});
-    assert!(sync(&apps, &apps, h, &document, &[], &backup).is_empty());
+    assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert!(claude.contains(SHARED));
+}
+
+#[test]
+fn a_held_sync_keeps_the_old_block_until_the_service_catches_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().canonicalize().unwrap();
+    let h = home.as_path();
+    let app = |key: &'static str, root: &str| App {
+        key,
+        id: key,
+        label: key,
+        root: h.join(root),
+    };
+    let apps = [app("claude", ".claude"), app("codex", ".codex")];
+    let backup = |_: &Path, _: &[u8]| Ok(());
+    let split = json!({"preset": "split"});
+    std::fs::create_dir_all(h.join(".claude")).unwrap();
+    std::fs::create_dir_all(h.join(".codex")).unwrap();
+    let old = format!("{}\n", block("旧"));
+    std::fs::write(h.join(".claude/CLAUDE.md"), &old).unwrap();
+    std::fs::write(h.join(".codex/AGENTS.md"), &old).unwrap();
+
+    let failures = sync(&apps, &apps, h, &split, &[], &backup, true);
+    assert_eq!(failures.len(), 2);
+    assert_eq!(
+        std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
+        old
+    );
+
+    // Turning the block off does not wait: no tool argument depends on its absence.
+    let off = json!({"preset": "off"});
+    assert!(sync(&apps, &apps, h, &off, &[], &backup, true).is_empty());
+    assert!(!h.join(".claude/CLAUDE.md").exists());
+
+    // Once the service caught up the block goes in, and holding again reports nothing.
+    assert!(sync(&apps, &apps, h, &split, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &split, &[], &backup, true).is_empty());
 }

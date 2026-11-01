@@ -281,6 +281,11 @@ fn block(text: &str) -> String {
     format!("{START}\n{text}\n{END}")
 }
 
+/// Whether a rules file already holds exactly this block.
+fn carries(content: &str, text: &str) -> bool {
+    matches!(find(content), Ok(Some((start, end))) if content[start..end] == block(text))
+}
+
 /// Where the block sits: from its start marker to the end of its end marker. A lone or repeated
 /// marker is refused: taking whatever lies between them could swallow the user's own rules.
 fn find(content: &str) -> Result<Option<(usize, usize)>, String> {
@@ -411,7 +416,8 @@ pub fn existing(installed: &[App], home: &Path) -> Vec<PathBuf> {
 
 /// Put each boss's mode in the block of its target files and take the block out of every other
 /// rules file an installed app could read, and of `also` (files read before a host moved).
-/// Returns the files that could not be written.
+/// Returns the files that could not be written. With `hold`, a file due a new block keeps what it
+/// has and is reported instead; taking a block out still goes ahead.
 pub fn sync(
     installed: &[App],
     connected: &[App],
@@ -419,6 +425,7 @@ pub fn sync(
     document: &Value,
     also: &[PathBuf],
     backup: &Backup<'_>,
+    hold: bool,
 ) -> Vec<Value> {
     let wanted = wanted(connected, home, document);
     let mut paths: Vec<PathBuf> = wanted.iter().map(|(path, _)| path.clone()).collect();
@@ -434,6 +441,11 @@ pub fn sync(
         .iter()
         .filter_map(|path| {
             let text = wanted.iter().find(|(known, _)| known == path);
+            if let (true, Some((_, text))) = (hold, text) {
+                let content = std::fs::read_to_string(path).unwrap_or_default();
+                return (!carries(&content, text))
+                    .then(|| json!({"path": path, "error": "本机服务升级后才会写入"}));
+            }
             write(path, home, text.map(|(_, text)| text.as_str()), backup)
                 .err()
                 .map(|error| json!({"path": path, "error": error}))
@@ -448,10 +460,7 @@ pub fn list(installed: &[App], connected: &[App], home: &Path, document: &Value)
         .map(|(path, readers)| {
             let content = std::fs::read_to_string(&path).unwrap_or_default();
             let text = wanted.iter().find(|(known, _)| *known == path);
-            let current = match (find(&content), text) {
-                (Ok(Some((start, end))), Some((_, text))) => content[start..end] == block(text),
-                _ => false,
-            };
+            let current = text.is_some_and(|(_, text)| carries(&content, text));
             json!({"path": path, "readers": readers, "exists": path.is_file(),
                 "target": text.is_some(), "current": current,
                 "blocked": crate::hosts::check_path(&path, home).is_err()})
