@@ -909,6 +909,66 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
 }
 
 #[test]
+fn lingering_receipts_started_after_a_change_do_not_block_auto_confirmation() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    let dir = hosts.context.home.join(".agentnave/connections");
+    let since = hosts.settings["codex"]["reload_changed"]["at_ms"]
+        .as_u64()
+        .unwrap();
+    let receipt = |started: Value| {
+        json!({"version":1,"host":"codex","started_ms":started,"runtime_version":"0.22.0",
+            "runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64)})
+    };
+    let pause = |name: &str| {
+        fs::File::options()
+            .write(true)
+            .open(dir.join(name))
+            .unwrap()
+            .set_modified(SystemTime::now() - std::time::Duration::from_secs(100))
+            .unwrap();
+    };
+    save(
+        &dir.join("live.json"),
+        &receipt(json!(since + 1)).to_string(),
+    );
+    // A relay that swapped to the new install may pause its receipt after the change; it still
+    // proves the current entry loaded.
+    save(
+        &dir.join("swapped.json"),
+        &receipt(json!(since + 2)).to_string(),
+    );
+    pause("swapped.json");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    // A paused receipt started before the change, or at an unknown time, still blocks it.
+    save(&dir.join("old.json"), &receipt(json!(1)).to_string());
+    pause("old.json");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    fs::remove_file(dir.join("old.json")).unwrap();
+    save(&dir.join("unknown.json"), &receipt(Value::Null).to_string());
+    pause("unknown.json");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    fs::remove_file(dir.join("unknown.json")).unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    // remember_reloads keeps that proof once the connections close.
+    let token = hosts.state(&h)["reload"]["token"].clone();
+    hosts.remember_reloads();
+    let shell = hosts.shell.clone();
+    let tools = hosts.tools.clone();
+    hosts = Hosts::from_probe(hosts.context, shell, tools);
+    assert_eq!(hosts.settings["codex"]["reload_confirmed"]["token"], token);
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    fs::remove_file(dir.join("live.json")).unwrap();
+    fs::remove_file(dir.join("swapped.json")).unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
+}
+
+#[test]
 fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
     for id in IDS {
         let (_temp, mut hosts) = fixture();

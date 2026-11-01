@@ -867,8 +867,10 @@ impl Hosts {
         let now = SystemTime::now();
         // Live receipts refresh every five seconds; a relay swapping to a new install may pause
         // that for up to 105 seconds, so only a longer silence counts as no connection at all.
-        // A paused one may predate the change, so it also keeps a reload from clearing.
+        // One paused since before the change also keeps a reload from clearing.
+        let changed_at = changed["at_ms"].as_u64();
         let mut lingering = false;
+        let mut lingering_before_change = false;
         let connections: Vec<Value> = root
             .into_iter()
             .flat_map(|root| {
@@ -891,7 +893,14 @@ impl Hosts {
                 if value["version"] != 1 || value["host"] != host.boss {
                     return None;
                 }
-                lingering |= age > 20;
+                if age > 20 {
+                    lingering = true;
+                    // A paused receipt that started after the change still runs the current
+                    // entry; one with an unreadable start time may predate it.
+                    lingering_before_change |= !value["started_ms"]
+                        .as_u64()
+                        .is_some_and(|start| changed_at.is_some_and(|at| start > at));
+                }
                 (age <= 20).then_some(value)
             })
             .collect();
@@ -962,7 +971,7 @@ impl Hosts {
                 valid_hash(&c["runtime_tools_hash"])
                     && c["runtime_tools_hash"] == c["host_tools_hash"]
             }) {
-                let newly_connected = !lingering
+                let newly_connected = !lingering_before_change
                     && changed["token"] == token
                     && changed["at_ms"].as_u64().is_some_and(|at| {
                         connections
