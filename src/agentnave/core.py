@@ -138,8 +138,9 @@ class _InvocationRecord:
             self.last_activity = activity
             self.last_activity_at = self.last_event_at
             if activity.kind == "retry":
-                if self.retry_since is None:
-                    self.retry_since = self.last_event_at
+                self.retry_since = _retry_streak_start(
+                    self.retry_since, self.retry_at, self.last_event_at
+                )
                 self.retry_at = self.last_event_at
             else:
                 self.retry_since = None
@@ -161,6 +162,17 @@ class _InvocationRecord:
 class _CapturedStream:
     data: bytes
     exceeded: bool
+
+
+def _retry_streak_start(since: float | None, last: float | None, now: float) -> float:
+    """When the current run of retries began.
+
+    A run that already went quiet is over: a retry arriving after more than the quiet window
+    starts a new one, so a second unrelated hiccup is not counted as the first one continuing.
+    """
+    if since is None or (last is not None and now - last > _RETRY_STALL_QUIET_SECONDS):
+        return now
+    return since
 
 
 async def _stall_guard(record: _InvocationRecord, interval: float = 15.0) -> None:

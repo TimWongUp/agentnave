@@ -25,6 +25,7 @@ from agentnave.core import (
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
     _read_limited,  # pyright: ignore[reportPrivateUsage]
+    _retry_streak_start,  # pyright: ignore[reportPrivateUsage]
     _stall_guard,  # pyright: ignore[reportPrivateUsage]
 )
 from agentnave.models import (
@@ -1109,10 +1110,8 @@ def test_a_provider_that_keeps_retrying_is_stopped_after_the_window() -> None:
 
 def test_a_recovered_provider_is_not_stopped() -> None:
     # One retry long ago, then silence: the provider recovered, so the streak is over.
-    recovered = SimpleNamespace(
-        retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1,
-        retry_at=time.monotonic() - _RETRY_STALL_QUIET_SECONDS - 1,
-    )
+    once = time.monotonic() - _RETRY_STALL_SECONDS - 1
+    recovered = SimpleNamespace(retry_since=once, retry_at=once)
     with pytest.raises(TimeoutError):
         asyncio.run(
             asyncio.wait_for(
@@ -1131,3 +1130,13 @@ def test_a_quiet_provider_is_not_stopped() -> None:
                 timeout=0.2,
             )
         )
+
+
+def test_a_retry_after_a_quiet_gap_starts_a_new_streak() -> None:
+    quiet = _RETRY_STALL_QUIET_SECONDS
+    # First retry ever.
+    assert _retry_streak_start(None, None, 100.0) == 100.0
+    # Still inside the window: the same streak continues.
+    assert _retry_streak_start(10.0, 90.0, 100.0) == 10.0
+    # Silent for longer than the window: this is a new run.
+    assert _retry_streak_start(10.0, 100.0 - quiet - 1, 100.0) == 100.0
