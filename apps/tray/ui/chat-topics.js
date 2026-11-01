@@ -76,7 +76,7 @@ function tpDirectory(c, ctx) {
     const said = last ? [...last.replies].reverse().find((m) => m.kind === "reply") : null;
     const total = last ? Math.max(last.replies.length, last.prompt?.recipients?.length || 0) : 0;
     items.push({
-      weight: review || failed ? 0 : running ? 1 : 2,
+      weight: review ? 0 : running ? 1 : 2,
       time: last?.time || "",
       tag: "会议",
       title: room.title,
@@ -93,7 +93,7 @@ function tpDirectory(c, ctx) {
     const running = t.replies.some((m) => m.kind === "typing");
     const bad = tpBad(last);
     items.push({
-      weight: bad ? 0 : running ? 1 : 2,
+      weight: running ? 1 : 2,
       time: t.time,
       tag: "任务",
       title: tpFirst(t.prompt.text),

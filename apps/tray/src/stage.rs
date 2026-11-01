@@ -2,6 +2,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
@@ -601,7 +602,8 @@ impl Group {
     }
 
     /// The desks an office draws, at most `limit` (the App's running limit) unless more are
-    /// running or under review, plus the rest as the "optimized" list, most recent first. The
+    /// running or under review, plus the rest as the "optimized" list, most recent first. A
+    /// desk whose failure has settled goes there whatever the limit. The
     /// list holds the `listed` most recent and every one the payload refers to, so seats and
     /// messages always find their desk.
     fn desks(
@@ -611,10 +613,17 @@ impl Group {
         listed: usize,
         referenced: &BTreeSet<String>,
     ) -> (Vec<Value>, Value) {
-        let mut desks: Vec<_> = self.desks.values().collect();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_micros() as i64);
+        let (mut rest, mut desks): (Vec<_>, Vec<_>) = self
+            .desks
+            .values()
+            .partition(|desk| desk.failure_settled(now));
         desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
-        let rest = desks.split_off(limit.max(busy).min(desks.len()));
+        rest.extend(desks.split_off(limit.max(busy).min(desks.len())));
+        rest.sort_by_key(|d| (Reverse(d.last), &d.key));
         // Drawn desks put the newest first; the others keep their order as new ones arrive.
         desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
         let shown = desks.into_iter().map(|desk| desk.value(host)).collect();
@@ -1325,11 +1334,11 @@ pub(crate) fn respond(
         }
         group.app = apps.get(&group.id).copied();
     }
-    // Work going on first, then unhandled failures, then the most recent; never empty while history exists.
+    // Work going on first, then the most recent; never empty while history exists. A failure is
+    // no reason to come first: the boss handles it, the user has nothing to do.
     let tier = |status: &str| match status {
         "running" | "review" => 0,
-        "failed" => 1,
-        _ => 2,
+        _ => 1,
     };
     groups.sort_by(|a, b| {
         (tier(a.status), Reverse(a.at), &a.id).cmp(&(tier(b.status), Reverse(b.at), &b.id))
@@ -1504,6 +1513,17 @@ mod tests {
     }
 
     use super::{Desk, desk_label, desk_role, handle, model_with_effort};
+
+    #[test]
+    fn a_failed_desk_settles_after_half_an_hour_unless_it_runs_again() {
+        let mut desk = Desk::default();
+        let minutes = |n: i64| n * 60 * 1_000_000;
+        desk.observe(0, "failed");
+        assert!(!desk.failure_settled(minutes(30)));
+        assert!(desk.failure_settled(minutes(31)));
+        desk.observe(minutes(32), "succeeded");
+        assert!(!desk.failure_settled(minutes(90)));
+    }
 
     #[test]
     fn a_desk_role_hides_difficulties_and_names_review_roles_in_chinese() {
