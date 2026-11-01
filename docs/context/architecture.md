@@ -65,7 +65,7 @@ App 设置文件各自独立，以便旧版服务仍能读取组员配置：
 | 文件 | 写入方 | 服务的读法 |
 | --- | --- | --- |
 | `members.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
-| `review.json`、`orchestration.json` | App | 按 `role` 读取工位；损坏时不套用，由 `list_members` 报告 |
+| `review.json`、`orchestration.json` | App | 按 `role` 读取工位；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告 |
 | `permissions.json`、`cli-options.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
 | `settings.json` | App | 每次接纳时读取同时运行上限 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |

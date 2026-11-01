@@ -598,7 +598,8 @@ async def start_agent(
                 "thread is its own desk, whatever its role. An agentnave-review role (e.g. "
                 "correctness-reviewer) or explorer-easy, explorer-hard, worker-easy, "
                 "worker-hard also brings the model and effort the user picked for that seat in "
-                "the App when provider is the seat's CLI; explicit options win, and "
+                "the App when provider is the seat's CLI (Explorer/Worker only when this host's "
+                "orchestration is enabled); explicit options win, and "
                 "defaults_applied names the seat."
             )
         ),
@@ -648,7 +649,7 @@ async def start_agent(
         )
     seat_applied: list[str] = []
     try:
-        options, seat_applied = apply_seat(role_seat(role), provider, provider_options or {})
+        options, seat_applied = apply_seat(role_seat(role, HOST), provider, provider_options or {})
         options, defaults_applied = apply_member(
             read_members(),
             "task",
@@ -1135,7 +1136,9 @@ async def list_members(
     review holds the CLI and model the user picked in the App for each agentnave-review role,
     from review.json; review_error reports a broken review.json without affecting members.
     orchestration holds the CLI and model picked for each Explorer (read-only: explore, plan,
-    review) and Worker (writes) difficulty, easy or hard, from orchestration.json. native=true
+    review) and Worker (writes) difficulty, easy or hard, from orchestration.json. When disabled
+    for this host, enabled=false and both seat maps are empty; saved picks do not authorize
+    delegation or supply role defaults. native=true
     marks the host's own CLI: give that work to the host's built-in subagent instead.
     cli_options holds settings the user saved for a whole CLI, applied to every model of it.
     """

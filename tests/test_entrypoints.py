@@ -1148,7 +1148,14 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
         )
         (tmp_path / "orchestration.json").write_text(
-            json.dumps({"version": 1, "worker": {"easy": seat}, "explorer": {"hard": seat}})
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {"easy": seat},
+                    "explorer": {"hard": seat},
+                }
+            )
         )
         seated = await start({}, role="correctness-reviewer")
         assert seated["effort"] == "high"
@@ -1168,6 +1175,25 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "permission_mode",
         ]
         assert (await start({}, role="explorer-easy"))["defaults_applied"] == applied
+        # The current host's off override suppresses role defaults without deleting saved seats.
+        from agentnave.host import Host
+
+        monkeypatch.setattr(mcp_server, "HOST", Host("grok", "env"))
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "apps": {"grok": "off"},
+                    "worker": {"easy": seat},
+                    "explorer": {"hard": seat},
+                }
+            )
+        )
+        disabled = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert disabled["orchestration"] == {"enabled": False, "explorer": {}, "worker": {}}
+        assert (await start({}, role="worker-easy"))["defaults_applied"] == applied
+        assert (await start({}, role="explorer-hard"))["defaults_applied"] == applied
         (tmp_path / "review.json").write_text(
             json.dumps(
                 {"version": 1, "seats": {"correctness-reviewer": {**seat, "provider": "codex"}}}

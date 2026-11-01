@@ -40,6 +40,7 @@ type HostSource = Literal["env", "parent", "unknown"]
 class Host:
     name: HostName | None = None
     source: HostSource = "unknown"
+    app_id: str | None = None
 
     @property
     def provider(self) -> str | None:
@@ -404,12 +405,14 @@ def _detect_parent(
 
 
 def detect_host() -> Host:
+    app_id = os.environ.get("AGENTNAVE_HOST_APP", "").strip() or None
     if "AGENTNAVE_HOST" in os.environ:
         value = os.environ["AGENTNAVE_HOST"]
         for name in get_args(HostName.__value__):
             if value == name:
-                return Host(name, "env")
+                return Host(name, "env", app_id)
         raise ValueError(f"Unknown AGENTNAVE_HOST: {value!r}")
     if sys.platform == "win32":
-        return Host()
-    return _detect_parent(os.getppid(), read_process_parent, read_process_argv)
+        return Host(app_id=app_id)
+    host = _detect_parent(os.getppid(), read_process_parent, read_process_argv)
+    return Host(host.name, host.source, app_id)

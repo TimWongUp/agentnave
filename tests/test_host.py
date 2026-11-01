@@ -185,6 +185,7 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
     from agentnave import host
 
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
+    monkeypatch.delenv("AGENTNAVE_HOST_APP", raising=False)
     monkeypatch.setattr(host.sys, "platform", "win32")
     assert host.detect_host() == host.Host()
     for name, provider in (
@@ -197,6 +198,9 @@ def test_host_env_priority_validation_and_windows_fallback(monkeypatch: pytest.M
         identified = host.detect_host()
         assert identified.name == name and identified.source == "env"
         assert identified.provider == provider
+    monkeypatch.setenv("AGENTNAVE_HOST", "codex")
+    monkeypatch.setenv("AGENTNAVE_HOST_APP", "codex@work")
+    assert host.detect_host() == host.Host("codex", "env", "codex@work")
     for value in ("unknown", "", "CODEX", "opencode"):
         monkeypatch.setenv("AGENTNAVE_HOST", value)
         with pytest.raises(ValueError, match="Unknown AGENTNAVE_HOST"):
