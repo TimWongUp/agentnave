@@ -104,19 +104,35 @@ function tpDirectory(c, ctx) {
       scope: desk ? { kind: "desk", key: desk.key } : null,
     });
   }
+  // A handover belongs to no meeting or desk, so its whole note is read here.
+  for (const m of c.messages.filter((x) => x.kind === "handover")) {
+    items.push({
+      weight: 2,
+      time: m.time,
+      tag: "交接",
+      title: m.speaker?.label || "工作区交接",
+      faces: [],
+      meta: "",
+      line: [m.text, m.detail].filter(Boolean).join("\n\n"),
+      whole: true,
+      scope: null,
+    });
+  }
   items.sort((x, y) => x.weight - y.weight || AN.at(y.time) - AN.at(x.time));
-  if (!items.length) return [h("div.dr-empty", {}, "这里还没有消息。")];
-  return items.map((item) => {
+  const omitted = c.omitted ? [h("div.sep", {}, `更早的 ${c.omitted} 条没有列出`)] : [];
+  if (!items.length) return [...omitted, h("div.dr-empty", {}, "这里还没有消息。")];
+  const cards = items.map((item) => {
     const card = h(
-      "button.tp-card",
-      { type: "button" },
+      item.scope ? "button.tp-card" : "div.tp-card",
+      item.scope ? { type: "button" } : {},
       h("span.tp-card-top", {}, h("span.tp-tag", {}, item.tag), h("b", {}, item.title), tpBadge(item.status)),
       h("span.tp-card-meta", {}, h("span.tp-faces", {}, item.faces), h("span", {}, item.meta), h("time", {}, item.time ? clock(item.time) : "")),
-      item.line ? h("span.tp-card-line", {}, item.line) : null,
+      item.line ? h(`span.tp-card-line${item.whole ? ".whole" : ""}`, {}, item.line) : null,
     );
     if (item.scope) card.onclick = () => openScope(item.scope, card);
     return card;
   });
+  return [...cards, ...omitted];
 }
 function renderDirectory(c, ctx) {
   // The stream's nodes are not on screen; picking a card builds them afresh.
@@ -136,6 +152,8 @@ function renderDirectory(c, ctx) {
     c.group, ART.version(),
     c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.doing]),
     [...ctx.rooms.values()].map((r) => [r.id, r.title, r.status, r.pending_review]),
+    [...ctx.desks.values()].map((d) => [d.key, deskName(d)]),
+    c.omitted,
   ]);
   if (tp.key === key && el.inner.querySelector(".tp-card, .dr-empty")) return;
   tp.key = key;

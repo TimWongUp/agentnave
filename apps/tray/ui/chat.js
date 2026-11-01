@@ -1778,8 +1778,6 @@ function renderConv(c, ctx) {
     const rec = node(id, () => ({ el: h("div.sep", {}, ""), sep: true }));
     setText(rec.el, text);
   };
-  if (c.omitted && state.drawer.kind === "all")
-    separator("omitted", `更早的 ${c.omitted} 条没有列出`);
   let fresh = 0;
   for (const m of shown) {
     const date = new Date(AN.at(m.time)).toDateString();

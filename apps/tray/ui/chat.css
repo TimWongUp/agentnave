@@ -652,7 +652,8 @@ dialog.act::backdrop { background: #0006; }
 /* ---- new conversation reading (chat-topics.js) ---- */
 .tp-badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 650; line-height: 17px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent); }
 .chat-page .tp-card { display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); text-align: left; cursor: pointer; }
-.chat-page .tp-card:hover { background: var(--card-hover); }
+.chat-page button.tp-card:hover { background: var(--card-hover); }
+.chat-page div.tp-card { cursor: default; }
 .tp-card-top { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
 .tp-card-top b { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 650; color: var(--ink); }
 .tp-tag { flex: none; padding: 0 5px; border-radius: 4px; background: var(--card-hover); font-size: 10.5px; line-height: 17px; color: var(--muted); }
@@ -662,6 +663,7 @@ dialog.act::backdrop { background: #0006; }
 .tp-faces .head { width: 18px; height: 18px; border-radius: 27%; background: center / cover; }
 .tp-faces .head + .head { margin-left: -5px; }
 .tp-card-line { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--soft); }
+.tp-card-line.whole { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* the stream reads like a messenger: every message a bubble beside its avatar, boss on the right */
 :root { --im-bg: #111214; --im-member: #2c2c2e; --im-member-ink: #e8e8ea; --im-boss: #2f7f52; --im-boss-ink: #f2f7f3; --im-aside: #27533b; }
 :root[data-theme="light"] { --im-bg: #ededed; --im-member: #ffffff; --im-member-ink: #1d1d1f; --im-boss: #95ec69; --im-boss-ink: #1d1d1f; --im-aside: #d6f7c2; }
