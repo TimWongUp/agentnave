@@ -16,7 +16,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 进程与模块
 
-- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；安装变化且空闲时换用新子进程，宿主不断线。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；安装变化且空闲时换用新子进程，宿主不断线。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）→ Provider Adapter → supervisor。
 - 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。
 
@@ -75,7 +75,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 ## 身份与工作区
 
 - 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，否则 macOS／Linux 沿祖先进程只读匹配，Windows 只读环境变量。宿主身份决定单任务排除的同类 Provider，不约束会议席位。
-- `start_agent`、`run_round` 要求 boss 聊天身份 `manager_session_id`；磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。
+- `start_agent`、`run_round` 要求 boss 聊天身份 `manager_session_id`；磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0017](../adr/0017-manager-chat-session-identity.md)、[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - 工作区可交给另一个 boss 聊天接手；交接不转移运行中的调用，老 boss 之后的写入被拒绝（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - boss 与组员的模型优先取原生会话记录中的回报值，其次取调用声明；不从 CLI 全局默认值推测。
 
