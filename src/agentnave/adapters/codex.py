@@ -134,6 +134,9 @@ class CodexAdapter(AdapterHooks):
                 argv.extend(("--config", f'sandbox_mode="{value}"'))
             elif not isinstance(value, bool):
                 raise ValueError(f"codex option {key} must be a boolean")
+            elif key == "skip_git_repo_check":
+                # prepare always passes this flag, and Codex rejects it when repeated.
+                continue
             elif value and key == "approve_for_me" and request.session_id is not None:
                 # `exec resume` has no --approve-for-me; these are the settings it applies.
                 for setting in (

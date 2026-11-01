@@ -299,7 +299,6 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
         "model_reasoning_effort=high",
         "--config",
         'sandbox_mode="workspace-write"',
-        "--skip-git-repo-check",
         "0199a213-81c0-7800-8aa1-bbab2a035a53",
         "-",
     )
@@ -314,6 +313,18 @@ def test_codex_adapter_does_not_supply_model_defaults(
     prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
 
     assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
+
+
+def test_codex_skip_git_repo_check_option_adds_no_second_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
+    monkeypatch.setattr(codex, "_WINDOWS_DESKTOP_CODEX_PATHS", ())
+    for value in (True, False):
+        prepared = CodexAdapter().prepare(
+            request(tmp_path, "codex", provider_options={"skip_git_repo_check": value})
+        )
+        assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="macOS bundle selection uses POSIX executability")
