@@ -741,6 +741,10 @@ impl Reader {
         if let ["chat", resource] = parts.as_slice() {
             return match *resource {
                 "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
+                "chat-topics.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/chat-topics.js").to_vec(),
+                ),
                 "actions.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/actions.js").to_vec(),

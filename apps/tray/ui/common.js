@@ -312,7 +312,17 @@
     try { localStorage.setItem(MODEL_NAMES_KEY, full ? "full" : "short"); } catch { /* storage may be unavailable */ }
   };
   const modelName = (model) => (model && !fullModelNames() ? model.split("/").pop() || model : model);
-  const deskName = (d) => [modelName(d.display_model || d.model) || "CLI 默认模型", d.effort].filter(Boolean).join(" · ");
+  // Antigravity has no effort option: each model it lists ends in its level, as in gemini-4-argon-high.
+  // Other CLIs' names keep their ending, since a -max there is part of the model's name.
+  const deskParts = (d) => {
+    const name = modelName(d.display_model || d.model) || "CLI 默认模型";
+    const level = d.provider === "antigravity" ? name.match(/-(low|medium|high)$/) : null;
+    return { name: level ? name.slice(0, level.index) : name, effort: d.effort || level?.[1] || "" };
+  };
+  const deskName = (d) => {
+    const { name, effort } = deskParts(d);
+    return effort ? `${name} · ${effort}` : name;
+  };
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
   // The title a reader sees: a workspace waiting for a new boss says so until one takes it over.
@@ -337,7 +347,7 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();
 
 

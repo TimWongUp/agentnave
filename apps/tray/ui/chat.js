@@ -31,6 +31,7 @@ const {
   cliName,
   hostTile,
   deskName,
+  deskParts,
   chatName,
   shownName,
   chatPlace,
@@ -41,7 +42,7 @@ const mockOn = !!(window.AgentNaveMock && window.AgentNaveMock.enabled());
 const narrow = window.matchMedia("(max-width: 760px)");
 const overlay = window.matchMedia("(max-width: 860px)"); // the conversation slides over the floor
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const FOLD_PX = 260; // a bubble taller than this is folded behind "展开全文"
+const FOLD_PX = 320; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
 const SLEEP_AFTER = 20 * 60e3; // an idle boss dozes off after this long
@@ -94,7 +95,6 @@ const el = {
   drTitle: $("dr-title"),
   drSub: $("dr-sub"),
   drAll: $("dr-all"),
-  drNote: $("dr-note"),
   tl: $("timeline"),
   inner: $("tl-inner"),
   blank: $("blank"),
@@ -537,11 +537,12 @@ function updateBoss(rec, c, n) {
 }
 
 // ---------------------------------------------------------------- beside the boss
-// Recent chats (running first) and meetings (in session first) beside the boss.
+// Private chats, without meeting seats (running first), and meetings (in session first) beside the boss.
 function sideItems(c, ctx) {
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
   const running = (d) => activities(d).some((a) => a.status === "running");
-  const chats = [...c.desks]
+  const chats = c.desks
+    .filter((d) => d.kind !== "seat")
     .sort((a, b) => Number(running(b)) - Number(running(a)) || recent(a, b))
     .map((d) => {
       const s = deskMood(d, ctx);
@@ -598,7 +599,7 @@ function sideList(node, title, items, empty) {
 }
 function renderSides(rec, c, ctx) {
   const { chats, meets } = sideItems(c, ctx);
-  sideList(rec.chats, "最近对话", chats, "还没有私聊");
+  sideList(rec.chats, "私聊", chats, "还没有私聊");
   sideList(rec.meets, "会议", meets, "还没有开过会");
 }
 
@@ -611,6 +612,7 @@ function createDesk(d) {
     nm: h("div.nm"),
     cliText: h("span"),
     role: h("div.role"),
+    effort: h("span.tag.tag-effort", { hidden: true, title: "努力程度" }),
     access: h("span.tag.tag-access", {
       hidden: true,
       title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
@@ -639,8 +641,8 @@ function createDesk(d) {
   rec.el = h(
     "button.desk",
     { type: "button" },
-    // access and status sit in the top-left corner; the role is the label's last line
-    h("span.desk-tags", {}, rec.access, rec.only),
+    // effort, access and status sit in the top-left corner; the role is the label's last line
+    h("span.desk-tags", {}, rec.effort, rec.access, rec.only),
     rec.say,
     rec.scene,
     h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.role),
@@ -666,7 +668,11 @@ function updateDesk(rec, d, ctx) {
     `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${state.drawer.kind === "desk" && state.drawer.key === d.key ? " sel" : ""}`,
   );
   setSay(rec.say, s.say);
-  setText(rec.nm, deskName(d));
+  const { name: bare, effort } = deskParts(d);
+  setText(rec.nm, bare);
+  setText(rec.effort, effort);
+  setAttr(rec.effort, "data-effort", effort || null);
+  rec.effort.hidden = !effort;
   setText(rec.cliText, cliName(d.provider));
   setText(rec.role, d.role || "");
   setAttr(rec.role, "title", d.role || null);
@@ -1189,15 +1195,17 @@ function speakerName(m, ctx) {
   if (s.role === "system") return s.label || "系统";
   if (isBoss(m)) return "boss";
   const d = speakerDesk(m, ctx);
-  return d ? deskName({ ...d, effort: s.effort }) : [AN.modelName(s.model) || cliName(s.provider) || "组员", s.effort].filter(Boolean).join(" · ");
+  if (d) return deskName({ ...d, effort: s.effort });
+  return s.model ? deskName(s) : [cliName(s.provider) || "组员", s.effort].filter(Boolean).join(" · ");
 }
-// CLI and role after the name, so several "默认模型" desks stay apart.
+// The role leads the name and the CLI follows it, so several "默认模型" desks stay apart.
+function speakerRole(m, ctx) {
+  return isBoss(m) ? "" : speakerDesk(m, ctx)?.role || "";
+}
 function speakerSub(m, ctx) {
   const s = m.speaker || {};
   if (s.role === "system" || isBoss(m)) return "";
-  const d = speakerDesk(m, ctx);
-  const provider = d?.provider || s.provider;
-  return [cliName(provider), d?.role].filter(Boolean).join(" · ");
+  return cliName(speakerDesk(m, ctx)?.provider || s.provider);
 }
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
@@ -1233,14 +1241,15 @@ function chip(t) {
     return h("span.at.all", { title: "会议室里的所有人" }, "@all");
   const name = t.d ? deskName(t.d) : (t.handle || "").replace(/^@/, "");
   return h(
-    "span.at",
+    "span.at.who",
     { title: t.d ? handleOf(t.d) : t.handle || "" },
+    "@",
     t.d ? ART.head(deskChar(t.d)) : null,
     name,
     t.d?.role ? ` · ${t.d.role}` : "",
   );
 }
-// Like an office chat: what boss sends carries a kind tag (任务, 议题, 私下交代, 转发) and its
+// Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
 // recipients; a reply sits under it with no verb, plus a badge only when it needs attention.
 // Returns [tag, recipients, note, badge].
 function verbOf(m, ctx) {
@@ -1248,7 +1257,7 @@ function verbOf(m, ctx) {
   const room = t?.kind === "room" ? ctx.rooms.get(t.id) : null;
   if (m.kind === "handover") return ["", []];
   if (m.kind === "typing") return ["", [], "正在输入…", ""];
-  if (m.kind === "instruction") return ["私下交代", targets(m, ctx), "", "仅 TA 可见"];
+  if (m.kind === "instruction") return ["", targets(m, ctx), "", "仅 TA 可见"];
   if (m.kind === "forward") return ["转发", targets(m, ctx)];
   if (isBoss(m)) {
     if (t?.kind !== "room") return ["任务", targets(m, ctx)];
@@ -1263,9 +1272,14 @@ function verbOf(m, ctx) {
   if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", "本轮结束后公开"];
   return ["", []];
 }
+// Who answers this round, shown by face; the answers themselves follow right below.
+function answeringDesks(m, ctx) {
+  const desks = [...ctx.desks.values()];
+  return (m.answering || []).map((x) => desks.find((d) => d.handle === x)).filter(Boolean);
+}
 function metaOf(m, ctx) {
   if (Array.isArray(m.answering) && m.answering.length)
-    return `本轮回答：${m.answering.map((x) => String(x).replace(/^@/, "")).join("、")}`;
+    return `${m.answering.length} 位回答`;
   if (m.status === "review" && !m.kept_private)
     return "boss 公开后，会议室里的其他人才看得到";
   return "";
@@ -1287,7 +1301,7 @@ function eventText(m, ctx) {
     m.kind === "handover"
       ? m.text
       : m.kind === "instruction"
-      ? `boss 私下交代 ${to}`
+      ? `boss @${to}`
       : m.kind === "forward"
         ? `boss 转发了一条消息${room ? `到「${room.title}」` : ""}`
         : isBoss(m)
@@ -1309,6 +1323,7 @@ function createMessage(m) {
   const rec = { kind: m.kind, text: null };
   rec.time = h("time");
   rec.ava = h("span.m-ava");
+  rec.role = h("span.m-role");
   rec.name = h("b.m-name");
   rec.who = h("span.m-who");
   if (m.kind === "notice") {
@@ -1318,6 +1333,7 @@ function createMessage(m) {
       "div.note",
       {},
       rec.ava,
+      rec.role,
       rec.name,
       rec.who,
       rec.text_,
@@ -1344,12 +1360,16 @@ function createMessage(m) {
     {},
     m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.md],
   );
-  rec.meta = h("div.m-meta");
+  rec.metaFaces = h("span.tp-faces");
+  rec.metaText = h("span");
+  rec.meta = h("div.m-meta", { hidden: true }, rec.metaFaces, rec.metaText);
   rec.more = h("button.more", { type: "button", hidden: true }, "展开全文");
   rec.more.addEventListener("click", () => {
     const id = rec.id;
     if (state.expanded.has(id)) state.expanded.delete(id);
     else state.expanded.add(id);
+    // A peer's collapsed bubble holds one line, not its answer: draw it again.
+    if (rec.el.dataset.peer !== undefined) renderAll(state.chat);
     applyFolds([rec]);
   });
   rec.el = h(
@@ -1359,6 +1379,7 @@ function createMessage(m) {
       "div.m-h",
       {},
       rec.ava,
+      rec.role,
       rec.name,
       rec.who,
       rec.verb,
@@ -1410,7 +1431,10 @@ function updateMessage(rec, m, ctx, id) {
   setAttr(rec.el, "data-conv", m.conversation);
   setAttr(rec.el, "data-mid", m.message_id);
   setAttr(rec.el, "data-kind", m.kind);
+  const peer = state.peers?.has(id);
+  setAttr(rec.el, "data-peer", peer ? m.desk : null);
   setFace(rec, m, ctx);
+  setText(rec.role, speakerRole(m, ctx));
   setText(rec.name, speakerName(m, ctx));
   setText(rec.who, speakerSub(m, ctx));
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
@@ -1429,7 +1453,7 @@ function updateMessage(rec, m, ctx, id) {
     (m.thread?.kind === "room" && m.visibility !== "public" && !isBoss(m));
   setClass(
     rec.el,
-    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.reply_to && !isBoss(m) ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
+    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.reply_to ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
   );
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
@@ -1439,7 +1463,17 @@ function updateMessage(rec, m, ctx, id) {
     rec.toKey = toKey;
     rec.to.replaceChildren(...to.map(chip));
   }
-  setText(rec.meta, metaOf(m, ctx));
+  const meta = metaOf(m, ctx);
+  rec.meta.hidden = !meta;
+  setClass(rec.meta, m.answering?.length ? "m-meta m-round" : "m-meta");
+  setText(rec.metaText, meta);
+  setAttr(rec.meta, "title", m.answering?.length ? m.answering.map((x) => String(x).replace(/^@/, "")).join("\n") : null);
+  const faces = answeringDesks(m, ctx);
+  const facesKey = JSON.stringify([ART.version(), ...faces.map((d) => d.key)]);
+  if (rec.facesKey !== facesKey) {
+    rec.facesKey = facesKey;
+    rec.metaFaces.replaceChildren(...faces.map((d) => ART.head(deskChar(d))));
+  }
   if (m.kind !== "typing") {
     // A forwarded entry quotes a message by id; the card jumps to it while that message is still listed.
     const f = m.forward;
@@ -1461,7 +1495,8 @@ function updateMessage(rec, m, ctx, id) {
     setText(rec.status, status);
     rec.status.hidden = !status;
   }
-  const body = m.kind === "handover" ? [m.text, m.detail].filter(Boolean).join("\n\n") : m.text;
+  const summary = peer && m.kind !== "typing" && !state.expanded.has(id);
+  const body = m.kind === "handover" ? [m.text, m.detail].filter(Boolean).join("\n\n") : summary ? tpFirst(m.text) : m.text;
   if (rec.text !== body) {
     rec.text = body;
     if (m.kind === "typing") {
@@ -1470,6 +1505,9 @@ function updateMessage(rec, m, ctx, id) {
       rec.tail.hidden = !m.text;
     } else if (m.kind === "handover") {
       setClass(rec.md, "md handover-text");
+      setText(rec.md, body);
+      rec.dirty = true;
+    } else if (summary) {
       setText(rec.md, body);
       rec.dirty = true;
     } else {
@@ -1491,7 +1529,8 @@ function applyFolds(records) {
   const measured = visible.map(({ rec, open }) => ({
     rec,
     open,
-    overflows: rec.bub.scrollHeight > FOLD_PX + 6, // ignores the clamp
+    // A peer always has more to show than its one line.
+    overflows: rec.el.dataset.peer !== undefined || rec.bub.scrollHeight > FOLD_PX + 6, // ignores the clamp
   }));
   for (const { rec, open, overflows } of measured) {
     rec.more.hidden = !overflows;
@@ -1594,6 +1633,11 @@ for (const [name, s] of Object.entries(SPLITS)) {
   });
 }
 el.drAll.addEventListener("click", () => openScope({ kind: "all" }));
+// A collapsed peer opens from anywhere on its bubble, as its button says.
+el.inner.addEventListener("click", (event) => {
+  if (event.target.closest(".more")) return;
+  event.target.closest("[data-peer] .bub.fold")?.parentElement.querySelector(".more")?.click();
+});
 
 // Messages of the open scope. A desk's conversation is its own messages (private and meeting) plus
 // the boss prompts that were addressed to it.
@@ -1618,7 +1662,6 @@ function scopeHead(c, ctx, shown) {
         ico: () => ART.head(deskChar(desk)),
         title: deskName(desk),
         sub: `${cliName(desk.provider)}${desk.role ? ` · ${desk.role}` : ""} · ${real} 条消息`,
-        note: "boss 布置给 TA 的任务和 TA 的回复只有你们俩看得到；TA 在会议里的回复也列在这里。",
       };
   }
   if (d.kind === "room") {
@@ -1629,7 +1672,6 @@ function scopeHead(c, ctx, shown) {
         ico: () => h("span", {}, "会"),
         title: room.title,
         sub: `会议室 · ${room.seats.length} 位 · ${roundText(room)}`,
-        note: "议题和回复所有参会者都能看到；私下交代只给某一位；待审核的回答要 boss 公开后别人才看得到。",
       };
   }
   return {
@@ -1637,7 +1679,6 @@ function scopeHead(c, ctx, shown) {
     ico: () => hostTile(c.app || c.host, c.label),
     title: "boss",
     sub: `${c.label} · 全部消息 ${real} 条`,
-    note: "",
   };
 }
 // Like threads in an office chat: each reply sits under the task or agenda item it answers, so
@@ -1648,12 +1689,30 @@ function threaded(list) {
   const replies = new Map();
   const top = [];
   for (const m of list) {
-    if (m.reply_to && !isBoss(m) && listed.has(m.reply_to)) {
+    if (m.reply_to && listed.has(m.reply_to)) {
       if (!replies.has(m.reply_to)) replies.set(m.reply_to, []);
       replies.get(m.reply_to).push(m);
     } else top.push(m);
   }
-  return top.flatMap((m) => [m, ...(replies.get(m.id) || [])]);
+  return top.flatMap((m) => [m, ...instructionsFirst(replies.get(m.id) || [])]);
+}
+// A private instruction sits right above the answer it asked for; one whose seat has not answered
+// yet ends the thread.
+function instructionsFirst(replies) {
+  const waiting = new Map();
+  for (const m of replies)
+    if (m.kind === "instruction") {
+      const seat = m.recipients?.[0]?.focus;
+      waiting.set(seat, [...(waiting.get(seat) || []), m]);
+    }
+  const ordered = replies
+    .filter((m) => m.kind !== "instruction")
+    .flatMap((m) => {
+      const asked = waiting.get(m.focus) || [];
+      waiting.delete(m.focus);
+      return [...asked, m];
+    });
+  return [...ordered, ...[...waiting.values()].flat()];
 }
 function renderConv(c, ctx) {
   el.drawer.hidden = overlay.matches ? !state.convOpen : state.convCollapsed;
@@ -1675,6 +1734,11 @@ function renderConv(c, ctx) {
     (d.kind === "room" && !ctx.rooms.has(d.id))
   )
     state.drawer = { kind: "all" };
+  el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
+  if (state.drawer.kind === "all") {
+    renderDirectory(c, ctx);
+    return;
+  }
   const scopeKey = c.group + JSON.stringify(state.drawer);
   const reset = state.scopeKey !== scopeKey;
   if (reset) {
@@ -1686,7 +1750,9 @@ function renderConv(c, ctx) {
     el.inner.replaceChildren();
     el.tl.scrollTop = 0;
   }
-  const shown = threaded(c.messages.filter((m) => inScope(m, ctx)));
+  const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx) : null;
+  state.peers = stream?.peers || new Set();
+  const shown = threaded(stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx)));
   const head = scopeHead(c, ctx, shown);
   if (el.drIco.dataset.key !== head.key) {
     el.drIco.dataset.key = head.key;
@@ -1694,15 +1760,14 @@ function renderConv(c, ctx) {
   }
   setText(el.drTitle, head.title);
   setText(el.drSub, head.sub);
-  setText(el.drNote, head.note);
-  el.drNote.hidden = !head.note;
   el.drAll.hidden = state.drawer.kind === "all";
   setAttr(el.drawer, "aria-label", `${head.title} 的对话`);
   // Geometry is the truth: a reader who is at the bottom follows new content, anyone else is left alone.
   const follow = reset || nearBottom();
   const order = [];
   let day = null,
-    round = null;
+    round = null,
+    stamped = null;
   const node = (id, make) => {
     let rec = state.nodes.get(id);
     if (!rec) state.nodes.set(id, (rec = make()));
@@ -1719,7 +1784,7 @@ function renderConv(c, ctx) {
   for (const m of shown) {
     const date = new Date(AN.at(m.time)).toDateString();
     // a thread stays together: only messages that start one open a new day
-    const inThread = m.reply_to && !isBoss(m) && order.includes(m.reply_to);
+    const inThread = m.reply_to && order.includes(m.reply_to);
     if (date !== day && !inThread) {
       day = date;
       round = null;
@@ -1728,6 +1793,14 @@ function renderConv(c, ctx) {
     if (state.drawer.kind === "room" && m.round > 0 && m.round !== round) {
       round = m.round;
       separator(`round:${m.conversation}:${m.round}`, `第 ${m.round} 轮`);
+    }
+    // Like a messenger: a time line opens each stretch instead of a time on every message.
+    if (m.kind !== "typing") {
+      const at = AN.at(m.time);
+      if (stamped === null || Math.abs(at - stamped) >= 5 * 60e3) {
+        stamped = at;
+        separator(`time:${m.id}`, clock(m.time));
+      }
     }
     let rec = state.nodes.get(m.id);
     if (rec && rec.kind !== m.kind) {
@@ -1803,7 +1876,8 @@ function jumpToMessage(mid) {
       .pop();
   let target = find();
   if (!target) {
-    state.drawer = { kind: "all" };
+    const message = state.chat.messages.find((m) => m.message_id === mid);
+    state.drawer = tpScopeOf(message, state.ctx);
     renderAll(state.chat);
     target = find();
   }
@@ -1921,7 +1995,8 @@ function applyHash(ctx) {
     if (ctx.desks.has(desk)) openScope({ kind: "desk", key: desk });
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
-    openScope(ctx.rooms.has(id) ? { kind: "room", id } : { kind: "all" });
+    const last = state.chat?.messages.findLast((m) => m.conversation === id);
+    openScope(ctx.rooms.has(id) ? { kind: "room", id } : tpScopeOf(last, ctx));
     setTimeout(() => focusConversation(id), 0);
   }
 }
