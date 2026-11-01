@@ -209,16 +209,12 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         waited = await _wait(client, first["round_id"])
         assert waited["reason"] == "review_needed"
         assert [seat["status"] for seat in _seats(waited)] == ["pending_review"] * 2
-        compact = _data(
-            cast(
-                list[object],
-                (
-                    await _call(
-                        client, "wait", {"ids": [first["round_id"]], "include_output": False}
-                    )
-                )["rounds"],
-            )[0]
+        review_wait = await _call(
+            client, "wait", {"ids": [first["round_id"]], "include_output": False}
         )
+        assert review_wait["pending_ids"] == [first["round_id"]]
+        assert review_wait["all_finished"] is False
+        compact = _data(cast(list[object], review_wait["rounds"])[0])
         assert compact["reason"] == "review_needed"
         assert all("output" not in seat for seat in _seats(compact))
         reread = await _wait(client, first["round_id"])
@@ -449,11 +445,15 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
             client, "wait", {"ids": [sleeping["invocation_id"], round_["round_id"]]}
         )
         assert ready["reason"] == "ready" and ready["updates"] == []
+        assert ready["pending_ids"] == [sleeping["invocation_id"]]
+        assert ready["all_finished"] is False
         (finished,) = cast(list[dict[str, object]], ready["rounds"])
         assert finished["round_id"] == round_["round_id"] and finished["status"] == "finished"
         # The inbox skips the round already delivered and keeps the running task.
         inbox = await _call(client, "wait", {"wait_seconds": 0})
         assert inbox["reason"] == "wait_elapsed" and inbox["rounds"] == []
+        assert inbox["pending_ids"] == [sleeping["invocation_id"]]
+        assert inbox["all_finished"] is False
         updates = cast(list[dict[str, object]], inbox["updates"])
         assert [update["invocation_id"] for update in updates] == [sleeping["invocation_id"]]
         other = await _call(
@@ -466,12 +466,15 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
             *(_call(client, "wait", {"manager_session_id": "b"}) for _ in range(2))
         )
         assert sorted(str(item["reason"]) for item in both) == ["nothing_pending", "ready"]
+        assert all(item["pending_ids"] == [] and item["all_finished"] is True for item in both)
         theirs = next(item for item in both if item["reason"] == "ready")
         updates = cast(list[dict[str, object]], theirs["updates"])
         assert [update["invocation_id"] for update in updates] == [other["invocation_id"]]
         cancelled = await _cancel(client, sleeping["invocation_id"])
         assert cancelled["status"] == "cancelled"
-        assert (await _call(client, "wait", {}))["reason"] == "nothing_pending"
+        empty = await _call(client, "wait", {})
+        assert empty["reason"] == "nothing_pending"
+        assert empty["pending_ids"] == [] and empty["all_finished"] is True
 
 
 @pytest.mark.asyncio

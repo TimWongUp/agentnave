@@ -129,6 +129,8 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
         async with asyncio.timeout(3):
             response = await client.call_tool("wait", {"ids": [invocation_id]})
         assert _payload(response.structured_content)["reason"] == "ready"
+        assert _payload(response.structured_content)["pending_ids"] == [invocation_id]
+        assert _payload(response.structured_content)["all_finished"] is False
         payload = _first(response)
         assert payload["status"] == "running"
         assert payload["reason"] == "execution_blocked"

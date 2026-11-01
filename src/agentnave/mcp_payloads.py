@@ -142,6 +142,8 @@ class RoundPayload(TypedDict):
 
 class WaitPayload(TypedDict):
     reason: Literal["ready", "wait_elapsed", "nothing_pending"]
+    pending_ids: list[str]
+    all_finished: bool
     updates: list[InvocationPayload]
     rounds: list[RoundPayload]
 
