@@ -52,6 +52,7 @@ def test_session_file_finds_each_kind_of_host_record(
     from agentnave.host import Host, boss_key, session_file, shared_session_id
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh"))
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
 

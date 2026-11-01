@@ -1258,6 +1258,7 @@ fn refresh_adds_a_required_skill_to_a_host_connected_before_it_existed() {
     let required = h.optional(name).unwrap();
     let state =
         |hosts: &Hosts| skill::state(&required, &hosts.context.home, embedded)["state"].clone();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
 
     // The manager is an App copy but the host entry is not the App's, as after an update.
     skill::install(
