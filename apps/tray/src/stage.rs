@@ -203,8 +203,22 @@ fn opt_text(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// What a desk's role reads as: Explorer and Worker difficulties are internal and read as none,
+/// and a review role reads in the words the App's review seats use.
 fn desk_role(identity: &Value) -> Option<String> {
-    opt_text(identity, "role")
+    let role = opt_text(identity, "role")?;
+    match role.trim() {
+        "explorer-easy" | "explorer-hard" | "worker-easy" | "worker-hard" => None,
+        "correctness-reviewer" => Some("正确性评审".to_owned()),
+        "architecture-reviewer" => Some("架构评审".to_owned()),
+        "security-reviewer" => Some("安全评审".to_owned()),
+        "performance-reviewer" => Some("性能评审".to_owned()),
+        "test-reliability-reviewer" => Some("测试可靠性评审".to_owned()),
+        "simplicity-reviewer" => Some("简化评审".to_owned()),
+        "specialist-reviewer" => Some("专项评审".to_owned()),
+        "adversarial-verifier" => Some("反证复核".to_owned()),
+        _ => Some(role),
+    }
 }
 
 /// A desk is one native session: a private thread, or one seat of a saved show.
@@ -997,7 +1011,7 @@ impl Group {
                     );
                 }
             }
-            if msg["speaker"]["role"] != "manager" {
+            if msg["speaker"]["role"] != "manager" || msg["kind"] == "instruction" {
                 if msg["thread"]["kind"] == "room" {
                     msg["reply_to"] = prompts
                         .get(&(conversation, msg["round"].to_string()))
@@ -1489,7 +1503,26 @@ mod tests {
         assert_eq!(super::project_name("/"), None);
     }
 
-    use super::{desk_label, handle, model_with_effort};
+    use super::{Desk, desk_label, desk_role, handle, model_with_effort};
+
+    #[test]
+    fn a_desk_role_hides_difficulties_and_names_review_roles_in_chinese() {
+        let role = |role: &str| desk_role(&serde_json::json!({"role": role}));
+        assert_eq!(role("worker-hard"), None);
+        assert_eq!(role("correctness-reviewer").as_deref(), Some("正确性评审"));
+        assert_eq!(role("接手方视角").as_deref(), Some("接手方视角"));
+    }
+
+    #[test]
+    fn a_desk_shows_the_reported_model_until_a_newer_call_asks_for_another() {
+        let mut desk = Desk::default();
+        desk.label(1, "opus", None, None);
+        assert_eq!(desk.display_model(), "opus");
+        desk.reported(2, &serde_json::json!({"reported_model": "claude-opus-5-5"}));
+        assert_eq!(desk.display_model(), "claude-opus-5-5");
+        desk.label(3, "sonnet", None, None);
+        assert_eq!(desk.display_model(), "sonnet");
+    }
 
     #[test]
     fn handles_shorten_only_the_model_middle_by_unicode_characters() {
