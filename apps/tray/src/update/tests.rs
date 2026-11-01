@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 #[cfg(windows)]
 mod manifest;
@@ -177,5 +178,67 @@ fn extracts_embedded_wheel_from_gzip_archive_and_parses_proxy() {
     assert_eq!(
         proxy_url(&env).map(|u| u.to_string()).as_deref(),
         Some("socks5://127.0.0.1:7890")
+    );
+}
+
+#[test]
+fn a_service_at_or_above_this_build_is_left_alone() {
+    // The claim is taken after the version check, so the second read decides: a version already
+    // installed by another path must not be reinstalled over its running files.
+    assert!(!should_install(Some("0.59.1"), "0.59.1"));
+    assert!(!should_install(Some("0.60.0"), "0.59.1"));
+    assert!(should_install(Some("0.58.0"), "0.59.1"));
+    assert!(should_install(None, "0.59.1"));
+}
+
+#[test]
+fn the_mirror_retry_changes_only_the_index_and_leaves_the_original_alone() {
+    let dirs = ToolDirs {
+        home: PathBuf::from("/home/u"),
+        tools: PathBuf::from("/tools"),
+        bin: PathBuf::from("/bin"),
+        network: BTreeMap::new(),
+    };
+    let mirrored = with_mirror(&dirs).unwrap();
+    assert_eq!(
+        mirrored.network.get("UV_DEFAULT_INDEX").map(String::as_str),
+        Some(MIRROR_INDEX)
+    );
+    assert!(
+        dirs.network.is_empty(),
+        "the caller's directories stay untouched"
+    );
+    for key in [
+        "UV_DEFAULT_INDEX",
+        "UV_INDEX",
+        "UV_INDEX_URL",
+        "UV_EXTRA_INDEX_URL",
+        "PIP_INDEX_URL",
+        "PIP_EXTRA_INDEX_URL",
+    ] {
+        let mut configured = dirs.clone();
+        configured
+            .network
+            .insert(key.into(), "https://packages.example/simple".into());
+        assert!(with_mirror(&configured).is_none(), "must preserve {key}");
+        assert_eq!(configured.network[key], "https://packages.example/simple");
+    }
+}
+
+#[test]
+fn github_is_tried_before_the_mirrors() {
+    if update_override().is_some() {
+        // An explicit endpoint takes the first slot by design; this test covers the default order.
+        return;
+    }
+    let endpoints = update_endpoints();
+    let urls: Vec<String> = endpoints.iter().map(|(_, url)| url.to_string()).collect();
+    assert!(urls.len() >= 3, "{urls:?}");
+    // GitHub is the only source we control: a mirror must never be able to hide a release by
+    // answering "no update" first.
+    assert_eq!(urls[0], MANIFEST, "{urls:?}");
+    assert!(
+        endpoints.iter().skip(1).all(|(prefix, _)| prefix.is_some()),
+        "{urls:?}"
     );
 }

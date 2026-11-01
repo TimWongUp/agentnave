@@ -33,7 +33,8 @@ const UPGRADE_MARKER: &str = "upgrade-service-after-restart";
 /// The version an update installed, read once by its first start to say so.
 const UPDATED_MARKER: &str = "updated-to";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
-const CHECK_WAIT: Duration = Duration::from_secs(60);
+/// Three endpoints are tried in series, so the wait has to cover all of their timeouts.
+const CHECK_WAIT: Duration = Duration::from_secs(120);
 /// Bounds the update check request.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 /// A found update is used as it is for this long, the same as the automatic checks' interval;
@@ -41,6 +42,10 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const FOUND_FOR: Duration = EVERY;
 /// The updater sets no limit of its own, and the update dialog cannot be closed while it runs.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// The dependency index used for the retry that follows a failed direct install. PyPI is slow or
+/// unreachable from mainland China, where the first install is otherwise impossible.
+const MIRROR_INDEX: &str = "https://pypi.tuna.tsinghua.edu.cn/simple";
+
 /// `uv tool install` fetches from GitHub without a limit of its own.
 const SERVICE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Long enough to read the last step before the window goes away.
@@ -206,15 +211,88 @@ impl Updates {
     }
 }
 
-async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
-    let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
-    if let Some(proxy) = updater_proxy(&app) {
-        builder = builder.proxy(proxy);
+/// The manifest every release publishes.
+const MANIFEST: &str =
+    "https://github.com/TimWongUp/agentnave/releases/latest/download/latest.json";
+
+/// Public mirrors that serve GitHub release files where GitHub itself does not answer. Each
+/// takes the full GitHub URL as a path, so the manifest and the installer it points at both work.
+const UPDATE_MIRRORS: [&str; 2] = ["https://ghfast.top/", "https://gh-proxy.com/"];
+
+/// An explicit manifest to use before the mirrors. Advanced overrides only; the default path
+/// needs no configuration.
+fn update_override() -> Option<tauri::Url> {
+    let value = std::env::var("AGENTNAVE_UPDATE_ENDPOINT").ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
     }
-    let found = match builder.build() {
-        Ok(updater) => updater.check().await,
-        Err(error) => Err(error),
-    };
+    tauri::Url::parse(trimmed).ok()
+}
+
+/// Manifests to try: an explicit override, then GitHub, then each mirror.
+/// The mirror prefix is kept so the installer URL read from that manifest can be rewritten too.
+fn update_endpoints() -> Vec<(Option<&'static str>, tauri::Url)> {
+    let mut endpoints = Vec::new();
+    if let Some(override_url) = update_override() {
+        endpoints.push((None, override_url));
+    }
+    // GitHub first: it is the only source we control, and a mirror answering "no update" must not
+    // be able to hide a release. Mirrors only cover machines where GitHub does not answer.
+    if let Ok(direct) = tauri::Url::parse(MANIFEST) {
+        endpoints.push((None, direct));
+    }
+    for mirror in UPDATE_MIRRORS {
+        if let Ok(url) = tauri::Url::parse(&format!("{mirror}{MANIFEST}")) {
+            endpoints.push((Some(mirror), url));
+        }
+    }
+    endpoints
+}
+
+/// Rewrite an installer URL through the mirror that served its manifest.
+fn proxied(prefix: &str, url: &tauri::Url) -> Option<tauri::Url> {
+    tauri::Url::parse(&format!("{prefix}{url}")).ok()
+}
+
+async fn check_across_endpoints(
+    app: &AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let mut last_error: Option<String> = None;
+    for (prefix, endpoint) in update_endpoints() {
+        let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
+        if let Some(proxy) = updater_proxy(app) {
+            builder = builder.proxy(proxy);
+        }
+        let Ok(builder) = builder.endpoints(vec![endpoint]) else {
+            continue;
+        };
+        let built = builder.build();
+        match built {
+            Ok(updater) => match updater.check().await {
+                Ok(Some(mut update)) => {
+                    // The manifest travels through the mirror, but the installer it names is still
+                    // a GitHub URL, so route that through the same prefix.
+                    if let Some(prefix) = prefix
+                        && let Some(url) = proxied(prefix, &update.download_url)
+                    {
+                        update.download_url = url;
+                    }
+                    return Ok(Some(update));
+                }
+                Ok(None) => return Ok(None),
+                // Keep the first failure: it is usually the source the user configured, and the
+                // later ones only say "this mirror is unreachable too".
+                Err(error) => last_error = last_error.or(Some(error.to_string())),
+            },
+            Err(error) => last_error = last_error.or(Some(error.to_string())),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "没有可用的更新源".into()))
+}
+
+async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
+    let found = check_across_endpoints(&app).await;
     let updates = app.state::<Updates>();
     // A failed silent check still counts as an attempt, so an offline cache is not
     // checked again on every click. Explicit rechecks remain available.
@@ -305,7 +383,12 @@ pub fn resume(app: &AppHandle) {
     if let Some(version) = take_updated(&dir) {
         app.state::<Updates>().lock().updated = Some((version, Instant::now()));
     }
-    if take_marker(&dir) && service_for_app(app).is_object() {
+    // The service is a separate artifact the hosts start, so it follows the App on every start
+    // instead of waiting for a click. A versioned install makes that safe: the running service
+    // keeps its own directory, and hosts move over when they next start.
+    // A stale marker from an older app still gets consumed here.
+    let _marked = take_marker(&dir);
+    if service_for_app(app).is_object() {
         upgrade_service(app);
     }
 }
@@ -392,7 +475,9 @@ fn install(app: &AppHandle, mut update: Update) {
                 thread::sleep(RESTART_NOTE);
                 app.restart();
             }
-            Err(error) => updates.set(Phase::Failed(error), Some(update)),
+            // Drop the cached update: its download URL was rewritten for the source that just
+            // failed, so retrying would hit the same one instead of re-checking.
+            Err(error) => updates.set(Phase::Failed(error), None),
         }
     });
 }
@@ -547,6 +632,14 @@ pub(crate) fn rfc3339(at: SystemTime) -> String {
 }
 
 /// Install this release's service with uv.
+/// Whether this build's service still has to be installed over what is active.
+///
+/// Re-read under the claim: another path may have installed the same or a newer version while
+/// this one was still deciding, and reinstalling a running version would touch live files.
+fn should_install(current: Option<&str>, target: &str) -> bool {
+    current.is_none_or(|version| parse(version) < parse(target))
+}
+
 pub fn upgrade_service(app: &AppHandle) {
     if app.state::<Updates>().claim_upgrade() {
         finish_upgrade(app);
@@ -555,6 +648,16 @@ pub fn upgrade_service(app: &AppHandle) {
 
 fn finish_upgrade(app: &AppHandle) {
     let outcome = (|| {
+        // The decision was made outside the claim; make it again now that this path owns the
+        // install, so a concurrent upgrade to the same or a newer version is left alone.
+        let current = app
+            .path()
+            .app_data_dir()
+            .ok()
+            .and_then(|data| active_version(&data));
+        if !should_install(current.as_deref(), VERSION) {
+            return Ok(());
+        }
         let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
         let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
         // Install beside the running service instead of over it; the active manifest then moves
@@ -575,6 +678,31 @@ fn finish_upgrade(app: &AppHandle) {
 #[allow(dead_code)]
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
     install_service_version(uv, dirs, VERSION, None)
+}
+
+/// The same directories with uv's dependency index pointed at a reachable mirror.
+fn with_mirror(dirs: &ToolDirs) -> Option<ToolDirs> {
+    if [
+        "UV_DEFAULT_INDEX",
+        "UV_INDEX",
+        "UV_INDEX_URL",
+        "UV_EXTRA_INDEX_URL",
+        "PIP_INDEX_URL",
+        "PIP_EXTRA_INDEX_URL",
+    ]
+    .iter()
+    .any(|key| {
+        dirs.network
+            .get(*key)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        return None;
+    }
+    let mut mirrored = dirs.clone();
+    mirrored
+        .network
+        .insert("UV_DEFAULT_INDEX".into(), MIRROR_INDEX.into());
+    Some(mirrored)
 }
 
 fn install_service_version(
@@ -600,26 +728,51 @@ fn install_service_version(
             &["tool", "install", "--force", "--python", "3.12", source],
             dirs,
         );
-        if online.is_err()
-            && installed_version(&dirs.tools.join("agentnave")).is_some()
-            && run(
-                uv,
-                &[
-                    "tool",
-                    "install",
-                    "--force",
-                    "--offline",
-                    "--python",
-                    "3.12",
-                    source,
-                ],
-                dirs,
-            )
-            .is_ok()
+        if online.is_ok() {
+            return Ok(());
+        }
+        // The wheel is embedded but its dependency (`mcp`) is not, so an offline upgrade relies on
+        // the wheels the previous install already put in uv's cache. Retry offline for any target
+        // directory, not just a re-install of the same version, or a machine without a network
+        // could never move to a new version.
+        if run(
+            uv,
+            &[
+                "tool",
+                "install",
+                "--force",
+                "--offline",
+                "--python",
+                "3.12",
+                source,
+            ],
+            dirs,
+        )
+        .is_ok()
         {
             return Ok(());
         }
-        return online;
+        // Dependencies still missing from the cache: the direct index was unreachable, so try a
+        // mirror before giving up. This is the only path that needs the network.
+        let Some(mirrored) = with_mirror(dirs) else {
+            return Err(format!(
+                "{}（已保留指定的软件源，请检查其网络或依赖配置）",
+                online.unwrap_err()
+            ));
+        };
+        if run(
+            uv,
+            &["tool", "install", "--force", "--python", "3.12", source],
+            &mirrored,
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+        return Err(format!(
+            "{}（首次安装需要联网下载依赖：直连与镜像均失败，可设置 UV_DEFAULT_INDEX 或使用代理）",
+            online.unwrap_err()
+        ));
     }
     let source = format!("git+{REPOSITORY}@v{version}");
     run(
@@ -1007,7 +1160,7 @@ fn installed_metadata(env: &Path) -> Option<PathBuf> {
     None
 }
 
-fn parse(version: &str) -> Vec<u64> {
+pub(crate) fn parse(version: &str) -> Vec<u64> {
     version
         .split('.')
         .map(|part| part.parse().unwrap_or(0))

@@ -42,9 +42,7 @@ fn effective_env<'a>(
     shell: Option<&'a Shell>,
     var: &str,
 ) -> Option<(&'a str, &'static str)> {
-    context
-        .env
-        .get(var)
+    roots::env_value(&context.env, var)
         .filter(|p| Path::new(p).is_absolute())
         .map(|v| (v.as_str(), "env"))
         .or_else(|| {
@@ -88,9 +86,7 @@ impl ToolDirs {
             .unwrap_or_else(|| context.home.join(".local/bin"));
         let mut network = BTreeMap::new();
         for &var in roots::NETWORK_VARIABLES {
-            let found = context
-                .env
-                .get(var)
+            let found = roots::env_value(&context.env, var)
                 .filter(|v| !v.is_empty() && !v.contains('\n'))
                 .or_else(|| {
                     shell
@@ -1550,7 +1546,11 @@ impl Hosts {
         let state = skill::state(path, &self.context.home, embedded);
         // Another copy is the App's to replace, like a missing one.
         let missing = state["state"] == "missing" || state["state"] == "external";
-        let outdated = state["state"] == "app" && state["version"] != VERSION;
+        // Only an older copy is replaced. An App installed over a newer one must not push the
+        // hosts back to its own Skill while the service stays on the newer version.
+        let outdated = state["state"] == "app"
+            && crate::update::parse(state["version"].as_str().unwrap_or_default())
+                < crate::update::parse(VERSION);
         if (missing && install_missing) || outdated {
             skill::install(
                 path,
