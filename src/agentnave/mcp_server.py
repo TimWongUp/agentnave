@@ -1082,10 +1082,13 @@ async def list_members(
     ] = None,
 ) -> MemberListPayload:
     """Read App members, defaults, review/orchestration seats and mode limits afresh.
-    valid checks options, not installation/authentication/models; repair invalid files in App.
+    members merges provider/model rows: omitted modes means all modes, [] means none;
+    default is true or a list of default modes. error checks Adapter options, not
+    installation, authentication or model availability; repair invalid files in App.
     Missing members leave modes unrestricted; disabled orchestration supplies no defaults.
-    Unavailable seats may offer replacement parameters: pass with original seat/role;
-    switching is never automatic. Native seats/exclusions: see MCP instructions.
+    Omitted available means usable; unavailable seats may offer replacement parameters:
+    pass with original seat/role; switching is never automatic. Native seats/exclusions:
+    see MCP instructions.
     """
     try:
         members = read_member_list(EXCLUDED_PROVIDERS, HOST)
