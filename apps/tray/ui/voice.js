@@ -44,7 +44,7 @@
       // Only a change that silences or redirects playback interrupts it; other settings
       // apply to the next clip.
       const interrupt = previous && different && (usable(previous) !== usable(next)
-        || previous.engine !== next.engine || previous.auto_read !== false && next.auto_read === false);
+        || previous.engine !== next.engine || previous.auto_read === true && next.auto_read !== true);
       if (previous && different) {
         if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || usable(previous) !== usable(next)) { skip = true; baselineEpoch++; }
         if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
@@ -281,7 +281,7 @@
       const answer = briefing ? answers.get(briefing) : null;
       const can = eligible(m) && (!briefing || Boolean(answer));
       const seen = observed.get(m.id) === true;
-      if (!baseline && can && !seen && !answer?.seen && ready() && !halted && config.auto_read !== false)
+      if (!baseline && can && !seen && !answer?.seen && ready() && !halted && config.auto_read === true)
         queue.push(item(m, ctx, true));
       observed.set(m.id, seen || can);
     }
@@ -315,7 +315,7 @@
     interrupt();
     changed();
     void drain();
-    const target = config?.continue_read === false ? null : roomView ? roomView
+    const target = config?.continue_read !== true ? null : roomView ? roomView
       : privateView ? { group: channelContext?.c.group || group, id: privateView, private: true }
         : m.conversation ? { group, id: m.conversation } : null;
     if (!target) return;
@@ -436,13 +436,13 @@
     rec.read.setAttribute("aria-pressed", String(Boolean(reading)));
   }
   function switches() {
-    toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
-    chain.setAttribute("aria-pressed", String(config.continue_read !== false));
+    toggle.setAttribute("aria-pressed", String(config.auto_read === true));
+    chain.setAttribute("aria-pressed", String(config.continue_read === true));
     toggle.disabled = chain.disabled = !ready();
   }
   async function flip(field) {
     if (!config) return;
-    const on = config[field] !== false;
+    const on = config[field] === true;
     toggle.disabled = chain.disabled = true;
     if (field === "auto_read") {
       if (on) stop();

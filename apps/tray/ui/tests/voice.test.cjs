@@ -10,7 +10,7 @@ const message = (id, time, extra = {}) => ({
 });
 
 async function office(auto_read = true, synthesize = async () => ({}), loadRoom = async data => ({ ok: true, json: async () => structuredClone(data) })) {
-  let config = { enabled: true, auto_read, engine: "elevenlabs", keys: { elevenlabs: true }, summary: { enabled: true } };
+  let config = { enabled: true, auto_read, continue_read: true, engine: "elevenlabs", keys: { elevenlabs: true }, summary: { enabled: true } };
   const requests = [], sounds = [], nodes = [];
   const rooms = new Map();
   function h(tag, attributes = {}, ...children) {

@@ -13,8 +13,8 @@ pub(super) fn hash(text: &str) -> String {
 fn defaults() -> Value {
     json!({
         "enabled":false,
-        "auto_read":true,
-        "continue_read":true,
+        "auto_read":false,
+        "continue_read":false,
         "engine":"elevenlabs",
         "minimax_region":"cn",
         "models":{},
@@ -57,10 +57,10 @@ pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
 }
 pub(super) fn validate(value: &Value) -> Result<Value, String> {
     let enabled = value["enabled"].as_bool().ok_or("enabled 必须为布尔值")?;
-    let auto_read = value.get("auto_read").map_or(Ok(true), |value| {
+    let auto_read = value.get("auto_read").map_or(Ok(false), |value| {
         value.as_bool().ok_or("自动朗读开关必须为布尔值")
     })?;
-    let continue_read = value.get("continue_read").map_or(Ok(true), |value| {
+    let continue_read = value.get("continue_read").map_or(Ok(false), |value| {
         value.as_bool().ok_or("点读后连播开关必须为布尔值")
     })?;
     let engine = value["engine"]

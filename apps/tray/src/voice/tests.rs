@@ -219,8 +219,8 @@ fn combined_tls_features_have_an_explicit_provider() {
 fn automatic_playback_and_prompt_settings_preserve_old_documents() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = storage::read_settings(directory.path()).unwrap();
-    assert_eq!(settings["auto_read"], true);
-    assert_eq!(settings["continue_read"], true);
+    assert_eq!(settings["auto_read"], false);
+    assert_eq!(settings["continue_read"], false);
     // Every character starts with its own persona.
     for (family, persona) in storage::DEFAULT_PERSONAS {
         assert_eq!(settings["personas"][family], persona);
@@ -236,14 +236,14 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
         invalid[field] = value;
         assert!(storage::validate(&invalid).is_err());
     }
-    settings["auto_read"] = json!(false);
-    settings["continue_read"] = json!(false);
+    settings["auto_read"] = json!(true);
+    settings["continue_read"] = json!(true);
     settings["summary"]["prompt"] = json!("");
     settings["personas"] = json!({"boss":"先讲结论。","gpt":"语气简短。","claude":" "});
     storage::save_settings(directory.path(), &settings).unwrap();
     let saved = storage::read_settings(directory.path()).unwrap();
-    assert_eq!(saved["auto_read"], false);
-    assert_eq!(saved["continue_read"], false);
+    assert_eq!(saved["auto_read"], true);
+    assert_eq!(saved["continue_read"], true);
     assert_eq!(saved["summary"]["prompt"], summary::DEFAULT_PROMPT);
     assert_eq!(saved["personas"]["boss"], "先讲结论。");
     assert_eq!(saved["personas"]["gpt"], "语气简短。");
