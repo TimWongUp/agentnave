@@ -87,16 +87,12 @@ class StartArguments:
     defaults: list[str] = field(default_factory=lambda: [])
 
     def inherit(self, task: TaskRecord) -> None:
-        # Access belongs to the duty: a thread given a new role or seat does not keep the old one.
-        same_duty = self.role in (None, task.role) and self.seat in (None, task.seat)
         self.provider = self._inherited(
             self.provider, cast(ProviderName, task.provider), "provider"
         )
         self.cwd = self._inherited(self.cwd, task.cwd, "cwd")
         self.role = self._inherited(self.role, task.role, "role")
         self.seat = self._inherited(self.seat, cast(OrchestrationRole | None, task.seat), "seat")
-        if same_duty and self.access is None and role_access(self.seat or self.role) is None:
-            self.access = self._inherited(None, task.access, "access")
 
     def _inherited[T](self, explicit: T | None, saved: T | None, key: str) -> T | None:
         if explicit is not None or saved is None:

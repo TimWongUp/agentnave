@@ -581,7 +581,7 @@ async def start_agent(
             description=(
                 "To continue a specific native conversation, use the session_id returned by a "
                 "finished invocation of the same provider; never use an invocation_id here. "
-                "Omitted provider, cwd, role and seat inherit its latest saved task, and access too while the role and seat stay the same; "
+                "Omitted provider, cwd, role and seat inherit its latest saved task; access is never inherited; "
                 "explicit values win. Unknown or ambiguous history needs provider and cwd. "
                 "Omitted, the task starts a new native thread: a new desk in the App."
             ),

@@ -112,7 +112,7 @@ async def _start_and_wait(client: Client, **arguments: object) -> dict[str, obje
 
 
 @pytest.mark.asyncio
-async def test_resumed_access_stays_with_the_duty_it_was_declared_for(
+async def test_resume_does_not_inherit_a_declared_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
@@ -125,10 +125,8 @@ async def test_resumed_access_stays_with_the_duty_it_was_declared_for(
         await _start_and_wait(
             client, provider="claude", cwd=str(tmp_path), role="出计划", access="read"
         )
-        same = await _start_and_wait(client, session_id="session-e2e")
-        assert same["access"] == "read"
-        changed = await _start_and_wait(client, session_id="session-e2e", role="按计划实现")
-        assert changed["access"] is None
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert resumed["access"] is None
 
 
 @pytest.mark.asyncio

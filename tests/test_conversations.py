@@ -2368,13 +2368,12 @@ async def test_desk_access_is_recorded_but_never_enforced(tmp_path: Path, data_r
         assert writer["conversation_id"] == explorer["conversation_id"]
         await _wait_task(client, writer["invocation_id"])
         plain = await _call(client, "start_agent", task(session_id=str(ended["session_id"])))
-        assert plain["access"] == "write"
-        assert "access (session_id history)" in cast(list[str], plain["defaults_applied"])
+        assert plain["access"] is None
         await _wait_task(client, plain["invocation_id"])
         tasks = cast(
             list[dict[str, object]], _state(data_root, explorer["conversation_id"])["tasks"]
         )
-        assert [item["access"] for item in tasks] == ["read", "write", "write"]
+        assert [item["access"] for item in tasks] == ["read", "write", None]
         show = await _open(
             client,
             {
