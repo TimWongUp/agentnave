@@ -55,7 +55,7 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
-        "assert prompt.startswith('You are a subagent dispatched by AgentNave.')\n"
+        "assert prompt.startswith('You are an AgentNave subagent.')\n"
         "assert 'Do not call AgentNave tools' in prompt\n"
         "prompt = prompt.split('\\n\\nAssigned task:\\n', 1)[1]\n"
         "if prompt == 'finish':\n"
