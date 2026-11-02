@@ -277,7 +277,7 @@
   function persona(family, label) {
     return section(`persona-${family}`, "人设",
       promptEditor(`persona-${family}`, `${label}人设`, config.personas[family] || "", 500,
-        value => save({ personas: { ...config.personas, [family]: value } })));
+        value => save({ personas: { ...config.personas, [family]: value } }), true));
   }
   function familySettings() {
     const table = h("div.voice-families", {}, h("div.voice-character", {},

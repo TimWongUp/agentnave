@@ -221,7 +221,10 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
     let mut settings = storage::read_settings(directory.path()).unwrap();
     assert_eq!(settings["auto_read"], true);
     assert_eq!(settings["continue_read"], true);
-    assert_eq!(settings["personas"], json!({}));
+    // Every character starts with its own persona.
+    for (family, persona) in storage::DEFAULT_PERSONAS {
+        assert_eq!(settings["personas"][family], persona);
+    }
     for (field, value) in [
         ("auto_read", json!("yes")),
         ("continue_read", json!(1)),
@@ -236,13 +239,19 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
     settings["auto_read"] = json!(false);
     settings["continue_read"] = json!(false);
     settings["summary"]["prompt"] = json!("");
-    settings["personas"] = json!({"boss":"先讲结论。","gpt":"语气简短。"});
+    settings["personas"] = json!({"boss":"先讲结论。","gpt":"语气简短。","claude":" "});
     storage::save_settings(directory.path(), &settings).unwrap();
     let saved = storage::read_settings(directory.path()).unwrap();
     assert_eq!(saved["auto_read"], false);
     assert_eq!(saved["continue_read"], false);
     assert_eq!(saved["summary"]["prompt"], summary::DEFAULT_PROMPT);
-    assert_eq!(saved["personas"], settings["personas"]);
+    assert_eq!(saved["personas"]["boss"], "先讲结论。");
+    assert_eq!(saved["personas"]["gpt"], "语气简短。");
+    assert_eq!(
+        saved["personas"]["claude"],
+        storage::DEFAULT_PERSONAS[1].1,
+        "a blank persona is reset"
+    );
     // Simulate an existing document directly: saving it would already normalize the old default.
     for legacy in [
         summary::LEGACY_DEFAULT_PROMPT,
