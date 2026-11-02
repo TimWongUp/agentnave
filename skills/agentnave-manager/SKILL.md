@@ -76,7 +76,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## CLI 与模型
 
-用户未点名 CLI 时，App 设了工位就直接传 `seat` 或评审 `role`，不用先查；否则 `list_members`，按该模式的组员与说明选 CLI，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数，它不检查安装、登录。
+用户未点名 CLI 时，App 设了工位就直接传 `seat` 或评审 `role`，不用先查；派发被拒绝时看 `list_members` 里该工位的 `reason` 和 `replacement`，后者给出可直接传的参数，由 boss 决定用不用。没有工位时 `list_members`，按该模式的组员与说明选 CLI，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数，它不检查安装、登录。
 
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 
@@ -105,7 +105,9 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 返回：<格式、长度、产物位置>
 范围：<目录和可改的文件>；保留：<不能动的改动>；授权：<能做到哪一步>
 材料：<规格、ADR、Issue、diff 的绝对路径或 URL，注明用途>
-已知：<已核实的进展、已定决策及理由、试过并放弃的做法、阻塞>
+已知：<已核实的进展和验证、已定决策及理由、试过并放弃的做法、阻塞>
+待办：<未完成项和下一步>
+技能：<直接相关的 Skill 和已知路径>
 ```
 
 **续接同一线程**

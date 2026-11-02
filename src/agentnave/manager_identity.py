@@ -28,8 +28,10 @@ def session_id_hint(host: Host) -> str:
             "Only generate a UUID if the host exposes no native chat ID; a failed shell "
             "command does not establish that the ID is unavailable. "
         )
+    known = ", ".join(sorted(set(_SESSION_ID_SHELL_ENV.values())))
     return (
-        "Read this chat's native session ID from the host context or shell first; "
+        "Read this chat's native session ID from the host context or shell first "
+        f"(hosts expose one of: {known}); "
         "only if the host exposes none, generate one UUID once and reuse it for this chat. "
     )
 
