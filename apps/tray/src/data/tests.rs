@@ -479,6 +479,7 @@ fn show_chats_project_prompts_answers_review_absence_and_typing() {
                 {"kind": "answer", "speaker": "d", "round": 1, "text": "丁的回答", "time": "2026-10-15T00:00:01Z"},
                 {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：受阻）", "time": "2026-10-15T00:00:02Z"},
                 {"kind": "host", "speaker": "@host", "round": 1, "text": "继续", "time": "2026-10-15T00:00:03Z"}],
+            "rounds": [{"number": 1, "seats": [{"seat_id": "a", "status": "succeeded"}, {"seat_id": "d", "status": "succeeded"}]}],
             "round": {"number": 2, "seats": [
                 {"seat_id": "a", "status": "succeeded", "review": "pending", "output": "待审核私密回答"},
                 {"seat_id": "b", "status": "running", "output": "**正在写**"},
@@ -1576,8 +1577,9 @@ fn office_messages_keep_identity_routes_and_review_id_when_published() {
     let messages = chat["messages"].as_array().unwrap();
     let prompt = messages.iter().find(|m| m["kind"] == "prompt").unwrap();
     assert_eq!(prompt["speaker"]["handle"], "@boss");
+    // A serial round names every seat it called, the one not started yet included.
     assert_eq!(prompt["to"][0]["key"], prompt["recipients"][0]["key"]);
-    assert_eq!(prompt["to"].as_array().unwrap().len(), 1);
+    assert_eq!(prompt["to"].as_array().unwrap().len(), 2);
     assert_eq!(
         prompt["answering"],
         json!([

@@ -954,9 +954,7 @@ impl Group {
             .map(|(key, desk)| (key.clone(), desk.handle()))
             .collect();
         let mut seat_handles = BTreeMap::new();
-        let mut room_sizes = BTreeMap::new();
         for (_, room_id, room) in &mut self.rooms {
-            room_sizes.insert(room_id.clone(), array(room, "seats").count());
             for seat in room["seats"].as_array_mut().into_iter().flatten() {
                 // Each seat is its own desk; numbering already tells alike seats apart.
                 let handle = handles.get(text(seat, "desk")).cloned().unwrap_or_default();
@@ -1006,17 +1004,26 @@ impl Group {
                         .unwrap_or_default()
                 );
             }
-            // A round that called only some seats names them; the rest still hear it.
-            let named = array(msg, "recipients").count();
-            let partial = msg["kind"] == "prompt"
-                && msg["thread"]["kind"] == "room"
-                && named > 0
-                && room_sizes
-                    .get(&conversation)
-                    .is_some_and(|&size| named < size);
-            if msg["kind"] == "instruction"
+            if let Some(called) = msg["answering"]
+                .as_array()
+                .filter(|_| msg["kind"] == "prompt")
+            {
+                // A round that called only some seats names them, those not started yet
+                // included; the rest still hear it.
+                msg["to"] = json!(
+                    called
+                        .iter()
+                        .map(|seat| {
+                            let seat = seat.as_str().unwrap_or_default();
+                            json!({"key": seat_desk(&conversation, seat), "handle": seat_handles
+                                .get(&(conversation.clone(), seat.to_owned()))
+                                .cloned()
+                                .unwrap_or_default()})
+                        })
+                        .collect::<Vec<_>>()
+                );
+            } else if msg["kind"] == "instruction"
                 || (msg["kind"] == "prompt" && msg["thread"]["kind"] == "desk")
-                || partial
             {
                 msg["to"] = json!(
                     array(msg, "recipients")
