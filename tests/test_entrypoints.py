@@ -457,11 +457,11 @@ def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
         "items": [None, "", [], {}, {"kept": "中文"}],
         **{key: opaque for key in opaque_fields},
     }
-    # Skipping an opaque subtree includes an empty value at its root.
+    # Empty body fields retain their keys; empty options and notes are omitted.
     empty_values: list[object] = [None, [], {}, ""]
     for value in empty_values:
         values = dict.fromkeys(opaque_fields, value)
-        assert without_empty_fields(values) == values
+        assert without_empty_fields(values) == dict.fromkeys(("output", "text", "prompt"), value)
     assert source["dict"] == {"null": None}
 
 
@@ -1304,7 +1304,9 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         )
         empty_model = _payload((await client.call_tool("list_members", {})).structured_content)
         task_mode = _payload(_payload(empty_model["modes"])["task"])
-        assert "model" not in cast(list[dict[str, object]], task_mode["members"])[0]
+        member = cast(list[dict[str, object]], task_mode["members"])[0]
+        assert not {"model", "options", "notes"}.intersection(member)
+        assert "cli_options" not in empty_model
 
 
 @pytest.mark.asyncio
@@ -1440,7 +1442,6 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "provider": "claude",
             "model": "*",
             "default": False,
-            "options": {},
             "notes": "不限模型",
             "permitted": True,
             "valid": True,

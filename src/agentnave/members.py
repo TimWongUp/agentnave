@@ -608,8 +608,8 @@ class MemberStatus(StrictModel):
     default: bool
     efforts: list[str] = Field(default_factory=list)
     effort: str | None = None
-    options: dict[str, ProviderOption]
-    notes: str
+    options: dict[str, ProviderOption] = Field(default_factory=dict[str, ProviderOption])
+    notes: str = ""
     permitted: bool
     valid: bool
     error: str | None = None
@@ -622,7 +622,7 @@ class ModeStatus(StrictModel):
 
 class SeatReplacement(StrictModel):
     provider: ProviderName
-    provider_options: dict[str, ProviderOption]
+    provider_options: dict[str, ProviderOption] = Field(default_factory=dict[str, ProviderOption])
     reason: str
 
 
