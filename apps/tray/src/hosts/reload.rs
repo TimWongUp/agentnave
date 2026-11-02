@@ -219,8 +219,10 @@ impl Hosts {
                     .unwrap_or_else(|p| p.into_inner())
                     .invalidate();
                 // A proof belongs to the entry it saw; returning to that entry later needs a new one.
-                if let Some(record) = settings[host.id].as_object_mut() {
-                    record.remove("reload_confirmed");
+                if settings[host.id]["reload_confirmed"]["token"] != token.as_str() {
+                    if let Some(record) = settings[host.id].as_object_mut() {
+                        record.remove("reload_confirmed");
+                    }
                 }
                 settings[host.id]["reload_changed"] = json!({"v":RELOAD_FORMAT,"token":token,"at_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64});
             }
