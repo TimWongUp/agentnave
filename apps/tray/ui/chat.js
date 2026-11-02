@@ -442,17 +442,23 @@ function bossSpeech(c, match) {
   }
   return null;
 }
-// After a takeover the old boss keeps the seat until the new one speaks in the workspace. The
-// latest handover splits the boss's messages, so a takeover by the same CLI is told apart too.
+// After a takeover the old boss keeps the seat until the new one speaks in the workspace.
+// Messages name the boss's CLI but not its chat, so the latest handover splits them by time,
+// which tells a takeover by the same CLI apart too. A boss handing on again still holds the
+// seat, and with the handover out of view (withdrawn, or past the messages shown) the CLI
+// alone tells the bosses apart.
 function seatHolder(c) {
-  const at = Math.max(-Infinity, ...c.messages.filter((m) => m.kind === "handover").map((m) => AN.at(m.time)));
-  const later = (m) => AN.at(m.time) >= at;
-  const modelOf = (when) => bossSpeech(c, (m) => m.speaker.model && when(m))?.model || "";
-  const before = c.previous_host || (c.handover === "changed" && bossSpeech(c, (m) => !later(m))?.provider) || "";
-  if (!before) return { host: c.host, model: modelOf(() => true), app: c.app || c.host, label: c.label, former: null };
+  const marks = c.messages.filter((m) => m.kind === "handover").map((m) => AN.at(m.time));
+  const at = marks.length && c.handover !== "pending" ? Math.max(...marks) : null;
+  const later = at === null ? (m) => m.speaker.provider === c.host : (m) => AN.at(m.time) >= at;
   const earlier = (m) => !later(m);
-  if (!bossSpeech(c, later)) return { host: before, model: modelOf(earlier), app: before, label: c.previous_label || cliName(before), former: null };
-  return { host: c.host, model: modelOf(later), app: c.app || c.host, label: c.label, former: { host: before, model: modelOf(earlier) } };
+  const modelOf = (when) => bossSpeech(c, (m) => m.speaker.model && when(m))?.model || "";
+  const before = c.previous_host || (c.handover === "changed" && bossSpeech(c, earlier)?.provider) || "";
+  if (!before) return { host: c.host, model: modelOf(() => true), app: c.app || c.host, label: c.label, former: null };
+  // A former boss that never spoke here has no model of its own to show.
+  const former = { host: before, model: modelOf((m) => earlier(m) && m.speaker.provider === before) };
+  if (!bossSpeech(c, later)) return { ...former, app: before, label: c.previous_label || cliName(before), former: null };
+  return { host: c.host, model: modelOf(later), app: c.app || c.host, label: c.label, former };
 }
 // `live` only means a server is running work right now; an idle boss dozes off after a while.
 function recentlyActive(c) {
