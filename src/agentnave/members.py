@@ -602,17 +602,25 @@ def apply_seat(
     return result, applied
 
 
-class MemberStatus(StrictModel):
+class MemberDetails(StrictModel):
     provider: ProviderName
     model: str = ""
-    default: bool
     efforts: list[str] = Field(default_factory=list)
     effort: str | None = None
     options: dict[str, ProviderOption] = Field(default_factory=dict[str, ProviderOption])
     notes: str = ""
-    permitted: bool
-    valid: bool
     error: str | None = None
+
+
+class MemberStatus(MemberDetails):
+    default: bool
+    permitted: bool
+
+
+class ListedMember(MemberDetails):
+    # None means all modes; [] means configured but not permitted in any mode.
+    modes: list[Mode] | None = None
+    default: Literal[True] | list[Mode] | None = None
 
 
 class ModeStatus(StrictModel):
@@ -630,10 +638,10 @@ class ReviewSeatStatus(StrictModel):
     provider: ProviderName
     model: str
     effort: str | None = None
-    available: bool
+    available: Literal[False] | None = None
     reason: str | None = None
     # The host's own CLI: dispatch to the host's built-in subagent, with this model if it can.
-    native: bool = False
+    native: Literal[True] | None = None
     # Other permitted task CLIs listing the same model ID.
     alternatives: list[ProviderName] = Field(default_factory=list[ProviderName])
     # A ready start_agent choice for an unavailable seat; the boss decides whether to use it.
@@ -651,7 +659,8 @@ class MemberList(StrictModel):
     error: str | None = None
     host: HostName | None = None
     host_source: HostSource
-    modes: dict[Mode, ModeStatus]
+    restricted: list[Mode] = Field(default_factory=list[Mode])
+    members: list[ListedMember]
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error: str | None = None
     orchestration: OrchestrationStatus = Field(default_factory=OrchestrationStatus)
@@ -665,16 +674,11 @@ class MemberList(StrictModel):
     cli_options_error: str | None = None
 
 
-def list_members(excluded: frozenset[str], host: Host) -> MemberList:
-    document = read_members()
-    cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
-    cli_options_error = None
-    try:
-        saved_options = read_cli_options()
-    except CLIOptionsFileError as exc:
-        cli_options_error = str(exc)
-    else:
-        cli_options = saved_options.clis if saved_options else {}
+def _member_modes(
+    document: MemberFile | None,
+    excluded: frozenset[str],
+    cli_options: dict[ProviderName, dict[str, ProviderOption]],
+) -> dict[Mode, ModeStatus]:
     modes: dict[Mode, ModeStatus] = {}
     for mode in ("task", "discussion"):
         items: list[MemberStatus] = []
@@ -726,7 +730,6 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                             options=config.options,
                             notes=config.notes,
                             permitted=mode == "discussion" or provider not in excluded,
-                            valid=error is None,
                             error=error,
                         )
                     )
@@ -741,13 +744,50 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                             options={},
                             notes="不限模型",
                             permitted=mode == "discussion" or provider not in excluded,
-                            valid=True,
                             error=None,
                         )
                     )
         modes[mode] = ModeStatus(
             restricted=document is not None and mode in document.modes, members=items
         )
+    return modes
+
+
+def _compact_members(modes: dict[Mode, ModeStatus]) -> list[ListedMember]:
+    grouped: dict[tuple[ProviderName, str], list[tuple[Mode, MemberStatus]]] = {}
+    for mode, status in modes.items():
+        for member in status.members:
+            grouped.setdefault((member.provider, member.model), []).append((mode, member))
+    result: list[ListedMember] = []
+    for entries in grouped.values():
+        details = [member.model_dump(exclude={"default", "permitted"}) for _, member in entries]
+        groups: list[list[tuple[Mode, MemberStatus]]] = (
+            [entries] if all(item == details[0] for item in details) else [[e] for e in entries]
+        )
+        for group in groups:
+            available: list[Mode] = [mode for mode, member in group if member.permitted]
+            defaults: list[Mode] = [mode for mode, member in group if member.default]
+            result.append(
+                ListedMember(
+                    **group[0][1].model_dump(exclude={"default", "permitted"}),
+                    modes=None if len(available) == len(modes) else available,
+                    default=True if len(defaults) == len(modes) else defaults or None,
+                )
+            )
+    return result
+
+
+def list_members(excluded: frozenset[str], host: Host) -> MemberList:
+    document = read_members()
+    cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
+    cli_options_error = None
+    try:
+        saved_options = read_cli_options()
+    except CLIOptionsFileError as exc:
+        cli_options_error = str(exc)
+    else:
+        cli_options = saved_options.clis if saved_options else {}
+    modes = _member_modes(document, excluded, cli_options)
     # Review seats are not checked against clis: a removed model is reported here, and the
     # review Skill picks a replacement at dispatch time. A broken review.json leaves members alone.
     review: dict[ReviewRole, ReviewSeatStatus] = {}
@@ -787,7 +827,8 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         configured=document is not None,
         host=host.name,
         host_source=host.source,
-        modes=modes,
+        restricted=[mode for mode, status in modes.items() if status.restricted],
+        members=_compact_members(modes),
         review=review,
         review_error=review_error,
         orchestration=orchestration,
@@ -816,22 +857,25 @@ def _review_status[Role: str](
             reason = None
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
-        elif member is not None and not member.valid:
+        elif member is not None and member.error is not None:
             reason = member.error
         else:
             reason = None
         alternatives: list[ProviderName] = [
             m.provider
             for m in task
-            if m.provider != seat.provider and m.model == seat.model and m.permitted and m.valid
+            if m.provider != seat.provider
+            and m.model == seat.model
+            and m.permitted
+            and m.error is None
         ]
         seats[role] = ReviewSeatStatus(
             provider=seat.provider,
             model=seat.model,
             effort=seat.effort or None,
-            available=reason is None,
+            available=False if reason is not None else None,
             reason=reason,
-            native=native,
+            native=True if native else None,
             alternatives=list(dict.fromkeys(alternatives)),
             replacement=(None if reason is None else _seat_replacement(seat, alternatives, task)),
         )
@@ -849,7 +893,11 @@ def _seat_replacement(
             reason=f"{alternatives[0]} offers the same model",
         )
     fallback = next(
-        (m for m in task if m.default and m.permitted and m.valid and m.provider != seat.provider),
+        (
+            m
+            for m in task
+            if m.default and m.permitted and m.error is None and m.provider != seat.provider
+        ),
         None,
     )
     if fallback is None:

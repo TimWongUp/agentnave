@@ -1172,15 +1172,19 @@ async def list_members(
 ) -> MemberListPayload:
     """Read members.json afresh, with effective defaults, mode limits and host permission.
 
-    valid checks Adapter options, not installation, authentication or model availability.
+    members merges provider/model rows; omitted modes means all modes, [] means none.
+    default is true for both modes or a list of default modes; error reports invalid Adapter
+    options, not installation, authentication or model availability. restricted lists limited
+    modes; any provider/model is allowed in an unrestricted mode.
     Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
     review holds the CLI and model the user picked in the App for each agentnave-review role,
     from review.json; review_error reports a broken review.json without affecting members.
     orchestration holds the CLI and model picked for each Explorer (read-only: explore, plan,
     review) and Worker (writes) difficulty, easy or hard, from orchestration.json. When disabled
-    for this host, enabled=false and both seat maps are empty; saved picks do not authorize
-    delegation or supply role defaults. A seat with available=false may carry replacement, a
-    ready provider and provider_options with the reason, to pass along with the same seat or
+    for this host, only enabled=false remains; saved picks do not authorize
+    delegation or supply role defaults. Omitted available means usable; available=false may
+    carry replacement, a ready provider and provider_options with the reason, to pass along with
+    the same seat or
     role; the service never switches by itself.
     native=true
     marks the host's own CLI: give that work to the host's built-in subagent instead.

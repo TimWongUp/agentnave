@@ -415,8 +415,8 @@ def test_cli_options_apply_to_every_model_of_the_cli(
     # A restricted model stays valid: list_members checks what a dispatch would send.
     document.clis["codex"].models["m"].options = {"restricted_tools": True}
     (tmp_path / "members.json").write_text(document.model_dump_json(exclude_unset=True))
-    [member] = list_members(frozenset(), Host()).modes["task"].members
-    assert (member.valid, member.options) == (True, {"restricted_tools": True})
+    [member] = list_members(frozenset(), Host()).members
+    assert (member.error, member.options) == (None, {"restricted_tools": True})
     assert apply_member(
         document, "task", "codex", {"model": "m"}, frozenset(), cli_options=saved
     ) == ({"model": "m", "restricted_tools": True}, ["restricted_tools"])
@@ -541,5 +541,89 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
     other_model = seats["security-reviewer"].replacement
     assert other_model is not None
     assert other_model.provider == "pi" and other_model.provider_options == {}
-    assert seats["simplicity-reviewer"].available
+    assert seats["simplicity-reviewer"].available is None
     assert seats["simplicity-reviewer"].replacement is None
+
+
+def test_member_list_merges_modes_defaults_and_wildcards_in_member_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "claude": {"models": {"shared": {}}},
+                    "pi": {"models": {"shared": {}}},
+                    "grok": {"models": {"alone": {}}},
+                    "codex": {"models": {"last": {}}},
+                },
+                "modes": {
+                    "task": {
+                        "claude": {"models": ["shared"], "default": "shared"},
+                        "pi": {"models": [], "default": "shared"},
+                        "grok": {"models": ["alone"]},
+                    },
+                    "discussion": {
+                        "claude": {"models": ["shared"], "default": "shared"},
+                        "pi": {"models": []},
+                        "codex": {"models": ["last"]},
+                    },
+                },
+            }
+        )
+    )
+    result = list_members(frozenset({"claude", "grok"}), Host("claude"))
+    assert result.restricted == ["task", "discussion"]
+    assert [(member.provider, member.model) for member in result.members] == [
+        ("claude", "shared"),
+        ("pi", "shared"),
+        ("pi", "*"),
+        ("grok", "alone"),
+        ("codex", "last"),
+    ]
+    claude, pi, wildcard, denied, discussion_only = result.members
+    assert claude.modes == ["discussion"] and claude.default is True
+    assert pi.modes is None and pi.default == ["task"]
+    assert wildcard.modes is None and wildcard.default is None
+    assert denied.modes == [] and denied.default is None
+    assert discussion_only.modes == ["discussion"]
+    # The same wildcard becomes discussion-only when its CLI is excluded from tasks.
+    wildcard = next(
+        member for member in list_members(frozenset({"pi"}), Host()).members if member.model == "*"
+    )
+    assert wildcard.modes == ["discussion"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"effort": "medium"},
+        {"efforts": ["medium", "high"]},
+        {"options": {"agent": "reviewer"}},
+        {"notes": "discussion"},
+    ],
+)
+def test_member_list_splits_different_effective_mode_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: dict[str, object]
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {"claude": {"models": {"chosen": {"effort": "high"}}}},
+                "modes": {
+                    "task": {"claude": {"models": ["chosen"]}},
+                    "discussion": {
+                        "claude": {"models": ["chosen"], "overrides": {"chosen": override}}
+                    },
+                },
+            }
+        )
+    )
+    task, discussion = list_members(frozenset(), Host()).members
+    assert task.modes == ["task"] and discussion.modes == ["discussion"]
+    assert task.model == discussion.model == "chosen"
+    assert discussion.model_dump().items() >= override.items()
