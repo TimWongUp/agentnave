@@ -578,8 +578,8 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
         return None
     if required and seat is None:
         raise MemberFileError(
-            f"{role or 'Requested'} seat is missing from the App settings; "
-            "configure it in the App or pass provider explicitly"
+            f"{role or 'Requested'} seat is not configured in review.json or orchestration.json; "
+            "set it in the App or pass provider explicitly"
         )
     return seat
 
@@ -620,6 +620,12 @@ class ModeStatus(StrictModel):
     members: list[MemberStatus]
 
 
+class SeatReplacement(StrictModel):
+    provider: ProviderName
+    provider_options: dict[str, ProviderOption]
+    reason: str
+
+
 class ReviewSeatStatus(StrictModel):
     provider: ProviderName
     model: str
@@ -630,6 +636,8 @@ class ReviewSeatStatus(StrictModel):
     native: bool = False
     # Other permitted task CLIs listing the same model ID.
     alternatives: list[ProviderName]
+    # A ready start_agent choice for an unavailable seat; the boss decides whether to use it.
+    replacement: SeatReplacement | None = None
 
 
 class OrchestrationStatus(StrictModel):
@@ -825,5 +833,29 @@ def _review_status[Role: str](
             reason=reason,
             native=native,
             alternatives=list(dict.fromkeys(alternatives)),
+            replacement=(None if reason is None else _seat_replacement(seat, alternatives, task)),
         )
     return seats
+
+
+def _seat_replacement(
+    seat: ReviewSeat, alternatives: list[ProviderName], task: list[MemberStatus]
+) -> SeatReplacement | None:
+    """The same model on another CLI, else another CLI's App default model."""
+    if alternatives:
+        return SeatReplacement(
+            provider=alternatives[0],
+            provider_options={"model": seat.model},
+            reason=f"{alternatives[0]} offers the same model",
+        )
+    fallback = next(
+        (m for m in task if m.default and m.permitted and m.valid and m.provider != seat.provider),
+        None,
+    )
+    if fallback is None:
+        return None
+    return SeatReplacement(
+        provider=fallback.provider,
+        provider_options={},
+        reason=f"no other CLI offers {seat.model}; {fallback.provider} uses its App default model",
+    )

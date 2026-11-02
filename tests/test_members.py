@@ -498,3 +498,48 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
     assert apply_member(
         None, "task", "codex", {}, frozenset(), permissions=PermissionFile(version=1)
     ) == ({"approve_for_me": True}, ["approve_for_me"])
+
+
+def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "grok": {"models": {"shared": {}}},
+                    "pi": {"models": {"shared": {}, "other": {}}},
+                },
+                "modes": {
+                    "task": {
+                        "grok": {"models": ["shared"], "default": "shared"},
+                        "pi": {"models": ["shared", "other"], "default": "other"},
+                    }
+                },
+            }
+        )
+    )
+    (tmp_path / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": {"provider": "grok", "model": "shared"},
+                    "security-reviewer": {"provider": "grok", "model": "only-here"},
+                    "simplicity-reviewer": {"provider": "pi", "model": "shared"},
+                },
+            }
+        )
+    )
+    seats = list_members(frozenset({"grok"}), Host("claude")).review
+
+    same_model = seats["correctness-reviewer"].replacement
+    assert same_model is not None
+    assert same_model.provider == "pi" and same_model.provider_options == {"model": "shared"}
+    other_model = seats["security-reviewer"].replacement
+    assert other_model is not None
+    assert other_model.provider == "pi" and other_model.provider_options == {}
+    assert seats["simplicity-reviewer"].available
+    assert seats["simplicity-reviewer"].replacement is None

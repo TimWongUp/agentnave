@@ -306,9 +306,9 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
     async with Client(mcp) as client:
         for arguments, expected in (
             ({}, "Pass provider"),
-            ({"role": "ordinary duty"}, "missing"),
-            ({"role": "correctness-reviewer"}, "missing"),
-            ({"seat": "worker-easy"}, "missing"),
+            ({"role": "ordinary duty"}, "not configured"),
+            ({"role": "correctness-reviewer"}, "not configured"),
+            ({"seat": "worker-easy"}, "not configured"),
         ):
             result = await client.call_tool(
                 "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
@@ -317,7 +317,7 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
         for content, expected in (
             ("broken", "Invalid orchestration.json"),
             (json.dumps({"version": 1, "preset": "off", "worker": {"easy": seat}}), "not enabled"),
-            (json.dumps({"version": 1, "preset": "split"}), "missing"),
+            (json.dumps({"version": 1, "preset": "split"}), "not configured"),
         ):
             path.write_text(content)
             result = await client.call_tool(

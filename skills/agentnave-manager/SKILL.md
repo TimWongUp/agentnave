@@ -27,15 +27,13 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## boss 会话归属
 
-每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值，App 靠它读出 boss 模型。本聊天首次调用前在 shell 里取一次宿主会话 ID：Claude Code `$CLAUDE_CODE_SESSION_ID`、Codex `$CODEX_THREAD_ID`、Antigravity `$ANTIGRAVITY_CONVERSATION_ID`、CodeBuddy 与 WorkBuddy `$CODEBUDDY_SESSION_ID`、Grok `$GROK_SESSION_ID`、Pi `$PI_SESSION_ID`、DeepSeek Harness `$DSH_SESSION_ID`、Hermes `$HERMES_SESSION_ID`；其他宿主用上下文明确给出的会话 ID，都没有才生成一次 UUID 并沿用。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。缺少它时服务先用按聊天注入的 `AGENTNAVE_HOST_SESSION_ID`，再用 Claude Code 随 MCP 进程给出的 `CLAUDE_CODE_SESSION_ID`；该值在 `/clear` 等不重启 MCP 的切换后可能是旧聊天的，所以仍要每次显式传入；都没有时服务拒绝调用。
+每次 `start_agent`、`run_round` 都传 `manager_session_id`，同一 boss 聊天始终复用一个值，App 靠它读出 boss 模型。怎么取写在连接的 MCP 说明和参数说明里，按当前宿主给出；本聊天首次调用前取一次，取不到时用上下文明确给出的会话 ID，都没有才生成一次 UUID 并沿用。读取命令失败不代表没有，先修读取方式，不临时编 UUID。新聊天用新值。它与子 CLI 返回的 `session_id` 分开，CLI 名称、项目路径和 MCP 连接 ID 都不能替代。服务虽能从环境变量兜底，但该值在 `/clear` 等不重启 MCP 的切换后可能是旧聊天的，所以仍要每次显式传入。
 
 用户要求转交或接手会话时，按 `agentnave-handover` Skill 做，不在新聊天里主动查待接手。
 
 本聊天第一次 `start_agent` 或 `run_round` 的 `title` 也是 App 里这个工作区的名字，之后不再变：用它概括本聊天要做的事，写短（最多 48 列，中文算 2 列，约 24 个汉字或 48 个英文字符）。之后的私聊可不传 `title`；会议室照常各起一个短标题。
 
-Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv CODEX_THREAD_ID`，把读出的原值作为 `manager_session_id`。读取命令失败不代表宿主没有原生 ID，应修复读取方式或从可信宿主上下文取得，不能为了通过缺参校验临时编 UUID；编出的 ID 对应不到原生聊天，App 无法据此识别 boss 模型。回执的 `warnings` 若报告 boss 模型不可读，核对原生 ID 和宿主接入配置；已启动的任务继续 `wait`，不重复派发。
-
-可信宿主上下文（如系统提示）写明当前模型 ID 时作为 `manager_model` 传入，未知才省略，不从 CLI 默认配置或组员模型猜测。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
+`manager_model` 通常不传，服务从原生会话读 boss 模型。回执 `warnings` 报告读不到时，先核对 `manager_session_id`；确认无误且可信宿主上下文写明了模型，再传 `manager_model`，不从 CLI 默认配置或组员模型猜测。已启动的任务继续 `wait`，不重复派发。只有宿主明确为每段聊天独立注入时才使用 `AGENTNAVE_HOST_SESSION_ID`；共享的全局 MCP 配置不写固定聊天 ID。历史属于其他 boss 时，用子 CLI 的 `session_id` 续接并新建当前 boss 的任务记录，不传另一 boss 的 `conversation_id`。
 
 ## 工位、续接与转发
 
@@ -78,7 +76,7 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 
 ## CLI 与模型
 
-用户未点名 CLI 时先 `list_members`，按该模式的组员与说明选 CLI 或工位，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数，它不检查安装、登录。
+用户未点名 CLI 时，App 设了工位就直接传 `seat` 或评审 `role`，不用先查；派发被拒绝时看 `list_members` 里该工位的 `reason` 和 `replacement`，后者给出可直接传的参数，连同原来的 `seat` 或 `role` 一起传，访问等级才不会丢，由 boss 决定用不用。没有工位时 `list_members`，按该模式的组员与说明选 CLI，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数，它不检查安装、登录。
 
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 
@@ -97,13 +95,47 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 
 ## 目录与交接
 
-新任务必须传 `cwd`，使用目标项目存在的绝对目录，通常选当前 checkout/worktree 根目录；服务不提供默认目录，续接时可从历史继承。CLI 不继承主对话；首次派发、切换 CLI 或交接未完成任务时，在 prompt 提供本次所需内容，简单任务省略无关项：
+新任务必须传 `cwd`，使用目标项目存在的绝对目录，通常选当前 checkout/worktree 根目录；服务不提供默认目录，续接时可从历史继承。CLI 不继承主对话；首次派发、切换 CLI 或交接未完成任务时，prompt 要写够本次所需内容。按下面的模板填，用不上的行删掉，不要留占位或写「无」：
 
-- 目标、验收标准、返回格式及产物位置。
-- 目录、修改范围、授权边界、必须保留的用户改动。
-- 已核实进展、验证、未完成项、阻塞和下一步；已定决策及理由，试过并放弃的做法。
-- 可访问的规格、计划、ADR、Issue、commit、diff 或产物绝对路径/URL，注明用途。
-- 直接相关的技能和已知路径；无适用项写“无”。
+**首次派发或交接**
+
+```text
+目标：<要做什么>
+验收：<怎样算完成>
+返回：<格式、长度、产物位置>
+范围：<目录和可改的文件>；保留：<不能动的改动>；授权：<能做到哪一步>
+材料：<规格、ADR、Issue、diff 的绝对路径或 URL，注明用途>
+已知：<已核实的进展和验证、已定决策及理由、试过并放弃的做法、阻塞>
+待办：<未完成项和下一步>
+技能：<直接相关的 Skill 和已知路径>
+```
+
+**续接同一线程**
+
+```text
+上次之后：<新信息或 boss 的决定>
+这次要做：<下一步>
+返回：<格式、长度>
+```
+
+**评审**（工位和失败假设按 `agentnave-review`）
+
+```text
+候选：head <完整 SHA>，base <完整 SHA>，git diff <base>...<head>
+失败假设：<这个工位负责的一个假设>
+证据边界：<规格、ADR、PR 的路径或 URL>
+角色要点：<reviewers.md 对应段落>
+返回：每条 finding 写位置、缺陷、失败场景、严重度、证据类别；结尾说明有无实质 finding 和未审范围；不超过 <N> 字
+```
+
+**整改**（续接实现者，评审结论可用 `forward` 传入）
+
+```text
+评审发现：<逐条，含位置和失败场景>
+处理：<要修的；不修的及理由>
+验证：<要运行的检查>
+返回：改了什么和检查结果
+```
 
 服务会在每次派发前加上非交互说明，`access=read` 时再加只读说明，并在回执 `defaults_applied` 注明，这些不用写进 prompt；宿主自带子代理不经过服务，要自己写明。发送前移除密钥、密码和敏感个人信息。长交接写进系统临时目录的专用文档，prompt 要求读取其绝对路径；创建方在接收方用完后清理。
 
@@ -114,10 +146,10 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 ## 等待、验收与取消
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
-   终态和阻塞不会主动推送，只能由 `wait` 收取：手头没有不依赖结果的工作时，派发后立刻单独调用阻塞的 `wait`（单任务带 `ids`，多个用收件箱）；有这类独立工作就先完成当前步骤，再立即单独调用 `wait`（同批其他工具通常要等 `wait` 返回才一起交回结果），并在结束本轮交付前收齐全部终态。常规省略 `wait_seconds`，`wait_elapsed` 后直接再等，不例行补调 `0`。调用已被宿主转入后台的，可继续做别的事，结束时按宿主提醒或句柄收取。`start_agent`／`run_round` 回执里的 `unreceived` 列出已结束、遇到阻塞或待审、但还没被 `wait`／`cancel` 取走的任务和轮次，见到就先用 `wait` 收取处理。
-2. `wait(ids)` 默认最多等 240 秒，`wait_seconds` 仅接受 `0`、`240`；任一就绪即返回 `reason=ready`：`updates` 是就绪的任务，`rounds` 是就绪的轮次，其余继续运行，下次再等；已终态的每次都算就绪，处理后从名单移除。`reason=wait_elapsed` 返回每项运行快照。普通等待只带状态、耗时与最近活动，不带运行正文；仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 单独调用 `wait(wait_seconds=0)`，即时取得快照和可用正文尾部。`0` 遇到就绪项仍正常收取答案或阻塞，并非只读偷看；混合名单中存在就绪项时，未就绪项不会出现在回复中。同时派出多个时可用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`，等本 boss 在本服务上所有尚未收到终态的任务和轮次，每个终态只送达一次（待审轮次在决定前一直算就绪）；无待等项时立即返回 `reason=nothing_pending`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
+   终态和阻塞不会主动推送，只能由 `wait` 收取：手头没有不依赖结果的工作时，派发后立刻单独调用 `wait`；有就先完成当前步骤再调用，并在结束本轮前收齐全部终态。常规省略 `wait_seconds`，`wait_elapsed` 后直接再等。调用已被宿主转入后台的，结束时按宿主提醒或句柄收取。回执里的 `unreceived` 是还没取走的结果，见到就先用 `wait` 收取。
+2. `wait` 的返回值见工具说明：任一就绪即返回，其余下次再等，已终态的处理后从名单移除。仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 单独调用 `wait(wait_seconds=0)`；它遇到就绪项仍正常收取答案或阻塞，并非只读偷看。同时派出多个时用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`。在 Codex `functions.exec` 返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id)` 等该脚本完成；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。`seat_lost` 表示某席已失败或受阻而其他席仍在跑，每席提醒一次，只给状态和错误，不交付答案；按 `error` 决定补跑或继续等。
-4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部（每项最多 1000 字符）及其 `output_age_ms`，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席成功不单独唤醒等待；未就绪快照暂不交付该席完整答案，`0` 也不例外。终态、阻塞或待审就绪时沿用正常交付规则；`include_output=false` 同时关闭运行尾部和正式正文。
+4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席成功不单独唤醒等待，未就绪快照也不交付该席完整答案。
 5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；会议每席全文每轮只给一次，再看用 `read_conversation`。`succeeded` 不证明目标完成，须核对命令、产物或检查。
 
 正文有待确认问题时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。`cancel` 返回终态，不撤销已发生的副作用；活跃调用不能追加消息，要纠偏或补充就 `cancel`，回执带 `session_id` 时用它续接（没有就重新交接），prompt 写明：上一轮已被打断；已执行的命令和改动不要重跑，先核对现状；先交出已有结论和进展，再按新要求继续。换 CLI 或开新线程时重新交接，不假定旧历史可见。
