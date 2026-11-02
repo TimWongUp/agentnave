@@ -1004,7 +1004,25 @@ impl Group {
                         .unwrap_or_default()
                 );
             }
-            if msg["kind"] == "instruction"
+            if let Some(called) = msg["answering"]
+                .as_array()
+                .filter(|_| msg["kind"] == "prompt")
+            {
+                // A round that called only some seats names them, those not started yet
+                // included; the rest still hear it.
+                msg["to"] = json!(
+                    called
+                        .iter()
+                        .map(|seat| {
+                            let seat = seat.as_str().unwrap_or_default();
+                            json!({"key": seat_desk(&conversation, seat), "handle": seat_handles
+                                .get(&(conversation.clone(), seat.to_owned()))
+                                .cloned()
+                                .unwrap_or_default()})
+                        })
+                        .collect::<Vec<_>>()
+                );
+            } else if msg["kind"] == "instruction"
                 || (msg["kind"] == "prompt" && msg["thread"]["kind"] == "desk")
             {
                 msg["to"] = json!(
