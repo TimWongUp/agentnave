@@ -28,11 +28,13 @@
 </header>
 <main>
   <nav class="nav subnav" aria-label="设置分区">
+    <a draggable="false" id="nav-general" href="#general">常规</a>
     <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
     <a draggable="false" id="nav-members" href="#members">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
     <a draggable="false" id="nav-avatars" href="#avatars">外观</a>
     <a draggable="false" id="nav-voice" href="#voice">语音</a>
     <a draggable="false" id="nav-advanced" href="#advanced">高级<span id="advanced-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
+    <a draggable="false" id="nav-storage" href="#storage">数据与存储</a>
     <a draggable="false" id="nav-about" href="#about">关于<span id="update-badge" class="badge-dot" hidden></span></a>
   </nav>
 
@@ -88,6 +90,15 @@
       </div>
     </div>
     <div id="avatar-settings" aria-live="polite"></div>
+  </section>
+
+  <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
+    <div id="general-language"></div>
+    <div id="general-prefs"></div>
+  </section>
+
+  <section id="pane-storage" class="tab-pane" hidden aria-labelledby="nav-storage">
+    <div id="storage-settings"></div>
   </section>
 
   <section id="pane-voice" class="tab-pane" hidden aria-labelledby="nav-voice">
