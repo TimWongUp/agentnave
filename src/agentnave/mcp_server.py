@@ -49,6 +49,7 @@ from agentnave.mcp_payloads import (
     UnreceivedPayload,
     WaitPayload,
 )
+from agentnave.mcp_projection import without_empty_fields
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
@@ -291,15 +292,6 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
         raise ToolError(" ".join(problems) + " Nothing was started. Correct and retry.")
 
 
-def _without_nulls(value: object) -> object:
-    if isinstance(value, dict):
-        items = cast(dict[str, object], value).items()
-        return {key: _without_nulls(item) for key, item in items if item is not None}
-    if isinstance(value, list):
-        return [_without_nulls(item) for item in cast(list[object], value)]
-    return value
-
-
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         return [
@@ -323,11 +315,14 @@ class _Server(MCPServer[Runtime]):
             and not result.is_error
             and result.structured_content is not None
         ):
-            # The same data as structuredContent, compact and without empty fields.
-            text = json.dumps(
-                _without_nulls(result.structured_content), ensure_ascii=False, separators=(",", ":")
+            projected = without_empty_fields(result.structured_content)
+            text = json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
+            result = result.model_copy(
+                update={
+                    "structured_content": projected,
+                    "content": [TextContent(type="text", text=text)],
+                }
             )
-            result = result.model_copy(update={"content": [TextContent(type="text", text=text)]})
         return result
 
 

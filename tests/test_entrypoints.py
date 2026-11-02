@@ -10,9 +10,11 @@ from typing import cast
 
 import pytest
 from mcp import Client, StdioServerParameters
+from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent
 
 from agentnave import __version__, mcp_server
+from agentnave.mcp_projection import without_empty_fields
 from agentnave.mcp_server import mcp
 from agentnave.processes import spawn_process, terminate_process_tree
 
@@ -126,7 +128,7 @@ async def test_resume_does_not_inherit_a_declared_access(
             client, provider="claude", cwd=str(tmp_path), role="出计划", access="read"
         )
         resumed = await _start_and_wait(client, session_id="session-e2e")
-        assert resumed["access"] is None
+        assert "access" not in resumed
 
 
 @pytest.mark.asyncio
@@ -179,7 +181,7 @@ async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_va
         latest = await _start_and_wait(client, session_id="session-e2e")
         assert latest["access"] == "read"
         renamed = await _start_and_wait(client, session_id="session-e2e", role="实现参数推断")
-        assert renamed["access"] is None
+        assert "access" not in renamed
         assert "seat (session_id history)" not in cast(list[str], renamed["defaults_applied"])
         await _start_and_wait(
             client, session_id="session-e2e", role="只读复核", seat="explorer-hard"
@@ -285,7 +287,7 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
             provider="claude",
             cwd=str(tmp_path),
         )
-        assert foreign_explicit["access"] is None
+        assert "access" not in foreign_explicit
         assert "PRIVATE_" not in str(foreign_explicit)
         assert not any(
             "session_id history" in key
@@ -419,6 +421,137 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     for name in ("wait", "list", "list_members", "read_conversation"):
         annotations = tools[name].annotations
         assert annotations is not None and annotations.read_only_hint is True
+
+
+def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
+    opaque_fields = (
+        "options",
+        "provider_options",
+        "output",
+        "text",
+        "prompt",
+        "note",
+        "notes",
+    )
+    opaque: dict[str, object] = {
+        "empty": "",
+        "null": None,
+        "list": [],
+        "dict": {},
+        "nested": {"null": None},
+    }
+    source: dict[str, object] = {
+        "null": None,
+        "empty": "",
+        "list": [],
+        "dict": {"null": None},
+        "false": False,
+        "zero": 0,
+        "items": [None, "", [], {}, {"null": None, "kept": "中文"}],
+        **{key: opaque for key in opaque_fields},
+    }
+    assert without_empty_fields(source) == {
+        "false": False,
+        "zero": 0,
+        "items": [None, "", [], {}, {"kept": "中文"}],
+        **{key: opaque for key in opaque_fields},
+    }
+    # Non-null empty body fields retain their keys; empty options and notes are omitted.
+    empty_values: list[object] = [None, [], {}, ""]
+    for value in empty_values:
+        values = dict.fromkeys(opaque_fields, value)
+        kept = {} if value is None else dict.fromkeys(("output", "text", "prompt"), value)
+        assert without_empty_fields(values) == kept
+    assert source["dict"] == {"null": None}
+    cli_options = {"cli_options": {"codex": {"flag": ""}, "grok": {}}}
+    assert without_empty_fields(cli_options) == {"cli_options": {"codex": {"flag": ""}}}
+
+
+def _is_container(prop: object, defs: dict[str, object]) -> bool:
+    if isinstance(prop, list):
+        return any(_is_container(item, defs) for item in cast(list[object], prop))
+    if not isinstance(prop, dict):
+        return False
+    node = cast(dict[str, object], prop)
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        return _is_container(defs.get(ref.rsplit("/", 1)[-1]), defs)
+    if node.get("type") in ("array", "object"):
+        return True
+    return any(_is_container(node.get(key), defs) for key in ("anyOf", "oneOf", "allOf"))
+
+
+def _required_containers(
+    schema: object, defs: dict[str, object], all_defs: dict[str, object]
+) -> set[str]:
+    """Required array/object properties that projection could drop when empty."""
+    found: set[str] = set()
+    if isinstance(schema, list):
+        for item in cast(list[object], schema):
+            found |= _required_containers(item, defs, all_defs)
+        return found
+    if not isinstance(schema, dict):
+        return found
+    node = cast(dict[str, object], schema)
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        return _required_containers(defs.pop(ref.rsplit("/", 1)[-1], None), defs, all_defs)
+    properties = cast(dict[str, dict[str, object]], node.get("properties") or {})
+    for name in cast(list[str], node.get("required") or []):
+        prop = properties.get(name, {})
+        if _is_container(prop, all_defs) and "minItems" not in prop and "minProperties" not in prop:
+            found.add(name)
+    for value in node.values():
+        found |= _required_containers(value, defs, all_defs)
+    return found
+
+
+@pytest.mark.asyncio
+async def test_every_required_reply_container_survives_projection() -> None:
+    missing: dict[str, set[str]] = {}
+    for tool in await mcp.list_tools():
+        schema = cast(dict[str, object], tool.output_schema or {})
+        all_defs = cast(dict[str, object], schema.get("$defs") or {})
+        names = {
+            name
+            for name in _required_containers(schema, dict(all_defs), all_defs)
+            if without_empty_fields({name: []}) != {name: []}
+        }
+        if names:
+            missing[tool.name] = names
+    assert missing == {}
+
+
+@pytest.mark.asyncio
+async def test_mcp_projection_leaves_error_replies_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = CallToolResult(
+        is_error=True,
+        content=[TextContent(type="text", text="original error")],
+        structured_content={"null": None, "empty": [], "dict": {}},
+    )
+
+    async def failed(*_args: object, **_kwargs: object) -> CallToolResult:
+        return error
+
+    monkeypatch.setattr(MCPServer, "call_tool", failed)
+    assert await mcp.call_tool("list_members", {}) is error
+
+
+@pytest.mark.asyncio
+async def test_mcp_empty_replies_keep_required_containers() -> None:
+    async with Client(mcp) as client:
+        for name, containers in (
+            ("list", ("invocations", "conversations", "unavailable")),
+            ("list_invocations", ("invocations",)),
+            ("wait", ("pending_ids", "updates", "rounds")),
+            ("handover", ("waiting",)),
+        ):
+            result = await client.call_tool(name, {})
+            assert not result.is_error, result.content
+            payload = _payload(result.structured_content)
+            assert all(payload[key] == [] for key in containers)
 
 
 @pytest.mark.asyncio
@@ -1171,7 +1304,7 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         listed = await client.call_tool("list_members", {})
         assert not listed.is_error
         broken = _payload(listed.structured_content)
-        assert broken["review"] == {} and "review.json" in cast(str, broken["review_error"])
+        assert "review" not in broken and "review.json" in cast(str, broken["review_error"])
         (root / "review.json").write_text(json.dumps({"version": 1, "seats": seats}))
         listed = await client.call_tool("list_members", {})
         review = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["review"])
@@ -1197,12 +1330,12 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         ]
         # An unrestricted task mode accepts any model.
         assert review["performance-reviewer"]["available"] is True
-        assert review["performance-reviewer"]["alternatives"] == []
+        assert "alternatives" not in review["performance-reviewer"]
         modes = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["modes"])
         items = cast(list[dict[str, object]], modes["task"]["members"])
         valid = [item for item in items if item["model"] == "chosen"]
         assert len(valid) == 6
-        assert all(item["valid"] is True and item["error"] is None for item in valid)
+        assert all(item["valid"] is True and "error" not in item for item in valid)
         assert valid[0]["permitted"] is False and valid[1]["permitted"] is True
         invalid = [item for item in items if str(item["model"]).startswith("bad-")]
         assert len(invalid) == 3 and all(
@@ -1222,6 +1355,15 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             "task": {"restricted": False, "members": []},
             "discussion": {"restricted": True, "members": []},
         }
+        # The App file currently accepts an empty model key; its reply must still validate.
+        path.write_text(
+            json.dumps({"version": 1, "clis": {"claude": {"models": {"": {}}}}, "modes": {}})
+        )
+        empty_model = _payload((await client.call_tool("list_members", {})).structured_content)
+        task_mode = _payload(_payload(empty_model["modes"])["task"])
+        member = cast(list[dict[str, object]], task_mode["members"])[0]
+        assert not {"model", "options", "notes"}.intersection(member)
+        assert "cli_options" not in empty_model
 
 
 @pytest.mark.asyncio
@@ -1351,20 +1493,15 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "notes": "任务",
             "permitted": False,
             "valid": True,
-            "error": None,
         }
         discussion = cast(list[dict[str, object]], modes["discussion"]["members"])
         assert discussion[-1] == {
             "provider": "claude",
             "model": "*",
             "default": False,
-            "effort": None,
-            "efforts": [],
-            "options": {},
             "notes": "不限模型",
             "permitted": True,
             "valid": True,
-            "error": None,
         }
         monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
         defaulted = await start({})
@@ -1456,7 +1593,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             )
         )
         disabled = _payload((await client.call_tool("list_members", {})).structured_content)
-        assert disabled["orchestration"] == {"enabled": False, "explorer": {}, "worker": {}}
+        assert disabled["orchestration"] == {"enabled": False}
         assert (await start({}, role="worker-easy"))["defaults_applied"] == [
             *applied,
             "access (worker-easy seat)",
@@ -1522,7 +1659,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         seats = cast(list[dict[str, object]], _payload(grouped.structured_content)["members"])
         assert seats[0]["model"] == "chosen" and seats[0]["effort"] == "high"
         assert seats[0]["defaults_applied"] == ["model", "effort", "permission_mode"]
-        assert seats[1]["model"] == "outside" and seats[1]["effort"] is None
+        assert seats[1]["model"] == "outside" and "effort" not in seats[1]
         cast(dict[str, object], document["modes"])["discussion"] = {}
         path.write_text(json.dumps(document), encoding="utf-8")
         rejected = await client.call_tool(
