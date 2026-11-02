@@ -71,10 +71,10 @@ The App's interface is currently in Chinese.
 
 ### Option 2: manual install (Windows / Linux, or without the App)
 
-The paired release is **`v0.62.0`**; install both the runtime and the Skill from that tag:
+The paired release is **`v0.63.0`**; install both the runtime and the Skill from that tag:
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.62.0"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.63.0"
 ```
 
 Then follow the [installation guide](docs/installation.md) to register the MCP server, install the
