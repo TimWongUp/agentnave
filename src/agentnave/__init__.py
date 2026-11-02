@@ -1,3 +1,3 @@
 """AgentNave public package."""
 
-__version__ = "0.60.1"
+__version__ = "0.62.0"

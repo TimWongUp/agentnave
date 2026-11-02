@@ -586,7 +586,20 @@ impl Hosts {
             document,
             also,
             &backup,
+            self.service_behind(),
         )
+    }
+    /// Whether the service is older than this App. The block tells bosses to use tool arguments
+    /// of this App's release, which an older service rejects, so it waits for the upgrade; the
+    /// upgrade refreshes the hosts, and that syncs the rules again.
+    fn service_behind(&self) -> bool {
+        let env = crate::update::active_tools(&self.context.app)
+            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")));
+        env.as_deref()
+            .and_then(crate::update::installed_version)
+            .is_some_and(|installed| {
+                crate::update::parse(&installed) < crate::update::parse(VERSION)
+            })
     }
     /// The rules files the installed apps could read now, kept across a root change so the
     /// files left behind lose their block too.

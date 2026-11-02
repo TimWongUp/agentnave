@@ -82,6 +82,7 @@ fn routes_serve_views_and_reject_everything_else() {
         "/chat/",
         "/chat/missing-group",
         "/chat/chat.js",
+        "/chat/chat-topics.js",
         "/chat/actions.js",
         "/chat/chat.css",
         "/chat/common.js",
@@ -1569,6 +1570,7 @@ fn office_messages_keep_identity_routes_and_review_id_when_published() {
     assert_eq!(instruction["visibility"], "private");
     assert_eq!(instruction["to"][0]["key"], "seat:show:a");
     assert_eq!(instruction["to"][0]["handle"], prompt["answering"][0]);
+    assert_eq!(instruction["reply_to"], prompt["id"]);
     let answer = messages.iter().find(|m| m["status"] == "review").unwrap();
     assert_eq!(answer["text"], "answer");
     assert_eq!(answer["speaker"]["effort"], "high");
@@ -1655,8 +1657,8 @@ fn office_counts_activities_and_threads_preserve_concurrent_calls() {
     }
     let private = desk("task:private:t-private");
     assert_eq!(private["activities"][0]["kind"], "private");
-    assert_eq!(private["model_source"], "requested");
-    assert_eq!(private["display_model"], "m");
+    assert_eq!(private["model_source"], "native");
+    assert_eq!(private["display_model"], "native-model");
     let mut labels: Vec<_> = desks.iter().filter_map(|d| d["label"].as_str()).collect();
     labels.sort();
     assert_eq!(
@@ -1664,9 +1666,9 @@ fn office_counts_activities_and_threads_preserve_concurrent_calls() {
         [
             "m · Claude Code · reviewer #1",
             "m · Claude Code · reviewer #2",
-            "m · Claude Code · reviewer #3",
             "m · Codex #1",
-            "m · Codex #2"
+            "m · Codex #2",
+            "native-model · Claude Code · reviewer"
         ]
     );
     // Running and reviewed desks are drawn even past the limit; idle seats fold away.

@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.60.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.62.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.60.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.62.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -551,22 +551,14 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v0.60.0
+### Upgrading to v0.62.0
 
-Update the App, paired runtime and complete Skills together, including the new
-`agentnave-handover` Skill. App-managed installations add the required Skill automatically.
+This release changes only the App: Windows title bar and taskbar icon, and how failures are sorted
+and shown. Runtime tools, history and host registrations are unchanged. Update the App; the paired runtime and Skills follow
+as usual, with no migration.
 
-Reconnect MCP after the App repairs host registrations: this release changes tool receipts
-and adds a connection-row identity. Old connections without that identity do not borrow another
-account's Explorer/Worker settings. Custom registrations must carry the matching App row ID
-in `AGENTNAVE_HOST_APP`; App-managed registrations supply it automatically.
-
-History adds handover metadata on demand; credentials and member selections need no migration.
-Update both components together: older processes can discard handover markers for workspaces
-that contain only a boss and no conversations during the upgrade window.
-
-See [v0.60.0 release notes](releases/v0.60.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v0.59.1.md).
+See [v0.62.0 release notes](releases/v0.62.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v0.61.0.md).
 
 ## Uninstall
 

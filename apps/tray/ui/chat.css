@@ -496,7 +496,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .dr-all:hover { color: var(--ink); background: var(--card-hover); }
 .dr-close { display: none; flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
 .dr-close:hover { background: var(--card-hover); color: var(--ink); }
-.dr-note { flex: none; margin: 12px 14px 0; padding: 8px 10px; border-radius: 9px; background: var(--card); font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 .dr-empty { padding: 40px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
 
 /* ---- timeline: one reading line per message, "who 对 @whom 做什么" ---- */
@@ -510,6 +509,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .m-ava .avatar { width: 22px; height: 22px; border-radius: 6px; font-size: 10px; }
 .m-ava .head { width: 22px; height: 22px; border-radius: 27%; background: center / cover; }
 .m-name { color: var(--ink); font-weight: 650; white-space: nowrap; }
+.m-role { font-size: 11.5px; font-weight: 550; color: var(--show); white-space: nowrap; }
+.m-role:empty { display: none; }
 .m-who { font-size: 11px; color: var(--faint); white-space: nowrap; }
 .m-who:empty { display: none; }
 .m-verb { white-space: nowrap; }
@@ -521,6 +522,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .m-lock:empty { display: none; }
 .m-h time { margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); flex: none; }
 .at { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 8px 1px 3px; border-radius: 99px; background: var(--card-hover); border: 1px solid var(--line); font-size: 11.5px; font-weight: 550; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.at.who { padding-left: 7px; }
 .at .avatar, .at .head { width: 15px; height: 15px; border-radius: 4px; font-size: 8px; flex: none; }
 .at .head { border-radius: 27%; background: center / cover; }
 .at.boss { padding-left: 8px; background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); color: var(--accent); }
@@ -531,9 +533,9 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .msg.pending .bub { background: transparent; border: 1px dashed color-mix(in srgb, var(--review) 55%, transparent); color: var(--muted); }
 .msg.reply { margin-left: 12px; padding-left: 10px; border-left: 2px solid var(--line); }
 .msg.forward .bub { box-shadow: inset 3px 0 0 var(--accent); }
-.m-meta { margin: 4px 0 0 28px; font-size: 11px; color: var(--faint); }
-.m-meta:empty { display: none; }
-.bub.fold { max-height: 260px; overflow: hidden; }
+.m-meta { display: flex; align-items: center; gap: 5px; margin: 4px 0 0 28px; font-size: 11px; color: var(--faint); }
+.m-meta[hidden] { display: none; }
+.bub.fold { max-height: 320px; overflow: hidden; }
 .bub.fold::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px; border-radius: inherit; background: linear-gradient(to bottom, transparent, var(--solid) 92%); pointer-events: none; }
 .fwd { display: flex; align-items: center; gap: 6px; width: 100%; margin: 0 0 8px; padding: 4px 8px; border-radius: 7px; text-align: left; font-size: 11.5px; color: var(--soft); background: color-mix(in srgb, var(--accent) 12%, transparent); cursor: pointer; }
 .fwd.dead { cursor: default; opacity: 0.75; }
@@ -646,3 +648,66 @@ dialog.act::backdrop { background: #0006; }
 .gi, .zone.room, .td-row { -webkit-user-select: none; user-select: none; }
 .toast { position: fixed; z-index: 400; left: 50%; bottom: 54px; transform: translateX(-50%); max-width: min(520px, 90vw); padding: 8px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: 12.5px; box-shadow: 0 10px 30px #0006; }
 .toast.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+
+/* ---- new conversation reading (chat-topics.js) ---- */
+.tp-badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 650; line-height: 17px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent); }
+.chat-page .tp-card { display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); text-align: left; cursor: pointer; }
+.chat-page button.tp-card:hover { background: var(--card-hover); }
+.chat-page div.tp-card { cursor: default; }
+.tp-card-top { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
+.tp-card-top b { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 650; color: var(--ink); }
+.tp-tag { flex: none; padding: 0 5px; border-radius: 4px; background: var(--card-hover); font-size: 10.5px; line-height: 17px; color: var(--muted); }
+.tp-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.tp-card-meta time { margin-left: auto; color: var(--faint); }
+.tp-faces { display: inline-flex; }
+.tp-faces .head { width: 18px; height: 18px; border-radius: 27%; background: center / cover; }
+.tp-faces .head + .head { margin-left: -5px; }
+.tp-card-line { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--soft); }
+.tp-card-line.whole { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* the stream reads like a messenger: every message a bubble beside its avatar, boss on the right */
+:root { --im-bg: #111214; --im-member: #2c2c2e; --im-member-ink: #e8e8ea; --im-boss: #2f7f52; --im-boss-ink: #f2f7f3; --im-aside: #27533b; }
+:root[data-theme="light"] { --im-bg: #ededed; --im-member: #ffffff; --im-member-ink: #1d1d1f; --im-boss: #95ec69; --im-boss-ink: #1d1d1f; --im-aside: #d6f7c2; }
+.tp-im .tl { background: var(--im-bg); }
+.tp-im .sep { justify-content: center; margin: 14px 0 0; font-weight: 500; }
+.tp-im .sep::before, .tp-im .sep::after { display: none; }
+.tp-im .msg { --im-bub: var(--im-member); --im-ink: var(--im-member-ink); position: relative; display: flex; flex-direction: column; min-height: 32px; margin: 14px 0 0; padding: 0 38px 0 38px; border: 0; }
+.tp-im .msg.boss { --im-bub: var(--im-boss); --im-ink: var(--im-boss-ink); align-items: flex-end; }
+.tp-im .msg.boss.private { --im-bub: var(--im-aside); }
+.tp-im .m-h { position: relative; flex-wrap: nowrap; min-height: 16px; font-size: 11px; }
+.tp-im .msg.boss .m-h { flex-wrap: wrap; justify-content: flex-end; }
+.tp-im .m-h > time { display: none; }
+.tp-im .m-h > .m-ava { position: absolute; top: 0; left: -38px; }
+.tp-im .msg.boss .m-h > .m-ava { right: -38px; left: auto; }
+.tp-im .m-ava :is(.avatar, .head) { width: 30px; height: 30px; border-radius: 5px; font-size: 12px; }
+.tp-im .m-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 650; color: var(--ink); }
+.tp-im .m-role { flex-shrink: 1; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.tp-im .m-who { flex-shrink: 999; min-width: 0; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; }
+.tp-im .msg.boss .m-name { display: none; }
+.tp-room .msg.boss .m-verb:not(.m-tag) { display: none; }
+/* the tail hangs from the header, outside the bubble that a fold clips */
+.tp-im .m-h::after { content: ""; position: absolute; z-index: 1; bottom: -26px; left: -4px; width: 9px; height: 9px; background: var(--im-bub); transform: rotate(45deg); }
+.tp-im .msg.boss .m-h::after { right: -4px; left: auto; }
+.tp-im .msg .bub { width: fit-content; max-width: 100%; box-sizing: border-box; margin: 5px 0 0; padding: 8px 11px; border-radius: 6px; background: var(--im-bub); color: var(--im-ink); font-size: 13px; }
+.tp-im .msg .bub.fold::after { height: 76px; background: linear-gradient(to bottom, transparent, var(--im-bub) 58%); }
+.tp-im .msg .bub:has(~ .more:not([hidden])) { padding-bottom: 30px; }
+.tp-im .more { position: relative; z-index: 2; order: 1; display: block; width: fit-content; margin: -27px 0 0 5px; }
+.tp-im .more[hidden] { display: none; }
+.tp-im .msg.boss .more { margin: -27px 5px 0 0; }
+.tp-im .m-meta { order: 2; flex: none; margin: 6px 0 0; }
+.tp-im .note { width: fit-content; max-width: 88%; margin: 12px auto 0; padding: 3px 10px; border-radius: 6px; background: color-mix(in srgb, var(--faint) 18%, transparent); justify-content: center; text-align: center; }
+.tp-im .m-meta.m-round { align-self: center; max-width: 88%; margin-top: 12px; padding: 3px 10px; border-radius: 6px; background: color-mix(in srgb, var(--faint) 18%, transparent); font-size: 11.5px; color: var(--muted); }
+.tp-im .m-round .head { width: 16px; height: 16px; }
+.tp-im .note time { display: none; }
+.tp-im .note .m-ava { display: none; }
+.tp-im .msg[data-peer] .bub.fold { max-height: none; font-size: 12px; cursor: pointer; }
+.tp-im .msg[data-peer] .bub.fold::after { display: none; }
+.msg[data-peer] .bub.fold .md { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msg[data-peer] .tail { -webkit-line-clamp: 1; }
+/* a desk's effort: the harder it tries, the warmer the tag */
+.tag-effort { --effort: var(--idle); color: var(--effort); border-color: color-mix(in srgb, var(--effort) 45%, transparent); background: color-mix(in srgb, var(--effort) 14%, transparent); }
+.tag-effort:is([data-effort="minimal"], [data-effort="low"]) { --effort: var(--done); }
+.tag-effort[data-effort="medium"] { --effort: var(--m0); }
+.tag-effort[data-effort="high"] { --effort: var(--review); }
+.tag-effort[data-effort="xhigh"] { --effort: var(--m4); }
+.tag-effort[data-effort="max"] { --effort: var(--bad); }
+.tag-effort[data-effort="ultra"] { --effort: var(--m1); }

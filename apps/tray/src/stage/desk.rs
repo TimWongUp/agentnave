@@ -1,6 +1,9 @@
 //! A desk in the office: one native session and what its calls have shown.
 use super::*;
 
+/// Microseconds, as in `timestamp`; the same half hour after which an idle desk reads as resting.
+const FAILURE_SETTLES_AFTER: i64 = 30 * 60 * 1_000_000;
+
 /// A desk seen in one workspace: one native session (a private thread or a show seat), with
 /// the labels of its latest call and its history.
 #[derive(Default)]
@@ -96,22 +99,29 @@ impl Desk {
         }
     }
 
-    /// The requested model, else the one the CLI reported, else the CLI's own default.
+    /// The model the CLI reported for the latest call, unless a newer call has yet to report.
+    fn reported_model(&self) -> Option<&str> {
+        let (at, model) = self.reported.as_ref()?;
+        (self.model.is_empty() || self.labelled.is_none_or(|labelled| *at >= labelled))
+            .then_some(model.as_str())
+    }
+
+    /// The model the CLI reported, else the requested one, else the CLI's own default.
     pub(super) fn display_model(&self) -> String {
-        if !self.model.is_empty() {
+        if let Some(model) = self.reported_model() {
+            model.to_owned()
+        } else if !self.model.is_empty() {
             self.model.clone()
-        } else if let Some((_, model)) = &self.reported {
-            model.clone()
         } else {
             crate::detect::cached_native(&self.provider).unwrap_or_default()
         }
     }
 
     pub(super) fn model_source(&self) -> &'static str {
-        if !self.model.is_empty() {
-            "requested"
-        } else if self.reported.is_some() {
+        if self.reported_model().is_some() {
             "native"
+        } else if !self.model.is_empty() {
+            "requested"
         } else if crate::detect::cached_native(&self.provider).is_some() {
             "cli_default"
         } else {
@@ -146,6 +156,14 @@ impl Desk {
                 _ => "idle",
             }
         }
+    }
+
+    /// A failure nobody needs to act on stops standing out once the office has moved on from it.
+    pub(super) fn failure_settled(&self, now: i64) -> bool {
+        self.status() == "failed"
+            && self
+                .last
+                .is_some_and(|last| now - last > FAILURE_SETTLES_AFTER)
     }
 
     pub(super) fn value(&self, host: Option<&str>) -> Value {
