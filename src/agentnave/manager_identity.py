@@ -41,11 +41,11 @@ def model_warnings(host: Host, message: Entry | EntryRecord | TaskRecord) -> lis
         return []
     variable = _SESSION_ID_SHELL_ENV.get(host.name or "")
     hint = (
-        f"read this chat's native session ID from {variable} in the shell"
+        f"read {variable} in the shell"
         if variable is not None
-        else "read this chat's native session ID from the host context or shell"
+        else "read this chat's native session ID"
     )
     return [
-        "Boss model unavailable in App: neither native model nor manager_model was "
-        f"recorded; {hint} and pass it as manager_session_id."
+        f"Boss model unknown: {hint} and pass it as manager_session_id, or pass "
+        "manager_model. Do not repeat this call; wait for work already started."
     ]
