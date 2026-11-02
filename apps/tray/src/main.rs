@@ -79,6 +79,19 @@ pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
 
 /// Preview writes only its own appearance and voice data. Other exceptions move the window,
 /// check the release feed or open a rules file in the user's editor.
+/// Header values are ASCII; the page reads this back with decodeURIComponent.
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                char::from(b).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
 fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
@@ -236,7 +249,11 @@ fn main() {
                     }
                     _ => reader.request(method, &path, action, request.body()),
                 };
-                let response = Response::builder()
+                let mut response = Response::builder();
+                if let Some(notice) = &reply.notice {
+                    response = response.header("X-AgentNave-Notice", percent_encode(notice));
+                }
+                let response = response
                     .status(reply.status)
                     .header(header::CONTENT_TYPE, reply.content_type)
                     .header(header::CACHE_CONTROL, reply.cache_control)

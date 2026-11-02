@@ -491,7 +491,7 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
 fn boss_and_member_prompts_only_change_summary_speech_style() {
     let server = FakeServer::start(4, |_| Reply {
         status: 500,
-        body: json!({"error":"no TTS should follow"}),
+        body: json!({"error":"summary failed"}),
     });
     let directory = tempfile::tempdir().unwrap();
     let mut settings = storage::read_settings(directory.path()).unwrap();
@@ -516,12 +516,14 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
             "会议总结：已选择方案甲，因为速度更快，费用分歧仍需确认。".repeat(10),
         ),
     ] {
-        let result = speak(
+        cache_opening(directory.path(), &text);
+        let response = speak(
             directory.path(),
-            &json!({"family":"gpt","text":text,"full":false,"boss":boss,
+            &json!({"family":"gpt","text":text,"full":false,"boss":boss,"voice":"voice-a",
                 "scene":{"name":"GPT","role":"探索派","room":true,"to":null}}),
-        );
-        assert!(error(result).contains("500"));
+        )
+        .unwrap();
+        assert!(response.notice.unwrap().contains("500"));
     }
     let requests = server.finish();
     for (index, expected, absent) in [
@@ -550,8 +552,16 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
     }
 }
 
+/// The audio a failed summary falls back to, so a test never reaches a real voice service.
+fn cache_opening(root: &Path, raw: &str) {
+    let settings = storage::read_settings(root).unwrap();
+    let opening = text::excerpt(&text::clean(raw, true));
+    let key = super::super::audio_key(&settings, "elevenlabs", "voice-a", &opening);
+    storage::cache(root, &key, b"opening", "mp3").unwrap();
+}
+
 #[test]
-fn short_text_skips_summary_and_failed_summary_never_reaches_tts() {
+fn short_text_skips_summary_and_failed_summary_reads_the_opening() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = json!({
         "enabled":true,
@@ -585,12 +595,15 @@ fn short_text_skips_summary_and_failed_summary_never_reaches_tts() {
         &json!({"engine":"elevenlabs","key":"fake-tts-key"}),
     )
     .unwrap();
-    let failed = error(speak(
+    let raw = "这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。".repeat(5);
+    cache_opening(directory.path(), &raw);
+    let failed = speak(
         directory.path(),
-        &json!({"family":null,"text":"这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。","full":true}),
-    ));
-    assert!(failed.contains("500"), "{failed}");
-    assert!(!failed.contains("API 密钥"));
+        &json!({"family":null,"text":raw,"full":true,"voice":"voice-a"}),
+    )
+    .unwrap();
+    assert_eq!(failed.body, b"opening");
+    assert!(failed.notice.unwrap().contains("500"));
     let requests = server.finish();
     assert_eq!(requests.len(), 2);
     assert!(requests[0].path.ends_with("/models"));
@@ -612,11 +625,14 @@ fn summary_limits_and_magpie_config_are_explicit() {
         "summary":summary_settings("http://127.0.0.1:9/v1", "custom", "model")
     });
     storage::save_settings(directory.path(), &settings).unwrap();
-    let too_long = error(speak(
-        directory.path(),
-        &json!({"family":null,"text":"字".repeat(30_001),"full":true}),
-    ));
-    assert!(too_long.contains("30000"));
+    // A very long message is no longer refused; it still needs the engine's key.
+    assert_eq!(
+        error(speak(
+            directory.path(),
+            &json!({"family":null,"text":"字".repeat(30_001),"full":true}),
+        )),
+        "请先保存所选引擎的 API 密钥"
+    );
     assert_eq!(
         error(speak(
             directory.path(),

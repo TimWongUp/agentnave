@@ -44,7 +44,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
       if (rooms.has(path)) return loadRoom(rooms.get(path));
       if (path === "/app/voice/speak") {
         requests.push(JSON.parse(options.body));
-        return { ok: true, status: 200, blob: () => synthesize(JSON.parse(options.body), options.signal) };
+        return { ok: true, status: 200, headers: { get: () => null }, blob: () => synthesize(JSON.parse(options.body), options.signal) };
       }
       if (options?.method === "POST") config = JSON.parse(options.body);
       return { ok: true, json: async () => structuredClone(config) };
@@ -163,7 +163,7 @@ test("live private briefings wait for their own completed answers across polls",
   await app.feed([...instructions, answer("a", "review")]);
   assert.equal(app.requests.length, 0, "neither a running nor a review-only answer releases the briefing");
   await app.feed([...instructions, answer("b")]);
-  assert.deepEqual(app.requests.map(r => r.text), ["instruction-b"], "an earlier briefing uses its newly completed answer's playback eligibility");
+  assert.deepEqual(app.requests.map(r => r.text), ["instruction-b", "answer-b"], "an earlier briefing uses its newly completed answer's playback eligibility");
   await app.end(); await app.end();
   await app.feed([...instructions, answer("b"), answer("a")]);
   await app.end(); await app.end();
@@ -172,7 +172,7 @@ test("live private briefings wait for their own completed answers across polls",
   assert.equal(app.requests.length, 4);
 });
 
-test("returning to the directory stops playback, hides the channel and never reads in the background", async () => {
+test("returning to the directory keeps playing, keeps the channel and reads the whole workspace", async () => {
   const app = await office();
   app.room([]);
   const roomReply = message("meeting-answer", "2026-11-01T00:00:01Z", {
@@ -190,11 +190,12 @@ test("returning to the directory stops playback, hides the channel and never rea
   });
   renderConv(app.ctx.c, app.ctx);
   assert.equal(directory, true);
-  assert.equal(clip.paused, true);
-  assert.equal(app.nodes.find(n => n.id === "voice-actions").hidden, true);
+  assert.equal(clip.paused, false);
+  assert.equal(app.nodes.find(n => n.id === "voice-actions").hidden, false);
   assert.equal(app.nodes.find(n => n.tag === "button.voice-play-all").hidden, true);
   await app.feed([roomReply, message("private-answer", "2026-11-01T00:00:02Z")]);
-  assert.deepEqual(app.requests.map(r => r.text), ["meeting-answer"]);
+  await app.end();
+  assert.deepEqual(app.requests.map(r => r.text), ["meeting-answer", "private-answer"]);
 });
 
 test("private play-from-start reads only that employee's private history and excludes meeting excerpts", async () => {
@@ -228,13 +229,13 @@ test("existing boss messages and employee answers use their displayed text in ti
   const notice = message("notice", "2026-11-01T00:00:00Z", { kind: "notice", speaker: { role: "system" } });
   const messages = [later, typing, forward, instruction, earlier, topic, pending, notice];
   await app.feed(messages);
-  assert.deepEqual(app.requests.map(r => r.text), [earlier.text]);
+  assert.deepEqual(app.requests.map(r => r.text), [earlier.text, "topic", "instruction"], "the next two are prepared ahead");
   assert.equal(app.requests[0].boss, true);
-  for (let index = 0; index < 4; index++) await app.end();
-  assert.deepEqual(app.requests.map(r => r.text), [earlier.text, "instruction", "member", "forward"]);
+  for (let index = 0; index < 5; index++) await app.end();
+  assert.deepEqual(app.requests.map(r => r.text), [earlier.text, "topic", "instruction", "member", "forward"]);
   assert.ok(app.requests.every(r => r.full === false));
   await app.feed(messages);
-  assert.equal(app.requests.length, 4);
+  assert.equal(app.requests.length, 5);
 });
 
 test("pausing a meeting preserves the exact clip position and remaining queue for resume", async () => {
@@ -313,23 +314,22 @@ test("pausing a failed or empty meeting load does not block later automatic play
   }
 });
 
-test("automatic meeting playback stays in the selected meeting and clears its queue on switching", async () => {
+test("automatic playback follows every meeting and switching meetings keeps its queue", async () => {
   const app = await office();
-  const meeting = (id, room, second, round = 1) => message(id, `2026-11-01T00:00:0${second}Z`, {
-    conversation: room, thread: { kind: "room", id: room }, round,
+  const meeting = (id, room, second) => message(id, `2026-11-01T00:00:0${second}Z`, {
+    conversation: room, thread: { kind: "room", id: room }, round: 1,
   });
   app.room([], "a");
   await app.feed([]);
-  const a1 = meeting("a1", "a", 1), a2 = meeting("a2", "a", 2, 2), b1 = meeting("b1", "b", 1);
+  const a1 = meeting("a1", "a", 1), b1 = meeting("b1", "b", 2), a2 = meeting("a2", "a", 3);
   await app.feed([b1, a2, a1]);
-  assert.deepEqual(app.requests.map(r => r.text), ["a1"]);
+  assert.deepEqual(app.requests.map(r => r.text), ["a1", "b1", "a2"]);
   app.room([], "b");
-  const b2 = meeting("b2", "b", 3, 2), a3 = meeting("a3", "a", 4, 3);
-  await app.feed([a1, a2, b1, a3, b2]);
-  assert.deepEqual(app.requests.map(r => r.text), ["a1", "b2"], "drop a2 and old b1, but keep the first new b reply after switching");
-  await app.end();
-  await app.feed([a1, a2, b1, a3, b2]);
-  assert.equal(app.requests.length, 2, "finishing b must not move on to another meeting");
+  assert.equal(app.sounds[0].paused, false);
+  await app.end(); await app.end(); await app.end();
+  assert.equal(app.sounds.length, 3);
+  await app.feed([a1, a2, b1]);
+  assert.equal(app.requests.length, 3, "each message is read once");
 });
 
 test("meeting audio is prepared ahead, plays in message order and stops scheduling on cancel", async () => {
@@ -401,10 +401,27 @@ test("automatic switch stops new automatic reads while final answers remain manu
   await app.automatic();
   await app.feed([final]);
   assert.equal(app.requests.length, 1, "enabling automatic playback must not replay old answers");
-  await app.feed([final, message("next-final", "2026-11-01T00:00:02Z"), message("old-backfill", "1969-12-31T00:00:00Z")]);
+  await app.feed([final, message("next-final", "2026-11-01T00:00:02Z")]);
   assert.equal(app.requests[1].text, "next-final");
   await app.end();
-  assert.equal(app.requests.length, 2, "late history backfills must not enter automatic playback");
+  assert.equal(app.requests.length, 2);
+});
+
+test("reading one message by hand keeps what automatic playback queued after it", async () => {
+  const app = await office();
+  const first = message("first", "2026-11-01T00:00:01Z"), second = message("second", "2026-11-01T00:00:02Z");
+  const third = message("third", "2026-11-01T00:00:03Z");
+  await app.feed([first, second, third]);
+  const rec = { bub: { prepend() {} } };
+  app.voice.decorate(rec, third, app.ctx);
+  rec.read.listeners.click();
+  await flush();
+  assert.equal(app.sounds[0].paused, true, "the clip in progress stops");
+  assert.equal(app.sounds.length, 2);
+  await app.end();
+  await app.end();
+  assert.equal(app.sounds.length, 3, "the queued second message still plays");
+  assert.deepEqual(app.requests.map(r => r.text), ["first", "second", "third"], "a clip prepared ahead is reused");
 });
 
 test("the voice channel shows host and speaker avatars without office animation state", async () => {

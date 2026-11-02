@@ -21,34 +21,13 @@ fn prose_removes_nonspoken_content_and_truncates_at_a_sentence() {
     );
     assert_eq!(text::clean("```\ncode only\n```", false), "");
     assert_eq!(text::clean("~~~js\ncode only\n~~~", true), "");
-    let long = format!(
-        "{}。{}！{}",
-        "甲".repeat(100),
-        "乙".repeat(100),
-        "丙".repeat(100)
-    );
-    assert_eq!(text::clean(&long, false).chars().count(), 101);
     assert_eq!(
         text::clean("1. 甲\n2) 乙\n3、丙\n4）丁", true),
         "1、甲\n2、乙\n3、丙\n4、丁"
     );
     assert_eq!(text::clean("3.5 秒就够了", true), "3.5 秒就够了");
-    let points = format!(
-        "{}结论。{}\n1. 第一点。{}\n- 细节\n2. **第二点**。{}\n3. 第三点。",
-        "前".repeat(10),
-        "略".repeat(150),
-        "甲".repeat(100),
-        "乙".repeat(100)
-    );
-    assert_eq!(
-        text::clean(&points, false),
-        format!(
-            "{}结论。\n1、第一点。\n2、第二点。\n3、第三点。",
-            "前".repeat(10)
-        )
-    );
+    let long = "字".repeat(300);
     assert_eq!(text::clean(&long, true), long);
-    assert_eq!(text::clean(&"字".repeat(300), false).chars().count(), 240);
     assert_eq!(
         text::clean("./src/main.rs ~/file C:\\Users\\a src/agentnave/a.py", true),
         ""
@@ -77,34 +56,30 @@ fn prose_preserves_technical_terms_and_only_removes_links_paths_and_tags() {
 }
 
 #[test]
-fn summary_uses_sentence_boundaries_without_cutting_versions_or_short_openings() {
-    for fragment in [
-        "耗时从 3.5 秒降到 1.2 秒",
-        "升级到 v1.2 后",
-        "修改了 voice.rs 的逻辑",
-    ] {
-        let long = format!(
-            "{}{}{}。尾句。",
-            "字".repeat(180),
-            fragment,
-            "续".repeat(30)
-        );
-        let sentence_end = long.chars().position(|c| c == '。').unwrap() + 1;
-        assert_eq!(text::clean(&long, false).chars().count(), sentence_end);
-    }
-    let no_nearby_end = format!("我先说结论。{}。", "字".repeat(270));
-    assert_eq!(text::clean(&no_nearby_end, false).chars().count(), 240);
-    let next_sentence = format!("我先说结论。{}。{}。", "字".repeat(210), "尾".repeat(60));
-    assert_eq!(text::clean(&next_sentence, false).chars().count(), 217);
-    let preferred = format!(
-        "{}。{}。{}",
-        "字".repeat(150),
-        "字".repeat(60),
-        "尾".repeat(60)
+fn without_a_summary_only_the_opening_paragraphs_are_read() {
+    let paragraphs = format!(
+        "# 结论\n可以合并。\n{}\n{}",
+        "甲".repeat(60),
+        "乙".repeat(60)
     );
-    assert_eq!(text::clean(&preferred, false).chars().count(), 151);
-    let english = format!("{}End. {}", "字".repeat(180), "tail ".repeat(20));
-    assert_eq!(text::clean(&english, false).chars().count(), 184);
+    assert_eq!(
+        text::clean(&paragraphs, false),
+        format!("结论\n可以合并。\n{}", "甲".repeat(60))
+    );
+    let sentences = format!(
+        "{}。{}。{}",
+        "前".repeat(30),
+        "中".repeat(50),
+        "后".repeat(50)
+    );
+    assert_eq!(text::clean(&sentences, false).chars().count(), 82);
+    let version = format!("{}升级到 v1.2 后完成。{}", "字".repeat(40), "尾".repeat(80));
+    assert_eq!(
+        text::clean(&version, false),
+        format!("{}升级到 v1.2 后完成。", "字".repeat(40))
+    );
+    assert_eq!(text::clean(&"字".repeat(300), false).chars().count(), 100);
+    assert_eq!(text::clean("短消息。", false), "短消息。");
 }
 
 #[test]

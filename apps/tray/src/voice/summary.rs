@@ -447,7 +447,31 @@ fn levels(model: &Value) -> Vec<String> {
     normalized
 }
 
+/// A model's reasoning levels, asked of its catalog once per endpoint, key and model.
+static LEVELS: LazyLock<Mutex<HashMap<String, Vec<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 fn catalog_levels(base: &str, key: &str, model: &str) -> Result<Option<Vec<String>>, String> {
+    let cache_key = storage::hash(&json!([base, key, model]).to_string());
+    let cached = LEVELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&cache_key)
+        .cloned();
+    if cached.is_some() {
+        return Ok(cached);
+    }
+    let levels = fetch_levels(base, key, model)?;
+    if let Some(levels) = &levels {
+        LEVELS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(cache_key, levels.clone());
+    }
+    Ok(levels)
+}
+
+fn fetch_levels(base: &str, key: &str, model: &str) -> Result<Option<Vec<String>>, String> {
     let value = response_value(
         request(summary_client()?.get(format!("{base}/models")), key, base),
         key,

@@ -1745,8 +1745,8 @@ function renderConv(c, ctx) {
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
   const privateChat = state.drawer.kind === "desk" && c.threads.some(t => t.kind === "desk" && t.key === state.drawer.key);
-  AN.voice?.controls(state.drawer.kind === "room" || privateChat, state.drawer.kind === "room" ? { group: c.group, id: state.drawer.id } : null, ctx,
-    state.drawer.kind === "desk" ? state.drawer.key : null);
+  AN.voice?.controls(true, state.drawer.kind === "room" ? { group: c.group, id: state.drawer.id } : null, ctx,
+    privateChat ? state.drawer.key : null);
   if (state.drawer.kind === "all") {
     renderDirectory(c, ctx);
     return;

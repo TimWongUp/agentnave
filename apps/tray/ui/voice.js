@@ -4,7 +4,7 @@
   const { h } = AN;
   let config = null, group = null, view = null, observed = new Map(), skip = true;
   let queue = [], current = null, generation = 0, failures = 0, halted = false;
-  let running = false, loading = null, baselineEpoch = 0, autoSince = 0;
+  let running = false, loading = null, baselineEpoch = 0;
   let roomView = null, playlistScope = null, playlistLoad = null;
   let privateView = null, channelVisible = false, paused = false, wakePlayback = null;
   const toggle = h("button.voice-toggle", { type: "button", hidden: true, "aria-label": "自动读摘要", "aria-pressed": "false" }, h("span.voice-track"), "自动读");
@@ -39,18 +39,20 @@
       const next = await state();
       const previous = config;
       const different = !previous || JSON.stringify(previous) !== JSON.stringify(next);
+      const usable = c => Boolean(c.enabled && c.keys?.[c.engine]);
+      // Only a change that silences or redirects playback interrupts it; other settings
+      // apply to the next clip.
+      const interrupt = previous && different && (usable(previous) !== usable(next)
+        || previous.engine !== next.engine || previous.auto_read !== false && next.auto_read === false);
       if (previous && different) {
-        if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || Boolean(previous.keys?.[previous.engine]) !== Boolean(next.keys?.[next.engine])) { skip = true; baselineEpoch++; }
+        if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || usable(previous) !== usable(next)) { skip = true; baselineEpoch++; }
         if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
-        if (previous.auto_read === false && next.auto_read !== false) autoSince = Date.now();
       }
       config = next;
       toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
       toggle.disabled = !ready();
-      if (different) {
-        if (previous) stop();
-        else changed();
-      }
+      if (interrupt) stop();
+      else if (different) changed();
     })().finally(() => { loading = null; });
     return loading;
   }
@@ -132,6 +134,8 @@
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || "语音播报合成失败");
     }
+    const notice = response.headers.get("X-AgentNave-Notice");
+    if (notice) error(decodeURIComponent(notice));
     return response.blob();
   }
   function prepare(job) {
@@ -158,6 +162,12 @@
     queue = [];
     if (current) { current.controller.abort(); finish(current); current = null; }
     if (notify) changed();
+  }
+  // Ends the clip in progress but keeps what is queued after it.
+  function interrupt() {
+    generation++;
+    paused = false; wakePlayback?.(); wakePlayback = null;
+    if (current) { current.controller.abort(); finish(current); current = null; }
   }
   function pause() {
     if (!current && !queue.length && !playlistLoad) return;
@@ -204,7 +214,7 @@
         const token = generation;
         const job = current = queue.shift();
         prepare(job);
-        if (playlistScope) for (const next of queue.slice(0, 2)) prepare(next);
+        for (const next of queue.slice(0, 2)) prepare(next);
         changed();
         try {
           await play(job, token);
@@ -227,14 +237,14 @@
       if (!queue.length && !playlistLoad && playlistScope) { playlistScope = null; changed(); }
     }
   }
+  // Auto read follows the whole workspace, whichever conversation is open: each message is
+  // read once, when it first becomes readable after the baseline.
   function ingest(chat, ctx, focus = null, epoch = baselineEpoch) {
     const baseline = skip || document.hidden || group !== chat.group || view !== focus || epoch !== baselineEpoch;
     if (group !== chat.group) {
       stop(false); observed = new Map(); group = chat.group;
-      autoSince = Date.now();
     }
     view = focus;
-    const selectedRoom = roomView?.group === chat.group ? roomView.id : null;
     const answers = new Map(chat.messages.filter(m => m.kind === "reply" && eligible(m)).map(m =>
       [answerKey(m), { message: m, seen: observed.get(m.id) === true }]));
     for (const m of chat.messages) {
@@ -242,9 +252,7 @@
       const answer = briefing ? answers.get(briefing) : null;
       const can = eligible(m) && (!briefing || Boolean(answer));
       const seen = observed.get(m.id) === true;
-      const inScope = channelVisible && (selectedRoom ? m.conversation === selectedRoom
-        : privateView ? privateMessage(m, privateView) : m.thread?.kind !== "room");
-      if (!baseline && !playlistScope && inScope && can && !seen && !answer?.seen && ready() && !halted && config.auto_read !== false && Date.parse(answer?.message.time || m.time) >= autoSince)
+      if (!baseline && can && !seen && !answer?.seen && ready() && !halted && config.auto_read !== false)
         queue.push(item(m, ctx, true));
       observed.set(m.id, seen || can);
     }
@@ -272,7 +280,10 @@
       if (token !== generation) return;
       const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
         rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
-      queue = chat.messages.filter(m => eligible(m) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
+      const playlist = chat.messages.filter(m => eligible(m) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
+      const listed = new Set(playlist.map(job => job.id));
+      // What auto read queued while the history loaded still plays, once.
+      queue = [...playlist, ...queue.filter(job => !listed.has(job.id))];
       queue.sort((a, b) => a.time - b.time);
       queue = beforeAnswers(queue);
       for (const job of queue) observed.set(job.id, true);
@@ -288,10 +299,9 @@
     }
   }
   function controls(visible, room = null, ctx = null, desk = null) {
-    if (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk) {
+    // Reading from the start belongs to the open conversation; auto read does not.
+    if (playlistScope && (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk))
       stop(false);
-      autoSince = Date.now();
-    }
     roomView = room;
     privateView = desk;
     channelVisible = visible;
@@ -363,9 +373,14 @@
         event?.stopPropagation();
         const same = current && current.id === rec.voiceItem?.id;
         if (same) { if (paused) void resume(); else pause(); return; }
-        stop();
         if (!ready() || halted) return;
-        queue.push({ ...rec.voiceItem, controller: new AbortController() });
+        if (playlistScope) stop(false);
+        // The chosen message goes first; what auto read queued still follows it.
+        const queued = queue.find(job => job.id === rec.voiceItem.id);
+        queue = queue.filter(job => job !== queued);
+        queue.unshift(queued || { ...rec.voiceItem, controller: new AbortController() });
+        interrupt();
+        changed();
         void drain();
       });
       rec.bub.prepend(rec.read); // Keep the action inside the chat bubble, above its text.
@@ -383,20 +398,19 @@
   toggle.addEventListener("click", async () => {
     if (!config) return;
     toggle.disabled = true;
-    stop();
+    if (config.auto_read !== false) stop();
     try {
       const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, auto_read: config.auto_read === false }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "无法保存语音播报设置");
       config = data; failures = 0; halted = false; skip = true; baselineEpoch++;
-      autoSince = Date.now();
       toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
       toggle.disabled = !ready();
       changed();
     } catch (failure) { error(failure.message); }
     finally { toggle.disabled = !ready(); }
   });
-  document.addEventListener("visibilitychange", () => { skip = true; baselineEpoch++; autoSince = Date.now(); stop(); });
+  document.addEventListener("visibilitychange", () => { skip = true; baselineEpoch++; stop(); });
   window.addEventListener("pagehide", stop);
   AN.voice = { ingest, decorate, pollToken: () => baselineEpoch, controls, stop, beforeAnswers };
   void reload().catch(failure => error(failure.message));

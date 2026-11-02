@@ -99,6 +99,8 @@ pub struct Response {
     pub content_type: &'static str,
     pub body: Vec<u8>,
     pub cache_control: &'static str,
+    /// Something the page should tell the user although the request succeeded.
+    pub notice: Option<String>,
 }
 
 impl Response {
@@ -108,7 +110,13 @@ impl Response {
             status: 200,
             content_type,
             body,
+            notice: None,
         }
+    }
+
+    pub(crate) fn with_notice(mut self, notice: Option<String>) -> Self {
+        self.notice = notice;
+        self
     }
 
     pub fn json(value: &serde_json::Value) -> Self {
@@ -124,6 +132,7 @@ impl Response {
             status: 404,
             content_type: "text/plain; charset=utf-8",
             body: b"not found".to_vec(),
+            notice: None,
         }
     }
 
