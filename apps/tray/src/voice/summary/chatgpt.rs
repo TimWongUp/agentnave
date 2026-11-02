@@ -494,17 +494,17 @@ pub(super) fn respond(
     text: &str,
     reasoning_effort: Option<&str>,
     system: &str,
+    session: &str,
 ) -> Result<String, String> {
     let input = json!([{"type":"message","role":"user",
         "content":[{"type":"input_text","text":user_message(text)}]}]);
-    let key = conversation_key(system, &input);
     let mut body = json!({
         "model":model,
         "instructions":system,
         "store":false,
         "stream":true,
         "input":input,
-        "prompt_cache_key":key
+        "prompt_cache_key":session
     });
     if let Some(effort) = reasoning_effort {
         body["reasoning"] = json!({"effort":effort});
@@ -514,8 +514,8 @@ pub(super) fn respond(
         client()?
             .post(format!("{API}/responses"))
             .bearer_auth(token)
-            .header("session-id", &key)
-            .header("thread-id", &key)
+            .header("session-id", session)
+            .header("thread-id", session)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body.to_string()),
         token,
@@ -525,7 +525,7 @@ pub(super) fn respond(
 }
 
 /// A conversation's name from how it starts, as magpie gives one to a client that sends none.
-fn conversation_key(instructions: &str, input: &Value) -> String {
+pub(super) fn conversation_key(instructions: &str, input: &Value) -> String {
     let mut hash = sha2::Sha256::new();
     hash.update(instructions.as_bytes());
     for item in input.as_array().into_iter().flatten() {

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const DEFAULT_MODEL: &str = "eleven_v4";
+pub(super) const DEFAULT_MODEL: &str = "eleven_v4_turbo";
 
 pub(super) fn models(key: &str) -> Result<Vec<Voice>, String> {
     let bytes = http(
@@ -49,7 +49,6 @@ pub(super) fn synthesize(
     model: &str,
     voice: &str,
     text: &str,
-    speed: f64,
 ) -> Result<Vec<u8>, String> {
     if key.is_empty() {
         return Err("请先保存 ElevenLabs API 密钥".into());
@@ -61,9 +60,7 @@ pub(super) fn synthesize(
             ))
             .header("xi-api-key", key)
             .header("Content-Type", "application/json")
-            .body(
-                json!({"text":text,"model_id":model,"voice_settings":{"speed":speed}}).to_string(),
-            ),
+            .body(json!({"text":text,"model_id":model}).to_string()),
         key,
     )
 }

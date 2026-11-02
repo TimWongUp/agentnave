@@ -234,7 +234,7 @@ fn magpie_identity_catalog_display_names_and_low_reasoning_are_preserved() {
     assert_eq!(body["model"], "opencode-go/deepseek-v4.1-flash");
     assert_eq!(body["reasoning_effort"], "low");
     assert_eq!(body["stream"], false);
-    assert_eq!(body["max_tokens"], 350);
+    assert_eq!(body["max_tokens"], 1000);
 }
 
 #[test]
@@ -382,16 +382,16 @@ fn summary_output_rejects_empty_symbols_and_length_and_caps_long_text() {
     ] {
         assert!(output(&json!({"choices":[choice]})).is_err());
     }
-    let content = format!("{}。{}。", "甲".repeat(100), "乙".repeat(100));
+    let content = format!("{}。{}。", "甲".repeat(200), "乙".repeat(200));
     let value = json!({"choices":[{"finish_reason":"stop","message":{"content":content}}]});
     let generated = output(&value).unwrap();
-    assert!(generated.chars().count() <= 140);
+    assert_eq!(generated.chars().count(), 201);
     assert!(generated.ends_with('。'));
 }
 
 #[test]
 fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
-    let server = FakeServer::start(13, |request| {
+    let server = FakeServer::start(7, |request| {
         if request.path.ends_with("/models") {
             return Reply {
                 status: 200,
@@ -432,6 +432,8 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
         );
         storage::cache(directory.path(), &cache_key, cached.as_bytes(), "txt").unwrap();
     }
+    // One catalog read serves every later summary of the same model.
+    assert!(catalog_levels(&base, "", "model-a").unwrap().is_some());
     let workers: Vec<_> = (0..2)
         .map(|_| {
             let directory = directory.clone();
@@ -473,6 +475,11 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
     assert_eq!(bodies[2]["model"], "model-b");
     assert_eq!(bodies[2]["reasoning_effort"], "high");
     assert_eq!(bodies.len(), 5);
+    assert_eq!(
+        requests.len() - bodies.len(),
+        2,
+        "one catalog read per model"
+    );
     let system = bodies[4]["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("用两句话介绍结论。"));
     assert!(system.contains("冷静的主持人"));
@@ -491,7 +498,7 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
 fn boss_and_member_prompts_only_change_summary_speech_style() {
     let server = FakeServer::start(4, |_| Reply {
         status: 500,
-        body: json!({"error":"no TTS should follow"}),
+        body: json!({"error":"summary failed"}),
     });
     let directory = tempfile::tempdir().unwrap();
     let mut settings = storage::read_settings(directory.path()).unwrap();
@@ -516,14 +523,25 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
             "会议总结：已选择方案甲，因为速度更快，费用分歧仍需确认。".repeat(10),
         ),
     ] {
-        let result = speak(
+        cache_opening(directory.path(), &text);
+        let response = speak(
             directory.path(),
-            &json!({"family":"gpt","text":text,"full":false,"boss":boss,
+            &json!({"family":"gpt","text":text,"full":false,"boss":boss,"voice":"voice-a",
                 "scene":{"name":"GPT","role":"探索派","room":true,"to":null}}),
-        );
-        assert!(error(result).contains("500"));
+        )
+        .unwrap();
+        assert!(response.notice.unwrap().contains("500"));
     }
     let requests = server.finish();
+    // Both speakers' summaries are one conversation, so the endpoint can reuse its prompt cache.
+    let session = |index: usize| {
+        requests[index].headers.lines().find_map(|line| {
+            line.to_lowercase()
+                .strip_prefix("x-session-id:")
+                .map(|v| v.trim().to_string())
+        })
+    };
+    assert!(session(1).is_some() && session(1) == session(3));
     for (index, expected, absent) in [
         (1, "你是一位冷静果断的主持人。", "你是热心而幽默的同事。"),
         (3, "你是热心而幽默的同事。", "你是一位冷静果断的主持人。"),
@@ -531,6 +549,8 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         let body: Value = serde_json::from_slice(&requests[index].body).unwrap();
         let system = body["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains(expected) && !system.contains(absent));
+        // Messages differ only after the fixed head, which providers can then cache.
+        assert!(system.starts_with(&fixed_prompt("保留主要结论。")));
         assert!(system.contains("保留主要结论。"));
         assert!(system.contains("不替自己回答") && system.contains("不说成已完成"));
         assert!(system.contains("不看你是 boss 还是员工"));
@@ -538,7 +558,7 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         assert!(system.contains(if index == 1 {
             "你是这个工作区的 boss"
         } else {
-            "你是员工 GPT，工位角色是「探索派」"
+            "你是员工 GPT，职责是「探索派」"
         }));
         let original = body["messages"][1]["content"].as_str().unwrap();
         assert!(original.starts_with("下面是你要说的原话"));
@@ -550,8 +570,16 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
     }
 }
 
+/// The audio a failed summary falls back to, so a test never reaches a real voice service.
+fn cache_opening(root: &Path, raw: &str) {
+    let settings = storage::read_settings(root).unwrap();
+    let opening = text::excerpt(&text::clean(raw, true));
+    let key = super::super::audio_key(&settings, "elevenlabs", "voice-a", &opening);
+    storage::cache(root, &key, b"opening", "mp3").unwrap();
+}
+
 #[test]
-fn short_text_skips_summary_and_failed_summary_never_reaches_tts() {
+fn every_message_is_summarized_and_a_failed_summary_reads_the_opening() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = json!({
         "enabled":true,
@@ -585,12 +613,16 @@ fn short_text_skips_summary_and_failed_summary_never_reaches_tts() {
         &json!({"engine":"elevenlabs","key":"fake-tts-key"}),
     )
     .unwrap();
-    let failed = error(speak(
+    // Even a short message goes to the summary model.
+    let raw = "这是一句短话。";
+    cache_opening(directory.path(), raw);
+    let failed = speak(
         directory.path(),
-        &json!({"family":null,"text":"这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。","full":true}),
-    ));
-    assert!(failed.contains("500"), "{failed}");
-    assert!(!failed.contains("API 密钥"));
+        &json!({"family":null,"text":raw,"full":false,"voice":"voice-a"}),
+    )
+    .unwrap();
+    assert_eq!(failed.body, b"opening");
+    assert!(failed.notice.unwrap().contains("500"));
     let requests = server.finish();
     assert_eq!(requests.len(), 2);
     assert!(requests[0].path.ends_with("/models"));
@@ -612,11 +644,14 @@ fn summary_limits_and_magpie_config_are_explicit() {
         "summary":summary_settings("http://127.0.0.1:9/v1", "custom", "model")
     });
     storage::save_settings(directory.path(), &settings).unwrap();
-    let too_long = error(speak(
-        directory.path(),
-        &json!({"family":null,"text":"字".repeat(30_001),"full":true}),
-    ));
-    assert!(too_long.contains("30000"));
+    // A very long message is no longer refused; it still needs the engine's key.
+    assert_eq!(
+        error(speak(
+            directory.path(),
+            &json!({"family":null,"text":"字".repeat(30_001),"full":true}),
+        )),
+        "请先保存所选引擎的 API 密钥"
+    );
     assert_eq!(
         error(speak(
             directory.path(),
@@ -665,7 +700,7 @@ fn each_platform_keeps_its_own_key_and_needs_one() {
     storage::save_key(root, &json!({"engine":"summary","key":"mine"})).unwrap();
     let keys = storage::read_keys(root).unwrap();
     assert_eq!(key_of(&keys, &settings), "ds");
-    assert_eq!(key_of(&keys, &json!({"provider":"groq"})), "");
+    assert_eq!(key_of(&keys, &json!({"provider":"qwen"})), "");
     assert_eq!(key_of(&keys, &json!({"provider":"custom"})), "mine");
     for refused in ["chatgpt", "chatgpt_host", "summary:unknown"] {
         assert!(storage::save_key(root, &json!({"engine":refused,"key":"x"})).is_err());
@@ -695,5 +730,5 @@ fn a_chatgpt_catalog_lists_its_slugs_for_pickers_and_their_levels() {
 fn openai_chat_gets_its_own_token_limit_field() {
     let body = for_openai(request_prompt("m", "t", None, "s"));
     assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
-    assert_eq!(body["max_completion_tokens"], 350);
+    assert_eq!(body["max_completion_tokens"], 1000);
 }

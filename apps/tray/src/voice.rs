@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-/// With summaries on, only a message this short is read as written.
-const SHORT_CHARS: usize = 50;
+/// A summary hears at most this much of a very long message.
+const SUMMARY_INPUT_CHARS: usize = 6_000;
 
 #[derive(Clone)]
 struct Voice {
@@ -102,13 +102,6 @@ fn valid_voice(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-}
-fn speed(settings: &Value) -> f64 {
-    match settings["rate"].as_str() {
-        Some("slow") => 0.85,
-        Some("fast") => 1.15,
-        _ => 1.0,
-    }
 }
 
 /// The model a synthesis uses: the user's pick, else the engine's default.
@@ -269,8 +262,8 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         Some(Value::Bool(boss)) => *boss,
         _ => return Err("boss 必须为布尔值".into()),
     };
-    let (text, long_summary) = source_text(payload, settings["summary"]["enabled"] == true)?;
-    if text.is_empty() && long_summary.is_none() {
+    let (text, to_summarize) = source_text(payload, settings["summary"]["enabled"] == true)?;
+    if text.is_empty() && to_summarize.is_none() {
         return Ok(no_audio());
     }
     let engine = settings["engine"].as_str().unwrap_or("elevenlabs");
@@ -280,42 +273,35 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         .filter(|key| !key.is_empty())
         .ok_or("请先保存所选引擎的 API 密钥")?;
     let scene = scene::Scene::of(payload, boss);
-    let text = match long_summary {
+    let mut notice = None;
+    let text = match to_summarize {
         Some(full_text) => {
             let summary_key = summary::key_of(&keys, &settings["summary"]);
             let mut options = settings["summary"].clone();
             let character = if boss { "boss" } else { family.unwrap_or("") };
             options["persona"] = settings["personas"][character].clone();
             options["identity"] = json!(scene.identity());
-            summary::summarize(root, &full_text, &options, summary_key)?
+            // A failed summary still speaks: the opening, as without summaries.
+            summary::summarize(root, &full_text, &options, summary_key).unwrap_or_else(|error| {
+                notice = Some(format!("摘要失败，已改读开头：{error}"));
+                text::excerpt(&full_text)
+            })
         }
         None => text,
     };
-    let text = scene.addressed(text);
     let voice = select_voice(payload, family, &settings, &keys, engine)?;
     let model = model(&settings, engine);
-    let cache_key = storage::hash(
-        &json!([
-            engine,
-            model,
-            voice,
-            settings["rate"],
-            settings["minimax_region"],
-            text
-        ])
-        .to_string(),
-    );
+    let cache_key = audio_key(&settings, engine, &voice, &text);
     if let Some(audio) = storage::cached(root, &cache_key, "mp3") {
-        return Ok(Response::ok("audio/mpeg", audio));
+        return Ok(Response::ok("audio/mpeg", audio).with_notice(notice));
     }
     let audio = match engine {
-        "elevenlabs" => elevenlabs::synthesize(key, model, &voice, &text, speed(&settings)),
+        "elevenlabs" => elevenlabs::synthesize(key, model, &voice, &text),
         "minimax" => minimax::synthesize(
             key,
             model,
             &voice,
             &text,
-            speed(&settings),
             settings["minimax_region"].as_str().unwrap_or("cn"),
         ),
         _ => Err("未知语音引擎".into()),
@@ -324,29 +310,38 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         return Err("语音服务未返回音频".into());
     }
     storage::cache(root, &cache_key, &audio, "mp3")?;
-    Ok(Response::ok("audio/mpeg", audio))
+    Ok(Response::ok("audio/mpeg", audio).with_notice(notice))
+}
+
+fn audio_key(settings: &Value, engine: &str, voice: &str, text: &str) -> String {
+    storage::hash(
+        &json!([
+            engine,
+            model(settings, engine),
+            voice,
+            settings["minimax_region"],
+            text
+        ])
+        .to_string(),
+    )
 }
 
 fn source_text(payload: &Value, summary_enabled: bool) -> Result<(String, Option<String>), String> {
     let raw = payload["text"].as_str().ok_or("缺少发言文本")?;
     let full = payload["full"].as_bool().ok_or("full 必须为布尔值")?;
-    let result = if summary_enabled {
-        if raw.chars().count() > 30_000 {
-            return Err("摘要模式发言文本不能超过 30000 字".into());
-        }
-        let cleaned = text::clean(raw, true);
-        if cleaned.chars().count() <= SHORT_CHARS {
-            (cleaned, None)
-        } else {
-            (String::new(), Some(cleaned))
-        }
-    } else {
-        if raw.chars().count() > 5000 {
-            return Err("发言文本不能超过 5000 字".into());
-        }
-        (text::clean(raw, full), None)
-    };
-    Ok(result)
+    // With summaries on, every message is spoken through the summary model, which knows who
+    // speaks to whom; only a full read, like a voice sample, is read as written.
+    if !summary_enabled || full {
+        return Ok((text::clean(raw, full), None));
+    }
+    let cleaned = text::clean(raw, true);
+    if cleaned.is_empty() {
+        return Ok((cleaned, None));
+    }
+    Ok((
+        String::new(),
+        Some(cleaned.chars().take(SUMMARY_INPUT_CHARS).collect()),
+    ))
 }
 
 fn no_audio() -> Response {

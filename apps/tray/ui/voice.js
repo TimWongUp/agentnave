@@ -4,18 +4,19 @@
   const { h } = AN;
   let config = null, group = null, view = null, observed = new Map(), skip = true;
   let queue = [], current = null, generation = 0, failures = 0, halted = false;
-  let running = false, loading = null, baselineEpoch = 0, autoSince = 0;
-  let roomView = null, playlistScope = null, playlistLoad = null;
+  let running = false, loading = null, baselineEpoch = 0;
+  let roomView = null, playlistScope = null, playlistFetch = null;
   let privateView = null, channelVisible = false, paused = false, wakePlayback = null;
-  const toggle = h("button.voice-toggle", { type: "button", hidden: true, "aria-label": "自动读摘要", "aria-pressed": "false" }, h("span.voice-track"), "自动读");
+  const switchButton = label => h("button.voice-toggle", { type: "button", hidden: true, "aria-label": label, "aria-pressed": "false" }, h("span.voice-track"), label);
+  // Auto read speaks new messages as they arrive; chaining follows a clicked message down its conversation.
+  const toggle = switchButton("新消息自动读"), chain = switchButton("点读后连播");
   const actions = document.getElementById("voice-actions");
-  const playAll = h("button.voice-play-all", { type: "button", "aria-pressed": "false" }, "从头读");
   const roster = h("div.voice-roster");
   const channelStop = h("button.voice-stop", { type: "button", disabled: true, hidden: true }, "暂停");
   const statusName = h("span.voice-status-name");
   const status = h("div.voice-status", { "aria-live": "polite" }, h("span.voice-waves", {}, h("i"), h("i"), h("i")), statusName);
   const more = h("div.voice-more");
-  actions.append(roster, status, toggle, h("div.voice-channel-controls", {}, channelStop, playAll));
+  actions.append(roster, status, toggle, chain, h("div.voice-channel-controls", {}, channelStop));
   let channelContext = null;
   const participants = new Map();
   const ROSTER_LIMIT = 6;
@@ -39,18 +40,19 @@
       const next = await state();
       const previous = config;
       const different = !previous || JSON.stringify(previous) !== JSON.stringify(next);
+      const usable = c => Boolean(c.enabled && c.keys?.[c.engine]);
+      // Only a change that silences or redirects playback interrupts it; other settings
+      // apply to the next clip.
+      const interrupt = previous && different && (usable(previous) !== usable(next)
+        || previous.engine !== next.engine || previous.auto_read === true && next.auto_read !== true);
       if (previous && different) {
-        if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || Boolean(previous.keys?.[previous.engine]) !== Boolean(next.keys?.[next.engine])) { skip = true; baselineEpoch++; }
+        if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || usable(previous) !== usable(next)) { skip = true; baselineEpoch++; }
         if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
-        if (previous.auto_read === false && next.auto_read !== false) autoSince = Date.now();
       }
       config = next;
-      toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
-      toggle.disabled = !ready();
-      if (different) {
-        if (previous) stop();
-        else changed();
-      }
+      switches();
+      if (interrupt) stop();
+      else if (different) changed();
     })().finally(() => { loading = null; });
     return loading;
   }
@@ -99,39 +101,60 @@
     const family = Avatars.family(provider, model);
     return family === "gpt" ? "GPT" : Avatars.families?.[family]?.[0] || AN.cliName?.(provider) || "";
   }
-  // The one employee a boss message is said to, named by role too if a seat shares its family.
-  function addressee(m, ctx, boss) {
-    if (!boss || m.kind === "forward" || m.thread?.kind === "room" && m.kind !== "instruction") return null;
+  // How the summary model may call a desk: its spoken name and duty, and whether another seat of
+  // this meeting shares that name.
+  function person(d, ctx, m) {
+    // A desk on its CLI's default model knows the model only from what the CLI reported.
+    const familyOf = desk => Avatars.family(desk.provider, desk.display_model || desk.model);
+    const family = familyOf(d);
+    const seats = m?.thread?.kind === "room" ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
+    const twin = Boolean(family) && seats.some(s => s.desk !== d.key && (t => t && familyOf(t) === family)(ctx.desks.get(s.desk)));
+    return { name: spokenName(d.provider, d.display_model || d.model), role: d.role || "", twin };
+  }
+  // Whom a boss message is said to: its one employee in private, or the seats it names in a
+  // meeting; nobody named means the whole meeting.
+  function listeners(m, ctx, boss) {
+    if (!boss || m.kind === "forward") return [];
     const keys = m.to?.map(t => t.key).filter(Boolean) || [];
-    const d = ctx.desks.get(m.desk || (keys.length === 1 ? keys[0] : null));
-    if (!d) return null;
-    const family = Avatars.family(d.provider, d.model);
-    const seats = m.thread?.kind === "room" ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
-    const twin = seats.some(s => s.desk !== d.key && (t => t && Avatars.family(t.provider, t.model) === family)(ctx.desks.get(s.desk)));
-    const name = spokenName(d.provider, d.model);
-    return { name: twin && d.role ? `${name} ${d.role}` : name, role: d.role || "" };
+    const meeting = m.thread?.kind === "room" && m.kind !== "instruction";
+    const seats = meeting ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
+    const named = meeting ? (keys.length && keys.length < seats.length ? keys : []) : m.desk ? [m.desk] : keys.slice(0, 1);
+    return named.map(key => ctx.desks.get(key)).filter(Boolean).map(d => person(d, ctx, m));
+  }
+  // Whose words a boss forward relays, when the forwarded message is still in view.
+  function source(m, ctx) {
+    const id = m.forward?.message_id;
+    const original = id && ctx.c.messages?.find(o => o.message_id === id);
+    if (!original) return null;
+    if (original.speaker?.role === "manager") return { name: "boss", role: "" };
+    const d = original.desk && ctx.desks.get(original.desk);
+    return d ? person(d, ctx, original) : { name: spokenName(original.speaker?.provider, original.speaker?.model), role: "" };
   }
   function item(m, ctx, automatic = false) {
     const d = m.desk && ctx.desks.get(m.desk);
     const boss = m.speaker?.role === "manager";
     const { provider, model } = boss ? bossIdentity(m, ctx.c)
-      : { provider: m.speaker?.provider || d?.provider || ctx.c.host, model: m.speaker?.model || d?.model || "" };
+      : { provider: m.speaker?.provider || d?.provider || ctx.c.host, model: m.speaker?.model || d?.display_model || d?.model || "" };
     return { id: m.id, room: m.thread?.kind === "room" ? m.thread.id : null, desk: m.desk,
       kind: m.kind, conversation: m.conversation, round: m.round,
       boss, family: Avatars.family(provider, model) || null,
       provider, model, role: boss ? "" : d?.role || m.speaker?.desk_role || "", label: boss ? "boss" : d ? AN.deskName(d) : m.speaker?.label || provider,
-      name: boss ? "boss" : spokenName(provider, model), to: addressee(m, ctx, boss),
+      name: boss ? "boss" : spokenName(provider, model), to: listeners(m, ctx, boss),
+      private: m.thread?.kind !== "room" || m.kind === "instruction" || m.kept_private === true,
+      forward: boss && m.kind === "forward" ? source(m, ctx) : null,
       text: m.text, time: Date.parse(m.time) || 0, automatic, controller: new AbortController() };
   }
   async function audio(job) {
     const response = await fetch("/app/voice/speak", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
       signal: job.controller.signal, body: JSON.stringify({ family: job.family, text: job.text, full: false, boss: job.boss,
-        scene: { name: job.name, role: job.role, room: Boolean(job.room), to: job.to } }) });
+        scene: { name: job.name, role: job.role, room: Boolean(job.room), private: job.private, to: job.to, forward: job.forward } }) });
     if (response.status === 204) return null;
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || "语音播报合成失败");
     }
+    const notice = response.headers.get("X-AgentNave-Notice");
+    if (notice) error(decodeURIComponent(notice));
     return response.blob();
   }
   function prepare(job) {
@@ -153,14 +176,28 @@
   function stop(notify = true) {
     generation++;
     paused = false; wakePlayback?.(); wakePlayback = null;
-    playlistLoad?.abort(); playlistLoad = null; playlistScope = null;
+    playlistFetch?.abort(); playlistFetch = null; playlistScope = null;
     for (const job of queue) { job.controller.abort(); job.prepared = null; }
     queue = [];
     if (current) { current.controller.abort(); finish(current); current = null; }
     if (notify) changed();
   }
+  // Ends a chained read; what auto read queued meanwhile stays queued.
+  function dropPlaylist(keepCurrent = false) {
+    playlistFetch?.abort(); playlistFetch = null; playlistScope = null;
+    queue = queue.filter(job => job.automatic || (job.controller.abort(), false));
+    if (!keepCurrent && current && !current.automatic) interrupt();
+    // A pause between clips with nothing left to resume would leave the player stuck.
+    if (!current && !queue.length) paused = false;
+  }
+  // Ends the clip in progress but keeps what is queued after it.
+  function interrupt() {
+    generation++;
+    paused = false; wakePlayback?.(); wakePlayback = null;
+    if (current) { current.controller.abort(); finish(current); current = null; }
+  }
   function pause() {
-    if (!current && !queue.length && !playlistLoad) return;
+    if (!current && !queue.length) return;
     paused = true;
     if (current?.audio) { current.audio.pause(); current.speaking = false; }
     changed();
@@ -196,15 +233,21 @@
       job.audio.play().catch(failure => { if (!paused) reject(failure); });
     });
   }
+  // While a clip plays, the next two are already being synthesized.
+  function prefetch() {
+    if (!paused) for (const next of queue.slice(0, 2)) prepare(next);
+  }
   async function drain() {
-    if (running || paused || playlistLoad || halted || !ready() || document.hidden) return;
+    if (running || paused || halted || !ready() || document.hidden) return;
     running = true;
     try {
       while (queue.length && !paused && !halted && ready() && !document.hidden) {
         const token = generation;
         const job = current = queue.shift();
+        // Once only auto read is left, the chained read is over.
+        if (playlistScope && !playlistFetch && job.automatic && !queue.some(next => !next.automatic)) playlistScope = null;
         prepare(job);
-        if (playlistScope) for (const next of queue.slice(0, 2)) prepare(next);
+        prefetch();
         changed();
         try {
           await play(job, token);
@@ -223,18 +266,18 @@
       }
     } finally {
       running = false;
-      if (paused && !current && !queue.length && !playlistLoad) { paused = false; changed(); }
-      if (!queue.length && !playlistLoad && playlistScope) { playlistScope = null; changed(); }
+      if (paused && !current && !queue.length) { paused = false; changed(); }
+      if (!queue.length && !playlistFetch && playlistScope) { playlistScope = null; changed(); }
     }
   }
+  // Auto read follows the whole workspace, whichever conversation is open: each message is
+  // read once, when it first becomes readable after the baseline.
   function ingest(chat, ctx, focus = null, epoch = baselineEpoch) {
     const baseline = skip || document.hidden || group !== chat.group || view !== focus || epoch !== baselineEpoch;
     if (group !== chat.group) {
       stop(false); observed = new Map(); group = chat.group;
-      autoSince = Date.now();
     }
     view = focus;
-    const selectedRoom = roomView?.group === chat.group ? roomView.id : null;
     const answers = new Map(chat.messages.filter(m => m.kind === "reply" && eligible(m)).map(m =>
       [answerKey(m), { message: m, seen: observed.get(m.id) === true }]));
     for (const m of chat.messages) {
@@ -242,56 +285,78 @@
       const answer = briefing ? answers.get(briefing) : null;
       const can = eligible(m) && (!briefing || Boolean(answer));
       const seen = observed.get(m.id) === true;
-      const inScope = channelVisible && (selectedRoom ? m.conversation === selectedRoom
-        : privateView ? privateMessage(m, privateView) : m.thread?.kind !== "room");
-      if (!baseline && !playlistScope && inScope && can && !seen && !answer?.seen && ready() && !halted && config.auto_read !== false && Date.parse(answer?.message.time || m.time) >= autoSince)
+      if (!baseline && can && !seen && !answer?.seen && ready() && !halted && config.auto_read === true)
         queue.push(item(m, ctx, true));
       observed.set(m.id, seen || can);
     }
     if (!document.hidden && epoch === baselineEpoch) skip = false;
-    queue.sort((a, b) => a.time - b.time);
+    // A message picked by hand stays first.
+    queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
     queue = beforeAnswers(queue);
+    if (current) prefetch();
     // Playback only updates its channel and message controls.
     queueMicrotask(drain);
     void reload().catch(failure => error(failure.message));
   }
-  async function readAll() {
-    const target = roomView || (privateView ? { group: channelContext?.c.group || group, id: privateView, private: true } : null);
-    stop(false);
-    if (!channelVisible || !target || !ready() || halted) { changed(); return; }
-    const token = generation;
-    playlistScope = target.id;
-    playlistLoad = new AbortController();
+  // The messages of one conversation a chained read follows, in the order they are shown.
+  function playable(chat, target) {
+    const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
+      rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
+    // A briefing waits for its answer, as in auto read.
+    const answered = new Set(chat.messages.filter(m => m.kind === "reply" && eligible(m)).map(answerKey).filter(Boolean));
+    const list = chat.messages.filter(m => eligible(m) && (m.kind !== "instruction" || !answerKey(m) || answered.has(answerKey(m)))
+      && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
+    list.sort((a, b) => a.time - b.time);
+    return beforeAnswers(list);
+  }
+  // Reads the clicked message at once, then, with chaining on, the rest of its conversation after it.
+  async function readFrom(m, chosen) {
+    if (playlistScope) dropPlaylist();
+    const queued = queue.find(job => job.id === chosen.id);
+    queue = queue.filter(job => job !== queued);
+    queue.unshift(Object.assign(queued || chosen, { chosen: true, automatic: false }));
+    observed.set(chosen.id, true);
+    interrupt();
     changed();
+    void drain();
+    const target = config?.continue_read !== true ? null : roomView ? roomView
+      : privateView ? { group: channelContext?.c.group || group, id: privateView, private: true }
+        : m.conversation ? { group, id: m.conversation } : null;
+    if (!target) return;
+    const load = playlistFetch = new AbortController();
+    playlistScope = target.id;
     try {
       const path = target.private ? "history" : `focus/${encodeURIComponent(target.id)}`;
       const response = await fetch(`/app/chats/${encodeURIComponent(target.group)}/${path}`,
-        { cache: "no-store", signal: playlistLoad.signal });
+        { cache: "no-store", signal: load.signal });
       if (!response.ok) throw new Error("无法读取完整对话消息");
       const chat = await response.json();
-      if (token !== generation) return;
-      const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
-        rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
-      queue = chat.messages.filter(m => eligible(m) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
-      queue.sort((a, b) => a.time - b.time);
+      if (playlistFetch !== load) return;
+      const list = playable(chat, target);
+      const start = list.findIndex(job => job.id === chosen.id);
+      const known = new Set([current?.id, ...queue.map(job => job.id)]);
+      // A briefing still waiting for its answer is not in the list; the chain starts after it.
+      const after = start < 0 ? list.filter(job => job.time > chosen.time) : list.slice(start + 1);
+      const rest = after.filter(job => !known.has(job.id));
+      for (const job of rest) observed.set(job.id, true);
+      queue.push(...rest);
+      queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
       queue = beforeAnswers(queue);
-      for (const job of queue) observed.set(job.id, true);
-      if (!queue.length) { playlistScope = null; error("对话里还没有可朗读的消息"); }
+      if (current) prefetch();
     } catch (failure) {
-      if (token === generation) { playlistScope = null; error(failure.message); }
+      if (playlistFetch === load) error(failure.message);
     } finally {
-      if (token === generation) {
-        playlistLoad = null;
-        if (!queue.length) paused = false;
+      if (playlistFetch === load) {
+        playlistFetch = null;
+        if (!queue.some(job => !job.automatic) && !current?.chosen) playlistScope = null;
         changed(); void drain();
       }
     }
   }
   function controls(visible, room = null, ctx = null, desk = null) {
-    if (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk) {
-      stop(false);
-      autoSince = Date.now();
-    }
+    // A chained read belongs to the open conversation; auto read does not.
+    if (playlistScope && (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk))
+      dropPlaylist();
     roomView = room;
     privateView = desk;
     channelVisible = visible;
@@ -310,7 +375,7 @@
     const room = roomView && ctx?.rooms?.get(roomView.id);
     const desks = room ? room.seats.map(s => ctx.desks.get(s.desk)).filter(Boolean)
       : privateView ? [ctx?.desks.get(privateView)].filter(Boolean) : [];
-    for (const d of desks) people.push({ key: d.key, provider: d.provider, model: d.model, role: d.role, label: AN.deskName(d) });
+    for (const d of desks) people.push({ key: d.key, provider: d.provider, model: d.display_model || d.model, role: d.role, label: AN.deskName(d) });
     if (current && !current.boss && !people.some(p => p.key === current.desk))
       people.push({ key: current.desk || current.id, provider: current.provider, model: current.model, role: current.role, label: current.label });
     const keep = new Set();
@@ -339,22 +404,19 @@
     more.textContent = `+${people.length - shown.length}`;
     more.title = people.filter(p => !shown.includes(p)).map(p => p.host ? "boss" : p.role || p.label).join("、");
     AN.reconcile(roster, [...shown.map(p => participants.get(p.key).el), ...people.length > shown.length ? [more] : []]);
-    const idle = !current && !queue.length && !playlistLoad;
-    if (!current) statusName.textContent = playlistLoad ? "读取中" : "";
+    const idle = !current && !queue.length;
+    if (!current) statusName.textContent = "";
     actions.hidden = !channelVisible || !config?.enabled;
     actions.dataset.live = String(Boolean(current?.speaking));
     actions.dataset.active = String(!idle);
-    status.hidden = !current && !playlistLoad;
-    toggle.hidden = actions.hidden;
-    playAll.hidden = actions.hidden || !roomView && !privateView || !idle && !paused;
-    playAll.disabled = !ready() || halted;
+    status.hidden = !current;
+    toggle.hidden = chain.hidden = actions.hidden;
     channelStop.textContent = paused ? "继续" : "暂停";
     channelStop.hidden = idle;
     channelStop.disabled = idle;
     channelStop.dataset.paused = String(paused);
   }
   channelStop.addEventListener("click", () => paused ? resume() : pause());
-  playAll.addEventListener("click", readAll);
   function decorate(rec, m, ctx) {
     if (!rec.read) {
       rec.readLabel = h("span", {}, "读摘要");
@@ -363,10 +425,9 @@
         event?.stopPropagation();
         const same = current && current.id === rec.voiceItem?.id;
         if (same) { if (paused) void resume(); else pause(); return; }
-        stop();
         if (!ready() || halted) return;
-        queue.push({ ...rec.voiceItem, controller: new AbortController() });
-        void drain();
+        // The chosen message goes first; what auto read queued still follows it.
+        void readFrom(m, { ...rec.voiceItem, controller: new AbortController() });
       });
       rec.bub.prepend(rec.read); // Keep the action inside the chat bubble, above its text.
     }
@@ -380,23 +441,33 @@
     rec.read.setAttribute("aria-label", rec.read.title);
     rec.read.setAttribute("aria-pressed", String(Boolean(reading)));
   }
-  toggle.addEventListener("click", async () => {
+  function switches() {
+    toggle.setAttribute("aria-pressed", String(config.auto_read === true));
+    chain.setAttribute("aria-pressed", String(config.continue_read === true));
+    toggle.disabled = chain.disabled = !ready();
+  }
+  async function flip(field) {
     if (!config) return;
-    toggle.disabled = true;
-    stop();
+    const on = config[field] === true;
+    toggle.disabled = chain.disabled = true;
+    if (field === "auto_read") {
+      if (on) stop();
+      // A poll finishing while this saves must not queue under the old setting.
+      skip = true; baselineEpoch++;
+    } else if (on) dropPlaylist(true);
     try {
-      const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, auto_read: config.auto_read === false }) });
+      const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, [field]: !on }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "无法保存语音播报设置");
-      config = data; failures = 0; halted = false; skip = true; baselineEpoch++;
-      autoSince = Date.now();
-      toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
-      toggle.disabled = !ready();
+      config = data; failures = 0; halted = false;
+      if (field === "auto_read") { skip = true; baselineEpoch++; }
       changed();
     } catch (failure) { error(failure.message); }
-    finally { toggle.disabled = !ready(); }
-  });
-  document.addEventListener("visibilitychange", () => { skip = true; baselineEpoch++; autoSince = Date.now(); stop(); });
+    finally { switches(); }
+  }
+  toggle.addEventListener("click", () => flip("auto_read"));
+  chain.addEventListener("click", () => flip("continue_read"));
+  document.addEventListener("visibilitychange", () => { skip = true; baselineEpoch++; stop(); });
   window.addEventListener("pagehide", stop);
   AN.voice = { ingest, decorate, pollToken: () => baselineEpoch, controls, stop, beforeAnswers };
   void reload().catch(failure => error(failure.message));

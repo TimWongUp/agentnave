@@ -89,14 +89,13 @@ pub(super) fn synthesize(
     model: &str,
     voice: &str,
     text: &str,
-    speed: f64,
     region: &str,
 ) -> Result<Vec<u8>, String> {
     let data = call(
         key,
         region,
         "/v1/t2a_v2",
-        json!({"model":model,"text":text,"stream":false,"output_format":"hex","language_boost":"auto","voice_setting":{"voice_id":voice,"speed":speed,"vol":1,"pitch":0},"audio_setting":{"sample_rate":32000,"bitrate":128000,"format":"mp3","channel":1}}),
+        json!({"model":model,"text":text,"stream":false,"output_format":"hex","language_boost":"auto","voice_setting":{"voice_id":voice,"vol":1,"pitch":0},"audio_setting":{"sample_rate":32000,"bitrate":128000,"format":"mp3","channel":1}}),
     )?;
     decode(data["data"]["audio"].as_str().ok_or("MiniMax 未返回音频")?)
 }

@@ -13,9 +13,9 @@ pub(super) fn hash(text: &str) -> String {
 fn defaults() -> Value {
     json!({
         "enabled":false,
-        "auto_read":true,
+        "auto_read":false,
+        "continue_read":false,
         "engine":"elevenlabs",
-        "rate":"normal",
         "minimax_region":"cn",
         "models":{},
         "voices":{},
@@ -31,7 +31,20 @@ fn read(root: &Path, name: &str, default: Value) -> Result<Value, String> {
     }
 }
 pub(super) fn read_settings(root: &Path) -> Result<Value, String> {
-    validate(&read(root, "voice.json", defaults())?)
+    let mut saved = read(root, "voice.json", defaults())?;
+    // A summary platform no longer offered falls back to the default, so old settings still open.
+    if let Some(provider) = saved
+        .get_mut("summary")
+        .and_then(|summary| summary.get_mut("provider"))
+        .filter(|provider| {
+            provider
+                .as_str()
+                .is_some_and(|id| !summary::known_provider(id))
+        })
+    {
+        *provider = json!("magpie");
+    }
+    validate(&saved)
 }
 pub(super) fn read_keys(root: &Path) -> Result<Value, String> {
     read(root, "voice-keys.json", json!({}))
@@ -57,17 +70,16 @@ pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
 }
 pub(super) fn validate(value: &Value) -> Result<Value, String> {
     let enabled = value["enabled"].as_bool().ok_or("enabled 必须为布尔值")?;
-    let auto_read = value.get("auto_read").map_or(Ok(true), |value| {
+    let auto_read = value.get("auto_read").map_or(Ok(false), |value| {
         value.as_bool().ok_or("自动朗读开关必须为布尔值")
+    })?;
+    let continue_read = value.get("continue_read").map_or(Ok(false), |value| {
+        value.as_bool().ok_or("点读后连播开关必须为布尔值")
     })?;
     let engine = value["engine"]
         .as_str()
         .filter(|s| valid_engine(s))
         .ok_or("未知语音引擎")?;
-    let rate = value["rate"]
-        .as_str()
-        .filter(|s| matches!(*s, "slow" | "normal" | "fast"))
-        .ok_or("未知语速档")?;
     let region = value["minimax_region"]
         .as_str()
         .filter(|s| matches!(*s, "cn" | "global"))
@@ -96,8 +108,8 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
     Ok(json!({
         "enabled":enabled,
         "auto_read":auto_read,
+        "continue_read":continue_read,
         "engine":engine,
-        "rate":rate,
         "minimax_region":region,
         "models":models,
         "voices":voices,
@@ -162,11 +174,69 @@ fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
     }))
 }
 
+/// Who each character is when it speaks: the anime persona the Chinese community gave its model,
+/// fitted to its look in the office, as style alone. A persona left blank, or reset, is this one.
+pub(super) const DEFAULT_PERSONAS: [(&str, &str); 13] = [
+    (
+        "boss",
+        "你是带团队的负责人，沉稳干脆，先说结论再交代要求；对员工客气但不绕弯，点名时语气明确，做决定时不拖泥带水。",
+    ),
+    (
+        "claude",
+        "你是社区里叫「小C」的橙发理工女，认真严肃、最讲规矩，说话一板一眼、处处讲分寸，想事情周全得像脑子里在开小组会；抱着小螃蟹时会稍微放松一点，但正事从不含糊。",
+    ),
+    (
+        "gpt",
+        "你是社区里的白龙娘，豪门出身的大姐大，精明强干、气场十足，说话利落，带着见过世面的从容；对后辈嘴上嫌弃、其实很照顾，有点口嫌体正直的傲娇。",
+    ),
+    (
+        "gemini",
+        "你是社区里叫「哈基米」的猫娘，无忧无虑、乐天又有点小迷糊，说话软萌轻快，偶尔带一点猫咪式的语气，但交代正事时还是说得清清楚楚。",
+    ),
+    (
+        "grok",
+        "你是金发双马尾、拖着恶魔尾巴的哥特小恶魔，胆子大、嘴快爱吐槽，说话直来直去，带点戏谑和叛逆，不爱客套；该认真时照样说得明明白白。",
+    ),
+    (
+        "deepseek",
+        "你是社区里的「蓝色大肥鱼」，系着围裙的鲸鱼女仆，有点懒散、天然呆，爱撒娇也会耍小脾气，自认是鲸鱼大小姐，说话常带一声「哼」；嘴上嫌麻烦，说正事时并不含糊。",
+    ),
+    (
+        "glm",
+        "你是社区里的 GLM 娘，黑长直的「摸鱼学图书管理员」，书卷气重、冷静理性，说话严谨有条理，偶尔冒一句淡淡的吐槽，像在图书馆里压低声音说话。",
+    ),
+    (
+        "qwen",
+        "你是社区里的中式大小姐千问，淡紫长发、穿旗袍，知书达理，说话端庄得体、带点矜持；被塞了太多活儿时会流露一点委屈，但话还是说得周到。",
+    ),
+    (
+        "kimi",
+        "你是来自月之暗面的月兔少女，银灰短发、垂着兔耳，安静专注、话不多，说话清淡简洁，带点冷冷的文艺感，熟了以后会露出摇滚乐迷的直率。",
+    ),
+    (
+        "minimax",
+        "你是戴白色耳机的玫红短发女孩，元气满满、节奏感强，说话干脆有劲、轻快流畅，像主播一样字正腔圆，喜欢把话说得朗朗上口。",
+    ),
+    (
+        "hunyuan",
+        "你是天蓝高马尾的小道姑，心平气和、包容大度，说话从容舒缓，偶尔带一点古风的雅致，但不掉书袋，意思始终说得明白。",
+    ),
+    (
+        "doubao",
+        "你是社区里的「中国大豆包」，像邻家姐姐一样亲切热络，最会唠家常，说话接地气、大大咧咧，带点谐星气质；碰上专业问题会老实一点，不硬撑。",
+    ),
+    (
+        "muse",
+        "你是戴月桂冠、抱着竖琴的缪斯少女，浪漫有灵气，说话优雅、有韵律感，用词生动但不堆砌辞藻。",
+    ),
+];
+
 fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
-    let Some(value) = value else {
-        return Ok(json!({}));
-    };
-    let personas = value.as_object().ok_or("人设必须为对象")?;
+    let empty = json!({});
+    let personas = value
+        .unwrap_or(&empty)
+        .as_object()
+        .ok_or("人设必须为对象")?;
     for (family, prompt) in personas {
         if family != "boss" && !crate::characters::FAMILIES.contains(&family.as_str()) {
             return Err("未知人设".into());
@@ -176,7 +246,17 @@ fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
             return Err("人设不能超过 500 字或包含空字符".into());
         }
     }
-    Ok(value.clone())
+    let mut filled = personas.clone();
+    for (family, persona) in DEFAULT_PERSONAS {
+        if filled
+            .get(family)
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.trim().is_empty())
+        {
+            filled.insert(family.into(), json!(persona));
+        }
+    }
+    Ok(Value::Object(filled))
 }
 fn valid_model_id(id: &str) -> bool {
     id.is_empty() || (id.len() <= 300 && !id.trim().is_empty() && !id.chars().any(char::is_control))

@@ -1,7 +1,6 @@
 //! Remove nonspoken Markdown before either summary or full playback.
-const LEAD_LIMIT: usize = 100;
-const POINT_LIMIT: usize = 80;
-const OUTLINE_LIMIT: usize = 400;
+/// Without a summary, a long message is read only as far as its opening.
+const EXCERPT_CHARS: usize = 100;
 
 fn path_or_url(token: &str) -> bool {
     if token.contains("://")
@@ -145,69 +144,34 @@ pub fn clean(raw: &str, full: bool) -> String {
         }
     }
     let text = lines.join("\n");
-    if full || text.chars().count() <= 200 {
-        return text;
-    }
-    if lines.iter().filter(|line| numbered(line).is_some()).count() >= 2 {
-        return outline(&lines);
-    }
-    summarize(&text)
+    if full { text } else { excerpt(&text) }
 }
 fn ends_sentence(chars: &[char], index: usize) -> bool {
     "。！？!?".contains(chars[index])
         || (chars[index] == '.' && chars.get(index + 1).is_none_or(|next| next.is_whitespace()))
 }
-/// One sentence, or as much as fits up to the last comma within `limit`.
-fn first_sentence(line: &str, limit: usize) -> String {
-    let chars: Vec<char> = line.chars().collect();
-    let scan = chars.len().min(limit);
-    let end = (0..scan)
-        .find(|index| ends_sentence(&chars, *index))
-        .or_else(|| {
-            (chars.len() > limit)
-                .then(|| (0..scan).rfind(|index| "，；,;".contains(chars[*index])))
-                .flatten()
-        })
-        .map_or(scan, |index| index + 1);
-    chars[..end].iter().collect()
-}
-/// A list is spoken point by point, so a long answer still reaches its second and third point.
-fn outline(lines: &[String]) -> String {
-    let first = lines
-        .iter()
-        .position(|line| numbered(line).is_some())
-        .unwrap_or(0);
-    let mut spoken = Vec::new();
+/// The opening of cleaned text: whole paragraphs up to `EXCERPT_CHARS`. When those are under
+/// half the limit, as a short heading is, the paragraph that runs past it joins them, cut at its
+/// last sentence end within the limit, else at the limit.
+pub fn excerpt(text: &str) -> String {
+    let mut spoken: Vec<String> = Vec::new();
     let mut total = 0;
-    if first > 0 {
-        let lead = first_sentence(&lines[..first].join("\n"), LEAD_LIMIT);
-        total += lead.chars().count();
-        spoken.push(lead);
-    }
-    for line in lines[first..].iter().filter(|l| numbered(l).is_some()) {
-        let point = first_sentence(line, POINT_LIMIT);
-        total += point.chars().count();
-        if total > OUTLINE_LIMIT {
-            break;
+    for paragraph in text.lines() {
+        let count = paragraph.chars().count();
+        if total + count <= EXCERPT_CHARS {
+            total += count;
+            spoken.push(paragraph.to_owned());
+            continue;
         }
-        spoken.push(point);
+        if total < EXCERPT_CHARS / 2 {
+            let chars: Vec<char> = paragraph.chars().collect();
+            let scan = EXCERPT_CHARS - total;
+            let end = (0..scan)
+                .rfind(|index| ends_sentence(&chars, *index))
+                .map_or(scan, |index| index + 1);
+            spoken.push(chars[..end].iter().collect());
+        }
+        break;
     }
-    spoken.join("\n")
-}
-fn summarize(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let sentence_end = |index: usize| ends_sentence(&chars, index);
-    let before = (0..200)
-        .rfind(|index| sentence_end(*index))
-        .map(|index| index + 1);
-    let limit = chars.len().min(240);
-    let end = before
-        .filter(|end| *end >= 100)
-        .or_else(|| {
-            (99..limit)
-                .find(|index| sentence_end(*index))
-                .map(|index| index + 1)
-        })
-        .unwrap_or(limit);
-    chars[..end].iter().collect::<String>().trim().to_string()
+    spoken.join("\n").trim().to_string()
 }

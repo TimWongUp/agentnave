@@ -37,13 +37,17 @@
   const row = (label, control) => h("div.setting-row", {}, h("h2", {}, label), control);
   // A long editor takes the row's whole width under its label.
   const wide = (label, control) => h("div.setting-row.voice-wide", {}, h("h2", {}, label), control);
+  // A catalog that arrives after the engine changed belongs to the old engine and is dropped.
   async function loadVoices() {
+    const engine = config.engine, usable = config.enabled && config.keys[engine];
     voices = [];
     models = [];
-    if (config.engine === "minimax") models = await request("/app/voice/models/minimax");
-    if (!config.enabled || !config.keys[config.engine]) return;
-    voices = await request(`/app/voice/voices/${config.engine}`);
-    if (config.engine !== "minimax") models = await request(`/app/voice/models/${config.engine}`);
+    const fixed = engine === "minimax" ? await request("/app/voice/models/minimax") : [];
+    const listed = usable ? await request(`/app/voice/voices/${engine}`) : [];
+    const loadedModels = usable && engine !== "minimax" ? await request(`/app/voice/models/${engine}`) : fixed;
+    if (config.engine !== engine) return;
+    voices = listed;
+    models = loadedModels;
   }
   async function loadSummaryModels() {
     summaryModels = [];
@@ -273,7 +277,7 @@
   function persona(family, label) {
     return section(`persona-${family}`, "人设",
       promptEditor(`persona-${family}`, `${label}人设`, config.personas[family] || "", 500,
-        value => save({ personas: { ...config.personas, [family]: value } })));
+        value => save({ personas: { ...config.personas, [family]: value } }), true));
   }
   function familySettings() {
     const table = h("div.voice-families", {}, h("div.voice-character", {},
@@ -292,30 +296,37 @@
     if (!config) return;
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.enabled, disabled: busy, "aria-label": "语音播报" });
     enabled.addEventListener("change", () => save({ enabled: enabled.checked }));
-    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": "自动读摘要" });
+    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": "新消息自动读" });
     automatic.addEventListener("change", () => save({ auto_read: automatic.checked }));
-    const parts = [row("语音播报", enabled), row("自动读摘要", automatic),
+    const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": "点读后连播" });
+    chained.addEventListener("change", () => save({ continue_read: chained.checked }));
+    const parts = [row("语音播报", enabled), row("新消息自动读", automatic), row("点读后连播", chained),
       row("引擎", segments("语音引擎", "engine", [["elevenlabs", "ElevenLabs"], ["minimax", "MiniMax"]])), keyRow()];
     if (config.engine === "minimax") parts.push(row("地区", segments("MiniMax 地区", "minimax_region", [["cn", "国内"], ["global", "海外"]])));
     parts.push(row("语音模型", picker("语音模型", models, config.model,
       id => save({ models: { ...config.models, [config.engine]: id } }))));
-    parts.push(row("语速", segments("语速", "rate", [["slow", "慢"], ["normal", "标准"], ["fast", "快"]])), modelSettings());
+    parts.push(modelSettings());
     parts.push(h("p.voice-cloud", {}, config.summary.enabled
       ? "回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。" : "回答内容会发送给所选语音引擎。"));
     root.replaceChildren(...parts, h("h2.voice-group", {}, "角色"), familySettings());
   }
+  // The settings work as soon as they are read; catalogs fill their pickers when they arrive.
   async function load() {
     if (busy) return;
     busy = true;
     try {
-      config = await request("/app/voice"); render();
+      config = await request("/app/voice");
       loaded = true;
       watchSignIn();
-      const result = await loadCatalogs("语音设置已加载");
-      if (result !== "语音设置已加载") status(result);
     }
-    catch (failure) { status(failure.message); }
+    catch (failure) { status(failure.message); return; }
     finally { busy = false; render(); }
+    const result = await loadCatalogs("语音设置已加载");
+    if (result !== "语音设置已加载") status(result);
+    // Redrawing would take the caret from a field being typed in; wait until it is left.
+    const field = root.contains(document.activeElement) && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName) ? document.activeElement : null;
+    if (field) field.addEventListener("blur", render, { once: true });
+    else render();
   }
   addEventListener("hashchange", () => { if (location.hash !== "#voice") stop(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); });
