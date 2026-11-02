@@ -493,7 +493,22 @@ fn show_chats_project_prompts_answers_review_absence_and_typing() {
     assert_eq!(prompts[0]["speaker"]["model_source"], "native");
     assert_eq!(prompts[0]["speaker"]["provider"], "codex");
     assert_eq!(prompts[0]["speaker"]["label"], "Codex");
-    assert_eq!(prompts[0]["to"], json!([{"key": "@all", "handle": "@all"}]));
+    // Two of four seats were called, so the round names them rather than @all.
+    let called: Vec<_> = prompts[0]["to"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| &t["key"])
+        .collect();
+    let recipients: Vec<_> = prompts[0]["recipients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| &r["key"])
+        .collect();
+    assert_eq!(called, recipients);
+    assert_eq!(called.len(), 2);
+    assert_eq!(prompts[1]["to"], json!([{"key": "@all", "handle": "@all"}]));
     assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
     assert_ne!(
         prompts[0]["recipients"][0]["focus"],
@@ -1561,7 +1576,8 @@ fn office_messages_keep_identity_routes_and_review_id_when_published() {
     let messages = chat["messages"].as_array().unwrap();
     let prompt = messages.iter().find(|m| m["kind"] == "prompt").unwrap();
     assert_eq!(prompt["speaker"]["handle"], "@boss");
-    assert_eq!(prompt["to"], json!([{"key": "@all", "handle": "@all"}]));
+    assert_eq!(prompt["to"][0]["key"], prompt["recipients"][0]["key"]);
+    assert_eq!(prompt["to"].as_array().unwrap().len(), 1);
     assert_eq!(
         prompt["answering"],
         json!([

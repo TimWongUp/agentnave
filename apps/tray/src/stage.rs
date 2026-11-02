@@ -954,7 +954,9 @@ impl Group {
             .map(|(key, desk)| (key.clone(), desk.handle()))
             .collect();
         let mut seat_handles = BTreeMap::new();
+        let mut room_sizes = BTreeMap::new();
         for (_, room_id, room) in &mut self.rooms {
+            room_sizes.insert(room_id.clone(), array(room, "seats").count());
             for seat in room["seats"].as_array_mut().into_iter().flatten() {
                 // Each seat is its own desk; numbering already tells alike seats apart.
                 let handle = handles.get(text(seat, "desk")).cloned().unwrap_or_default();
@@ -1004,8 +1006,17 @@ impl Group {
                         .unwrap_or_default()
                 );
             }
+            // A round that called only some seats names them; the rest still hear it.
+            let named = array(msg, "recipients").count();
+            let partial = msg["kind"] == "prompt"
+                && msg["thread"]["kind"] == "room"
+                && named > 0
+                && room_sizes
+                    .get(&conversation)
+                    .is_some_and(|&size| named < size);
             if msg["kind"] == "instruction"
                 || (msg["kind"] == "prompt" && msg["thread"]["kind"] == "desk")
+                || partial
             {
                 msg["to"] = json!(
                     array(msg, "recipients")
