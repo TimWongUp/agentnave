@@ -121,6 +121,7 @@ class TaskRecord(BaseModel):
     manager_model: str | None = None
     manager_reported_model: str | None = None
     role: str | None = None
+    seat: str | None = None
     access: Literal["read", "write"] | None = None  # declared, never enforced
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])

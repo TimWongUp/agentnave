@@ -39,7 +39,7 @@ from agentnave.host import (
     session_file,
     session_model,
 )
-from agentnave.members import CapacityError, read_max_running
+from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
 from agentnave.store import (
     Conversation,
@@ -55,6 +55,7 @@ from agentnave.store import (
     now,
     write_file,
 )
+from agentnave.task_start import latest_session_task
 
 type Decision = Literal["publish", "private"]
 type Access = Literal["read", "write"]
@@ -937,6 +938,25 @@ class Conversations(Groups):
                 "once. Wait for some to finish, then retry"
             )
 
+    def resume_task(
+        self,
+        session_id: str,
+        provider: ProviderName | None,
+        manager_session_id: str | None,
+        *,
+        explicit_identity: bool,
+    ) -> TaskRecord | None:
+        manager_session = self._manager_session(manager_session_id)
+        self.scan()
+        return latest_session_task(
+            self.records.values(),
+            session_id,
+            provider,
+            manager_session,
+            self._not_yours,
+            explicit_identity=explicit_identity,
+        )
+
     def start_task(
         self,
         request: InvocationRequest,
@@ -946,6 +966,7 @@ class Conversations(Groups):
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         role: str | None = None,
+        seat: str | None = None,
         forward: list[str] | None = None,
         access: str | None = None,
     ) -> TaskStart:
@@ -1048,6 +1069,7 @@ class Conversations(Groups):
                 session_id=request.session_id,
                 time=now(),
                 role=role,
+                seat=seat,
                 access=declared,
                 forward=[item.message_id for item in forwarded],
             )

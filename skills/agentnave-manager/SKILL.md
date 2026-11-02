@@ -39,17 +39,17 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 
 ## 工位、续接与转发
 
-每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是可选的显示标签，不影响身份；用评审角色名（如 `correctness-reviewer`）或 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard` 且 `provider` 是该工位的 CLI 时，服务自动套用用户在 App 里给该工位选的模型和档位，回执 `defaults_applied` 注明，显式传的 `model`、`effort` 优先。续接时同样传 `role`。
+每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是显示给用户看的职责，不影响身份，写这位员工这次具体做什么，如「接手方视角」。用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 传 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`，可省略 `provider`，由服务按 App 工位选 CLI；工位缺失、未启用、文件损坏或属于宿主自带子代理时会报错。最终 `provider` 是工位的 CLI 时，服务套用工位的模型和档位，显式传的 `model`、`effort` 优先。继承与推断的参数来源都列在回执 `defaults_applied` 中。
 
-- 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
+- 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，省略的 `provider`、`cwd`、`role`、`seat` 继承本 boss 历史中该原生会话最近一次任务，显式值优先；`access` 不继承，只换 `role` 不传 `seat` 时也不再沿用旧工位；不能换 provider。找不到历史或跨 provider 重名时补传 `provider` 和 `cwd`，其他 boss 的历史不提供默认值，`manager_session_id` 仍按上节传入。不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。`list_members` 的 `review`、`orchestration` 把这类工位标为 `native=true`：交给宿主自带子代理，宿主允许时用所选模型。
-- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，不拒绝调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。未声明 `read` 而同一 `cwd` 已有其他运行中的 CLI 时，回执带 `warnings`：并行写入要换独立 worktree，只读就补声明 `read`。
+- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，除了与工位矛盾时拒绝外不影响调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。Explorer 和评审工位固定 `read`，Worker 工位固定 `write`，由服务补上，不用传，传了不一致的值会被拒绝；其他任务服务判断不了，每次要声明就传，续接也一样，不传就是没声明。未声明 `read` 而同一 `cwd` 已有其他运行中的 CLI 时，回执带 `warnings`：并行写入要换独立 worktree，只读就补声明 `read`。
 
 ## 选择调用方式
 
-选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档，派发时 `role` 写成对应的 `explorer-easy` 等，不必再传模型。
+选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档，派发时 `seat` 写成对应的 `explorer-easy` 等，可省略 `provider`、`access` 和模型。
 
 | 用户需要 | 调用方式 |
 | --- | --- |
@@ -65,7 +65,7 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 常用组合只说明怎么调用；会议轮次按上表默认，用户另有要求时从其要求；选谁、何时收手按用户的全局规则或由 boss 定：
 
 - **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就写明不改文件）；写代码的交接先由 boss 建好 worktree 作 `cwd`。
-- **顾问**：`access=read`，prompt 写明只分析、不改文件、给出建议与理由；追问用同一 `session_id` 续接。
+- **顾问**：`access=read`，prompt 写明只分析、不改文件、给出建议与理由；追问用同一 `session_id` 续接，仍传 `access=read`。
 - **先计划后实现**：先 `access=read`，prompt 写明只出计划（改动范围、步骤、风险与验证方式）、不改文件；boss 按已有授权核对计划，需用户决定的转达用户，确认后用同一 `session_id` 续接、`access=write`，写明按已确认计划实现及调整内容。
 - **委员会**：`run_round` 两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报共识、分歧及如何收敛。用户要求最终收束时再加一轮 `serial`。
 - **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
@@ -97,7 +97,7 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 
 ## 目录与交接
 
-`cwd` 必须是目标项目存在的绝对目录，默认当前 checkout/worktree 根目录。CLI 不继承主对话；首次派发、切换 CLI 或交接未完成任务时，在 prompt 提供本次所需内容，简单任务省略无关项：
+新任务必须传 `cwd`，使用目标项目存在的绝对目录，通常选当前 checkout/worktree 根目录；服务不提供默认目录，续接时可从历史继承。CLI 不继承主对话；首次派发、切换 CLI 或交接未完成任务时，在 prompt 提供本次所需内容，简单任务省略无关项：
 
 - 目标、验收标准、返回格式及产物位置。
 - 目录、修改范围、授权边界、必须保留的用户改动。

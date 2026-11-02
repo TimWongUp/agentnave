@@ -102,6 +102,239 @@ def _first(result: object, key: str = "updates") -> dict[str, object]:
     return cast(list[dict[str, object]], content[key])[0]
 
 
+async def _start_and_wait(client: Client, **arguments: object) -> dict[str, object]:
+    result = await client.call_tool("start_agent", {"prompt": "ok", **arguments})
+    assert not result.is_error, result.content
+    payload = _payload(result.structured_content)
+    finished = _first(await client.call_tool("wait", {"ids": [payload["invocation_id"]]}))
+    assert finished["status"] == "succeeded", finished
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_resume_does_not_inherit_a_declared_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    root.mkdir()
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
+    from agentnave.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        await _start_and_wait(
+            client, provider="claude", cwd=str(tmp_path), role="出计划", access="read"
+        )
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert resumed["access"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_values_win(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.db import Database
+    from agentnave.store import Record
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    (root).mkdir()
+    (root / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "preset": "split",
+                "worker": {"easy": {"provider": "claude", "model": "chosen", "effort": "high"}},
+            }
+        )
+    )
+    async with Client(mcp) as client:
+        started = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="worker-easy", role="实现参数推断"
+        )
+    # A fresh service reads the seat from disk rather than retaining start arguments.
+    async with Client(mcp) as client:
+        inherited = await _start_and_wait(client, session_id="session-e2e")
+        assert inherited["conversation_id"] == started["conversation_id"]
+        assert inherited["provider"] == "claude"
+        assert inherited["model"] == "chosen" and inherited["access"] == "write"
+        assert set(cast(list[str], inherited["defaults_applied"])) >= {
+            *(f"{key} (session_id history)" for key in ("provider", "cwd", "role", "seat")),
+            "access (worker-easy seat)",
+        }
+        alternate = tmp_path / "alternate"
+        alternate.mkdir()
+        explicit = await _start_and_wait(
+            client,
+            session_id="session-e2e",
+            provider="claude",
+            cwd=str(alternate),
+            role="只读复核",
+            seat="explorer-hard",
+            access="read",
+        )
+        assert not any(
+            "session_id history" in key for key in cast(list[str], explicit["defaults_applied"])
+        )
+        latest = await _start_and_wait(client, session_id="session-e2e")
+        assert latest["access"] == "read"
+        renamed = await _start_and_wait(client, session_id="session-e2e", role="实现参数推断")
+        assert renamed["access"] is None
+        assert "seat (session_id history)" not in cast(list[str], renamed["defaults_applied"])
+        await _start_and_wait(
+            client, session_id="session-e2e", role="只读复核", seat="explorer-hard"
+        )
+        kept = await _start_and_wait(client, session_id="session-e2e", role=" 只读复核 ")
+        assert kept["access"] == "read"
+        saved = Record.read(Database(root), root / "locks", str(started["conversation_id"]))
+        assert saved.state.tasks[1].cwd == str(tmp_path)
+        assert saved.state.tasks[-1].cwd == str(alternate)
+        # Inherited seat metadata does not accidentally inherit the previous model or effort.
+        assert latest.get("model") != "chosen"
+        changed_provider = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "session_id": "session-e2e", "provider": "grok", "cwd": str(tmp_path)},
+        )
+        assert changed_provider.is_error and "cannot change provider" in str(
+            changed_provider.content
+        )
+        cleared = await _start_and_wait(client, session_id="session-e2e", role="")
+        assert "role (session_id history)" not in cast(list[str], cleared["defaults_applied"])
+        assert cleared["access"] == "read"
+    record = Record.read(Database(root), root / "locks", str(started["conversation_id"]))
+    assert record.state.tasks[-2].role == "只读复核"
+    assert record.state.tasks[-2].seat == "explorer-hard"
+    assert record.state.tasks[-1].role is None
+    assert record.state.tasks[-1].prompt == "ok"
+
+
+@pytest.mark.asyncio
+async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.db import Database
+    from agentnave.host import boss_key
+    from agentnave.store import Conversation, Record, TaskRecord
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    async with Client(mcp) as client:
+        for arguments in ({}, {"cwd": str(tmp_path)}, {"provider": "claude"}):
+            result = await client.call_tool(
+                "start_agent", {"prompt": "ok", "session_id": "unknown-native-session", **arguments}
+            )
+            assert result.is_error and "pass provider and cwd" in str(result.content)
+        # Native sessions created outside this service remain resumable with explicit identity.
+        await _start_and_wait(
+            client, provider="claude", cwd=str(tmp_path), session_id="external-session"
+        )
+        for provider, owner in (
+            ("grok", "test-chat"),
+            ("claude", "test-chat"),
+            ("claude", "other-boss"),
+        ):
+            record = Record.create(
+                Database(root),
+                root / "locks",
+                Conversation(
+                    id=f"saved-{provider}-{owner}",
+                    title="PRIVATE_TITLE",
+                    kind="task",
+                    manager_session=boss_key(None, owner),
+                    tasks=[
+                        TaskRecord(
+                            id=f"saved-{provider}-{owner}",
+                            provider=provider,
+                            model="PRIVATE_MODEL",
+                            cwd="/PRIVATE_CWD",
+                            prompt="PRIVATE_PROMPT",
+                            role="PRIVATE_ROLE",
+                            session_id="session-e2e",
+                            status="succeeded",
+                            time="2099-01-01T00:00:00+00:00",
+                        )
+                    ],
+                ),
+            )
+            record.release()
+        ambiguous = await client.call_tool(
+            "start_agent", {"prompt": "ok", "session_id": "session-e2e"}
+        )
+        assert ambiguous.is_error and "multiple providers" in str(ambiguous.content)
+        # Explicit provider disambiguates without exposing another boss's saved arguments.
+        selected = await _start_and_wait(
+            client, provider="claude", cwd=str(tmp_path), session_id="session-e2e"
+        )
+        assert "PRIVATE_" not in str(selected)
+        for arguments in ({}, {"provider": "claude"}):
+            foreign = await client.call_tool(
+                "start_agent",
+                {
+                    "prompt": "ok",
+                    "session_id": "session-e2e",
+                    "manager_session_id": "third-boss",
+                    **arguments,
+                },
+            )
+            assert foreign.is_error and "different manager session" in str(foreign.content)
+            assert "PRIVATE_" not in str(foreign.content)
+        foreign_explicit = await _start_and_wait(
+            client,
+            session_id="session-e2e",
+            manager_session_id="third-boss",
+            provider="claude",
+            cwd=str(tmp_path),
+        )
+        assert foreign_explicit["access"] is None
+        assert "PRIVATE_" not in str(foreign_explicit)
+        assert not any(
+            "session_id history" in key
+            for key in cast(list[str], foreign_explicit["defaults_applied"])
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_agent_provider_inference_reports_unusable_seats_and_requires_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "orchestration.json"
+    seat = {"provider": "claude", "model": "chosen"}
+    async with Client(mcp) as client:
+        for arguments, expected in (
+            ({}, "Pass provider"),
+            ({"role": "ordinary duty"}, "missing"),
+            ({"role": "correctness-reviewer"}, "missing"),
+            ({"seat": "worker-easy"}, "missing"),
+        ):
+            result = await client.call_tool(
+                "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
+            )
+            assert result.is_error and expected in str(result.content)
+        for content, expected in (
+            ("broken", "Invalid orchestration.json"),
+            (json.dumps({"version": 1, "preset": "off", "worker": {"easy": seat}}), "not enabled"),
+            (json.dumps({"version": 1, "preset": "split"}), "missing"),
+        ):
+            path.write_text(content)
+            result = await client.call_tool(
+                "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+            )
+            assert result.is_error and expected in str(result.content)
+        path.write_text(json.dumps({"version": 1, "preset": "split", "worker": {"easy": seat}}))
+        missing_cwd = await client.call_tool("start_agent", {"prompt": "ok", "seat": "worker-easy"})
+        assert missing_cwd.is_error and "cwd is required" in str(missing_cwd.content)
+        monkeypatch.setattr(mcp_server, "HOST", Host("claude", "env"))
+        native = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+        )
+        assert native.is_error and "native" in str(native.content)
+        assert "built-in subagent" in str(native.content)
+
+
 @pytest.mark.asyncio
 async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -175,6 +408,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert start is not None and start.open_world_hint is True and start.destructive_hint is True
     start_properties = _payload(tools["start_agent"].input_schema["properties"])
     assert "timeout_seconds" not in start_properties
+    assert tools["start_agent"].input_schema["required"] == ["prompt"]
     wait_properties = _payload(tools["wait"].input_schema["properties"])
     assert set(wait_properties) == {"ids", "include_output", "wait_seconds", "manager_session_id"}
     assert mcp_server.WAIT_SECONDS == 240
@@ -1078,17 +1312,24 @@ async def test_members_apply_defaults_and_enforce_each_mode(
     async with Client(mcp) as client:
 
         async def start(
-            options: dict[str, object], session_id: str | None = None, role: str | None = None
+            options: dict[str, object],
+            session_id: str | None = None,
+            role: str | None = None,
+            seat: str | None = None,
+            provider: str | None = "claude",
+            access: str | None = None,
         ) -> dict[str, object]:
             result = await client.call_tool(
                 "start_agent",
                 {
-                    "provider": "claude",
+                    "provider": provider,
                     "prompt": "ok",
                     "cwd": str(tmp_path),
                     "provider_options": options,
                     "session_id": session_id,
                     "role": role,
+                    "seat": seat,
+                    "access": access,
                 },
             )
             assert not result.is_error, result.content
@@ -1165,7 +1406,9 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "effort",
             "agent",
             "permission_mode",
+            "access (correctness-reviewer seat)",
         ]
+        assert seated["access"] == "read"
         worker = await start({"effort": "medium"}, role="worker-easy")
         assert worker["effort"] == "medium"
         assert worker["defaults_applied"] == [
@@ -1173,8 +1416,28 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "model",
             "agent",
             "permission_mode",
+            "access (worker-easy seat)",
         ]
-        assert (await start({}, role="explorer-easy"))["defaults_applied"] == applied
+        assert worker["access"] == "write"
+        assert (await start({}, role="explorer-easy"))["defaults_applied"] == [
+            *applied,
+            "access (explorer-easy seat)",
+        ]
+        # seat picks the difficulty, so role stays free for the desk's own words.
+        named = await start({}, role="接手方视角", seat="worker-easy")
+        assert cast(list[str], named["defaults_applied"])[0] == "worker-easy seat"
+        inferred = await start({}, role="实现参数推断", seat="worker-easy", provider=None)
+        assert inferred["provider"] == "claude" and inferred["access"] == "write"
+        assert "provider (worker-easy seat)" in cast(list[str], inferred["defaults_applied"])
+        review = await start({}, role="correctness-reviewer", provider=None)
+        assert review["access"] == "read"
+        assert "access (correctness-reviewer seat)" in cast(list[str], review["defaults_applied"])
+        contradiction = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy", "access": "read"},
+        )
+        assert contradiction.is_error
+        assert "worker-easy declares access=write" in str(contradiction.content)
         # The current host's off override suppresses role defaults without deleting saved seats.
         from agentnave.host import Host
 
@@ -1192,14 +1455,23 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         )
         disabled = _payload((await client.call_tool("list_members", {})).structured_content)
         assert disabled["orchestration"] == {"enabled": False, "explorer": {}, "worker": {}}
-        assert (await start({}, role="worker-easy"))["defaults_applied"] == applied
-        assert (await start({}, role="explorer-hard"))["defaults_applied"] == applied
+        assert (await start({}, role="worker-easy"))["defaults_applied"] == [
+            *applied,
+            "access (worker-easy seat)",
+        ]
+        assert (await start({}, role="explorer-hard"))["defaults_applied"] == [
+            *applied,
+            "access (explorer-hard seat)",
+        ]
         (tmp_path / "review.json").write_text(
             json.dumps(
                 {"version": 1, "seats": {"correctness-reviewer": {**seat, "provider": "codex"}}}
             )
         )
-        assert (await start({}, role="correctness-reviewer"))["defaults_applied"] == applied
+        assert (await start({}, role="correctness-reviewer"))["defaults_applied"] == [
+            *applied,
+            "access (correctness-reviewer seat)",
+        ]
         (tmp_path / "review.json").write_text(
             json.dumps({"version": 1, "seats": {"correctness-reviewer": {**seat, "effort": "low"}}})
         )

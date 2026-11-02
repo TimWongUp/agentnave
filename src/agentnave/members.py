@@ -548,27 +548,40 @@ def add_cli_effort(
     applied.append(CLI_EFFORT_APPLIED)
 
 
-def role_seat(role: str | None, host: Host) -> ReviewSeat | None:
+def role_seat(role: str | None, host: Host, *, required: bool = False) -> ReviewSeat | None:
     """The App seat a task role names: an agentnave-review role from review.json, or an
     Explorer/Worker difficulty from orchestration.json. A missing or broken file names none;
-    list_members reports it."""
+    list_members reports it. Provider inference requires a usable seat instead."""
     role = (role or "").strip()
+    seat = None
     try:
         if role in get_args(ReviewRole.__value__):
             review = _read_app_file("review.json", ReviewFile, MemberFileError)
-            return review.seats.get(cast(ReviewRole, role)) if review else None
-        if role in get_args(OrchestrationRole.__value__):
+            seat = review.seats.get(cast(ReviewRole, role)) if review else None
+        elif role in get_args(OrchestrationRole.__value__):
             kind, difficulty = role.split("-")
             roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+            if required and roles is not None and not roles.enabled(host):
+                raise MemberFileError(
+                    f"{role} seat is not enabled for this host in orchestration.json; "
+                    "enable it in the App or pass provider explicitly"
+                )
             seats = (
                 (roles.explorer if kind == "explorer" else roles.worker)
                 if roles and roles.enabled(host)
                 else {}
             )
-            return seats.get(cast(Difficulty, difficulty))
+            seat = seats.get(cast(Difficulty, difficulty))
     except MemberFileError:
+        if required:
+            raise
         return None
-    return None
+    if required and seat is None:
+        raise MemberFileError(
+            f"{role or 'Requested'} seat is missing from the App settings; "
+            "configure it in the App or pass provider explicitly"
+        )
+    return seat
 
 
 def apply_seat(
