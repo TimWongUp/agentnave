@@ -28,9 +28,9 @@ pub(super) struct Platform {
     base: &'static str,
 }
 
-/// Vendors with their own pay-as-you-go API that cache a prompt's fixed head by themselves. Each
-/// is its OpenAI-compatible address, on the mainland endpoint when a vendor runs two.
-pub(super) const PLATFORMS: [Platform; 5] = [
+/// Vendors with their own pay-as-you-go API, then two resellers of fast and cheap models. Each is
+/// its OpenAI-compatible address, on the mainland endpoint when a vendor runs two.
+pub(super) const PLATFORMS: [Platform; 10] = [
     Platform {
         id: "openai",
         name: "OpenAI",
@@ -52,9 +52,34 @@ pub(super) const PLATFORMS: [Platform; 5] = [
         base: "https://api.moonshot.cn/v1",
     },
     Platform {
+        id: "zhipu",
+        name: "智谱 GLM",
+        base: "https://open.bigmodel.cn/api/paas/v4",
+    },
+    Platform {
         id: "qwen",
         name: "通义千问",
         base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    },
+    Platform {
+        id: "minimax",
+        name: "MiniMax",
+        base: "https://api.minimaxi.com/v1",
+    },
+    Platform {
+        id: "volcengine",
+        name: "火山方舟（豆包）",
+        base: "https://ark.cn-beijing.volces.com/api/v3",
+    },
+    Platform {
+        id: "openrouter",
+        name: "OpenRouter",
+        base: "https://openrouter.ai/api/v1",
+    },
+    Platform {
+        id: "siliconflow",
+        name: "硅基流动",
+        base: "https://api.siliconflow.cn/v1",
     },
 ];
 
