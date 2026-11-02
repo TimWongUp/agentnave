@@ -435,12 +435,30 @@ function renderHead(c, n) {
 }
 
 // ---------------------------------------------------------------- boss office
-function bossModel(c) {
+function bossSpeech(c, match) {
   for (let i = c.messages.length - 1; i >= 0; i--) {
-    const s = c.messages[i].speaker;
-    if (s?.role === "manager" && s.model) return s.model;
+    const m = c.messages[i];
+    if (m.speaker?.role === "manager" && match(m)) return m.speaker;
   }
-  return "";
+  return null;
+}
+// After a takeover the old boss keeps the seat until the new one speaks in the workspace.
+// Messages name the boss's CLI but not its chat, so the latest handover splits them by time,
+// which tells a takeover by the same CLI apart too. A boss handing on again still holds the
+// seat, and with the handover out of view (withdrawn, or past the messages shown) the CLI
+// alone tells the bosses apart.
+function seatHolder(c) {
+  const marks = c.messages.filter((m) => m.kind === "handover").map((m) => AN.at(m.time));
+  const at = marks.length && c.handover !== "pending" ? Math.max(...marks) : null;
+  const later = at === null ? (m) => m.speaker.provider === c.host : (m) => AN.at(m.time) >= at;
+  const earlier = (m) => !later(m);
+  const modelOf = (when) => bossSpeech(c, (m) => m.speaker.model && when(m))?.model || "";
+  const before = c.previous_host || (c.handover === "changed" && bossSpeech(c, earlier)?.provider) || "";
+  if (!before) return { host: c.host, model: modelOf(() => true), app: c.app || c.host, label: c.label, former: null };
+  // A former boss that never spoke here has no model of its own to show.
+  const former = { host: before, model: modelOf((m) => earlier(m) && m.speaker.provider === before) };
+  if (!bossSpeech(c, later)) return { ...former, app: before, label: c.previous_label || cliName(before), former: null };
+  return { host: c.host, model: modelOf(later), app: c.app || c.host, label: c.label, former };
 }
 // `live` only means a server is running work right now; an idle boss dozes off after a while.
 function recentlyActive(c) {
@@ -482,7 +500,7 @@ function createBoss() {
   const rec = {
     lid: h("span.lid"),
     scene: null,
-    nm: h("div.nm", {}, "boss"),
+    portrait: h("span.boss-portrait", { hidden: true }),
     cli: h("div.cli"),
     st: h("div.st"),
     state: h("span.r"),
@@ -494,6 +512,7 @@ function createBoss() {
   rec.scene = h(
     "div.scene",
     {},
+    rec.portrait,
     rec.chair,
     rec.desk,
     rec.open,
@@ -510,7 +529,7 @@ function createBoss() {
       {},
       rec.chats,
       // no speech bubble: the label below already says what the boss is waiting for
-      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
+      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st)),
       rec.meets,
     ),
   );
@@ -518,13 +537,15 @@ function createBoss() {
   return rec;
 }
 function updateBoss(rec, c, n) {
-  const model = bossModel(c);
-  dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
-  dressBossSet(rec, c.host);
-  dressLid(rec, c.app || c.host);
+  const holder = seatHolder(c);
+  const model = holder.model;
+  dress(rec, ART.character(holder.host, model), rec.scene, rec.desk);
+  dressBossSet(rec, holder.host);
+  dressLid(rec, holder.app);
+  hangPortrait(rec, c, holder.former);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
-  setText(rec.cli, c.label);
+  setText(rec.cli, holder.label);
   setText(
     rec.st,
     n.running ? `等 ${n.running} 个回复` : n.review ? "会议进行中" : "空闲",
@@ -536,6 +557,16 @@ function updateBoss(rec, c, n) {
     `boss 办公室，${c.took_over ? `${c.took_over}，` : ""}${rec.st.textContent}，查看全部消息`,
   );
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
+}
+
+// Once the new boss has spoken, the one before hangs framed on the wall to its left.
+function hangPortrait(rec, c, former) {
+  rec.portrait.hidden = !former;
+  setAttr(rec.portrait, "title", c.took_over || null);
+  const face = former ? ART.character(former.host, former.model) : "";
+  if (rec.portraitFace === face) return;
+  rec.portraitFace = face;
+  rec.portrait.replaceChildren(...(face ? [ART.head(face)] : []));
 }
 
 // ---------------------------------------------------------------- beside the boss

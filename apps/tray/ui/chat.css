@@ -127,7 +127,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- painted scene: chair → character → desk → laptop → lid logo, one 1536×1200 stage ---- */
 .scene { position: relative; aspect-ratio: 1536 / 1200; max-width: 250px; margin-inline: auto; }
-.boss-zone .scene { width: 266px; max-width: min(325px, 100%); margin-top: -10px; margin-bottom: -10px; }
+.boss-zone .scene { width: 266px; max-width: min(325px, 100%); margin-top: 14px; margin-bottom: -10px; }
 /* boss in the middle, recent chats and meetings on either side; narrow floors put the lists below */
 .boss-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; }
 .boss-mid { grid-column: 2; grid-row: 1; }
@@ -384,6 +384,10 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
 
 /* ---- boss office ---- */
+/* the boss before a takeover: a framed head on the wall */
+.boss-portrait { position: absolute; left: 0; top: 4%; width: 16%; aspect-ratio: 1; z-index: 0; padding: 3px; border-radius: 3px; background: #8a5a2b; box-shadow: inset 0 0 0 1px #c89b5e, 0 2px 5px rgb(0 0 0 / 0.28); }
+.boss-portrait[hidden] { display: none; }
+.boss-portrait .head { display: block; width: 100%; height: 100%; border-radius: 1px; background: var(--wall) center / cover; }
 .boss-zone .label { position: relative; z-index: 6; text-align: center; margin-top: 0; }
 .boss-zone { padding-top: 8px; padding-bottom: 4px; }
 .label { text-align: center; margin-top: 4px; min-width: 0; }

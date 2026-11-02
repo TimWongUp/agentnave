@@ -568,8 +568,15 @@ impl Group {
             self.handover.changed.then_some("changed")
         };
         let took_over = (handover == Some("changed")).then(|| format!("{label} 接手了 {previous}"));
+        // A workspace handed on again keeps its former boss while it waits for the next one.
+        let previous_host = self
+            .handover
+            .previous_host
+            .as_deref()
+            .filter(|_| self.handover.changed);
         json!({"group": self.id, "host": host, "app": app, "label": label, "handover": handover,
-            "took_over": took_over, "project": self.project_name, "title": self.title,
+            "took_over": took_over, "previous_host": previous_host,
+            "previous_label": previous_host.map(|_| previous), "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
