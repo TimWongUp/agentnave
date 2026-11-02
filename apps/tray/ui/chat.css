@@ -722,22 +722,24 @@ dialog.act::backdrop { background: #0006; }
 .tp-im .tl { background: var(--im-bg); }
 .tp-im .sep { justify-content: center; margin: 14px 0 0; font-weight: 500; }
 .tp-im .sep::before, .tp-im .sep::after { display: none; }
-.tp-im .msg { --im-bub: var(--im-member); --im-ink: var(--im-member-ink); position: relative; display: flex; flex-direction: column; min-height: 32px; margin: 14px 0 0; padding: 0 38px 0 38px; border: 0; }
+.tp-im .msg { --im-bub: var(--im-member); --im-ink: var(--im-member-ink); position: relative; display: flex; flex-direction: column; min-height: 34px; margin: 14px 0 0; padding: 0 42px 0 42px; border: 0; }
 .tp-im .msg.boss { --im-bub: var(--im-boss); --im-ink: var(--im-boss-ink); align-items: flex-end; }
 .tp-im .msg.boss.private { --im-bub: var(--im-aside); }
-.tp-im .m-h { position: relative; flex-wrap: nowrap; min-height: 16px; font-size: 11px; }
+/* like WeChat, the name line starts level with the avatar's top edge */
+.tp-im .m-h { position: relative; flex-wrap: nowrap; min-height: 12px; font-size: 11px; line-height: 12px; }
 .tp-im .msg.boss .m-h { flex-wrap: wrap; justify-content: flex-end; }
 .tp-im .m-h > time { display: none; }
-.tp-im .m-h > .m-ava { position: absolute; top: 0; left: -38px; }
-.tp-im .msg.boss .m-h > .m-ava { right: -38px; left: auto; }
-.tp-im .m-ava :is(.avatar, .head) { width: 30px; height: 30px; border-radius: 5px; font-size: 12px; }
+.tp-im .m-h > .m-ava { position: absolute; top: 0; left: -42px; }
+.tp-im .msg.boss .m-h > .m-ava { right: -42px; left: auto; }
+.tp-im .m-ava :is(.avatar, .head) { width: 34px; height: 34px; border-radius: 4px; font-size: 13px; }
+.tp-im .m-ava .head { background: var(--im-member) center / cover; }
 .tp-im .m-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 650; color: var(--ink); }
 .tp-im .m-role { flex-shrink: 1; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
 .tp-im .m-who { flex-shrink: 999; min-width: 0; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; }
 .tp-im .msg.boss .m-name { display: none; }
 .tp-room .msg.boss .m-verb:not(.m-tag) { display: none; }
-/* the tail hangs from the header, outside the bubble that a fold clips */
-.tp-im .m-h::after { content: ""; position: absolute; z-index: 1; bottom: -26px; left: -4px; width: 9px; height: 9px; background: var(--im-bub); transform: rotate(45deg); }
+/* the tail hangs from the header, outside the bubble that a fold clips, and points at the avatar */
+.tp-im .m-h::after { content: ""; position: absolute; z-index: 1; top: calc(100% + 9px); left: -4px; width: 9px; height: 9px; background: var(--im-bub); transform: rotate(45deg); }
 .tp-im .msg.boss .m-h::after { right: -4px; left: auto; }
 .tp-im .msg .bub { width: fit-content; max-width: 100%; box-sizing: border-box; margin: 5px 0 0; padding: 8px 11px; border-radius: 6px; background: var(--im-bub); color: var(--im-ink); font-size: 13px; }
 .tp-im .msg .bub.fold::after { height: 76px; background: linear-gradient(to bottom, transparent, var(--im-bub) 58%); }
