@@ -753,7 +753,7 @@ def _member_modes(
     return modes
 
 
-def _compact_members(modes: dict[Mode, ModeStatus]) -> list[ListedMember]:
+def _compact_members(modes: dict[Mode, ModeStatus], excluded: frozenset[str]) -> list[ListedMember]:
     grouped: dict[tuple[ProviderName, str], list[tuple[Mode, MemberStatus]]] = {}
     for mode, status in modes.items():
         for member in status.members:
@@ -765,11 +765,21 @@ def _compact_members(modes: dict[Mode, ModeStatus]) -> list[ListedMember]:
             [entries] if all(item == details[0] for item in details) else [[e] for e in entries]
         )
         for group in groups:
-            available: list[Mode] = [mode for mode, member in group if member.permitted]
+            member = group[0][1]
+            permitted = {mode for mode, item in group if item.permitted}
+            available: list[Mode] = [
+                mode
+                for mode, status in modes.items()
+                if mode in permitted
+                or (
+                    not status.restricted
+                    and (mode == "discussion" or member.provider not in excluded)
+                )
+            ]
             defaults: list[Mode] = [mode for mode, member in group if member.default]
             result.append(
                 ListedMember(
-                    **group[0][1].model_dump(exclude={"default", "permitted"}),
+                    **member.model_dump(exclude={"default", "permitted"}),
                     modes=None if len(available) == len(modes) else available,
                     default=True if len(defaults) == len(modes) else defaults or None,
                 )
@@ -828,7 +838,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         host=host.name,
         host_source=host.source,
         restricted=[mode for mode, status in modes.items() if status.restricted],
-        members=_compact_members(modes),
+        members=_compact_members(modes, excluded),
         review=review,
         review_error=review_error,
         orchestration=orchestration,

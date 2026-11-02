@@ -627,3 +627,44 @@ def test_member_list_splits_different_effective_mode_settings(
     assert task.modes == ["task"] and discussion.modes == ["discussion"]
     assert task.model == discussion.model == "chosen"
     assert discussion.model_dump().items() >= override.items()
+
+
+@pytest.mark.parametrize("restricted_mode", ["task", "discussion"])
+def test_member_list_unrestricted_mode_allows_other_mode_rows_except_excluded_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restricted_mode: str
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    providers = ("pi", "claude")
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    provider: {"models": {"chosen": {"effort": "high"}}} for provider in providers
+                },
+                "modes": {
+                    restricted_mode: {
+                        provider: {
+                            "models": [],
+                            "default": "chosen",
+                            "overrides": {"chosen": {"effort": "medium"}},
+                        }
+                        for provider in providers
+                    }
+                },
+            }
+        )
+    )
+    listed = list_members(frozenset({"claude"}), Host("claude"))
+    assert listed.restricted == [restricted_mode]
+    assert len(listed.members) == 6  # Each CLI has two effective model settings and a wildcard.
+    for provider in providers:
+        configured, wildcard = [
+            member
+            for member in listed.members
+            if member.provider == provider and (member.effort == "medium" or member.model == "*")
+        ]
+        expected_modes = ["discussion"] if provider == "claude" else None
+        assert configured.modes == wildcard.modes == expected_modes
+        assert configured.default == [restricted_mode]
+        assert wildcard.default is None
