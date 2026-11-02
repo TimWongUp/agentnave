@@ -1370,8 +1370,8 @@ function createMessage(m) {
     const id = rec.id;
     if (state.expanded.has(id)) state.expanded.delete(id);
     else state.expanded.add(id);
-    // A peer's collapsed bubble holds one line, not its answer: draw it again.
-    if (rec.el.dataset.peer !== undefined) renderAll(state.chat);
+    // A peer's or handover's collapsed bubble holds one line, not its answer: draw it again.
+    if (rec.el.dataset.peer !== undefined || rec.el.dataset.brief !== undefined) renderAll(state.chat);
     applyFolds([rec]);
   });
   rec.el = h(
@@ -1498,7 +1498,11 @@ function updateMessage(rec, m, ctx, id) {
     rec.status.hidden = !status;
   }
   const summary = peer && m.kind !== "typing" && !state.expanded.has(id);
-  const body = m.kind === "handover" ? [m.text, m.detail].filter(Boolean).join("\n\n") : summary ? tpFirst(m.text) : m.text;
+  // A handover note is long: it opens on request, below the one line saying who took over.
+  const brief = m.kind === "handover" && !!m.detail;
+  rec.el.toggleAttribute("data-brief", brief);
+  const note = brief && state.expanded.has(id) ? m.detail : "";
+  const body = m.kind === "handover" ? [m.text, note].filter(Boolean).join("\n\n") : summary ? tpFirst(m.text) : m.text;
   if (rec.text !== body) {
     rec.text = body;
     if (m.kind === "typing") {
@@ -1532,7 +1536,7 @@ function applyFolds(records) {
     rec,
     open,
     // A peer always has more to show than its one line.
-    overflows: rec.el.dataset.peer !== undefined || rec.bub.scrollHeight > FOLD_PX + 6, // ignores the clamp
+    overflows: rec.el.dataset.peer !== undefined || rec.el.dataset.brief !== undefined || rec.bub.scrollHeight > FOLD_PX + 6, // ignores the clamp
   }));
   for (const { rec, open, overflows } of measured) {
     rec.more.hidden = !overflows;

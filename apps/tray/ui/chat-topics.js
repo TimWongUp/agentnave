@@ -104,7 +104,7 @@ function tpDirectory(c, ctx) {
       scope: desk ? { kind: "desk", key: desk.key } : null,
     });
   }
-  // A handover belongs to no meeting or desk, so its whole note is read here.
+  // A handover belongs to no meeting or desk, so its note is read here, folded until asked for.
   for (const m of c.messages.filter((x) => x.kind === "handover")) {
     items.push({
       weight: 2,
@@ -113,8 +113,8 @@ function tpDirectory(c, ctx) {
       title: m.speaker?.label || "工作区交接",
       faces: [],
       meta: "",
-      line: [m.text, m.detail].filter(Boolean).join("\n\n"),
-      whole: true,
+      line: m.text,
+      note: m.detail ? { id: m.id, text: m.detail } : null,
       scope: null,
     });
   }
@@ -127,12 +127,20 @@ function tpDirectory(c, ctx) {
       item.scope ? { type: "button" } : {},
       h("span.tp-card-top", {}, h("span.tp-tag", {}, item.tag), h("b", {}, item.title), tpBadge(item.status)),
       h("span.tp-card-meta", {}, h("span.tp-faces", {}, item.faces), h("span", {}, item.meta), h("time", {}, item.time ? clock(item.time) : "")),
-      item.line ? h(`span.tp-card-line${item.whole ? ".whole" : ""}`, {}, item.line) : null,
+      item.line ? h("span.tp-card-line", {}, item.line) : null,
+      item.note ? handoverNote(item.note) : null,
     );
     if (item.scope) card.onclick = () => openScope(item.scope, card);
     return card;
   });
   return [...cards, ...omitted];
+}
+// The fold survives the list being drawn again.
+function handoverNote(note) {
+  const box = h("details.tp-card-note", { open: state.expanded.has(note.id) },
+    h("summary", {}, "交接说明"), h("span.tp-card-line.whole", {}, note.text));
+  box.ontoggle = () => (box.open ? state.expanded.add(note.id) : state.expanded.delete(note.id));
+  return box;
 }
 function renderDirectory(c, ctx) {
   // The stream's nodes are not on screen; picking a card builds them afresh.

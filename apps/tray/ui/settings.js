@@ -1081,7 +1081,7 @@ function slotRows(provider, scene, split) {
             "aria-label": "改回 CLI 当前设置",
             onClick: () => pick({ effort: cli }),
           }, "↺")
-          : null);
+          : el("span", { className: "member-reset-slot" }));
   }
 
   const open = pickerOpen === key;
