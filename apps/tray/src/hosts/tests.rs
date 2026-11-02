@@ -966,6 +966,11 @@ fn lingering_receipts_started_after_a_change_do_not_block_auto_confirmation() {
     fs::remove_file(dir.join("live.json")).unwrap();
     fs::remove_file(dir.join("swapped.json")).unwrap();
     assert_eq!(hosts.state(&h)["reload"]["state"], "idle");
+    // A later change voids that proof, so coming back to this entry needs a new one.
+    hosts.settings["codex"]["reload_observed"]["token"] = json!("other");
+    let mut settings = hosts.settings.clone();
+    hosts.note_reload_change(&h, &Value::Null, &mut settings);
+    assert!(settings["codex"].get("reload_confirmed").is_none());
 }
 
 #[test]
