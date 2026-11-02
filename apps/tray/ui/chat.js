@@ -1248,8 +1248,8 @@ function chip(t) {
     { title: t.d ? handleOf(t.d) : t.handle || "" },
     "@",
     t.d ? ART.head(deskChar(t.d)) : null,
+    t.d?.role ? h("span.at-role", {}, t.d.role) : null,
     name,
-    t.d?.role ? ` · ${t.d.role}` : "",
   );
 }
 // Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
