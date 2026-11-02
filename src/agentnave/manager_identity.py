@@ -17,6 +17,12 @@ _SESSION_ID_SHELL_ENV = {
     "hermes": "HERMES_SESSION_ID",
 }
 
+# Parameter schemas name the host variable once; full identity rules live in MCP instructions.
+SESSION_ID_DESCRIPTIONS = {
+    name: f"Boss chat ID from {variable}; see MCP instructions."
+    for name, variable in _SESSION_ID_SHELL_ENV.items()
+}
+
 
 def session_id_hint(host: Host) -> str:
     variable = _SESSION_ID_SHELL_ENV.get(host.name or "")

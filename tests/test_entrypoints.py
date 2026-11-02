@@ -57,7 +57,7 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
-        "assert prompt.startswith('You are a subagent dispatched by AgentNave.')\n"
+        "assert prompt.startswith('You are an AgentNave subagent.')\n"
         "assert 'Do not call AgentNave tools' in prompt\n"
         "prompt = prompt.split('\\n\\nAssigned task:\\n', 1)[1]\n"
         "if prompt == 'finish':\n"
@@ -1147,9 +1147,9 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         tools = (await client.list_tools()).tools
         description = str(tools[0].input_schema)
         assert client.instructions is not None
-        assert "list_members" in client.instructions
+        assert "manager_session_id" in client.instructions
         assert "Excluded providers:" in client.instructions
-        assert "Excluded providers:" in description
+        assert "MCP instructions" in description
         described = await client.call_tool("list_members", {"provider": "codex"})
         details = _payload(_payload(described.structured_content)["provider_details"])
         assert details["permitted"] is False
@@ -1169,7 +1169,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         assert grouped.is_error is False  # exclusions limit start_agent, not group seats
         assert not marker.exists()
         if "claude" in excluded:
-            assert "Providers permitted by this host configuration: none" in description
+            assert "Providers permitted by this host configuration: none" in client.instructions
         else:
             started = await client.call_tool(
                 "start_agent", {"provider": "claude", "prompt": "finish", "cwd": str(tmp_path)}
@@ -1262,10 +1262,8 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         assert not missing.is_error
         missing_payload = _payload(missing.structured_content)
         assert missing_payload["configured"] is False
-        assert missing_payload["modes"] == {
-            "task": {"restricted": False, "members": []},
-            "discussion": {"restricted": False, "members": []},
-        }
+        assert missing_payload["members"] == []
+        assert "restricted" not in missing_payload and "modes" not in missing_payload
         assert not root.exists()
         root.mkdir()
         clis: dict[str, dict[str, dict[str, dict[str, object]]]] = {
@@ -1308,11 +1306,14 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         (root / "review.json").write_text(json.dumps({"version": 1, "seats": seats}))
         listed = await client.call_tool("list_members", {})
         review = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["review"])
-        assert review["correctness-reviewer"]["available"] is True
+        assert "available" not in review["correctness-reviewer"]
         assert review["correctness-reviewer"]["effort"] == "high"
+        assert "native" not in review["correctness-reviewer"]
+        assert review["security-reviewer"]["available"] is False
+        assert _payload(review["security-reviewer"]["replacement"])["provider"] == "claude"
         assert review["security-reviewer"]["reason"] == "CLI is excluded by this host"
         # The host's own CLI goes to its built-in subagent rather than being unavailable.
-        assert review["simplicity-reviewer"]["available"] is True
+        assert "available" not in review["simplicity-reviewer"]
         assert review["simplicity-reviewer"]["native"] is True
         orchestration = cast(
             dict[str, dict[str, dict[str, object]]],
@@ -1329,39 +1330,32 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
             "pi",
         ]
         # An unrestricted task mode accepts any model.
-        assert review["performance-reviewer"]["available"] is True
+        assert "available" not in review["performance-reviewer"]
         assert "alternatives" not in review["performance-reviewer"]
-        modes = cast(dict[str, dict[str, object]], _payload(listed.structured_content)["modes"])
-        items = cast(list[dict[str, object]], modes["task"]["members"])
+        payload = _payload(listed.structured_content)
+        assert "modes" not in payload and "restricted" not in payload
+        items = cast(list[dict[str, object]], payload["members"])
         valid = [item for item in items if item["model"] == "chosen"]
         assert len(valid) == 6
-        assert all(item["valid"] is True and "error" not in item for item in valid)
-        assert valid[0]["permitted"] is False and valid[1]["permitted"] is True
+        assert all("valid" not in item and "error" not in item for item in valid)
+        assert valid[0]["modes"] == ["discussion"] and "modes" not in valid[1]
         invalid = [item for item in items if str(item["model"]).startswith("bad-")]
-        assert len(invalid) == 3 and all(
-            item["valid"] is False and item["error"] for item in invalid
-        )
-        discussion = cast(list[dict[str, object]], modes["discussion"]["members"])
-        assert all(item["permitted"] for item in discussion)
-        assert [(item["provider"], item["model"]) for item in discussion if item["default"]] == [
-            ("codex", "chosen")
+        assert len(invalid) == 3 and all("valid" not in item and item["error"] for item in invalid)
+        assert [(item["provider"], item["default"]) for item in items if "default" in item] == [
+            ("codex", ["discussion"])
         ]
         assert path.read_text(encoding="utf-8") == content
         assert sorted(root.iterdir()) == [path, root / "orchestration.json", root / "review.json"]
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
         fresh = _payload((await client.call_tool("list_members", {})).structured_content)
         assert fresh["configured"] is True
-        assert fresh["modes"] == {
-            "task": {"restricted": False, "members": []},
-            "discussion": {"restricted": True, "members": []},
-        }
+        assert fresh["members"] == [] and fresh["restricted"] == ["discussion"]
         # The App file currently accepts an empty model key; its reply must still validate.
         path.write_text(
             json.dumps({"version": 1, "clis": {"claude": {"models": {"": {}}}}, "modes": {}})
         )
         empty_model = _payload((await client.call_tool("list_members", {})).structured_content)
-        task_mode = _payload(_payload(empty_model["modes"])["task"])
-        member = cast(list[dict[str, object]], task_mode["members"])[0]
+        member = cast(list[dict[str, object]], empty_model["members"])[0]
         assert not {"model", "options", "notes"}.intersection(member)
         assert "cli_options" not in empty_model
 
@@ -1481,27 +1475,27 @@ async def test_members_apply_defaults_and_enforce_each_mode(
 
         monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
-        modes = cast(dict[str, dict[str, object]], listed["modes"])
-        task_member = cast(list[dict[str, object]], modes["task"]["members"])[0]
+        assert listed["restricted"] == ["task", "discussion"]
+        members = cast(list[dict[str, object]], listed["members"])
+        task_member, discussion_member, wildcard = members
         assert task_member == {
             "provider": "claude",
             "model": "chosen",
-            "default": True,
+            "default": ["task"],
             "effort": "medium",
             "efforts": ["medium", "high"],
             "options": {"agent": "reviewer"},
             "notes": "任务",
-            "permitted": False,
-            "valid": True,
+            "modes": [],
         }
-        discussion = cast(list[dict[str, object]], modes["discussion"]["members"])
-        assert discussion[-1] == {
+        assert discussion_member["effort"] == "high"
+        assert discussion_member["default"] == ["discussion"]
+        assert discussion_member["modes"] == ["discussion"]
+        assert wildcard == {
             "provider": "claude",
             "model": "*",
-            "default": False,
             "notes": "不限模型",
-            "permitted": True,
-            "valid": True,
+            "modes": ["discussion"],
         }
         monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
         defaulted = await start({})
