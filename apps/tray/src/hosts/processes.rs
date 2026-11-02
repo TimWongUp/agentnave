@@ -1,9 +1,9 @@
-//! Read-only host process observations. Keep only host identities and start times in the cache.
+//! Read-only process observations. Cache host identities and PID start times together.
 use super::{Context, IDS};
 use std::{
     collections::HashMap,
     path::Path,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
@@ -17,7 +17,9 @@ pub(super) enum State {
 #[derive(Default)]
 pub(super) struct Probe {
     checked: Option<Instant>,
+    observed_at: Option<SystemTime>,
     running: Option<HashMap<&'static str, u64>>,
+    receipt_processes: Option<HashMap<u32, u64>>,
     #[cfg(test)]
     fixed: bool,
 }
@@ -26,29 +28,90 @@ impl Probe {
     #[cfg(test)]
     pub fn fixed(running: Option<HashMap<&'static str, u64>>) -> Self {
         Self {
-            checked: None,
             running,
             fixed: true,
+            ..Self::default()
         }
     }
 
-    pub fn state(&mut self, context: &Context, id: &str) -> State {
+    #[cfg(test)]
+    pub fn with_receipt_processes(mut self, processes: Option<HashMap<u32, u64>>) -> Self {
+        self.receipt_processes = processes;
+        self
+    }
+
+    fn is_fixed(&self) -> bool {
         #[cfg(test)]
-        let fixed = self.fixed;
+        {
+            self.fixed
+        }
         #[cfg(not(test))]
-        let fixed = false;
-        if !fixed
+        {
+            false
+        }
+    }
+
+    fn refresh(&mut self, context: &Context) {
+        if !self.is_fixed()
             && self
                 .checked
                 .is_none_or(|at| at.elapsed() >= Duration::from_secs(5))
         {
-            self.running = observe(context);
+            // Capture the beginning, not the end: a relay can start during enumeration.
+            self.observed_at = Some(SystemTime::now());
+            match observe(context) {
+                Some(observation) => {
+                    self.running = observation.running;
+                    self.receipt_processes = Some(observation.processes);
+                }
+                None => {
+                    self.running = None;
+                    self.receipt_processes = None;
+                }
+            }
             self.checked = Some(Instant::now());
         }
+    }
+
+    pub fn state(&mut self, context: &Context, id: &str) -> State {
+        self.refresh(context);
         match &self.running {
             Some(running) => running
                 .get(id)
                 .map_or(State::Stopped, |at| State::Running(*at)),
+            None => State::Unknown,
+        }
+    }
+
+    pub fn receipt_process(
+        &mut self,
+        context: &Context,
+        pid: u32,
+        started_ms: Option<u64>,
+        modified: SystemTime,
+    ) -> State {
+        self.refresh(context);
+        let Some(processes) = &self.receipt_processes else {
+            return State::Unknown;
+        };
+        // A newer receipt may name a relay that was not visible in this snapshot yet.
+        // Keep the shared five-second cache and defer negative results until it catches up.
+        let can_stop = self.is_fixed() || self.observed_at.is_some_and(|at| at >= modified);
+        match processes.get(&pid).copied() {
+            Some(at)
+                if at != 0
+                    && started_ms.is_some_and(|started| {
+                        started != 0 && at > (started / 1000).saturating_add(2)
+                    }) =>
+            {
+                if can_stop {
+                    State::Stopped
+                } else {
+                    State::Unknown
+                }
+            }
+            Some(at) => State::Running(at),
+            None if can_stop => State::Stopped,
             None => State::Unknown,
         }
     }
@@ -184,10 +247,44 @@ fn dispatched(process: &Process, system: &System) -> bool {
     false
 }
 
-fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
+#[derive(Debug)]
+struct Observation {
+    running: Option<HashMap<&'static str, u64>>,
+    processes: HashMap<u32, u64>,
+}
+
+fn observe(context: &Context) -> Option<Observation> {
     if !sysinfo::IS_SUPPORTED_SYSTEM {
         return None;
     }
+    let mut system = System::new();
+    let count = system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always)
+            .with_user(UpdateKind::Always),
+    );
+    if count == 0
+        || system
+            .process(sysinfo::Pid::from_u32(std::process::id()))
+            .is_none()
+    {
+        return None;
+    }
+    Some(Observation {
+        running: observe_hosts(context, &system),
+        // Missing executable, arguments or user information never means a PID is dead.
+        processes: system
+            .processes()
+            .iter()
+            .map(|(pid, process)| (pid.as_u32(), process.start_time()))
+            .collect(),
+    })
+}
+
+fn observe_hosts(context: &Context, system: &System) -> Option<HashMap<&'static str, u64>> {
     // Resolve installed entry points so node/python CLIs with a generic script name also match.
     let mut targets: HashMap<String, &'static str> = HashMap::new();
     for id in IDS {
@@ -215,18 +312,6 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
             .copied()
             .or_else(|| identity(&path.to_string_lossy()))
     };
-    let mut system = System::new();
-    let count = system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing()
-            .with_exe(UpdateKind::Always)
-            .with_cmd(UpdateKind::Always)
-            .with_user(UpdateKind::Always),
-    );
-    if count == 0 {
-        return None;
-    }
     let mut running = HashMap::new();
     let user = system
         .process(sysinfo::Pid::from_u32(std::process::id()))?
@@ -259,7 +344,7 @@ fn observe(context: &Context) -> Option<HashMap<&'static str, u64>> {
                 })
         });
         if let Some(id) = host
-            && !dispatched(process, &system)
+            && !dispatched(process, system)
         {
             running
                 .entry(id)

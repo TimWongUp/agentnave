@@ -105,11 +105,15 @@ impl Hosts {
             .into_iter()
             .flat_map(|dir| fs::read_dir(dir).into_iter().flatten().flatten())
         {
-            let Some((age, value)) = read_receipt(&entry, now, host.boss) else {
+            let Some((age, modified, value)) = read_receipt(&entry, now, host.boss) else {
                 continue;
             };
             if !value["ended_ms"].is_null() {
                 receipts.ended.push(value);
+            } else if age <= LINGER_SECONDS
+                && self.receipt_process_exited(&entry.path(), &value, modified)
+            {
+                continue;
             } else if age <= 20 {
                 receipts.live.push(value);
             } else if age <= LINGER_SECONDS {
@@ -122,6 +126,19 @@ impl Hosts {
             }
         }
         receipts
+    }
+    /// A missing or reused PID only excludes an old blocker; it never proves tools loaded.
+    fn receipt_process_exited(&self, path: &Path, value: &Value, modified: SystemTime) -> bool {
+        let Some(pid) = receipt_pid(path) else {
+            return false;
+        };
+        matches!(
+            self.processes
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .receipt_process(&self.context, pid, value["started_ms"].as_u64(), modified),
+            processes::State::Stopped
+        )
     }
     fn install(&self, now: SystemTime) -> Install {
         let env = crate::update::active_tools(&self.context.app)
@@ -258,18 +275,35 @@ impl Receipts {
 }
 
 /// A private, size-limited receipt of this host's relays, with its age in seconds.
-fn read_receipt(entry: &fs::DirEntry, now: SystemTime, boss: &str) -> Option<(u64, Value)> {
+fn read_receipt(
+    entry: &fs::DirEntry,
+    now: SystemTime,
+    boss: &str,
+) -> Option<(u64, SystemTime, Value)> {
     let path = entry.path();
     if path.is_symlink() || path.extension().is_none_or(|ext| ext != "json") {
         return None;
     }
     let meta = entry.metadata().ok()?;
-    let age = now.duration_since(meta.modified().ok()?).ok()?.as_secs();
+    let modified = meta.modified().ok()?;
+    let age = now.duration_since(modified).ok()?.as_secs();
     if meta.len() > 16_384 || age > ENDED_SECONDS {
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    (value["version"] == 1 && value["host"] == boss).then_some((age, value))
+    (value["version"] == 1 && value["host"] == boss).then_some((age, modified, value))
+}
+
+fn receipt_pid(path: &Path) -> Option<u32> {
+    let (pid, identity) = path.file_stem()?.to_str()?.split_once('-')?;
+    if pid.is_empty()
+        || !pid.bytes().all(|byte| byte.is_ascii_digit())
+        || identity.len() != 32
+        || !identity.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    pid.parse::<u32>().ok().filter(|pid| *pid > 0)
 }
 
 fn valid_hash(value: &Value) -> bool {

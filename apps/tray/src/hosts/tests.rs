@@ -1056,6 +1056,63 @@ fn ended_receipts_confirm_short_connections_without_hiding_old_ones() {
 }
 
 #[test]
+fn exited_receipt_processes_do_not_delay_reload_confirmation() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(&hosts.context.search[0].join(h.binary), "cli");
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    let dir = hosts.context.home.join(".agentnave/connections");
+    let since = hosts.settings["codex"]["reload_changed"]["at_ms"]
+        .as_u64()
+        .unwrap()
+        .saturating_sub(1000);
+    hosts.settings["codex"]["reload_changed"]["at_ms"] = json!(since);
+    let receipt = |start| {
+        json!({"version":1,"host":"codex","started_ms":start,
+            "runtime_version":"0.22.0","runtime_tools_hash":"a".repeat(64),
+            "host_tools_hash":"a".repeat(64)})
+    };
+    save(&dir.join("new.json"), &receipt(since + 1).to_string());
+    let old = dir.join("17-0123456789abcdef0123456789abcdef.json");
+    save(&old, &receipt(1000).to_string());
+    // A dead relay must not block either while its receipt is fresh or while it lingers.
+    hosts.processes =
+        Mutex::new(processes::Probe::fixed(None).with_receipt_processes(Some(HashMap::new())));
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(SystemTime::now() - std::time::Duration::from_secs(100))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    assert!(old.exists(), "observation must not delete a receipt");
+    // A live old relay or an unavailable process observation still blocks confirmation.
+    hosts.processes = Mutex::new(
+        processes::Probe::fixed(None).with_receipt_processes(Some(HashMap::from([(17, 1)]))),
+    );
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    hosts.processes = Mutex::new(processes::Probe::fixed(None));
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    // An ended successful connection also confirms once the dead old relay is excluded.
+    let mut ended = receipt(since + 1);
+    ended["ended_ms"] = json!(since + 1);
+    save(&dir.join("new.json"), &ended.to_string());
+    hosts.processes =
+        Mutex::new(processes::Probe::fixed(None).with_receipt_processes(Some(HashMap::new())));
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    let unrecognized = dir.join("17-unrecognized.json");
+    fs::rename(&old, &unrecognized).unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    fs::rename(&unrecognized, &old).unwrap();
+    hosts.remember_reloads();
+    assert_eq!(
+        hosts.settings["codex"]["reload_confirmed"]["token"],
+        hosts.settings["codex"]["reload_changed"]["token"]
+    );
+}
+
+#[test]
 fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
     for id in IDS {
         let (_temp, mut hosts) = fixture();
