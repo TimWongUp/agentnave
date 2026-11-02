@@ -1453,7 +1453,8 @@ async def run_round(
             max_length=12000,
             description=(
                 "Shared task for this round, visible to all seats; without seats, a public "
-                "host remark every seat receives with its next round. To get answers, include "
+                "host remark every seat receives with its next round. At meeting close, post "
+                "the same summary you give the user here, with no seats. To get answers, include "
                 "seats even when opening a new meeting. Omit to only create the meeting."
             ),
         ),
@@ -1552,6 +1553,7 @@ async def run_round(
     To start immediately, pass title, members, prompt and seats together: this runs round 1
     in the same call. With no prompt it only creates the meeting. With prompt but no seats it
     only posts a host remark, starts no subagents and does not advance the round number.
+    At meeting close, save the same summary you give the user as a host remark with no seats.
     Seats are subagents with native tools and permissions unless isolated; each keeps its
     native session across rounds and restarts. Meetings follow discussion member limits, not
     host exclusions. A started round returns at once: use wait with its round_id. Private

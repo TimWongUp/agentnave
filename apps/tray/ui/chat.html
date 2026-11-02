@@ -12,6 +12,7 @@
 <script src="/chat/common.js" defer></script>
 <script src="/chat/mock.js" defer></script>
 <script src="/chat/actions.js" defer></script>
+<script src="/chat/voice.js" defer></script>
 <script src="/chat/chat-topics.js" defer></script>
 <script src="/chat/chat.js" defer></script>
 </head>
@@ -55,6 +56,7 @@
       <button id="dr-all" class="dr-all" type="button" hidden>‹ 全部</button>
       <button id="dr-close" class="dr-close" type="button" aria-label="关闭对话栏">×</button>
     </header>
+    <section id="voice-actions" class="voice-channel" aria-label="语音频道" hidden></section>
     <div id="timeline" class="tl" role="log" aria-label="消息" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
     <button id="jump" class="jump" type="button" hidden>有新消息 ↓</button>
     <div id="ro" class="ro">只读</div>

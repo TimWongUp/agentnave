@@ -97,6 +97,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
                     else entry.text
                 ),
                 "time": entry.time,
+                "manager_host": entry.manager_host,
                 "manager_model": entry.manager_model,
                 "manager_reported_model": entry.manager_reported_model,
                 "reported_model": entry.reported_model,
@@ -225,12 +226,23 @@ def _director(
         {"number": round_.number, "seats": [{"seat_id": run.seat_id} for run in round_.seats]}
         for round_ in state.rounds
     ]
+    # A round's instructions come from the boss that opened it.
+    openers = {entry.round: entry for entry in state.entries if entry.kind == "task"}
     data["instructions"] = [
         {
             "round": round_.number,
             "seat_id": seat.seat_id,
             "text": seat.instruction,
             "time": round_times.get(round_.number, state.created),
+            **_compact(
+                {
+                    "manager_host": getattr(openers.get(round_.number), "manager_host", None),
+                    "manager_model": getattr(openers.get(round_.number), "manager_model", None),
+                    "manager_reported_model": getattr(
+                        openers.get(round_.number), "manager_reported_model", None
+                    ),
+                }
+            ),
         }
         for round_ in state.rounds
         for seat in round_.seats

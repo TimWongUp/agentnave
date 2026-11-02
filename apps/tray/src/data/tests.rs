@@ -491,6 +491,8 @@ fn show_chats_project_prompts_answers_review_absence_and_typing() {
     let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
     assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
     assert_eq!(prompts[0]["speaker"]["model_source"], "native");
+    assert_eq!(prompts[0]["speaker"]["provider"], "codex");
+    assert_eq!(prompts[0]["speaker"]["label"], "Codex");
     assert_eq!(prompts[0]["to"], json!([{"key": "@all", "handle": "@all"}]));
     assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
     assert_ne!(
@@ -806,6 +808,7 @@ fn failed_task_keeps_native_output_beside_the_failure_notice() {
     task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
     task["director"]["tasks"][0]["error"] = json!("permission_denied");
     task["director"]["tasks"][0]["manager_model"] = json!("gemini-3.5-pro");
+    task["director"]["tasks"][0]["manager_host"] = json!("gemini");
     save(dir.path(), &task);
     let reader = Reader::new(dir.path().to_path_buf());
     let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -819,6 +822,9 @@ fn failed_task_keeps_native_output_beside_the_failure_notice() {
         messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"]["model"],
         "gemini-3.5-pro"
     );
+    let speaker = &messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"];
+    assert_eq!(speaker["provider"], "gemini");
+    assert_eq!(speaker["label"], "Gemini CLI");
     assert!(messages.iter().any(|m| m["kind"] == "notice"
         && m["status"] == "blocked"
         && m["detail"] == "permission_denied"));
@@ -1359,7 +1365,7 @@ fn messages_carry_message_id_visibility_thread_desk_and_forward() {
             {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T01:00:00Z",
                 "recipients": [{"seat": "a", "provider": "claude", "model": "m"}], "message_id": "show:e:0"},
             {"kind": "forward", "speaker": "@forward", "round": 1, "text": "转发内容", "time": "2026-10-15T01:01:00Z",
-                "message_id": "show:e:1", "forward_id": "task:t:t-task", "forward_source": "房间 · 工位 · 时间"},
+                "message_id": "show:e:1", "manager_host": "codex", "forward_id": "task:t:t-task", "forward_source": "房间 · 工位 · 时间"},
             {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：失败）", "time": "2026-10-15T01:02:00Z",
                 "message_id": "show:e:2"}]);
     show["director"]["private_messages"] = json!([
@@ -1751,6 +1757,9 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
     let focused = state(&reader, &format!("{path}/focus/many"));
     assert_eq!(focused["omitted"], 0);
     assert_eq!(focused["messages"].as_array().unwrap().len(), 422);
+    let history = state(&reader, &format!("{path}/history"));
+    assert_eq!(history["omitted"], 0);
+    assert_eq!(history["messages"].as_array().unwrap().len(), 422);
     // Focusing the conversation returns every message, so every folded desk is listed.
     assert_eq!(resolves(&focused), 208);
 }

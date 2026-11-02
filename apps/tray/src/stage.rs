@@ -361,7 +361,15 @@ fn member_speaker(identity: &Value) -> Value {
     who
 }
 
-fn manager_speaker(identity: &Value, provider: &str, name: &str) -> Value {
+/// The boss who said this, kept through a handover; records older than `manager_host` fall back
+/// to the host that opened the conversation. Only a boss that took over is named by its host.
+fn manager_speaker(identity: &Value, opened_by: Option<&str>, name: &str) -> Value {
+    let provider = opt_text(identity, "manager_host");
+    let name = provider
+        .as_deref()
+        .filter(|host| Some(*host) != opened_by)
+        .map_or(name, |host| label(Some(host)));
+    let provider = provider.as_deref().or(opened_by).unwrap_or("");
     let reported = text(identity, "manager_reported_model");
     let mut who = speaker(
         "manager",
@@ -579,7 +587,7 @@ impl Group {
         members.into_iter().map(|m| m.value.clone()).collect()
     }
 
-    fn timeline(&self, focus: Option<&str>) -> Vec<Value> {
+    fn timeline(&self, focus: Option<&str>, complete: bool) -> Vec<Value> {
         let mut messages: Vec<_> = self.messages.iter().collect();
         messages.sort_by_key(|m| timestamp(text(m, "time")).unwrap_or_default());
         let mut typing: Vec<_> = self.typing.values().map(|(_, message)| message).collect();
@@ -595,7 +603,9 @@ impl Group {
             .into_iter()
             .enumerate()
             .filter(|(index, message)| {
-                *index >= skip || focus.is_some_and(|id| text(message, "conversation") == id)
+                complete
+                    || *index >= skip
+                    || focus.is_some_and(|id| text(message, "conversation") == id)
             })
             .map(|(_, message)| message.clone())
             .collect()
@@ -1035,8 +1045,9 @@ impl Group {
         }
     }
 
-    fn omitted(&self, focus: Option<&str>) -> usize {
-        (self.messages.len() + self.typing.len()).saturating_sub(self.timeline(focus).len())
+    fn omitted(&self, focus: Option<&str>, complete: bool) -> usize {
+        (self.messages.len() + self.typing.len())
+            .saturating_sub(self.timeline(focus, complete).len())
     }
 
     fn threads(&self) -> Vec<Value> {
@@ -1144,11 +1155,7 @@ impl Group {
                     &start,
                     &item.id,
                     "prompt",
-                    manager_speaker(
-                        task,
-                        self.host.as_deref().unwrap_or(""),
-                        self.manager_label(),
-                    ),
+                    manager_speaker(task, item.host.as_deref(), self.manager_label()),
                     prompt,
                 );
                 route_to(&mut msg, vec![recipient(&desk, task)]);
@@ -1290,6 +1297,8 @@ pub(crate) fn respond(
     apps: &HashMap<String, &'static str>,
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
+    let complete = requested.is_some_and(|path| path.ends_with("/history"));
+    let requested = requested.map(|path| path.strip_suffix("/history").unwrap_or(path));
     let (requested, focus) = match requested {
         Some(path) => match path.split_once("/focus/") {
             Some((group, conversation)) => (Some(group), Some(conversation)),
@@ -1370,14 +1379,14 @@ pub(crate) fn respond(
         value["conversations"] = json!(group.conversations);
         value["members"] = json!(group.members());
         let rooms = group.rooms();
-        let messages = group.timeline(focus);
+        let messages = group.timeline(focus, complete);
         let referenced = referenced_desks(&rooms, &messages);
         let (desks, optimized) = group.desks(host.as_deref(), limit, OPTIMIZED_LISTED, &referenced);
         value["desks"] = json!(desks);
         value["optimized"] = optimized;
         value["rooms"] = json!(rooms);
         value["messages"] = json!(messages);
-        value["omitted"] = json!(group.omitted(focus));
+        value["omitted"] = json!(group.omitted(focus, complete));
         value["threads"] = json!(group.threads());
         return Response::json(&value);
     }
@@ -1389,7 +1398,7 @@ pub(crate) fn respond(
                 g.project(&snapshots, true);
                 let mut value = g.header();
                 value["threads"] = json!(g.threads());
-                value["omitted"] = json!(g.omitted(None));
+                value["omitted"] = json!(g.omitted(None, false));
                 value["members"] = json!(g.members());
                 let rooms = g.rooms();
                 // The panel only shows how many; the office lists them. Seats still need theirs.
@@ -1438,7 +1447,7 @@ pub(crate) fn respond(
                     _ => {
                         g.project(&snapshots, true);
                         let text = g
-                            .timeline(None)
+                            .timeline(None, false)
                             .last()
                             .map(|m| line("succeeded", text(m, "text"), ""))
                             .unwrap_or_default();

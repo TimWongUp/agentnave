@@ -583,6 +583,7 @@ class Conversations(Groups):
                         kind=item.kind,
                         seat_id=item.seat,
                         text=item.text,
+                        manager_host=item.manager_host,
                         manager_model=item.manager_model,
                         reported_model=item.reported_model,
                         manager_reported_model=item.manager_reported_model,
@@ -608,6 +609,7 @@ class Conversations(Groups):
         prompt: str,
         instructions: dict[str, str],
         *,
+        manager_host: str | None = None,
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         manager_reported_model: str | None = None,
@@ -630,6 +632,7 @@ class Conversations(Groups):
                     group.rounds + 1,
                     "forward",
                     text=item.text,
+                    manager_host=manager_host or self.host.name,
                     manager_model=manager_model,
                     manager_reported_model=manager_reported,
                     forward_id=item.message_id,
@@ -645,6 +648,7 @@ class Conversations(Groups):
                     order,
                     prompt,
                     instructions,
+                    manager_host=manager_host or self.host.name,
                     manager_model=manager_model,
                     manager_reported_model=manager_reported,
                 )
@@ -688,6 +692,7 @@ class Conversations(Groups):
                     group.rounds,
                     "host",
                     text=text,
+                    manager_host=self.host.name,
                     manager_model=manager_model,
                     manager_reported_model=self._manager_model(state.manager_session),
                 )
@@ -758,6 +763,7 @@ class Conversations(Groups):
                             kind=item.kind,
                             seat_id=item.seat,
                             text=item.text,
+                            manager_host=item.manager_host,
                             manager_model=item.manager_model,
                             reported_model=item.reported_model,
                             manager_reported_model=item.manager_reported_model,
@@ -1064,6 +1070,7 @@ class Conversations(Groups):
                 else None,
                 cwd=str(request.cwd),
                 prompt=prompt,
+                manager_host=self.host.name,
                 manager_model=manager_model,
                 manager_reported_model=self._manager_model(manager_session),
                 session_id=request.session_id,
@@ -1163,6 +1170,7 @@ class Conversations(Groups):
                     if item.kind in ("answer", "absent")
                     else now()
                 ),
+                manager_host=item.manager_host,
                 manager_model=item.manager_model,
                 manager_reported_model=item.manager_reported_model,
                 reported_model=item.reported_model,
