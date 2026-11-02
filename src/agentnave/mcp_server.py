@@ -1184,8 +1184,9 @@ async def list_members(
     orchestration holds the CLI and model picked for each Explorer (read-only: explore, plan,
     review) and Worker (writes) difficulty, easy or hard, from orchestration.json. When disabled
     for this host, enabled=false and both seat maps are empty; saved picks do not authorize
-    delegation or supply role defaults. A seat with available=false carries replacement, a
-    ready provider and provider_options with the reason; the service never switches by itself.
+    delegation or supply role defaults. A seat with available=false may carry replacement, a
+    ready provider and provider_options with the reason, to pass along with the same seat or
+    role; the service never switches by itself.
     native=true
     marks the host's own CLI: give that work to the host's built-in subagent instead.
     cli_options holds settings the user saved for a whole CLI, applied to every model of it.
