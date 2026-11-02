@@ -1751,6 +1751,9 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
     let focused = state(&reader, &format!("{path}/focus/many"));
     assert_eq!(focused["omitted"], 0);
     assert_eq!(focused["messages"].as_array().unwrap().len(), 422);
+    let history = state(&reader, &format!("{path}/history"));
+    assert_eq!(history["omitted"], 0);
+    assert_eq!(history["messages"].as_array().unwrap().len(), 422);
     // Focusing the conversation returns every message, so every folded desk is listed.
     assert_eq!(resolves(&focused), 208);
 }

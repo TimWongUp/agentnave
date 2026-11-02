@@ -15,6 +15,7 @@ mod rules;
 mod settings;
 mod stage;
 mod update;
+mod voice;
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,19 +73,23 @@ const DRIP: [&[u8]; 18] = [
 ];
 static DRIPPING: AtomicBool = AtomicBool::new(false);
 /// A preview build (`scripts/preview_tray.sh`) runs beside the installed app on the same data to
-/// show UI changes: it never changes AgentNave data, host configs or Skills, and never updates or
-/// installs. Only its own WebView storage (display settings) is kept, under its own identifier.
+/// show UI changes: it never changes production data, host configs or Skills, and never updates
+/// or installs. Its display preferences and voice settings, keys and cache stay separate.
 pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
 
-/// What a preview build refuses: every request that could change files, except moving its window,
-/// checking for an update, which only asks the release feed, and opening a rules file in the
-/// user's editor, which changes nothing by itself.
+/// Preview writes only its own appearance and voice data. Other exceptions move the window,
+/// check the release feed or open a rules file in the user's editor.
 fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
         && !matches!(
             path,
-            "/app/window/drag"
+            "/app/voice"
+                | "/app/voice/key"
+                | "/app/voice/speak"
+                | "/app/voice/chatgpt/start"
+                | "/app/voice/chatgpt/sign-out"
+                | "/app/window/drag"
                 | "/app/window/zoom"
                 | "/app/window/minimize"
                 | "/app/window/close"
@@ -746,6 +751,13 @@ fn open(app: &AppHandle, label: &str, path: &str) {
     }
 }
 
+/// Opens a sign-in page in the default browser.
+pub(crate) fn browse_address(address: &str) {
+    if let Ok(target) = address.parse::<Url>() {
+        browse(&target);
+    }
+}
+
 /// Links in replies open in the default browser.
 fn browse(target: &Url) {
     #[cfg(target_os = "macos")]
@@ -772,6 +784,16 @@ mod tests {
             assert!(preview_refuses(true, method, path), "{method} {path}");
             assert!(!preview_refuses(false, method, path), "{method} {path}");
         }
+        for path in [
+            "/app/voice",
+            "/app/voice/key",
+            "/app/voice/speak",
+            "/app/voice/chatgpt/start",
+            "/app/voice/chatgpt/sign-out",
+        ] {
+            assert!(!preview_refuses(true, "POST", path));
+        }
+        assert!(preview_refuses(true, "POST", "/app/voice/unknown"));
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
         assert!(!preview_refuses(true, "POST", "/app/window/minimize"));

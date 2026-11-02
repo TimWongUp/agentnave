@@ -88,7 +88,7 @@ let currentDoc = {
   modes: {},
 };
 let detected = {};
-let currentTab = "members"; // "members" | "avatars" | "advanced" | "hosts" | "about"
+let currentTab = "members"; // "members" | "avatars" | "voice" | "advanced" | "hosts" | "about"
 let dirty = false;
 let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
 let savedVersion = 0;
@@ -709,11 +709,12 @@ function setTab(tab) {
   // Status lines belong to the tab that produced them.
   if (currentTab !== tab) showNotice("");
   currentTab = tab;
-  for (const id of ["hosts", "members", "avatars", "advanced", "about"]) {
+  for (const id of ["hosts", "members", "avatars", "voice", "advanced", "about"]) {
     if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
     else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
+  if (tab === "voice") window.AgentNaveVoiceSettings?.load();
   if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "members") loadLimit();
   if (tab === "advanced") {
@@ -1587,7 +1588,7 @@ for (const event of ["click", "change"]) $("cli-cards").addEventListener(event, 
 }, true);
 bindAdvanced();
 const OLD_TABS = { "#updates": "about", "#skills": "advanced", "#orchestration": "advanced" }; // Preserve old links.
-const tabFromHash = () => OLD_TABS[location.hash] || (["members", "avatars", "advanced", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
+const tabFromHash = () => OLD_TABS[location.hash] || (["members", "avatars", "voice", "advanced", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
 
