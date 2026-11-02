@@ -495,9 +495,12 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
   const list = [
     message("topic", "2026-11-01T00:00:01Z", { conversation: "room", round: 1, thread: room, kind: "prompt", desk: null, to: desks.map(d => ({ key: d.key })), speaker: { role: "manager" } }),
     message("brief", "2026-11-01T00:00:02Z", { conversation: "room", round: 1, thread: room, kind: "instruction", desk: "a", to: [{ key: "a" }], speaker: { role: "manager" } }),
-    message("answer", "2026-11-01T00:00:03Z", { conversation: "room", round: 1, thread: room, desk: "a", speaker: { role: "member", provider: "claude", model: "claude-x" } }),
+    message("answer", "2026-11-01T00:00:03Z", { conversation: "room", round: 1, thread: room, desk: "a", message_id: "m-answer", speaker: { role: "member", provider: "claude", model: "claude-x" } }),
     message("task", "2026-11-01T00:00:04Z", { conversation: "t", thread: { kind: "desk", key: "c" }, kind: "prompt", desk: "c", to: [{ key: "c" }], speaker: { role: "manager" } }),
+    message("ask", "2026-11-01T00:00:05Z", { conversation: "room", round: 2, thread: room, kind: "prompt", desk: null, to: [{ key: "a" }, { key: "c" }], speaker: { role: "manager" } }),
+    message("relay", "2026-11-01T00:00:06Z", { conversation: "room", round: 2, thread: room, kind: "forward", desk: null, forward: { message_id: "m-answer" }, speaker: { role: "manager" } }),
   ];
+  app.ctx.c.messages = list;
   app.ctx.desks = new Map(desks.map(d => [d.key, d]));
   app.ctx.rooms.set("room", { seats: desks.map(d => ({ desk: d.key })) });
   const said = text => {
@@ -506,14 +509,18 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
     rec.read.listeners.click({ stopPropagation() {} });
     return flush().then(() => app.requests.at(-1).scene);
   };
-  assert.deepEqual(await said("topic"), { name: "boss", role: "", room: true, to: null });
+  assert.deepEqual(await said("topic"), { name: "boss", role: "", room: true, private: false, to: [], forward: null },
+    "a message to every seat names nobody");
   const brief = await said("brief");
-  assert.equal(brief.to.role, "探索派");
-  assert.match(brief.to.name, /探索派/, "seats sharing a family are told apart by role");
+  assert.equal(brief.private, true);
+  assert.deepEqual(brief.to.map(p => [p.role, p.twin]), [["探索派", true]], "the model learns a same-family seat is here");
   const answer = await said("answer");
-  assert.equal(answer.room, true);
-  assert.equal(answer.to, null);
-  assert.equal((await said("task")).to.name, "GPT");
+  assert.deepEqual([answer.room, answer.private, answer.to], [true, false, []]);
+  const task = await said("task");
+  assert.deepEqual([task.private, task.to], [true, [{ name: "GPT", role: "", twin: false }]]);
+  const ask = await said("ask");
+  assert.deepEqual([ask.private, ask.to.map(p => p.role)], [false, ["探索派", ""]], "a meeting question to some seats names them");
+  assert.deepEqual((await said("relay")).forward, { name: "", role: "探索派", twin: true }, "a forward says whose words it relays");
   const fromStart = app.requests.length;
   const playAll = app.room(list.filter(m => m.conversation === "room"), "room", desks);
   await playAll.listeners.click();

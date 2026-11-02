@@ -547,7 +547,7 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         assert!(system.contains(if index == 1 {
             "你是这个工作区的 boss"
         } else {
-            "你是员工 GPT，工位角色是「探索派」"
+            "你是员工 GPT，职责是「探索派」"
         }));
         let original = body["messages"][1]["content"].as_str().unwrap();
         assert!(original.starts_with("下面是你要说的原话"));

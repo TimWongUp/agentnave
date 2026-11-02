@@ -101,17 +101,32 @@
     const family = Avatars.family(provider, model);
     return family === "gpt" ? "GPT" : Avatars.families?.[family]?.[0] || AN.cliName?.(provider) || "";
   }
-  // The one employee a boss message is said to, named by role too if a seat shares its family.
-  function addressee(m, ctx, boss) {
-    if (!boss || m.kind === "forward" || m.thread?.kind === "room" && m.kind !== "instruction") return null;
-    const keys = m.to?.map(t => t.key).filter(Boolean) || [];
-    const d = ctx.desks.get(m.desk || (keys.length === 1 ? keys[0] : null));
-    if (!d) return null;
+  // How the summary model may call a desk: its spoken name and duty, and whether another seat of
+  // this meeting shares that name.
+  function person(d, ctx, m) {
     const family = Avatars.family(d.provider, d.model);
-    const seats = m.thread?.kind === "room" ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
+    const seats = m?.thread?.kind === "room" ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
     const twin = seats.some(s => s.desk !== d.key && (t => t && Avatars.family(t.provider, t.model) === family)(ctx.desks.get(s.desk)));
-    const name = spokenName(d.provider, d.model);
-    return { name: twin && d.role ? `${name} ${d.role}` : name, role: d.role || "" };
+    return { name: spokenName(d.provider, d.model), role: d.role || "", twin };
+  }
+  // Whom a boss message is said to: its one employee in private, or the seats it names in a
+  // meeting; nobody named means the whole meeting.
+  function listeners(m, ctx, boss) {
+    if (!boss || m.kind === "forward") return [];
+    const keys = m.to?.map(t => t.key).filter(Boolean) || [];
+    const meeting = m.thread?.kind === "room" && m.kind !== "instruction";
+    const seats = meeting ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
+    const named = meeting ? (keys.length && keys.length < seats.length ? keys : []) : m.desk ? [m.desk] : keys.slice(0, 1);
+    return named.map(key => ctx.desks.get(key)).filter(Boolean).map(d => person(d, ctx, m));
+  }
+  // Whose words a boss forward relays, when the forwarded message is still in view.
+  function source(m, ctx) {
+    const id = m.forward?.message_id;
+    const original = id && ctx.c.messages?.find(o => o.message_id === id);
+    if (!original) return null;
+    if (original.speaker?.role === "manager") return { name: "boss", role: "" };
+    const d = original.desk && ctx.desks.get(original.desk);
+    return d ? person(d, ctx, original) : { name: spokenName(original.speaker?.provider, original.speaker?.model), role: "" };
   }
   function item(m, ctx, automatic = false) {
     const d = m.desk && ctx.desks.get(m.desk);
@@ -122,13 +137,15 @@
       kind: m.kind, conversation: m.conversation, round: m.round,
       boss, family: Avatars.family(provider, model) || null,
       provider, model, role: boss ? "" : d?.role || m.speaker?.desk_role || "", label: boss ? "boss" : d ? AN.deskName(d) : m.speaker?.label || provider,
-      name: boss ? "boss" : spokenName(provider, model), to: addressee(m, ctx, boss),
+      name: boss ? "boss" : spokenName(provider, model), to: listeners(m, ctx, boss),
+      private: m.thread?.kind !== "room" || m.kind === "instruction" || m.kept_private === true,
+      forward: boss && m.kind === "forward" ? source(m, ctx) : null,
       text: m.text, time: Date.parse(m.time) || 0, automatic, controller: new AbortController() };
   }
   async function audio(job) {
     const response = await fetch("/app/voice/speak", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
       signal: job.controller.signal, body: JSON.stringify({ family: job.family, text: job.text, full: false, boss: job.boss,
-        scene: { name: job.name, role: job.role, room: Boolean(job.room), to: job.to } }) });
+        scene: { name: job.name, role: job.role, room: Boolean(job.room), private: job.private, to: job.to, forward: job.forward } }) });
     if (response.status === 204) return null;
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));

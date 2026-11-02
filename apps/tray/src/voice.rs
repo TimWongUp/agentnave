@@ -298,7 +298,6 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         }
         None => text,
     };
-    let text = scene.addressed(text);
     let voice = select_voice(payload, family, &settings, &keys, engine)?;
     let model = model(&settings, engine);
     let cache_key = audio_key(&settings, engine, &voice, &text);

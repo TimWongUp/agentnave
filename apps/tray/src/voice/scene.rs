@@ -1,18 +1,24 @@
-//! Who is talking, where, and to whom: the part of a spoken message the text itself leaves out.
+//! Who is talking, where, and to whom: what the text itself leaves out, told to the summary
+//! model so it can speak the message as its speaker would, naming whom it needs to.
 use serde_json::Value;
 
 const NAME_CHARS: usize = 40;
+const LISTENERS: usize = 8;
 
 struct Person {
     name: String,
     role: String,
+    /// Another seat here goes by the same name.
+    twin: bool,
 }
 
 pub(super) struct Scene {
     boss: bool,
     me: Person,
     room: bool,
-    to: Option<Person>,
+    private: bool,
+    to: Vec<Person>,
+    forward: Option<Person>,
 }
 
 /// A role or name comes from the conversation, so an odd one is trimmed rather than refused.
@@ -32,32 +38,51 @@ fn person(value: &Value) -> Person {
     Person {
         name: field(value, "name"),
         role: field(value, "role"),
+        twin: value["twin"] == true,
     }
 }
 
 impl Person {
-    /// "Claude（探索派）", dropping the role when the name already carries it.
+    /// "Claude（职责：探索派）", with a reminder when another seat shares the name.
     fn called(&self) -> String {
-        if self.role.is_empty() || self.name.contains(&self.role) {
-            self.name.clone()
-        } else {
-            format!("{}（{}）", self.name, self.role)
+        match (self.role.is_empty(), self.twin) {
+            (true, _) => self.name.clone(),
+            (false, false) => format!("{}（职责：{}）", self.name, self.role),
+            (false, true) => format!(
+                "{}（职责：{}；这里还有另一位 {}，称呼时带上职责区分）",
+                self.name, self.role, self.name
+            ),
         }
     }
+}
+
+fn list(people: &[Person]) -> String {
+    people
+        .iter()
+        .map(Person::called)
+        .collect::<Vec<_>>()
+        .join("、")
 }
 
 impl Scene {
     pub(super) fn of(payload: &Value, boss: bool) -> Self {
         let scene = &payload["scene"];
+        let to = match &scene["to"] {
+            Value::Array(items) => items.iter().take(LISTENERS).map(person).collect(),
+            Value::Object(_) => vec![person(&scene["to"])],
+            _ => Vec::new(),
+        };
         Self {
             boss,
             me: person(scene),
             room: scene["room"] == true,
-            to: Some(person(&scene["to"])).filter(|to| !to.name.is_empty()),
+            private: scene["private"] == true,
+            to: to.into_iter().filter(|to| !to.name.is_empty()).collect(),
+            forward: Some(person(&scene["forward"])).filter(|from| !from.name.is_empty()),
         }
     }
 
-    /// Tells the model who it is and who hears it, so it speaks as itself and not about itself.
+    /// Who the speaker is and who hears it, so the model speaks as itself, to its listeners.
     pub(super) fn identity(&self) -> String {
         let who = if self.boss {
             "你是这个工作区的 boss：给员工派任务、主持会议、做决定。".to_string()
@@ -70,30 +95,30 @@ impl Scene {
             )
         } else {
             format!(
-                "你是员工 {}，工位角色是「{}」：接 boss 交代的事，向 boss 汇报。",
+                "你是员工 {}，职责是「{}」：接 boss 交代的事，向 boss 汇报。",
                 self.me.name, self.me.role
             )
         };
-        let hearing = match (self.boss, self.room, &self.to) {
-            (true, _, Some(to)) => format!("现在你私下对员工 {} 说话，别人听不到。", to.called()),
-            (true, true, None) => "现在你在会议上对所有参会员工说话。".to_string(),
-            (true, false, None) => "现在你在对员工说话。".to_string(),
-            (false, true, _) => "现在你在会议上发言，boss 和其他员工都听得到。".to_string(),
-            (false, false, _) => "现在你私下向 boss 汇报。".to_string(),
+        let hearing = match (self.boss, self.room, self.private, self.to.is_empty()) {
+            (true, _, true, false) => {
+                format!("现在你私下对员工 {} 说话，别人听不到。", list(&self.to))
+            }
+            (true, true, false, false) => format!(
+                "现在你在会议上点名对 {} 说话，其他参会员工也听得到。",
+                list(&self.to)
+            ),
+            (true, true, _, true) => "现在你在会议上对所有参会员工说话。".to_string(),
+            (true, false, _, _) => "现在你在对员工说话。".to_string(),
+            (false, true, false, _) => "现在你在会议上发言，boss 和其他员工都听得到。".to_string(),
+            (false, _, _, _) => "现在你私下回复 boss。".to_string(),
         };
-        format!("{who}{hearing}")
-    }
-
-    /// A message for one employee opens by calling them, unless it already does.
-    pub(super) fn addressed(&self, text: String) -> String {
-        let Some(to) = self.to.as_ref().filter(|_| self.boss) else {
-            return text;
-        };
-        let name = to.name.to_lowercase();
-        if text.trim_start().to_lowercase().starts_with(&name) {
-            return text;
-        }
-        format!("{}，{text}", to.name)
+        let relay = self.forward.as_ref().map_or(String::new(), |from| {
+            format!(
+                "原话是 {} 说的，你在把它转给大家：要说清楚是在转述谁，那些结论和做法是对方的，不是你的。",
+                from.called()
+            )
+        });
+        format!("{who}{hearing}{relay}")
     }
 }
 
@@ -102,49 +127,54 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn brief() -> Scene {
-        let scene = json!({"name":"boss","role":"","room":true,
-            "to":{"name":"Claude","role":"探索派"}});
-        Scene::of(&json!({ "scene": scene }), true)
+    #[test]
+    fn a_private_briefing_names_its_employee_for_the_model_to_call() {
+        let scene = json!({"name":"boss","room":true,"private":true,
+            "to":[{"name":"Claude","role":"探索派","twin":true}]});
+        let identity = Scene::of(&json!({ "scene": scene }), true).identity();
+        assert!(identity.contains("私下对员工 Claude（职责：探索派；这里还有另一位 Claude"));
     }
 
     #[test]
-    fn a_private_briefing_calls_its_employee_once() {
-        let scene = brief();
-        assert_eq!(
-            scene.addressed("你是探索派。".into()),
-            "Claude，你是探索派。"
+    fn a_meeting_message_says_who_is_called_on_and_who_listens() {
+        let named = json!({"scene":{"name":"boss","room":true,
+            "to":[{"name":"Claude"},{"name":"Gemini","role":"评审"}]}});
+        assert!(
+            Scene::of(&named, true)
+                .identity()
+                .contains("点名对 Claude、Gemini（职责：评审） 说话，其他参会员工也听得到")
         );
-        assert_eq!(
-            scene.addressed("claude，你是探索派。".into()),
-            "claude，你是探索派。"
+        let everyone = json!({"scene":{"name":"boss","room":true,"to":[]}});
+        assert!(
+            Scene::of(&everyone, true)
+                .identity()
+                .contains("对所有参会员工说话")
+        );
+        let member = json!({"scene":{"name":"Gemini","role":"探索派","room":true}});
+        let member = Scene::of(&member, false).identity();
+        assert!(member.starts_with("你是员工 Gemini，职责是「探索派」"));
+        assert!(member.contains("boss 和其他员工都听得到"));
+        let private = json!({"scene":{"name":"Gemini","private":true}});
+        assert!(
+            Scene::of(&private, false)
+                .identity()
+                .contains("私下回复 boss")
+        );
+    }
+
+    #[test]
+    fn a_forward_says_whose_words_are_relayed() {
+        let scene =
+            json!({"scene":{"name":"boss","room":true,"forward":{"name":"GPT","role":"实现"}}});
+        assert!(
+            Scene::of(&scene, true)
+                .identity()
+                .contains("原话是 GPT（职责：实现） 说的")
         );
         assert!(
-            scene
+            Scene::of(&json!({}), false)
                 .identity()
-                .contains("私下对员工 Claude（探索派） 说话")
+                .starts_with("你是这个工作区的一名员工")
         );
-    }
-
-    #[test]
-    fn only_a_boss_addressing_one_employee_is_prefixed() {
-        let room = json!({"scene":{"name":"boss","room":true,"to":null}});
-        assert_eq!(Scene::of(&room, true).addressed("开会。".into()), "开会。");
-        let member = json!({"scene":{"name":"Gemini","role":"探索派","to":{"name":"boss"}}});
-        let member = Scene::of(&member, false);
-        assert_eq!(member.addressed("结论是甲。".into()), "结论是甲。");
-        assert!(
-            member
-                .identity()
-                .starts_with("你是员工 Gemini，工位角色是「探索派」")
-        );
-        assert!(member.identity().contains("私下向 boss 汇报"));
-    }
-
-    #[test]
-    fn a_payload_without_a_scene_still_speaks_unchanged() {
-        let scene = Scene::of(&json!({}), false);
-        assert_eq!(scene.addressed("你好".into()), "你好");
-        assert!(scene.identity().starts_with("你是这个工作区的一名员工"));
     }
 }
