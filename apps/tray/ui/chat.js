@@ -435,20 +435,24 @@ function renderHead(c, n) {
 }
 
 // ---------------------------------------------------------------- boss office
-function managerSpeaker(c, match) {
+function bossSpeech(c, match) {
   for (let i = c.messages.length - 1; i >= 0; i--) {
-    const s = c.messages[i].speaker;
-    if (s?.role === "manager" && match(s)) return s;
+    const m = c.messages[i];
+    if (m.speaker?.role === "manager" && match(m)) return m.speaker;
   }
   return null;
 }
-// After a takeover the old boss keeps the seat until the new one speaks in the workspace.
+// After a takeover the old boss keeps the seat until the new one speaks in the workspace. The
+// latest handover splits the boss's messages, so a takeover by the same CLI is told apart too.
 function seatHolder(c) {
-  const before = c.previous_host || "";
-  const spoke = !before || managerSpeaker(c, (s) => s.provider === c.host);
-  const host = spoke ? c.host : before;
-  const model = managerSpeaker(c, (s) => s.model && (!before || s.provider === host))?.model || "";
-  return { host, model, app: spoke ? c.app || c.host : before, label: spoke ? c.label : cliName(before), former: spoke ? before : "" };
+  const at = Math.max(-Infinity, ...c.messages.filter((m) => m.kind === "handover").map((m) => AN.at(m.time)));
+  const later = (m) => AN.at(m.time) >= at;
+  const modelOf = (when) => bossSpeech(c, (m) => m.speaker.model && when(m))?.model || "";
+  const before = c.previous_host || (c.handover === "changed" && bossSpeech(c, (m) => !later(m))?.provider) || "";
+  if (!before) return { host: c.host, model: modelOf(() => true), app: c.app || c.host, label: c.label, former: null };
+  const earlier = (m) => !later(m);
+  if (!bossSpeech(c, later)) return { host: before, model: modelOf(earlier), app: before, label: c.previous_label || cliName(before), former: null };
+  return { host: c.host, model: modelOf(later), app: c.app || c.host, label: c.label, former: { host: before, model: modelOf(earlier) } };
 }
 // `live` only means a server is running work right now; an idle boss dozes off after a while.
 function recentlyActive(c) {
@@ -550,13 +554,13 @@ function updateBoss(rec, c, n) {
 }
 
 // Once the new boss has spoken, the one before hangs framed on the wall to its left.
-function hangPortrait(rec, c, before) {
-  rec.portrait.hidden = !before;
-  const face = before ? ART.character(before, managerSpeaker(c, (s) => s.model && s.provider === before)?.model || "") : "";
+function hangPortrait(rec, c, former) {
+  rec.portrait.hidden = !former;
+  setAttr(rec.portrait, "title", c.took_over || null);
+  const face = former ? ART.character(former.host, former.model) : "";
   if (rec.portraitFace === face) return;
   rec.portraitFace = face;
   rec.portrait.replaceChildren(...(face ? [ART.head(face)] : []));
-  setAttr(rec.portrait, "title", c.took_over || null);
 }
 
 // ---------------------------------------------------------------- beside the boss

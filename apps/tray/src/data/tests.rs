@@ -692,6 +692,7 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
     assert_eq!(waiting["took_over"], Value::Null);
     assert_eq!(claimed["took_over"], "Codex 接手了 Claude Code");
     assert_eq!(claimed["previous_host"], "claude");
+    assert_eq!(claimed["previous_label"], "Claude Code");
     let message = claimed["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(message["text"], "Claude Code 交出工作区，Codex 已接手");
     assert_eq!(claimed["omitted"], 0);

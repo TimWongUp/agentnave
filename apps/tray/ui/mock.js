@@ -581,6 +581,7 @@ All checks passed!
       handover: q.get("handover") || null,
       took_over: q.get("handover") === "changed" ? `${label(g)} 接手了 Claude Code` : null,
       previous_host: q.get("handover") === "changed" ? "claude" : null,
+      previous_label: q.get("handover") === "changed" ? "Claude Code" : null,
       conversations: g.convs
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
         .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
