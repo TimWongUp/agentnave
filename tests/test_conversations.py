@@ -2310,7 +2310,7 @@ async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
                 ],
             },
         )
-        assert [seat["role"] for seat in cast(list[dict[str, object]], show["members"])] == [
+        assert [seat.get("role") for seat in cast(list[dict[str, object]], show["members"])] == [
             "author",
             None,
         ]
@@ -2368,7 +2368,7 @@ async def test_desk_access_is_recorded_but_never_enforced(tmp_path: Path, data_r
         assert writer["conversation_id"] == explorer["conversation_id"]
         await _wait_task(client, writer["invocation_id"])
         plain = await _call(client, "start_agent", task(session_id=str(ended["session_id"])))
-        assert plain["access"] is None
+        assert "access" not in plain
         await _wait_task(client, plain["invocation_id"])
         tasks = cast(
             list[dict[str, object]], _state(data_root, explorer["conversation_id"])["tasks"]

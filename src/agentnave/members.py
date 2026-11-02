@@ -604,15 +604,15 @@ def apply_seat(
 
 class MemberStatus(StrictModel):
     provider: ProviderName
-    model: str
+    model: str = ""
     default: bool
-    efforts: list[str]
-    effort: str | None
+    efforts: list[str] = Field(default_factory=list)
+    effort: str | None = None
     options: dict[str, ProviderOption]
     notes: str
     permitted: bool
     valid: bool
-    error: str | None
+    error: str | None = None
 
 
 class ModeStatus(StrictModel):
@@ -629,13 +629,13 @@ class SeatReplacement(StrictModel):
 class ReviewSeatStatus(StrictModel):
     provider: ProviderName
     model: str
-    effort: str | None
+    effort: str | None = None
     available: bool
-    reason: str | None
+    reason: str | None = None
     # The host's own CLI: dispatch to the host's built-in subagent, with this model if it can.
     native: bool = False
     # Other permitted task CLIs listing the same model ID.
-    alternatives: list[ProviderName]
+    alternatives: list[ProviderName] = Field(default_factory=list[ProviderName])
     # A ready start_agent choice for an unavailable seat; the boss decides whether to use it.
     replacement: SeatReplacement | None = None
 
@@ -649,7 +649,7 @@ class OrchestrationStatus(StrictModel):
 class MemberList(StrictModel):
     configured: bool
     error: str | None = None
-    host: HostName | None
+    host: HostName | None = None
     host_source: HostSource
     modes: dict[Mode, ModeStatus]
     review: dict[ReviewRole, ReviewSeatStatus] = {}
