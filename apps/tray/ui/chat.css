@@ -556,6 +556,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .msg.flash .bub, .note.flash { animation: flash 1.6s ease-out; }
 @keyframes flash { from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, transparent); } }
 .handover-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg[data-brief] .bub.fold { max-height: none; }
+.msg[data-brief] .bub.fold::after, .tp-im .msg[data-brief] .bub.fold::after { display: none; }
 /* status lines: failures, absences */
 .note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin: 10px 0 0 28px; font-size: 11.5px; color: var(--muted); }
 .note .m-ava .avatar, .note .m-ava .head { width: 16px; height: 16px; }
@@ -711,6 +713,9 @@ dialog.act::backdrop { background: #0006; }
 .tp-faces .head + .head { margin-left: -5px; }
 .tp-card-line { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--soft); }
 .tp-card-line.whole { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tp-card-note > summary { width: max-content; font-size: 12px; color: var(--muted); cursor: pointer; }
+.tp-card-note > summary:hover { color: var(--ink); }
+.tp-card-note[open] > summary { margin-bottom: 4px; }
 /* the stream reads like a messenger: every message a bubble beside its avatar, boss on the right */
 :root { --im-bg: #111214; --im-member: #2c2c2e; --im-member-ink: #e8e8ea; --im-boss: #2f7f52; --im-boss-ink: #f2f7f3; --im-aside: #27533b; }
 :root[data-theme="light"] { --im-bg: #ededed; --im-member: #ffffff; --im-member-ink: #1d1d1f; --im-boss: #95ec69; --im-boss-ink: #1d1d1f; --im-aside: #d6f7c2; }

@@ -162,43 +162,68 @@
 .cli-missing-toggle:hover:enabled { color: var(--ink); border-color: transparent; }
 .cli-missing-toggle[aria-expanded="true"] .cli-chevron { transform: rotate(45deg); }
 .cli-missing-list { margin: 2px 0 0 24px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
-/* Member cards: a head line, then one row for both scenes or one per scene. */
+/* Member cards: the head and every row share one column grid, so each control lines up across rows and cards and ends at the card's edge. */
 .cli-cards { gap: 10px; }
-.member-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px; overflow: visible; }
-.member-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 28px; }
-.member-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
-.member-end { display: grid; grid-template-columns: auto 150px; align-items: center; gap: 14px; }
+.member-card { --member-cols: 96px minmax(0, 1fr) minmax(0, .75fr) minmax(0, 1.65fr); display: flex; flex-direction: column; gap: 8px; padding: 12px 18px; overflow: visible; }
+.member-head, .member-row { display: grid; grid-template-columns: var(--member-cols); align-items: center; gap: 12px; padding-left: 30px; }
+.member-head { min-height: 30px; }
+.member-title { grid-column: 1 / 3; display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: -30px; }
+.member-title > .cli-name { white-space: nowrap; }
+.member-end { display: contents; }
+.member-end > .segment-control, .member-row .member-efforts { display: flex; min-width: 0; }
+.member-end > .segment-control > .segment-btn, .member-efforts > .segment-btn { flex: 1 1 0; min-width: 0; padding-left: 2px; padding-right: 2px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-hidden { visibility: hidden; }
-.member-row { display: grid; grid-template-columns: 96px 290px 180px minmax(0, 1fr); align-items: center; gap: 12px; padding-left: 30px; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
-.member-tier { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.member-tier { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--muted); }
 .member-tier select { flex: 1; min-width: 0; font-size: 12.5px; padding: 4px 8px; }
 .member-switch { display: inline-flex; align-items: center; gap: 8px; padding-left: 30px; font-size: 12.5px; cursor: pointer; }
 .member-error { margin: 0; padding-left: 30px; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
-.member-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.member-row > .member-line:nth-child(2) { flex-wrap: nowrap; }
-.member-row > .member-line:nth-child(2) > select { flex: 1; min-width: 0; }
+.member-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.member-line > select, .member-line > .member-efforts { flex: 1; min-width: 0; }
 .member-reset-slot { flex: none; width: 26px; }
 .member-model { font-size: 12.5px; padding: 5px 8px; }
-.member-efforts { justify-self: start; }
 .member-reset { flex: none; width: 26px; padding: 0; min-height: 24px; font-size: 13px; color: var(--muted); }
+.member-line > .member-muted { flex: none; }
 .member-muted { color: var(--muted); font-size: 12px; }
-.member-list { width: 100%; font-size: 12.5px; padding: 5px 10px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.member-list { width: 100%; min-width: 0; font-size: 12.5px; padding: 5px 10px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .member-picker { margin: 0 0 4px 30px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
 .member-option { display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
 .member-option:has(input:disabled) { cursor: default; }
 .member-option-id { overflow-wrap: anywhere; }
 .member-option-all { grid-column: 1 / -1; font-weight: 600; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-.member-card > .disable-confirm { margin: 0 -16px; border-top: 1px solid var(--line); }
+.member-card > .disable-confirm { margin: 0 -18px; border-top: 1px solid var(--line); }
 @media (max-width: 1000px) {
-  .member-row { grid-template-columns: 96px 250px 160px; }
+  .member-card { --member-cols: 96px minmax(0, 1fr) minmax(0, 1fr); }
+  .member-title { grid-column: 1 / -1; }
+  .member-end > .segment-control { grid-column: 2; }
   .member-row > :nth-child(4) { grid-column: 2 / -1; }
 }
 @media (max-width: 700px) {
-  .member-row { grid-template-columns: minmax(0, 1fr); padding-left: 0; gap: 8px; }
-  .member-row > :nth-child(4) { grid-column: auto; }
+  .member-card { --member-cols: minmax(0, 1fr); padding: 12px 14px; }
+  .member-head, .member-row { padding-left: 0; gap: 8px; }
+  .member-title { margin-left: 0; }
+  .member-end > .segment-control, .member-row > :nth-child(4) { grid-column: auto; }
+  .member-row > .member-list { width: calc(100% - 34px); }
   .member-switch, .member-error { padding-left: 0; }
   .member-picker { margin-left: 0; }
+  .member-card > .disable-confirm { margin: 0 -14px; }
+}
+/* Every pane shares one column in the middle of the window, and its tabs start on that column's edge. */
+.settings-page main { max-width: 1060px; }
+.settings-page main > .subnav, .settings-page main > #notice, .settings-page main > .banner, .settings-page .tab-pane { max-width: 980px; }
+.settings-page .subnav > a:first-child { margin-left: -12px; }
+.settings-page .tab-pane :is(.host-cards, .updates-panel, .model-names, .skill-rows) { max-width: none; }
+.updates-panel { margin: 0 0 12px; }
+.updates-card { padding: 18px; }
+.updates-card h2 { font-size: 14px; margin-bottom: 14px; }
+.setting-row > h2 { margin: 0; font-size: 14px; }
+/* Typed fields look like the selects beside them. */
+.settings-page :is(input[type="text"], input[type="password"], input[type="url"], input:not([type])) { box-sizing: border-box; min-height: 34px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.settings-page :is(input, textarea):focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 1px; }
+/* A host's notes and details start under its name, not under its icon. */
+.hc-main > :is(.hc-note, .hc-orphan, .hc-details) { margin-left: 46px; }
+@media (max-width: 620px) {
+  .hc-main > :is(.hc-note, .hc-orphan, .hc-details) { margin-left: 0; }
 }
 .review-grid { display: grid; gap: 8px; }
 .review-row { display: grid; grid-template-columns: minmax(150px, 1.2fr) 1fr 1.4fr 1fr; gap: 10px; align-items: center; }
