@@ -234,7 +234,7 @@ fn magpie_identity_catalog_display_names_and_low_reasoning_are_preserved() {
     assert_eq!(body["model"], "opencode-go/deepseek-v4.1-flash");
     assert_eq!(body["reasoning_effort"], "low");
     assert_eq!(body["stream"], false);
-    assert_eq!(body["max_tokens"], 350);
+    assert_eq!(body["max_tokens"], 1000);
 }
 
 #[test]
@@ -382,10 +382,10 @@ fn summary_output_rejects_empty_symbols_and_length_and_caps_long_text() {
     ] {
         assert!(output(&json!({"choices":[choice]})).is_err());
     }
-    let content = format!("{}。{}。", "甲".repeat(100), "乙".repeat(100));
+    let content = format!("{}。{}。", "甲".repeat(200), "乙".repeat(200));
     let value = json!({"choices":[{"finish_reason":"stop","message":{"content":content}}]});
     let generated = output(&value).unwrap();
-    assert!(generated.chars().count() <= 140);
+    assert_eq!(generated.chars().count(), 201);
     assert!(generated.ends_with('。'));
 }
 
@@ -721,5 +721,5 @@ fn a_chatgpt_catalog_lists_its_slugs_for_pickers_and_their_levels() {
 fn openai_chat_gets_its_own_token_limit_field() {
     let body = for_openai(request_prompt("m", "t", None, "s"));
     assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
-    assert_eq!(body["max_completion_tokens"], 350);
+    assert_eq!(body["max_completion_tokens"], 1000);
 }
