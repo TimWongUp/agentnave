@@ -40,7 +40,14 @@ def without_empty_fields(value: object) -> object:
                 if item is not None:
                     projected[key] = item
                 continue
-            if key not in _OPAQUE_FIELDS:
+            if key == "cli_options" and isinstance(item, dict):
+                # Each CLI's saved options are opaque like a member's options.
+                item = {
+                    cli: options
+                    for cli, options in cast(dict[str, object], item).items()
+                    if options
+                }
+            elif key not in _OPAQUE_FIELDS:
                 item = without_empty_fields(item)
             if (key in _REQUIRED_CONTAINERS and isinstance(item, (dict, list))) or (
                 item is not None and item != "" and item != [] and item != {}
