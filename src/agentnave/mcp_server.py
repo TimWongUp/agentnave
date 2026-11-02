@@ -595,7 +595,7 @@ async def start_agent(
         OrchestrationRole | None,
         Field(
             description=(
-                "App Explorer/Worker difficulty: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; role is the desk label."
+                "App Explorer/Worker difficulty: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; also pass role as the desk label."
             )
         ),
     ] = None,
