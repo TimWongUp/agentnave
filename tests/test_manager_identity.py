@@ -104,7 +104,8 @@ async def test_codex_boss_model_reaches_saved_app_views_or_returns_a_diagnostic(
         if identity == "invented":
             warnings = cast(list[str], receipt["warnings"])
             assert len(warnings) == 1 and "CODEX_THREAD_ID" in warnings[0]
-            assert "Do not repeat this call" in warnings[0]
+            assert "pass it as manager_session_id" in warnings[0]
+            assert len(warnings[0]) < 250
         else:
             assert "warnings" not in receipt
     saved = _state(data_root, task["conversation_id"])["tasks"][0]
