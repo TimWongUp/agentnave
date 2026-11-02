@@ -700,7 +700,7 @@ fn each_platform_keeps_its_own_key_and_needs_one() {
     storage::save_key(root, &json!({"engine":"summary","key":"mine"})).unwrap();
     let keys = storage::read_keys(root).unwrap();
     assert_eq!(key_of(&keys, &settings), "ds");
-    assert_eq!(key_of(&keys, &json!({"provider":"groq"})), "");
+    assert_eq!(key_of(&keys, &json!({"provider":"qwen"})), "");
     assert_eq!(key_of(&keys, &json!({"provider":"custom"})), "mine");
     for refused in ["chatgpt", "chatgpt_host", "summary:unknown"] {
         assert!(storage::save_key(root, &json!({"engine":refused,"key":"x"})).is_err());
