@@ -320,7 +320,8 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
     finally:
         host.writer.close()
         host.thread.join(10)
-    assert not list(data.glob("connections/*.json"))
+    (ended,) = data.glob("connections/*.json")
+    assert json.loads(ended.read_bytes())["host_tools_hash"] == refreshed["host_tools_hash"]
 
 
 def test_empty_data_root_matches_service_default(
@@ -336,7 +337,7 @@ def test_empty_data_root_matches_service_default(
     assert not (tmp_path / "home").exists()
 
 
-def test_host_eof_removes_observation_and_prevents_swap_while_child_exits(tmp_path: Path) -> None:
+def test_host_eof_ends_observation_and_prevents_swap_while_child_exits(tmp_path: Path) -> None:
     data = tmp_path / "data"
     gate = tmp_path / "busy.closing"
     host = Host(
@@ -355,7 +356,14 @@ def test_host_eof_removes_observation_and_prevents_swap_while_child_exits(tmp_pa
         while not gate.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         assert gate.exists()  # Child deliberately remains alive after stdin EOF.
-        assert not list(data.glob("connections/*.json"))
+        # A host that closes within the tray's poll interval still leaves proof that it loaded
+        # the tools; marked ended, it no longer counts as a running connection.
+        (path,) = data.glob("connections/*.json")
+        receipt = json.loads(path.read_bytes())
+        assert receipt["ended_ms"] >= receipt["started_ms"]
+        assert receipt["runtime_tools_hash"] == receipt["host_tools_hash"]
+        host.relay._publish_connection()  # pyright: ignore[reportPrivateUsage]
+        assert json.loads(path.read_bytes()) == receipt
         host.install("1.1")
         assert host.relay._swap() == "busy"  # pyright: ignore[reportPrivateUsage]
         assert host.relay.child is child
@@ -364,6 +372,7 @@ def test_host_eof_removes_observation_and_prevents_swap_while_child_exits(tmp_pa
         gate.unlink(missing_ok=True)
         host.thread.join(10)
     assert host.code == [0]
+    assert [json.loads(p.read_bytes()) for p in data.glob("connections/*.json")] == [receipt]
 
 
 def test_zero_tool_relay_never_creates_connection_observations(tmp_path: Path) -> None:
