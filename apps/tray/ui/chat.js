@@ -435,12 +435,16 @@ function renderHead(c, n) {
 }
 
 // ---------------------------------------------------------------- boss office
-function bossModel(c) {
+function managerSpeaker(c, match) {
   for (let i = c.messages.length - 1; i >= 0; i--) {
     const s = c.messages[i].speaker;
-    if (s?.role === "manager" && s.model) return s.model;
+    if (s?.role === "manager" && s.model && match(s)) return s;
   }
-  return "";
+  return null;
+}
+// After a takeover only the new boss's own messages say what model it runs.
+function bossModel(c) {
+  return managerSpeaker(c, (s) => c.handover !== "changed" || s.provider === c.host)?.model || "";
 }
 // `live` only means a server is running work right now; an idle boss dozes off after a while.
 function recentlyActive(c) {
@@ -482,7 +486,7 @@ function createBoss() {
   const rec = {
     lid: h("span.lid"),
     scene: null,
-    nm: h("div.nm", {}, "boss"),
+    portrait: h("span.boss-portrait", { hidden: true }),
     cli: h("div.cli"),
     st: h("div.st"),
     state: h("span.r"),
@@ -494,6 +498,7 @@ function createBoss() {
   rec.scene = h(
     "div.scene",
     {},
+    rec.portrait,
     rec.chair,
     rec.desk,
     rec.open,
@@ -510,7 +515,7 @@ function createBoss() {
       {},
       rec.chats,
       // no speech bubble: the label below already says what the boss is waiting for
-      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.nm, rec.cli, rec.st)),
+      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st)),
       rec.meets,
     ),
   );
@@ -522,6 +527,7 @@ function updateBoss(rec, c, n) {
   dress(rec, ART.character(c.host, model), rec.scene, rec.desk);
   dressBossSet(rec, c.host);
   dressLid(rec, c.app || c.host);
+  hangPortrait(rec, c);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
   setText(rec.cli, c.label);
@@ -536,6 +542,17 @@ function updateBoss(rec, c, n) {
     `boss 办公室，${c.took_over ? `${c.took_over}，` : ""}${rec.st.textContent}，查看全部消息`,
   );
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
+}
+
+// The boss before a takeover hangs framed on the wall to the new boss's left.
+function hangPortrait(rec, c) {
+  const before = c.previous_host || "";
+  rec.portrait.hidden = !before;
+  const face = before ? ART.character(before, managerSpeaker(c, (s) => s.provider === before)?.model || "") : "";
+  if (rec.portraitFace === face) return;
+  rec.portraitFace = face;
+  rec.portrait.replaceChildren(...(face ? [ART.head(face)] : []));
+  setAttr(rec.portrait, "title", c.took_over || null);
 }
 
 // ---------------------------------------------------------------- beside the boss
