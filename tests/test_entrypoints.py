@@ -463,6 +463,62 @@ def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
         kept = {} if value is None else dict.fromkeys(("output", "text", "prompt"), value)
         assert without_empty_fields(values) == kept
     assert source["dict"] == {"null": None}
+    cli_options = {"cli_options": {"codex": {"flag": ""}, "grok": {}}}
+    assert without_empty_fields(cli_options) == {"cli_options": {"codex": {"flag": ""}}}
+
+
+def _is_container(prop: object, defs: dict[str, object]) -> bool:
+    if isinstance(prop, list):
+        return any(_is_container(item, defs) for item in cast(list[object], prop))
+    if not isinstance(prop, dict):
+        return False
+    node = cast(dict[str, object], prop)
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        return _is_container(defs.get(ref.rsplit("/", 1)[-1]), defs)
+    if node.get("type") in ("array", "object"):
+        return True
+    return any(_is_container(node.get(key), defs) for key in ("anyOf", "oneOf", "allOf"))
+
+
+def _required_containers(
+    schema: object, defs: dict[str, object], all_defs: dict[str, object]
+) -> set[str]:
+    """Required array/object properties that projection could drop when empty."""
+    found: set[str] = set()
+    if isinstance(schema, list):
+        for item in cast(list[object], schema):
+            found |= _required_containers(item, defs, all_defs)
+        return found
+    if not isinstance(schema, dict):
+        return found
+    node = cast(dict[str, object], schema)
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        return _required_containers(defs.pop(ref.rsplit("/", 1)[-1], None), defs, all_defs)
+    properties = cast(dict[str, dict[str, object]], node.get("properties") or {})
+    for name in cast(list[str], node.get("required") or []):
+        prop = properties.get(name, {})
+        if _is_container(prop, all_defs) and "minItems" not in prop and "minProperties" not in prop:
+            found.add(name)
+    for value in node.values():
+        found |= _required_containers(value, defs, all_defs)
+    return found
+
+
+@pytest.mark.asyncio
+async def test_every_required_reply_container_survives_projection() -> None:
+    from agentnave import mcp_projection
+
+    preserved = mcp_projection._REQUIRED_CONTAINERS | mcp_projection._OPAQUE_FIELDS
+    missing: dict[str, set[str]] = {}
+    for tool in await mcp.list_tools():
+        schema = cast(dict[str, object], tool.output_schema or {})
+        all_defs = cast(dict[str, object], schema.get("$defs") or {})
+        names = _required_containers(schema, dict(all_defs), all_defs) - preserved - {"cli_options"}
+        if names:
+            missing[tool.name] = names
+    assert missing == {}
 
 
 @pytest.mark.asyncio
