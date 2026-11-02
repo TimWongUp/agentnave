@@ -91,10 +91,10 @@ class StartArguments:
             self.provider, cast(ProviderName, task.provider), "provider"
         )
         self.cwd = self._inherited(self.cwd, task.cwd, "cwd")
-        role = self.role
-        self.role = self._inherited(role, task.role, "role")
-        # A new role is a new duty: the old seat would otherwise outrank it.
-        if self.seat is not None or role in (None, task.role):
+        role = (self.role or "").strip()
+        self.role = self._inherited(self.role, task.role, "role")
+        # A new role is a new duty: the old seat would otherwise outrank it. Blank only clears the label.
+        if self.seat is not None or role in ("", task.role):
             self.seat = self._inherited(
                 self.seat, cast(OrchestrationRole | None, task.seat), "seat"
             )
