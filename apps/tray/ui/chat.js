@@ -1212,8 +1212,8 @@ function speakerSub(m, ctx) {
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
   if (s.role === "system") return null;
-  // A boss who has since handed over keeps their own mark on what they said.
-  if (isBoss(m)) return s.provider && s.provider !== ctx.c.host ? hostTile(s.provider) : hostTile(ctx.c.app || ctx.c.host, ctx.c.label);
+  // A boss wears the character of the model it ran when it spoke, a former boss included.
+  if (isBoss(m)) return ART.head(ART.character(s.provider || ctx.c.host, s.model), "idle");
   const d = speakerDesk(m, ctx);
   return ART.head(d ? deskChar(d) : ART.character(s.provider, s.model), "idle");
 }
