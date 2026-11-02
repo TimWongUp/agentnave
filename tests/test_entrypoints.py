@@ -1407,6 +1407,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "agent",
             "permission_mode",
             "access (correctness-reviewer seat)",
+            "read-only instruction (access=read)",
         ]
         assert seated["access"] == "read"
         worker = await start({"effort": "medium"}, role="worker-easy")
@@ -1422,6 +1423,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert (await start({}, role="explorer-easy"))["defaults_applied"] == [
             *applied,
             "access (explorer-easy seat)",
+            "read-only instruction (access=read)",
         ]
         # seat picks the difficulty, so role stays free for the desk's own words.
         named = await start({}, role="接手方视角", seat="worker-easy")
@@ -1462,6 +1464,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert (await start({}, role="explorer-hard"))["defaults_applied"] == [
             *applied,
             "access (explorer-hard seat)",
+            "read-only instruction (access=read)",
         ]
         (tmp_path / "review.json").write_text(
             json.dumps(
@@ -1471,6 +1474,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert (await start({}, role="correctness-reviewer"))["defaults_applied"] == [
             *applied,
             "access (correctness-reviewer seat)",
+            "read-only instruction (access=read)",
         ]
         (tmp_path / "review.json").write_text(
             json.dumps({"version": 1, "seats": {"correctness-reviewer": {**seat, "effort": "low"}}})

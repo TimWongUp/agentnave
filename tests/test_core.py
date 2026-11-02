@@ -22,6 +22,7 @@ from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_QUIET_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    READ_ONLY_INSTRUCTIONS,
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
     _read_limited,  # pyright: ignore[reportPrivateUsage]
@@ -1225,3 +1226,24 @@ def test_a_retry_after_a_quiet_gap_starts_a_new_streak() -> None:
     assert _retry_streak_start(10.0, 90.0, 100.0) == 10.0
     # Silent for longer than the window: this is a new run.
     assert _retry_streak_start(10.0, 100.0 - quiet - 1, 100.0) == 100.0
+
+
+def test_read_only_tasks_get_the_read_only_instruction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prompts: list[str] = []
+
+    class Capture:
+        def prepare(self, request: InvocationRequest) -> InvocationRequest:
+            prompts.append(request.prompt)
+            return request
+
+    def capture(_: str) -> Capture:
+        return Capture()
+
+    monkeypatch.setattr("agentnave.core.get_adapter", capture)
+    manager = InvocationManager()
+    manager.prepare(InvocationRequest("codex", "task", tmp_path, read_only=True))
+    manager.prepare(InvocationRequest("codex", "task", tmp_path))
+    assert READ_ONLY_INSTRUCTIONS in prompts[0] and prompts[0].endswith("Assigned task:\ntask")
+    assert READ_ONLY_INSTRUCTIONS not in prompts[1] and SUBAGENT_INSTRUCTIONS in prompts[1]

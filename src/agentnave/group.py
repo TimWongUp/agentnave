@@ -462,6 +462,7 @@ class Groups:
                     seat.cwd,
                     state.session_id,
                     seat.provider_options,
+                    read_only=seat.access == "read",
                 )
             )
         except (OSError, ValueError, RuntimeError) as exc:

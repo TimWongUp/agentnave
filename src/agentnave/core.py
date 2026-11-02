@@ -250,7 +250,14 @@ def _output_limit_error(
 SUBAGENT_INSTRUCTIONS = (
     "You are a subagent dispatched by AgentNave. Complete the assigned task and report back "
     "to the calling manager. Do not call AgentNave tools or use AgentNave to delegate further "
-    "work. If blocked, report the blocker to the manager."
+    "work. If blocked, report the blocker to the manager. Nobody can answer during this run: "
+    "proceed within the authorization you have; when you need new authorization or a user's "
+    "choice, put the specific question and your progress in your final answer instead of calling "
+    "an interactive question tool, and do not bypass native permissions."
+)
+READ_ONLY_INSTRUCTIONS = (
+    "This task is read-only: do not modify files, commit, push, send messages or post comments. "
+    "Reading files and running read-only commands is allowed."
 )
 
 
@@ -266,8 +273,11 @@ class InvocationManager:
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         """Apply the shared subagent instruction before provider-specific encoding."""
+        instructions = SUBAGENT_INSTRUCTIONS
+        if request.read_only:
+            instructions += f" {READ_ONLY_INSTRUCTIONS}"
         return get_adapter(request.provider).prepare(
-            replace(request, prompt=f"{SUBAGENT_INSTRUCTIONS}\n\nAssigned task:\n{request.prompt}")
+            replace(request, prompt=f"{instructions}\n\nAssigned task:\n{request.prompt}")
         )
 
     def start(
