@@ -582,7 +582,8 @@ async def start_agent(
         str | None,
         Field(
             description=(
-                "New title: at most 48 columns (CJK=2); the first permanently names this workspace."
+                "New title: at most 48 columns (CJK=2). The first permanently names this workspace, so "
+                "state the chat's purpose; later tasks may omit it."
             )
         ),
         AfterValidator(_short_title),
@@ -599,7 +600,7 @@ async def start_agent(
         OrchestrationRole | None,
         Field(
             description=(
-                "App Explorer/Worker difficulty: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume."
+                "App Explorer/Worker difficulty: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; role is the desk label."
             )
         ),
     ] = None,
@@ -1436,6 +1437,7 @@ async def run_round(
     New: title/members required; add prompt/seats to run round 1, omit prompt to only create.
     Existing: omit creation-only arguments. One active round per meeting; wait on round_id.
     entries contains committed message_ids; unreceived flags ends/blockers/reviews for wait.
+    At meeting close, post the summary you give the user as a prompt with no seats.
     """
     conversations = _conversations(ctx)
     if retry_seats is not None:
@@ -1676,7 +1678,8 @@ async def handover(
     """Transfer all tasks/meetings of a chat only on user request; no arguments lists waiting
     workspaces. release=true hands off; workspace_id claims and refuses the previous boss.
     Claiming your own waiting workspace withdraws it. Running work finishes on the old server;
-    continue when writable=true. Private: never send to seats.
+    continue when writable=true. Private: never send to seats. Follow the agentnave-handover
+    Skill.
     """
     conversations = _conversations(ctx)
     if (note is not None or title is not None or cwd is not None) and not release:
