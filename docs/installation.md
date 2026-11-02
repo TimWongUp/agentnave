@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.63.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.64.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.63.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.64.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -551,16 +551,16 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v0.63.0
+### Upgrading to v0.64.0
 
-This release makes `provider` and `cwd` optional on `start_agent`, adds `seat`, and lets the service
-fill in what it can infer. Existing calls keep working, except that an `access` contradicting a seat
-is now rejected. Update the App; the paired runtime and Skills follow as usual, with no migration.
-Hosts already running pick up the new tool list when they refresh it; reconnect if a host still
-rejects a call without `provider`.
+This release adds meeting voice playback to the App and records which boss host spoke each
+history entry; older history still reads as before. Relays now keep a short-lived proof after a
+host closes normally, so the App stops showing a stale reload reminder. Update the App; the paired
+runtime and Skills follow as usual, with no migration. Reconnect each host once after updating so
+its relay records the new proof.
 
-See [v0.63.0 release notes](releases/v0.63.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v0.62.0.md).
+See [v0.64.0 release notes](releases/v0.64.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v0.63.0.md).
 
 ## Uninstall
 
