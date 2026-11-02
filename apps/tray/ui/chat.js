@@ -1346,7 +1346,7 @@ function createMessage(m) {
     return rec;
   }
   rec.verb = h("span.m-verb");
-  rec.to = h("span.m-to");
+  rec.to = h("div.m-to");
   rec.verb2 = h("span.m-verb");
   rec.lock = h("span.m-lock");
   rec.fwd = h("button.fwd", { type: "button", hidden: true });
@@ -1361,7 +1361,7 @@ function createMessage(m) {
   rec.bub = h(
     "div.bub",
     {},
-    m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.md],
+    m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
   );
   rec.metaFaces = h("span.tp-faces");
   rec.metaText = h("span");
@@ -1386,7 +1386,6 @@ function createMessage(m) {
       rec.name,
       rec.who,
       rec.verb,
-      rec.to,
       rec.verb2,
       rec.lock,
       rec.time,
