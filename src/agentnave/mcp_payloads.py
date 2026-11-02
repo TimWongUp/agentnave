@@ -37,7 +37,7 @@ class InvocationPayload(TypedDict):
     invocation_id: str
     status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
     reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
-    elapsed_ms: int
+    elapsed_ms: NotRequired[int]
     provider: NotRequired[str]
     model: NotRequired[str]
     effort: NotRequired[str]

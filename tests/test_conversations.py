@@ -286,9 +286,11 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
 
         dashboard = await _call(client, "list", {})
         view = await _call(client, "read_conversation", {"conversation_id": group_id})
-        public = await asyncio.to_thread(_fetch, str(view["public_url"]) + "state")
-        director = await asyncio.to_thread(_fetch, str(view["director_url"]) + "state")
+        assert "public_url" not in view and "director_url" not in view
         home = await asyncio.to_thread(_fetch, str(dashboard["dashboard_url"]) + "state")
+        shown = json.loads(home)
+        director = await asyncio.to_thread(_fetch, str(shown["shows"][0]["director_url"]) + "state")
+        public = await asyncio.to_thread(_fetch, str(json.loads(director)["public_url"]) + "state")
         assert "SECRET-B" not in public and "round" not in json.loads(public)
         assert json.loads(director)["round"]["seats"][0]["seat_id"] == "c"
         private = json.loads(director)["private_messages"]

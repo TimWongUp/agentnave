@@ -375,11 +375,11 @@ def started_payload(
         "invocation_id": invocation_id,
         "status": "running",
         "reason": "started",
-        "elapsed_ms": 0,
         "provider": request.provider,
         "defaults_applied": defaults_applied or [],
-        "effort": str(request.provider_options.get("effort", "继承原生设置")),
     }
+    if "effort" in request.provider_options:
+        payload["effort"] = str(request.provider_options["effort"])
     if "model" in request.provider_options:
         payload["model"] = str(request.provider_options["model"])
     return payload
@@ -1108,14 +1108,18 @@ async def list_all(
         Literal["show", "task"] | None,
         Field(description="Only meetings or only task conversations."),
     ] = None,
-    limit: Annotated[int, Field(ge=1, le=200, description="Most recent conversations.")] = 20,
+    limit: Annotated[
+        int,
+        Field(ge=1, le=200, description="Most recent conversations; defaults to 10, at most 200."),
+    ] = 10,
     *,
     ctx: Context[Runtime],
 ) -> ListPayload:
     """List this server's invocation handles and saved conversations, most recent first.
 
-    Invocations carry metadata only: no prompt, reply or tool data; finished ones tell with
-    result_read whether a wait or cancel returned the final result, and failures their error. total counts every
+    Conversations default to the 10 most recent. Invocations carry metadata only: no prompt,
+    reply or tool data; finished ones tell with result_read whether a wait or cancel returned
+    the final result, and failures their error. total counts every
     matching conversation. writable=false means another AgentNave server holds it: read it
     here, continue it there or once it becomes idle. unavailable lists unreadable or legacy
     records. Also starts the local read-only dashboard and returns its link. Private: never
@@ -1942,15 +1946,9 @@ async def read_conversation(
         raise ToolError("Unknown conversation_id; use list.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    data = views.timeline(
+    return views.timeline(
         record.state, since_round=since_round, include_private=include_private, limit=limit
     ) | {"writable": writable}
-    urls = conversations.urls(conversation_id)
-    if urls is not None:
-        if record.state.kind == "show":
-            data["public_url"] = urls[0]
-        data["director_url"] = urls[1]
-    return data
 
 
 def main() -> None:
