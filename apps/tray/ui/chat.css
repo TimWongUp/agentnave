@@ -384,12 +384,10 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
 
 /* ---- boss office ---- */
-/* the boss before a takeover: a framed head hung on the wall from a nail */
+/* the boss before a takeover: a framed head on the wall */
 .boss-portrait { position: absolute; left: 0; top: 4%; width: 16%; aspect-ratio: 1; z-index: 0; padding: 3px; border-radius: 3px; background: #8a5a2b; box-shadow: inset 0 0 0 1px #c89b5e, 0 2px 5px rgb(0 0 0 / 0.28); }
 .boss-portrait[hidden] { display: none; }
 .boss-portrait .head { display: block; width: 100%; height: 100%; border-radius: 1px; background: var(--wall) center / cover; }
-.boss-portrait::before { content: ""; position: absolute; left: 20%; right: 20%; bottom: 100%; height: 9px; background: linear-gradient(to top right, transparent calc(50% - 0.7px), #6b4a2a 50%, transparent calc(50% + 0.7px)) left / 50% 100% no-repeat, linear-gradient(to top left, transparent calc(50% - 0.7px), #6b4a2a 50%, transparent calc(50% + 0.7px)) right / 50% 100% no-repeat; }
-.boss-portrait::after { content: ""; position: absolute; left: 50%; bottom: calc(100% + 7px); width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: #5a5a5a; }
 .boss-zone .label { position: relative; z-index: 6; text-align: center; margin-top: 0; }
 .boss-zone { padding-top: 8px; padding-bottom: 4px; }
 .label { text-align: center; margin-top: 4px; min-width: 0; }
