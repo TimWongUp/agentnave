@@ -642,7 +642,7 @@ async def start_agent(
                 "the user picked for that seat in the App when provider is the seat's CLI and "
                 "this host's orchestration is enabled; explicit options win, and "
                 "defaults_applied names the seat. Selects the seat's CLI if provider is omitted. "
-                "Inherited on resume when omitted. Never shown; role stays the desk's label."
+                "Inherited on resume when omitted. Never shown: also pass role to label the desk."
             )
         ),
     ] = None,
