@@ -45,7 +45,7 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。`list_members` 的 `review`、`orchestration` 把这类工位标为 `native=true`：交给宿主自带子代理，宿主允许时用所选模型。
-- 访问等级：`access` 声明 `read` 或 `write`，只记录并在 App 显示，除了与工位矛盾时拒绝外不影响调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。Explorer 和评审工位固定 `read`，Worker 工位固定 `write`，由服务补上，不用传，传了不一致的值会被拒绝；其他任务服务判断不了，每次要声明就传，续接也一样，不传就是没声明。未声明 `read` 而同一 `cwd` 已有其他运行中的 CLI 时，回执带 `warnings`：并行写入要换独立 worktree，只读就补声明 `read`。
+- 访问等级：`access` 声明 `read` 或 `write`，在 App 显示，`read` 时服务给 prompt 加只读说明；除了与工位矛盾时拒绝外不影响调用，也不改变 CLI 权限；真正的只读靠 Provider 原生权限。Explorer 和评审工位固定 `read`，Worker 工位固定 `write`，由服务补上，不用传，传了不一致的值会被拒绝；其他任务服务判断不了，每次要声明就传，续接也一样，不传就是没声明。未声明 `read` 而同一 `cwd` 已有其他运行中的 CLI 时，回执带 `warnings`：并行写入要换独立 worktree，只读就补声明 `read`。
 
 ## 选择调用方式
 
@@ -64,9 +64,9 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 
 常用组合只说明怎么调用；会议轮次按上表默认，用户另有要求时从其要求；选谁、何时收手按用户的全局规则或由 boss 定：
 
-- **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就写明不改文件）；写代码的交接先由 boss 建好 worktree 作 `cwd`。
-- **顾问**：`access=read`，prompt 写明只分析、不改文件、给出建议与理由；追问用同一 `session_id` 续接，仍传 `access=read`。
-- **先计划后实现**：先 `access=read`，prompt 写明只出计划（改动范围、步骤、风险与验证方式）、不改文件；boss 按已有授权核对计划，需用户决定的转达用户，确认后用同一 `session_id` 续接、`access=write`，写明按已确认计划实现及调整内容。
+- **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就声明 `access=read`）；写代码的交接先由 boss 建好 worktree 作 `cwd`。
+- **顾问**：`access=read`，prompt 要求给出建议与理由；追问用同一 `session_id` 续接，仍传 `access=read`。
+- **先计划后实现**：先 `access=read`，prompt 要求只出计划（改动范围、步骤、风险与验证方式）；boss 按已有授权核对计划，需用户决定的转达用户，确认后用同一 `session_id` 续接、`access=write`，写明按已确认计划实现及调整内容。
 - **委员会**：`run_round` 两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报共识、分歧及如何收敛。用户要求最终收束时再加一轮 `serial`。
 - **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
@@ -105,7 +105,7 @@ Codex 用 PowerShell 读取 `$env:CODEX_THREAD_ID`，POSIX shell 用 `printenv C
 - 可访问的规格、计划、ADR、Issue、commit、diff 或产物绝对路径/URL，注明用途。
 - 直接相关的技能和已知路径；无适用项写“无”。
 
-明确这是非交互子任务：已有授权内自主推进；确需新授权或用户选择时，以最终回答交回具体问题和进展，不调用现场交互提问工具，不绕过原生权限。发送前移除密钥、密码和敏感个人信息。长交接写进系统临时目录的专用文档，prompt 要求读取其绝对路径；创建方在接收方用完后清理。
+服务会在每次派发前加上非交互说明，`access=read` 时再加只读说明，并在回执 `defaults_applied` 注明，这些不用写进 prompt；宿主自带子代理不经过服务，要自己写明。发送前移除密钥、密码和敏感个人信息。长交接写进系统临时目录的专用文档，prompt 要求读取其绝对路径；创建方在接收方用完后清理。
 
 ## 回复预算
 

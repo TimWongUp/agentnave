@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from agentnave.core import InvocationManager
 
 
+READ_ONLY_APPLIED = "read-only instruction (access=read)"
+
+
 def latest_session_task(
     records: Iterable[Record],
     session_id: str,
@@ -151,6 +154,8 @@ def resolve_start(
     if arguments.cwd is None:
         raise ValueError("cwd is required for a new task; pass an absolute existing directory")
     arguments.resolve_seat(host)
+    if arguments.access == "read":
+        arguments.defaults.append(READ_ONLY_APPLIED)
     return arguments
 
 

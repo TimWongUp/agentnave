@@ -77,6 +77,7 @@ from agentnave.models import (
 )
 from agentnave.store import Record, Review
 from agentnave.task_start import (
+    READ_ONLY_APPLIED,
     StartArguments,
     add_write_warning,
     apply_task_defaults,
@@ -170,7 +171,8 @@ PROVIDER_SELECTION = (
 )
 ACCESS = (
     "Declared desk access: read for exploring, planning or reviewing, write for changing files. "
-    "Recorded and shown only; it never changes the CLI's native permissions. Omit it for a seat "
+    "Shown in the App, and read adds a read-only instruction to the prompt; it never changes the "
+    "CLI's native permissions. Omit it for a seat "
     "or review role, which already carries it; a contradicting value is rejected."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
@@ -348,7 +350,9 @@ mcp = _Server(
         "processes do not. Invocation handles expire seven days after completion. "
         "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
         "Every dispatched prompt includes an instruction to complete the assigned task, "
-        "report back to the manager, and not call AgentNave tools or delegate through AgentNave. "
+        "report back to the manager, not call AgentNave tools or delegate through AgentNave, "
+        "and return questions in its final answer because nobody answers during the run; "
+        "access=read also adds a read-only instruction, so do not write these in the prompt. "
         "handover passes a whole workspace to another boss chat; use it only when the user asks "
         "to hand over or take over. " + PROVIDER_SELECTION
     ),
@@ -719,6 +723,7 @@ async def start_agent(
             cwd=Path(cwd),
             session_id=session_id,
             provider_options=options,
+            read_only=access == "read",
         )
         validate_provider_options(request)
         started = _conversations(ctx).start_task(
@@ -1421,7 +1426,10 @@ def _open_show(
             else None,
             "role": seat.role,
             "access": seat.access,
-            "defaults_applied": defaults[seat.id],
+            "defaults_applied": [
+                *defaults[seat.id],
+                *([READ_ONLY_APPLIED] if seat.access == "read" else []),
+            ],
         }
         for seat in state.seats
     ]
