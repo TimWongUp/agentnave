@@ -17,8 +17,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-/// With summaries on, only a message this short is read as written.
-const SHORT_CHARS: usize = 50;
 /// A summary hears at most this much of a very long message.
 const SUMMARY_INPUT_CHARS: usize = 30_000;
 
@@ -271,8 +269,8 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         Some(Value::Bool(boss)) => *boss,
         _ => return Err("boss 必须为布尔值".into()),
     };
-    let (text, long_summary) = source_text(payload, settings["summary"]["enabled"] == true)?;
-    if text.is_empty() && long_summary.is_none() {
+    let (text, to_summarize) = source_text(payload, settings["summary"]["enabled"] == true)?;
+    if text.is_empty() && to_summarize.is_none() {
         return Ok(no_audio());
     }
     let engine = settings["engine"].as_str().unwrap_or("elevenlabs");
@@ -283,7 +281,7 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         .ok_or("请先保存所选引擎的 API 密钥")?;
     let scene = scene::Scene::of(payload, boss);
     let mut notice = None;
-    let text = match long_summary {
+    let text = match to_summarize {
         Some(full_text) => {
             let summary_key = summary::key_of(&keys, &settings["summary"]);
             let mut options = settings["summary"].clone();
@@ -340,11 +338,13 @@ fn audio_key(settings: &Value, engine: &str, voice: &str, text: &str) -> String 
 fn source_text(payload: &Value, summary_enabled: bool) -> Result<(String, Option<String>), String> {
     let raw = payload["text"].as_str().ok_or("缺少发言文本")?;
     let full = payload["full"].as_bool().ok_or("full 必须为布尔值")?;
-    if !summary_enabled {
+    // With summaries on, every message is spoken through the summary model, which knows who
+    // speaks to whom; only a full read, like a voice sample, is read as written.
+    if !summary_enabled || full {
         return Ok((text::clean(raw, full), None));
     }
     let cleaned = text::clean(raw, true);
-    if cleaned.chars().count() <= SHORT_CHARS {
+    if cleaned.is_empty() {
         return Ok((cleaned, None));
     }
     Ok((

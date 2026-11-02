@@ -568,7 +568,7 @@ fn cache_opening(root: &Path, raw: &str) {
 }
 
 #[test]
-fn short_text_skips_summary_and_failed_summary_reads_the_opening() {
+fn every_message_is_summarized_and_a_failed_summary_reads_the_opening() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = json!({
         "enabled":true,
@@ -602,11 +602,12 @@ fn short_text_skips_summary_and_failed_summary_reads_the_opening() {
         &json!({"engine":"elevenlabs","key":"fake-tts-key"}),
     )
     .unwrap();
-    let raw = "这是一段超过一百二十字的发言开头，用来确保进入摘要失败路径。".repeat(5);
-    cache_opening(directory.path(), &raw);
+    // Even a short message goes to the summary model.
+    let raw = "这是一句短话。";
+    cache_opening(directory.path(), raw);
     let failed = speak(
         directory.path(),
-        &json!({"family":null,"text":raw,"full":true,"voice":"voice-a"}),
+        &json!({"family":null,"text":raw,"full":false,"voice":"voice-a"}),
     )
     .unwrap();
     assert_eq!(failed.body, b"opening");
