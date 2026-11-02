@@ -1,5 +1,108 @@
 use super::*;
 
+fn receipt_context() -> Context {
+    Context {
+        home: Default::default(),
+        app: Default::default(),
+        project: Default::default(),
+        env: Default::default(),
+        search: Vec::new(),
+        applications: Vec::new(),
+    }
+}
+
+#[test]
+fn fixed_receipt_observations_default_to_unknown_and_allow_explicit_absence() {
+    let context = receipt_context();
+    let modified = SystemTime::now() + Duration::from_secs(60);
+    let mut probe = Probe::fixed(Some(HashMap::new()));
+    assert!(matches!(
+        probe.receipt_process(&context, 42, Some(100_000), modified),
+        State::Unknown
+    ));
+    probe = probe.with_receipt_processes(Some(HashMap::new()));
+    assert!(matches!(
+        probe.receipt_process(&context, 42, None, modified),
+        State::Stopped
+    ));
+    probe = probe.with_receipt_processes(None);
+    assert!(matches!(
+        probe.receipt_process(&context, 42, Some(100_000), modified),
+        State::Unknown
+    ));
+}
+
+#[test]
+fn receipt_process_start_times_allow_two_seconds_before_declaring_pid_reuse() {
+    let context = receipt_context();
+    let modified = SystemTime::now();
+    let mut probe = Probe::fixed(None).with_receipt_processes(Some(HashMap::from([(42, 102)])));
+    for started in [100_000, 100_999, 102_000, 110_000] {
+        assert!(matches!(
+            probe.receipt_process(&context, 42, Some(started), modified),
+            State::Running(102)
+        ));
+    }
+    probe = probe.with_receipt_processes(Some(HashMap::from([(42, 103)])));
+    assert!(matches!(
+        probe.receipt_process(&context, 42, Some(100_000), modified),
+        State::Stopped
+    ));
+}
+
+#[test]
+fn receipt_process_with_unknown_start_time_is_alive_without_a_reuse_claim() {
+    let context = receipt_context();
+    let modified = SystemTime::now();
+    let mut probe = Probe::fixed(None).with_receipt_processes(Some(HashMap::from([(42, 900)])));
+    for started in [None, Some(0)] {
+        assert!(matches!(
+            probe.receipt_process(&context, 42, started, modified),
+            State::Running(900)
+        ));
+    }
+    probe = probe.with_receipt_processes(Some(HashMap::from([(42, 0)])));
+    assert!(matches!(
+        probe.receipt_process(&context, 42, Some(100_000), modified),
+        State::Running(0)
+    ));
+}
+
+#[test]
+fn receipt_newer_than_cached_snapshot_cannot_be_declared_dead_or_trigger_a_scan() {
+    let context = receipt_context();
+    let snapshot = SystemTime::now();
+    let modified = snapshot + Duration::from_secs(1);
+    let checked = Instant::now();
+    let mut probe = Probe {
+        checked: Some(checked),
+        observed_at: Some(snapshot),
+        receipt_processes: Some(HashMap::from([(42, 103)])),
+        ..Probe::default()
+    };
+    for _ in 0..2 {
+        assert!(matches!(
+            probe.receipt_process(&context, 43, None, modified),
+            State::Unknown
+        ));
+        assert!(matches!(
+            probe.receipt_process(&context, 42, Some(100_000), modified),
+            State::Unknown
+        ));
+    }
+    assert!(matches!(
+        probe.receipt_process(&context, 42, None, modified),
+        State::Running(103)
+    ));
+    assert_eq!(probe.checked, Some(checked));
+    for (pid, started) in [(43, None), (42, Some(100_000))] {
+        assert!(matches!(
+            probe.receipt_process(&context, pid, started, snapshot),
+            State::Stopped
+        ));
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn installed_windows_shim_contents_resolve_in_a_clean_fixture() {
