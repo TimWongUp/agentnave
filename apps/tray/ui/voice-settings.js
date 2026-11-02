@@ -305,7 +305,7 @@
     if (config.engine === "minimax") parts.push(row("地区", segments("MiniMax 地区", "minimax_region", [["cn", "国内"], ["global", "海外"]])));
     parts.push(row("语音模型", picker("语音模型", models, config.model,
       id => save({ models: { ...config.models, [config.engine]: id } }))));
-    parts.push(row("语速", segments("语速", "rate", [["slow", "慢"], ["normal", "标准"], ["fast", "快"]])), modelSettings());
+    parts.push(modelSettings());
     parts.push(h("p.voice-cloud", {}, config.summary.enabled
       ? "回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。" : "回答内容会发送给所选语音引擎。"));
     root.replaceChildren(...parts, h("h2.voice-group", {}, "角色"), familySettings());

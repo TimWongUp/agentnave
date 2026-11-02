@@ -16,7 +16,6 @@ fn defaults() -> Value {
         "auto_read":true,
         "continue_read":true,
         "engine":"elevenlabs",
-        "rate":"normal",
         "minimax_region":"cn",
         "models":{},
         "voices":{},
@@ -68,10 +67,6 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
         .as_str()
         .filter(|s| valid_engine(s))
         .ok_or("未知语音引擎")?;
-    let rate = value["rate"]
-        .as_str()
-        .filter(|s| matches!(*s, "slow" | "normal" | "fast"))
-        .ok_or("未知语速档")?;
     let region = value["minimax_region"]
         .as_str()
         .filter(|s| matches!(*s, "cn" | "global"))
@@ -102,7 +97,6 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
         "auto_read":auto_read,
         "continue_read":continue_read,
         "engine":engine,
-        "rate":rate,
         "minimax_region":region,
         "models":models,
         "voices":voices,

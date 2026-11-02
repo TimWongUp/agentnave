@@ -129,7 +129,6 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
     assert!(!root.join("voice-cache").exists());
     for (field, value) in [
         ("engine", json!("unknown")),
-        ("rate", json!("turbo")),
         ("minimax_region", json!("other")),
         ("voices", json!({"unknown":"voice"})),
         ("voices", json!({"gpt":"../evil"})),

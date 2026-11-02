@@ -31,7 +31,7 @@ fn elevenlabs_live() -> Result<(), String> {
     let voices = elevenlabs::voices(&key)?;
     eprintln!("ElevenLabs: {} 个音色", voices.len());
     let voice = voices.first().ok_or("ElevenLabs 未返回可用音色")?;
-    let audio = elevenlabs::synthesize(&key, elevenlabs::DEFAULT_MODEL, &voice.id, PHRASE, 1.0)?;
+    let audio = elevenlabs::synthesize(&key, elevenlabs::DEFAULT_MODEL, &voice.id, PHRASE)?;
     save("elevenlabs", &audio)
 }
 
@@ -53,13 +53,6 @@ fn minimax_live() -> Result<(), String> {
     let voices = minimax::voices(&key, &region)?;
     eprintln!("MiniMax: {} 个音色（{region}）", voices.len());
     let voice = voices.first().ok_or("MiniMax 未返回可用音色")?;
-    let audio = minimax::synthesize(
-        &key,
-        minimax::DEFAULT_MODEL,
-        &voice.id,
-        PHRASE,
-        1.0,
-        &region,
-    )?;
+    let audio = minimax::synthesize(&key, minimax::DEFAULT_MODEL, &voice.id, PHRASE, &region)?;
     save("minimax", &audio)
 }

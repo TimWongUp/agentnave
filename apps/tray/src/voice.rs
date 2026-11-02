@@ -103,13 +103,6 @@ fn valid_voice(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
-fn speed(settings: &Value) -> f64 {
-    match settings["rate"].as_str() {
-        Some("slow") => 0.85,
-        Some("fast") => 1.15,
-        _ => 1.0,
-    }
-}
 
 /// The model a synthesis uses: the user's pick, else the engine's default.
 fn model<'a>(settings: &'a Value, engine: &str) -> &'a str {
@@ -303,13 +296,12 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         return Ok(Response::ok("audio/mpeg", audio).with_notice(notice));
     }
     let audio = match engine {
-        "elevenlabs" => elevenlabs::synthesize(key, model, &voice, &text, speed(&settings)),
+        "elevenlabs" => elevenlabs::synthesize(key, model, &voice, &text),
         "minimax" => minimax::synthesize(
             key,
             model,
             &voice,
             &text,
-            speed(&settings),
             settings["minimax_region"].as_str().unwrap_or("cn"),
         ),
         _ => Err("未知语音引擎".into()),
@@ -327,7 +319,6 @@ fn audio_key(settings: &Value, engine: &str, voice: &str, text: &str) -> String 
             engine,
             model(settings, engine),
             voice,
-            settings["rate"],
             settings["minimax_region"],
             text
         ])
