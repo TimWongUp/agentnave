@@ -1014,9 +1014,9 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         tools = (await client.list_tools()).tools
         description = str(tools[0].input_schema)
         assert client.instructions is not None
-        assert "list_members" in client.instructions
+        assert "manager_session_id" in client.instructions
         assert "Excluded providers:" in client.instructions
-        assert "Excluded providers:" in description
+        assert "MCP instructions" in description
         described = await client.call_tool("list_members", {"provider": "codex"})
         details = _payload(_payload(described.structured_content)["provider_details"])
         assert details["permitted"] is False
@@ -1036,7 +1036,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
         assert grouped.is_error is False  # exclusions limit start_agent, not group seats
         assert not marker.exists()
         if "claude" in excluded:
-            assert "Providers permitted by this host configuration: none" in description
+            assert "Providers permitted by this host configuration: none" in client.instructions
         else:
             started = await client.call_tool(
                 "start_agent", {"provider": "claude", "prompt": "finish", "cwd": str(tmp_path)}
