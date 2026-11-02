@@ -176,10 +176,13 @@ pub(super) fn normalize_base_url(base_url: &str) -> Result<String, String> {
         return Err("请填写摘要 API 地址".into());
     }
     let url = reqwest::Url::parse(base_url).map_err(|_| "摘要 API 地址无效")?;
-    let has_userinfo = base_url
-        .split_once("://")
-        .and_then(|(_, rest)| rest.split('/').next())
-        .is_some_and(|authority| authority.contains('@'));
+    // The parsed form also catches shorthands like `https:user:pass@host`.
+    let has_userinfo = !url.username().is_empty()
+        || url.password().is_some()
+        || base_url
+            .split_once("://")
+            .and_then(|(_, rest)| rest.split('/').next())
+            .is_some_and(|authority| authority.contains('@'));
     if has_userinfo || url.query().is_some() || url.fragment().is_some() {
         return Err("摘要 API 地址不能包含账号、查询参数或片段".into());
     }

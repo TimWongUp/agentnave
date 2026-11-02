@@ -365,6 +365,7 @@ fn custom_urls_are_https_or_loopback_without_credentials_query_or_fragment() {
         "http://api.example.com/v1",
         "https://user@api.example.com/v1",
         "https://@api.example.com/v1",
+        "https:user:pass@api.example.com/v1",
         "https://api.example.com/v1?key=bad",
         "https://api.example.com/v1#bad",
     ] {
