@@ -152,13 +152,13 @@ fn summary_client() -> Result<reqwest::blocking::Client, String> {
         .map_err(|_| "无法创建摘要网络连接".into())
 }
 
-fn request(mut request: RequestBuilder, key: &str) -> RequestBuilder {
+fn request(mut request: RequestBuilder, key: &str, base: &str) -> RequestBuilder {
     request = request.header(reqwest::header::USER_AGENT, USER_AGENT);
     if !key.is_empty() {
         request = request.bearer_auth(key);
     }
     // Anthropic's model list reads its own headers; its chat route takes the bearer token.
-    if key.starts_with("sk-ant-") {
+    if reqwest::Url::parse(base).is_ok_and(|url| url.host_str() == Some("api.anthropic.com")) {
         request = request
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01");
@@ -242,6 +242,7 @@ fn endpoint_at(
             request(
                 summary_client()?.get(format!("{root}/api/hello")),
                 MAGPIE_KEY,
+                &root,
             ),
             MAGPIE_KEY,
         )?;
@@ -281,7 +282,7 @@ pub(super) fn models(
 
 fn models_at(base: &str, key: &str) -> Result<Vec<SummaryModel>, String> {
     let value = response_value(
-        request(summary_client()?.get(format!("{base}/models")), key),
+        request(summary_client()?.get(format!("{base}/models")), key, base),
         key,
     )?;
     let items = catalog_items(&value).ok_or("摘要服务未返回模型列表")?;
@@ -445,7 +446,7 @@ fn levels(model: &Value) -> Vec<String> {
 
 fn catalog_levels(base: &str, key: &str, model: &str) -> Result<Option<Vec<String>>, String> {
     let value = response_value(
-        request(summary_client()?.get(format!("{base}/models")), key),
+        request(summary_client()?.get(format!("{base}/models")), key, base),
         key,
     )?;
     let selected = catalog_items(&value).and_then(|models| {
@@ -518,6 +519,7 @@ fn request_summary(
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(body.to_string()),
             key,
+            base,
         ),
         key,
     )?;

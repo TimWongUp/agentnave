@@ -270,7 +270,8 @@
       if (!response.ok) throw new Error("无法读取完整对话消息");
       const chat = await response.json();
       if (token !== generation) return;
-      const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])) };
+      const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
+        rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
       queue = chat.messages.filter(m => eligible(m) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
       queue.sort((a, b) => a.time - b.time);
       queue = beforeAnswers(queue);

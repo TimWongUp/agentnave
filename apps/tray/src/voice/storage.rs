@@ -225,10 +225,13 @@ pub(super) fn save_key(root: &Path, value: &Value) -> Result<(), String> {
     write(root, "voice-keys.json", &keys)
 }
 /// Changes the key file under the write lock; the ChatGPT sign-in keeps its tokens there too.
-pub(super) fn edit_keys(root: &Path, edit: impl FnOnce(&mut Value)) -> Result<(), String> {
+pub(super) fn edit_keys(
+    root: &Path,
+    edit: impl FnOnce(&mut Value) -> Result<(), String>,
+) -> Result<(), String> {
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut keys = read_keys(root)?;
-    edit(&mut keys);
+    edit(&mut keys)?;
     write(root, "voice-keys.json", &keys)
 }
 pub(super) fn cached(root: &Path, key: &str, extension: &str) -> Option<Vec<u8>> {

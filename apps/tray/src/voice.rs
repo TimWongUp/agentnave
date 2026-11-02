@@ -164,17 +164,15 @@ fn listed(items: &[Voice]) -> Value {
 }
 
 pub fn get(shared: &Path, path: &str) -> Response {
+    if path == "/app/voice/summary/models" {
+        return Response::error(405, "此操作只接受 POST");
+    }
     let root = root(shared);
     let result: Result<Value, String> = (|| {
         let settings = storage::read_settings(&root)?;
         let keys = storage::read_keys(&root)?;
         if path == "/app/voice" {
             return Ok(storage::public_state(settings, &keys));
-        }
-        if path == "/app/voice/summary/models" {
-            let key = summary::key_of(&keys, &settings["summary"]);
-            let models = summary::models(&root, &settings["summary"], key)?;
-            return Ok(summary::listed(&models));
         }
         let (kind, engine) = path
             .strip_prefix("/app/voice/voices/")
@@ -228,6 +226,7 @@ pub fn request(
             get(shared, "/app/voice")
         }),
         "/app/voice/speak" => speak(&root, &payload),
+        "/app/voice/summary/models" => summary_models(&root),
         "/app/voice/chatgpt/start" => {
             summary::chatgpt::start(&root).map(|()| get(shared, "/app/voice"))
         }
@@ -240,6 +239,17 @@ pub fn request(
         Ok(response) => response,
         Err(error) => Response::error(400, &error),
     }
+}
+
+fn summary_models(root: &Path) -> Result<Response, String> {
+    let settings = storage::read_settings(root)?;
+    if settings["enabled"] != true {
+        return Err("请先开启会议语音再读取摘要模型".into());
+    }
+    let keys = storage::read_keys(root)?;
+    let key = summary::key_of(&keys, &settings["summary"]);
+    let models = summary::models(root, &settings["summary"], key)?;
+    Ok(Response::json(&summary::listed(&models)))
 }
 
 fn speak(root: &Path, payload: &Value) -> Result<Response, String> {

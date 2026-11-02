@@ -119,7 +119,10 @@ fn host_id(root: &Path) -> Result<String, String> {
         &hex[16..20],
         &hex[20..]
     );
-    storage::edit_keys(root, |keys| keys["chatgpt_host"] = json!(host))?;
+    storage::edit_keys(root, |keys| {
+        keys["chatgpt_host"] = json!(host);
+        Ok(())
+    })?;
     Ok(host)
 }
 
@@ -203,7 +206,7 @@ impl SignIn {
                 );
                 continue;
             }
-            let result = self.finish(&query);
+            let result = self.finish(&query, generation);
             let text = if result.is_ok() {
                 "已登录，可以关闭这个页面。"
             } else {
@@ -214,7 +217,7 @@ impl SignIn {
         }
     }
 
-    fn finish(&self, query: &str) -> Result<(), String> {
+    fn finish(&self, query: &str, generation: u64) -> Result<(), String> {
         if let Some(error) = value(query, "error") {
             let detail = value(query, "error_description").unwrap_or(error);
             return Err(format!("OpenAI 未完成登录：{detail}"));
@@ -240,8 +243,19 @@ impl SignIn {
         let user = checked_user(id, &client, &self.nonce)?;
         let mut account = account_from(&reply, &client, &self.host, &user)?;
         account["plan"] = json!(plan(&[id, account["access"].as_str().unwrap_or("")]));
-        storage::edit_keys(&self.root, |keys| keys["chatgpt"] = account.clone())
+        save_login(&self.root, generation, account)
     }
+}
+
+fn save_login(root: &Path, generation: u64, account: Value) -> Result<(), String> {
+    storage::edit_keys(root, |keys| {
+        let flow = flow();
+        if flow.generation != generation {
+            return Err("请先用 ChatGPT 账号登录".into());
+        }
+        keys["chatgpt"] = account;
+        Ok(())
+    })
 }
 
 /// The query of a `GET /auth/callback`, anything else being none of this sign-in's business.
@@ -410,24 +424,35 @@ pub(super) fn access_token(root: &Path) -> Result<String, String> {
     } else {
         json!(renewed)
     };
-    storage::edit_keys(root, |keys| keys["chatgpt"] = fresh.clone())?;
+    save_refresh(root, refresh, &fresh)?;
     Ok(fresh["access"].as_str().unwrap_or("").to_string())
+}
+
+fn save_refresh(root: &Path, refresh: &str, fresh: &Value) -> Result<(), String> {
+    storage::edit_keys(root, |keys| {
+        if keys["chatgpt"]["refresh"].as_str() != Some(refresh) {
+            return Err("请先用 ChatGPT 账号登录".into());
+        }
+        keys["chatgpt"] = fresh.clone();
+        Ok(())
+    })
 }
 
 /// Signed out here at once; OpenAI revoking the token is best effort.
 pub(in crate::voice) fn sign_out(root: &Path) -> Result<(), String> {
-    let account = storage::read_keys(root)?["chatgpt"].clone();
+    let mut account = Value::Null;
     storage::edit_keys(root, |keys| {
-        if let Some(keys) = keys.as_object_mut() {
-            keys.remove("chatgpt");
-        }
-    })?;
-    {
+        // Match sign-in's lock order: storage WRITE, then FLOW. No callback can restore
+        // the account between its removal and invalidating this sign-in generation.
         let mut flow = flow();
         flow.generation += 1;
         flow.signing_in = false;
         flow.error = None;
-    }
+        if let Some(keys) = keys.as_object_mut() {
+            account = keys.remove("chatgpt").unwrap_or(Value::Null);
+        }
+        Ok(())
+    })?;
     std::thread::spawn(move || {
         let (Some(refresh), Some(client)) =
             (account["refresh"].as_str(), account["client"].as_str())
@@ -548,7 +573,7 @@ fn explain(error: String) -> String {
 /// out: the token is served as Codex on the plan and runs Codex's newest models too.
 pub(super) fn models(token: &str) -> Result<Vec<SummaryModel>, String> {
     let value = response_value(
-        request(summary_client()?.get(format!("{API}/models")), token),
+        request(summary_client()?.get(format!("{API}/models")), token, API),
         token,
     )
     .map_err(explain)?;
@@ -633,6 +658,30 @@ fn stream_text(stream: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_out_rejects_in_flight_refreshes_and_login_callbacks() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let generation = flow().generation;
+        // No client: sign_out cannot send a revocation request in this test.
+        save_login(root, generation, json!({"refresh":"old"})).unwrap();
+        let fresh = json!({"refresh":"new","access":"new-access"});
+        save_refresh(root, "old", &fresh).unwrap();
+        assert!(save_refresh(root, "old", &fresh).is_err());
+        sign_out(root).unwrap();
+        let signed_out = std::fs::read(root.join("voice-keys.json")).unwrap();
+        assert_eq!(
+            save_refresh(root, "new", &fresh).unwrap_err(),
+            "请先用 ChatGPT 账号登录"
+        );
+        assert!(save_login(root, generation, fresh).is_err());
+        assert!(storage::read_keys(root).unwrap()["chatgpt"].is_null());
+        assert_eq!(
+            std::fs::read(root.join("voice-keys.json")).unwrap(),
+            signed_out
+        );
+    }
 
     fn id_token(claims: &Value) -> String {
         format!("h.{}.s", URL_SAFE_NO_PAD.encode(claims.to_string()))

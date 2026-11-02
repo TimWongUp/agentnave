@@ -64,12 +64,12 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
       AN.voice.controls(true, null, ctx, desk.key);
       return nodes.find(n => n.tag === "button.voice-play-all");
     },
-    room(messages, id = "room") {
+    room(messages, id = "room", desks = null) {
       const members = messages.filter(m => m.speaker?.role === "member" && m.conversation === id && m.kind === "reply");
-      ctx.desks = new Map(members.map(m => [m.desk, { key: m.desk, provider: m.speaker.provider, model: m.speaker.model || m.desk }]));
+      ctx.desks = new Map(desks ? desks.map(d => [d.key, d]) : members.map(m => [m.desk, { key: m.desk, provider: m.speaker.provider, model: m.speaker.model || m.desk }]));
       ctx.c.messages = messages;
-      rooms.set(`/app/chats/workspace/focus/${id}`, { group: "workspace", host: "codex", desks: [...ctx.desks.values()], messages });
-      ctx.rooms.set(id, { seats: members.map(m => ({ desk: m.desk })) });
+      ctx.rooms.set(id, { id, seats: [...ctx.desks.values()].map(d => ({ desk: d.key })) });
+      rooms.set(`/app/chats/workspace/focus/${id}`, { group: "workspace", host: "codex", desks: [...ctx.desks.values()], rooms: [...ctx.rooms.values()], messages });
       AN.voice.controls(true, { group: "workspace", id }, ctx);
       return nodes.find(n => n.tag === "button.voice-play-all");
     },
@@ -479,4 +479,10 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
   assert.equal(answer.room, true);
   assert.equal(answer.to, null);
   assert.equal((await said("task")).to.name, "GPT");
+  const fromStart = app.requests.length;
+  const playAll = app.room(list.filter(m => m.conversation === "room"), "room", desks);
+  await playAll.listeners.click();
+  await flush();
+  assert.deepEqual(app.requests.slice(fromStart).find(r => r.text === "brief").scene, brief,
+    "reading from the start addresses same-family seats exactly like reading one message");
 });

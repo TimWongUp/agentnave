@@ -47,8 +47,8 @@
   }
   async function loadSummaryModels() {
     summaryModels = [];
-    if (!config.summary.enabled || !summaryUsable()) return;
-    summaryModels = await request("/app/voice/summary/models");
+    if (!config.enabled || !config.summary.enabled || !summaryUsable()) return;
+    summaryModels = await request("/app/voice/summary/models", {});
   }
   async function loadCatalogs(label) {
     const failures = [];
@@ -253,7 +253,7 @@
     if (provider === "custom") parts.push(summaryConnection(), keyRow("summary", "摘要"));
     if (provider === "chatgpt") parts.push(chatgptAccount());
     if (summaryPlatform()) parts.push(keyRow(`summary:${provider}`, config.summary_platforms.find(p => p.id === provider)?.name));
-    const refresh = h("button.voice-refresh", { type: "button", disabled: busy || !config.summary.enabled }, "刷新");
+    const refresh = h("button.voice-refresh", { type: "button", disabled: busy || !config.enabled || !config.summary.enabled }, "刷新");
     refresh.addEventListener("click", async () => {
       busy = true; render();
       try { await loadSummaryModels(); status("摘要模型已刷新"); }

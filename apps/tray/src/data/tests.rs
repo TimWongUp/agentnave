@@ -491,6 +491,8 @@ fn show_chats_project_prompts_answers_review_absence_and_typing() {
     let prompts: Vec<_> = messages.iter().filter(|m| m["kind"] == "prompt").collect();
     assert_eq!(prompts[0]["speaker"]["model"], "gpt-6");
     assert_eq!(prompts[0]["speaker"]["model_source"], "native");
+    assert_eq!(prompts[0]["speaker"]["provider"], "codex");
+    assert_eq!(prompts[0]["speaker"]["label"], "Codex");
     assert_eq!(prompts[0]["to"], json!([{"key": "@all", "handle": "@all"}]));
     assert_eq!(prompts[0]["recipients"][0]["seat"], "a");
     assert_ne!(
@@ -806,6 +808,7 @@ fn failed_task_keeps_native_output_beside_the_failure_notice() {
     task["director"]["tasks"][0]["output"] = json!("已完成的部分结果");
     task["director"]["tasks"][0]["error"] = json!("permission_denied");
     task["director"]["tasks"][0]["manager_model"] = json!("gemini-3.5-pro");
+    task["director"]["tasks"][0]["manager_host"] = json!("gemini");
     save(dir.path(), &task);
     let reader = Reader::new(dir.path().to_path_buf());
     let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -819,6 +822,9 @@ fn failed_task_keeps_native_output_beside_the_failure_notice() {
         messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"]["model"],
         "gemini-3.5-pro"
     );
+    let speaker = &messages.iter().find(|m| m["kind"] == "prompt").unwrap()["speaker"];
+    assert_eq!(speaker["provider"], "gemini");
+    assert_eq!(speaker["label"], "Gemini CLI");
     assert!(messages.iter().any(|m| m["kind"] == "notice"
         && m["status"] == "blocked"
         && m["detail"] == "permission_denied"));

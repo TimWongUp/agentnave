@@ -365,6 +365,7 @@ fn member_speaker(identity: &Value) -> Value {
 /// to the host that opened the conversation.
 fn manager_speaker(identity: &Value, opened_by: Option<&str>, name: &str) -> Value {
     let provider = opt_text(identity, "manager_host");
+    let name = provider.as_deref().map_or(name, |host| label(Some(host)));
     let provider = provider.as_deref().or(opened_by).unwrap_or("");
     let reported = text(identity, "manager_reported_model");
     let mut who = speaker(

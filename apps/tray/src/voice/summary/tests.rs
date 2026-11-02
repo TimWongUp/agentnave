@@ -294,7 +294,7 @@ fn explicit_effort_is_sent_exactly_and_unsupported_effort_is_not_sent() {
 fn summary_model_route_returns_complete_ordered_metadata() {
     let server = FakeServer::start(1, |_| catalog());
     let directory = tempfile::tempdir().unwrap();
-    let settings = json!({
+    let mut settings = json!({
         "enabled":false,
         "engine":"elevenlabs",
         "rate":"normal",
@@ -304,7 +304,18 @@ fn summary_model_route_returns_complete_ordered_metadata() {
         "summary":summary_settings(&server.root, "custom", "opencode-go/deepseek-v4.1-flash")
     });
     storage::save_settings(directory.path(), &settings).unwrap();
-    let response = get(directory.path(), "/app/voice/summary/models");
+    let path = "/app/voice/summary/models";
+    assert_eq!(get(directory.path(), path).status, 405);
+    assert_eq!(
+        super::super::request(directory.path(), path, "POST", None, b"{}").status,
+        403
+    );
+    let disabled = super::super::request(directory.path(), path, "POST", Some("1"), b"{}");
+    assert_eq!(disabled.status, 400);
+    assert!(String::from_utf8_lossy(&disabled.body).contains("请先开启会议语音"));
+    settings["enabled"] = json!(true);
+    storage::save_settings(directory.path(), &settings).unwrap();
+    let response = super::super::request(directory.path(), path, "POST", Some("1"), b"{}");
     assert_eq!(response.status, 200);
     let models: Value = serde_json::from_slice(&response.body).unwrap();
     assert_eq!(models.as_array().unwrap().len(), 3);
@@ -317,6 +328,29 @@ fn summary_model_route_returns_complete_ordered_metadata() {
     );
     assert_eq!(models[2]["id"], "opencode-go/deepseek-v4.1-flash");
     assert_eq!(server.finish().len(), 1);
+}
+
+#[test]
+fn anthropic_headers_follow_the_endpoint_instead_of_the_key_prefix() {
+    for (base, key, anthropic) in [
+        ("https://api.anthropic.com/v1", "rotated-key", true),
+        ("https://api.openai.com/v1", "sk-ant-other", false),
+    ] {
+        let request = request(
+            summary_client().unwrap().get(format!("{base}/models")),
+            key,
+            base,
+        )
+        .build()
+        .unwrap();
+        let headers = request.headers();
+        assert_eq!(headers.contains_key("x-api-key"), anthropic);
+        assert_eq!(headers.contains_key("anthropic-version"), anthropic);
+        assert_eq!(headers["authorization"], format!("Bearer {key}"));
+        if anthropic {
+            assert_eq!(headers["x-api-key"], key);
+        }
+    }
 }
 
 #[test]
