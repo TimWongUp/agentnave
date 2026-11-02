@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.64.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.65.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.64.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.65.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -551,16 +551,17 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v0.64.0
+### Upgrading to v0.65.0
 
-This release adds meeting voice playback to the App and records which boss host spoke each
-history entry; older history still reads as before. Relays now keep a short-lived proof after a
-host closes normally, so the App stops showing a stale reload reminder. Update the App; the paired
-runtime and Skills follow as usual, with no migration. Reconnect each host once after updating so
-its relay records the new proof.
+This release reworks meeting voice playback in the App: auto read covers the whole workspace,
+chained playback starts from the message you click, summaries describe who is speaking to whom,
+and three summary platforms are retired (saved settings that used them fall back to Magpie). The
+MCP tools return leaner results and shorter descriptions. Update the App; the paired runtime and
+Skills follow as usual, with no migration. Reconnect each host once after updating so it loads
+the shorter tool descriptions.
 
-See [v0.64.0 release notes](releases/v0.64.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v0.63.0.md).
+See [v0.65.0 release notes](releases/v0.65.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v0.64.0.md).
 
 ## Uninstall
 
