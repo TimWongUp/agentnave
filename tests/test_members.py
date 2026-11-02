@@ -629,9 +629,19 @@ def test_member_list_splits_different_effective_mode_settings(
     assert discussion.model_dump().items() >= override.items()
 
 
-@pytest.mark.parametrize("restricted_mode", ["task", "discussion"])
-def test_member_list_unrestricted_mode_allows_other_mode_rows_except_excluded_tasks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restricted_mode: str
+@pytest.mark.parametrize(
+    ("restricted_mode", "override"),
+    [
+        ("task", {"effort": "medium"}),
+        ("discussion", {"effort": "medium"}),
+        ("discussion", {"options": {"unknown": True}}),
+    ],
+)
+def test_member_list_keeps_mode_settings_and_expands_only_missing_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    restricted_mode: str,
+    override: dict[str, object],
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
     providers = ("pi", "claude")
@@ -647,7 +657,7 @@ def test_member_list_unrestricted_mode_allows_other_mode_rows_except_excluded_ta
                         provider: {
                             "models": [],
                             "default": "chosen",
-                            "overrides": {"chosen": {"effort": "medium"}},
+                            "overrides": {"chosen": override},
                         }
                         for provider in providers
                     }
@@ -659,12 +669,17 @@ def test_member_list_unrestricted_mode_allows_other_mode_rows_except_excluded_ta
     assert listed.restricted == [restricted_mode]
     assert len(listed.members) == 6  # Each CLI has two effective model settings and a wildcard.
     for provider in providers:
-        configured, wildcard = [
-            member
-            for member in listed.members
-            if member.provider == provider and (member.effort == "medium" or member.model == "*")
+        task, discussion, wildcard = [
+            member for member in listed.members if member.provider == provider
         ]
-        expected_modes = ["discussion"] if provider == "claude" else None
-        assert configured.modes == wildcard.modes == expected_modes
-        assert configured.default == [restricted_mode]
+        assert task.modes == ([] if provider == "claude" else ["task"])
+        assert discussion.modes == ["discussion"]
+        assert task.error is None
+        assert (discussion.error is not None) == ("options" in override)
+        configured, other = (task, discussion) if restricted_mode == "task" else (discussion, task)
+        assert configured.model_dump().items() >= override.items()
+        assert configured.default == [restricted_mode] and other.default is None
+        # Only the wildcard lacks an entry in the unrestricted mode, so it can expand.
+        assert wildcard.model == "*"
+        assert wildcard.modes == (["discussion"] if provider == "claude" else None)
         assert wildcard.default is None

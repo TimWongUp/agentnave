@@ -760,6 +760,7 @@ def _compact_members(modes: dict[Mode, ModeStatus], excluded: frozenset[str]) ->
             grouped.setdefault((member.provider, member.model), []).append((mode, member))
     result: list[ListedMember] = []
     for entries in grouped.values():
+        entry_modes = {mode for mode, _ in entries}
         details = [member.model_dump(exclude={"default", "permitted"}) for _, member in entries]
         groups: list[list[tuple[Mode, MemberStatus]]] = (
             [entries] if all(item == details[0] for item in details) else [[e] for e in entries]
@@ -772,7 +773,9 @@ def _compact_members(modes: dict[Mode, ModeStatus], excluded: frozenset[str]) ->
                 for mode, status in modes.items()
                 if mode in permitted
                 or (
-                    not status.restricted
+                    len(groups) == 1
+                    and mode not in entry_modes
+                    and not status.restricted
                     and (mode == "discussion" or member.provider not in excluded)
                 )
             ]
