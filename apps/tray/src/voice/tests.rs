@@ -80,6 +80,12 @@ fn without_a_summary_only_the_opening_paragraphs_are_read() {
     );
     assert_eq!(text::clean(&"字".repeat(300), false).chars().count(), 100);
     assert_eq!(text::clean("短消息。", false), "短消息。");
+    // A short heading is not all that is read: the paragraph after it follows to a sentence end.
+    let headed = format!("结论\n{}。{}", "甲".repeat(60), "乙".repeat(60));
+    assert_eq!(
+        text::clean(&headed, false),
+        format!("结论\n{}。", "甲".repeat(60))
+    );
 }
 
 #[test]
@@ -252,6 +258,12 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
         storage::DEFAULT_PERSONAS[1].1,
         "a blank persona is reset"
     );
+    // A summary platform no longer offered opens as the default instead of failing.
+    let mut retired = saved.clone();
+    retired["summary"]["provider"] = json!("groq");
+    std::fs::write(directory.path().join("voice.json"), retired.to_string()).unwrap();
+    let reopened = storage::read_settings(directory.path()).unwrap();
+    assert_eq!(reopened["summary"]["provider"], "magpie");
     // Simulate an existing document directly: saving it would already normalize the old default.
     for legacy in [
         summary::LEGACY_DEFAULT_PROMPT,

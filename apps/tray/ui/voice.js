@@ -104,10 +104,12 @@
   // How the summary model may call a desk: its spoken name and duty, and whether another seat of
   // this meeting shares that name.
   function person(d, ctx, m) {
-    const family = Avatars.family(d.provider, d.model);
+    // A desk on its CLI's default model knows the model only from what the CLI reported.
+    const familyOf = desk => Avatars.family(desk.provider, desk.display_model || desk.model);
+    const family = familyOf(d);
     const seats = m?.thread?.kind === "room" ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
-    const twin = seats.some(s => s.desk !== d.key && (t => t && Avatars.family(t.provider, t.model) === family)(ctx.desks.get(s.desk)));
-    return { name: spokenName(d.provider, d.model), role: d.role || "", twin };
+    const twin = Boolean(family) && seats.some(s => s.desk !== d.key && (t => t && familyOf(t) === family)(ctx.desks.get(s.desk)));
+    return { name: spokenName(d.provider, d.display_model || d.model), role: d.role || "", twin };
   }
   // Whom a boss message is said to: its one employee in private, or the seats it names in a
   // meeting; nobody named means the whole meeting.
@@ -132,7 +134,7 @@
     const d = m.desk && ctx.desks.get(m.desk);
     const boss = m.speaker?.role === "manager";
     const { provider, model } = boss ? bossIdentity(m, ctx.c)
-      : { provider: m.speaker?.provider || d?.provider || ctx.c.host, model: m.speaker?.model || d?.model || "" };
+      : { provider: m.speaker?.provider || d?.provider || ctx.c.host, model: m.speaker?.model || d?.display_model || d?.model || "" };
     return { id: m.id, room: m.thread?.kind === "room" ? m.thread.id : null, desk: m.desk,
       kind: m.kind, conversation: m.conversation, round: m.round,
       boss, family: Avatars.family(provider, model) || null,
@@ -185,6 +187,8 @@
     playlistFetch?.abort(); playlistFetch = null; playlistScope = null;
     queue = queue.filter(job => job.automatic || (job.controller.abort(), false));
     if (!keepCurrent && current && !current.automatic) interrupt();
+    // A pause between clips with nothing left to resume would leave the player stuck.
+    if (!current && !queue.length) paused = false;
   }
   // Ends the clip in progress but keeps what is queued after it.
   function interrupt() {
@@ -310,7 +314,7 @@
     if (playlistScope) dropPlaylist();
     const queued = queue.find(job => job.id === chosen.id);
     queue = queue.filter(job => job !== queued);
-    queue.unshift(Object.assign(queued || chosen, { chosen: true }));
+    queue.unshift(Object.assign(queued || chosen, { chosen: true, automatic: false }));
     observed.set(chosen.id, true);
     interrupt();
     changed();
@@ -331,7 +335,9 @@
       const list = playable(chat, target);
       const start = list.findIndex(job => job.id === chosen.id);
       const known = new Set([current?.id, ...queue.map(job => job.id)]);
-      const rest = start < 0 ? [] : list.slice(start + 1).filter(job => !known.has(job.id));
+      // A briefing still waiting for its answer is not in the list; the chain starts after it.
+      const after = start < 0 ? list.filter(job => job.time > chosen.time) : list.slice(start + 1);
+      const rest = after.filter(job => !known.has(job.id));
       for (const job of rest) observed.set(job.id, true);
       queue.push(...rest);
       queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
@@ -369,7 +375,7 @@
     const room = roomView && ctx?.rooms?.get(roomView.id);
     const desks = room ? room.seats.map(s => ctx.desks.get(s.desk)).filter(Boolean)
       : privateView ? [ctx?.desks.get(privateView)].filter(Boolean) : [];
-    for (const d of desks) people.push({ key: d.key, provider: d.provider, model: d.model, role: d.role, label: AN.deskName(d) });
+    for (const d of desks) people.push({ key: d.key, provider: d.provider, model: d.display_model || d.model, role: d.role, label: AN.deskName(d) });
     if (current && !current.boss && !people.some(p => p.key === current.desk))
       people.push({ key: current.desk || current.id, provider: current.provider, model: current.model, role: current.role, label: current.label });
     const keep = new Set();

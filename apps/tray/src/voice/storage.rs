@@ -31,7 +31,20 @@ fn read(root: &Path, name: &str, default: Value) -> Result<Value, String> {
     }
 }
 pub(super) fn read_settings(root: &Path) -> Result<Value, String> {
-    validate(&read(root, "voice.json", defaults())?)
+    let mut saved = read(root, "voice.json", defaults())?;
+    // A summary platform no longer offered falls back to the default, so old settings still open.
+    if let Some(provider) = saved
+        .get_mut("summary")
+        .and_then(|summary| summary.get_mut("provider"))
+        .filter(|provider| {
+            provider
+                .as_str()
+                .is_some_and(|id| !summary::known_provider(id))
+        })
+    {
+        *provider = json!("magpie");
+    }
+    validate(&saved)
 }
 pub(super) fn read_keys(root: &Path) -> Result<Value, String> {
     read(root, "voice-keys.json", json!({}))

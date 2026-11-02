@@ -150,26 +150,28 @@ fn ends_sentence(chars: &[char], index: usize) -> bool {
     "。！？!?".contains(chars[index])
         || (chars[index] == '.' && chars.get(index + 1).is_none_or(|next| next.is_whitespace()))
 }
-/// The opening of cleaned text: whole paragraphs up to `EXCERPT_CHARS`, else the first
-/// paragraph cut at its last sentence end within the limit, else cut at the limit.
+/// The opening of cleaned text: whole paragraphs up to `EXCERPT_CHARS`. When those are under
+/// half the limit, as a short heading is, the paragraph that runs past it joins them, cut at its
+/// last sentence end within the limit, else at the limit.
 pub fn excerpt(text: &str) -> String {
-    let mut spoken: Vec<&str> = Vec::new();
+    let mut spoken: Vec<String> = Vec::new();
     let mut total = 0;
     for paragraph in text.lines() {
         let count = paragraph.chars().count();
-        if total + count > EXCERPT_CHARS {
-            break;
+        if total + count <= EXCERPT_CHARS {
+            total += count;
+            spoken.push(paragraph.to_owned());
+            continue;
         }
-        total += count;
-        spoken.push(paragraph);
+        if total < EXCERPT_CHARS / 2 {
+            let chars: Vec<char> = paragraph.chars().collect();
+            let scan = EXCERPT_CHARS - total;
+            let end = (0..scan)
+                .rfind(|index| ends_sentence(&chars, *index))
+                .map_or(scan, |index| index + 1);
+            spoken.push(chars[..end].iter().collect());
+        }
+        break;
     }
-    if !spoken.is_empty() {
-        return spoken.join("\n");
-    }
-    let chars: Vec<char> = text.lines().next().unwrap_or("").chars().collect();
-    let scan = chars.len().min(EXCERPT_CHARS);
-    let end = (0..scan)
-        .rfind(|index| ends_sentence(&chars, *index))
-        .map_or(scan, |index| index + 1);
-    chars[..end].iter().collect::<String>().trim().to_string()
+    spoken.join("\n").trim().to_string()
 }
