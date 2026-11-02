@@ -37,7 +37,7 @@ class InvocationPayload(TypedDict):
     invocation_id: str
     status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
     reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
-    elapsed_ms: int
+    elapsed_ms: NotRequired[int]
     provider: NotRequired[str]
     model: NotRequired[str]
     effort: NotRequired[str]
@@ -64,7 +64,7 @@ class UnreceivedPayload(TypedDict):
 
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
-    access: str | None  # the tier this call declared; recorded only, never enforced
+    access: NotRequired[str | None]  # the declared tier; recorded only, never enforced
     unreceived: NotRequired[list[UnreceivedPayload]]
 
 
@@ -90,11 +90,11 @@ class GroupSeatPayload(TypedDict):
     id: str
     provider: str
     cwd: str
-    model: str | None
-    effort: str | None
-    role: str | None
-    access: str | None
-    defaults_applied: list[str]
+    model: NotRequired[str | None]
+    effort: NotRequired[str | None]
+    role: NotRequired[str | None]
+    access: NotRequired[str | None]
+    defaults_applied: NotRequired[list[str]]
 
 
 class SeatRunPayload(TypedDict):

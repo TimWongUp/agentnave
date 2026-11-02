@@ -55,7 +55,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "#!/usr/bin/env python3\n"
         "import json, os, sys, time, uuid\n"
         "prompt = sys.stdin.buffer.read().decode('utf-8')\n"
-        "assert prompt.startswith('You are a subagent dispatched by AgentNave.')\n"
+        "assert prompt.startswith('You are an AgentNave subagent.')\n"
         "assert 'Do not call AgentNave tools' in prompt.split('\\n\\nAssigned task:\\n', 1)[0]\n"
         "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
@@ -286,9 +286,11 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
 
         dashboard = await _call(client, "list", {})
         view = await _call(client, "read_conversation", {"conversation_id": group_id})
-        public = await asyncio.to_thread(_fetch, str(view["public_url"]) + "state")
-        director = await asyncio.to_thread(_fetch, str(view["director_url"]) + "state")
+        assert "public_url" not in view and "director_url" not in view
         home = await asyncio.to_thread(_fetch, str(dashboard["dashboard_url"]) + "state")
+        shown = json.loads(home)
+        director = await asyncio.to_thread(_fetch, str(shown["shows"][0]["director_url"]) + "state")
+        public = await asyncio.to_thread(_fetch, str(json.loads(director)["public_url"]) + "state")
         assert "SECRET-B" not in public and "round" not in json.loads(public)
         assert json.loads(director)["round"]["seats"][0]["seat_id"] == "c"
         private = json.loads(director)["private_messages"]
@@ -1729,7 +1731,7 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
             "run_round",
             {"group_id": show["group_id"], "prompt": "PRIVATE-HISTORY-" * 200},
         )
-        assert "Boss model unavailable" in str(posted.pop("warnings"))
+        assert "Boss model unknown" in str(posted.pop("warnings"))
         assert posted == {
             "group_id": show["group_id"],
             "entries": [{"message_id": f"{show['group_id']}:e:0", "kind": "host", "round": 0}],
@@ -2310,7 +2312,7 @@ async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
                 ],
             },
         )
-        assert [seat["role"] for seat in cast(list[dict[str, object]], show["members"])] == [
+        assert [seat.get("role") for seat in cast(list[dict[str, object]], show["members"])] == [
             "author",
             None,
         ]
@@ -2368,7 +2370,7 @@ async def test_desk_access_is_recorded_but_never_enforced(tmp_path: Path, data_r
         assert writer["conversation_id"] == explorer["conversation_id"]
         await _wait_task(client, writer["invocation_id"])
         plain = await _call(client, "start_agent", task(session_id=str(ended["session_id"])))
-        assert plain["access"] is None
+        assert "access" not in plain
         await _wait_task(client, plain["invocation_id"])
         tasks = cast(
             list[dict[str, object]], _state(data_root, explorer["conversation_id"])["tasks"]
@@ -3068,7 +3070,7 @@ async def test_run_round_commits_forward_entries_and_seats_receive_them(
         ]
         done2 = await _wait(client, second["round_id"])
         seat_prompt = cast(str, _seen(_seats(done2)[0])["prompt"])
-        assert '"kind": "forward"' in seat_prompt
+        assert '"kind":"forward"' in seat_prompt
         assert answer_id in seat_prompt and "host note" in seat_prompt
         state = _state(data_root, group_id)
         entries = cast(list[dict[str, object]], state["entries"])

@@ -226,7 +226,7 @@ class Suite:
         members = await self.call("list_members", {"provider": provider})
         described = members["provider_details"]
         if not described["permitted"]:
-            if members["host"] != provider or not described["show_permitted"]:
+            if members.get("host") != provider or not described["show_permitted"]:
                 raise ToolFailure("provider not permitted; unset AGENTNAVE_EXCLUDED_PROVIDERS")
             self.excluded.add(provider)
         return None

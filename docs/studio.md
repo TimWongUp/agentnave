@@ -11,7 +11,7 @@
 | `wait`、`cancel` | 同时接受任务 `invocation_id` 与轮次 `round_id`；某席失败或受阻而其他席仍在跑时返回一次 `seat_lost`（不交付答案，可用 `run_round` 的 `retry_seats` 在本轮补跑）；审核会议中轮次返回 `review_needed`，席位状态出现 `pending_review`、`private` |
 | `decide_answers` | `round_id` + `{seat_id: publish/private}`，整批校验并保存后生效 |
 | `list`、`read_conversation` | 列出句柄与会话并启动看板；按 App 的方式读回一个会话的最终消息 |
-| `list_members` | 只读组员工具；每次现读 `members.json`，按 task／discussion 返回生效配置、参数校验及宿主允许状态；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |
+| `list_members` | 只读组员工具；每次现读 `members.json`，以一份 `members` 返回生效配置，模式差异由行内 `modes` 标明，参数问题由 `error` 报告；传 `provider` 时另返回该 CLI 的 `permitted`、`show_permitted` 与支持参数 |
 | `handover` | 只在用户要求时把本聊天的整个工作区交给另一个 boss 聊天：`release=true` 交出（可附交接说明），不带参数列出待接手的工作区，`workspace_id` 认领；认领后老 boss 的 `start_agent`、`run_round` 与 `handover` 被拒绝，交接前的待审答案仍由它在原服务里用 `decide_answers` 决定，原服务正常退出时未决回答按不公开处理，崩溃或被强行终止后新 boss 才能决定（[ADR-0033](adr/0033-boss-workspace-handover.md)） |
 
 标题在创建时给出，之后只在 App 中改名；MCP 不提供改名工具。中继空闲探测使用的 `list_invocations` 仍可调用，但不在工具列表中（[ADR-0024](adr/0024-consolidated-tools-and-private-review.md)）。
@@ -66,7 +66,7 @@
 
 ## 看板
 
-看板只在 boss 调用 `list` 时启动并返回首页入口，之后 `read_conversation` 附带该会话的页面地址，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。重启后地址会更换。
+看板只在 boss 调用 `list` 时启动并返回首页入口，会话页面从首页进入，随 MCP 进程退出；只监听 127.0.0.1 随机端口，用随机路径与精确 Host/Origin 检查限制访问，CSP 禁止外部加载。重启后地址会更换。
 
 界面是左右两栏的工作台：左侧按“需要关注／其他会话”分组列出会话，可搜索并按会议、任务筛选；“需要关注”只收进行中与待审核的会话，失败、受阻或中断是已交给 boss 的结果，带红色状态留在其他会话中。右侧未选会话时是总览（进行中与待审核的会话），选中后显示详情，切换会话不离开页面。会议详情分“本轮现场”（私有：各席位私密指令、实时回复、审核状态）和“公开记录”（按轮分隔的公开发言），有工作进行或待审核时默认停在现场；“参会者视角”打开公开地址。任务详情按时间倒序显示每次调用的状态、模型、目录、耗时、boss 派发的任务原文与回复，“已回复”不等于已验收。公开地址只显示公开记录，不含会话列表。跟随系统浅色／深色，窄屏下列表与详情分屏显示。
 
@@ -108,7 +108,7 @@
 
 保存通过带操作请求头的 POST 原子替换 `members.json`。Rust 只校验结构与引用（未知字段、引用未配置的模型、默认模型或默认 effort 不在允许范围），参数是否有效以服务端 Adapter 校验为准；文件损坏时显示错误并禁止页面保存，需先修复文件再重新读取。设置页整份保存，外部编辑后请重新读取；并发编辑以最后一次保存为准。见 [ADR-0014](adr/0014-tray-members-and-one-click-update.md)。
 
-boss 未获点名时先读 `list_members`，按模式中的组员与说明选择。`permitted=false` 反映 task 的宿主排除项，discussion 恒为 true；模式允许范围由名单本身表达；受限模式中某 CLI 不限模型时，另以空配置的 `model="*"` 条目说明。`valid=true` 只表示 Adapter 参数校验通过，不证明安装、登录、模型可用或任务目录符合要求。
+boss 未获点名时先读 `list_members`，从一份 `members` 列表中按模式与说明选择。行内 `modes` 省略即所有模式可用，空数组表示均不可用；task 的宿主排除项会从可用模式中去掉 task，discussion 不受宿主排除影响。有效配置不同的模式拆成各自一行，`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认。顶层 `restricted` 列出受限模式，未受限模式允许任意 provider/model，但 task 仍遵守宿主排除；某 CLI 不限模型时用同一列表中的 `model="*"` 行说明。成员不返回 `valid`，Adapter 参数校验失败时带 `error`；无 `error` 不证明安装、登录、模型可用或任务目录符合要求。
 
 从包含托盘的版本起，每个 GitHub Release 附带 macOS 通用安装包 `AgentNave_<版本>_universal.dmg`：打开后把 AgentNave 拖进“应用程序”。应用未经 Apple 签名公证，首次打开须在访达中右键“打开”放行。
 

@@ -17,6 +17,12 @@ _SESSION_ID_SHELL_ENV = {
     "hermes": "HERMES_SESSION_ID",
 }
 
+# Parameter schemas name the host variable once; full identity rules live in MCP instructions.
+SESSION_ID_DESCRIPTIONS = {
+    name: f"Boss chat ID from {variable}; see MCP instructions."
+    for name, variable in _SESSION_ID_SHELL_ENV.items()
+}
+
 
 def session_id_hint(host: Host) -> str:
     variable = _SESSION_ID_SHELL_ENV.get(host.name or "")
@@ -39,10 +45,13 @@ def session_id_hint(host: Host) -> str:
 def model_warnings(host: Host, message: Entry | EntryRecord | TaskRecord) -> list[str]:
     if message.manager_reported_model or message.manager_model:
         return []
+    variable = _SESSION_ID_SHELL_ENV.get(host.name or "")
+    hint = (
+        f"read {variable} in the shell"
+        if variable is not None
+        else "read this chat's native session ID"
+    )
     return [
-        "Boss model unavailable in App: neither native model nor manager_model was recorded. "
-        + session_id_hint(host)
-        + "Verify manager_session_id; if it is right, pass manager_model when trusted host "
-        "context states the model. "
-        "Do not repeat this call; wait for any work already started."
+        f"Boss model unknown: {hint} and pass it as manager_session_id, or pass "
+        "manager_model. Do not repeat this call; wait for work already started."
     ]

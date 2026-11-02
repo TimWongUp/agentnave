@@ -29,7 +29,7 @@ from agentnave.core import InvocationManager
 from agentnave.db import Workspace
 from agentnave.group import GroupSeat, Round
 from agentnave.host import detect_host, host_session_id, shared_session_id
-from agentnave.manager_identity import model_warnings, session_id_hint
+from agentnave.manager_identity import SESSION_ID_DESCRIPTIONS, model_warnings, session_id_hint
 from agentnave.mcp_payloads import (
     ActivityPayload,
     CancelPayload,
@@ -49,6 +49,7 @@ from agentnave.mcp_payloads import (
     UnreceivedPayload,
     WaitPayload,
 )
+from agentnave.mcp_projection import without_empty_fields
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
@@ -89,12 +90,7 @@ type ManagerModel = Annotated[
     Field(
         min_length=1,
         max_length=200,
-        description=(
-            "Omit it normally: the service reads the boss model from the native session. Pass it "
-            "when warnings say the model is unavailable and trusted host context states it. "
-            "Metadata for this message only; never the subagent model or a CLI-derived guess. "
-            "Does not change provider settings."
-        ),
+        description="Boss model override; normally omit; see MCP instructions.",
     ),
 ]
 
@@ -126,16 +122,8 @@ type ManagerSessionId = Annotated[
     Field(
         min_length=1,
         max_length=200,
-        description=(
-            "Current manager chat/session ID, shared by all tasks and groups in that chat. "
-            + session_id_hint(HOST)
-            + "Pass that exact value so the App can read the boss model. A failed shell command is not evidence that no native ID exists. "
-            "Only when the host exposes no native ID, generate one UUID once for this chat "
-            "and keep reusing it. A different chat needs a different ID. "
-            "Never use the CLI name, MCP connection ID, or subagent session_id. "
-            "Required by start_agent and run_round, and by handover to hand over or take over, "
-            "unless AGENTNAVE_HOST_SESSION_ID is injected for this chat or the host gives this "
-            "server its native session ID (Claude Code: CLAUDE_CODE_SESSION_ID)."
+        description=SESSION_ID_DESCRIPTIONS.get(
+            HOST.name or "", "Boss chat ID from host context; see MCP instructions."
         ),
     ),
 ]
@@ -169,12 +157,7 @@ PROVIDER_SELECTION = (
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
     + ". start_agent rejects excluded providers; meetings follow discussion member limits without host exclusions."
 )
-ACCESS = (
-    "Declared desk access: read for exploring, planning or reviewing, write for changing files. "
-    "Shown in the App, and read adds a read-only instruction to the prompt; it never changes the "
-    "CLI's native permissions. Omit it for a seat "
-    "or review role, which already carries it; a contradicting value is rejected."
-)
+ACCESS = "Declared read/write access; see MCP instructions."
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
     "zcode": "permission_mode (auto, build, edit, plan, yolo, guarded); model accepts providerId/modelId; effort is native thoughtLevel; restricted_tools is not supported",
     "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
@@ -217,10 +200,7 @@ class GroupSeatSpec(BaseModel):
     provider: ProviderName
     provider_options: dict[str, ProviderOption] = Field(
         default_factory=lambda: {},
-        description=(
-            'Options for this seat\'s CLI, e.g. {"model": "gpt-6.1-sol", "effort": "medium"}; '
-            "omitted keys use discussion member defaults."
-        ),
+        description=("CLI options; omitted keys use discussion member defaults."),
     )
     cwd: str | None = Field(
         default=None,
@@ -229,8 +209,7 @@ class GroupSeatSpec(BaseModel):
     role: str | None = Field(
         default=None,
         description=(
-            "Optional desk role for this seat; 1–40 characters after trimming, no newlines "
-            "or control characters. Blank or omitted means no role."
+            "Desk label: 1–40 trimmed characters, no controls/newlines; blank/omitted means none."
         ),
     )
     access: Literal["read", "write"] | None = Field(default=None, description=ACCESS)
@@ -291,15 +270,6 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
         raise ToolError(" ".join(problems) + " Nothing was started. Correct and retry.")
 
 
-def _without_nulls(value: object) -> object:
-    if isinstance(value, dict):
-        items = cast(dict[str, object], value).items()
-        return {key: _without_nulls(item) for key, item in items if item is not None}
-    if isinstance(value, list):
-        return [_without_nulls(item) for item in cast(list[object], value)]
-    return value
-
-
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         return [
@@ -323,11 +293,14 @@ class _Server(MCPServer[Runtime]):
             and not result.is_error
             and result.structured_content is not None
         ):
-            # The same data as structuredContent, compact and without empty fields.
-            text = json.dumps(
-                _without_nulls(result.structured_content), ensure_ascii=False, separators=(",", ":")
+            projected = without_empty_fields(result.structured_content)
+            text = json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
+            result = result.model_copy(
+                update={
+                    "structured_content": projected,
+                    "content": [TextContent(type="text", text=text)],
+                }
             )
-            result = result.model_copy(update={"content": [TextContent(type="text", text=text)]})
         return result
 
 
@@ -335,27 +308,31 @@ mcp = _Server(
     "AgentNave",
     version=__version__,
     instructions=(
-        "AgentNave launches local CLI subagents and saves their history. Use the "
-        "agentnave-manager Skill for CLI usage and model selection. "
-        "Before start_agent or run_round, read this chat's native session ID and pass it as "
-        "manager_session_id every time. "
+        "AgentNave runs local CLI subagents and saves history; workflows: agentnave-manager Skill. "
+        "History survives restart; processes do not; invocation handles expire seven days after completion. "
+        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
+        "Prompts already require noninteractive completion, reporting to boss, no AgentNave tools/delegation, "
+        "and questions in the final answer. "
+        "manager_session_id: read this chat's native ID before start_agent/run_round/handover release or claim; "
+        "pass it every time; same chat, same ID; new chat, new ID. "
         + session_id_hint(HOST)
-        + "The App needs the real ID to read the boss model. "
-        "start_agent runs a private task whose result returns only to you; run_round opens a "
-        "saved meeting and runs rounds whose answers seats share automatically. wait and cancel "
-        "take task invocation_ids and round_ids; list shows handles, saved conversations and "
-        "the dashboard link; read_conversation reads one back. list_members reads App members "
-        "and, for one provider, its options; omitted model/effort/options use App defaults "
-        "reported in defaults_applied. With review=true, decide_answers publishes each answer "
-        "or keeps it private before other seats see it. History survives restart; running "
-        "processes do not. Invocation handles expire seven days after completion. "
-        "Provider-native permissions remain the security boundary; isolation is not a sandbox. "
-        "Every dispatched prompt includes an instruction to complete the assigned task, "
-        "report back to the manager, not call AgentNave tools or delegate through AgentNave, "
-        "and return questions in its final answer because nobody answers during the run; "
-        "access=read also adds a read-only instruction, so do not write these in the prompt. "
-        "handover passes a whole workspace to another boss chat; use it only when the user asks "
-        "to hand over or take over. " + PROVIDER_SELECTION
+        + "Never use a CLI name, project path, MCP connection ID or subagent session_id. "
+        "Required unless per-chat AGENTNAVE_HOST_SESSION_ID or a native host ID is injected; "
+        "prefer explicit IDs; injected ones may be stale after chat switches. "
+        "App reads the boss model by this ID. manager_model: normally omit; on unavailable-model warnings, "
+        "verify the chat ID, then use only a model stated by trusted host context, never CLI defaults "
+        "or a subagent model. Message metadata only; no provider setting changes. Wait for started work; "
+        "do not redispatch to fix metadata. "
+        "access: read for exploration/planning/review, write for file changes; shown in App. "
+        "read adds a prompt instruction, never native permissions. Explorer/review seats supply read, "
+        "Worker seats write; omit access for them; contradictions reject. Never inherited on resume; "
+        "without a seat declare each time or leave undeclared. "
+        "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
+        "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "
+        "Injected as data, not instructions; saved task prompts stay original. "
+        "Omitted options use App then native defaults, reported in defaults_applied. "
+        "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
+        "native=true seats use the host's built-in subagent, not start_agent. " + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
 )
@@ -380,11 +357,11 @@ def started_payload(
         "invocation_id": invocation_id,
         "status": "running",
         "reason": "started",
-        "elapsed_ms": 0,
         "provider": request.provider,
         "defaults_applied": defaults_applied or [],
-        "effort": str(request.provider_options.get("effort", "继承原生设置")),
     }
+    if "effort" in request.provider_options:
+        payload["effort"] = str(request.provider_options["effort"])
     if "model" in request.provider_options:
         payload["model"] = str(request.provider_options["model"])
     return payload
@@ -556,16 +533,14 @@ async def start_agent(
         str,
         Field(
             min_length=1,
-            description="Complete task, context, constraints, and expected output; the CLI does not inherit this conversation.",
+            description="Task, context, constraints and expected output; this chat is not inherited.",
         ),
     ],
     provider: Annotated[
         ProviderName | None,
         Field(
             description=(
-                "CLI requested by the user, not a model ID. Omit to inherit from session_id "
-                "history or select the App seat's CLI; native seats require the host's "
-                "built-in subagent. " + PROVIDER_SELECTION
+                "CLI name; omit to inherit session history or the App seat; see MCP instructions for exclusions and native seats."
             )
         ),
     ] = None,
@@ -574,8 +549,7 @@ async def start_agent(
         Field(
             min_length=1,
             description=(
-                "Absolute existing directory where the subagent runs. Required for a new task; "
-                "omitted on resume, inherits the native session's latest task directory."
+                "Existing absolute directory; required for new tasks, inherited on resume when omitted."
             ),
         ),
     ] = None,
@@ -584,12 +558,7 @@ async def start_agent(
         Field(
             min_length=1,
             description=(
-                "To continue a specific native conversation, use the session_id returned by a "
-                "finished invocation of the same provider; never use an invocation_id here. "
-                "Omitted provider, cwd, role and seat inherit its latest saved task; access is "
-                "never inherited, and a new role without a seat drops the old seat; explicit "
-                "values win. Unknown or ambiguous history needs provider and cwd. "
-                "Omitted, the task starts a new native thread: a new desk in the App."
+                "Native session_id from a finished task, never invocation_id; omit for a new thread. Resume inherits provider/cwd/role/seat; explicit values win. Unknown or ambiguous history needs provider and cwd; a new role without seat drops the old seat."
             ),
         ),
     ] = None,
@@ -597,23 +566,19 @@ async def start_agent(
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                'Explicit options for the selected CLI, e.g. {"model": "gpt-6.1-sol", '
-                '"effort": "medium"}; model is this CLI\'s own model ID as list_members shows '
-                "it. Call list_members(provider=...) for supported keys. Omitted options use "
-                "configured App defaults, then native CLI settings."
+                "CLI options, including model/effort; keys via list_members(provider=...); defaults in MCP instructions."
             )
         ),
     ] = None,
     conversation_id: Annotated[
-        str | None, Field(description="Task conversation to add this task to.")
+        str | None, Field(description="Private task conversation to append to.")
     ] = None,
     title: Annotated[
         str | None,
         Field(
             description=(
-                "Short title for a new task conversation, at most 48 columns (CJK characters "
-                "count 2). The first conversation of a manager chat also names its workspace "
-                "for good, so give that one the chat's purpose; later private tasks may omit it."
+                "New title: at most 48 columns (CJK=2). The first permanently names this workspace, so "
+                "state the chat's purpose; later tasks may omit it."
             )
         ),
         AfterValidator(_short_title),
@@ -622,15 +587,7 @@ async def start_agent(
         str | None,
         Field(
             description=(
-                "Optional label shown on this task's desk; 1–40 characters after trimming, no "
-                "newlines or control characters. Blank clears the label; omitted inherits on "
-                "resume, otherwise means no label. Each native "
-                "thread is its own desk, whatever its role. Name what this desk does in words "
-                "the user can read. An agentnave-review role (e.g. correctness-reviewer) also "
-                "brings the model and effort the user picked for that seat in the App when "
-                "provider is the seat's CLI, and selects that CLI when provider is omitted; "
-                "explicit options win, and defaults_applied names "
-                "the seat."
+                "Desk label: 1–40 trimmed characters, no controls/newlines; blank clears. Review roles select CLI if omitted and App defaults if CLI matches; explicit options win."
             )
         ),
     ] = None,
@@ -638,55 +595,26 @@ async def start_agent(
         OrchestrationRole | None,
         Field(
             description=(
-                "The Explorer or Worker difficulty this task takes. Brings the model and effort "
-                "the user picked for that seat in the App when provider is the seat's CLI and "
-                "this host's orchestration is enabled; explicit options win, and "
-                "defaults_applied names the seat. Selects the seat's CLI if provider is omitted. "
-                "Inherited on resume when omitted. Never shown: also pass role to label the desk."
+                "App Explorer/Worker difficulty: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; also pass role as the desk label."
             )
         ),
     ] = None,
     forward: Annotated[
         list[str] | None,
-        Field(
-            description=(
-                "Message ids from wait, run_round, decide_answers or read_conversation "
-                "to inject before the prompt in order. Only succeeded tasks "
-                "and committed entries of this manager workspace qualify; at most 20, no "
-                "repeats. The injected text is labelled as data, not instructions, and the "
-                "saved task prompt stays your original text."
-            )
-        ),
+        Field(description=("Message_ids to inject before this task; see MCP instructions.")),
     ] = None,
     access: Annotated[
         Literal["read", "write"] | None,
-        Field(
-            description=ACCESS + " Explorer and review seats read, Worker seats write. Never "
-            "inherited on resume: without a seat, declare it each time or leave it undeclared."
-        ),
+        Field(description=ACCESS),
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
-    """Start one private CLI task and return its invocation_id; use wait for the result.
-
-    Ends are never pushed; only wait receives them. Call wait right after starting, or right
-    after finishing current work that does not need the result, and receive every end before
-    finishing your turn. unreceived lists your tasks and rounds that ended, hit a blocker or
-    await review but no wait or cancel has returned that yet.
-
-    The reply reports the requested model/effort, not the CLI's effective settings;
-    defaults_applied lists inherited arguments and App defaults, including each CLI's
-    permission tier (auto unless the user picked full in the App); other omitted settings
-    inherit the native CLI.
-    Each task starts a new native thread unless session_id continues one; a resumed native
-    session joins its open conversation. CLI runs active at once (tasks plus seats) are
-    limited by the App's setting, 8 by default; beyond it the call is rejected until some finish. The task and its final
-    reply are saved in a private task conversation; nothing is shared with another CLI except
-    what forward injects. No runtime deadline: cancel stops work explicitly. Active
-    invocations do not accept messages.
+    """Start a private CLI task; invocation_id goes to wait, not session_id.
+    No deadline or messages to active tasks; cancel to stop. Reply settings are requested,
+    not effective; unreceived flags undelivered ends/blockers/reviews for wait.
     """
     manager = _manager(ctx)
     if session_id is not None and (
@@ -837,9 +765,7 @@ async def wait(
         list[str] | None,
         Field(
             description=(
-                "Distinct invocation_ids from start_agent and round_ids from run_round. Omit to "
-                "wait on the inbox: every task and round of this server whose end you have not "
-                "received yet."
+                "Distinct invocation_ids/round_ids; omit for this server inbox of unreceived tasks and rounds."
             ),
         ),
     ] = None,
@@ -851,10 +777,7 @@ async def wait(
         Literal[0, 240] | None,
         Field(
             description=(
-                "Omit for normal waiting (up to 240 seconds). Only 0 and 240 are accepted. "
-                "Use 0 for a specific progress or intervention check: it returns at once and "
-                "may include running reply tails. Ready results are still received normally. "
-                "Never stops the work."
+                "Omit to wait up to 240s; 0 checks progress immediately and includes running tails; ready results are still received; neither value stops work."
             ),
         ),
     ] = None,
@@ -862,38 +785,28 @@ async def wait(
         str | None,
         Field(
             description=(
-                "With ids omitted, only this boss chat's tasks and rounds; same value as "
-                "start_agent and run_round. Ignored with ids."
+                "Inbox chat filter when ids is omitted; ignored with ids; identity rules in MCP instructions."
             ),
         ),
     ] = None,
     *,
     ctx: Context[Runtime],
 ) -> WaitPayload:
-    """Wait up to 240 seconds for the first listed task or round to be ready.
+    """Return when any handle is ready; reason=ready contains all ready now in updates (tasks)
+    and rounds, not necessarily all finished.
 
-    A task is ready when it finished or reports a CLI execution blocker (it keeps running;
-    each blocker category wakes once). A round is ready when it finished, a seat reports a
-    blocker, answers wait for review (reason=review_needed, seat status pending_review), or a
-    seat failed or blocked while others still work (reason=seat_lost, once per seat; answers
-    stay held back until the round is delivered; run_round retry_seats can start it again).
-    reason=ready returns every handle ready at that moment, in updates (tasks) and rounds;
-    it does NOT mean all work finished. pending_ids lists handles whose final state is still
-    unreceived; all_finished is true only when that list is empty. With explicit ids these
-    fields cover only those ids; with ids omitted they cover the boss's current inbox.
-    While all_finished is false, handle blockers or review requests, then call wait again
-    with pending_ids (or keep using the inbox). Do not end your turn leaving work pending.
-    Finished ones stay ready, so drop them from the next call. reason=wait_elapsed returns a
-    running snapshot of each, with status and recent activity. Only explicit wait_seconds=0
-    includes running reply tails (at most 1000 characters each) and their age, subject to
-    include_output. After wait_elapsed, normally wait again without a separate 0-second check.
-    A round returns each seat's final answer once; later payloads mark it output_returned, so
-    reread it with read_conversation. Unknown, expired or repeated ids reject the whole call before waiting. This is
-    request/response waiting, not a background subscription.
-
-    Omitting ids waits on the inbox instead: the handles above whose final state no wait or
-    cancel has returned. Each end is delivered once; a round under review stays ready until
-    decided. reason=nothing_pending returns at once when nothing is outstanding.
+    Ready: terminal; execution_blocked (still running; once/category); review_needed
+    (pending_review needs decide_answers); seat_lost (failed/blocked seat while peers run;
+    once/seat, answers withheld; retry via run_round.retry_seats).
+    pending_ids lists unreceived ends for the given ids or inbox; all_finished means none
+    remain. Handle blockers/reviews, then wait on pending_ids until all_finished; drop
+    delivered handles. Ends are never pushed: wait after dispatch or independent work;
+    collect every terminal result before ending your turn.
+    wait_elapsed gives status/activity; wait again normally. Only wait_seconds=0 adds running
+    tails (up to 1000 characters) and age, subject to include_output. Round answers arrive
+    once; output_returned means reread with read_conversation. Unknown/expired/duplicate ids
+    reject the whole call. Inbox ends arrive once; reviews stay ready until decided;
+    nothing_pending means an empty inbox.
     """
     manager = _manager(ctx)
     conversations = _conversations(ctx)
@@ -1035,10 +948,9 @@ async def cancel(
     *,
     ctx: Context[Runtime],
 ) -> CancelPayload:
-    """Stop a task, or a round: its running seats are cancelled and recorded absent, unstarted
-    serial seats skip, published answers stay and undecided answers stay private.
-
-    Returns the cancelled or already-finished result. Does not undo CLI side effects.
+    """Stop a task or round; return its cancelled or already-finished result.
+    Running seats become absent, unstarted seats skip, published answers stay and undecided
+    answers stay private. CLI side effects are not undone.
     """
     manager = _manager(ctx)
     if _known_invocation(manager, id):
@@ -1113,18 +1025,15 @@ async def list_all(
         Literal["show", "task"] | None,
         Field(description="Only meetings or only task conversations."),
     ] = None,
-    limit: Annotated[int, Field(ge=1, le=200, description="Most recent conversations.")] = 20,
+    limit: Annotated[
+        int,
+        Field(ge=1, le=200, description="Most recent conversations; defaults to 10, at most 200."),
+    ] = 10,
     *,
     ctx: Context[Runtime],
 ) -> ListPayload:
-    """List this server's invocation handles and saved conversations, most recent first.
-
-    Invocations carry metadata only: no prompt, reply or tool data; finished ones tell with
-    result_read whether a wait or cancel returned the final result, and failures their error. total counts every
-    matching conversation. writable=false means another AgentNave server holds it: read it
-    here, continue it there or once it becomes idle. unavailable lists unreadable or legacy
-    records. Also starts the local read-only dashboard and returns its link. Private: never
-    send this to seats.
+    """List invocation metadata and saved conversations, newest first; open a read-only dashboard.
+    writable=false: continue at the owning server or when idle. Private: never send to seats.
     """
     conversations = _conversations(ctx)
     try:
@@ -1175,21 +1084,14 @@ async def list_members(
         Field(description="Also return this CLI's permitted status and supported options."),
     ] = None,
 ) -> MemberListPayload:
-    """Read members.json afresh, with effective defaults, mode limits and host permission.
-
-    valid checks Adapter options, not installation, authentication or model availability.
-    Missing files leave both modes unrestricted. Repair invalid files in the AgentNave App.
-    review holds the CLI and model the user picked in the App for each agentnave-review role,
-    from review.json; review_error reports a broken review.json without affecting members.
-    orchestration holds the CLI and model picked for each Explorer (read-only: explore, plan,
-    review) and Worker (writes) difficulty, easy or hard, from orchestration.json. When disabled
-    for this host, enabled=false and both seat maps are empty; saved picks do not authorize
-    delegation or supply role defaults. A seat with available=false may carry replacement, a
-    ready provider and provider_options with the reason, to pass along with the same seat or
-    role; the service never switches by itself.
-    native=true
-    marks the host's own CLI: give that work to the host's built-in subagent instead.
-    cli_options holds settings the user saved for a whole CLI, applied to every model of it.
+    """Read App members, defaults, review/orchestration seats and mode limits afresh.
+    members merges provider/model rows: omitted modes means all modes, [] means none;
+    default is true or a list of default modes. error checks Adapter options, not
+    installation, authentication or model availability; repair invalid files in App.
+    Missing members leave modes unrestricted; disabled orchestration supplies no defaults.
+    Omitted available means usable; unavailable seats may offer replacement parameters:
+    pass with original seat/role; switching is never automatic. Native seats/exclusions:
+    see MCP instructions.
     """
     try:
         members = read_member_list(EXCLUDED_PROVIDERS, HOST)
@@ -1452,10 +1354,7 @@ async def run_round(
             min_length=1,
             max_length=12000,
             description=(
-                "Shared task for this round, visible to all seats; without seats, a public "
-                "host remark every seat receives with its next round. At meeting close, post "
-                "the same summary you give the user here, with no seats. To get answers, include "
-                "seats even when opening a new meeting. Omit to only create the meeting."
+                "Shared task; no seats posts a public remark without starting a round; omit only to create."
             ),
         ),
     ] = None,
@@ -1467,19 +1366,13 @@ async def run_round(
     ] = None,
     seats: Annotated[
         list[str],
-        Field(
-            description=(
-                "Ordered seat ids that each answer once. Include with title, members and prompt "
-                "to open a meeting and run round 1 in one call. Empty only posts a host remark."
-            )
-        ),
+        Field(description=("Ordered seat ids to answer once; empty posts a remark.")),
     ] = [],  # noqa: B006 - pydantic copies defaults
     order: Annotated[
         Literal["parallel", "serial"],
         Field(
             description=(
-                "parallel: all start together and cannot see each other's answer this round. "
-                "serial: one by one in list order; later seats see earlier answers."
+                "parallel: answers hidden from peers this round; serial: later seats see earlier answers."
             )
         ),
     ] = "parallel",
@@ -1491,10 +1384,7 @@ async def run_round(
         list[str] | None,
         Field(
             description=(
-                "Message ids from wait, run_round, decide_answers or read_conversation to add "
-                "as committed forward entries before this round's task, in order. Only "
-                "succeeded tasks and committed entries of this manager workspace qualify; at "
-                "most 20, no repeats. Seats receive them as data, not instructions."
+                "Message_ids to commit before this task; requires seats; see MCP instructions."
             )
         ),
     ] = None,
@@ -1502,8 +1392,7 @@ async def run_round(
         str | None,
         Field(
             description=(
-                "New meeting only: its short title, at most 48 columns (CJK characters count 2). "
-                "If it is the manager chat's first conversation, it also names the workspace."
+                "New meeting title: at most 48 columns (CJK=2); the first also names this workspace."
             )
         ),
         AfterValidator(_short_title),
@@ -1535,10 +1424,7 @@ async def run_round(
         list[str] | None,
         Field(
             description=(
-                "Failed or blocked seats of this meeting's running parallel round to start "
-                "again: same input, still blind to other answers, and the answer joins this "
-                "round. Pass only with group_id. Once the round ended, name them in a new round "
-                "(they then see its answers)."
+                "Failed/blocked seats to restart with the same input in a still-running parallel round; pass only with group_id. After it ends, use a new round."
             )
         ),
     ] = None,
@@ -1547,22 +1433,12 @@ async def run_round(
     *,
     ctx: Context[Runtime],
 ) -> ShowRunPayload:
-    """Run a round of a saved meeting; answers reach the other seats without passing through you.
-
-    Without group_id, opens a meeting of 2–7 seats (group_id is its conversation id).
-    To start immediately, pass title, members, prompt and seats together: this runs round 1
-    in the same call. With no prompt it only creates the meeting. With prompt but no seats it
-    only posts a host remark, starts no subagents and does not advance the round number.
-    At meeting close, save the same summary you give the user as a host remark with no seats.
-    Seats are subagents with native tools and permissions unless isolated; each keeps its
-    native session across rounds and restarts. Meetings follow discussion member limits, not
-    host exclusions. A started round returns at once: use wait with its round_id. Private
-    instructions go only to their seat; with review=true each answer waits for decide_answers.
-    wait and cancel return each final answer once per round, then mark it output_returned.
-    entries lists the round's committed entries with message ids. unreceived lists your tasks
-    and rounds that ended, hit a blocker or await review but no wait or cancel has returned
-    that yet. Isolation
-    restricts tools; it is not an OS sandbox.
+    """Create/continue a saved meeting; group_id equals conversation_id. Seats keep native
+    sessions across rounds/restarts and automatically share committed entries.
+    New: title/members required; add prompt/seats to run round 1, omit prompt to only create.
+    Existing: omit creation-only arguments. One active round per meeting; wait on round_id.
+    entries contains committed message_ids; unreceived flags ends/blockers/reviews for wait.
+    At meeting close, post the summary you give the user as a prompt with no seats.
     """
     conversations = _conversations(ctx)
     if retry_seats is not None:
@@ -1674,14 +1550,10 @@ async def decide_answers(
     *,
     ctx: Context[Runtime],
 ) -> ReviewReceipt:
-    """Decide answers held for review; the whole batch is checked and saved before it applies.
-
-    publish shares the answer with the other seats. private keeps it between you and that
-    seat: the others never see it, and the seat is told so with its next round. Repeating a
-    decision is idempotent; changing one is rejected. Parallel rounds commit once every
-    answer is decided; a serial round continues with its next seat. Once no execution or
-    review remains, this call waits for local commit and returns the terminal status.
-    status=finished needs no further call; running/review still requires wait.
+    """Decide held answers atomically: publish shares with peers; private keeps between boss and
+    seat. Repeating a decision is idempotent; changing it is rejected. Parallel rounds commit
+    after all decisions; serial rounds then start the next seat. Returns after local commit
+    when no work/review remains: finished needs no further call; running/review requires wait.
     """
     try:
         conversations = _conversations(ctx)
@@ -1768,26 +1640,14 @@ def _handover_conversations(
 async def handover(
     release: Annotated[
         bool,
-        Field(
-            description="Mark this boss chat's whole workspace as waiting for another boss "
-            "chat to take over."
-        ),
+        Field(description="Mark this chat workspace as waiting for takeover."),
     ] = False,
     note: Annotated[
         str | None,
         Field(
             min_length=1,
             max_length=20000,
-            description="With release: notes for the next boss, written for what it must do "
-            "next. Say why you hand over (out of quota, a model better suited to the work), the "
-            "goal, what is done, decisions and why, what is open, desks in use, and the Skills "
-            "to load (agentnave-manager, any review gate): it may come from another host. Name "
-            "the conversations to read first and any worktree or uncommitted work needed to "
-            "continue. Cite "
-            "what already exists by reference only (conversation ids, PR or commit links, ADR "
-            "or spec paths); the next boss reads seat answers with read_conversation, so keep "
-            "this shorter than the records it points to. No keys, passwords or sensitive "
-            "personal data: it is saved and shown in the App.",
+            description="With release: next steps and references for the next boss; saved in the App, so exclude secrets and sensitive personal data.",
         ),
     ] = None,
     title: Annotated[
@@ -1795,39 +1655,32 @@ async def handover(
         Field(
             min_length=1,
             max_length=200,
-            description="With release: the workspace's name. Required for a chat that has no "
-            "saved conversations yet; ignored once it has some.",
+            description="With release: workspace name; required only when this chat has no saved conversations.",
         ),
     ] = None,
     cwd: Annotated[
         str | None,
         Field(
             min_length=1,
-            description="With release: the absolute directory this chat works in. Required for "
-            "a chat that has no saved conversations yet.",
+            description="With release: absolute working directory; required when this chat has no saved conversations.",
         ),
     ] = None,
     workspace_id: Annotated[
         str | None,
         Field(
             pattern=_WORKSPACE_ID,
-            description="Take this waiting workspace over (from a call without arguments).",
+            description="Claim a waiting workspace listed by handover().",
         ),
     ] = None,
     manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> dict[str, Any]:
-    """Pass a boss workspace (every task and meeting of one boss chat) to another boss chat.
-
-    Only when the user asks to hand over or take over; never as a routine check; follow the
-    agentnave-handover Skill. release=true marks this chat's workspace as waiting, creating one
-    when the chat has dispatched nothing yet. Without arguments, lists waiting workspaces. With
-    workspace_id, this chat takes it over: its note, conversation list and, when known, where the
-    previous boss's session is. From then on this chat continues those meetings and tasks and the
-    previous boss is refused. Work still running finishes in the previous boss's server and lands
-    in history; continue such a conversation once writable is true. Taking over your own waiting
-    workspace withdraws the handover. Private: never send this to seats.
+    """Transfer all tasks/meetings of a chat only on user request; no arguments lists waiting
+    workspaces. release=true hands off; workspace_id claims and refuses the previous boss.
+    Claiming your own waiting workspace withdraws it. Running work finishes on the old server;
+    continue when writable=true. Private: never send to seats. Follow the agentnave-handover
+    Skill.
     """
     conversations = _conversations(ctx)
     if (note is not None or title is not None or cwd is not None) and not release:
@@ -1909,8 +1762,7 @@ async def read_conversation(
         int,
         Field(
             ge=0,
-            description="Meetings: only messages from this round on; 0 includes host remarks "
-            "posted before the first round.",
+            description="Meetings: include messages from this round onward; 0 includes initial host remarks.",
         ),
     ] = 0,
     limit: Annotated[
@@ -1918,7 +1770,7 @@ async def read_conversation(
         Field(
             ge=1,
             le=500,
-            description="At most this many of the most recent messages or tasks; omitted counts the rest.",
+            description="Most recent messages/tasks to return; omit for all remaining.",
         ),
     ] = None,
     include_private: Annotated[
@@ -1932,12 +1784,9 @@ async def read_conversation(
     *,
     ctx: Context[Runtime],
 ) -> dict[str, Any]:
-    """Read a conversation back as its final messages, the way the App shows them.
-
-    Meetings return seats, the latest round and messages in order: tasks, published answers,
-    absences, forwards, host remarks and answers waiting for review (pending_answer). Tasks
-    return each prompt, final reply and native session_id. Message ids can be forwarded.
-    Private: never forward this whole result to seats. A meeting's id is its group_id.
+    """Read saved final messages/tasks, including native session_ids and forwardable message_ids.
+    Meeting id equals group_id; pending_answer marks answers awaiting review.
+    Private: never forward the whole result to seats.
     """
     conversations = _conversations(ctx)
     try:
@@ -1947,15 +1796,9 @@ async def read_conversation(
         raise ToolError("Unknown conversation_id; use list.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    data = views.timeline(
+    return views.timeline(
         record.state, since_round=since_round, include_private=include_private, limit=limit
     ) | {"writable": writable}
-    urls = conversations.urls(conversation_id)
-    if urls is not None:
-        if record.state.kind == "show":
-            data["public_url"] = urls[0]
-        data["director_url"] = urls[1]
-    return data
 
 
 def main() -> None:
