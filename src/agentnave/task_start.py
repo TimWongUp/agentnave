@@ -91,8 +91,13 @@ class StartArguments:
             self.provider, cast(ProviderName, task.provider), "provider"
         )
         self.cwd = self._inherited(self.cwd, task.cwd, "cwd")
-        self.role = self._inherited(self.role, task.role, "role")
-        self.seat = self._inherited(self.seat, cast(OrchestrationRole | None, task.seat), "seat")
+        role = self.role
+        self.role = self._inherited(role, task.role, "role")
+        # A new role is a new duty: the old seat would otherwise outrank it.
+        if self.seat is not None or role in (None, task.role):
+            self.seat = self._inherited(
+                self.seat, cast(OrchestrationRole | None, task.seat), "seat"
+            )
 
     def _inherited[T](self, explicit: T | None, saved: T | None, key: str) -> T | None:
         if explicit is not None or saved is None:

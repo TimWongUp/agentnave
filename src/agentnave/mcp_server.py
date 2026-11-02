@@ -581,8 +581,9 @@ async def start_agent(
             description=(
                 "To continue a specific native conversation, use the session_id returned by a "
                 "finished invocation of the same provider; never use an invocation_id here. "
-                "Omitted provider, cwd, role and seat inherit its latest saved task; access is never inherited; "
-                "explicit values win. Unknown or ambiguous history needs provider and cwd. "
+                "Omitted provider, cwd, role and seat inherit its latest saved task; access is "
+                "never inherited, and a new role without a seat drops the old seat; explicit "
+                "values win. Unknown or ambiguous history needs provider and cwd. "
                 "Omitted, the task starts a new native thread: a new desk in the App."
             ),
         ),
@@ -655,9 +656,8 @@ async def start_agent(
     access: Annotated[
         Literal["read", "write"] | None,
         Field(
-            description=ACCESS
-            + " Omitted on resume, inherits the latest task; otherwise Explorer/review seats "
-            "default to read and Worker seats to write. Explicit values always win."
+            description=ACCESS + " Explorer and review seats read, Worker seats write. Never "
+            "inherited on resume: without a seat, declare it each time or leave it undeclared."
         ),
     ] = None,
     manager_model: ManagerModel = None,

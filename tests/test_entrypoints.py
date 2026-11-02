@@ -178,6 +178,12 @@ async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_va
         )
         latest = await _start_and_wait(client, session_id="session-e2e")
         assert latest["access"] == "read"
+        renamed = await _start_and_wait(client, session_id="session-e2e", role="实现参数推断")
+        assert renamed["access"] is None
+        assert "seat (session_id history)" not in cast(list[str], renamed["defaults_applied"])
+        await _start_and_wait(
+            client, session_id="session-e2e", role="只读复核", seat="explorer-hard"
+        )
         saved = Record.read(Database(root), root / "locks", str(started["conversation_id"]))
         assert saved.state.tasks[1].cwd == str(tmp_path)
         assert saved.state.tasks[-1].cwd == str(alternate)
