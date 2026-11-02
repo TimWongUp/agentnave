@@ -257,7 +257,8 @@ SUBAGENT_INSTRUCTIONS = (
 )
 READ_ONLY_INSTRUCTIONS = (
     "This task is read-only: do not modify files, commit, push, send messages or post comments. "
-    "Reading files and running read-only commands is allowed."
+    "Reading files and running read-only commands and tests is allowed, including the caches "
+    "and temporary files they create."
 )
 
 

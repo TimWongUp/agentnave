@@ -135,7 +135,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 返回：改了什么和检查结果
 ```
 
-服务会在每次派发前加上非交互说明，`access=read` 时再加只读说明，并在回执 `defaults_applied` 注明，这些不用写进 prompt。发送前移除密钥、密码和敏感个人信息。长交接写进系统临时目录的专用文档，prompt 要求读取其绝对路径；创建方在接收方用完后清理。
+服务会在每次派发前加上非交互说明，`access=read` 时再加只读说明，并在回执 `defaults_applied` 注明，这些不用写进 prompt；宿主自带子代理不经过服务，要自己写明。发送前移除密钥、密码和敏感个人信息。长交接写进系统临时目录的专用文档，prompt 要求读取其绝对路径；创建方在接收方用完后清理。
 
 ## 回复预算
 
