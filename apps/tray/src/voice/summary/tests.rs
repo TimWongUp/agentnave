@@ -533,6 +533,15 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         assert!(response.notice.unwrap().contains("500"));
     }
     let requests = server.finish();
+    // Both speakers' summaries are one conversation, so the endpoint can reuse its prompt cache.
+    let session = |index: usize| {
+        requests[index].headers.lines().find_map(|line| {
+            line.to_lowercase()
+                .strip_prefix("x-session-id:")
+                .map(|v| v.trim().to_string())
+        })
+    };
+    assert!(session(1).is_some() && session(1) == session(3));
     for (index, expected, absent) in [
         (1, "你是一位冷静果断的主持人。", "你是热心而幽默的同事。"),
         (3, "你是热心而幽默的同事。", "你是一位冷静果断的主持人。"),

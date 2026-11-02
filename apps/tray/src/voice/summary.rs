@@ -552,19 +552,27 @@ fn request_summary(
     text: &str,
     reasoning_effort: Option<&str>,
     system: &str,
+    (session, from_magpie): (&str, bool),
 ) -> Result<String, String> {
     if !valid_summary_model(model) {
         return Err("请先选择摘要模型".into());
     }
     let mut body = request_prompt(model, text, reasoning_effort, system);
-    if base == "https://api.openai.com/v1" {
+    let openai = base == "https://api.openai.com/v1";
+    if openai {
         body = for_openai(body);
+    }
+    // Every summary is one conversation: Magpie tells it by its session header, and OpenAI routes
+    // its prompt cache by this key; other endpoints may refuse a field they do not know.
+    if openai || from_magpie {
+        body["prompt_cache_key"] = json!(session);
     }
     let value = response_value(
         request(
             summary_client()?
                 .post(format!("{base}/chat/completions"))
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header("x-session-id", session)
                 .body(body.to_string()),
             key,
             base,
@@ -657,6 +665,7 @@ fn summarize_at(
         return Ok(summary);
     }
     let system = system_prompt(prompt, persona, identity);
+    let session = chatgpt::conversation_key(&fixed_prompt(prompt), &json!([]));
     let summary = if subscribed {
         chatgpt::respond(
             &effective_key,
@@ -664,7 +673,7 @@ fn summarize_at(
             text,
             effective_effort.as_deref(),
             &system,
-            &fixed_prompt(prompt),
+            &session,
         )?
     } else {
         request_summary(
@@ -674,6 +683,7 @@ fn summarize_at(
             text,
             effective_effort.as_deref(),
             &system,
+            (&session, from_magpie),
         )?
     };
     storage::cache(root, &cache_key, summary.as_bytes(), "txt")?;
