@@ -508,14 +508,15 @@ def _required_containers(
 
 @pytest.mark.asyncio
 async def test_every_required_reply_container_survives_projection() -> None:
-    from agentnave import mcp_projection
-
-    preserved = mcp_projection._REQUIRED_CONTAINERS | mcp_projection._OPAQUE_FIELDS
     missing: dict[str, set[str]] = {}
     for tool in await mcp.list_tools():
         schema = cast(dict[str, object], tool.output_schema or {})
         all_defs = cast(dict[str, object], schema.get("$defs") or {})
-        names = _required_containers(schema, dict(all_defs), all_defs) - preserved - {"cli_options"}
+        names = {
+            name
+            for name in _required_containers(schema, dict(all_defs), all_defs)
+            if without_empty_fields({name: []}) != {name: []}
+        }
         if names:
             missing[tool.name] = names
     assert missing == {}
