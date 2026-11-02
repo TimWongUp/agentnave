@@ -18,7 +18,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 /// A summary hears at most this much of a very long message.
-const SUMMARY_INPUT_CHARS: usize = 30_000;
+const SUMMARY_INPUT_CHARS: usize = 6_000;
 
 #[derive(Clone)]
 struct Voice {

@@ -494,10 +494,12 @@ pub(super) fn respond(
     text: &str,
     reasoning_effort: Option<&str>,
     system: &str,
+    fixed: &str,
 ) -> Result<String, String> {
     let input = json!([{"type":"message","role":"user",
         "content":[{"type":"input_text","text":user_message(text)}]}]);
-    let key = conversation_key(system, &input);
+    // Every summary shares the fixed head of its prompt; one key lets OpenAI reuse its cache.
+    let key = conversation_key(fixed, &json!([]));
     let mut body = json!({
         "model":model,
         "instructions":system,

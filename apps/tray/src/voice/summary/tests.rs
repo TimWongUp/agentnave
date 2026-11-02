@@ -540,6 +540,8 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         let body: Value = serde_json::from_slice(&requests[index].body).unwrap();
         let system = body["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains(expected) && !system.contains(absent));
+        // Messages differ only after the fixed head, which providers can then cache.
+        assert!(system.starts_with(&fixed_prompt("保留主要结论。")));
         assert!(system.contains("保留主要结论。"));
         assert!(system.contains("不替自己回答") && system.contains("不说成已完成"));
         assert!(system.contains("不看你是 boss 还是员工"));
