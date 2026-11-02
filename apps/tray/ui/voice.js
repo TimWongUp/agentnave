@@ -5,17 +5,18 @@
   let config = null, group = null, view = null, observed = new Map(), skip = true;
   let queue = [], current = null, generation = 0, failures = 0, halted = false;
   let running = false, loading = null, baselineEpoch = 0;
-  let roomView = null, playlistScope = null, playlistLoad = null;
+  let roomView = null, playlistScope = null, playlistFetch = null;
   let privateView = null, channelVisible = false, paused = false, wakePlayback = null;
-  const toggle = h("button.voice-toggle", { type: "button", hidden: true, "aria-label": "自动读摘要", "aria-pressed": "false" }, h("span.voice-track"), "自动读");
+  const switchButton = label => h("button.voice-toggle", { type: "button", hidden: true, "aria-label": label, "aria-pressed": "false" }, h("span.voice-track"), label);
+  // Auto read speaks new messages as they arrive; chaining follows a clicked message down its conversation.
+  const toggle = switchButton("新消息自动读"), chain = switchButton("点读后连播");
   const actions = document.getElementById("voice-actions");
-  const playAll = h("button.voice-play-all", { type: "button", "aria-pressed": "false" }, "从头读");
   const roster = h("div.voice-roster");
   const channelStop = h("button.voice-stop", { type: "button", disabled: true, hidden: true }, "暂停");
   const statusName = h("span.voice-status-name");
   const status = h("div.voice-status", { "aria-live": "polite" }, h("span.voice-waves", {}, h("i"), h("i"), h("i")), statusName);
   const more = h("div.voice-more");
-  actions.append(roster, status, toggle, h("div.voice-channel-controls", {}, channelStop, playAll));
+  actions.append(roster, status, toggle, chain, h("div.voice-channel-controls", {}, channelStop));
   let channelContext = null;
   const participants = new Map();
   const ROSTER_LIMIT = 6;
@@ -49,8 +50,7 @@
         if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
       }
       config = next;
-      toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
-      toggle.disabled = !ready();
+      switches();
       if (interrupt) stop();
       else if (different) changed();
     })().finally(() => { loading = null; });
@@ -157,17 +157,17 @@
   function stop(notify = true) {
     generation++;
     paused = false; wakePlayback?.(); wakePlayback = null;
-    playlistLoad?.abort(); playlistLoad = null; playlistScope = null;
+    playlistFetch?.abort(); playlistFetch = null; playlistScope = null;
     for (const job of queue) { job.controller.abort(); job.prepared = null; }
     queue = [];
     if (current) { current.controller.abort(); finish(current); current = null; }
     if (notify) changed();
   }
-  // Ends reading from the start; what auto read queued meanwhile stays queued.
-  function dropPlaylist() {
-    playlistLoad?.abort(); playlistLoad = null; playlistScope = null;
+  // Ends a chained read; what auto read queued meanwhile stays queued.
+  function dropPlaylist(keepCurrent = false) {
+    playlistFetch?.abort(); playlistFetch = null; playlistScope = null;
     queue = queue.filter(job => job.automatic || (job.controller.abort(), false));
-    if (current && !current.automatic) interrupt();
+    if (!keepCurrent && current && !current.automatic) interrupt();
   }
   // Ends the clip in progress but keeps what is queued after it.
   function interrupt() {
@@ -176,7 +176,7 @@
     if (current) { current.controller.abort(); finish(current); current = null; }
   }
   function pause() {
-    if (!current && !queue.length && !playlistLoad) return;
+    if (!current && !queue.length) return;
     paused = true;
     if (current?.audio) { current.audio.pause(); current.speaking = false; }
     changed();
@@ -212,17 +212,21 @@
       job.audio.play().catch(failure => { if (!paused) reject(failure); });
     });
   }
+  // While a clip plays, the next two are already being synthesized.
+  function prefetch() {
+    if (!paused) for (const next of queue.slice(0, 2)) prepare(next);
+  }
   async function drain() {
-    if (running || paused || playlistLoad || halted || !ready() || document.hidden) return;
+    if (running || paused || halted || !ready() || document.hidden) return;
     running = true;
     try {
       while (queue.length && !paused && !halted && ready() && !document.hidden) {
         const token = generation;
         const job = current = queue.shift();
-        // Once only auto read is left, reading from the start is over.
-        if (playlistScope && !playlistLoad && job.automatic && !queue.some(next => !next.automatic)) playlistScope = null;
+        // Once only auto read is left, the chained read is over.
+        if (playlistScope && !playlistFetch && job.automatic && !queue.some(next => !next.automatic)) playlistScope = null;
         prepare(job);
-        for (const next of queue.slice(0, 2)) prepare(next);
+        prefetch();
         changed();
         try {
           await play(job, token);
@@ -241,8 +245,8 @@
       }
     } finally {
       running = false;
-      if (paused && !current && !queue.length && !playlistLoad) { paused = false; changed(); }
-      if (!queue.length && !playlistLoad && playlistScope) { playlistScope = null; changed(); }
+      if (paused && !current && !queue.length) { paused = false; changed(); }
+      if (!queue.length && !playlistFetch && playlistScope) { playlistScope = null; changed(); }
     }
   }
   // Auto read follows the whole workspace, whichever conversation is open: each message is
@@ -268,50 +272,66 @@
     // A message picked by hand stays first.
     queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
     queue = beforeAnswers(queue);
+    if (current) prefetch();
     // Playback only updates its channel and message controls.
     queueMicrotask(drain);
     void reload().catch(failure => error(failure.message));
   }
-  async function readAll() {
-    const target = roomView || (privateView ? { group: channelContext?.c.group || group, id: privateView, private: true } : null);
-    dropPlaylist();
+  // The messages of one conversation a chained read follows, in the order they are shown.
+  function playable(chat, target) {
+    const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
+      rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
+    // A briefing waits for its answer, as in auto read.
+    const answered = new Set(chat.messages.filter(m => m.kind === "reply" && eligible(m)).map(answerKey).filter(Boolean));
+    const list = chat.messages.filter(m => eligible(m) && (m.kind !== "instruction" || !answerKey(m) || answered.has(answerKey(m)))
+      && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
+    list.sort((a, b) => a.time - b.time);
+    return beforeAnswers(list);
+  }
+  // Reads the clicked message at once, then, with chaining on, the rest of its conversation after it.
+  async function readFrom(m, chosen) {
+    if (playlistScope) dropPlaylist();
+    const queued = queue.find(job => job.id === chosen.id);
+    queue = queue.filter(job => job !== queued);
+    queue.unshift(Object.assign(queued || chosen, { chosen: true }));
+    observed.set(chosen.id, true);
     interrupt();
-    if (!channelVisible || !target || !ready() || halted) { changed(); return; }
-    const token = generation;
-    playlistScope = target.id;
-    playlistLoad = new AbortController();
     changed();
+    void drain();
+    const target = config?.continue_read === false ? null : roomView ? roomView
+      : privateView ? { group: channelContext?.c.group || group, id: privateView, private: true }
+        : m.conversation ? { group, id: m.conversation } : null;
+    if (!target) return;
+    const load = playlistFetch = new AbortController();
+    playlistScope = target.id;
     try {
       const path = target.private ? "history" : `focus/${encodeURIComponent(target.id)}`;
       const response = await fetch(`/app/chats/${encodeURIComponent(target.group)}/${path}`,
-        { cache: "no-store", signal: playlistLoad.signal });
+        { cache: "no-store", signal: load.signal });
       if (!response.ok) throw new Error("无法读取完整对话消息");
       const chat = await response.json();
-      if (token !== generation) return;
-      const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
-        rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
-      // A briefing waits for its answer, as in auto read.
-      const answered = new Set(chat.messages.filter(m => m.kind === "reply" && eligible(m)).map(answerKey).filter(Boolean));
-      const playlist = chat.messages.filter(m => eligible(m) && (m.kind !== "instruction" || !answerKey(m) || answered.has(answerKey(m))) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
-      const listed = new Set(playlist.map(job => job.id));
-      // What auto read queued while the history loaded still plays, once.
-      queue = [...playlist, ...queue.filter(job => !listed.has(job.id))];
-      queue.sort((a, b) => a.time - b.time);
+      if (playlistFetch !== load) return;
+      const list = playable(chat, target);
+      const start = list.findIndex(job => job.id === chosen.id);
+      const known = new Set([current?.id, ...queue.map(job => job.id)]);
+      const rest = start < 0 ? [] : list.slice(start + 1).filter(job => !known.has(job.id));
+      for (const job of rest) observed.set(job.id, true);
+      queue.push(...rest);
+      queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
       queue = beforeAnswers(queue);
-      for (const job of queue) observed.set(job.id, true);
-      if (!playlist.length) { playlistScope = null; error("对话里还没有可朗读的消息"); }
+      if (current) prefetch();
     } catch (failure) {
-      if (token === generation) { playlistScope = null; error(failure.message); }
+      if (playlistFetch === load) error(failure.message);
     } finally {
-      if (token === generation) {
-        playlistLoad = null;
-        if (!queue.length) paused = false;
+      if (playlistFetch === load) {
+        playlistFetch = null;
+        if (!queue.some(job => !job.automatic) && !current?.chosen) playlistScope = null;
         changed(); void drain();
       }
     }
   }
   function controls(visible, room = null, ctx = null, desk = null) {
-    // Reading from the start belongs to the open conversation; auto read does not.
+    // A chained read belongs to the open conversation; auto read does not.
     if (playlistScope && (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk))
       dropPlaylist();
     roomView = room;
@@ -361,22 +381,19 @@
     more.textContent = `+${people.length - shown.length}`;
     more.title = people.filter(p => !shown.includes(p)).map(p => p.host ? "boss" : p.role || p.label).join("、");
     AN.reconcile(roster, [...shown.map(p => participants.get(p.key).el), ...people.length > shown.length ? [more] : []]);
-    const idle = !current && !queue.length && !playlistLoad;
-    if (!current) statusName.textContent = playlistLoad ? "读取中" : "";
+    const idle = !current && !queue.length;
+    if (!current) statusName.textContent = "";
     actions.hidden = !channelVisible || !config?.enabled;
     actions.dataset.live = String(Boolean(current?.speaking));
     actions.dataset.active = String(!idle);
-    status.hidden = !current && !playlistLoad;
-    toggle.hidden = actions.hidden;
-    playAll.hidden = actions.hidden || !roomView && !privateView || !idle && !paused;
-    playAll.disabled = !ready() || halted;
+    status.hidden = !current;
+    toggle.hidden = chain.hidden = actions.hidden;
     channelStop.textContent = paused ? "继续" : "暂停";
     channelStop.hidden = idle;
     channelStop.disabled = idle;
     channelStop.dataset.paused = String(paused);
   }
   channelStop.addEventListener("click", () => paused ? resume() : pause());
-  playAll.addEventListener("click", readAll);
   function decorate(rec, m, ctx) {
     if (!rec.read) {
       rec.readLabel = h("span", {}, "读摘要");
@@ -386,14 +403,8 @@
         const same = current && current.id === rec.voiceItem?.id;
         if (same) { if (paused) void resume(); else pause(); return; }
         if (!ready() || halted) return;
-        if (playlistScope) dropPlaylist();
         // The chosen message goes first; what auto read queued still follows it.
-        const queued = queue.find(job => job.id === rec.voiceItem.id);
-        queue = queue.filter(job => job !== queued);
-        queue.unshift(Object.assign(queued || { ...rec.voiceItem, controller: new AbortController() }, { chosen: true }));
-        interrupt();
-        changed();
-        void drain();
+        void readFrom(m, { ...rec.voiceItem, controller: new AbortController() });
       });
       rec.bub.prepend(rec.read); // Keep the action inside the chat bubble, above its text.
     }
@@ -407,23 +418,32 @@
     rec.read.setAttribute("aria-label", rec.read.title);
     rec.read.setAttribute("aria-pressed", String(Boolean(reading)));
   }
-  toggle.addEventListener("click", async () => {
+  function switches() {
+    toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
+    chain.setAttribute("aria-pressed", String(config.continue_read !== false));
+    toggle.disabled = chain.disabled = !ready();
+  }
+  async function flip(field) {
     if (!config) return;
-    toggle.disabled = true;
-    if (config.auto_read !== false) stop();
-    // A poll finishing while this saves must not queue under the old setting.
-    skip = true; baselineEpoch++;
+    const on = config[field] !== false;
+    toggle.disabled = chain.disabled = true;
+    if (field === "auto_read") {
+      if (on) stop();
+      // A poll finishing while this saves must not queue under the old setting.
+      skip = true; baselineEpoch++;
+    } else if (on) dropPlaylist(true);
     try {
-      const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, auto_read: config.auto_read === false }) });
+      const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, [field]: !on }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "无法保存语音播报设置");
-      config = data; failures = 0; halted = false; skip = true; baselineEpoch++;
-      toggle.setAttribute("aria-pressed", String(config.auto_read !== false));
-      toggle.disabled = !ready();
+      config = data; failures = 0; halted = false;
+      if (field === "auto_read") { skip = true; baselineEpoch++; }
       changed();
     } catch (failure) { error(failure.message); }
-    finally { toggle.disabled = !ready(); }
-  });
+    finally { switches(); }
+  }
+  toggle.addEventListener("click", () => flip("auto_read"));
+  chain.addEventListener("click", () => flip("continue_read"));
   document.addEventListener("visibilitychange", () => { skip = true; baselineEpoch++; stop(); });
   window.addEventListener("pagehide", stop);
   AN.voice = { ingest, decorate, pollToken: () => baselineEpoch, controls, stop, beforeAnswers };

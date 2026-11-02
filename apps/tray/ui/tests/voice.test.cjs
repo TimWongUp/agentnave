@@ -52,6 +52,17 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
   });
   await flush();
   const ctx = { c: { group: "workspace", host: "codex", messages: [], threads: [] }, desks: new Map(), rooms: new Map() };
+  const readable = m => m.text && ["member", "manager"].includes(m.speaker?.role) && ["prompt", "instruction", "forward", "reply"].includes(m.kind)
+    && !["running", "pending", "not_started", "review"].includes(m.status);
+  // Clicking the first message of a conversation with chaining on reads it to the end.
+  const starter = messages => ({ hidden: !messages.some(readable), listeners: { async click() {
+    const first = messages.filter(readable).sort((x, y) => Date.parse(x.time) - Date.parse(y.time))[0];
+    if (!first) return;
+    const rec = { bub: { prepend() {} } };
+    AN.voice.decorate(rec, first, ctx);
+    rec.read.listeners.click();
+    await flush();
+  } } });
   const feed = async messages => { ctx.c.messages = messages; AN.voice.ingest({ group: "workspace", messages }, ctx); await flush(); };
   await feed([]);
   AN.voice.controls(true, null, ctx);
@@ -62,7 +73,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
       ctx.desks = new Map([[desk.key, desk]]);
       rooms.set("/app/chats/workspace/history", { ...ctx.c, messages, desks: [desk] });
       AN.voice.controls(true, null, ctx, desk.key);
-      return nodes.find(n => n.tag === "button.voice-play-all");
+      return starter(messages);
     },
     room(messages, id = "room", desks = null) {
       const members = messages.filter(m => m.speaker?.role === "member" && m.conversation === id && m.kind === "reply");
@@ -71,7 +82,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
       ctx.rooms.set(id, { id, seats: [...ctx.desks.values()].map(d => ({ desk: d.key })) });
       rooms.set(`/app/chats/workspace/focus/${id}`, { group: "workspace", host: "codex", desks: [...ctx.desks.values()], rooms: [...ctx.rooms.values()], messages });
       AN.voice.controls(true, { group: "workspace", id }, ctx);
-      return nodes.find(n => n.tag === "button.voice-play-all");
+      return starter(messages.filter(m => m.conversation === id));
     },
     async end() { sounds.at(-1).onended(); await flush(); },
     async automatic() { await nodes.find(n => n.tag === "button.voice-toggle").listeners.click(); await flush(); },
@@ -192,7 +203,6 @@ test("returning to the directory keeps playing, keeps the channel and reads the 
   assert.equal(directory, true);
   assert.equal(clip.paused, false);
   assert.equal(app.nodes.find(n => n.id === "voice-actions").hidden, false);
-  assert.equal(app.nodes.find(n => n.tag === "button.voice-play-all").hidden, true);
   await app.feed([roomReply, message("private-answer", "2026-11-01T00:00:02Z")]);
   await app.end();
   assert.deepEqual(app.requests.map(r => r.text), ["meeting-answer", "private-answer"]);
@@ -292,26 +302,6 @@ test("private channel shows boss and the selected employee role before playback"
   app.private({ key: "other", provider: "claude", model: "other-model", role: "实现" });
   assert.equal(roster.children.length, 2);
   assert.match(roster.children[1].attributes["aria-label"], /实现/);
-});
-
-test("pausing a failed or empty meeting load does not block later automatic playback", async () => {
-  for (const response of [{ ok: false }, { ok: true, json: async () => ({ messages: [] }) }]) {
-    let complete;
-    const app = await office(true, undefined, () => new Promise(resolve => { complete = resolve; }));
-    const loading = app.room([]).listeners.click();
-    app.stop();
-    complete(response);
-    await loading;
-    await flush();
-    const button = app.nodes.find(n => n.tag === "button.voice-stop");
-    assert.equal(button.textContent, "暂停");
-    assert.equal(button.disabled, true);
-    await app.feed([message("new-answer", "2026-11-01T00:00:01Z", {
-      conversation: "room", thread: { kind: "room", id: "room" },
-    })]);
-    assert.equal(app.sounds.length, 1, "an exhausted paused playlist must not leave automatic playback stuck");
-    await app.end();
-  }
 });
 
 test("automatic playback follows every meeting and switching meetings keeps its queue", async () => {
@@ -436,6 +426,20 @@ test("leaving reading from the start keeps what auto read queued meanwhile", asy
   assert.equal(app.sounds[0].paused, true, "the history clip stops");
   assert.deepEqual(app.requests.map(r => r.text), ["old", "fresh"]);
   assert.equal(app.sounds.length, 2);
+});
+
+test("with chaining off a clicked message is read alone", async () => {
+  const app = await office(false);
+  const messages = [1, 2].map(n => message(`c${n}`, `2026-11-01T00:00:0${n}Z`, {
+    conversation: "room", thread: { kind: "room", id: "room" },
+  }));
+  const start = app.room(messages);
+  const chain = app.nodes.filter(n => n.tag === "button.voice-toggle")[1];
+  await chain.listeners.click(); await flush();
+  assert.equal(chain.attributes["aria-pressed"], "false");
+  await start.listeners.click();
+  await app.end();
+  assert.deepEqual(app.requests.map(r => r.text), ["c1"]);
 });
 
 test("the voice channel shows host and speaker avatars without office animation state", async () => {

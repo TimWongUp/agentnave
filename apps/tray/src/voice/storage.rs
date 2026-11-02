@@ -14,6 +14,7 @@ fn defaults() -> Value {
     json!({
         "enabled":false,
         "auto_read":true,
+        "continue_read":true,
         "engine":"elevenlabs",
         "rate":"normal",
         "minimax_region":"cn",
@@ -60,6 +61,9 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
     let auto_read = value.get("auto_read").map_or(Ok(true), |value| {
         value.as_bool().ok_or("自动朗读开关必须为布尔值")
     })?;
+    let continue_read = value.get("continue_read").map_or(Ok(true), |value| {
+        value.as_bool().ok_or("点读后连播开关必须为布尔值")
+    })?;
     let engine = value["engine"]
         .as_str()
         .filter(|s| valid_engine(s))
@@ -96,6 +100,7 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
     Ok(json!({
         "enabled":enabled,
         "auto_read":auto_read,
+        "continue_read":continue_read,
         "engine":engine,
         "rate":rate,
         "minimax_region":region,

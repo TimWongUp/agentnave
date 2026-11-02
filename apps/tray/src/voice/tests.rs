@@ -221,9 +221,11 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = storage::read_settings(directory.path()).unwrap();
     assert_eq!(settings["auto_read"], true);
+    assert_eq!(settings["continue_read"], true);
     assert_eq!(settings["personas"], json!({}));
     for (field, value) in [
         ("auto_read", json!("yes")),
+        ("continue_read", json!(1)),
         ("personas", json!({"unknown":"role"})),
         ("personas", json!({"gpt": "字".repeat(501)})),
         ("personas", json!({"boss":false})),
@@ -233,11 +235,13 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
         assert!(storage::validate(&invalid).is_err());
     }
     settings["auto_read"] = json!(false);
+    settings["continue_read"] = json!(false);
     settings["summary"]["prompt"] = json!("");
     settings["personas"] = json!({"boss":"先讲结论。","gpt":"语气简短。"});
     storage::save_settings(directory.path(), &settings).unwrap();
     let saved = storage::read_settings(directory.path()).unwrap();
     assert_eq!(saved["auto_read"], false);
+    assert_eq!(saved["continue_read"], false);
     assert_eq!(saved["summary"]["prompt"], summary::DEFAULT_PROMPT);
     assert_eq!(saved["personas"], settings["personas"]);
     // Simulate an existing document directly: saving it would already normalize the old default.
