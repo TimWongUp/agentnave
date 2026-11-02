@@ -90,9 +90,10 @@ type ManagerModel = Annotated[
         min_length=1,
         max_length=200,
         description=(
-            "Your current manager model ID, when known from trusted host context. "
+            "Omit it normally: the service reads the boss model from the native session. Pass it "
+            "when warnings say the model is unavailable and trusted host context states it. "
             "Metadata for this message only; never the subagent model or a CLI-derived guess. "
-            "Omit when unknown. Does not change provider settings."
+            "Does not change provider settings."
         ),
     ),
 ]
@@ -118,6 +119,8 @@ def _short_title(title: str | None) -> str | None:
     return title
 
 
+HOST = detect_host()
+
 type ManagerSessionId = Annotated[
     str | None,
     Field(
@@ -125,10 +128,8 @@ type ManagerSessionId = Annotated[
         max_length=200,
         description=(
             "Current manager chat/session ID, shared by all tasks and groups in that chat. "
-            "Read the host's real session ID from context or shell before generating any ID. "
-            "Codex: read CODEX_THREAD_ID (PowerShell: $env:CODEX_THREAD_ID; "
-            "POSIX: printenv CODEX_THREAD_ID). Pass that exact value so the App can read "
-            "the boss model. A failed shell command is not evidence that no native ID exists. "
+            + session_id_hint(HOST)
+            + "Pass that exact value so the App can read the boss model. A failed shell command is not evidence that no native ID exists. "
             "Only when the host exposes no native ID, generate one UUID once for this chat "
             "and keep reusing it. A different chat needs a different ID. "
             "Never use the CLI name, MCP connection ID, or subagent session_id. "
@@ -155,7 +156,6 @@ def _read_excluded_providers() -> frozenset[str]:
 
 WAIT_SECONDS = 240
 
-HOST = detect_host()
 EXCLUDED_PROVIDERS = _read_excluded_providers()
 PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
@@ -338,8 +338,9 @@ mcp = _Server(
         "AgentNave launches local CLI subagents and saves their history. Use the "
         "agentnave-manager Skill for CLI usage and model selection. "
         "Before start_agent or run_round, read this chat's native session ID and pass it as "
-        "manager_session_id every time. Codex: read CODEX_THREAD_ID in the shell; do not "
-        "invent a UUID when the shell fails. The App needs the real ID to read the boss model. "
+        "manager_session_id every time. "
+        + session_id_hint(HOST)
+        + "The App needs the real ID to read the boss model. "
         "start_agent runs a private task whose result returns only to you; run_round opens a "
         "saved meeting and runs rounds whose answers seats share automatically. wait and cancel "
         "take task invocation_ids and round_ids; list shows handles, saved conversations and "
