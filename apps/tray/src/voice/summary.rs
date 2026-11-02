@@ -281,7 +281,10 @@ pub(super) fn models(
     }
     let (base, key, _) = endpoint(settings, key)?;
     // Listing the catalog again also refreshes the reasoning levels a summary checks.
-    LEVELS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    LEVELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&endpoint_key(&base, &key));
     models_at(&base, &key)
 }
 
@@ -449,16 +452,22 @@ fn levels(model: &Value) -> Vec<String> {
     normalized
 }
 
-/// A model's reasoning levels, asked of its catalog once per endpoint, key and model.
-static LEVELS: LazyLock<Mutex<HashMap<String, Vec<String>>>> =
+/// Each endpoint's models' reasoning levels, asked of its catalog once per model.
+type ModelLevels = HashMap<String, Vec<String>>;
+static LEVELS: LazyLock<Mutex<HashMap<String, ModelLevels>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+fn endpoint_key(base: &str, key: &str) -> String {
+    storage::hash(&json!([base, key]).to_string())
+}
+
 fn catalog_levels(base: &str, key: &str, model: &str) -> Result<Option<Vec<String>>, String> {
-    let cache_key = storage::hash(&json!([base, key, model]).to_string());
+    let endpoint = endpoint_key(base, key);
     let cached = LEVELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(&cache_key)
+        .get(&endpoint)
+        .and_then(|models| models.get(model))
         .cloned();
     if cached.is_some() {
         return Ok(cached);
@@ -468,7 +477,9 @@ fn catalog_levels(base: &str, key: &str, model: &str) -> Result<Option<Vec<Strin
         LEVELS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(cache_key, levels.clone());
+            .entry(endpoint)
+            .or_default()
+            .insert(model.into(), levels.clone());
     }
     Ok(levels)
 }
