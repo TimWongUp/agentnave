@@ -427,7 +427,6 @@ def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
     opaque_fields = (
         "options",
         "provider_options",
-        "cli_options",
         "output",
         "text",
         "prompt",
@@ -457,11 +456,12 @@ def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
         "items": [None, "", [], {}, {"kept": "中文"}],
         **{key: opaque for key in opaque_fields},
     }
-    # Empty body fields retain their keys; empty options and notes are omitted.
+    # Non-null empty body fields retain their keys; empty options and notes are omitted.
     empty_values: list[object] = [None, [], {}, ""]
     for value in empty_values:
         values = dict.fromkeys(opaque_fields, value)
-        assert without_empty_fields(values) == dict.fromkeys(("output", "text", "prompt"), value)
+        kept = {} if value is None else dict.fromkeys(("output", "text", "prompt"), value)
+        assert without_empty_fields(values) == kept
     assert source["dict"] == {"null": None}
 
 

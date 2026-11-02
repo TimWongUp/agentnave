@@ -2,9 +2,9 @@
 
 from typing import cast
 
-# Opaque fields are never traversed; only empty bodies must also retain their keys.
+# Opaque fields are never traversed; only non-null empty bodies also retain their keys.
 _OPAQUE_FIELDS = frozenset(
-    {"options", "provider_options", "cli_options", "output", "text", "prompt", "note", "notes"}
+    {"options", "provider_options", "output", "text", "prompt", "note", "notes"}
 )
 _BODY_FIELDS = frozenset({"output", "text", "prompt"})
 
@@ -37,7 +37,8 @@ def without_empty_fields(value: object) -> object:
         projected: dict[str, object] = {}
         for key, item in cast(dict[str, object], value).items():
             if key in _BODY_FIELDS:
-                projected[key] = item
+                if item is not None:
+                    projected[key] = item
                 continue
             if key not in _OPAQUE_FIELDS:
                 item = without_empty_fields(item)
