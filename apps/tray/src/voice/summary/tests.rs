@@ -391,7 +391,7 @@ fn summary_output_rejects_empty_symbols_and_length_and_caps_long_text() {
 
 #[test]
 fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
-    let server = FakeServer::start(13, |request| {
+    let server = FakeServer::start(7, |request| {
         if request.path.ends_with("/models") {
             return Reply {
                 status: 200,
@@ -432,6 +432,8 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
         );
         storage::cache(directory.path(), &cache_key, cached.as_bytes(), "txt").unwrap();
     }
+    // One catalog read serves every later summary of the same model.
+    assert!(catalog_levels(&base, "", "model-a").unwrap().is_some());
     let workers: Vec<_> = (0..2)
         .map(|_| {
             let directory = directory.clone();
@@ -473,6 +475,11 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
     assert_eq!(bodies[2]["model"], "model-b");
     assert_eq!(bodies[2]["reasoning_effort"], "high");
     assert_eq!(bodies.len(), 5);
+    assert_eq!(
+        requests.len() - bodies.len(),
+        2,
+        "one catalog read per model"
+    );
     let system = bodies[4]["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("用两句话介绍结论。"));
     assert!(system.contains("冷静的主持人"));

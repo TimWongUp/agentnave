@@ -280,6 +280,8 @@ pub(super) fn models(
         return chatgpt::models(&chatgpt::access_token(root)?);
     }
     let (base, key, _) = endpoint(settings, key)?;
+    // Listing the catalog again also refreshes the reasoning levels a summary checks.
+    LEVELS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     models_at(&base, &key)
 }
 

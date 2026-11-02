@@ -424,6 +424,20 @@ test("reading one message by hand keeps what automatic playback queued after it"
   assert.deepEqual(app.requests.map(r => r.text), ["first", "second", "third"], "a clip prepared ahead is reused");
 });
 
+test("leaving reading from the start keeps what auto read queued meanwhile", async () => {
+  const app = await office();
+  const old = message("old", "2025-01-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" } });
+  const button = app.room([old]);
+  await button.listeners.click(); await flush();
+  assert.deepEqual(app.requests.map(r => r.text), ["old"]);
+  await app.feed([old, message("fresh", "2026-11-01T00:00:01Z")]);
+  app.room([], "other");
+  await flush();
+  assert.equal(app.sounds[0].paused, true, "the history clip stops");
+  assert.deepEqual(app.requests.map(r => r.text), ["old", "fresh"]);
+  assert.equal(app.sounds.length, 2);
+});
+
 test("the voice channel shows host and speaker avatars without office animation state", async () => {
   const app = await office(false);
   const question = message("boss-question", "2026-11-01T00:00:01Z", {

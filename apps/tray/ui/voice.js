@@ -163,6 +163,12 @@
     if (current) { current.controller.abort(); finish(current); current = null; }
     if (notify) changed();
   }
+  // Ends reading from the start; what auto read queued meanwhile stays queued.
+  function dropPlaylist() {
+    playlistLoad?.abort(); playlistLoad = null; playlistScope = null;
+    queue = queue.filter(job => job.automatic || (job.controller.abort(), false));
+    if (current && !current.automatic) interrupt();
+  }
   // Ends the clip in progress but keeps what is queued after it.
   function interrupt() {
     generation++;
@@ -213,6 +219,8 @@
       while (queue.length && !paused && !halted && ready() && !document.hidden) {
         const token = generation;
         const job = current = queue.shift();
+        // Once only auto read is left, reading from the start is over.
+        if (playlistScope && !playlistLoad && job.automatic && !queue.some(next => !next.automatic)) playlistScope = null;
         prepare(job);
         for (const next of queue.slice(0, 2)) prepare(next);
         changed();
@@ -257,7 +265,8 @@
       observed.set(m.id, seen || can);
     }
     if (!document.hidden && epoch === baselineEpoch) skip = false;
-    queue.sort((a, b) => a.time - b.time);
+    // A message picked by hand stays first.
+    queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
     queue = beforeAnswers(queue);
     // Playback only updates its channel and message controls.
     queueMicrotask(drain);
@@ -265,7 +274,8 @@
   }
   async function readAll() {
     const target = roomView || (privateView ? { group: channelContext?.c.group || group, id: privateView, private: true } : null);
-    stop(false);
+    dropPlaylist();
+    interrupt();
     if (!channelVisible || !target || !ready() || halted) { changed(); return; }
     const token = generation;
     playlistScope = target.id;
@@ -280,14 +290,16 @@
       if (token !== generation) return;
       const ctx = { c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
         rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
-      const playlist = chat.messages.filter(m => eligible(m) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
+      // A briefing waits for its answer, as in auto read.
+      const answered = new Set(chat.messages.filter(m => m.kind === "reply" && eligible(m)).map(answerKey).filter(Boolean));
+      const playlist = chat.messages.filter(m => eligible(m) && (m.kind !== "instruction" || !answerKey(m) || answered.has(answerKey(m))) && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
       const listed = new Set(playlist.map(job => job.id));
       // What auto read queued while the history loaded still plays, once.
       queue = [...playlist, ...queue.filter(job => !listed.has(job.id))];
       queue.sort((a, b) => a.time - b.time);
       queue = beforeAnswers(queue);
       for (const job of queue) observed.set(job.id, true);
-      if (!queue.length) { playlistScope = null; error("对话里还没有可朗读的消息"); }
+      if (!playlist.length) { playlistScope = null; error("对话里还没有可朗读的消息"); }
     } catch (failure) {
       if (token === generation) { playlistScope = null; error(failure.message); }
     } finally {
@@ -301,7 +313,7 @@
   function controls(visible, room = null, ctx = null, desk = null) {
     // Reading from the start belongs to the open conversation; auto read does not.
     if (playlistScope && (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk))
-      stop(false);
+      dropPlaylist();
     roomView = room;
     privateView = desk;
     channelVisible = visible;
@@ -374,11 +386,11 @@
         const same = current && current.id === rec.voiceItem?.id;
         if (same) { if (paused) void resume(); else pause(); return; }
         if (!ready() || halted) return;
-        if (playlistScope) stop(false);
+        if (playlistScope) dropPlaylist();
         // The chosen message goes first; what auto read queued still follows it.
         const queued = queue.find(job => job.id === rec.voiceItem.id);
         queue = queue.filter(job => job !== queued);
-        queue.unshift(queued || { ...rec.voiceItem, controller: new AbortController() });
+        queue.unshift(Object.assign(queued || { ...rec.voiceItem, controller: new AbortController() }, { chosen: true }));
         interrupt();
         changed();
         void drain();
@@ -399,6 +411,8 @@
     if (!config) return;
     toggle.disabled = true;
     if (config.auto_read !== false) stop();
+    // A poll finishing while this saves must not queue under the old setting.
+    skip = true; baselineEpoch++;
     try {
       const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, auto_read: config.auto_read === false }) });
       const data = await response.json();
