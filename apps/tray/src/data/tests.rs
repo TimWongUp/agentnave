@@ -1365,7 +1365,7 @@ fn messages_carry_message_id_visibility_thread_desk_and_forward() {
             {"kind": "task", "speaker": "@host", "round": 1, "text": "题目", "time": "2026-10-15T01:00:00Z",
                 "recipients": [{"seat": "a", "provider": "claude", "model": "m"}], "message_id": "show:e:0"},
             {"kind": "forward", "speaker": "@forward", "round": 1, "text": "转发内容", "time": "2026-10-15T01:01:00Z",
-                "message_id": "show:e:1", "forward_id": "task:t:t-task", "forward_source": "房间 · 工位 · 时间"},
+                "message_id": "show:e:1", "manager_host": "codex", "forward_id": "task:t:t-task", "forward_source": "房间 · 工位 · 时间"},
             {"kind": "absent", "speaker": "b", "round": 1, "text": "（本轮未作答：失败）", "time": "2026-10-15T01:02:00Z",
                 "message_id": "show:e:2"}]);
     show["director"]["private_messages"] = json!([

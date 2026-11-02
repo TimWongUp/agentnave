@@ -362,10 +362,13 @@ fn member_speaker(identity: &Value) -> Value {
 }
 
 /// The boss who said this, kept through a handover; records older than `manager_host` fall back
-/// to the host that opened the conversation.
+/// to the host that opened the conversation. Only a boss that took over is named by its host.
 fn manager_speaker(identity: &Value, opened_by: Option<&str>, name: &str) -> Value {
     let provider = opt_text(identity, "manager_host");
-    let name = provider.as_deref().map_or(name, |host| label(Some(host)));
+    let name = provider
+        .as_deref()
+        .filter(|host| Some(*host) != opened_by)
+        .map_or(name, |host| label(Some(host)));
     let provider = provider.as_deref().or(opened_by).unwrap_or("");
     let reported = text(identity, "manager_reported_model");
     let mut who = speaker(

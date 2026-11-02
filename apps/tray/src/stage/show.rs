@@ -209,7 +209,9 @@ impl Group {
         let absent = kind == "absent";
         let host = show.item.host.as_deref();
         let who = if forwarded {
-            manager_speaker(entry, host, "boss 转发")
+            let mut who = manager_speaker(entry, host, "");
+            who["label"] = json!("boss 转发");
+            who
         } else if manager {
             manager_speaker(entry, host, self.manager_label())
         } else if has_seat {
