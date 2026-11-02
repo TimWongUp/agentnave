@@ -47,7 +47,7 @@ const HOSTS_CSS: &[u8] = include_bytes!("../ui/hosts.css");
 const ONBOARDING_CSS: &[u8] = include_bytes!("../ui/onboarding.css");
 const MOCK_JS: &[u8] = include_bytes!("../ui/mock.js");
 
-pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'";
+pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src blob:; base-uri 'none'; frame-ancestors 'none'";
 
 /// Same rule as the Studio MCP server: `AGENTNAVE_DATA_DIR`, else `~/.agentnave`.
 pub fn data_root() -> PathBuf {
@@ -205,6 +205,12 @@ impl Reader {
 
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        if path == "/app/voice" || path.starts_with("/app/voice/") {
+            if method == "GET" {
+                return crate::voice::get(&self.root, path);
+            }
+            return crate::voice::request(&self.root, path, method, action, body);
+        }
         if path == "/app/hosts"
             || path.starts_with("/app/hosts/")
             || path == "/app/onboarding"
@@ -699,6 +705,9 @@ impl Reader {
 
     /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
     pub fn respond(&self, path: &str) -> Response {
+        if path == "/app/voice" || path.starts_with("/app/voice/") {
+            return crate::voice::get(&self.root, path);
+        }
         if let Some(name) = path.strip_prefix("/art/") {
             if name.contains("..") {
                 return Response::not_found();
@@ -740,6 +749,10 @@ impl Reader {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if let ["chat", resource] = parts.as_slice() {
             return match *resource {
+                "voice.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/voice.js").to_vec(),
+                ),
                 "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
                 "chat-topics.js" => Response::ok(
                     "text/javascript; charset=utf-8",
@@ -763,6 +776,10 @@ impl Reader {
         if let ["settings", resource] = parts.as_slice() {
             return match *resource {
                 "" => Response::ok("text/html; charset=utf-8", SETTINGS_HTML.to_vec()),
+                "voice-settings.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/voice-settings.js").to_vec(),
+                ),
                 "avatar-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/avatar-settings.js").to_vec(),

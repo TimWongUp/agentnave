@@ -56,6 +56,7 @@ class EntryRecord(BaseModel):
     seat: str | None = None
     text: str | None = None
     time: str
+    manager_host: str | None = None
     manager_model: str | None = None
     manager_reported_model: str | None = None
     reported_model: str | None = None
@@ -118,6 +119,7 @@ class TaskRecord(BaseModel):
     error: str | None = None
     elapsed_ms: int = 0
     time: str
+    manager_host: str | None = None
     manager_model: str | None = None
     manager_reported_model: str | None = None
     role: str | None = None

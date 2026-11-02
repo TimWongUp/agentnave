@@ -59,7 +59,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 历史与数据根
 
-数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖）。会话历史存于 SQLite（[ADR-0026](../adr/0026-sqlite-conversation-store.md)），每个会话一把 OS 文件锁：持锁的服务才能写，其他服务只读，空闲后可接手。写入时在同一事务内更新托盘读取的视图快照（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）；运行中的输出尾部只写进程级运行文件，内容不变时只刷新修改时间。中继在 `connections/` 写连接观测（宿主、连接时间、服务版本与工具定义摘要），不存原始工具定义、提示词、环境或凭据；App 只读新鲜、大小受限、非符号链接的观测（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。
+数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖）。会话历史存于 SQLite（[ADR-0026](../adr/0026-sqlite-conversation-store.md)），每个会话一把 OS 文件锁：持锁的服务才能写，其他服务只读，空闲后可接手。写入时在同一事务内更新托盘读取的视图快照（[ADR-0008](../adr/0008-tray-app-reads-studio-snapshots.md)）；运行中的输出尾部只写进程级运行文件，内容不变时只刷新修改时间。中继在 `connections/` 写连接观测（宿主、连接时间、服务版本与工具定义摘要），不存原始工具定义、提示词、环境或凭据；正常结束后保留有期限的加载证据，由中继清理，App 将它与在线连接分开读取，用于确认短连接已加载配置。App 只读新鲜、大小受限、非符号链接的观测（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。
 
 App 设置文件各自独立，以便旧版服务仍能读取组员配置：
 
@@ -82,8 +82,15 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 
 ## 托盘 App
 
-- 界面只经 `agentnave` 自定义协议提供：不开放 IPC、不监听端口、导航限于自身协议；写操作都要求 `X-AgentNave-Action: 1`。
-- 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、工作区交接标记、清空工作区时删去交接记录和删除只有 boss 的工作区（不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)）、数据根的设置文件、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
-- 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）。
+- 界面只经 `agentnave` 自定义协议提供：不开放 IPC、导航限于自身协议；除 ChatGPT 订阅登录期间仅在回环地址临时监听登录回调端口外，不监听端口。界面写操作都要求 `X-AgentNave-Action: 1`，可能刷新并保存令牌的目录请求也属于写操作。
+- 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、工作区交接标记、清空工作区时删去交接记录和删除只有 boss 的工作区（不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)）、数据根的设置文件、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
+- 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）；语音 API 密钥、自定义口语摘要连接信息、摘要要求及语音人设为例外（[ADR-0044](../adr/0044-meeting-voice-cloud-and-key-input.md)）。
 - 模型与档位以各 CLI 自己给出的为准，App 只探测、不猜测（[ADR-0034](../adr/0034-models-and-efforts-from-each-cli.md)）。
 - 应用内更新只访问本仓库的 GitHub Release，用户确认后先升级服务再安装 App（[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）。
+
+## 语音播报
+
+- 语音合成、可选的口语摘要请求与密钥由托盘 Rust 端拥有，页面只能取得密钥是否已保存和合成音频，拿不到密钥本身。合成只使用 ElevenLabs 与 MiniMax，默认选 ElevenLabs 且功能关闭；关闭时或所选引擎未配置密钥时不合成或联系语音引擎。开启并配置密钥后，发言文本会发送给所选云端引擎。
+- 口语摘要通过 ChatGPT 订阅登录、各平台 API Key、Magpie 本机网关或用户配置的 OpenAI 兼容接口生成。ChatGPT 登录与令牌由托盘 Rust 端拥有，直接请求 OpenAI API；各平台分别保存 API 密钥。Magpie 拥有供应商认证和模型路由，托盘只读其本机端口配置、核验网关身份并获取模型目录，不修改 Magpie 配置，也不把摘要模型接入为 Provider CLI。语音关闭时不联网读取摘要模型目录；启用语音和摘要后，长发言先发送给摘要模型，合成引擎只收到短口语；摘要失败时停止该条播报并报错。
+- 语音直接复用右侧消息列表中已有的 boss 发言与员工回答正文，按消息时间共用摘要与播放队列。自动播报与语音总开关独立；模型 prompt 定义消息缩写规则，按小人家族及 boss 保存的人设定义性格、措辞与口吻，输出保留发言者本人的第一人称视角；两者仅供语音使用，不修改 CLI 任务或 Provider 参数。
+- 托盘 App 独占写入数据根的 `voice.json`、`voice-keys.json`（含摘要平台密钥与 ChatGPT 登录令牌）和 `voice-cache/`；服务不读取这些文件。预览版的语音设置、密钥和缓存写入其独立的应用数据目录，不写正式版数据根。

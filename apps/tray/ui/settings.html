@@ -13,6 +13,7 @@
 <script src="/chat/mock.js" defer></script>
 <script src="./avatar-settings.js" defer></script>
 <script src="./advanced.js" defer></script>
+<script src="./voice-settings.js" defer></script>
 <script src="./settings.js" defer></script>
 <script src="./hosts.js" defer></script>
 <script src="./skills.js" defer></script>
@@ -30,6 +31,7 @@
     <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
     <a draggable="false" id="nav-members" href="#members">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
     <a draggable="false" id="nav-avatars" href="#avatars">外观</a>
+    <a draggable="false" id="nav-voice" href="#voice">语音</a>
     <a draggable="false" id="nav-advanced" href="#advanced">高级<span id="advanced-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
     <a draggable="false" id="nav-about" href="#about">关于<span id="update-badge" class="badge-dot" hidden></span></a>
   </nav>
@@ -86,6 +88,10 @@
       </div>
     </div>
     <div id="avatar-settings" aria-live="polite"></div>
+  </section>
+
+  <section id="pane-voice" class="tab-pane" hidden aria-labelledby="nav-voice">
+    <div id="voice-settings"></div>
   </section>
 
   <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">

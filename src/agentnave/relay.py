@@ -275,8 +275,9 @@ class Relay:
             elif not reported and time.monotonic() - since > _BUSY_REPORT:
                 reported = True
                 print(f"agentnave relay: update waiting, {self._busy_reason()}", file=sys.stderr)
-        with self.connection_lock, contextlib.suppress(OSError):
-            self.connection_path.unlink(missing_ok=True)
+        with self.connection_lock:
+            if not self.closing.is_set():  # the server quit on its own; a host close ends it
+                self._drop_connection()
         return self.code
 
     def _publish_connection(self) -> None:
@@ -284,16 +285,27 @@ class Relay:
         with self.connection_lock:
             self._write_connection()
 
-    def _write_connection(self) -> None:
+    def _end_connection(self) -> None:
+        """Keep proof that a host which closed normally loaded the tools; it no longer runs."""
+        with self.connection_lock:
+            if self.stopped.is_set():  # the server quit first; that is no normal close
+                self._drop_connection()
+            else:
+                self._write_connection(ended_ms=time.time_ns() // 1_000_000)
+
+    def _drop_connection(self) -> None:
+        with contextlib.suppress(OSError):
+            self.connection_path.unlink(missing_ok=True)
+
+    def _write_connection(self, *, ended_ms: int | None = None) -> None:
         with self.lock:
             if (
-                self.closing.is_set()
-                or self.stopped.is_set()
+                (ended_ms is None and (self.closing.is_set() or self.stopped.is_set()))
                 or not self.host
-                or not self.host_tools_hash
+                or not self.host_tools_hash  # nothing delivered, so nothing to prove
             ):
                 return
-            payload = {
+            payload: Message = {
                 "version": 1,
                 "host": self.host,
                 "started_ms": self.started_ms,
@@ -301,6 +313,8 @@ class Relay:
                 "runtime_tools_hash": self.runtime_tools_hash,
                 "host_tools_hash": self.host_tools_hash,
             }
+            if ended_ms is not None:
+                payload["ended_ms"] = ended_ms
         path = self.connection_path
         body = json.dumps(payload).encode()
         try:
@@ -356,8 +370,7 @@ class Relay:
             self.closing.set()
             child = self.child
             child.retiring = True  # the host left; the child's exit is expected
-        with self.connection_lock, contextlib.suppress(OSError):
-            self.connection_path.unlink(missing_ok=True)
+        self._end_connection()
         child.close()
         self.code = child.process.wait()
         self.stopped.set()

@@ -60,6 +60,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 需要席位作答时，新建会议的同一次 `run_round` 就传 `prompt` 和 `seats`，直接启动第 1 轮。只准备会议室时省略 `prompt`；已有会议中单独的 boss 公开发言用 `run_round(group_id, prompt)`，不带 `seats`，不启动组员，也不增加轮次。
 
+会议收尾时，收齐本场轮次终态并处理完审核，将准备发给用户的会议总结正文原样写入同一会议：调用 `run_round(group_id, prompt="会议总结\n\n" + 总结正文, manager_session_id=本聊天原生ID)`，省略 `seats`。收到保存成功的 `message_id` 后，将同一份总结回复用户；写入失败时如实说明总结未保存到会议。
+
 常用组合只说明怎么调用；会议轮次按上表默认，用户另有要求时从其要求；选谁、何时收手按用户的全局规则或由 boss 定：
 
 - **交接**：`start_agent` 的 prompt 按下文「目录与交接」写成自足简报，保留原任务语义（只调查就声明 `access=read`）；写代码的交接先由 boss 建好 worktree 作 `cwd`。

@@ -207,9 +207,11 @@ impl Group {
         let forwarded = kind == "forward";
         let manager = matches!(kind, "task" | "host");
         let absent = kind == "absent";
-        let host = self.host.as_deref().unwrap_or("");
+        let host = show.item.host.as_deref();
         let who = if forwarded {
-            manager_speaker(entry, host, "boss 转发")
+            let mut who = manager_speaker(entry, host, "");
+            who["label"] = json!("boss 转发");
+            who
         } else if manager {
             manager_speaker(entry, host, self.manager_label())
         } else if has_seat {
@@ -292,11 +294,7 @@ impl Group {
             &show.time(entry),
             conversation,
             "instruction",
-            manager_speaker(
-                entry,
-                self.host.as_deref().unwrap_or(""),
-                self.manager_label(),
-            ),
+            manager_speaker(entry, show.item.host.as_deref(), self.manager_label()),
             text(entry, "text"),
         );
         msg["round"] = entry["round"].clone();

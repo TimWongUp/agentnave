@@ -68,6 +68,7 @@ class Entry:
     kind: Literal["task", "host", "answer", "absent", "forward"]
     seat_id: str | None = None
     text: str | None = None
+    manager_host: str | None = None
     manager_model: str | None = None
     reported_model: str | None = None
     manager_reported_model: str | None = None
@@ -217,6 +218,7 @@ class Groups:
         prompt: str,
         instructions: dict[str, str],
         *,
+        manager_host: str | None = None,
         manager_model: str | None = None,
         manager_reported_model: str | None = None,
     ) -> Round:
@@ -246,6 +248,7 @@ class Groups:
                 round_.number,
                 "task",
                 text=prompt,
+                manager_host=manager_host,
                 manager_model=manager_model,
                 manager_reported_model=manager_reported_model,
             )

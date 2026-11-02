@@ -1212,7 +1212,8 @@ function speakerSub(m, ctx) {
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
   if (s.role === "system") return null;
-  if (isBoss(m)) return hostTile(ctx.c.app || ctx.c.host, ctx.c.label);
+  // A boss who has since handed over keeps their own mark on what they said.
+  if (isBoss(m)) return s.provider && s.provider !== ctx.c.host ? hostTile(s.provider) : hostTile(ctx.c.app || ctx.c.host, ctx.c.label);
   const d = speakerDesk(m, ctx);
   return ART.head(d ? deskChar(d) : ART.character(s.provider, s.model), "idle");
 }
@@ -1448,6 +1449,7 @@ function updateMessage(rec, m, ctx, id) {
     setText(rec.detail, m.detail || "");
     return;
   }
+  AN.voice?.decorate(rec, m, ctx);
   const [verb, to, verb2 = "", lock = ""] = verbOf(m, ctx);
   setClass(rec.verb, verb ? "m-verb m-tag" : "m-verb");
   const priv =
@@ -1730,6 +1732,7 @@ function renderConv(c, ctx) {
   setAttr(el.convToggle, "aria-label", shut ? "展开对话栏" : "收起对话栏");
   setAttr(el.convToggle, "title", shut ? "展开对话栏" : "收起对话栏");
   if (el.drawer.hidden) {
+    AN.voice?.controls(false, null, ctx);
     state.scopeKey = "";
     return;
   }
@@ -1741,6 +1744,9 @@ function renderConv(c, ctx) {
   )
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
+  const privateChat = state.drawer.kind === "desk" && c.threads.some(t => t.kind === "desk" && t.key === state.drawer.key);
+  AN.voice?.controls(state.drawer.kind === "room" || privateChat, state.drawer.kind === "room" ? { group: c.group, id: state.drawer.id } : null, ctx,
+    state.drawer.kind === "desk" ? state.drawer.key : null);
   if (state.drawer.kind === "all") {
     renderDirectory(c, ctx);
     return;
@@ -2011,11 +2017,13 @@ async function refresh() {
     return;
   }
   state.refreshing = true;
+  const voicePoll = AN.voice?.pollToken();
   try {
     let chats;
     try {
       chats = await load("/app/chats");
     } catch {
+      setText(el.banner, "读取中断，正在重试…");
       el.banner.hidden = false;
       if (!state.loaded && !state.groupsData.length) showBlank("error");
       return;
@@ -2055,6 +2063,7 @@ async function refresh() {
       }
       if (e.status === 404) showBlank("missing");
       else {
+        setText(el.banner, "读取中断，正在重试…");
         el.banner.hidden = false;
         if (!state.loaded) showBlank("error");
       }
@@ -2071,6 +2080,8 @@ async function refresh() {
     }
     state.chat = chat;
     showBlank(null);
+    // Playback uses the same message text and identities as the conversation.
+    AN.voice?.ingest(chat, contextOf(chat), focus, voicePoll);
     renderAll(chat, newGroup);
     ingest(chat, state.ctx, newGroup);
     applyHash(state.ctx);
@@ -2087,6 +2098,9 @@ async function refresh() {
 
 for (const link of document.querySelectorAll("a[href]"))
   setAttr(link, "href", href(link.getAttribute("href")));
+addEventListener("agentnave:voice", () => {
+  if (state.chat) renderConv(state.chat, state.ctx);
+});
 sync();
 poll(refresh);
 

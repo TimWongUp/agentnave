@@ -651,6 +651,53 @@ dialog.act::backdrop { background: #0006; }
 .toast { position: fixed; z-index: 400; left: 50%; bottom: 54px; transform: translateX(-50%); max-width: min(520px, 90vw); padding: 8px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: 12.5px; box-shadow: 0 10px 30px #0006; }
 .toast.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 
+/* One flat playback bar under the conversation header: who is here, who is speaking, what to do. */
+.voice-channel { flex: none; container-type: inline-size; display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 7px 12px 7px 16px; border-bottom: 1px solid var(--line); }
+.voice-channel[hidden] { display: none; }
+.voice-roster { flex: none; display: flex; align-items: center; padding-left: 6px; }
+.voice-person, .voice-more { flex: none; width: 30px; height: 30px; margin-left: -6px; border-radius: 50%; box-shadow: 0 0 0 2px var(--solid); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
+.voice-person-head { display: grid; place-items: center; width: 100%; height: 100%; }
+.voice-person-head .head { display: block; width: 100%; height: 100%; border-radius: 50%; background: center / cover no-repeat; }
+.voice-channel[data-active="true"] .voice-roster > * + * { margin-left: -14px; }
+.voice-more { display: grid; place-items: center; color: var(--muted); font-size: 10.5px; font-weight: 650; }
+.voice-channel[data-live="true"] .voice-person:not([data-speaking="true"]), .voice-channel[data-live="true"] .voice-more { opacity: .4; }
+.voice-person[data-speaking="true"] { position: relative; z-index: 1; transform: scale(1.1); box-shadow: 0 0 0 2px var(--solid), 0 0 0 4px var(--run); }
+.voice-person[data-preparing="true"] { position: relative; z-index: 1; box-shadow: 0 0 0 2px var(--solid), 0 0 0 4px var(--line); }
+.voice-status { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; }
+.voice-status[hidden] { display: flex; visibility: hidden; }
+.voice-status-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-status > .voice-waves { display: none; flex: none; }
+.voice-channel[data-live="true"] .voice-status { color: var(--run); font-weight: 600; }
+.voice-channel[data-live="true"] .voice-status > .voice-waves { display: flex; }
+.voice-channel[data-live="true"] .voice-status > .voice-waves i { animation: voice-wave .9s ease-in-out infinite; }
+.voice-channel[data-live="true"] .voice-status > .voice-waves i:nth-child(2) { animation-delay: -.3s; }
+.voice-channel[data-live="true"] .voice-status > .voice-waves i:nth-child(3) { animation-delay: -.6s; }
+@keyframes voice-wave { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+.voice-toggle { flex: none; display: flex; align-items: center; gap: 6px; padding: 0; color: var(--muted); font-size: 12px; cursor: pointer; }
+.voice-toggle[hidden] { display: none; }
+.voice-toggle:disabled { opacity: .5; cursor: default; }
+.voice-track { position: relative; width: 24px; height: 14px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 35%, transparent); transition: background .15s; }
+.voice-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.voice-toggle[aria-pressed="true"] { color: var(--ink); }
+.voice-toggle[aria-pressed="true"] .voice-track { background: var(--run); }
+.voice-toggle[aria-pressed="true"] .voice-track::after { transform: translateX(10px); }
+.voice-channel-controls { flex: none; display: flex; gap: 6px; }
+.voice-play-all, .voice-stop { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px 0 10px; border-radius: 99px; background: var(--card-hover); color: var(--ink); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.voice-play-all[hidden], .voice-stop[hidden] { display: none; }
+.voice-play-all:disabled, .voice-stop:disabled { opacity: .5; cursor: default; }
+.voice-play-all:not(:disabled):hover, .voice-stop:not(:disabled):hover { background: var(--line); }
+.voice-play-all::before, .voice-stop[data-paused="true"]::before { content: ""; width: 0; height: 0; border-style: solid; border-width: 4.5px 0 4.5px 7px; border-color: transparent transparent transparent currentColor; }
+.voice-stop::before { content: ""; width: 7px; height: 9px; border-style: solid; border-width: 0 2.5px; border-color: currentColor; }
+.voice-read { display: flex; align-items: center; gap: 5px; width: 62px; height: 20px; margin: -1px 0 5px -2px; padding: 0 2px; border: 0; background: none; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.voice-read[hidden] { display: none; }
+.voice-read:not(:disabled):hover { color: var(--ink); }
+.voice-read[aria-pressed="true"] { color: var(--run); }
+.voice-waves { display: flex; align-items: center; gap: 2px; height: 12px; }
+.voice-waves i { display: block; width: 2px; height: 5px; border-radius: 1px; background: currentColor; }
+.voice-waves i:nth-child(2) { height: 11px; }
+.voice-waves i:nth-child(3) { height: 8px; }
+@container (max-width: 340px) { .voice-more, .voice-person:nth-child(n+4):not([data-speaking="true"], [data-preparing="true"]), .voice-channel[data-active="true"] .voice-play-all { display: none; } }
+@media (prefers-reduced-motion: reduce) { .voice-channel[data-live="true"] .voice-status > .voice-waves i { animation: none; } }
 /* ---- new conversation reading (chat-topics.js) ---- */
 .tp-badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 650; line-height: 17px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent); }
 .chat-page .tp-card { display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); text-align: left; cursor: pointer; }
@@ -716,3 +763,6 @@ dialog.act::backdrop { background: #0006; }
 .tag-effort[data-effort="xhigh"] { --effort: var(--m4); }
 .tag-effort[data-effort="max"] { --effort: var(--bad); }
 .tag-effort[data-effort="ultra"] { --effort: var(--m1); }
+
+.tp-im .voice-read { color: inherit; opacity: .7; }
+.tp-im .voice-read:not(:disabled):hover, .tp-im .voice-read[aria-pressed="true"] { opacity: 1; }
