@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
+pub mod autostart;
+pub mod general;
+mod keep_awake;
+pub mod runtime;
+
 const FILE: &str = "preferences.json";
 
 /// `app_config_dir` of this build: the config folder named by the bundle identifier.
@@ -45,15 +50,8 @@ pub fn state(dir: &Path) -> Value {
 /// Each section checks the fields it knows; a new section adds one line here.
 fn validate_field(section: &str, field: &str, value: &Value) -> Result<(), String> {
     match section {
-        "general" => general(field, value),
+        "general" => general::validate(field, value),
         _ => Err(format!("未知的设置分区：{section}")),
-    }
-}
-
-fn general(field: &str, value: &Value) -> Result<(), String> {
-    match field {
-        "language" => one_of(value, &["system", "zh", "en"], "general.language"),
-        _ => Err(format!("未知的设置项：general.{field}")),
     }
 }
 
@@ -64,9 +62,8 @@ fn one_of(value: &Value, allowed: &[&str], name: &str) -> Result<(), String> {
     }
 }
 
-/// Merge `{section: {field: value}}` into the saved document. Only the given fields change;
-/// fields and sections this build does not know stay as they were.
-pub fn update(dir: &Path, changes: &Value) -> Result<Value, String> {
+fn validate_changes(changes: &Value) -> Result<(), String> {
+    general::reject_autostart(crate::PREVIEW, changes)?;
     let changes = changes.as_object().ok_or("设置必须为 JSON 对象")?;
     for (section, fields) in changes {
         let fields = fields
@@ -76,6 +73,14 @@ pub fn update(dir: &Path, changes: &Value) -> Result<Value, String> {
             validate_field(section, field, value)?;
         }
     }
+    Ok(())
+}
+
+/// Merge `{section: {field: value}}` into the saved document. Only the given fields change;
+/// fields and sections this build does not know stay as they were.
+pub fn update(dir: &Path, changes: &Value) -> Result<Value, String> {
+    validate_changes(changes)?;
+    let changes = changes.as_object().expect("validated object");
     // A broken file is replaced rather than blocking every later change.
     let mut document = read(dir).unwrap_or_default();
     for (section, fields) in changes {
@@ -96,7 +101,21 @@ pub fn update(dir: &Path, changes: &Value) -> Result<Value, String> {
     Ok(document)
 }
 
-/// The interface language a page opens in: `zh`, `en`, or `system` for the page to decide.
+/// Called under Runtime's write lock, shared with all ordinary preference writes.
+fn migrate_theme(dir: &Path, changes: &Value) -> Result<Value, String> {
+    validate_changes(changes)?;
+    if *changes != json!({"general": {"theme": changes["general"]["theme"]}}) {
+        return Err("主题迁移只接受 general.theme".into());
+    }
+    let document = Value::Object(read(dir)?);
+    if document["general"].get("theme").is_some() {
+        Ok(document)
+    } else {
+        update(dir, changes)
+    }
+}
+
+/// The saved language choice; native menus and pages resolve `system` with the OS locale.
 pub fn language(dir: &Path) -> String {
     read(dir)
         .ok()
@@ -111,12 +130,20 @@ pub fn language(dir: &Path) -> String {
         .unwrap_or_else(|| "system".into())
 }
 
-/// The page with its `<html lang>` set, so text is right from the first paint; `system`
-/// leaves the choice to common.js, which reads the system language.
-pub fn localize(html: &[u8], language: &str) -> Vec<u8> {
+/// Attributes are validated before insertion; system theme is settled by CSS before paint.
+pub fn localize(html: &[u8], general: &Value) -> Vec<u8> {
     let opening = br#"<html lang="zh-CN">"#;
-    let lang = if language == "en" { "en" } else { "zh-CN" };
-    let replacement = format!(r#"<html lang="{lang}" data-lang="{language}">"#);
+    let language = general["language"].as_str().unwrap_or("system");
+    let locale = sys_locale::get_locale().unwrap_or_default();
+    let lang = match general::resolved_language(language, &locale) {
+        "en" => "en",
+        _ => "zh-CN",
+    };
+    let theme = general["theme"].as_str().unwrap_or("system");
+    let motion = general["motion"].as_str().unwrap_or("system");
+    let replacement = format!(
+        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}">"#
+    );
     match html.windows(opening.len()).position(|w| w == opening) {
         Some(at) => [
             &html[..at],
@@ -129,59 +156,4 @@ pub fn localize(html: &[u8], language: &str) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn updates_merge_fields_and_keep_unknown_ones() {
-        let dir = tempfile::tempdir().unwrap();
-        let folder = dir.path().join("config");
-        assert_eq!(state(&folder)["preferences"], json!({}));
-        assert_eq!(language(&folder), "system");
-        fs::create_dir_all(&folder).unwrap();
-        fs::write(
-            folder.join(FILE),
-            br#"{"general":{"future":1},"later":{"x":true}}"#,
-        )
-        .unwrap();
-        update(&folder, &json!({"general": {"language": "en"}})).unwrap();
-        assert_eq!(
-            read(&folder).unwrap(),
-            *json!({"general": {"future": 1, "language": "en"}, "later": {"x": true}})
-                .as_object()
-                .unwrap()
-        );
-        assert_eq!(language(&folder), "en");
-        for bad in [
-            json!({"general": {"language": "fr"}}),
-            json!({"general": {"typo": 1}}),
-            json!({"nowhere": {"language": "en"}}),
-            json!({"general": "en"}),
-            json!([]),
-        ] {
-            assert!(update(&folder, &bad).is_err(), "{bad}");
-        }
-        assert_eq!(language(&folder), "en");
-    }
-
-    #[test]
-    fn a_broken_file_reads_empty_and_is_replaced_by_the_next_change() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join(FILE), b"{oops").unwrap();
-        assert!(state(dir.path())["error"].is_string());
-        assert_eq!(language(dir.path()), "system");
-        update(dir.path(), &json!({"general": {"language": "zh"}})).unwrap();
-        assert_eq!(state(dir.path())["error"], Value::Null);
-        assert_eq!(language(dir.path()), "zh");
-    }
-
-    #[test]
-    fn pages_open_in_the_chosen_language() {
-        let html = b"<!doctype html>\n<html lang=\"zh-CN\">\n<head>";
-        let page = |language| String::from_utf8(localize(html, language)).unwrap();
-        assert!(page("en").contains(r#"<html lang="en" data-lang="en">"#));
-        assert!(page("zh").contains(r#"<html lang="zh-CN" data-lang="zh">"#));
-        assert!(page("system").contains(r#"<html lang="zh-CN" data-lang="system">"#));
-        assert_eq!(localize(b"<html>", "en"), b"<html>");
-    }
-}
+mod tests;

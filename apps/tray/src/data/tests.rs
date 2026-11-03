@@ -95,8 +95,10 @@ fn routes_serve_views_and_reject_everything_else() {
         "/chat/actions.js",
         "/chat/chat.css",
         "/chat/common.js",
+        "/chat/appearance.js",
         "/chat/mock.js",
         "/panel/common.js",
+        "/panel/appearance.js",
         "/panel/mock.js",
     ] {
         assert_eq!(reader.respond(path).status, 200, "{path}");

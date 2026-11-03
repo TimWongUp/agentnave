@@ -675,7 +675,26 @@ All checks passed!
     { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },
     { id: "members", done: membersReady, detail: "选择可以派出的 CLI 与模型" },
     { id: "try", done: triedReady, detail: "在宿主里派一次任务" }] });
+  const mockPrefs = {
+    general: {
+      theme: "system",
+      motion: "system",
+      scale: 100,
+      autostart: false,
+      open_on_start: true,
+      tray_click: "panel",
+      tray_count: true,
+      keep_awake: false,
+    },
+  };
+  const preferencesView = () => ({
+    preferences: structuredClone(mockPrefs),
+    effective: structuredClone(mockPrefs),
+    autostart_available: !q.has("preview"),
+    error: null,
+  });
   async function p3Fetch(path) {
+    if (path === "/app/preferences") return preferencesView();
     if (path === "/app/hosts") return structuredClone(hostView());
     if (path === "/app/skills") return { skills: [{ name: "agentnave-review", title: "AgentNave 评审门控", description: "代码评审门控：创建或更新 PR、用户要求评审代码或合并到主分支前使用。", content: "---\nname: agentnave-review\n---\n\n# AgentNave 评审门控\n\n（预览）完整写法在 App 中读取内嵌的 SKILL.md。" }] };
     if (path === "/app/onboarding") return onboarding();
@@ -714,6 +733,10 @@ All checks passed!
         installedState = { state: "done", version: mockVersion };
       }, 11500));
       return { ...await p3Fetch("/app/status"), started: true };
+    }
+    if (path === "/app/preferences") {
+      if (body.general) Object.assign(mockPrefs.general, body.general);
+      return { saved: true, ...preferencesView() };
     }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }

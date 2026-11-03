@@ -140,7 +140,10 @@ button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness
   .adv-kv { grid-template-columns: 1fr; gap: 2px; }
   .adv-kv dd { margin-bottom: 6px; }
 }
-@media (prefers-reduced-motion: reduce) { .spin, .hc.is-busy .hc-status .dot { animation: none; } }
+:root[data-motion="reduce"] .spin, :root[data-motion="reduce"] .hc.is-busy .hc-status .dot { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .spin, :root:not([data-motion="reduce"]):not([data-motion="full"]) .hc.is-busy .hc-status .dot { animation: none; }
+}
 .hc-facts dd .sub.block { display: block; margin: 2px 0 0; }
 
 .root-editor { display: grid; gap: 8px; padding-block: 10px; }

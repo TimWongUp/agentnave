@@ -26,7 +26,6 @@ use std::time::{Duration, Instant};
 
 use tauri::http::{Response, header};
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::NewWindowResponse;
 use tauri::{
@@ -166,6 +165,11 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .manage(preferences::runtime::Runtime::default())
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let reader = served.clone();
             let app = ctx.app_handle().clone();
@@ -220,13 +224,25 @@ fn main() {
                     ("POST", "/app/theme/system" | "/app/theme/light" | "/app/theme/dark")
                         if action == Some("1") =>
                     {
-                        app.set_theme(match path.as_str() {
-                            "/app/theme/light" => Some(tauri::Theme::Light),
-                            "/app/theme/dark" => Some(tauri::Theme::Dark),
-                            _ => None,
-                        });
-                        data::Response::json(&serde_json::json!({"ok": true}))
+                        let choice = path.rsplit('/').next().unwrap_or("system");
+                        match preferences::runtime::save(
+                            &app,
+                            &serde_json::json!({"general": {"theme": choice}}),
+                        ) {
+                            Ok(_) => data::Response::json(&serde_json::json!({"ok": true})),
+                            Err(error) => data::Response::error(400, &error),
+                        }
                     }
+                    (_, "/app/preferences") => preferences::runtime::request(
+                        &app,
+                        method,
+                        action,
+                        request.body(),
+                        request
+                            .headers()
+                            .get("X-AgentNave-Migrate-Theme")
+                            .is_some_and(|value| value == "1"),
+                    ),
                     ("GET", "/settings/members") => reader.members(refresh),
                     (_, "/app/service/install") if method != "POST" => {
                         data::Response::error(405, "此操作只接受 POST")
@@ -276,23 +292,17 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
             let handle = app.handle();
+            if let Err(error) = preferences::autostart::repair(handle) {
+                eprintln!("无法修复开机启动路径：{error}");
+            }
             let host_context = hosts::Context::live(handle.path().app_data_dir()?);
             let takeover = reader.clone();
             build_panel(handle)?;
             let overview = reader.overview();
-            // Left click opens the panel; right click shows this short menu.
-            let check = MenuItem::with_id(handle, "update", "检查更新…", true, None::<&str>)?;
-            let open_item =
-                MenuItem::with_id(handle, "open", "打开 AgentNave", true, None::<&str>)?;
-            let settings = MenuItem::with_id(handle, "settings", "设置…", true, None::<&str>)?;
-            let quit = MenuItem::with_id(handle, "quit", "退出 AgentNave", true, None::<&str>)?;
-            // A preview build never updates itself, so it offers no update check.
-            let menu = if PREVIEW {
-                Menu::with_items(handle, &[&open_item, &settings, &quit])?
-            } else {
-                Menu::with_items(handle, &[&open_item, &settings, &check, &quit])?
-            };
-            app.manage(Updates::new(check));
+            let menu = preferences::runtime::menu(handle)?;
+            if let Err(error) = preferences::runtime::apply(handle) {
+                eprintln!("无法应用常规设置：{error}");
+            }
             TrayIconBuilder::with_id(TRAY)
                 .icon(Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?)
                 .icon_as_template(true)
@@ -315,8 +325,15 @@ fn main() {
                         ..
                     } = event
                     {
-                        drip(tray);
-                        toggle_panel(tray.app_handle(), rect);
+                        if preferences::general::current()["motion"] != "reduce" {
+                            drip(tray);
+                        }
+                        if preferences::general::current()["tray_click"] == "office" {
+                            hide_visible_panel(tray.app_handle());
+                            open(tray.app_handle(), "main", "/chat/");
+                        } else {
+                            toggle_panel(tray.app_handle(), rect);
+                        }
                     }
                 })
                 .build(app)?;
@@ -355,8 +372,13 @@ fn main() {
         } => api.prevent_exit(),
         // Like any regular app, launching it shows the main window. Opening it once the event
         // loop runs keeps its first requests from stalling behind start-up.
-        RunEvent::Ready => open(app, "main", "/chat/"),
+        RunEvent::Ready => {
+            if preferences::general::current()["open_on_start"] == true {
+                open(app, "main", "/chat/");
+            }
+        }
         RunEvent::Exit => {
+            preferences::runtime::shutdown(app);
             if let Some(window) = app.get_webview_window("main") {
                 save_size(&window);
             }
@@ -391,6 +413,9 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
     loop {
         thread::sleep(POLL);
         let overview = reader.overview();
+        if let Err(error) = preferences::runtime::refresh_working(&app, &overview) {
+            eprintln!("无法应用常规设置：{error}");
+        }
         if overview == shown {
             continue;
         }
@@ -412,7 +437,11 @@ fn headline(overview: &Overview) -> String {
 /// Shown beside the menu bar icon: how many subagents are running, nothing when idle; a preview
 /// build always says so, to tell its icon from the installed app's.
 fn running_badge(overview: &Overview) -> String {
-    let count = match overview.count("running") {
+    let count = match if preferences::general::current()["tray_count"] == true {
+        overview.count("running")
+    } else {
+        0
+    } {
         0 => String::new(),
         n => format!("={n}"),
     };
@@ -752,6 +781,9 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         })
         .build();
     if let Ok(window) = built {
+        if let Err(error) = preferences::runtime::zoom(&window) {
+            eprintln!("无法设置窗口缩放：{error}");
+        }
         let closing = window.clone();
         window.on_window_event(move |event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

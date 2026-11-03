@@ -714,6 +714,7 @@ function setTab(tab) {
     else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
+  if (tab === "general") window.AgentNaveGeneralSettings?.load();
   if (tab === "voice") window.AgentNaveVoiceSettings?.load();
   if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "members") loadLimit();
