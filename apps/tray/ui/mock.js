@@ -699,6 +699,7 @@ All checks passed!
     autostart_available: !q.has("preview"),
     error: null,
   });
+  let mockRetentionDays = null;
   let mockVoiceCacheBytes = 14820352;
   const mockVoice = {
     enabled: true,
@@ -733,6 +734,12 @@ All checks passed!
   };
   async function p3Fetch(path) {
     if (path === "/app/preferences") return preferencesView();
+    if (path === "/app/storage") return { path: "/preview/.agentnave", bytes: 48234496, retention_days: mockRetentionDays };
+    const storagePreview = /^\/app\/storage\/preview\?days=(\d+)$/.exec(path);
+    if (storagePreview) {
+      const days = Number(storagePreview[1]);
+      return { workspaces: days <= 30 ? 3 : days <= 90 ? 1 : 0 };
+    }
     if (path === "/app/voice") return structuredClone(mockVoice);
     if (path === "/app/voice/cache") return { bytes: mockVoiceCacheBytes };
     if (path.startsWith("/app/voice/models/")) return [{ id: mockVoice.model, name: mockVoice.model }];
@@ -781,6 +788,12 @@ All checks passed!
       return { saved: true, ...preferencesView() };
     }
     if (path === "/app/alerts/test") return { sent: true };
+    if (path === "/app/storage/open") return { opened: true };
+    if (path === "/app/settings") {
+      if (q.has("preview")) throw Object.assign(new Error("预览版不修改正式数据"), { status: 403 });
+      if (Object.hasOwn(body, "history_retention_days")) mockRetentionDays = body.history_retention_days;
+      return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays } };
+    }
     if (path === "/app/voice") {
       Object.assign(mockVoice, body);
       if (body.summary) mockVoice.summary = { ...mockVoice.summary, ...body.summary };

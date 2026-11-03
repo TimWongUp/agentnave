@@ -726,6 +726,7 @@ function setTab(tab) {
     loadOrchestration();
     loadLimit();
   }
+  if (tab === "storage") window.AgentNaveStorageSettings?.load();
 }
 
 const SCENE_IDS = ["task", "discussion"];
