@@ -158,6 +158,62 @@ class Connection:
             return message.get("result", {})
 
 
+def _configure_session(connection: Connection, request: dict[str, Any]) -> None:
+    params: dict[str, Any] = {
+        "sessionId": request["session_id"],
+        "workspace": {"workspacePath": request["cwd"], "workspaceKey": request["cwd"]},
+    }
+    options = request["options"]
+    if not request["resume"] and options.get("permission_mode"):
+        params["mode"] = options["permission_mode"]
+    snapshot = connection.call("session/resume" if request["resume"] else "session/create", params)
+    emit({"type": "session", "session_id": connection.session_id})
+    if request["resume"] and options.get("permission_mode"):
+        connection.call(
+            "session/setMode",
+            {"sessionId": connection.session_id, "mode": options["permission_mode"]},
+        )
+    if model := options.get("model"):
+        available = snapshot.get("settings", {}).get("model", {}).get("available", [])
+        matches = [
+            item["ref"]
+            for item in available
+            if model
+            in (
+                item["ref"]["modelId"],
+                item["ref"]["providerId"] + "/" + item["ref"]["modelId"],
+            )
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "ZCode model must uniquely match its native catalog; use providerId/modelId"
+            )
+        selection = dict(matches[0])
+        if options.get("effort"):
+            selection["options"] = {"reasoningLevel": options["effort"]}
+        connection.call(
+            "session/setModel",
+            {
+                "sessionId": connection.session_id,
+                "model": selection,
+                "persistAsWorkspaceLastUsed": False,
+            },
+        )
+    if effort := options.get("effort"):
+        connection.call(
+            "session/setThoughtLevel",
+            {
+                "sessionId": connection.session_id,
+                "thoughtLevel": effort,
+                "persistAsWorkspaceLastUsed": False,
+            },
+        )
+    connection.call(
+        "session/subscribe",
+        {"sessionId": connection.session_id, "deliveryKind": "desktop-continuous"},
+    )
+
+
 def run(request: dict[str, Any]) -> int:
     started = datetime.now(UTC)
     argv, env = command()
@@ -173,61 +229,7 @@ def run(request: dict[str, Any]) -> int:
     ) as process:
         connection = Connection(process, request["session_id"])
         try:
-            params: dict[str, Any] = {
-                "sessionId": request["session_id"],
-                "workspace": {"workspacePath": request["cwd"], "workspaceKey": request["cwd"]},
-            }
-            options = request["options"]
-            if not request["resume"] and options.get("permission_mode"):
-                params["mode"] = options["permission_mode"]
-            snapshot = connection.call(
-                "session/resume" if request["resume"] else "session/create", params
-            )
-            emit({"type": "session", "session_id": connection.session_id})
-            if request["resume"] and options.get("permission_mode"):
-                connection.call(
-                    "session/setMode",
-                    {"sessionId": connection.session_id, "mode": options["permission_mode"]},
-                )
-            if model := options.get("model"):
-                available = snapshot.get("settings", {}).get("model", {}).get("available", [])
-                matches = [
-                    item["ref"]
-                    for item in available
-                    if model
-                    in (
-                        item["ref"]["modelId"],
-                        item["ref"]["providerId"] + "/" + item["ref"]["modelId"],
-                    )
-                ]
-                if len(matches) != 1:
-                    raise ValueError(
-                        "ZCode model must uniquely match its native catalog; use providerId/modelId"
-                    )
-                selection = dict(matches[0])
-                if options.get("effort"):
-                    selection["options"] = {"reasoningLevel": options["effort"]}
-                connection.call(
-                    "session/setModel",
-                    {
-                        "sessionId": connection.session_id,
-                        "model": selection,
-                        "persistAsWorkspaceLastUsed": False,
-                    },
-                )
-            if effort := options.get("effort"):
-                connection.call(
-                    "session/setThoughtLevel",
-                    {
-                        "sessionId": connection.session_id,
-                        "thoughtLevel": effort,
-                        "persistAsWorkspaceLastUsed": False,
-                    },
-                )
-            connection.call(
-                "session/subscribe",
-                {"sessionId": connection.session_id, "deliveryKind": "desktop-continuous"},
-            )
+            _configure_session(connection, request)
             # Only this prompt's events count: drop anything a resumed session reported earlier.
             connection.reset()
             connection.call(
