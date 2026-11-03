@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.66.1` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v0.66.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.66.1`, which supports
+value for the Skill in step 4. The paired release for this version is `v0.66.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -575,22 +575,17 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v0.66.1
+### Upgrading to v0.66.0
 
-This release lets the macOS menu bar count use a chosen font, documents `settings.json` for
-installations without the App, and makes the service reclaim orphan conversation locks, orphan
-isolated seat directories, used native-session locks and empty unclaimed handovers older than 90
-days, regardless of the history retention setting. It also fixes three relay defects around
-runtime upgrades: the relay now notifies hosts on
-any protocol version when a swapped-in child publishes a different tool list, a late answer to the
-relay's own timed-out probe no longer reaches the host, and a child it had to kill is reaped
-instead of being left as a zombie. Tool receipts keep their added fields and are therefore not
-compatible with pre-upgrade output schemas. Update the App; the paired runtime and Skills follow
-as usual, with no migration. Reconnect each host once after updating so it caches the current
-tool definitions.
+This release adds an English interface to the App and expands its settings: general options,
+employee notifications, voice summary and reading choices, an update-check switch, and automatic
+cleanup of saved history. Automatic cleanup is off by default; once enabled, the local service
+deletes workspaces older than the chosen number of days at startup and then daily. The browser
+dashboard is removed, and the MCP `list` tool no longer returns a dashboard link. Update the App;
+the paired runtime and Skills follow as usual, with no migration.
 
-See [v0.66.1 release notes](releases/v0.66.1.md). Earlier upgrade instructions remain in
-[the release archive](releases/v0.66.0.md).
+See [v0.66.0 release notes](releases/v0.66.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v0.65.0.md).
 
 ## Uninstall
 
