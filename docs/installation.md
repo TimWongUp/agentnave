@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v0.66.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v1.0.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v0.66.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.0.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -575,17 +575,21 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v0.66.0
+### Upgrading to v1.0.0
 
-This release adds an English interface to the App and expands its settings: general options,
-employee notifications, voice summary and reading choices, an update-check switch, and automatic
-cleanup of saved history. Automatic cleanup is off by default; once enabled, the local service
-deletes workspaces older than the chosen number of days at startup and then daily. The browser
-dashboard is removed, and the MCP `list` tool no longer returns a dashboard link. Update the App;
-the paired runtime and Skills follow as usual, with no migration.
+This is the first stable release and the minimum compatibility baseline: older programs and data
+are migrated once, with no runtime compatibility branches kept. The App installs the paired
+service by version at startup; each host uses it only after its MCP connection reconnects, so
+reconnect every host after updating. On first open the service migrates the history database to
+version 2 and deletes legacy-identity conversations (records without a manager chat identity)
+together with their seat directories; this cannot be undone, so back up `agentnave.db` in the
+data directory first if you need them. Until a host reconnects, the App keeps an unmigrated
+database read-only. `cli-options.json` is removed: Codex always runs outside Git repositories
+without configuration, an existing file is ignored, and `list_members` no longer returns
+`cli_options`. `role` no longer doubles as an `explorer-*`/`worker-*` seat name; use `seat`.
 
-See [v0.66.0 release notes](releases/v0.66.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v0.65.0.md).
+See [v1.0.0 release notes](releases/v1.0.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v0.66.0.md).
 
 ## Uninstall
 
