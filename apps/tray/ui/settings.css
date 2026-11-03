@@ -334,18 +334,4 @@
   .voice-family > .head { width: 28px; height: 28px; }
   .voice-character > .voice-section { margin: -2px 14px 12px; }
 }
-:root[data-scale="90"] {
-  font-size: 90%;
-}
-
-:root[data-scale="115"] {
-  font-size: 115%;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
-:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
-  animation: none !important; transition: none !important;
-}
 

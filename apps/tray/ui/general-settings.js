@@ -92,17 +92,10 @@
     return DEFAULTS[key];
   }
 
-  function applyAppearance(key, value) {
-    if (key === "theme") {
-      try { localStorage.setItem("agentnave.theme", value); } catch { /* ignore */ }
-      AN.applyTheme?.();
-    } else if (key === "motion") {
-      if (value === "system") delete document.documentElement.dataset.motion;
-      else document.documentElement.dataset.motion = value;
-    } else if (key === "scale") {
-      if (!value || value === 100) delete document.documentElement.dataset.scale;
-      else document.documentElement.dataset.scale = String(value);
-    }
+  // appearance.js applies theme and motion on every page; the App zooms the window itself.
+  function applyAppearance() {
+    const detail = { theme: effectiveValue("theme"), motion: effectiveValue("motion") };
+    window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail }));
   }
 
   async function save(key, value) {
@@ -128,7 +121,7 @@
           },
         },
       };
-      applyAppearance(key, effectiveValue(key));
+      applyAppearance();
       say(L("已保存", "Saved"));
     } catch (err) {
       say(err.message || L("保存失败", "Failed to save"), true);
@@ -182,9 +175,7 @@
     try {
       data = await load("/app/preferences");
       if (data.error) say(data.error, true);
-      applyAppearance("theme", effectiveValue("theme"));
-      applyAppearance("motion", effectiveValue("motion"));
-      applyAppearance("scale", effectiveValue("scale"));
+      applyAppearance();
       render();
     } catch (err) {
       say(err.message || L("无法读取常规设置", "Failed to load general settings"), true);
