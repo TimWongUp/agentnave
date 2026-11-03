@@ -37,7 +37,7 @@ function appearance({ saved = {}, legacy = null, systemReduce = false, failWrite
   function settings() {
     nodes.set("general-prefs", h("div", {}));
     nodes.set("pane-general", { hidden: false });
-    context.AN = { h, $: id => nodes.get(id), L: (zh, en) => en,
+    context.AN = { h, $: id => nodes.get(id), L: (zh, en) => en, shellOS: () => "macos",
       load: async path => (await context.fetch(path)).json(),
       post: async (path, body) => (await context.fetch(path, { method: "POST", headers: {}, body: JSON.stringify(body) })).json() };
     vm.runInNewContext(readFileSync(`${__dirname}/../general-settings.js`, "utf8"), context);

@@ -22,12 +22,17 @@
   const ROSTER_LIMIT = 6;
   const ready = () => Boolean(config?.enabled && config.keys?.[config.engine]);
   const changed = () => { updateChannel(); window.dispatchEvent(new Event("agentnave:voice")); };
-  function error(message) {
-    const banner = document.getElementById("banner");
-    banner.textContent = message;
+  // Its own banner: the chat refresh hides the connection banner on every poll.
+  const banner = document.getElementById("voice-banner");
+  let failureShown = false;
+  function error(message, failure = true) {
+    document.getElementById("voice-banner-text").textContent = message;
     banner.hidden = false;
+    failureShown = failure;
     document.getElementById("announce").textContent = message;
   }
+  function clearError() { banner.hidden = true; failureShown = false; }
+  document.getElementById("voice-banner-close").addEventListener("click", clearError);
   async function state() {
     const response = await fetch("/app/voice", { cache: "no-store" });
     const data = await response.json();
@@ -46,6 +51,7 @@
       const shouldInterrupt = previous && different && (usable(previous) !== usable(next)
         || previous.engine !== next.engine || previous.auto_read === true && next.auto_read !== true);
       if (previous && different) {
+        clearError();
         if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || usable(previous) !== usable(next)) { skip = true; baselineEpoch++; }
         if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
       }
@@ -174,7 +180,7 @@
       throw new Error(data.error || L("语音播报合成失败", "Voice synthesis failed"));
     }
     const notice = response.headers.get("X-AgentNave-Notice");
-    if (notice) error(decodeURIComponent(notice));
+    if (notice) error(decodeURIComponent(notice), false);
     return response.blob();
   }
   function prepare(job) {
@@ -271,7 +277,7 @@
         changed();
         try {
           await play(job, token);
-          if (token === generation) failures = 0;
+          if (token === generation) { failures = 0; if (failureShown) clearError(); }
         } catch (failure) {
           if (token === generation) {
             failures++;
@@ -481,7 +487,7 @@
       const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, [field]: !on }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || L("无法保存语音播报设置", "Failed to save voice settings"));
-      config = data; failures = 0; halted = false;
+      config = data; failures = 0; halted = false; clearError();
       if (field === "auto_read") { skip = true; baselineEpoch++; }
       changed();
     } catch (failure) { error(failure.message); }
