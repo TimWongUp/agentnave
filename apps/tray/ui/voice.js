@@ -25,13 +25,18 @@
   // Its own banner: the chat refresh hides the connection banner on every poll.
   const banner = document.getElementById("voice-banner");
   let shownError = null;
+  function syncBannerHeight() {
+    document.documentElement.style.setProperty("--voice-banner-h", `${banner.hidden ? 0 : banner.getBoundingClientRect().height}px`);
+  }
+  new ResizeObserver(syncBannerHeight).observe(banner);
   function error(message, source, job = null) {
     document.getElementById("voice-banner-text").textContent = message;
     banner.hidden = false;
+    syncBannerHeight();
     shownError = { source, job };
     document.getElementById("announce").textContent = message;
   }
-  function clearError() { banner.hidden = true; shownError = null; }
+  function clearError() { banner.hidden = true; shownError = null; syncBannerHeight(); }
   document.getElementById("voice-banner-close").addEventListener("click", clearError);
   async function state() {
     const response = await fetch("/app/voice", { cache: "no-store" });
@@ -375,6 +380,7 @@
       queue.push(...rest);
       queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);
       queue = beforeAnswers(queue);
+      if (shownError?.source === "read") clearError();
       if (current) prefetch();
     } catch (failure) {
       if (playlistFetch === load) error(failure.message, "read");

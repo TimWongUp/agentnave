@@ -23,8 +23,8 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
     return node;
   }
   const elements = new Map();
-  const document = { hidden: false, getElementById: id => {
-    if (!elements.has(id)) elements.set(id, Object.assign(h("div"), { id, hidden: true }));
+  const document = { hidden: false, documentElement: { style: { setProperty() {} } }, getElementById: id => {
+    if (!elements.has(id)) elements.set(id, Object.assign(h("div"), { id, hidden: true, getBoundingClientRect: () => ({ height: 32 }) }));
     return elements.get(id);
   }, addEventListener() {} };
   class Audio {
@@ -40,6 +40,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
   };
   vm.runInNewContext(readFileSync(`${__dirname}/../voice.js`, "utf8"), {
     AN, document, Audio, AbortController, Map, Event, queueMicrotask,
+    ResizeObserver: class { observe() {} },
     Avatars: { family: (provider, model) => model?.includes("claude") ? "claude" : provider === "codex" ? "gpt" : provider || null },
     Date: class extends Date { static now() { return 0; } },
     window: { dispatchEvent() {}, addEventListener() {} },
@@ -157,7 +158,8 @@ test("a notice belongs to its playing job and clears only after a later job play
 });
 
 test("finishing a playing message does not clear a full-conversation read failure", async () => {
-  const app = await office(false, undefined, async () => ({ ok: false }));
+  let broken = true;
+  const app = await office(false, undefined, async data => ({ ok: !broken, json: async () => structuredClone(data) }));
   const button = app.room([message("chosen", "2026-11-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" } })]);
   await button.listeners.click();
   const banner = app.nodes.find(n => n.id === "voice-banner");
@@ -166,8 +168,9 @@ test("finishing a playing message does not clear a full-conversation read failur
   assert.equal(banner.hidden, false);
   await app.feed(app.ctx.c.messages);
   assert.equal(banner.hidden, false, "a settings reload cannot clear a conversation-read error");
-  app.nodes.find(n => n.id === "voice-banner-close").listeners.click();
-  assert.equal(banner.hidden, true);
+  broken = false;
+  await button.listeners.click();
+  assert.equal(banner.hidden, true, "successfully loading the conversation on retry clears its read error");
 });
 
 test("settings-load errors survive playback and clear on an unchanged successful reload", async () => {
