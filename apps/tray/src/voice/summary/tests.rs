@@ -331,6 +331,44 @@ fn summary_model_route_returns_complete_ordered_metadata() {
 }
 
 #[test]
+fn an_id_only_google_catalog_still_hides_dedicated_models() {
+    let server = FakeServer::start(1, |_| Reply {
+        status: 200,
+        body: json!({"data":[
+            {"id":"models/gemini-2.5-pro","display_name":"Gemini 2.5 Pro","owned_by":"google"},
+            {"id":"models/gemini-2.5-flash-preview-tts"},
+            {"id":"models/gemini-2.5-flash"},
+            {"id":"models/gemini-2.5-pro-exp-03-25"},
+            {"id":"models/gemma-3-27b-it"},
+            {"id":"models/imagen-4.0-generate-001"},
+            {"id":"google/models/nano-banana-pro-preview"},
+            {"id":"models/text-embedding-004"},
+            {"id":"models/gemini-2.0-flash-live-001"},
+            {"id":"models/gemini-2.5-computer-use-preview-10-2025"},
+            {"id":"models/gemini-2.5-pro","display_name":"Duplicate retained"}
+        ]}),
+    });
+    let models = models_at(&server.root, "fake-key").unwrap();
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "models/gemini-2.5-pro",
+            "models/gemini-2.5-flash",
+            "models/gemini-2.5-pro-exp-03-25",
+            "models/gemma-3-27b-it",
+            "models/gemini-2.5-pro",
+        ]
+    );
+    assert_eq!(models[0].display_name, "Gemini 2.5 Pro");
+    assert_eq!(models[0].owned_by.as_deref(), Some("google"));
+    assert_eq!(models[4].display_name, "Duplicate retained");
+    assert_eq!(server.finish().len(), 1);
+}
+
+#[test]
 fn anthropic_headers_follow_the_endpoint_instead_of_the_key_prefix() {
     for (base, key, anthropic) in [
         ("https://api.anthropic.com/v1", "rotated-key", true),
