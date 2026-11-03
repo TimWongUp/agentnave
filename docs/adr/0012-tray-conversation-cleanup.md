@@ -1,11 +1,14 @@
 # ADR-0012：托盘在原生会话锁下清理记录
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-16
-- 按天数的自动清理改由服务执行，托盘只保留手动清理，见 [ADR-0046](0046-service-history-retention.md)。
-- 托盘另可在同一把锁下改名，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
-- 锁移到 `locks/<会话ID>.lock`，删除对象改为数据库中的会话行（级联），见 [ADR-0026](0026-sqlite-conversation-store.md)。
+- 按天数的自动清理归属由 [ADR-0046](0046-service-history-retention.md) 取代：由服务执行，托盘保留手动清理。
+- 托盘写入范围由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订：另可在同一把锁下改名。
+- 锁位置与删除对象由 [ADR-0026](0026-sqlite-conversation-store.md) 取代：使用 `locks/<会话ID>.lock`，级联删除数据库会话行。
 - 独立的管理页面已并入办公室：右键工作区或会议室改名、删除，可多选；路由与锁不变。
+- `profiles.json` 增补由 [ADR-0013](0013-members-defaults-and-host-identity.md) 取代
+- 托盘配置写入对象由 [ADR-0014](0014-tray-members-and-one-click-update.md) 修订
+- 保留只读浏览器看板的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
 
 托盘需在没有工作室服务运行、Python 未安装或版本不同的机器上管理历史，因此由 Rust 原生删除，不调用 Python 或 MCP。此决定修订 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 中托盘“不写数据根”的边界：托盘可删除会话的 `state.json` 与 `views.json`，保留会话目录、`.lock` 和全部席位文件；浏览器看板仍只读。
 

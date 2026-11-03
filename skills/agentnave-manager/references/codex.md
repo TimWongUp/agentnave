@@ -8,7 +8,7 @@
 {"model": "gpt-6.1-sol", "effort": "high"}
 ```
 
-用户在 App 打开「允许在 git 仓库外运行」时，服务已为每次 Codex 调用带上 `skip_git_repo_check`（见 `defaults_applied` 或 `list_members` 的 `cli_options`）；未打开时，在非 Git 目录执行已获授权的任务需显式加入布尔选项 `"skip_git_repo_check": true`，Git 目录无需加入。该选项只处理仓库检查，不扩大命令权限。
+服务总是为 Codex 带上 `--skip-git-repo-check`，非 Git 目录也能直接运行，无需传参；它只跳过仓库检查，不扩大命令权限。
 
 `sandbox`（`read-only`、`workspace-write`、`danger-full-access`）设定本次调用的原生沙箱模式，续接同样生效；它是权限类参数，只能来自 App 默认值或用户明确要求。
 

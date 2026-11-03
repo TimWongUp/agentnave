@@ -1,9 +1,11 @@
 # ADR-0007：`wait_any` 返回就绪子集并只消费回复中的阻塞
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-15
-- `wait_any`、`wait_agent` 与 `wait_round` 由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 合并为 `wait`，就绪子集语义不变。
-- 轮次新增的 `seat_lost` 就绪原因见 [ADR-0039](0039-retry-lost-seat-within-round.md)。
+- 修订：2026-11-03 补记，见文末「修订：工作区收件箱」。
+- `wait_any`、`wait_agent` 与 `wait_round` 工具名由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 取代：合并为 `wait`，就绪子集语义不变。
+- 轮次 `seat_lost` 就绪条件由 [ADR-0039](0039-retry-lost-seat-within-round.md) 补充
+- 服务主动终止情形与终态句柄保留七天的边界由 [ADR-0049](0049-service-initiated-termination.md) 补充
 
 ## 背景
 
@@ -34,3 +36,7 @@ Manager 常并行启动多个 Invocation。只有 `wait_agent` 时，它要么�
 `wait_seconds` 收敛为 `0`、`240` 两档，省略时最多等 240 秒。移除任意短等待，减少 Manager 反复选择短窗口带来的调用与上下文开销；240 秒为已观察到的单次 300 秒宿主超时留出余量，不保证适用于更短超时的宿主，也不延长宿主期限。
 
 私聊任务与会议使用相同规则：普通等待只返回运行状态与最近活动，显式 `0` 才附带运行中的公开正文尾部（每项最多 1000 字符）及其年龄，供有具体原因的即时核验。`0` 遇到就绪项仍正常收取，不是只读查询；不能在每次普通等待到期后例行补调。终态、阻塞原因、待审答案与既有一次性交付规则不变，`include_output=false` 仍关闭所有正文。此选择保留按需判断是否介入的能力，代价是不能再通过任意秒数适配更短的宿主超时。
+
+## 修订：工作区收件箱
+
+`wait` 省略 `ids` 时，按 `manager_session_id` 收取本聊天还没取走的终态、阻塞与审核，每个终态只交付一次；派发回执用 `unreceived` 提示仍有未收的结果。boss 同时派出多个任务时不必逐个记住句柄也能收齐结果；按句柄等待的就绪子集语义不变。

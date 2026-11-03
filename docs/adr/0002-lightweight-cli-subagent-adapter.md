@@ -1,10 +1,14 @@
 # ADR-0002：AgentNave 收敛为轻量 CLI 子代理适配器
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-08-25
 - 公开接口条款由 [ADR-0003](0003-agent-only-stdio-mcp-server.md) 取代
 - 总运行时限已移除，当前取消与等待合同见[架构与边界](../context/architecture.md)。
 - “不提供桌面状态 App”由 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 取代：托盘应用只读展示工作室数据。
+- 不保存任务历史的边界由 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 修订
+- “不提供数据库”的存储实现由 [ADR-0026](0026-sqlite-conversation-store.md) 取代：会话与托盘投影存入 SQLite。
+- Adapter 参数例外由 [ADR-0027](0027-deepseek-official-route-stored-credentials.md) 补充：DeepSeek 官方路由可自动恢复已存认证。
+- 服务主动终止情形与终态保留由 [ADR-0049](0049-service-initiated-termination.md) 补充
 
 ## 背景
 

@@ -1,8 +1,10 @@
 # ADR-0038：私聊的 role 指明工位时，服务套用 App 里的工位设置
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-30
 - 扩展 [ADR-0013](0013-members-defaults-and-host-identity.md) 的默认值套用，补充 [ADR-0030](0030-optional-review-gate-skill.md) 与 [ADR-0037](0037-app-writes-orchestration-rules.md)：评审工位与 Explorer／Worker 工位原本只由 `list_members` 回报。
+- 非交互与只读派发说明由 [ADR-0043](0043-service-prompt-instructions.md) 补充
+- “role 兼当编排工位名的旧写法保留”由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代：Explorer／Worker 只用 `seat`，评审角色名仍可用 `role`。
 
 ## 背景
 
@@ -28,4 +30,4 @@
 ## 取舍
 
 - `role` 不再只是显示标签：boss 随手用了某个评审角色名，也会带上那个工位的设置。名单固定且有专门含义，误用的代价是一次换模型的调用，回执可见。
-- 工位设置过期（模型已从员工里移除、档位不再允许）时，调用会报错而不是退回员工默认，boss 需显式传参；这比悄悄跑错模型更容易被发现。
+- 工位补上的模型和档位不受员工名单与档位范围限制；boss 显式传的值仍按名单校验，宿主排除与 Adapter 选项校验照常，不因名单变化退回员工默认。

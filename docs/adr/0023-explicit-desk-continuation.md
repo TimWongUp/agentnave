@@ -2,8 +2,8 @@
 
 - 状态：已被 ADR-0025 取代
 - 日期：2026-10-22
-- `continue_desk` 已由 [ADR-0025](0025-session-desks-and-running-limit.md) 移除，工位改为原生线程。
-- 续接不再按访问等级筛选线程，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
+- `continue_desk` 与按角色合并工位由 [ADR-0025](0025-session-desks-and-running-limit.md) 取代：工位改为原生线程。
+- 按访问等级筛选续接线程的条款由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 取代
 
 修订 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 的私聊默认续接；工位、会议室与转发的其余约定不变。
 

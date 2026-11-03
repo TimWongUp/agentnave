@@ -1,8 +1,9 @@
 # ADR-0009：核心与工作室合为一个发行包，保留两个入口
 
-- 状态：已被 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代
+- 状态：已被 ADR-0016 取代
 - 日期：2026-10-15
 - 取代 [ADR-0006](0006-core-rounds-and-studio-split.md) 中“拆为两个发行包”一节；核心与工作室的运行边界、工具集合不变。
+- 双入口与核心／工作室分层由 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代
 
 ## 背景
 

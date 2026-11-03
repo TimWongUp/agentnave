@@ -1,5 +1,9 @@
 # ADR-0019：不提供运行中消息
 
+- 状态：部分取代
+- 日期：2026-10-19
+- MCP 回到十六个工具的条款由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订
+
 v0.28.0 曾为普通任务加入 `start_agent(enable_messages=true)` 与 `send_agent_message`，让主控在子代理运行中追加约束。此功能现已整体移除：MCP 回到十六个工具，各 CLI 只保留一次性调用（print／exec），结束后用 `session_id` 续接。
 
 移除理由来自真实使用与代价对比：

@@ -1,7 +1,8 @@
 # ADR-0003：只提供面向 Agent 的 STDIO MCP 接口
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-08-30
+- 三个 MCP 工具的名称与工具集合由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订
 
 AgentNave 的唯一用户是上层 Agent Manager。公开接口因此只保留 STDIO MCP 的 `start_agent`、`wait_agent` 和 `cancel_agent`，不再维护面向人的前台 `run` 命令；`agentnave-mcp` 仅是 MCP Host 启动 server 进程的入口。
 

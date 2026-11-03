@@ -1,5 +1,11 @@
 # ADR-0030：App「技能」页提供可选 Skill，评审门控为首个，评审工位在 App 设置
 
+- 状态：部分取代
+- 日期：2026-10-25
+- 外部 Skill 不改动、开关置灰的规则由 [ADR-0036](0036-app-owns-service-skills.md) 修订
+- 评审工位只由 `list_members` 回报及模型须在员工名单内的限制由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊自动套用工位设置，工位默认值豁免名单范围。
+- 同类宿主工位不可用的条款由 [ADR-0037](0037-app-writes-orchestration-rules.md) 修订：标为原生工位，交宿主自带子代理。
+
 ## 背景
 
 用户希望把 PR／合并前的分级评审流程（定级、按风险派评审者、裁决、复核、留记录）用到 Codex 以外的宿主，并通过 AgentNave 派不同 CLI 做评审。原架构约定 MCP 与 Skill 只提供调用方式，不规定调用方的审核策略；App 只内嵌并自动安装 `agentnave-manager`。用户还希望在 App 里直接为每个评审角色指定 CLI 和模型，不必每次在对话里点名。

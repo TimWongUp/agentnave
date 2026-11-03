@@ -1,7 +1,9 @@
 # ADR-0021：关闭自选时保留各 CLI 的默认模型
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-21
+- 重新开启自选时按检测补主力模型由 [ADR-0028](0028-follow-cli-default-model.md) 取代
+- 设置页“自选”开关交互由 [ADR-0035](0035-member-cards-one-row-per-cli.md) 取代
 
 补充 [ADR-0013](0013-members-defaults-and-host-identity.md) 的组员默认值与 [ADR-0020](0020-prefill-main-model-defaults.md) 的首次预填。
 

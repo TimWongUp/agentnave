@@ -1,0 +1,26 @@
+# ADR-0050：1.0 兼容基线
+
+- 状态：已接受
+- 日期：2026-11-03
+- 取代 [ADR-0017](0017-manager-chat-session-identity.md)、[ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 中旧历史独立展示的条款，[ADR-0038](0038-role-applies-app-seat.md) 中「`role` 兼当编排工位名的旧写法继续有效」的条款，[ADR-0008](0008-tray-app-reads-studio-snapshots.md) 的 live v1 兼容读取，[ADR-0014](0014-tray-members-and-one-click-update.md) 的旧升级标记兼容，以及 [ADR-0035](0035-member-cards-one-row-per-cli.md) 的 Codex 仓库检查开关。
+
+1.0.0 是最低兼容版本。早于它的程序和数据，只做一次性迁移，不再保留运行时兼容分支。这样定的前提是：App 每次启动都跟进服务（[ADR-0047](0047-versioned-service-install.md)），新 App 搭配旧服务的情况只会出现在宿主重连之前。
+
+- **旧身份会话**：`manager_session` 为空，或者不是 `s-` 开头的聊天身份。这类会话在服务迁移时连同级联数据和席位目录一起删除，不再合成工作区，也不再单独展示。
+- **数据库**：按 [ADR-0048](0048-sqlite-schema-evolution.md) 迁移到版本 2。托盘不再补表补列。
+- **删除的旧程序兼容**：
+  - live v1 运行快照；
+  - `role` 兼当 `explorer-*`／`worker-*` 工位名（评审角色名用作 `role` 不受影响）；
+  - 旧 App 留下的升级标记；
+  - 主题从 localStorage 迁移；
+  - 旧版语音默认 prompt 的识别；
+  - v0.31 之前中继的判定；
+  - 旧服务只在启动时持锁的判定；
+  - 旧工作台重定向。
+- **`cli-options.json`**：整条链路删除。Codex 一律带 `--skip-git-repo-check`，这是协议必需参数：派发目录由 boss 决定，可能不在 Git 仓库里，而界面上的开关本来就不起作用。磁盘上留下的旧文件直接忽略。旧服务在宿主重连前仍可能把同名选项写进会议席位，迁移无法一次清干净，因此 Codex Adapter 继续接受这个键并忽略它。
+- **保留**：MCP 旧版握手，仍有宿主在用；`RetiredHostName`，展示历史时需要它；uv 旧目录布局与旧 launcher 路径的回退，因为自定义入口和直接写在宿主配置里的命令不会被 App 改写，删掉后这些宿主会找不到服务。
+
+## 考虑过的方案
+
+- **把旧身份会话迁成合成工作区，继续展示**：用户数据可以保住，但要为极少的旧记录多写一套迁移规则。用户选择直接删除，并在发布说明中写明。
+- **继续保留各个兼容分支**：不会破坏任何旧组合，但服务、托盘和前端都要长期背着这些分支，正式版也就失去了一个干净的起点。

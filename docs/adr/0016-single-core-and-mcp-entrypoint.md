@@ -1,10 +1,11 @@
 # ADR-0016：统一核心与 MCP 入口
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-17
 - 取代 ADR-0006、ADR-0009 的核心／工作室分层与双入口约定，以及 ADR-0010 的核心内存组固定旧进程条款。
-- 工具集由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 收敛为 8 个。
-- 嵌套检测与零工具条款由 [ADR-0031](0031-prompt-only-orchestration.md) 取代。
+- 工具集合由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订：收敛为 8 个，后由 ADR-0033 增至 9 个。
+- 嵌套检测与零工具条款由 [ADR-0031](0031-prompt-only-orchestration.md) 取代
+- 只读浏览器看板的保留由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
 
 App 已统一承担接入、配置、展示和清理，继续让用户选择“核心”或“工作室”会使历史和工具能力取决于启动命令。用户明确选择收缩为一个核心，并允许撤销旧核心不保存历史的承诺。
 

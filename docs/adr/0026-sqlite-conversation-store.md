@@ -1,8 +1,10 @@
 # ADR-0026：会话存储改为 SQLite
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-24
 - 修订 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 的视图快照位置、[ADR-0012](0012-tray-conversation-cleanup.md) 的删除对象与锁位置；会话语义、写入归属、live 运行文件与 Provider 原生会话的归属不变。
+- 会话库表结构由 [ADR-0033](0033-boss-workspace-handover.md) 补充：增加工作区交接与只有 boss 的工作区。
+- schema 版本与迁移归属由 [ADR-0048](0048-sqlite-schema-evolution.md) 修订：加表、加列必须升 `user_version`，迁移只由服务执行，托盘不补表补列。
 
 ## 背景
 

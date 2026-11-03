@@ -1,6 +1,9 @@
 # 0005 — 由主控 Agent 导演的公共发言区与独立工作台
 
-状态：已被 [ADR-0006](0006-core-rounds-and-studio-split.md) 取代（v0.15.0）；原接受于 v0.11.0。任务记录不保存 prompt 的条款已由 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 修订
+- 状态：已被 ADR-0006 取代
+- 日期：2026-10-10
+- 讨论室、统一工作台与 Dashboard 归属由 [ADR-0006](0006-core-rounds-and-studio-split.md) 取代（v0.15.0）；原接受于 v0.11.0。
+- 任务记录不保存 prompt 的条款由 [ADR-0008](0008-tray-app-reads-studio-snapshots.md) 修订
 
 ## 背景
 
