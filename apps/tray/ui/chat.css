@@ -609,9 +609,11 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
   .floor { padding: 10px 12px 18px; }
   .conv { width: 100vw; }
 }
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after { animation: none !important; scroll-behavior: auto !important; }
+:root[data-motion="reduce"] .tail:not([hidden])::after { visibility: visible; }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; }
-  .tail:not([hidden])::after { visibility: visible; }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) *, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::before, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::after { animation: none !important; scroll-behavior: auto !important; }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .tail:not([hidden])::after { visibility: visible; }
 }
 
 .gl-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
@@ -705,7 +707,10 @@ dialog.act::backdrop { background: #0006; }
 .voice-waves i:nth-child(2) { height: 11px; }
 .voice-waves i:nth-child(3) { height: 8px; }
 @container (max-width: 340px) { .voice-more, .voice-person:nth-child(n+4):not([data-speaking="true"], [data-preparing="true"]) { display: none; } }
-@media (prefers-reduced-motion: reduce) { .voice-channel[data-live="true"] .voice-status > .voice-waves i { animation: none; } }
+:root[data-motion="reduce"] .voice-channel[data-live="true"] .voice-status > .voice-waves i { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .voice-channel[data-live="true"] .voice-status > .voice-waves i { animation: none; }
+}
 /* ---- new conversation reading (chat-topics.js) ---- */
 .tp-badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 650; line-height: 17px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent); }
 .chat-page .tp-card { display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); text-align: left; cursor: pointer; }
@@ -776,3 +781,22 @@ dialog.act::backdrop { background: #0006; }
 
 .tp-im .voice-read { color: inherit; opacity: .7; }
 .tp-im .voice-read:not(:disabled):hover, .tp-im .voice-read[aria-pressed="true"] { opacity: 1; }
+
+/* System appearance is correct before the shared script runs. */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --solid: #fbfbfd;
+    --card: #0000000a;
+    --card-hover: #00000010;
+    --line-strong: #0000002e;
+    --faint: #9a9ea6;
+    --review: #c4862a;
+    --done: #3d9a56;
+    --idle: #8a8f98;
+    --accent-ink: #fff;
+    --m0: #2f6fe0; --m1: #7a54e0; --m2: #b83fa6; --m3: #d63b6a;
+    --m4: #d9731a; --m5: #6c9a14; --m6: #1f9d62; --m7: #1d89a8;
+  }
+  :root[data-theme="system"] { --floor-dot: #00000010; --wall: #0000000a; }
+  :root[data-theme="system"] { --im-bg: #ededed; --im-member: #ffffff; --im-member-ink: #1d1d1f; --im-boss: #95ec69; --im-boss-ink: #1d1d1f; --im-aside: #d6f7c2; }
+}

@@ -19,9 +19,8 @@
   }
   const $ = (id) => document.getElementById(id);
   // Bilingual text: the page's <html lang> carries the App's interface language. The App sets
-  // it when serving the page; "follow the system" is settled here, before any text is built.
+  // it when serving the page, including the system language, before any text is built.
   const root = document.documentElement;
-  if (root.dataset.lang === "system" && /^en\b/i.test(navigator.language || "")) root.lang = "en";
   const L = (zh, en) => (root.lang.startsWith("en") ? en : zh);
 
   // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
@@ -142,40 +141,9 @@
     if (mock() && link?.getAttribute("href").startsWith("/app/")) event.preventDefault();
   });
 
-  // ---- appearance: system / light / dark, shared by every window through localStorage ----------
-  const THEME_KEY = "agentnave.theme";
-  const lightQuery = matchMedia("(prefers-color-scheme: light)");
-  const themeChoice = () => {
-    try { return localStorage.getItem(THEME_KEY) || "system"; } catch { return "system"; }
-  };
-  // The Mac App's native parts (the panel's glass, window buttons) follow the same choice.
-  let nativeTheme = null;
-  function applyTheme() {
-    const choice = themeChoice();
-    document.documentElement.dataset.theme = choice === "system" ? (lightQuery.matches ? "light" : "dark") : choice;
-    document.querySelectorAll("[data-theme-choice]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice)));
-    if (inApp() && nativeTheme !== choice) {
-      nativeTheme = choice;
-      fetch(`/app/theme/${choice}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
-    }
-  }
-  function themeSwitch() {
-    const labels = { system: ["◐", "跟随系统"], light: ["☀", "浅色"], dark: ["☾", "深色"] };
-    const group = h("div.theme", { role: "group", "aria-label": "外观" },
-      ...Object.entries(labels).map(([choice, [icon, title]]) => {
-        const b = h("button", { type: "button", title, "aria-label": title, "data-theme-choice": choice }, icon);
-        b.addEventListener("click", () => {
-          try { localStorage.setItem(THEME_KEY, choice); } catch { /* storage may be unavailable */ }
-          applyTheme();
-        });
-        return b;
-      }));
-    queueMicrotask(applyTheme);
-    return group;
-  }
-  lightQuery.addEventListener("change", applyTheme);
-  addEventListener("storage", (e) => e.key === THEME_KEY && applyTheme());
-  applyTheme();
+  // Appearance is shared with settings and the panel through App preferences.
+  const applyTheme = window.ANAppearance.applyTheme;
+  const themeSwitch = () => window.ANAppearance.themeSwitch(h, L);
 
   // Which system the App runs on; the bar draws the window buttons that system would.
   function shellOS() {
@@ -288,7 +256,7 @@
   const emits = fetch(artUrl("emit.json")).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   const EMIT_EVERY = { idle: 2600, working: 700, speaking: 1000, review: 1800, done: 350 };
   const emitters = new Set();
-  const still = matchMedia("(prefers-reduced-motion: reduce)");
+  const still = window.ANAppearance.reducedMotion;
   setInterval(() => {
     if (document.hidden || still.matches) return;
     const now = performance.now();
@@ -411,7 +379,7 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();
 
 
@@ -1073,7 +1041,7 @@
 for (const brand of document.querySelectorAll(".brand")) {
   brand.addEventListener("mouseenter", () => {
     const mark = brand.querySelector(".mark");
-    if (!mark || mark.classList.contains("drip") || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!mark || mark.classList.contains("drip") || window.ANAppearance.reducedMotion.matches) return;
     mark.classList.add("drip");
     mark.querySelector(".drop").addEventListener("animationend", () => mark.classList.remove("drip"), { once: true });
   });

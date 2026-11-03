@@ -35,6 +35,7 @@ const SETTINGS_CSS: &[u8] = include_bytes!("../ui/settings.css");
 const CHAT_HTML: &[u8] = include_bytes!("../ui/chat.html");
 const CHAT_JS: &[u8] = include_bytes!("../ui/chat.js");
 const CHAT_CSS: &[u8] = include_bytes!("../ui/chat.css");
+const APPEARANCE_JS: &[u8] = include_bytes!("../ui/appearance.js");
 const COMMON_JS: &[u8] = concat!(
     "\"use strict\";\nconst AGENTNAVE_ART_VERSION = \"",
     env!("CARGO_PKG_VERSION"),
@@ -275,23 +276,6 @@ impl Reader {
                     crate::members::validate,
                     crate::members::save,
                 )
-            });
-        }
-        if path == "/app/preferences" {
-            let dir = crate::preferences::dir();
-            if method == "GET" {
-                return Response::json(&crate::preferences::state(&dir));
-            }
-            if method != "POST" {
-                return Response::error(405, "此路由只接受 GET 或 POST");
-            }
-            return with_payload(action, body, |payload| {
-                match crate::preferences::update(&dir, &payload) {
-                    Ok(document) => {
-                        Response::json(&json!({"saved": true, "preferences": document}))
-                    }
-                    Err(error) => Response::error(400, &error),
-                }
             });
         }
         if path == "/app/settings" {
@@ -792,6 +776,9 @@ impl Reader {
                 "onboarding.css" => {
                     Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec())
                 }
+                "appearance.js" => {
+                    Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec())
+                }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
                 "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
                 "" => page(CHAT_HTML),
@@ -843,6 +830,9 @@ impl Reader {
                 "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
                 "onboarding.css" => {
                     Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec())
+                }
+                "appearance.js" => {
+                    Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec())
                 }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
                 "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
@@ -986,10 +976,10 @@ fn post(
 /// The action header and JSON body of a write, for a route that has already checked its method.
 /// A page in the interface language the user picked.
 fn page(html: &[u8]) -> Response {
-    let language = crate::preferences::language(&crate::preferences::dir());
+    let general = crate::preferences::general::current();
     Response::ok(
         "text/html; charset=utf-8",
-        crate::preferences::localize(html, &language),
+        crate::preferences::localize(html, &general),
     )
 }
 

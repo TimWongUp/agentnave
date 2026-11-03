@@ -138,14 +138,30 @@ impl Updates {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    pub fn refresh_label(&self) {
+        self.label(&self.lock().phase);
+    }
+
     fn label(&self, phase: &Phase) {
+        use crate::preferences::general::text;
         let (text, enabled) = match phase {
-            Phase::Idle => ("检查更新…".to_owned(), true),
-            Phase::Checking => ("正在检查更新…".to_owned(), false),
-            Phase::Latest => (format!("已是最新版本 v{VERSION}"), true),
-            Phase::Available(version) => (format!("更新到 v{version}…"), true),
-            Phase::Installing(_) => ("正在更新…".to_owned(), false),
-            Phase::Failed(_) => ("更新失败，点此重试".to_owned(), true),
+            Phase::Idle => (text("检查更新…", "Check for Updates…").to_owned(), true),
+            Phase::Checking => (
+                text("正在检查更新…", "Checking for Updates…").to_owned(),
+                false,
+            ),
+            Phase::Latest => (
+                format!("{} v{VERSION}", text("已是最新版本", "Up to date")),
+                true,
+            ),
+            Phase::Available(version) => {
+                (format!("{} v{version}…", text("更新到", "Update to")), true)
+            }
+            Phase::Installing(_) => (text("正在更新…", "Updating…").to_owned(), false),
+            Phase::Failed(_) => (
+                text("更新失败，点此重试", "Update failed, retry").to_owned(),
+                true,
+            ),
         };
         let _ = self.item.set_text(text);
         let _ = self.item.set_enabled(enabled);

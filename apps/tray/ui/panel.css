@@ -228,8 +228,9 @@ button { font: inherit; color: inherit; cursor: default; }
 .avatar { flex: none; width: 24px; height: 24px; border-radius: 7px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; }
 
 html.paused *, html.paused ::before, html.paused ::after { animation-play-state: paused !important; }
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) *, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::before, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::after { animation: none !important; }
 }
 
 .ob-slot { padding: 14px 2px 8px; }
@@ -244,3 +245,30 @@ html.paused *, html.paused ::before, html.paused ::after { animation-play-state:
 .cli-mark.mono > img { filter: invert(1); }
 .cli-mark.claude-tile { background: #d97757 !important; }
 .cli-mark.claude-tile > img { filter: brightness(0) invert(1); }
+
+/* System appearance is correct before the shared script runs. */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+    --bg: #f5f5f7f5;
+    --glass: #f5f5f7c7;
+    --solid: #f5f5f7;
+    --card: #0000000a;
+    --card-hover: #00000012;
+    --line: #00000014;
+    --line-strong: #0000002e;
+    --ink: #1d1d1f;
+    --soft: #3a3a3c;
+    --muted: #6e6e73;
+    --faint: #9a9ea6;
+    --accent: #1d1d1f;
+    --accent-ink: #fff;
+    --run: #0e9d92;
+    --review: #c4862a;
+    --bad: #d65446;
+    --done: #3d9a56;
+    --idle: #8a8f98;
+    --m0: #2f6fe0; --m1: #7a54e0; --m2: #b83fa6; --m3: #d63b6a;
+    --m4: #d9731a; --m5: #6c9a14; --m6: #1f9d62; --m7: #1d89a8;
+  }
+}
