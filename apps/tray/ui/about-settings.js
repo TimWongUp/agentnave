@@ -2,7 +2,7 @@
 // The About pane's automatic update checks. The choice is stored with the App's preferences,
 // while "立即检查" always works. The App reads the same field before its own daily check.
 (function () {
-  const { h, L } = AN;
+  const { h, L, load, post } = AN;
   const root = document.getElementById("update-auto-check");
   if (!root) return;
   const notice = document.getElementById("notice");
@@ -31,16 +31,8 @@
     notice.classList.toggle("error", Boolean(error));
   }
 
-  async function preferences(payload) {
-    const response = await fetch("/app/preferences", payload === undefined ? { cache: "no-store" } : {
-      method: "POST",
-      headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || L("无法保存设置", "Could not save the setting"));
-    return data;
-  }
+  // Through AN, so the browser preview's mock answers too.
+  const preferences = payload => payload === undefined ? load("/app/preferences") : post("/app/preferences", payload);
 
   function chosen(data) {
     return data.preferences?.updates?.auto_check !== false;
