@@ -142,209 +142,20 @@ struct Tray {
 fn main() {
     proxy::apply();
     let reader = Arc::new(Reader::new(data::data_root()));
-    let served = reader.clone();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .manage(preferences::runtime::Runtime::default())
-        .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
-            let reader = served.clone();
-            let app = ctx.app_handle().clone();
-            let path = match request.uri().path() {
-                "/app/storage/preview" => request
-                    .uri()
-                    .path_and_query()
-                    .map(|path| path.as_str())
-                    .unwrap_or("/app/storage/preview")
-                    .to_owned(),
-                path => path.to_owned(),
-            };
-            let label = ctx.webview_label().to_owned();
-            let flag = |name: &str| {
-                request
-                    .uri()
-                    .query()
-                    .is_some_and(|query| query.split('&').any(|pair| pair == name))
-            };
-            let refresh = flag("refresh=1");
-            let quiet = flag("quiet=1");
-            let service_only = flag("service=1");
-            thread::spawn(move || {
-                let method = request.method().as_str();
-                let action = request
-                    .headers()
-                    .get("X-AgentNave-Action")
-                    .and_then(|v| v.to_str().ok());
-                let reply = match (method, path.as_str()) {
-                    _ if preview_refuses(PREVIEW, method, &path) => {
-                        data::Response::error(403, "预览版只读：请在正式版里保存改动")
-                    }
-                    ("GET", "/app/status") => data::Response::json(&update::status(&app)),
-                    (_, "/app/alerts/test") => alerts::test(&app, method, action),
-                    // Whether the page's maximize button should read as maximize or restore.
-                    ("GET", "/app/window/state") => {
-                        let maximized = app
-                            .get_webview_window(&label)
-                            .and_then(|window| window.is_maximized().ok())
-                            .unwrap_or(false);
-                        data::Response::json(&serde_json::json!({ "maximized": maximized }))
-                    }
-                    // The top bar moves, zooms, minimizes and closes its window, as a native title
-                    // bar would; the main window draws no title bar of its own.
-                    (
-                        "POST",
-                        "/app/window/drag"
-                        | "/app/window/zoom"
-                        | "/app/window/minimize"
-                        | "/app/window/close",
-                    ) if action == Some("1") => {
-                        match (WindowAction::of(&path), app.get_webview_window(&label)) {
-                            (Some(step), Some(window)) => {
-                                step.run(&window);
-                                data::Response::json(&serde_json::json!({"ok": true}))
-                            }
-                            _ => data::Response::error(404, "找不到窗口"),
-                        }
-                    }
-                    // Native appearance (the panel's glass, window buttons) follows the page's theme.
-                    ("POST", "/app/theme/system" | "/app/theme/light" | "/app/theme/dark")
-                        if action == Some("1") =>
-                    {
-                        let choice = path.rsplit('/').next().unwrap_or("system");
-                        match preferences::runtime::save(
-                            &app,
-                            &serde_json::json!({"general": {"theme": choice}}),
-                        ) {
-                            Ok(_) => data::Response::json(&serde_json::json!({"ok": true})),
-                            Err(error) => data::Response::error(400, &error),
-                        }
-                    }
-                    (_, "/app/preferences") => {
-                        preferences::runtime::request(&app, method, action, request.body())
-                    }
-                    ("GET", "/settings/members") => reader.members(refresh),
-                    (_, "/app/service/install") if method != "POST" => {
-                        data::Response::error(405, "此操作只接受 POST")
-                    }
-                    (_, "/app/service/install") if action != Some("1") => {
-                        data::Response::error(403, "缺少操作请求头")
-                    }
-                    (_, "/app/service/install") => {
-                        data::Response::json(&update::install_service_now(&app))
-                    }
-                    (_, "/app/update/check" | "/app/update/apply") if method != "POST" => {
-                        data::Response::error(405, "此操作只接受 POST")
-                    }
-                    (_, "/app/update/check" | "/app/update/apply") if action != Some("1") => {
-                        data::Response::error(403, "缺少操作请求头")
-                    }
-                    (_, "/app/update/check") => {
-                        data::Response::json(&update::check_now(&app, !quiet))
-                    }
-                    (_, "/app/update/apply") => {
-                        data::Response::json(&update::apply(&app, service_only))
-                    }
-                    _ => reader.request(method, &path, action, request.body()),
-                };
-                let mut response = Response::builder();
-                if let Some(notice) = &reply.notice {
-                    response = response.header("X-AgentNave-Notice", percent_encode(notice));
-                }
-                let response = response
-                    .status(reply.status)
-                    .header(header::CONTENT_TYPE, reply.content_type)
-                    .header(header::CACHE_CONTROL, reply.cache_control)
-                    .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-                    .header(header::REFERRER_POLICY, "no-referrer")
-                    .header(header::CONTENT_SECURITY_POLICY, CSP)
-                    .body(reply.body)
-                    .expect("static response headers are valid");
-                responder.respond(response);
-            });
-        })
+        .manage(preferences::runtime::Runtime::default());
+    let app = register_protocol(builder, reader.clone())
         .manage(Tray {
             reader: reader.clone(),
             panel_hidden: Mutex::new(None),
         })
-        .setup(move |app| {
-            // A regular app: it has a Dock icon and can be kept in the Dock; the menu bar icon stays.
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Regular);
-            let handle = app.handle();
-            if let Err(error) = preferences::autostart::repair(handle) {
-                eprintln!("无法修复开机启动路径：{error}");
-            }
-            let host_context = hosts::Context::live(handle.path().app_data_dir()?);
-            let takeover = reader.clone();
-            build_panel(handle)?;
-            let overview = reader.overview();
-            let menu = preferences::runtime::menu(handle)?;
-            if let Err(error) = preferences::runtime::apply(handle) {
-                eprintln!("无法应用常规设置：{error}");
-            }
-            TrayIconBuilder::with_id(TRAY)
-                .icon(badge::initial(badge::count(&overview)))
-                .icon_as_template(true)
-                .tooltip(headline(&overview))
-                .title(if PREVIEW { "预览" } else { "" })
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => restore(app),
-                    "settings" => open(app, "main", "/settings/"),
-                    "update" if !PREVIEW => open(app, "main", UPDATE_PAGE),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        rect,
-                        ..
-                    } = event
-                    {
-                        badge::drip(tray);
-                        if preferences::general::current()["tray_click"] == "office" {
-                            hide_visible_panel(tray.app_handle());
-                            open(tray.app_handle(), "main", "/chat/");
-                        } else {
-                            toggle_panel(tray.app_handle(), rect);
-                        }
-                    }
-                })
-                .build(app)?;
-            let handle = handle.clone();
-            let checker = handle.clone();
-            let resumer = handle.clone();
-            thread::spawn(move || {
-                let shell = takeover.probe_tools(&host_context);
-                thread::spawn(move || {
-                    takeover.configure_hosts(host_context, shell);
-                    // Refreshing repairs host configs and reinstalls Skills; that stays with the installed app.
-                    if !PREVIEW {
-                        takeover.refresh_hosts();
-                    }
-                });
-                if !PREVIEW {
-                    update::resume(&resumer);
-                    thread::spawn(move || {
-                        loop {
-                            update::auto_check(&checker);
-                            thread::sleep(update::EVERY);
-                        }
-                    });
-                }
-            });
-            thread::spawn(members::prepare);
-            alerts::start(handle.clone(), reader.clone());
-            thread::spawn(move || poll(handle, reader, overview));
-            Ok(())
-        })
+        .setup(move |app| setup(app, reader))
         .build(tauri::generate_context!())
         .expect("failed to start the AgentNave tray");
     app.run(|app, event| match event {
@@ -765,6 +576,236 @@ fn browse(target: &Url) {
     let _ = Command::new("explorer").arg(target.as_str()).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let _ = Command::new("xdg-open").arg(target.as_str()).spawn();
+}
+
+fn register_protocol(
+    builder: tauri::Builder<tauri::Wry>,
+    served: Arc<Reader>,
+) -> tauri::Builder<tauri::Wry> {
+    builder.register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
+        let reader = served.clone();
+        let app = ctx.app_handle().clone();
+        let path = match request.uri().path() {
+            "/app/storage/preview" => request
+                .uri()
+                .path_and_query()
+                .map(|path| path.as_str())
+                .unwrap_or("/app/storage/preview")
+                .to_owned(),
+            path => path.to_owned(),
+        };
+        let label = ctx.webview_label().to_owned();
+        let flag = |name: &str| {
+            request
+                .uri()
+                .query()
+                .is_some_and(|query| query.split('&').any(|pair| pair == name))
+        };
+        let refresh = flag("refresh=1");
+        let quiet = flag("quiet=1");
+        let service_only = flag("service=1");
+        thread::spawn(move || {
+            let reply = ProtocolRequest {
+                app,
+                reader,
+                label,
+                path,
+                refresh,
+                quiet,
+                service_only,
+                request,
+            }
+            .reply();
+            let mut response = Response::builder();
+            if let Some(notice) = &reply.notice {
+                response = response.header("X-AgentNave-Notice", percent_encode(notice));
+            }
+            let response = response
+                .status(reply.status)
+                .header(header::CONTENT_TYPE, reply.content_type)
+                .header(header::CACHE_CONTROL, reply.cache_control)
+                .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+                .header(header::REFERRER_POLICY, "no-referrer")
+                .header(header::CONTENT_SECURITY_POLICY, CSP)
+                .body(reply.body)
+                .expect("static response headers are valid");
+            responder.respond(response);
+        });
+    })
+}
+
+fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::error::Error>> {
+    // A regular app: it has a Dock icon and can be kept in the Dock; the menu bar icon stays.
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    let handle = app.handle();
+    if let Err(error) = preferences::autostart::repair(handle) {
+        eprintln!("无法修复开机启动路径：{error}");
+    }
+    let host_context = hosts::Context::live(handle.path().app_data_dir()?);
+    let takeover = reader.clone();
+    build_panel(handle)?;
+    let overview = reader.overview();
+    let menu = preferences::runtime::menu(handle)?;
+    if let Err(error) = preferences::runtime::apply(handle) {
+        eprintln!("无法应用常规设置：{error}");
+    }
+    TrayIconBuilder::with_id(TRAY)
+        .icon(badge::initial(badge::count(&overview)))
+        .icon_as_template(true)
+        .tooltip(headline(&overview))
+        .title(if PREVIEW { "预览" } else { "" })
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => restore(app),
+            "settings" => open(app, "main", "/settings/"),
+            "update" if !PREVIEW => open(app, "main", UPDATE_PAGE),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                rect,
+                ..
+            } = event
+            {
+                badge::drip(tray);
+                if preferences::general::current()["tray_click"] == "office" {
+                    hide_visible_panel(tray.app_handle());
+                    open(tray.app_handle(), "main", "/chat/");
+                } else {
+                    toggle_panel(tray.app_handle(), rect);
+                }
+            }
+        })
+        .build(app)?;
+    let handle = handle.clone();
+    let checker = handle.clone();
+    let resumer = handle.clone();
+    thread::spawn(move || {
+        let shell = takeover.probe_tools(&host_context);
+        thread::spawn(move || {
+            takeover.configure_hosts(host_context, shell);
+            // Refreshing repairs host configs and reinstalls Skills; that stays with the installed app.
+            if !PREVIEW {
+                takeover.refresh_hosts();
+            }
+        });
+        if !PREVIEW {
+            update::resume(&resumer);
+            thread::spawn(move || {
+                loop {
+                    update::auto_check(&checker);
+                    thread::sleep(update::EVERY);
+                }
+            });
+        }
+    });
+    thread::spawn(members::prepare);
+    alerts::start(handle.clone(), reader.clone());
+    thread::spawn(move || poll(handle, reader, overview));
+    Ok(())
+}
+
+struct ProtocolRequest {
+    app: AppHandle,
+    reader: Arc<Reader>,
+    label: String,
+    path: String,
+    refresh: bool,
+    quiet: bool,
+    service_only: bool,
+    request: tauri::http::Request<Vec<u8>>,
+}
+
+impl ProtocolRequest {
+    fn reply(&self) -> data::Response {
+        let Self {
+            app,
+            reader,
+            label,
+            path,
+            refresh,
+            quiet,
+            service_only,
+            ..
+        } = self;
+        let (refresh, quiet, service_only) = (*refresh, *quiet, *service_only);
+        let method = self.request.method().as_str();
+        let action = self
+            .request
+            .headers()
+            .get("X-AgentNave-Action")
+            .and_then(|v| v.to_str().ok());
+        match (method, path.as_str()) {
+            _ if preview_refuses(PREVIEW, method, path) => {
+                data::Response::error(403, "预览版只读：请在正式版里保存改动")
+            }
+            ("GET", "/app/status") => data::Response::json(&update::status(app)),
+            (_, "/app/alerts/test") => alerts::test(app, method, action),
+            // Whether the page's maximize button should read as maximize or restore.
+            ("GET", "/app/window/state") => {
+                let maximized = app
+                    .get_webview_window(label)
+                    .and_then(|window| window.is_maximized().ok())
+                    .unwrap_or(false);
+                data::Response::json(&serde_json::json!({ "maximized": maximized }))
+            }
+            // The top bar moves, zooms, minimizes and closes its window, as a native title
+            // bar would; the main window draws no title bar of its own.
+            (
+                "POST",
+                "/app/window/drag"
+                | "/app/window/zoom"
+                | "/app/window/minimize"
+                | "/app/window/close",
+            ) if action == Some("1") => {
+                match (WindowAction::of(path), app.get_webview_window(label)) {
+                    (Some(step), Some(window)) => {
+                        step.run(&window);
+                        data::Response::json(&serde_json::json!({"ok": true}))
+                    }
+                    _ => data::Response::error(404, "找不到窗口"),
+                }
+            }
+            // Native appearance (the panel's glass, window buttons) follows the page's theme.
+            ("POST", "/app/theme/system" | "/app/theme/light" | "/app/theme/dark")
+                if action == Some("1") =>
+            {
+                let choice = path.rsplit('/').next().unwrap_or("system");
+                match preferences::runtime::save(
+                    app,
+                    &serde_json::json!({"general": {"theme": choice}}),
+                ) {
+                    Ok(_) => data::Response::json(&serde_json::json!({"ok": true})),
+                    Err(error) => data::Response::error(400, &error),
+                }
+            }
+            (_, "/app/preferences") => {
+                preferences::runtime::request(app, method, action, self.request.body())
+            }
+            ("GET", "/settings/members") => reader.members(refresh),
+            (_, "/app/service/install") if method != "POST" => {
+                data::Response::error(405, "此操作只接受 POST")
+            }
+            (_, "/app/service/install") if action != Some("1") => {
+                data::Response::error(403, "缺少操作请求头")
+            }
+            (_, "/app/service/install") => data::Response::json(&update::install_service_now(app)),
+            (_, "/app/update/check" | "/app/update/apply") if method != "POST" => {
+                data::Response::error(405, "此操作只接受 POST")
+            }
+            (_, "/app/update/check" | "/app/update/apply") if action != Some("1") => {
+                data::Response::error(403, "缺少操作请求头")
+            }
+            (_, "/app/update/check") => data::Response::json(&update::check_now(app, !quiet)),
+            (_, "/app/update/apply") => data::Response::json(&update::apply(app, service_only)),
+            _ => reader.request(method, path, action, self.request.body()),
+        }
+    }
 }
 
 #[cfg(test)]
