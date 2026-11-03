@@ -9,6 +9,38 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+type HostName = Literal[
+    "codex",
+    "claude",
+    "codebuddy",
+    "workbuddy",
+    "grok",
+    "antigravity",
+    "pi",
+    "deepseek",
+    "hermes",
+    "zcode",
+]
+# Hosts no longer connected or detected; saved history may still name them.
+type RetiredHostName = Literal["gemini", "opencode"]
+type HostSource = Literal["env", "parent", "unknown"]
+
+
+@dataclass(frozen=True)
+class Host:
+    name: HostName | None = None
+    source: HostSource = "unknown"
+    app_id: str | None = None
+
+    @property
+    def provider(self) -> str | None:
+        if self.name == "workbuddy":
+            return "codebuddy"
+        if self.name == "hermes":
+            return None
+        return self.name
+
+
 type ProviderOption = str | int | float | bool
 type RoundOrder = Literal["parallel", "serial"]
 
@@ -64,9 +96,6 @@ class InvocationError:
     message: str
     details: str | None = None
 
-    def to_dict(self) -> dict[str, object]:
-        return {"code": self.code, "message": self.message, "details": self.details}
-
 
 @dataclass(frozen=True, slots=True)
 class ProviderActivity:
@@ -82,16 +111,6 @@ class ProviderActivity:
     blocking_error: str | None = None
     public_output: str | None = None
 
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "kind": self.kind,
-            "event_type": self.event_type,
-            "state": self.state,
-            "tool_name": self.tool_name,
-            "message": self.message,
-            "tool_call_id": self.tool_call_id,
-        }
-
 
 @dataclass(frozen=True, slots=True)
 class InvocationSnapshot:
@@ -100,15 +119,6 @@ class InvocationSnapshot:
     last_event_age_ms: int | None
     last_activity: ProviderActivity | None = None
     last_activity_age_ms: int | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "phase": self.phase.value,
-            "elapsed_ms": self.elapsed_ms,
-            "last_event_age_ms": self.last_event_age_ms,
-            "last_activity": None if self.last_activity is None else self.last_activity.to_dict(),
-            "last_activity_age_ms": self.last_activity_age_ms,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,20 +143,8 @@ class InvocationResult:
     provider: str
     output: str
     session_id: str | None
-    provider_usage: dict[str, int | float]
     duration_ms: int
     error: InvocationError | None = None
     reported_model: str | None = None
     # Problems in a run the CLI still reported as finished, such as denied tool calls.
     warnings: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "status": self.status.value,
-            "provider": self.provider,
-            "output": self.output,
-            "session_id": self.session_id,
-            "provider_usage": self.provider_usage,
-            "duration_ms": self.duration_ms,
-            "error": None if self.error is None else self.error.to_dict(),
-        }

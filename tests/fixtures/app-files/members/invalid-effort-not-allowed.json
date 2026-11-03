@@ -10,7 +10,6 @@
           ],
           "effort": "low",
           "options": {
-            "skip_git_repo_check": true,
             "budget": 2.5
           },
           "notes": "多文件实现"

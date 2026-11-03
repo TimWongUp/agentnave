@@ -7,6 +7,9 @@ class CodeBuddyAdapter(ClaudeAdapter):
     """Use CodeBuddy's documented Claude-compatible stream result contract."""
 
     name = "codebuddy"
+    options_description = (
+        "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)"
+    )
     executable = "codebuddy"
     _options = {
         "model": "--model",

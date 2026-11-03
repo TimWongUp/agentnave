@@ -15,7 +15,6 @@ from agentnave.adapters.base import (
     clean_model,
     error_summary,
     failure_status,
-    normalized_usage,
     object_dict,
     option_args,
     parse_json_lines,
@@ -51,6 +50,7 @@ def _last_text_block(events: list[dict[str, object]]) -> str:
 
 class GrokAdapter(AdapterHooks):
     name = "grok"
+    options_description = "permission_mode, agent, max_turns, sandbox, restricted_tools (boolean; denies tool execution)"
     _options = {
         "model": "--model",
         "effort": "--reasoning-effort",
@@ -162,12 +162,10 @@ class GrokAdapter(AdapterHooks):
                 InvocationStatus.FAILED,
                 "",
                 None,
-                {},
                 "grok stream ended without a terminal event",
             )
 
         session_id = payload.get("session_id", payload.get("sessionId"))
-        usage = normalized_usage(payload)
         explicit_error = payload.get("error")
         stop_reason = payload.get("stopReason", payload.get("stop_reason"))
         if payload.get("type") == "error":
@@ -179,7 +177,7 @@ class GrokAdapter(AdapterHooks):
             isinstance(stop_reason, str) and stop_reason.replace("_", "").lower() == "endturn"
         )
         if returncode == 0 and not explicit_error and normal_stop:
-            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id, usage)
+            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
 
         raw_message = str(
             explicit_error
@@ -193,4 +191,4 @@ class GrokAdapter(AdapterHooks):
             if isinstance(stop_reason, str) and stop_reason.lower() == "refusal"
             else failure_status(message)
         )
-        return ParsedProviderResult(status, output, session_id, usage, message)
+        return ParsedProviderResult(status, output, session_id, message)

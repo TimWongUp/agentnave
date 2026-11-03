@@ -1,7 +1,4 @@
-"""Saved tray projections and manager-readable history.
-
-Public views carry only committed entries.
-"""
+"""Saved tray projections and manager-readable history."""
 
 from __future__ import annotations
 
@@ -33,7 +30,7 @@ def _thread(provider: str, session_id: str | None) -> str | None:
     return hashlib.sha256(f"{provider}\0{session_id}".encode()).hexdigest()[:16]
 
 
-def _show(state: Conversation, view: str) -> dict[str, object]:
+def _show(state: Conversation) -> dict[str, object]:
     seats = {seat.id: seat for seat in state.seats}
     rounds = {round_.number: round_ for round_ in state.rounds}
 
@@ -64,7 +61,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
         ]
 
     return {
-        "view": view,
+        "view": "director",
         "host": state.host,
         "id": state.id,
         "title": state.title,
@@ -137,17 +134,8 @@ def _round(round_: RoundRecord) -> dict[str, object]:
     }
 
 
-def _director(
-    state: Conversation,
-    *,
-    public_url: str,
-    home_url: str,
-    storage: str,
-) -> dict[str, object]:
+def _director(state: Conversation) -> dict[str, object]:
     common: dict[str, object] = {
-        "workbench_url": home_url,
-        "storage": storage,
-        "refresh_error": None,
         "created": state.created,
         "cwd": conversation_cwd(state),
     }
@@ -171,7 +159,7 @@ def _director(
             "tasks": tasks,
         } | common
     latest = state.rounds[-1] if state.rounds else None
-    data = _show(state, "director") | common
+    data = _show(state) | common
     round_times = {entry.round: entry.time for entry in state.entries if entry.kind == "task"}
     data["private_messages"] = [
         {
@@ -215,7 +203,6 @@ def _director(
     ]
     data.update(
         {
-            "public_url": public_url,
             "status": "idle" if latest is None else _round(latest)["status"],
             "speaking": [seat.seat_id for seat in latest.seats if seat.status == "running"]
             if latest
@@ -403,9 +390,8 @@ def _time(text: str) -> datetime | None:
         return None
 
 
-def snapshot(state: Conversation, storage: str) -> dict[str, object]:
-    """One conversation as the tray app reads it, linking to its routes: / , /c/<id>/, /p/<id>/."""
-    show = state.kind == "show"
+def snapshot(state: Conversation) -> dict[str, object]:
+    """One conversation as the tray app reads it."""
     return {
         "version": 1,
         "summary": {
@@ -418,11 +404,5 @@ def snapshot(state: Conversation, storage: str) -> dict[str, object]:
             "status": _status(state),
             "updated": updated(state),
         },
-        "director": _director(
-            state,
-            public_url=f"/p/{state.id}/" if show else "",
-            home_url="/",
-            storage=storage,
-        ),
-        "public": _show(state, "public") | {"stale": False} if show else None,
+        "director": _director(state),
     }

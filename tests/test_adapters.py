@@ -172,7 +172,7 @@ def test_claude_adapter_only_passes_transport_and_explicit_options(tmp_path: Pat
     assert prepared.stdin == b"do the task"
 
 
-def test_claude_adapter_preserves_result_session_and_usage_summary() -> None:
+def test_claude_adapter_preserves_result_and_session() -> None:
     payload = {
         "type": "result",
         "result": "finished",
@@ -187,7 +187,6 @@ def test_claude_adapter_preserves_result_session_and_usage_summary() -> None:
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "finished"
     assert result.session_id == "session-2"
-    assert result.usage == {"num_turns": 2, "total_cost_usd": 0.02}
 
 
 def test_codebuddy_adapter_only_passes_transport_and_explicit_options(tmp_path: Path) -> None:
@@ -233,7 +232,6 @@ def test_codebuddy_adapter_parses_documented_result_contract() -> None:
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "finished"
     assert result.session_id == "session-4"
-    assert result.usage == {"num_turns": 3, "total_cost_usd": 0.03}
 
 
 def test_codebuddy_permission_denials_block_only_a_failed_run() -> None:
@@ -282,7 +280,6 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
                 "model": "gpt-5.6-sol",
                 "effort": "high",
                 "sandbox": "workspace-write",
-                "skip_git_repo_check": True,
             },
         )
     )
@@ -313,18 +310,6 @@ def test_codex_adapter_does_not_supply_model_defaults(
     prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
 
     assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
-
-
-def test_codex_skip_git_repo_check_option_adds_no_second_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
-    monkeypatch.setattr(codex, "_WINDOWS_DESKTOP_CODEX_PATHS", ())
-    for value in (True, False):
-        prepared = CodexAdapter().prepare(
-            request(tmp_path, "codex", provider_options={"skip_git_repo_check": value})
-        )
-        assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="macOS bundle selection uses POSIX executability")
@@ -435,17 +420,6 @@ def test_provider_environment_keeps_manager_chat_identity_private(
     assert os.environ["AGENTNAVE_HOST_SESSION_ID"] == "private-manager-chat"
 
 
-def test_codex_adapter_rejects_non_boolean_git_check_override(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="skip_git_repo_check must be a boolean"):
-        CodexAdapter().prepare(
-            request(
-                tmp_path,
-                "codex",
-                provider_options={"skip_git_repo_check": "true"},
-            )
-        )
-
-
 @pytest.mark.parametrize("value", [None, False, True])
 def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None) -> None:
     options: dict[str, str | int | float | bool] = (
@@ -516,7 +490,6 @@ def test_codex_adapter_preserves_final_message_and_session() -> None:
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "finished"
     assert result.session_id == "0199a213-81c0-7800-8aa1-bbab2a035a53"
-    assert result.usage == {}
 
 
 def test_codex_adapter_fails_turn_without_reply_or_usage() -> None:
@@ -615,96 +588,6 @@ def test_provider_registry_returns_codex_adapter() -> None:
     assert isinstance(adapter, CodexAdapter)
 
 
-@pytest.mark.parametrize(
-    ("adapter", "stdout", "expected_output", "expected_session"),
-    [
-        (
-            ClaudeAdapter(),
-            (
-                b'{"type":"result","result":"claude answer",'
-                b'"session_id":"claude-session","num_turns":{"invalid":true},'
-                b'"total_cost_usd":' + b"1" * 5001 + b',"is_error":false}'
-            ),
-            "claude answer",
-            "claude-session",
-        ),
-        (
-            CodeBuddyAdapter(),
-            (
-                b'{"type":"result","result":"codebuddy answer",'
-                b'"session_id":"codebuddy-session","num_turns":{"invalid":true},'
-                b'"total_cost_usd":' + b"1" * 5001 + b',"is_error":false}'
-            ),
-            "codebuddy answer",
-            "codebuddy-session",
-        ),
-        (
-            AntigravityAdapter(),
-            json.dumps(
-                {
-                    "event": "result",
-                    "result": {
-                        "conversation_id": "antigravity-session",
-                        "status": "SUCCESS",
-                        "response": "antigravity answer",
-                        "num_turns": {"invalid": True},
-                        "total_cost_usd": [0.1],
-                    },
-                }
-            ).encode(),
-            "antigravity answer",
-            "antigravity-session",
-        ),
-        (
-            GrokAdapter(),
-            b"\n".join(
-                (
-                    json.dumps({"type": "text", "data": "grok answer"}).encode(),
-                    json.dumps(
-                        {
-                            "type": "end",
-                            "stopReason": "end_turn",
-                            "sessionId": "grok-session",
-                            "num_turns": {"invalid": True},
-                            "total_cost_usd": [0.1],
-                        }
-                    ).encode(),
-                )
-            ),
-            "grok answer",
-            "grok-session",
-        ),
-        (
-            DeepSeekAdapter(),
-            b"\n".join(
-                json.dumps(event).encode()
-                for event in (
-                    {"type": "session", "sessionId": "deepseek-session", "cwd": "/w"},
-                    {"type": "text", "text": "intermediate"},
-                    {"type": "status", "phase": "step_end", "usage": {"inputTokens": [1]}},
-                    {"type": "status", "phase": "turn_end", "reason": {"kind": "completed"}},
-                    {"type": "final", "text": "deepseek answer"},
-                )
-            ),
-            "deepseek answer",
-            "deepseek-session",
-        ),
-    ],
-)
-def test_adapters_drop_malformed_usage_without_losing_terminal_result(
-    adapter: ClaudeAdapter | CodeBuddyAdapter | AntigravityAdapter | GrokAdapter | DeepSeekAdapter,
-    stdout: bytes,
-    expected_output: str,
-    expected_session: str,
-) -> None:
-    result = adapter.parse(0, stdout, b"")
-
-    assert result.status is InvocationStatus.SUCCEEDED
-    assert result.output == expected_output
-    assert result.session_id == expected_session
-    assert result.usage == {}
-
-
 def test_claude_permission_denials_block_only_a_failed_run(tmp_path: Path) -> None:
     # Claude 2.1.308 reports subtype=success when the model finishes after a denied tool call.
     payload = {
@@ -749,7 +632,7 @@ def test_claude_permission_denials_block_only_a_failed_run(tmp_path: Path) -> No
     assert "codebuddy denied 1 tool call(s) (Bash)" in warned.warnings[0]
 
 
-def test_claude_structured_error_preserves_usage_and_message() -> None:
+def test_claude_structured_error_preserves_message() -> None:
     payload = {
         "type": "result",
         "subtype": "error_max_turns",
@@ -764,7 +647,6 @@ def test_claude_structured_error_preserves_usage_and_message() -> None:
     assert result.error_message is not None
     assert "maximum turns reached" in result.error_message
     assert len(result.error_message) == 512  # a long provider error is summarized, bounded
-    assert result.usage == {"num_turns": 4}
 
 
 def test_claude_api_error_uses_output_instead_of_success_subtype() -> None:
@@ -877,7 +759,6 @@ def test_antigravity_adapter_parses_documented_json_contract() -> None:
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "finished\n"
     assert result.session_id == "conversation-2"
-    assert result.usage == {"num_turns": 2}
 
 
 def test_antigravity_waiting_status_is_blocked() -> None:
@@ -1162,7 +1043,6 @@ def test_grok_adapter_returns_only_final_text_block() -> None:
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "finished"
     assert result.session_id == "session-3"
-    assert result.usage == {"num_turns": 2, "total_cost_usd": 0.01}
 
 
 def test_grok_adapter_does_not_report_max_turns_as_success() -> None:
@@ -1360,7 +1240,7 @@ def test_activity_projects_native_tool_metadata_without_inputs(
     assert activity.state == state
     assert activity.tool_name == tool
     assert activity.tool_call_id is not None
-    assert "hidden" not in json.dumps(activity.to_dict())
+    assert "hidden" not in str(activity)
 
 
 def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -> None:
@@ -1484,7 +1364,6 @@ def test_pi_filtered_capture_preserves_only_final_reply_and_session(tmp_path: Pa
         result.output == "final answer\u2028next\u2029line\u0085end"
         and result.session_id == "native-session"
     )
-    assert result.usage == {"total_cost_usd": 0.25}
 
 
 def test_pi_foreign_session_reports_cwd_instead_of_forking() -> None:
@@ -1562,7 +1441,7 @@ def test_pi_activity_exposes_text_and_tool_names_without_private_payloads() -> N
         }
     )
     assert tool is not None and tool.tool_name == "read" and tool.blocking_error is None
-    assert "hidden" not in json.dumps(tool.to_dict())
+    assert "hidden" not in str(tool)
 
 
 def test_pi_retryable_message_error_does_not_signal_execution_blocker() -> None:

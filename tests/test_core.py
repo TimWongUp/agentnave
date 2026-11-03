@@ -196,12 +196,9 @@ class FakeAdapter(ClaudeAdapter):
                 InvocationStatus.FAILED,
                 "",
                 "provider-session",
-                {"calls": 1},
                 "provider stream ended before completion",
             )
-        return ParsedProviderResult(
-            InvocationStatus.SUCCEEDED, stdout.decode(), "provider-session", {"calls": 1}
-        )
+        return ParsedProviderResult(InvocationStatus.SUCCEEDED, stdout.decode(), "provider-session")
 
 
 @pytest.fixture
@@ -255,7 +252,7 @@ async def test_unexpected_execution_error_is_a_readable_terminal_result(
         assert result.status is InvocationStatus.FAILED
         assert result.error is not None and result.error.code == "internal_error"
         assert result.session_id == "existing"
-        assert "PRIVATE INTERNAL DETAIL" not in str(result.to_dict())
+        assert "PRIVATE INTERNAL DETAIL" not in str(result)
         assert await manager.wait(invocation_id) == result
     finally:
         await manager.shutdown()
@@ -458,7 +455,6 @@ async def test_manager_returns_normalized_terminal_result(
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == "completed"
     assert result.session_id == "provider-session"
-    assert result.provider_usage == {"calls": 1}
     await manager.shutdown()
 
 
@@ -530,7 +526,6 @@ async def test_wait_timeout_does_not_cancel_invocation(tmp_path: Path, fake_adap
     assert result.status is InvocationStatus.CANCELLED
     assert result.output == ""
     assert result.session_id == "provider-session"
-    assert result.provider_usage == {"calls": 1}
     await manager.shutdown()
 
 

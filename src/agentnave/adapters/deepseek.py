@@ -167,6 +167,17 @@ def _capture_line(line: bytes) -> bytes:
 
 class DeepSeekAdapter(AdapterHooks):
     name = "deepseek"
+    options_description = (
+        "provider (model route; requires model; omitted, dsh's default model and models its "
+        "configured providers declare keep their route, any other uses deepseek-official), "
+        "effort requires model, "
+        "permission_mode (read-only, workspace-write or danger-full-access), "
+        "stored_credentials (boolean; reuses the sign-in and keys saved by the DeepSeek "
+        "Harness app; defaults to true on deepseek-official, else headless reads "
+        "DEEPSEEK_API_KEY), "
+        "restricted_tools (boolean; disables tool plugins, read-only sandbox)"
+    )
+    restricted_extra_options = frozenset({"provider", "stored_credentials"})
     _options = ("model", "effort", "provider", "permission_mode", "stored_credentials")
 
     def executable(self) -> str:

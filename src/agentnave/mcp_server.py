@@ -18,6 +18,7 @@ from mcp_types import CallToolResult, InputRequiredResult, TextContent, ToolAnno
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from agentnave import __version__, views
+from agentnave.adapters import get_adapter
 from agentnave.conversations import (
     CommittedEntry,
     Conversations,
@@ -28,7 +29,7 @@ from agentnave.conversations import (
 from agentnave.core import InvocationManager
 from agentnave.db import Workspace
 from agentnave.group import GroupSeat, Round
-from agentnave.host import detect_host, host_session_id, shared_session_id
+from agentnave.host import detect_host, host_session_id
 from agentnave.manager_identity import SESSION_ID_DESCRIPTIONS, model_warnings, session_id_hint
 from agentnave.mcp_payloads import (
     ActivityPayload,
@@ -53,7 +54,6 @@ from agentnave.mcp_projection import without_empty_fields
 from agentnave.members import (
     AdapterOptionsError,
     CapacityError,
-    CLIOptionsFileError,
     MemberFileError,
     OrchestrationRole,
     PermissionFileError,
@@ -63,7 +63,6 @@ from agentnave.members import (
     apply_member,
     apply_seat,
     data_root,
-    read_cli_options,
     read_members,
     read_permissions,
     role_seat,
@@ -76,6 +75,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
+from agentnave.native_sessions import shared_session_id
 from agentnave.retention import Retention
 from agentnave.store import Record, Review
 from agentnave.task_start import (
@@ -84,6 +84,7 @@ from agentnave.task_start import (
     add_write_warning,
     apply_task_defaults,
     resolve_start,
+    review_role,
 )
 
 type ManagerModel = Annotated[
@@ -160,37 +161,8 @@ PROVIDER_SELECTION = (
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
-    "zcode": "permission_mode (auto, build, edit, plan, yolo, guarded); model accepts providerId/modelId; effort is native thoughtLevel; restricted_tools is not supported",
-    "pi": "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)",
-    "claude": "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)",
-    "codebuddy": "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)",
-    "codex": (
-        "skip_git_repo_check (boolean; true outside Git repositories unless cli_options has it), "
-        "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
-        "workspace-write sandbox; not with sandbox or "
-        "dangerously_bypass_approvals_and_sandbox), "
-        "sandbox (read-only, workspace-write or danger-full-access), "
-        "dangerously_bypass_approvals_and_sandbox "
-        "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
-        "restricted_tools (boolean; native read/tool restrictions)"
-    ),
-    "deepseek": (
-        "provider (model route; requires model; omitted, dsh's default model and models its "
-        "configured providers declare keep their route, any other uses deepseek-official), "
-        "effort requires model, "
-        "permission_mode (read-only, workspace-write or danger-full-access), "
-        "stored_credentials (boolean; reuses the sign-in and keys saved by the DeepSeek "
-        "Harness app; defaults to true on deepseek-official, else headless reads "
-        "DEEPSEEK_API_KEY), "
-        "restricted_tools (boolean; disables tool plugins, read-only sandbox)"
-    ),
-    "grok": "permission_mode, agent, max_turns, sandbox, restricted_tools (boolean; denies tool execution)",
-    "antigravity": (
-        "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
-        "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
-        "restricted_tools (boolean; tool-free profile, only in a dedicated seat cwd that already "
-        "contains it)"
-    ),
+    provider: get_adapter(provider).options_description
+    for provider in get_args(ProviderName.__value__)
 }
 
 
@@ -376,7 +348,6 @@ def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolErr
         (
             MemberFileError,
             PermissionFileError,
-            CLIOptionsFileError,
             SettingsFileError,
             CapacityError,
         ),
@@ -641,7 +612,7 @@ async def start_agent(
     provider, cwd = arguments.provider, arguments.cwd
     assert provider is not None and cwd is not None
     role, seat, access = arguments.role, arguments.seat, arguments.access
-    seat_name = seat or role
+    seat_name = seat or review_role(role)
     try:
         options, seat_applied = apply_seat(
             role_seat(seat_name, HOST), provider, provider_options or {}
@@ -1289,7 +1260,6 @@ def _open_show(
 ) -> tuple[str, list[GroupSeatPayload]]:
     document = read_members()
     permissions = read_permissions()
-    cli_options = read_cli_options()
     prepared: list[GroupSeat] = []
     defaults: dict[str, list[str]] = {}
     for seat in members:
@@ -1301,7 +1271,6 @@ def _open_show(
             EXCLUDED_PROVIDERS,
             restricted=isolated,
             permissions=permissions,
-            cli_options=cli_options,
         )
         prepared.append(
             GroupSeat(
@@ -1473,7 +1442,7 @@ async def run_round(
             group_id, opened = _open_show(
                 conversations, title, members, cwd, review, isolated, manager_session_id
             )
-        except (MemberFileError, PermissionFileError, CLIOptionsFileError) as exc:
+        except (MemberFileError, PermissionFileError) as exc:
             raise ToolError(str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise ToolError(f"Invalid meeting: {exc}. Correct the arguments and retry.") from exc

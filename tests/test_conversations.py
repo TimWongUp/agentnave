@@ -280,15 +280,14 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         view = await _call(client, "read_conversation", {"conversation_id": group_id})
         assert "public_url" not in view and "director_url" not in view
         snapshot = _views(data_root, group_id)
-        director, public = snapshot["director"], snapshot["public"]
-        assert "SECRET-B" not in str(public) and "round" not in public
+        director = snapshot["director"]
+        assert "public" not in snapshot
         assert director["round"]["seats"][0]["seat_id"] == "c"
         private = director["private_messages"]
         assert len(private) == 1
         assert private[0]["round"] == 1 and private[0]["seat_id"] == "b"
         assert private[0]["text"] == _seats(waited)[1]["output"]
         private_time = private[0]["time"]
-        assert "private_messages" not in public
         # Read back like the App: final messages only, private ones on request.
         b_private = str(_seats(waited)[1]["output"])
         assert "SECRET-B" not in str(view) and b_private not in str(view)
@@ -757,8 +756,11 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
         assert saved_views["summary"]["updated"] >= saved_views["director"]["tasks"][0]["time"]
         assert saved_views["director"]["tasks"][0]["prompt"] == "one"
         assert saved_views["director"]["tasks"][0]["effort"] == "high"
-        assert saved_views["director"]["workbench_url"] == "/"
-        assert saved_views["public"] is None
+        assert "public" not in saved_views
+        assert (
+            not {"workbench_url", "public_url", "storage", "refresh_error"}
+            & saved_views["director"].keys()
+        )
         resumed = await _call(
             client,
             "start_agent",
@@ -921,8 +923,8 @@ async def test_servers_release_idle_shows_and_reload_entries_and_sessions(
         assert [item.number for item in record.state.rounds] == [1, 2, 3]
         assert record.state.rounds[-1].seats[0].review == "private"
         assert all(item.status != "interrupted" for item in record.state.rounds)
-        public = _views(data_root, conversation_id)["public"]
-        assert [m["text"] for m in public["messages"][:3]] == [
+        director = _views(data_root, conversation_id)["director"]
+        assert [m["text"] for m in director["messages"][:3]] == [
             "first host",
             "second host",
             "third host",
@@ -1508,17 +1510,14 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
             )
         ],
     )
-    projected = views.snapshot(state, "")
+    projected = views.snapshot(state)
     assert _data(projected["director"])["instructions"] == [
         {"round": 1, "seat_id": "b", "text": "只看边界", "time": state.created}
     ]
-    assert "instructions" not in _data(projected["public"])
     assert _data(projected["director"])["rounds"] == [
         {"number": 1, "seats": [{"seat_id": "a"}, {"seat_id": "b"}]}
     ]
     assert _data(projected["director"])["cwd"] == state.cwd
-    assert "cwd" not in _data(projected["public"])
-    assert "rounds" not in _data(projected["public"])
     private = _data(projected["director"])["private_messages"]
     assert private == [
         {
@@ -1530,7 +1529,6 @@ def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None
             "message_id": None,
         }
     ]
-    assert "private_messages" not in _data(projected["public"])
 
 
 def test_host_projection_does_not_collide_with_director_seat() -> None:
@@ -1545,7 +1543,7 @@ def test_host_projection_does_not_collide_with_director_seat() -> None:
             EntryRecord(round=1, kind="answer", seat="director", text="seat", time="now"),
         ],
     )
-    projected = cast(dict[str, Any], views.snapshot(state, "")["public"])
+    projected = cast(dict[str, Any], views.snapshot(state)["director"])
     assert [m["speaker"] for m in projected["messages"]] == ["@host", "director"]
     assert [m["message_id"] for m in projected["messages"]] == ["show:e:0", "show:e:1"]
 
@@ -1568,7 +1566,7 @@ def test_task_director_exposes_manager_identity() -> None:
             )
         ],
     )
-    projected = cast(dict[str, Any], views.snapshot(state, "/tmp")["director"])
+    projected = cast(dict[str, Any], views.snapshot(state)["director"])
     assert projected["host"] == "codex"
     assert projected["cwd"] == "/tmp"
     assert projected["tasks"][0]["manager_model"] == "gpt-6"
@@ -1681,7 +1679,7 @@ async def test_history_io_failure_keeps_last_readable_state_until_recovery(
         assert studio.scan()["known"] is False
         assert studio.records["known"].state is known
         assert studio.unavailable[0].reason == "temporary history read failure"
-        assert _views(root, "known")["public"]["title"] == "Known"
+        assert _views(root, "known")["director"]["title"] == "Known"
         monkeypatch.setattr(Database, "load", original_load)
         assert studio.scan()["known"] is True
         assert studio.records["known"].state.title == "Known"
@@ -1793,7 +1791,7 @@ async def test_native_model_is_saved_and_round_recipients_match_selected_seats(
     saved = Record.read(Database(data_root), data_root / "locks", str(show["group_id"]))
     saved.state.rounds[0].seats[0].status = "failed"
     saved.state.rounds[0].seats[0].error = "launch_error: missing binary"
-    projected = cast(dict[str, Any], views.snapshot(saved.state, "")["public"])
+    projected = cast(dict[str, Any], views.snapshot(saved.state)["director"])
     assert [target["seat"] for target in projected["messages"][0]["recipients"]] == ["a"]
 
 
@@ -1900,19 +1898,6 @@ asyncio.run(main())
         await studio.manager.wait(invocation)
         await asyncio.gather(*studio.collectors)
         assert another_process() == "started"
-        # An older server holds no lock while its task runs; the saved running task still blocks.
-        studio.manager.session_locks = None
-        legacy, _, *_ = studio.start_task(
-            InvocationRequest(
-                "claude", "Private instruction for you only:\nSLEEP", tmp_path, "shared-native"
-            ),
-            None,
-            None,
-            manager_session_id="chat-a",
-        )
-        assert another_process() == "blocked"
-        await studio.manager.cancel(legacy)
-        await asyncio.gather(*studio.collectors)
     finally:
         await studio.manager.shutdown()
         await studio.close()
@@ -2461,7 +2446,7 @@ async def test_studio_enforces_discussion_defaults_before_saving(
             }
         )
         assert old.host is None and old.host_source == "unknown" and old.manager_session is None
-        assert views.snapshot(old, str(data_root / "agentnave.db"))["summary"]
+        assert views.snapshot(old)["summary"]
         cast(dict[str, object], document["modes"])["discussion"] = {}
         path.write_text(json.dumps(document), encoding="utf-8")
         before = Database(data_root).revisions()
@@ -2616,8 +2601,8 @@ async def test_manager_model_is_message_metadata_without_cli_inference(
         ]
         disk = _state(data_root, group_id)
         assert disk["entries"] == entries
-        public = _views(data_root, group_id)["public"]
-        assert [entry["manager_model"] for entry in public["messages"]] == [
+        director = _views(data_root, group_id)["director"]
+        assert [entry["manager_model"] for entry in director["messages"]] == [
             entry["manager_model"] for entry in entries
         ]
         legacy = EntryRecord(round=1, kind="host", time="now")
@@ -2941,7 +2926,9 @@ async def test_run_round_commits_forward_entries_and_seats_receive_them(
         assert [item["forward_id"] for item in forwarded] == [answer_id, posted_entry["message_id"]]
         assert all(item["speaker"] == "@forward" and item["forward_source"] for item in forwarded)
         assert [
-            item["forward_id"] for item in views["public"]["messages"] if item["kind"] == "forward"
+            item["forward_id"]
+            for item in views["director"]["messages"]
+            if item["kind"] == "forward"
         ] == [answer_id, posted_entry["message_id"]]
 
 

@@ -11,10 +11,8 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
-    clean_model,
     error_summary,
     failure_status,
-    normalized_usage,
     object_dict,
     option_args,
     parse_json_lines,
@@ -23,6 +21,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.native_sessions import message_model
 
 # Pi reports this on stderr before asking on stdin whether to fork another project's session.
 _FOREIGN_SESSION = re.compile(r"Session found in different project: ([^\n\x1b]*)")
@@ -61,7 +60,6 @@ def _capture_line(line: bytes) -> bytes:
                 "content": [{"type": "text", "text": _text(message)}],
                 "stopReason": message.get("stopReason"),
                 "errorMessage": message.get("errorMessage"),
-                "cost": object_dict(object_dict(message.get("usage")).get("cost")).get("total"),
             },
         }
     elif kind == "agent_end":
@@ -73,15 +71,10 @@ def _capture_line(line: bytes) -> bytes:
     return json.dumps(kept).encode() + b"\n"
 
 
-def message_model(message: dict[str, object]) -> str | None:
-    """The model that served an assistant message, not the one requested."""
-    if message.get("role") != "assistant":
-        return None
-    return clean_model(message.get("responseModel") or message.get("model"))
-
-
 class PiAdapter(AdapterHooks):
     name = "pi"
+    options_description = "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)"
+    restricted_extra_options = frozenset({"provider"})
     _options = {
         "model": "--model",
         "effort": "--thinking",
@@ -183,14 +176,6 @@ class PiAdapter(AdapterHooks):
         )
         output = _text(message)
         stop_reason = message.get("stopReason")
-        costs = [
-            cost
-            for event in events
-            if event.get("type") == "message_end"
-            and isinstance(cost := object_dict(event.get("message")).get("cost"), (int, float))
-            and not isinstance(cost, bool)
-        ]
-        usage = normalized_usage({"total_cost_usd": sum(costs)}) if costs else {}
         last = events[-1] if events else {}
         # agent_settled follows agent_end; either may be the last retained completion marker.
         complete = last.get("type") == "agent_end" or (
@@ -203,9 +188,9 @@ class PiAdapter(AdapterHooks):
                 "continue it from that cwd",
                 "pi session belongs to another working directory",
             )
-            return ParsedProviderResult(InvocationStatus.FAILED, output, session_id, usage, error)
+            return ParsedProviderResult(InvocationStatus.FAILED, output, session_id, error)
         if returncode == 0 and complete and stop_reason == "stop":
-            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id, usage)
+            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
         raw_error = message.get("errorMessage")
         fallback = (
             f"pi exited with status {returncode}"
@@ -223,4 +208,4 @@ class PiAdapter(AdapterHooks):
             if "no api key" in lowered or "/login" in lowered
             else failure_status(error)
         )
-        return ParsedProviderResult(status, output, session_id, usage, error)
+        return ParsedProviderResult(status, output, session_id, error)

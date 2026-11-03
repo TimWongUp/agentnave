@@ -396,14 +396,6 @@ def test_seat_removal_failure_logs_without_rolling_back_committed_history(
     assert "could not remove seat directory" in caplog.text
 
 
-def test_legacy_sessions_are_individual_workspaces(tmp_path: Path) -> None:
-    settings(tmp_path)
-    fixture(tmp_path, "old", group="legacy")
-    fixture(tmp_path, "recent", group="legacy", updated="2026-11-03T00:00:00Z")
-    assert cleanup(tmp_path, now=_NOW) == 1
-    assert remaining(tmp_path) == ["recent"]
-
-
 @pytest.mark.asyncio
 async def test_worker_does_not_block_loop_and_shutdown_joins_inflight_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -474,7 +466,7 @@ def test_bad_round_preserves_its_workspace_but_does_not_stop_later_cleanup(tmp_p
     settings(tmp_path)
     fixture(tmp_path, "broken-a")
     fixture(tmp_path, "broken-b")
-    fixture(tmp_path, "z-good", group=None)
+    fixture(tmp_path, "z-good", group="s-" + "b" * 32)
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         db.execute("INSERT INTO rounds VALUES ('r', 'broken-b', 1, '{broken')")
     assert cleanup(tmp_path, now=_NOW) == 1
@@ -482,23 +474,123 @@ def test_bad_round_preserves_its_workspace_but_does_not_stop_later_cleanup(tmp_p
 
 
 @pytest.mark.parametrize("missing", ["tables", "columns"])
-def test_first_cleanup_repairs_legacy_handover_schema(tmp_path: Path, missing: str) -> None:
+def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> None:
     settings(tmp_path)
-    fixture(tmp_path, "old")
+    fixture(tmp_path, "modern")
+    for id_, identity in [("old", "legacy"), ("empty", ""), ("unknown", None), ("upper", "S-old")]:
+        fixture(tmp_path, id_, group=identity)
+        seat = tmp_path / "seats" / id_ / "a"
+        seat.mkdir(parents=True)
+        (seat / "output").write_text("discard")
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("INSERT INTO entries VALUES ('old', 0, '{}')")
+        db.execute("INSERT INTO rounds VALUES ('r', 'old', 1, '{}')")
+        db.execute(
+            "INSERT INTO tasks VALUES ('t', 'old', 0, 'claude', 'native', 'succeeded', '{}')"
+        )
         if missing == "tables":
             db.execute("DROP TABLE workspaces")
             db.execute("DROP TABLE former_bosses")
         else:
+            db.execute("INSERT INTO workspaces (id, owner) VALUES (?, ?)", (_WORKSPACE, _WORKSPACE))
             db.execute("ALTER TABLE workspaces DROP COLUMN title")
             db.execute("ALTER TABLE workspaces DROP COLUMN cwd")
-    assert cleanup(tmp_path, now=_NOW) == 1
-    assert remaining(tmp_path) == []
+        db.execute("PRAGMA user_version = 1")
+    # Retention never migrates: only opening through the service's Database does.
     assert cleanup(tmp_path, now=_NOW) == 0
+    for _ in range(2):
+        database = Database(tmp_path)
+        try:
+            assert database.revisions() == {"modern": 1}
+            row = database.workspace(_WORKSPACE)
+            if missing == "columns":
+                assert row is not None and row.title is None and row.cwd is None
+        finally:
+            database.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         columns = {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
         assert {"title", "cwd"} <= columns
-        assert db.execute("SELECT count(*) FROM former_bosses").fetchone()[0] == 0
+        for table in ["entries", "rounds", "tasks", "former_bosses"]:
+            assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        assert db.execute("SELECT conversation_id FROM views").fetchall() == [("modern",)]
+    assert list((tmp_path / "seats").iterdir()) == []
+
+
+def test_v1_migration_preserves_busy_history_and_retries_after_unlock(tmp_path: Path) -> None:
+    fixture(tmp_path, "old", group="legacy")
+    seat = tmp_path / "seats/old/a"
+    seat.mkdir(parents=True)
+    (seat / "output").write_text("preserve")
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("ALTER TABLE workspaces DROP COLUMN title")
+        db.execute("PRAGMA user_version = 1")
+    (tmp_path / "locks").mkdir()
+    database = Database(tmp_path)
+    try:
+        with lock_file(tmp_path / "locks/old.lock", "busy"):
+            with pytest.raises(OSError, match="disconnect old hosts"):
+                database.revisions()
+            assert remaining(tmp_path) == ["old"]
+            assert (seat / "output").read_text() == "preserve"
+            with sqlite3.connect(tmp_path / "agentnave.db") as db:
+                assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+                assert "title" not in {
+                    row[1] for row in db.execute("PRAGMA table_info(workspaces)")
+                }
+        assert database.revisions() == {}
+        assert not seat.parent.exists()
+    finally:
+        database.close()
+
+
+def test_v1_migration_rolls_back_schema_and_history_on_delete_failure(tmp_path: Path) -> None:
+    fixture(tmp_path, "old", group="legacy")
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("ALTER TABLE workspaces DROP COLUMN title")
+        db.execute("PRAGMA user_version = 1")
+        db.execute(
+            "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
+            "BEGIN SELECT RAISE(ABORT, 'migration deletion failed'); END"
+        )
+    database = Database(tmp_path)
+    try:
+        with pytest.raises(OSError, match="migration deletion failed"):
+            database.revisions()
+        assert remaining(tmp_path) == ["old"]
+        with sqlite3.connect(tmp_path / "agentnave.db") as db:
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert "title" not in {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
+            db.execute("DROP TRIGGER reject_delete")
+        assert database.revisions() == {}
+    finally:
+        database.close()
+
+
+def test_v1_migration_rereads_identity_under_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture(tmp_path, "old", group="legacy")
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("PRAGMA user_version = 1")
+
+    def take(path: Path, message: str, *, create: bool = True):
+        guard = lock_file(path, message, create=create)
+        with sqlite3.connect(tmp_path / "agentnave.db") as db:
+            db.execute(
+                "UPDATE conversations SET manager_session = ? WHERE id = 'old'", (_WORKSPACE,)
+            )
+        return guard
+
+    monkeypatch.setattr("agentnave.retention.lock_file", take)
+    database = Database(tmp_path)
+    try:
+        with pytest.raises(OSError, match="History changed"):
+            database.revisions()
+        assert remaining(tmp_path) == ["old"]
+        assert database.revisions() == {"old": 1}
+    finally:
+        database.close()
 
 
 def test_pending_handover_preserves_note_until_claimed(tmp_path: Path) -> None:
@@ -536,7 +628,7 @@ def test_bad_view_skips_whole_workspace_and_logs_while_cleaning_healthy_ones(
     settings(tmp_path)
     fixture(tmp_path, "a-broken")
     fixture(tmp_path, "b-sibling")
-    fixture(tmp_path, "z-good", group=None)
+    fixture(tmp_path, "z-good", group="s-" + "b" * 32)
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         if broken == "utf8":
             db.execute(

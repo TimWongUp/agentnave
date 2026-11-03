@@ -77,12 +77,7 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "    time.sleep(30)\n"
         "if prompt == 'sleep':\n"
         "    time.sleep(30)\n"
-        "if prompt == 'malformed usage':\n"
-        '    print(\'{"type":"result","result":"MALFORMED USAGE",\' '
-        '+ \'"session_id":"session-e2e","num_turns":{"invalid":true},\' '
-        "+ '\"total_cost_usd\":' + '1' * 5001 + ',\"is_error\":false}')\n"
-        "else:\n"
-        "    print(json.dumps({'type': 'result', 'result': prompt.upper(), "
+        "print(json.dumps({'type': 'result', 'result': prompt.upper(), "
         "'session_id': 'session-e2e', 'num_turns': 1, 'is_error': False}))\n",
         encoding="utf-8",
     )
@@ -215,7 +210,7 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agentnave.db import Database
-    from agentnave.host import boss_key
+    from agentnave.native_sessions import boss_key
     from agentnave.store import Conversation, Record, TaskRecord
 
     _install_fake_claude(tmp_path, monkeypatch)
@@ -308,7 +303,7 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
     async with Client(mcp) as client:
         for arguments, expected in (
             ({}, "Pass provider"),
-            ({"role": "ordinary duty"}, "not configured"),
+            ({"role": "ordinary duty"}, "Pass provider"),
             ({"role": "correctness-reviewer"}, "not configured"),
             ({"seat": "worker-easy"}, "not configured"),
         ):
@@ -463,8 +458,6 @@ def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
         kept = {} if value is None else dict.fromkeys(("output", "text", "prompt"), value)
         assert without_empty_fields(values) == kept
     assert source["dict"] == {"null": None}
-    cli_options = {"cli_options": {"codex": {"flag": ""}, "grok": {}}}
-    assert without_empty_fields(cli_options) == {"cli_options": {"codex": {"flag": ""}}}
 
 
 def _is_container(prop: object, defs: dict[str, object]) -> bool:
@@ -779,28 +772,6 @@ async def test_mcp_rejects_arbitrary_wait_windows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_preserves_terminal_result_when_provider_usage_is_malformed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _install_fake_claude(tmp_path, monkeypatch)
-
-    async with Client(mcp) as client:
-        started = await client.call_tool(
-            "start_agent",
-            {"provider": "claude", "prompt": "malformed usage", "cwd": str(tmp_path)},
-        )
-        invocation_id = _payload(started.structured_content)["invocation_id"]
-        finished = await client.call_tool("wait", {"ids": [invocation_id]})
-
-    invocation_result = _first(finished)
-    assert finished.is_error is False
-    assert invocation_result["status"] == "succeeded"
-    assert invocation_result["output"] == "MALFORMED USAGE"
-    assert invocation_result["session_id"] == "session-e2e"
-    assert "provider_usage" not in invocation_result
-
-
-@pytest.mark.asyncio
 async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -961,7 +932,7 @@ async def test_mcp_rejects_non_absolute_cwd_with_retry_guidance(cwd: str) -> Non
     ("provider", "options", "message"),
     [
         ("grok", {"unsupported_probe": True}, "unsupported grok options"),
-        ("codex", {"skip_git_repo_check": "true"}, "must be a boolean"),
+        ("codex", {"approve_for_me": "true"}, "must be a boolean"),
         ("antigravity", {"sandbox": "true"}, "must be boolean"),
     ],
 )
@@ -1278,7 +1249,7 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         }
         clis["antigravity"]["models"]["chosen"] = {"options": {"restricted_tools": True}}
         clis["codex"]["models"]["bad-option"] = {"options": {"unknown": True}}
-        clis["codex"]["models"]["bad-type"] = {"options": {"skip_git_repo_check": "true"}}
+        clis["codex"]["models"]["bad-type"] = {"options": {"approve_for_me": "true"}}
         clis["antigravity"]["models"]["bad-restricted"] = {
             "options": {"restricted_tools": True, "sandbox": True}
         }
@@ -1507,13 +1478,10 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert resumed["defaults_applied"] == applied
         explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
         assert explicit["defaults_applied"] == ["permission_mode"] and explicit["effort"] == "high"
-        # A CLI-wide setting joins the model's own defaults.
-        (tmp_path / "cli-options.json").write_text(
-            json.dumps({"version": 1, "clis": {"claude": {"max_budget_usd": 1}}})
-        )
+        # Old CLI-wide settings are ignored even if their file is malformed.
+        (tmp_path / "cli-options.json").write_text("{")
         wide = await start({"model": "chosen"})
-        assert wide["defaults_applied"] == ["effort", "agent", "max_budget_usd", "permission_mode"]
-        (tmp_path / "cli-options.json").unlink()
+        assert wide["defaults_applied"] == ["effort", "agent", "permission_mode"]
         # A review or Explorer/Worker role brings the seat the user picked for this CLI.
         seat = {"provider": "claude", "model": "chosen", "effort": "high"}
         (tmp_path / "review.json").write_text(
@@ -1541,7 +1509,14 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "read-only instruction (access=read)",
         ]
         assert seated["access"] == "read"
-        worker = await start({"effort": "medium"}, role="worker-easy")
+        # An Explorer/Worker name in role is only a label, even with a configured seat.
+        labelled = await start({}, role="worker-easy")
+        assert labelled["defaults_applied"] == applied and "access" not in labelled
+        label_only = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "role": "worker-easy"}
+        )
+        assert label_only.is_error and "Pass provider" in str(label_only.content)
+        worker = await start({"effort": "medium"}, seat="worker-easy")
         assert worker["effort"] == "medium"
         assert worker["defaults_applied"] == [
             "worker-easy seat",
@@ -1551,7 +1526,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "access (worker-easy seat)",
         ]
         assert worker["access"] == "write"
-        assert (await start({}, role="explorer-easy"))["defaults_applied"] == [
+        assert (await start({}, seat="explorer-easy"))["defaults_applied"] == [
             *applied,
             "access (explorer-easy seat)",
             "read-only instruction (access=read)",
@@ -1588,11 +1563,11 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         )
         disabled = _payload((await client.call_tool("list_members", {})).structured_content)
         assert disabled["orchestration"] == {"enabled": False}
-        assert (await start({}, role="worker-easy"))["defaults_applied"] == [
+        assert (await start({}, seat="worker-easy"))["defaults_applied"] == [
             *applied,
             "access (worker-easy seat)",
         ]
-        assert (await start({}, role="explorer-hard"))["defaults_applied"] == [
+        assert (await start({}, seat="explorer-hard"))["defaults_applied"] == [
             *applied,
             "access (explorer-hard seat)",
             "read-only instruction (access=read)",

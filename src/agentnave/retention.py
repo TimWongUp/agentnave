@@ -12,13 +12,13 @@ import sqlite3
 import stat
 import threading
 import time
-from collections.abc import Callable
-from contextlib import ExitStack, closing
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from agentnave.db import NAME, SCHEMA_VERSION, add_handover_schema
+from agentnave.db import NAME, SCHEMA_VERSION
 from agentnave.locks import lock_file, release_and_remove
 from agentnave.members import read_history_retention_days
 
@@ -176,8 +176,6 @@ def _workspace_ids(connection: sqlite3.Connection, anchor: str) -> list[str]:
     if row is None:
         return []
     session = row[0]
-    if not isinstance(session, str) or not re.fullmatch(r"s-[0-9a-fA-F]{32}", session):
-        return [anchor]
     return [
         row[0]
         for row in connection.execute(
@@ -227,18 +225,41 @@ def _eligible(connection: sqlite3.Connection, ids: list[str], cutoff: int) -> bo
     return True
 
 
-def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: int) -> bool:
-    # OS locks precede the SQLite write transaction, so active writers can finish.
+@contextmanager
+def locked_conversations(root: Path, ids: list[str]) -> Generator[None]:
+    """Hold the same OS locks as App and server writers, before a DB transaction."""
+    if not _contained(root / "locks"):
+        raise ValueError("Unsafe conversation lock directory")
     with ExitStack() as locks:
         for id_ in ids:
             path = _lock_path(root, id_)
             if path is None:
-                return False
+                raise ValueError("Unsafe conversation lock")
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            try:
-                locks.enter_context(lock_file(path, "Conversation is in use"))
-            except ValueError:
-                return False
+            locks.enter_context(lock_file(path, "Conversation is in use"))
+        yield
+
+
+def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None:
+    """Delete rows and their cascades under the caller's transaction and OS locks."""
+    connection.executemany("DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids])
+
+
+def remove_seats(root: Path, ids: list[str]) -> None:
+    """Reclaim deleted conversations' directories while their OS locks are still held."""
+    for id_ in ids:
+        _remove_seat(root, id_)
+
+
+def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: int) -> bool:
+    try:
+        return _remove_locked(connection, root, ids, cutoff)
+    except ValueError:
+        return False
+
+
+def _remove_locked(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: int) -> bool:
+    with locked_conversations(root, ids):
         connection.execute("BEGIN IMMEDIATE")
         try:
             if _workspace_ids(connection, ids[0]) != ids or not _eligible(connection, ids, cutoff):
@@ -246,9 +267,7 @@ def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: 
             group = connection.execute(
                 "SELECT manager_session FROM conversations WHERE id = ?", (ids[0],)
             ).fetchone()[0]
-            connection.executemany(
-                "DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids]
-            )
+            remove_conversations(connection, ids)
             connection.execute(
                 "DELETE FROM workspaces WHERE pending != 1 AND NOT EXISTS "
                 "(SELECT 1 FROM conversations WHERE manager_session = workspaces.id) "
@@ -260,8 +279,7 @@ def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: 
                 "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)"
             )
             connection.commit()
-            for id_ in ids:
-                _remove_seat(root, id_)
+            remove_seats(root, ids)
             return True
         finally:
             if connection.in_transaction:
@@ -295,7 +313,6 @@ def cleanup(
         connection.execute("PRAGMA journal_size_limit = 8388608")
         if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
             return 0
-        add_handover_schema(connection)
         current = time.time() if now is None else now
         _sweep_locks(connection, root, current, stopped)
         _sweep_seats(connection, root, current, stopped)

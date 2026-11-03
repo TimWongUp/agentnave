@@ -12,7 +12,6 @@ from agentnave.members import (
     ProviderName,
     ReviewRole,
     apply_member,
-    read_cli_options,
     read_members,
     read_permissions,
     role_seat,
@@ -49,7 +48,6 @@ def latest_session_task(
         (state, index, task)
         for state, index, task in matches
         if state.manager_session == manager_session
-        or (manager_session is None and not (state.manager_session or "").startswith("s-"))
     ]
     candidates = [item for item in owned if provider is None or item[2].provider == provider]
     if not candidates:
@@ -70,6 +68,12 @@ def latest_session_task(
         candidates,
         key=lambda item: (item[2].time, item[0].created, item[0].id, item[1]),
     )[2]
+
+
+def review_role(role: str | None) -> str:
+    """Only review role labels select a seat; Explorer/Worker names require seat."""
+    name = (role or "").strip()
+    return name if name in get_args(ReviewRole.__value__) else ""
 
 
 def role_access(role: str | None) -> Literal["read", "write"] | None:
@@ -109,7 +113,7 @@ class StartArguments:
         return saved
 
     def resolve_seat(self, host: Host) -> None:
-        name = (self.seat or self.role or "").strip()
+        name = self.seat or review_role(self.role)
         if self.provider is None:
             if not name:
                 raise ValueError("Pass provider, or seat / a review role to select an App seat")
@@ -173,7 +177,6 @@ def apply_task_defaults(
         options,
         excluded,
         permissions=read_permissions(),
-        cli_options=read_cli_options(),
         seat=frozenset(seat_applied),
     )
     if seat_applied:

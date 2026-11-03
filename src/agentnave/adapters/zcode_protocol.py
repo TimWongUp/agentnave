@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from agentnave.adapters.base import resolve_executable
-from agentnave.host import Host, session_model
+from agentnave.models import Host
+from agentnave.native_sessions import session_model
 
 LINE_LIMIT = 64 * 1024 * 1024
 
@@ -76,7 +77,6 @@ class Connection:
     def reset(self) -> None:
         self.response = ""
         self.partial = ""
-        self.usage: dict[str, Any] = {}
         self.failed = False
         self.failure = ""
         self.finished = False
@@ -113,7 +113,6 @@ class Connection:
                 kind, payload = event.get("type"), event.get("payload", {})
                 if kind == "turn.completed":
                     self.response = payload.get("response", self.response)
-                    self.usage = payload.get("usage", {})
                 elif kind == "turn.failed":
                     self.failed = True
                     error: object = payload.get("error")
@@ -241,7 +240,6 @@ def run(request: dict[str, Any]) -> int:
                     "type": "result",
                     "session_id": connection.session_id,
                     "output": connection.response or connection.partial,
-                    "usage": connection.usage,
                     "failed": connection.failed,
                     "error": connection.failure,
                 }

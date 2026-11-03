@@ -97,10 +97,18 @@ def _bundled_paths() -> tuple[str, ...]:
 
 class CodexAdapter(AdapterHooks):
     name = "codex"
+    options_description = (
+        "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
+        "workspace-write sandbox; not with sandbox or "
+        "dangerously_bypass_approvals_and_sandbox), "
+        "sandbox (read-only, workspace-write or danger-full-access), "
+        "dangerously_bypass_approvals_and_sandbox "
+        "(boolean; true skips approvals and disables sandboxing; false or omitted adds no flag), "
+        "restricted_tools (boolean; native read/tool restrictions)"
+    )
     _options = {
         "model",
         "effort",
-        "skip_git_repo_check",
         "approve_for_me",
         "dangerously_bypass_approvals_and_sandbox",
         "sandbox",
@@ -134,9 +142,6 @@ class CodexAdapter(AdapterHooks):
                 argv.extend(("--config", f'sandbox_mode="{value}"'))
             elif not isinstance(value, bool):
                 raise ValueError(f"codex option {key} must be a boolean")
-            elif key == "skip_git_repo_check":
-                # prepare always passes this flag, and Codex rejects it when repeated.
-                continue
             elif value and key == "approve_for_me" and request.session_id is not None:
                 # `exec resume` has no --approve-for-me; these are the settings it applies.
                 for setting in (
@@ -186,7 +191,8 @@ class CodexAdapter(AdapterHooks):
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
         # Codex streams no model; its session file records each turn's.
-        from agentnave.host import Host, session_model
+        from agentnave.models import Host
+        from agentnave.native_sessions import session_model
 
         return session_model(Host("codex"), session_id, since=since)
 

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import json
-import math
 import os
 import shutil
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.native_sessions import clean_model as clean_model
+from agentnave.native_sessions import object_dict as object_dict
+from agentnave.native_sessions import parse_json_object as parse_json_object
 
 # Common install locations for provider CLIs when the host passes a minimal PATH.
 PROVIDER_BIN_DIRS = (
@@ -78,13 +79,15 @@ class ParsedProviderResult:
     status: InvocationStatus
     output: str
     session_id: str | None = None
-    usage: dict[str, int | float] = field(default_factory=lambda: {})
     error_message: str | None = None
     warnings: tuple[str, ...] = ()
 
 
 class ProviderAdapter(Protocol):
     name: str
+    options_description: str
+    supports_restricted_tools: bool
+    restricted_extra_options: frozenset[str]
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]: ...
 
@@ -104,6 +107,10 @@ class ProviderAdapter(Protocol):
 class AdapterHooks:
     """What most CLIs do not need: the defaults of the optional ProviderAdapter hooks."""
 
+    options_description = ""
+    supports_restricted_tools = True
+    restricted_extra_options: frozenset[str] = frozenset()
+
     def event_model(self, event: dict[str, object]) -> str | None:
         """The main assistant's model named by one native stream event."""
         return None
@@ -121,61 +128,8 @@ def brief(value: object, limit: int = 512) -> str | None:
     return value[-limit:] if isinstance(value, str) and value else None
 
 
-def parse_json_object(text: str) -> dict[str, object] | None:
-    try:
-        raw = cast(object, json.loads(text, parse_int=_parse_json_int))
-    except (ValueError, RecursionError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    mapping = cast(dict[object, object], raw)
-    return {str(key): value for key, value in mapping.items()}
-
-
-def _parse_json_int(value: str) -> int | str:
-    try:
-        return int(value)
-    except ValueError:
-        return value
-
-
 def parse_json_lines(text: str) -> list[dict[str, object]]:
     return [payload for line in text.splitlines() if (payload := parse_json_object(line))]
-
-
-def object_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {}
-    mapping = cast(dict[object, object], value)
-    return {str(key): item for key, item in mapping.items()}
-
-
-def clean_model(value: object) -> str | None:
-    """A model name fit to show: printable, bounded, and not a placeholder."""
-    # A control character anywhere rejects the value rather than being stripped away.
-    if not isinstance(value, str) or len(value) > 200 or not value.isprintable():
-        return None
-    model = value.strip()
-    return model if model and model not in {"unknown", "<synthetic>"} else None
-
-
-def normalized_usage(payload: dict[str, object]) -> dict[str, int | float]:
-    """Keep only usage summary values supported by the stable MCP result contract."""
-    nested = object_dict(payload.get("usage"))
-    usage: dict[str, int | float] = {}
-    num_turns = payload.get("num_turns", nested.get("num_turns"))
-    if isinstance(num_turns, int) and not isinstance(num_turns, bool):
-        usage["num_turns"] = num_turns
-    total_cost = payload.get("total_cost_usd", nested.get("total_cost_usd"))
-    if isinstance(total_cost, (int, float)) and not isinstance(total_cost, bool):
-        try:
-            normalized_cost = float(total_cost)
-        except OverflowError:
-            pass
-        else:
-            if math.isfinite(normalized_cost):
-                usage["total_cost_usd"] = normalized_cost
-    return usage
 
 
 def failure_status(text: str) -> InvocationStatus:
@@ -212,14 +166,6 @@ def option_args(request: InvocationRequest, allowlist: dict[str, str]) -> tuple[
     return tuple(args)
 
 
-# Options that grant no tools: Pi's and DeepSeek's provider only pick the model backend,
-# and DeepSeek's stored_credentials only restores the app's saved sign-in.
-RESTRICTED_EXTRA_OPTIONS: dict[str, set[str]] = {
-    "pi": {"provider"},
-    "deepseek": {"provider", "stored_credentials"},
-}
-
-
 def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
     """Explicit opt-in only; restricted profiles cannot enable other tools."""
     options = dict(request.provider_options)
@@ -227,17 +173,12 @@ def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, b
     if not isinstance(enabled, bool):
         raise ValueError("restricted_tools must be a boolean")
     if enabled:
-        if request.provider not in (
-            "antigravity",
-            "claude",
-            "codebuddy",
-            "codex",
-            "deepseek",
-            "grok",
-            "pi",
-        ):
+        from agentnave.adapters import get_adapter
+
+        adapter = get_adapter(request.provider)
+        if not adapter.supports_restricted_tools:
             raise ValueError("restricted_tools requires a registered provider")
-        allowed = {"model", "effort"} | RESTRICTED_EXTRA_OPTIONS.get(request.provider, set())
+        allowed = {"model", "effort"} | adapter.restricted_extra_options
         if set(options) - allowed:
             raise ValueError("restricted_tools accepts only model and effort")
     return replace(request, provider_options=options), enabled
