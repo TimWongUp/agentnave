@@ -233,9 +233,16 @@ fn main() {
                             Err(error) => data::Response::error(400, &error),
                         }
                     }
-                    (_, "/app/preferences") => {
-                        preferences::runtime::request(&app, method, action, request.body())
-                    }
+                    (_, "/app/preferences") => preferences::runtime::request(
+                        &app,
+                        method,
+                        action,
+                        request.body(),
+                        request
+                            .headers()
+                            .get("X-AgentNave-Migrate-Theme")
+                            .is_some_and(|value| value == "1"),
+                    ),
                     ("GET", "/settings/members") => reader.members(refresh),
                     (_, "/app/service/install") if method != "POST" => {
                         data::Response::error(405, "此操作只接受 POST")
@@ -285,6 +292,9 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
             let handle = app.handle();
+            if let Err(error) = preferences::autostart::repair(handle) {
+                eprintln!("无法修复开机启动路径：{error}");
+            }
             let host_context = hosts::Context::live(handle.path().app_data_dir()?);
             let takeover = reader.clone();
             build_panel(handle)?;

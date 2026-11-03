@@ -4,6 +4,7 @@
   const root = $("general-prefs");
   let data = null;
   let busy = false;
+  let generation = 0;
 
   const DEFAULTS = {
     theme: "system",
@@ -102,26 +103,29 @@
     if (busy) return;
     busy = true;
     render();
+    const expected = generation;
     try {
       const res = await post("/app/preferences", { general: { [key]: value } });
-      data = {
-        ...data,
-        ...res,
-        preferences: res.preferences || {
-          ...data?.preferences,
-          general: { ...data?.preferences?.general, [key]: value },
-        },
-        effective: {
-          ...data?.effective,
-          ...res.effective,
-          general: {
-            ...data?.effective?.general,
-            ...res.effective?.general,
-            [key]: res.effective?.general?.[key] ?? value,
+      if (generation === expected) {
+        data = {
+          ...data,
+          ...res,
+          preferences: res.preferences || {
+            ...data?.preferences,
+            general: { ...data?.preferences?.general, [key]: value },
           },
-        },
-      };
-      applyAppearance();
+          effective: {
+            ...data?.effective,
+            ...res.effective,
+            general: {
+              ...data?.effective?.general,
+              ...res.effective?.general,
+              [key]: res.effective?.general?.[key] ?? value,
+            },
+          },
+        };
+        applyAppearance();
+      }
       say(L("已保存", "Saved"));
     } catch (err) {
       say(err.message || L("保存失败", "Failed to save"), true);
@@ -134,7 +138,7 @@
   function renderControl(item) {
     const val = effectiveValue(item.key);
     const label = item.label();
-    const unavailable = item.key === "autostart" && data?.autostart_available === false;
+    const unavailable = item.key === "autostart" && data?.autostart_available !== true;
     const disabled = busy || unavailable;
     if (item.kind === "switch") {
       const input = h("input.switch-input", {
@@ -156,7 +160,7 @@
         disabled,
       }, text);
       btn.addEventListener("click", () => {
-        if (!active) void save(item.key, choice);
+        if (effectiveValue(item.key) !== choice) void save(item.key, choice);
       });
       control.append(btn);
     }
@@ -172,15 +176,32 @@
 
   async function refresh() {
     if (!root || busy) return;
+    const expected = generation;
     try {
-      data = await load("/app/preferences");
+      const next = await load("/app/preferences");
+      // A shortcut/native event received during this GET is newer than its snapshot.
+      if (generation !== expected) {
+        next.preferences = { ...next.preferences, general: { ...next.preferences?.general, ...data?.preferences?.general } };
+        next.effective = { ...next.effective, general: { ...next.effective?.general, ...data?.effective?.general } };
+      }
+      data = next;
       if (data.error) say(data.error, true);
-      applyAppearance();
       render();
     } catch (err) {
       say(err.message || L("无法读取常规设置", "Failed to load general settings"), true);
     }
   }
+
+  window.addEventListener("agentnave:preferences", ({ detail }) => {
+    if (!detail) return;
+    generation++;
+    data = {
+      ...data,
+      preferences: { ...data?.preferences, general: { ...data?.preferences?.general, ...detail } },
+      effective: { ...data?.effective, general: { ...data?.effective?.general, ...detail } },
+    };
+    render();
+  });
 
   const visible = () => !$("pane-general")?.hidden && !document.hidden;
   document.addEventListener("visibilitychange", () => visible() && refresh());

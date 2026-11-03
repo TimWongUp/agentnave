@@ -6,6 +6,7 @@ window.ANAppearance = (() => {
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const inApp = () => location.protocol === "agentnave:" || location.hostname === "agentnave.localhost";
   let theme = root.dataset.theme || "system";
+  let generation = 0;
   const reducedMotion = { get matches() {
     return root.dataset.motion === "reduce" || (root.dataset.motion !== "full" && motion.matches);
   } };
@@ -19,23 +20,34 @@ window.ANAppearance = (() => {
 
   function applyPreferences(general) {
     if (!general) return;
+    generation++;
     if (["system", "light", "dark"].includes(general.theme)) theme = general.theme;
     if (["system", "reduce", "full"].includes(general.motion)) root.dataset.motion = general.motion;
     applyTheme();
   }
 
-  async function saveTheme(choice) {
+  function publish(general, expected) {
+    if (generation === expected && general) {
+      window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: general }));
+    }
+  }
+
+  async function saveTheme(choice, migrate = false) {
+    const expected = generation;
+    const headers = { "X-AgentNave-Action": "1", "Content-Type": "application/json" };
+    if (migrate) headers["X-AgentNave-Migrate-Theme"] = "1";
     const response = await fetch("/app/preferences", {
-      method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
+      method: "POST", headers,
       body: JSON.stringify({ general: { theme: choice } }),
     });
     if (!response.ok) throw new Error(`Preferences: ${response.status}`);
     const result = await response.json();
-    applyPreferences(result.preferences?.general);
+    publish(result.effective?.general || result.preferences?.general, expected);
   }
 
   async function refresh() {
     if (!inApp()) return;
+    const expected = generation;
     try {
       const response = await fetch("/app/preferences", { cache: "no-store" });
       if (!response.ok) return;
@@ -44,9 +56,9 @@ window.ANAppearance = (() => {
       let legacy;
       try { legacy = localStorage.getItem("agentnave.theme"); } catch { /* optional migration */ }
       if (!state.preferences.general?.theme && ["system", "light", "dark"].includes(legacy)) {
-        await saveTheme(legacy);
+        await saveTheme(legacy, true);
       } else {
-        applyPreferences(state.effective?.general || state.preferences.general);
+        publish(state.effective?.general || state.preferences.general, expected);
       }
       try { localStorage.removeItem("agentnave.theme"); } catch { /* optional migration */ }
     } catch { /* Keep the attributes the App supplied when preferences cannot be read. */ }

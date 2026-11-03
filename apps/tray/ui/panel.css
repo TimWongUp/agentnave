@@ -228,9 +228,9 @@ button { font: inherit; color: inherit; cursor: default; }
 .avatar { flex: none; width: 24px; height: 24px; border-radius: 7px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; }
 
 html.paused *, html.paused ::before, html.paused ::after { animation-play-state: paused !important; }
-:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after { animation: none !important; }
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="reduce"]):not([data-motion="full"]) *, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::before, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::after { animation: none !important; }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) *, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::before, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::after { animation: none !important; transition: none !important; }
 }
 
 .ob-slot { padding: 14px 2px 8px; }

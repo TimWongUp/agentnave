@@ -4,9 +4,8 @@ use std::sync::Mutex;
 use serde_json::{Value, json};
 use tauri::menu::{Menu, MenuItem};
 use tauri::{AppHandle, Manager, Wry};
-use tauri_plugin_autostart::ManagerExt;
 
-use super::{general, keep_awake};
+use super::{autostart, general, keep_awake};
 use crate::data::{Overview, Response};
 
 #[derive(Default)]
@@ -17,28 +16,20 @@ pub struct Runtime {
     scale: Mutex<u64>,
 }
 
-fn autostart(app: &AppHandle) -> Result<bool, String> {
-    if crate::PREVIEW {
-        return Ok(false);
+impl Runtime {
+    pub(super) fn migrate_theme(
+        &self,
+        dir: &std::path::Path,
+        payload: &Value,
+    ) -> Result<Value, String> {
+        let _write = self.writes.lock().unwrap();
+        super::migrate_theme(dir, payload)
     }
-    app.autolaunch()
-        .is_enabled()
-        .map_err(|error| error.to_string())
-}
-
-fn set_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
-    let launcher = app.autolaunch();
-    if enabled {
-        launcher.enable()
-    } else {
-        launcher.disable()
-    }
-    .map_err(|error| error.to_string())
 }
 
 pub fn state(app: &AppHandle) -> Value {
     let mut state = super::state(&super::dir());
-    let enabled = match autostart(app) {
+    let enabled = match autostart::is_enabled(app) {
         Ok(enabled) => enabled,
         Err(error) => {
             state["error"] = json!(format!("无法读取开机启动状态：{error}"));
@@ -62,7 +53,13 @@ pub(super) fn response(mut state: Value, enabled: bool, scale: u64, preview: boo
     state
 }
 
-pub fn request(app: &AppHandle, method: &str, action: Option<&str>, body: &[u8]) -> Response {
+pub fn request(
+    app: &AppHandle,
+    method: &str,
+    action: Option<&str>,
+    body: &[u8],
+    migrate: bool,
+) -> Response {
     if method == "GET" {
         return Response::json(&state(app));
     }
@@ -76,7 +73,17 @@ pub fn request(app: &AppHandle, method: &str, action: Option<&str>, body: &[u8])
         Ok(value) => value,
         Err(_) => return Response::error(400, "无效的 JSON"),
     };
-    match save(app, &payload) {
+    let result = if migrate {
+        app.state::<Runtime>()
+            .migrate_theme(&super::dir(), &payload)
+            .and_then(|document| {
+                apply(app)?;
+                Ok(document)
+            })
+    } else {
+        save(app, &payload)
+    };
+    match result {
         Ok(document) => Response::json(&json!({"saved": true, "preferences": document})),
         Err(error) => Response::error(400, &error),
     }
@@ -88,18 +95,18 @@ pub fn save(app: &AppHandle, payload: &Value) -> Result<Value, String> {
     super::validate_changes(payload)?;
     let requested = payload["general"]["autostart"].as_bool();
     let previous = if requested.is_some() {
-        Some(autostart(app)?)
+        Some(autostart::is_enabled(app)?)
     } else {
         None
     };
     if let Some(enabled) = requested {
-        set_autostart(app, enabled)?;
+        autostart::set(app, enabled)?;
     }
     let document = match super::update(&super::dir(), payload) {
         Ok(document) => document,
         Err(error) => {
             if let Some(previous) = previous
-                && let Err(rollback) = set_autostart(app, previous)
+                && let Err(rollback) = autostart::set(app, previous)
             {
                 return Err(format!("{error}；恢复开机启动状态失败：{rollback}"));
             }
@@ -111,7 +118,8 @@ pub fn save(app: &AppHandle, payload: &Value) -> Result<Value, String> {
 }
 
 pub fn apply(app: &AppHandle) -> Result<(), String> {
-    let general = general::current();
+    let mut general = general::current();
+    general["autostart"] = json!(autostart::is_enabled(app)?);
     app.set_theme(match general["theme"].as_str() {
         Some("light") => Some(tauri::Theme::Light),
         Some("dark") => Some(tauri::Theme::Dark),

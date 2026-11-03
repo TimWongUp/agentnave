@@ -35,7 +35,11 @@ toml = "1.1"
 toml_edit = "0.25"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "system-proxy"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
+
 [target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
 block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSEvent"] }
