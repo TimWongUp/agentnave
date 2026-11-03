@@ -67,14 +67,14 @@ install or sign in to CLIs for you.
    Use agentnave to have two teammates each answer: what does this repository do?
    ```
 
-The App's interface is currently in Chinese.
+The App's interface is available in English and Chinese; choose it under Settings → General.
 
 ### Option 2: manual install (Windows / Linux, or without the App)
 
-The paired release is **`v0.65.0`**; install both the runtime and the Skill from that tag:
+The paired release is **`v0.66.0`**; install both the runtime and the Skill from that tag:
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.65.0"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0.66.0"
 ```
 
 Then follow the [installation guide](docs/installation.md) to register the MCP server, install the
