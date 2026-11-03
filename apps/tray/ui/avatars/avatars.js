@@ -62,7 +62,7 @@
   async function load() {
     const stamp = ++revision;
     const response = await fetch(new URL("avatar-settings", base), { cache: "no-store" });
-    if (!response.ok) throw new Error("无法读取头像设置");
+    if (!response.ok) throw new Error(window.AN ? AN.L("无法读取头像设置", "Failed to load avatar settings") : "无法读取头像设置");
     const data = await response.json();
     if (stamp !== revision) return;
     const changed = JSON.stringify(overrides) !== JSON.stringify(data);

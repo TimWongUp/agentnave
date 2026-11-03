@@ -9,6 +9,7 @@
 const {
   h,
   $,
+  L,
   load,
   href,
   GROUP,
@@ -67,8 +68,8 @@ const LEAVE_MS = WALK_MS + HOLD_MS + FOLD_MS;
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
 // How a desk that requested no model got the name it shows.
 const MODEL_NOTE = {
-  cli_default: "\n调用时没有指定模型，这里显示 CLI 自己设置的默认模型，以 CLI 回报为准",
-  unknown: "\n调用时没有指定模型，CLI 也没有回报，用的是它自己的默认模型",
+  cli_default: L("\n调用时没有指定模型，这里显示 CLI 自己设置的默认模型，以 CLI 回报为准", "\nNo model was specified for the call; showing the CLI's own default model as reported"),
+  unknown: L("\n调用时没有指定模型，CLI 也没有回报，用的是它自己的默认模型", "\nNo model was specified and the CLI did not report one; using its own default model"),
 };
 const handleOf = (d) =>
   d.handle ||
@@ -259,7 +260,7 @@ function updateItem(rec, g) {
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
-  setAttr(rec.el, "aria-label", `${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`);
+  setAttr(rec.el, "aria-label", L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`));
   setAttr(rec.el, "title", `${name} · ${chatPlace(g)}`);
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
   if (rec.tileKey !== tileKey) {
@@ -267,11 +268,11 @@ function updateItem(rec, g) {
     rec.tile.replaceChildren(hostTile(g.app || g.host, g.label));
   }
   setClass(rec.presence, g.live ? "presence on" : "presence");
-  setAttr(rec.presence, "title", g.live ? "有任务在运行" : null);
+  setAttr(rec.presence, "title", g.live ? L("有任务在运行", "Tasks running") : null);
   setText(rec.label, name);
   setText(
     rec.meta,
-    `${handoverWord(g)}${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`,
+    L(`${handoverWord(g)}${chatPlace(g)} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`, `${handoverWord(g)}${chatPlace(g)} · ${g.desks_count ?? 0} desks · ${g.rooms_count ?? 0} rooms`),
   );
   setText(rec.time, relTime(g.updated));
   setText(rec.prev, g.preview);
@@ -281,7 +282,7 @@ function updateItem(rec, g) {
 }
 // A workspace taken over by another boss (ADR-0033).
 function handoverWord(g) {
-  return g.handover === "changed" ? "boss 已更换 · " : "";
+  return g.handover === "changed" ? L("boss 已更换 · ", "boss changed · ") : "";
 }
 function renderList() {
   const groups = state.groupsData;
@@ -300,7 +301,7 @@ function renderList() {
     if (rank !== section) {
       section = rank;
       nodes.push(
-        rank === 0 ? sectionEl("hot", "进行中") : sectionEl("rest", "最近"),
+        rank === 0 ? sectionEl("hot", L("进行中", "Active")) : sectionEl("rest", L("最近", "Recent")),
       );
     }
     let rec = state.items.get(id);
@@ -308,7 +309,7 @@ function renderList() {
     updateItem(rec, g);
     nodes.push(rec.el);
   }
-  if (!groups.length) nodes.push(h("div.gl-empty", {}, "还没有工作区"));
+  if (!groups.length) nodes.push(h("div.gl-empty", {}, L("还没有工作区", "No workspaces yet")));
   reconcile(el.list, nodes);
 }
 
@@ -333,30 +334,30 @@ function deskMood(d, ctx) {
     return {
       mood: "working",
       say: "dots",
-      word: meeting ? "私聊处理中 · 另一席在开会" : "私聊处理中",
+      word: meeting ? L("私聊处理中 · 另一席在开会", "In private chat · also in meeting") : L("私聊处理中", "In private chat"),
       away: null,
     };
   if (meeting) {
     const room = ctx.rooms.get(meeting.room);
     return {
       mood: "idle",
-      say: "去开会了",
-      word: `在会议室「${room?.title || "会议"}」`,
+      say: L("去开会了", "In meeting"),
+      word: L(`在会议室「${room?.title || "会议"}」`, `In meeting "${room?.title || "Meeting"}"`),
       away: `${meeting.room}|${meeting.seat}`,
     };
   }
   if (d.status === "failed")
-    return { mood: "failed", say: "上次失败", word: "上次失败", away: null };
+    return { mood: "failed", say: L("上次失败", "Failed"), word: L("上次失败", "Last failed"), away: null };
   if (d.status === "pending")
-    return { mood: "idle", say: "", word: "等待中", away: null };
+    return { mood: "idle", say: "", word: L("等待中", "Pending"), away: null };
   return AN.dozing(d)
     ? {
         mood: "sleep",
         say: "zz",
-        word: "休息中",
+        word: L("休息中", "Resting"),
         away: null,
       }
-    : { mood: "idle", say: "", word: "空闲", away: null };
+    : { mood: "idle", say: "", word: L("空闲", "Idle"), away: null };
 }
 // A seat that has answered stays at the table until its round ends, so it is never drawn twice.
 function seatedIn(d, ctx) {
@@ -407,8 +408,8 @@ function renderHead(c, n) {
     state.headKey = c.group;
     const back = h(
       "a.back",
-      { href: href("/chat/"), "aria-label": "返回工作区列表" },
-      "‹ 工作区",
+      { href: href("/chat/"), "aria-label": L("返回工作区列表", "Back to workspaces") },
+      L("‹ 工作区", "‹ Workspaces"),
     );
     back.addEventListener("click", (e) => {
       e.preventDefault();
@@ -429,9 +430,9 @@ function renderHead(c, n) {
   }
   const t = state.head;
   setText(t.title, shownName(c));
-  setText(t.sub, `boss 在 ${c.label} 里${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  setText(t.sub, `${L(`boss 在 ${c.label} 里`, `boss in ${c.label}`)}${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
   t.run.hidden = !n.running && !n.review;
-  setText(t.run, n.running ? `${n.running} 个在工作` : "会议进行中");
+  setText(t.run, n.running ? L(`${n.running} 个在工作`, `${n.running} working`) : L("会议进行中", "In meeting"));
 }
 
 // ---------------------------------------------------------------- boss office
@@ -523,7 +524,7 @@ function createBoss() {
   rec.chats = h("div.boss-side");
   rec.meets = h("div.boss-side");
   el.boss.replaceChildren(
-    h("h2.zone-h", {}, "boss 办公室", rec.state),
+    h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state),
     h(
       "div.boss-row",
       {},
@@ -548,13 +549,13 @@ function updateBoss(rec, c, n) {
   setText(rec.cli, holder.label);
   setText(
     rec.st,
-    n.running ? `等 ${n.running} 个回复` : n.review ? "会议进行中" : "空闲",
+    n.running ? L(`等 ${n.running} 个回复`, `Waiting on ${n.running}`) : n.review ? L("会议进行中", "In meeting") : L("空闲", "Idle"),
   );
   setText(rec.state, [c.took_over, model].filter(Boolean).join(" · "));
   setAttr(
     el.boss,
     "aria-label",
-    `boss 办公室，${c.took_over ? `${c.took_over}，` : ""}${rec.st.textContent}，查看全部消息`,
+    L(`boss 办公室，${c.took_over ? `${c.took_over}，` : ""}${rec.st.textContent}，查看全部消息`, `boss office, ${c.took_over ? `${c.took_over}, ` : ""}${rec.st.textContent}, view all messages`),
   );
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }
@@ -594,7 +595,7 @@ function sideItems(c, ctx) {
       scope: { kind: "room", id: r.id },
       heads: r.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean),
       name: r.title,
-      sub: `${roundText(r)} · ${r.seats.length} 位参会`,
+      sub: `${roundText(r)} · ${L(`${r.seats.length} 位参会`, `${r.seats.length} seats`)}`,
       tone: urgent(r.status) ? "run" : r.status === "failed" ? "bad" : "",
       time: r.last_active ? relTime(r.last_active) : "",
     }));
@@ -632,8 +633,8 @@ function sideList(node, title, items, empty) {
 }
 function renderSides(rec, c, ctx) {
   const { chats, meets } = sideItems(c, ctx);
-  sideList(rec.chats, "私聊", chats, "还没有私聊");
-  sideList(rec.meets, "会议", meets, "还没有开过会");
+  sideList(rec.chats, L("私聊", "Private chats"), chats, L("还没有私聊", "No private chats yet"));
+  sideList(rec.meets, L("会议", "Meetings"), meets, L("还没有开过会", "No meetings yet"));
 }
 
 // ---------------------------------------------------------------- desks
@@ -645,15 +646,15 @@ function createDesk(d) {
     nm: h("div.nm"),
     cliText: h("span"),
     role: h("div.role"),
-    effort: h("span.tag.tag-effort", { hidden: true, title: "努力程度" }),
+    effort: h("span.tag.tag-effort", { hidden: true, title: L("努力程度", "Effort level") }),
     access: h("span.tag.tag-access", {
       hidden: true,
-      title: "boss 声明的访问等级，只是约定，不改变 CLI 的实际权限",
+      title: L("boss 声明的访问等级，只是约定，不改变 CLI 的实际权限", "Access level declared by boss; advisory only, does not change actual CLI permissions"),
     }),
     only: h(
       "span.tag.tag-only",
-      { hidden: true, title: "与 boss 的宿主同类，只参加会议，不接受私聊" },
-      "仅开会",
+      { hidden: true, title: L("与 boss 的宿主同类，只参加会议，不接受私聊", "Same host CLI as boss; joins meetings only, no private tasks") },
+      L("仅开会", "Meetings only"),
     ),
   };
   const idx = deskHash(d.key || "");
@@ -691,7 +692,7 @@ function updateDesk(rec, d, ctx) {
   const settled = s.mood === "idle" && !s.away;
   if (rec.mood?.mood === "working" && settled) rec.doneUntil = Date.now() + DONE_FOR;
   if (settled && rec.doneUntil > Date.now())
-    s = { ...s, mood: "done", say: "搞定" };
+    s = { ...s, mood: "done", say: L("搞定", "Done") };
   rec.mood = s;
   dress(rec, deskChar(d), rec.scene, rec.desk);
   dressLid(rec, d.provider);
@@ -711,19 +712,19 @@ function updateDesk(rec, d, ctx) {
   setAttr(rec.role, "title", d.role || null);
   setText(
     rec.access,
-    d.access === "read" ? "只读" : d.access === "write" ? "可写" : "",
+    d.access === "read" ? L("只读", "Read-only") : d.access === "write" ? L("可写", "Writable") : "",
   );
   rec.access.hidden = !d.access;
   rec.only.hidden = d.private_allowed !== false;
   setAttr(
     rec.el,
     "title",
-    `${s.word}\n${handleOf(d)}\n首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}${MODEL_NOTE[d.model_source] || (!d.model && !d.display_model ? MODEL_NOTE.unknown : "")}`,
+    `${s.word}\n${handleOf(d)}\n${L(`首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}`, `First seen ${fullTime(d.first_seen)} · Last active ${fullTime(d.last_active)}`)}${MODEL_NOTE[d.model_source] || (!d.model && !d.display_model ? MODEL_NOTE.unknown : "")}`,
   );
   setAttr(
     rec.el,
     "aria-label",
-    `${deskName(d)}，${cliName(d.provider)}${d.role ? `，${d.role}` : ""}，${s.word}，查看对话`,
+    L(`${deskName(d)}，${cliName(d.provider)}${d.role ? `，${d.role}` : ""}，${s.word}，查看对话`, `${deskName(d)}, ${cliName(d.provider)}${d.role ? `, ${d.role}` : ""}, ${s.word}, view conversation`),
   );
 }
 
@@ -733,8 +734,8 @@ const fullRoom = (r) => urgent(r.status);
 function roundText(r) {
   const n = r.round;
   if (!n) return pick(GROUP, AN.ongoing(r.status))[0];
-  const order = n.order === "serial" ? "依次回复" : "同时回复";
-  return `第 ${n.number} 轮 · ${urgent(r.status) ? order : pick(GROUP, r.status)[0]}`;
+  const order = n.order === "serial" ? L("依次回复", "In turn") : L("同时回复", "In parallel");
+  return L(`第 ${n.number} 轮 · ${urgent(r.status) ? order : pick(GROUP, r.status)[0]}`, `Round ${n.number} · ${urgent(r.status) ? order : pick(GROUP, r.status)[0]}`);
 }
 function createRoom(r) {
   const rec = {
@@ -750,7 +751,7 @@ function createRoom(r) {
     h(
       "h2.zone-h",
       {},
-      h("span", {}, "会议室 · "),
+      h("span", {}, L("会议室 · ", "Meeting room · ")),
       rec.title,
       rec.state,
     ),
@@ -789,10 +790,10 @@ function seatMood(r, seat, d) {
       )
     : null;
   if (act?.status === "running")
-    return { mood: "speaking", say: ["作答中"], word: "作答中" };
+    return { mood: "speaking", say: [L("作答中", "Replying")], word: L("作答中", "Replying") };
   if (act?.status === "review")
-    return { mood: "idle", say: "已作答", word: "已作答" };
-  return { mood: "idle", say: "", word: d || seat.desk ? "" : "缺席" };
+    return { mood: "idle", say: L("已作答", "Replied"), word: L("已作答", "Replied") };
+  return { mood: "idle", say: "", word: d || seat.desk ? "" : L("缺席", "Absent") };
 }
 function updateRoom(rec, r, ctx) {
   const [, tone] = pick(GROUP, AN.ongoing(r.status));
@@ -806,7 +807,7 @@ function updateRoom(rec, r, ctx) {
   setAttr(
     rec.el,
     "aria-label",
-    `会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条，查看会议`,
+    L(`会议室 ${r.title}，${roundText(r)}，会议记录 ${r.board ?? 0} 条，查看会议`, `Meeting room ${r.title}, ${roundText(r)}, ${r.board ?? 0} notes, view meeting`),
   );
   const nodes = [];
   for (const seat of r.seats) {
@@ -822,12 +823,12 @@ function updateRoom(rec, r, ctx) {
     setSay(s.say, m.say);
     const name = d ? deskName(d) : seat.handle?.replace(/^@/, "") || seat.seat;
     // model name and role only; the CLI is in the tooltip
-    const tag = d ? d.role || "" : absent ? "缺席" : "";
+    const tag = d ? d.role || "" : absent ? L("缺席", "Absent") : "";
     setText(s.nm, name);
     setText(s.plate, tag);
     s.plate.hidden = !tag;
     setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
-    setAttr(s.el, "title", d ? handleOf(d) : seat.handle || `席位 ${seat.seat}`);
+    setAttr(s.el, "title", d ? handleOf(d) : seat.handle || L(`席位 ${seat.seat}`, `Seat ${seat.seat}`));
     nodes.push(s.el);
   }
   reconcile(rec.scene, nodes);
@@ -933,7 +934,7 @@ function renderOffice(c, ctx, n, newGroup) {
       h(
         "div.zone-empty",
         {},
-        "还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时工作的员工上限的空闲工位归入「已优化」。",
+        L("还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时工作的员工上限的空闲工位归入「已优化」。", "No desks yet. Desks appear once boss dispatches the first private task or meeting seat; idle desks beyond the concurrent limit fold into Optimized."),
       ),
     );
   if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));
@@ -982,9 +983,9 @@ function optimizedNode(opt, ctx) {
   const toggle = h(
     "button.optimized-h",
     { type: "button", "aria-expanded": String(Boolean(state.optimizedOpen)) },
-    "已优化",
-    h("b", {}, `${opt.count} 人`),
-    h("span.r", {}, state.optimizedOpen ? "收起" : "展开"),
+    L("已优化", "Optimized"),
+    h("b", {}, L(`${opt.count} 人`, `${opt.count}`)),
+    h("span.r", {}, state.optimizedOpen ? L("收起", "Collapse") : L("展开", "Expand")),
   );
   toggle.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1009,11 +1010,11 @@ function optimizedNode(opt, ctx) {
       rows.push(row);
     }
     if (opt.count > listed.length)
-      rows.push(h("div.td-more", {}, `另有 ${opt.count - listed.length} 个更早的工位未列出`));
+      rows.push(h("div.td-more", {}, L(`另有 ${opt.count - listed.length} 个更早的工位未列出`, `${opt.count - listed.length} earlier desks omitted`)));
   }
   node = h(
     "div.optimized",
-    { "aria-label": `已优化的工位，${opt.count} 人` },
+    { "aria-label": L(`已优化的工位，${opt.count} 人`, `Optimized desks, ${opt.count}`) },
     toggle,
     rows.length ? h("div.optimized-rows", {}, rows) : null,
   );
@@ -1225,11 +1226,11 @@ function speakerDesk(m, ctx) {
 }
 function speakerName(m, ctx) {
   const s = m.speaker || {};
-  if (s.role === "system") return s.label || "系统";
+  if (s.role === "system") return s.label || L("系统", "System");
   if (isBoss(m)) return "boss";
   const d = speakerDesk(m, ctx);
   if (d) return deskName({ ...d, effort: s.effort });
-  return s.model ? deskName(s) : [cliName(s.provider) || "组员", s.effort].filter(Boolean).join(" · ");
+  return s.model ? deskName(s) : [cliName(s.provider) || L("组员", "Member"), s.effort].filter(Boolean).join(" · ");
 }
 // The role leads the name and the CLI follows it, so several "默认模型" desks stay apart.
 function speakerRole(m, ctx) {
@@ -1272,7 +1273,7 @@ function targets(m, ctx) {
 function chip(t) {
   if (t.kind === "boss") return h("span.at.boss", {}, "@boss");
   if (t.kind === "all")
-    return h("span.at.all", { title: "会议室里的所有人" }, "@all");
+    return h("span.at.all", { title: L("会议室里的所有人", "Everyone in the meeting room") }, "@all");
   const name = t.d ? deskName(t.d) : (t.handle || "").replace(/^@/, "");
   return h(
     "span.at.who",
@@ -1290,20 +1291,20 @@ function verbOf(m, ctx) {
   const t = m.thread;
   const room = t?.kind === "room" ? ctx.rooms.get(t.id) : null;
   if (m.kind === "handover") return ["", []];
-  if (m.kind === "typing") return ["", [], "正在输入…", ""];
-  if (m.kind === "instruction") return ["", targets(m, ctx), "", "仅 TA 可见"];
-  if (m.kind === "forward") return ["转发", targets(m, ctx)];
+  if (m.kind === "typing") return ["", [], L("正在输入…", "Typing…"), ""];
+  if (m.kind === "instruction") return ["", targets(m, ctx), "", L("仅 TA 可见", "Private")];
+  if (m.kind === "forward") return [L("转发", "Forward"), targets(m, ctx)];
   if (isBoss(m)) {
-    if (t?.kind !== "room") return ["任务", targets(m, ctx)];
-    const round = m.round > 0 ? `第 ${m.round} 轮` : "";
-    const where = state.drawer.kind === "room" || !room ? round : `「${room.title}」${round}`;
-    return [m.round > 0 ? "议题" : "发言", targets(m, ctx), where];
+    if (t?.kind !== "room") return [L("任务", "Task"), targets(m, ctx)];
+    const round = m.round > 0 ? L(`第 ${m.round} 轮`, `Round ${m.round}`) : "";
+    const where = state.drawer.kind === "room" || !room ? round : L(`「${room.title}」${round}`, `"${room.title}"${round ? ` · ${round}` : ""}`);
+    return [m.round > 0 ? L("议题", "Topic") : L("发言", "Note"), targets(m, ctx), where];
   }
   // Kept from the other seats in review: a reply only boss sees, never deleted.
-  if (m.kept_private) return ["", [], "", "未公开 · 仅 boss 可见"];
-  if (m.status === "review") return ["", [], "", "待 boss 审核"];
+  if (m.kept_private) return ["", [], "", L("未公开 · 仅 boss 可见", "Unpublished · boss only")];
+  if (m.status === "review") return ["", [], "", L("待 boss 审核", "Awaiting boss review")];
   // A parallel round shows the answers to the other seats once every seat has answered.
-  if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", "本轮结束后公开"];
+  if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", L("本轮结束后公开", "Visible after round")];
   return ["", []];
 }
 // Who answers this round, shown by face; the answers themselves follow right below.
@@ -1313,9 +1314,9 @@ function answeringDesks(m, ctx) {
 }
 function metaOf(m, ctx) {
   if (Array.isArray(m.answering) && m.answering.length)
-    return `${m.answering.length} 位回答`;
+    return L(`${m.answering.length} 位回答`, `${m.answering.length} answering`);
   if (m.status === "review" && !m.kept_private)
-    return "boss 公开后，会议室里的其他人才看得到";
+    return L("boss 公开后，会议室里的其他人才看得到", "Visible to others in the room once boss publishes it");
   return "";
 }
 // One-line ticker / screen-reader sentence for a message.
@@ -1330,25 +1331,25 @@ function eventText(m, ctx) {
           : (t.handle || "").replace(/^@/, "")
         : t.kind,
     )
-    .join("、");
+    .join(L("、", ", "));
   const text =
     m.kind === "handover"
       ? m.text
       : m.kind === "instruction"
       ? `boss @${to}`
       : m.kind === "forward"
-        ? `boss 转发了一条消息${room ? `到「${room.title}」` : ""}`
+        ? L(`boss 转发了一条消息${room ? `到「${room.title}」` : ""}`, `boss forwarded a message${room ? ` to "${room.title}"` : ""}`)
         : isBoss(m)
           ? room
-            ? `boss 在「${room.title}」提出议题`
-            : `boss 给 ${to || "工位"} 布置了任务`
+            ? L(`boss 在「${room.title}」提出议题`, `boss raised a topic in "${room.title}"`)
+            : L(`boss 给 ${to || "工位"} 布置了任务`, `boss assigned a task to ${to || "desk"}`)
           : m.kind === "notice"
             ? `${who} ${m.text}`
             : m.status === "review"
-              ? `${who} 提交了回答，等 boss 审核`
+              ? L(`${who} 提交了回答，等 boss 审核`, `${who} submitted a reply, awaiting boss review`)
               : room
-                ? `${who} 在「${room.title}」回复了议题`
-                : `${who} 回复了任务`;
+                ? L(`${who} 在「${room.title}」回复了议题`, `${who} replied in "${room.title}"`)
+                : L(`${who} 回复了任务`, `${who} replied to the task`);
   return { who, text };
 }
 
@@ -1397,7 +1398,7 @@ function createMessage(m) {
   rec.metaFaces = h("span.tp-faces");
   rec.metaText = h("span");
   rec.meta = h("div.m-meta", { hidden: true }, rec.metaFaces, rec.metaText);
-  rec.more = h("button.more", { type: "button", hidden: true }, "展开全文");
+  rec.more = h("button.more", { type: "button", hidden: true }, L("展开全文", "Show more"));
   rec.more.addEventListener("click", () => {
     const id = rec.id;
     if (state.expanded.has(id)) state.expanded.delete(id);
@@ -1440,22 +1441,22 @@ function setFace(rec, m, ctx) {
 const STALE_TAIL_MS = 60_000;
 // Codex names its built-in tools by item type; other CLIs report readable tool names.
 const TOOL_WORDS = {
-  command_execution: "正在运行命令",
-  file_change: "正在修改文件",
-  web_search: "正在搜索网页",
+  command_execution: L("正在运行命令", "Running command"),
+  file_change: L("正在修改文件", "Editing files"),
+  web_search: L("正在搜索网页", "Searching web"),
 };
 function typingStatus(m) {
   const d = m.doing || "";
   const tool = d.slice(5);
   const doing = d === "thinking"
-    ? "思考中"
+    ? L("思考中", "Thinking")
     : d === "retrying"
-      ? "重试中"
+      ? L("重试中", "Retrying")
       : d.startsWith("tool:")
-        ? TOOL_WORDS[tool] || `正在使用 ${tool || "工具"}`
+        ? TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`)
         : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
-  return [doing, quiet ? `上次输出 ${relTime(m.output_at)}` : ""].filter(Boolean).join(" · ");
+  return [doing, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
 }
 function updateMessage(rec, m, ctx, id) {
   rec.id = id;
@@ -1514,13 +1515,13 @@ function updateMessage(rec, m, ctx, id) {
     rec.fwd.hidden = !f;
     if (f) {
       rec.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
-      setText(rec.fwd, `↪ 转发自 ${f.source || "其他消息"}`);
+      setText(rec.fwd, L(`↪ 转发自 ${f.source || "其他消息"}`, `↪ Forwarded from ${f.source || "another message"}`));
       setClass(rec.fwd, rec.fwdId ? "fwd" : "fwd dead");
       setAttr(rec.fwd, "aria-disabled", rec.fwdId ? null : "true");
       setAttr(
         rec.fwd,
         "title",
-        rec.fwdId ? "跳到原消息" : "原消息不在当前列表中",
+        rec.fwdId ? L("跳到原消息", "Jump to original message") : L("原消息不在当前列表中", "Original message not in current view"),
       );
     }
   }
@@ -1572,7 +1573,7 @@ function applyFolds(records) {
   }));
   for (const { rec, open, overflows } of measured) {
     rec.more.hidden = !overflows;
-    rec.more.textContent = open ? "收起" : "展开全文";
+    rec.more.textContent = open ? L("收起", "Show less") : L("展开全文", "Show more");
     rec.more.setAttribute("aria-expanded", open ? "true" : "false");
     rec.bub.classList.toggle("fold", !open && overflows);
     rec.dirty = false;
@@ -1699,7 +1700,7 @@ function scopeHead(c, ctx, shown) {
         key: `desk|${d.key}|${deskChar(desk)}`,
         ico: () => ART.head(deskChar(desk)),
         title: deskName(desk),
-        sub: `${cliName(desk.provider)}${desk.role ? ` · ${desk.role}` : ""} · ${real} 条消息`,
+        sub: `${cliName(desk.provider)}${desk.role ? ` · ${desk.role}` : ""} · ${L(`${real} 条消息`, `${real} messages`)}`,
       };
   }
   if (d.kind === "room") {
@@ -1707,16 +1708,16 @@ function scopeHead(c, ctx, shown) {
     if (room)
       return {
         key: `room|${d.id}`,
-        ico: () => h("span", {}, "会"),
+        ico: () => h("span", {}, L("会", "M")),
         title: room.title,
-        sub: `会议室 · ${room.seats.length} 位 · ${roundText(room)}`,
+        sub: L(`会议室 · ${room.seats.length} 位 · ${roundText(room)}`, `Meeting room · ${room.seats.length} seats · ${roundText(room)}`),
       };
   }
   return {
     key: `all|${c.host}|${c.label}`,
     ico: () => hostTile(c.app || c.host, c.label),
     title: "boss",
-    sub: `${c.label} · 全部消息 ${real} 条`,
+    sub: L(`${c.label} · 全部消息 ${real} 条`, `${c.label} · ${real} messages`),
   };
 }
 // Like threads in an office chat: each reply sits under the task or agenda item it answers, so
@@ -1753,14 +1754,15 @@ function instructionsFirst(replies) {
   return [...ordered, ...[...waiting.values()].flat()];
 }
 function renderConv(c, ctx) {
+  const L = AN.L || ((zh) => zh);
   el.drawer.hidden = overlay.matches ? !state.convOpen : state.convCollapsed;
   // The fold button lives on the floor's right edge; the overlay has its own close button.
   el.convToggle.hidden = overlay.matches;
   const shut = state.convCollapsed;
   setText(el.convToggle, shut ? "‹" : "›");
   setAttr(el.convToggle, "aria-expanded", shut ? "false" : "true");
-  setAttr(el.convToggle, "aria-label", shut ? "展开对话栏" : "收起对话栏");
-  setAttr(el.convToggle, "title", shut ? "展开对话栏" : "收起对话栏");
+  setAttr(el.convToggle, "aria-label", shut ? L("展开对话栏", "Expand conversation drawer") : L("收起对话栏", "Collapse conversation drawer"));
+  setAttr(el.convToggle, "title", shut ? L("展开对话栏", "Expand conversation drawer") : L("收起对话栏", "Collapse conversation drawer"));
   if (el.drawer.hidden) {
     AN.voice?.controls(false, null, ctx);
     state.scopeKey = "";
@@ -1804,7 +1806,7 @@ function renderConv(c, ctx) {
   setText(el.drTitle, head.title);
   setText(el.drSub, head.sub);
   el.drAll.hidden = state.drawer.kind === "all";
-  setAttr(el.drawer, "aria-label", `${head.title} 的对话`);
+  setAttr(el.drawer, "aria-label", L(`${head.title} 的对话`, `${head.title} conversation`));
   // Geometry is the truth: a reader who is at the bottom follows new content, anyone else is left alone.
   const follow = reset || nearBottom();
   const order = [];
@@ -1833,7 +1835,7 @@ function renderConv(c, ctx) {
     }
     if (state.drawer.kind === "room" && m.round > 0 && m.round !== round) {
       round = m.round;
-      separator(`round:${m.conversation}:${m.round}`, `第 ${m.round} 轮`);
+      separator(`round:${m.conversation}:${m.round}`, L(`第 ${m.round} 轮`, `Round ${m.round}`));
     }
     // Like a messenger: a time line opens each stretch instead of a time on every message.
     if (m.kind !== "typing") {
@@ -1857,7 +1859,7 @@ function renderConv(c, ctx) {
   }
   if (!shown.length)
     node("empty", () => ({
-      el: h("div.dr-empty", {}, "这里还没有消息。"),
+      el: h("div.dr-empty", {}, L("这里还没有消息。", "No messages yet.")),
       sep: true,
     }));
   const keep = new Set(order);
@@ -1877,7 +1879,7 @@ function renderConv(c, ctx) {
 }
 function updateJump() {
   el.jump.hidden = !(state.unseen > 0 && !nearBottom());
-  el.jump.textContent = `${state.unseen} 条新消息 ↓`;
+  el.jump.textContent = L(`${state.unseen} 条新消息 ↓`, `${state.unseen} new messages ↓`);
 }
 el.tl.addEventListener(
   "scroll",
@@ -1961,23 +1963,23 @@ function showBlank(kind) {
   state.drawer = { kind: "all" };
   const text = {
     nogroups: [
-      "还没有工作区",
-      "在 boss（Claude Code、Codex CLI 等宿主里的 Agent）里派出任务或开始会议，对应的办公室会自动出现在这里。",
+      L("还没有工作区", "No workspaces yet"),
+      L("在 boss（Claude Code、Codex CLI 等宿主里的 Agent）里派出任务或开始会议，对应的办公室会自动出现在这里。", "Dispatch a task or start a meeting from boss (your agent in Claude Code, Codex CLI, or another host) and its office will appear here automatically."),
     ],
     pick: [
-      "选一个工作区开始查看",
-      "左侧是每个 boss 会话的工作区，进行中的排在最前面。",
+      L("选一个工作区开始查看", "Select a workspace"),
+      L("左侧是每个 boss 会话的工作区，进行中的排在最前面。", "Workspaces for each boss session are listed on the left, with active ones first."),
     ],
-    missing: ["找不到这个工作区", "它可能已被删除。"],
-    loading: ["正在读取办公室…", ""],
-    error: ["无法读取办公室", "正在重试，请稍候。"],
+    missing: [L("找不到这个工作区", "Workspace not found"), L("它可能已被删除。", "It may have been deleted.")],
+    loading: [L("正在读取办公室…", "Loading office…"), ""],
+    error: [L("无法读取办公室", "Failed to load office"), L("正在重试，请稍候。", "Retrying, please wait.")],
   }[kind];
   el.blank.replaceChildren(
     ...[
       h("strong", {}, text[0]),
       h("p", { hidden: kind === "nogroups" && ob.visible }, text[1]),
       kind === "missing" &&
-        h("a.blank-link", { href: href("/chat/") }, "回到工作区列表"),
+        h("a.blank-link", { href: href("/chat/") }, L("回到工作区列表", "Back to workspaces")),
     ].filter(Boolean),
   );
   el.jump.hidden = true;
@@ -2054,7 +2056,7 @@ async function refresh() {
     try {
       chats = await load("/app/chats");
     } catch {
-      setText(el.banner, "读取中断，正在重试…");
+      setText(el.banner, L("读取中断，正在重试…", "Connection interrupted, retrying…"));
       el.banner.hidden = false;
       if (!state.loaded && !state.groupsData.length) showBlank("error");
       return;
@@ -2094,7 +2096,7 @@ async function refresh() {
       }
       if (e.status === 404) showBlank("missing");
       else {
-        setText(el.banner, "读取中断，正在重试…");
+        setText(el.banner, L("读取中断，正在重试…", "Connection interrupted, retrying…"));
         el.banner.hidden = false;
         if (!state.loaded) showBlank("error");
       }

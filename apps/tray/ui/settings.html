@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>设置 · AgentNave</title>
+<title data-en="Settings · AgentNave">设置 · AgentNave</title>
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="./settings.css">
 <link rel="stylesheet" href="./hosts.css">
@@ -13,6 +13,7 @@
 <script src="/chat/common.js" defer></script>
 <script src="/chat/mock.js" defer></script>
 <script src="./avatar-settings.js" defer></script>
+<script src="./language-settings.js" defer></script>
 <script src="./general-settings.js" defer></script>
 <script src="./advanced.js" defer></script>
 <script src="./voice-settings.js" defer></script>
@@ -26,28 +27,28 @@
 <body class="settings-page">
 <header class="bar">
     <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
-    <nav class="nav" aria-label="主导航">
-      <a draggable="false" href="/chat/">办公室</a>
-      <a draggable="false" href="/settings/" aria-current="page">设置</a>
+    <nav class="nav" aria-label="主导航" data-en-label="Main navigation">
+      <a draggable="false" href="/chat/" data-en="Office">办公室</a>
+      <a draggable="false" href="/settings/" aria-current="page" data-en="Settings">设置</a>
     </nav>
 </header>
 <main>
-  <nav class="nav subnav" aria-label="设置分区">
-    <a draggable="false" id="nav-general" href="#general">常规</a>
+  <nav class="nav subnav" aria-label="设置分区" data-en-label="Settings sections">
+    <a draggable="false" id="nav-general" href="#general" data-en="General">常规</a>
     <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
-    <a draggable="false" id="nav-members" href="#members">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
-    <a draggable="false" id="nav-avatars" href="#avatars">外观</a>
-    <a draggable="false" id="nav-voice" href="#voice">语音</a>
-    <a draggable="false" id="nav-advanced" href="#advanced">高级<span id="advanced-badge" class="badge-dot" title="有未保存的修改" hidden></span></a>
-    <a draggable="false" id="nav-storage" href="#storage">数据与存储</a>
-    <a draggable="false" id="nav-about" href="#about">关于<span id="update-badge" class="badge-dot" hidden></span></a>
+    <a draggable="false" id="nav-members" href="#members" data-en="Employees">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+    <a draggable="false" id="nav-avatars" href="#avatars" data-en="Appearance">外观</a>
+    <a draggable="false" id="nav-voice" href="#voice" data-en="Voice">语音</a>
+    <a draggable="false" id="nav-advanced" href="#advanced" data-en="Advanced">高级<span id="advanced-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+    <a draggable="false" id="nav-storage" href="#storage" data-en="Data & Storage">数据与存储</a>
+    <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" hidden></span></a>
   </nav>
 
-  <div id="notice" role="status" aria-live="polite">正在读取设置…</div>
+  <div id="notice" role="status" aria-live="polite" data-en="Loading settings…">正在读取设置…</div>
 
   <div id="error-banner" class="banner error" hidden>
     <div class="banner-content">
-      <strong id="error-title">配置文件存在错误</strong>
+      <strong id="error-title" data-en="Configuration file error">配置文件存在错误</strong>
       <p id="error-desc"></p>
     </div>
   </div>
@@ -56,8 +57,8 @@
   <section id="pane-members" class="tab-pane" hidden aria-labelledby="nav-members">
     <div class="model-names setting-row running-limit">
       <div class="setting-copy">
-        <h2><label for="max-running">同时工作的员工上限</label></h2>
-        <p class="setting-example">到上限后，boss 要等有员工做完才能再派任务</p>
+        <h2><label for="max-running" data-en="Max concurrent employees">同时工作的员工上限</label></h2>
+        <p class="setting-example" data-en="Once reached, boss waits for an employee to finish before dispatching more work">到上限后，boss 要等有员工做完才能再派任务</p>
       </div>
       <select id="max-running"></select>
     </div>
@@ -70,7 +71,7 @@
 
     <!-- 底部固定保存条 -->
     <aside class="sticky-save-bar">
-      <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" hidden></div>
+      <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
       <div class="save-bar-inner">
         <div class="save-bar-info">
           <span id="dirty-text" class="dirty-label"></span>
@@ -78,8 +79,8 @@
           <span id="save-feedback" class="save-feedback"></span>
         </div>
         <div class="save-bar-actions">
-          <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务。回到设置页时也会自动检测">刷新模型列表</button>
-          <button id="save-btn" class="primary" type="button" disabled>保存设置</button>
+          <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务。回到设置页时也会自动检测" data-en="Refresh models" data-en-title="Re-scan local tools and models without starting AI tasks. Also runs automatically when returning to Settings">刷新模型列表</button>
+          <button id="save-btn" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
         </div>
       </div>
     </aside>
@@ -88,12 +89,12 @@
   <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">
     <div class="model-names setting-row">
       <div class="setting-copy">
-        <h2>模型名称</h2>
+        <h2 data-en="Model names">模型名称</h2>
         <p id="model-names-example" class="setting-example"></p>
       </div>
-      <div class="segment-control" role="radiogroup" aria-label="模型名称">
-        <button id="model-names-short" class="segment-btn" role="radio" type="button">简短</button>
-        <button id="model-names-full" class="segment-btn" role="radio" type="button">完整</button>
+      <div class="segment-control" role="radiogroup" aria-label="模型名称" data-en-label="Model names">
+        <button id="model-names-short" class="segment-btn" role="radio" type="button" data-en="Short">简短</button>
+        <button id="model-names-full" class="segment-btn" role="radio" type="button" data-en="Full">完整</button>
       </div>
     </div>
     <div id="avatar-settings" aria-live="polite"></div>
@@ -115,46 +116,46 @@
   <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>技能</h2>
+        <h2 data-en="Skills">技能</h2>
         <div id="skill-list" class="skill-list" aria-live="polite"></div>
       </div>
     </div>
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>编排</h2>
-        <div id="orchestration-presets" class="segment-control" role="radiogroup" aria-label="编排档位">
-          <button class="segment-btn" role="radio" type="button" data-preset="off">关闭</button>
-          <button class="segment-btn" role="radio" type="button" data-preset="split">分工协作</button>
-          <button class="segment-btn" role="radio" type="button" data-preset="parallel">并行复核</button>
-          <button class="segment-btn" role="radio" type="button" data-preset="custom">自定义</button>
+        <h2 data-en="Orchestration">编排</h2>
+        <div id="orchestration-presets" class="segment-control" role="radiogroup" aria-label="编排档位" data-en-label="Orchestration preset">
+          <button class="segment-btn" role="radio" type="button" data-preset="off" data-en="Off">关闭</button>
+          <button class="segment-btn" role="radio" type="button" data-preset="split" data-en="Split work">分工协作</button>
+          <button class="segment-btn" role="radio" type="button" data-preset="parallel" data-en="Parallel & review">并行复核</button>
+          <button class="segment-btn" role="radio" type="button" data-preset="custom" data-en="Custom">自定义</button>
         </div>
         <p id="orchestration-effect" class="fine orchestration-effect"></p>
-        <h3 class="orchestration-apply">应用到</h3>
+        <h3 class="orchestration-apply" data-en="Apply to">应用到</h3>
         <div id="orchestration-bosses" class="skill-chips orchestration-bosses"></div>
         <div id="orchestration-roles" class="review-grid orchestration-roles" hidden></div>
         <pre id="orchestration-text" class="orchestration-template" hidden></pre>
         <div id="orchestration-custom" class="orchestration-custom" hidden>
-          <textarea id="custom-text" aria-label="自定义编排规则" spellcheck="false"></textarea>
+          <textarea id="custom-text" aria-label="自定义编排规则" data-en-label="Custom orchestration rules" spellcheck="false"></textarea>
         </div>
       </div>
     </div>
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>boss 全局规则文件</h2>
+        <h2 data-en="boss global rules files">boss 全局规则文件</h2>
         <ul id="rule-files" class="rule-files"></ul>
       </div>
     </div>
 
     <aside class="sticky-save-bar">
-      <div id="advanced-leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" hidden></div>
+      <div id="advanced-leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
       <div class="save-bar-inner">
         <div class="save-bar-info">
           <span id="advanced-dirty" class="dirty-label"></span>
           <span id="advanced-feedback" class="save-feedback"></span>
         </div>
         <div class="save-bar-actions">
-          <button id="advanced-discard" type="button" disabled>放弃修改</button>
-          <button id="advanced-save" class="primary" type="button" disabled>保存设置</button>
+          <button id="advanced-discard" type="button" disabled data-en="Discard changes">放弃修改</button>
+          <button id="advanced-save" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
         </div>
       </div>
     </aside>
@@ -165,8 +166,8 @@
 
     <div id="reload-notice" class="banner reload-notice" role="note" hidden>
       <div class="banner-content">
-        <strong>有接入配置待生效</strong>
-        <p><a href="#host-cards">按下方卡片的提示</a>重开或重连，完成后提示自动消除。</p>
+        <strong data-en="Connection changes pending">有接入配置待生效</strong>
+        <p data-en=" to restart or reconnect; this notice clears automatically once done."><a href="#host-cards" data-en="Follow the instructions on the cards below">按下方卡片的提示</a>重开或重连，完成后提示自动消除。</p>
       </div>
     </div>
 
@@ -175,7 +176,7 @@
     <div class="hosts-toolbar">
       <div id="hosts-summary" class="hosts-summary" aria-live="polite"></div>
       <span id="refresh-result" class="fine" role="status"></span>
-      <button id="refresh-hosts" type="button">刷新检测</button>
+      <button id="refresh-hosts" type="button" data-en="Refresh detection">刷新检测</button>
     </div>
     <div id="backups-line" class="backups-line"></div>
     <div id="host-cards" class="host-cards"></div>
@@ -184,17 +185,17 @@
   <section id="pane-about" class="tab-pane" hidden aria-labelledby="nav-about">
     <div class="updates-panel">
       <div class="updates-card">
-        <h2>版本与更新</h2>
+        <h2 data-en="Version & updates">版本与更新</h2>
         <div class="status-grid">
           <div class="status-item">
-            <span class="status-label">AgentNave 托盘应用</span>
+            <span class="status-label" data-en="AgentNave tray app">AgentNave 托盘应用</span>
             <div class="status-val-wrap">
               <strong id="app-version" class="status-value">—</strong>
               <span id="app-badge" class="tag" hidden></span>
             </div>
           </div>
           <div class="status-item">
-            <span class="status-label">本机服务 (agentnave)</span>
+            <span class="status-label" data-en="Local service (agentnave)">本机服务 (agentnave)</span>
             <div class="status-val-wrap">
               <strong id="service-version" class="status-value">—</strong>
               <span id="service-badge" class="tag" hidden></span>
@@ -202,7 +203,7 @@
             <p id="service-msg" class="status-desc" hidden></p>
           </div>
           <div class="status-item full-width">
-            <span class="status-label">上次检查</span>
+            <span class="status-label" data-en="Last checked">上次检查</span>
             <span id="last-checked" class="status-value status-time">—</span>
           </div>
         </div>
@@ -211,25 +212,25 @@
 
         <div id="update-action-area" class="update-action-area">
           <div class="btn-group">
-            <button id="btn-apply-update" class="primary" type="button" hidden>全部更新</button>
-            <button id="btn-check-update" type="button">立即检查</button>
+            <button id="btn-apply-update" class="primary" type="button" hidden data-en="Update all">全部更新</button>
+            <button id="btn-check-update" type="button" data-en="Check now">立即检查</button>
           </div>
           <p id="update-hint" class="field-hint" hidden></p>
           <div id="update-progress-box" class="progress-box" hidden>
             <span class="spinner-dot"></span>
-            <span id="update-progress-text">正在检查更新…</span>
+            <span id="update-progress-text" data-en="Checking for updates…">正在检查更新…</span>
           </div>
           <div id="update-error-box" class="update-error" role="status" aria-live="polite" hidden>
             <span id="update-error-text"></span>
-            <button id="btn-retry-update" type="button">重试</button>
+            <button id="btn-retry-update" type="button" data-en="Retry">重试</button>
           </div>
         </div>
       </div>
     </div>
 
     <div class="setting-row">
-      <h2>开始使用</h2>
-      <button id="onboarding-reopen" type="button">重新显示</button>
+      <h2 data-en="Getting started">开始使用</h2>
+      <button id="onboarding-reopen" type="button" data-en="Show again">重新显示</button>
     </div>
   </section>
 </main>

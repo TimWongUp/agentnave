@@ -1,7 +1,7 @@
 "use strict";
 // The office alone owns playback. A generation invalidates fetches when stopped or hidden.
 (function () {
-  const { h } = AN;
+  const { h, L = (zh) => zh } = AN;
   let config = null, group = null, view = null, observed = new Map(), skip = true;
   let queue = [], current = null, generation = 0, failures = 0, halted = false;
   let running = false, loading = null, baselineEpoch = 0;
@@ -9,10 +9,10 @@
   let privateView = null, deskShown = null, channelVisible = false, paused = false, wakePlayback = null;
   const switchButton = label => h("button.voice-toggle", { type: "button", hidden: true, "aria-label": label, "aria-pressed": "false" }, h("span.voice-track"), label);
   // Auto read speaks new messages as they arrive; chaining follows a clicked message down its conversation.
-  const toggle = switchButton("新消息自动读"), chain = switchButton("点读后连播");
+  const toggle = switchButton(L("新消息自动读", "Auto-read new")), chain = switchButton(L("点读后连播", "Continue reading"));
   const actions = document.getElementById("voice-actions");
   const roster = h("div.voice-roster");
-  const channelStop = h("button.voice-stop", { type: "button", disabled: true, hidden: true }, "暂停");
+  const channelStop = h("button.voice-stop", { type: "button", disabled: true, hidden: true }, L("暂停", "Pause"));
   const statusName = h("span.voice-status-name");
   const status = h("div.voice-status", { "aria-live": "polite" }, h("span.voice-waves", {}, h("i"), h("i"), h("i")), statusName);
   const more = h("div.voice-more");
@@ -31,7 +31,7 @@
   async function state() {
     const response = await fetch("/app/voice", { cache: "no-store" });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "无法读取语音播报设置");
+    if (!response.ok) throw new Error(data.error || L("无法读取语音播报设置", "Failed to load voice settings"));
     return data;
   }
   async function reload() {
@@ -171,7 +171,7 @@
     if (response.status === 204) return null;
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || "语音播报合成失败");
+      throw new Error(data.error || L("语音播报合成失败", "Voice synthesis failed"));
     }
     const notice = response.headers.get("X-AgentNave-Notice");
     if (notice) error(decodeURIComponent(notice));
@@ -249,7 +249,7 @@
       job.resolve = resolve;
       job.reject = reject;
       job.audio.onended = resolve;
-      job.audio.onerror = () => reject(new Error("无法播放语音播报"));
+      job.audio.onerror = () => reject(new Error(L("无法播放语音播报", "Failed to play voice audio")));
       job.audio.play().catch(failure => { if (!paused) reject(failure); });
     });
   }
@@ -275,7 +275,7 @@
         } catch (failure) {
           if (token === generation) {
             failures++;
-            error(failures >= 3 ? `语音播报已停止：${failure.message}。请重新开启语音。` : failure.message);
+            error(failures >= 3 ? L(`语音播报已停止：${failure.message}。请重新开启语音。`, `Voice readout stopped: ${failure.message}. Re-enable voice to continue.`) : failure.message);
             if (failures >= 3) { halted = true; stop(); }
           }
         } finally {
@@ -350,7 +350,7 @@
       const path = target.shown ? "history" : `focus/${encodeURIComponent(target.id)}`;
       const response = await fetch(`/app/chats/${encodeURIComponent(target.group)}/${path}`,
         { cache: "no-store", signal: load.signal });
-      if (!response.ok) throw new Error("无法读取完整对话消息");
+      if (!response.ok) throw new Error(L("无法读取完整对话消息", "Failed to load full conversation"));
       const chat = await response.json();
       if (playlistFetch !== load) return;
       const list = playable(chat, target);
@@ -413,10 +413,10 @@
       const active = current && (person.host ? current.boss : !current.boss && person.key === (current.desk || current.id));
       const name = person.host ? "boss" : person.role || person.label;
       if (active) speaking = person.key;
-      if (active) statusName.textContent = paused ? "" : current.speaking ? name : `${name} 准备中`;
+      if (active) statusName.textContent = paused ? "" : current.speaking ? name : L(`${name} 准备中`, `${name} preparing`);
       rec.el.dataset.speaking = String(Boolean(active && current.speaking));
       rec.el.dataset.preparing = String(Boolean(active && !current.speaking));
-      rec.el.setAttribute("aria-label", `${person.host ? "主持人" : "发言人"} ${name}${active ? paused ? "，已暂停" : current.speaking ? "，正在播放" : "，正在准备" : ""}`);
+      rec.el.setAttribute("aria-label", `${person.host ? L("主持人", "Host") : L("发言人", "Speaker")} ${name}${active ? paused ? L("，已暂停", ", paused") : current.speaking ? L("，正在播放", ", playing") : L("，正在准备", ", preparing") : ""}`);
       rec.el.title = person.host || !person.role ? name : `${name} · ${person.label}`;
     }
     for (const [key, rec] of participants) if (!keep.has(key)) { rec.el.remove(); participants.delete(key); }
@@ -424,7 +424,7 @@
     const shown = people.length <= ROSTER_LIMIT ? people : people.slice(0, ROSTER_LIMIT - 1);
     if (speaking && !shown.some(p => p.key === speaking)) shown[shown.length - 1] = people.find(p => p.key === speaking);
     more.textContent = `+${people.length - shown.length}`;
-    more.title = people.filter(p => !shown.includes(p)).map(p => p.host ? "boss" : p.role || p.label).join("、");
+    more.title = people.filter(p => !shown.includes(p)).map(p => p.host ? "boss" : p.role || p.label).join(L("、", ", "));
     AN.reconcile(roster, [...shown.map(p => participants.get(p.key).el), ...people.length > shown.length ? [more] : []]);
     const idle = !current && !queue.length;
     if (!current) statusName.textContent = "";
@@ -433,7 +433,7 @@
     actions.dataset.active = String(!idle);
     status.hidden = !current;
     toggle.hidden = chain.hidden = actions.hidden;
-    channelStop.textContent = paused ? "继续" : "暂停";
+    channelStop.textContent = paused ? L("继续", "Resume") : L("暂停", "Pause");
     channelStop.hidden = idle;
     channelStop.disabled = idle;
     channelStop.dataset.paused = String(paused);
@@ -441,7 +441,7 @@
   channelStop.addEventListener("click", () => paused ? resume() : pause());
   function decorate(rec, m, ctx) {
     if (!rec.read) {
-      rec.readLabel = h("span", {}, "读摘要");
+      rec.readLabel = h("span", {}, L("读摘要", "Read summary"));
       rec.read = h("button.voice-read", { type: "button" }, h("span.voice-waves", {}, h("i"), h("i"), h("i")), rec.readLabel);
       rec.read.addEventListener("click", event => {
         event?.stopPropagation();
@@ -457,9 +457,9 @@
     rec.read.disabled = !ready() || halted;
     if (eligible(m)) rec.voiceItem = item(m, ctx);
     const reading = current?.id === m.id;
-    const idleLabel = "读摘要";
-    rec.readLabel.textContent = reading ? paused ? "继续" : "暂停" : idleLabel;
-    rec.read.title = reading ? paused ? "继续朗读" : "暂停朗读" : ready() ? idleLabel : "请在设置 → 语音中开启语音播报并配置音色引擎";
+    const idleLabel = L("读摘要", "Read summary");
+    rec.readLabel.textContent = reading ? paused ? L("继续", "Resume") : L("暂停", "Pause") : idleLabel;
+    rec.read.title = reading ? paused ? L("继续朗读", "Resume reading") : L("暂停朗读", "Pause reading") : ready() ? idleLabel : L("请在设置 → 语音中开启语音播报并配置音色引擎", "Enable voice readout and configure an engine in Settings → Voice");
     rec.read.setAttribute("aria-label", rec.read.title);
     rec.read.setAttribute("aria-pressed", String(Boolean(reading)));
   }
@@ -480,7 +480,7 @@
     try {
       const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, [field]: !on }) });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "无法保存语音播报设置");
+      if (!response.ok) throw new Error(data.error || L("无法保存语音播报设置", "Failed to save voice settings"));
       config = data; failures = 0; halted = false;
       if (field === "auto_read") { skip = true; baselineEpoch++; }
       changed();
