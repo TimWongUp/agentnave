@@ -95,14 +95,14 @@ configuration and native sessions stay with that CLI.
 | `wait`              | Wait up to 240 seconds by default; returns early when ready; use `0` for a progress check |
 | `cancel`            | Stop a task or a round and return its final result                                        |
 | `decide_answers`    | With review on, publish each answer or keep it private                                    |
-| `list`              | List current handles and saved conversations, and start the read-only dashboard           |
+| `list`              | List current handles and saved conversations                                              |
 | `read_conversation` | Read one conversation back as the App shows it                                            |
 | `list_members`      | Read the teammate defaults set in the App, and one CLI's options                          |
 | `handover`          | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
 
 Omitted model, effort and options use the teammate defaults set in the App; a run still without an effort gets the
 CLI's own configured one. Both are listed in `defaults_applied`; explicit parameters win. The [agentnave-manager Skill](skills/agentnave-manager/SKILL.md) covers CLI choice and options, the
-[conversation guide](docs/studio.md) (in Chinese) covers review, host remarks, isolated seats and the dashboard, and
+[conversation guide](docs/studio.md) (in Chinese) covers review, host remarks and isolated seats, and
 [architecture](docs/context/architecture.md) lists the stable contracts and output limits.
 
 ## 🧭 Who decides what

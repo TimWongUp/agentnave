@@ -20,7 +20,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 | `wait` | 等任务 `invocation_id` 和轮次 `round_id`，任一就绪即返回；省略 `ids` 等收件箱 |
 | `cancel` | 取消任务或轮次 |
 | `decide_answers` | `review=true` 的会议室：逐席公开或不公开 |
-| `list` | 本服务的句柄、保存的会话（最近在前）和只读看板链接 |
+| `list` | 本服务的句柄和保存的会话（最近在前） |
 | `read_conversation` | 按 App 的样子读回一个会话的最终消息 |
 | `list_members` | App 组员与默认值；传 `provider` 时附该 CLI 的允许状态和可用选项 |
 | `handover` | 把本聊天的整个工作区交给另一个 boss 聊天，或列出、认领待接手的工作区 |
@@ -70,7 +70,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 - **委员会**：`run_round` 两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报共识、分歧及如何收敛。用户要求最终收束时再加一轮 `serial`。
 - **实现＋复核**：实现者 `write` 用独立 worktree，复核者 `read` 看 diff 只报可执行问题；boss 用 `forward` 把复核结果交给实现者的 `session_id` 续接修复，再请复核者续接复查。
 
-会议室每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，续接自己的原生会话；席位只共享已提交条目，私密指令只给对应席位。同组同时一轮；`run_round` 立即返回，用 `wait` 等。可单独 `cancel` 某席的 `invocation_id`，记缺席后串联轮继续。不自动重试，不设每席截止时间。席位失败或受阻后不要另开私聊顶替，私聊线程接不回席位：[按会话与审核的做法补跑](references/studio.md)。并联写代码的席位各用独立 worktree。会议室保存为会话，可跨服务重启继续；运行中的进程和句柄不恢复。审核、主持人、隔离和看板见[会话与审核](references/studio.md)。
+会议室每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`，续接自己的原生会话；席位只共享已提交条目，私密指令只给对应席位。同组同时一轮；`run_round` 立即返回，用 `wait` 等。可单独 `cancel` 某席的 `invocation_id`，记缺席后串联轮继续。不自动重试，不设每席截止时间。席位失败或受阻后不要另开私聊顶替，私聊线程接不回席位：[按会话与审核的做法补跑](references/studio.md)。并联写代码的席位各用独立 worktree。会议室保存为会话，可跨服务重启继续；运行中的进程和句柄不恢复。审核、主持人和隔离见[会话与审核](references/studio.md)。
 
 ## 讨论范围与工具
 
