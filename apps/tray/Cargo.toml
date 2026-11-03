@@ -19,6 +19,7 @@ base64 = "0.22"
 dirs = "6"
 flate2 = "1"
 getrandom = "0.3"
+notify-rust = "4"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 ruzstd = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -29,7 +30,6 @@ sys-locale = "0.3"
 tauri = { version = "2.12", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-single-instance = "2.5"
 tauri-plugin-autostart = "2"
-tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tempfile = "3"
 toml = "1.1"
@@ -42,14 +42,12 @@ windows-registry = "0.6"
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
 block2 = "0.6"
-notify-rust = "4"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSEvent"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
 
 [target.'cfg(windows)'.dependencies]
-notify-rust = "4"
 windows = { version = "0.62", features = ["UI_Notifications"] }
 
 [target.'cfg(unix)'.dependencies]

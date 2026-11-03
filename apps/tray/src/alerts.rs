@@ -1,14 +1,12 @@
 //! App-local reminders. Observe saved task/round transitions even while reminders are off,
 //! so enabling them never replays work that ended earlier in this App process.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::thread;
 
 use serde_json::{Map, Value, json};
 use tauri::AppHandle;
-#[cfg(not(windows))]
-use tauri_plugin_notification::NotificationExt;
 
 use crate::data::{Reader, Response};
 
@@ -39,6 +37,9 @@ pub(crate) struct Observation {
     outcome: Outcome,
     elapsed_ms: Option<u64>,
 }
+
+/// Readable conversations, including those without any finished work yet.
+pub(crate) type Readings = HashMap<String, Vec<Observation>>;
 
 struct Options {
     enabled: bool,
@@ -83,7 +84,7 @@ impl Options {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Notice {
     title: String,
     body: String,
@@ -117,14 +118,18 @@ impl Observation {
 }
 
 #[derive(Default)]
-pub(crate) struct Monitor {
-    initialized: bool,
+struct Conversation {
     seen: HashSet<String>,
     unstamped_problems: HashSet<String>,
 }
 
-impl Monitor {
-    fn observe(&mut self, events: Vec<Observation>, options: &Options) -> Vec<(String, Notice)> {
+impl Conversation {
+    fn observe(
+        &mut self,
+        events: Vec<Observation>,
+        options: &Options,
+        baseline: bool,
+    ) -> Vec<(String, Notice)> {
         // Launch errors may have no saved finish time. An observed return to running
         // rearms only these events; timestamped results already identify each attempt.
         // A retry wholly between polls cannot be distinguished without a saved attempt id
@@ -143,7 +148,7 @@ impl Monitor {
             if self.seen.contains(&event.key) {
                 continue;
             }
-            if !self.initialized {
+            if baseline {
                 self.seen.insert(event.key);
             } else if options.accepts(&event) {
                 notices.push((event.key.clone(), event.notice(options.english)));
@@ -157,22 +162,42 @@ impl Monitor {
                 self.seen.insert(event.key);
             }
         }
-        self.initialized = true;
         notices
     }
+}
 
+#[derive(Default)]
+pub(crate) struct Monitor {
+    conversations: HashMap<String, Conversation>,
+}
+
+impl Monitor {
     pub(crate) fn tick(&mut self, app: &AppHandle, reader: &Reader) {
         let Ok(events) = reader.alert_observations() else {
             return;
         };
         let document = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
         let options = Options::from(&document);
-        for (key, notice) in self.observe(events, &options) {
-            match send(app, &notice, false, options.english) {
-                Ok(()) => {
-                    self.seen.insert(key);
+        self.deliver(events, &options, |notice| {
+            send(app, notice, false, options.english)
+        });
+    }
+
+    fn deliver(
+        &mut self,
+        readings: Readings,
+        options: &Options,
+        mut send: impl FnMut(&Notice) -> Result<(), String>,
+    ) {
+        for (id, events) in readings {
+            let baseline = !self.conversations.contains_key(&id);
+            let conversation = self.conversations.entry(id).or_default();
+            for (key, notice) in conversation.observe(events, options, baseline) {
+                let result = send(&notice);
+                conversation.seen.insert(key);
+                if let Err(reason) = result {
+                    eprintln!("agentnave: notification: {reason}");
                 }
-                Err(reason) => eprintln!("agentnave: notification: {reason}"),
             }
         }
     }
@@ -191,19 +216,7 @@ pub(crate) fn start(app: AppHandle, reader: Arc<Reader>) {
 
 fn send(app: &AppHandle, notice: &Notice, request: bool, english: bool) -> Result<(), String> {
     permission::check(app, request, english)?;
-    #[cfg(windows)]
-    {
-        permission::send_windows(app, &notice.title, &notice.body, english)
-    }
-    #[cfg(not(windows))]
-    {
-        app.notification()
-            .builder()
-            .title(&notice.title)
-            .body(&notice.body)
-            .show()
-            .map_err(|e| e.to_string())
-    }
+    permission::send(app, &notice.title, &notice.body, english)
 }
 
 /// Test delivery uses the same notification switch and native permission checks.

@@ -149,7 +149,7 @@ impl Response {
 type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 
 /// (view revision, parsed view) of one conversation.
-type CachedView = (i64, Option<Arc<Value>>);
+type CachedView = (i64, Arc<Value>);
 
 /// What identifies a route answer: each snapshot's view, whether the data root exists, and
 /// the reuse window.
@@ -637,7 +637,7 @@ impl Reader {
             }
             seen.insert(id.clone());
             let saved = match cache.get(&id) {
-                Some((cached, value)) if *cached == rev => value.clone(),
+                Some((cached, value)) if *cached == rev => Some(value.clone()),
                 _ => {
                     let value = database
                         .as_ref()
@@ -646,8 +646,13 @@ impl Reader {
                         .and_then(|connection| view_body(connection, &id))
                         .and_then(|body| serde_json::from_str::<Value>(&body).ok())
                         .filter(|value| version(value) == Some(VERSION))
+                        .filter(|value| summary(value).is_some_and(|item| item.id == id))
                         .map(Arc::new);
-                    cache.insert(id.clone(), (rev, value.clone()));
+                    if let Some(value) = &value {
+                        cache.insert(id.clone(), (rev, value.clone()));
+                    } else {
+                        cache.remove(&id);
+                    }
                     value
                 }
             };

@@ -2,7 +2,7 @@
 //! which the view deliberately reduces to identities once a newer round starts.
 
 use super::Reader;
-use crate::alerts::Observation;
+use crate::alerts::{Observation, Readings};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -11,15 +11,12 @@ use std::sync::Arc;
 pub(super) type Cache = HashMap<String, (Arc<Value>, Vec<Observation>)>;
 
 impl Reader {
-    pub(crate) fn alert_observations(&self) -> Result<Vec<Observation>, String> {
+    pub(crate) fn alert_observations(&self) -> Result<Readings, String> {
         // A failed database read must not establish an empty startup baseline.
         let database = crate::db::read(&self.root)?;
-        let (overview, snapshots) = self.scan();
-        if !overview.unavailable.is_empty() {
-            return Err("会话视图尚未完整读取".into());
-        }
+        let (_, snapshots) = self.scan();
         let mut cache = self.alerts.lock().unwrap_or_else(|p| p.into_inner());
-        let mut events = Vec::new();
+        let mut events = Readings::new();
         let mut seen = HashSet::new();
         for snapshot in &snapshots {
             let id = &snapshot.item.id;
@@ -29,7 +26,13 @@ impl Reader {
                 .is_some_and(|(view, _)| Arc::ptr_eq(view, &snapshot.view))
             {
                 let rounds = if snapshot.item.mode == "show" {
-                    saved_rounds(database.as_ref(), id)?
+                    match saved_rounds(database.as_ref(), id) {
+                        Ok(rounds) => rounds,
+                        Err(_) => {
+                            cache.remove(id);
+                            continue;
+                        }
+                    }
                 } else {
                     Vec::new()
                 };
@@ -37,7 +40,7 @@ impl Reader {
                 cache.insert(id.clone(), (snapshot.view.clone(), observations));
             }
             if let Some((_, observations)) = cache.get(id) {
-                events.extend_from_slice(observations);
+                events.insert(id.clone(), observations.clone());
             }
         }
         cache.retain(|id, _| seen.contains(id));

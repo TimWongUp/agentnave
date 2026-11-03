@@ -171,7 +171,6 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_notification::init())
         .manage(preferences::runtime::Runtime::default())
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let reader = served.clone();

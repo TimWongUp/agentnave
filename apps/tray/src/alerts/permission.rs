@@ -1,4 +1,4 @@
-//! Query native permissions: the plugin reports Granted unconditionally on desktop.
+//! Native permission checks and notification delivery.
 
 fn text<'a>(english: bool, zh: &'a str, en: &'a str) -> &'a str {
     if english { en } else { zh }
@@ -49,7 +49,7 @@ pub(super) fn check(_app: &tauri::AppHandle, request: bool, english: bool) -> Re
             .to_owned()
         })?
         .to_string();
-    // Set the actual bundle before the plugin attributes development builds to Terminal.
+    // Give development and preview bundles their own notification identity.
     static IDENTITY: OnceLock<Result<(), String>> = OnceLock::new();
     IDENTITY
         .get_or_init(|| notify_rust::set_application(&identifier).map_err(|e| e.to_string()))
@@ -130,41 +130,29 @@ pub(super) fn check(app: &tauri::AppHandle, _request: bool, english: bool) -> Re
     }
 }
 
-/// The plugin cannot override its Windows AUMID. Use its native backend with an explicit
-/// identity, including in development, and propagate failures instead of swallowing them.
-#[cfg(windows)]
-pub(super) fn send_windows(
+/// Use the native backend directly and propagate delivery errors to the caller.
+pub(super) fn send(
     app: &tauri::AppHandle,
     title: &str,
     body: &str,
     english: bool,
 ) -> Result<(), String> {
-    notify_rust::Notification::new()
-        .summary(title)
-        .body(body)
-        .app_id(identity(&app.config().identifier, crate::PREVIEW))
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(title).body(body);
+    #[cfg(windows)]
+    notification.app_id(identity(&app.config().identifier, crate::PREVIEW));
+    #[cfg(not(windows))]
+    let _ = app;
+    notification
         .show()
         .map(|_| ())
         .map_err(|e| error(english, e))
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-pub(super) fn check(app: &tauri::AppHandle, _request: bool, english: bool) -> Result<(), String> {
-    use tauri::plugin::PermissionState;
-    use tauri_plugin_notification::NotificationExt;
-    match app
-        .notification()
-        .permission_state()
-        .map_err(|e| error(english, e))?
-    {
-        PermissionState::Granted => Ok(()),
-        _ => Err(text(
-            english,
-            "系统未授予通知权限",
-            "Notification permission has not been granted",
-        )
-        .into()),
-    }
+pub(super) fn check(_app: &tauri::AppHandle, _request: bool, _english: bool) -> Result<(), String> {
+    // Desktop notification daemons report policy or transport failures during send.
+    Ok(())
 }
 
 #[cfg(test)]
