@@ -1,6 +1,6 @@
 "use strict";
 // The office alone owns playback. A generation invalidates fetches when stopped or hidden.
-(function () {
+{
   const { h, L = (zh) => zh } = AN;
   let config = null, group = null, view = null, observed = new Map(), skip = true;
   let queue = [], current = null, generation = 0, failures = 0, halted = false;
@@ -511,4 +511,4 @@
   window.addEventListener("pagehide", stop);
   AN.voice = { ingest, decorate, pollToken: () => baselineEpoch, controls, stop, beforeAnswers };
   void reload().catch(failure => error(failure.message, "load"));
-})();
+}

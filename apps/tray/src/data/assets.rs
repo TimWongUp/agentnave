@@ -125,7 +125,22 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/advanced.js").to_vec(),
         ),
-
+        "settings-state.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/settings-state.js").to_vec(),
+        ),
+        "member-models.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/member-models.js").to_vec(),
+        ),
+        "member-cards.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/member-cards.js").to_vec(),
+        ),
+        "update-settings.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/update-settings.js").to_vec(),
+        ),
         "settings.js" => Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec()),
         "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
         "hosts.js" => Response::ok("text/javascript; charset=utf-8", HOSTS_JS.to_vec()),
@@ -144,7 +159,18 @@ fn chat_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/voice.js").to_vec(),
         ),
-
+        "chat-state.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-state.js").to_vec(),
+        ),
+        "chat-office.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-office.js").to_vec(),
+        ),
+        "chat-messages.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-messages.js").to_vec(),
+        ),
         "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
         "chat-topics.js" => Response::ok(
             "text/javascript; charset=utf-8",
@@ -158,6 +184,22 @@ fn chat_asset(resource: &str) -> Response {
         "onboarding.css" => Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec()),
         "appearance.js" => Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec()),
         "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
+        "common-select.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/common-select.js").to_vec(),
+        ),
+        "onboarding.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/onboarding.js").to_vec(),
+        ),
+        "update-dialog.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/update-dialog.js").to_vec(),
+        ),
+        "common-status.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/common-status.js").to_vec(),
+        ),
 
         "" => page(CHAT_HTML),
         id if valid_id(id) => page(CHAT_HTML),
@@ -173,6 +215,22 @@ fn panel_asset(resource: &str) -> Response {
         "onboarding.css" => Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec()),
         "appearance.js" => Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec()),
         "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
+        "common-select.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/common-select.js").to_vec(),
+        ),
+        "onboarding.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/onboarding.js").to_vec(),
+        ),
+        "update-dialog.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/update-dialog.js").to_vec(),
+        ),
+        "common-status.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/common-status.js").to_vec(),
+        ),
 
         _ => Response::not_found(),
     }

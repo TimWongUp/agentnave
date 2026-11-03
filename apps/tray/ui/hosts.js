@@ -1,5 +1,5 @@
 "use strict";
-(function () {
+{
 "use strict";
 // Settings -> 宿主接入. Pure DOM construction (h() = createElement/textContent), no innerHTML, no inline style.
 // Data comes from GET /app/hosts; every write is a POST with X-AgentNave-Action (AN.post). The page never
@@ -759,4 +759,4 @@ $("onboarding-reopen").addEventListener("click", async () => {
   }
 })();
 
-})();
+}

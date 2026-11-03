@@ -1,5 +1,5 @@
 "use strict";
-(function () {
+{
   const { h, $, L, load, post } = AN;
   const root = $("storage-settings");
   let data = null;
@@ -198,4 +198,4 @@
   addEventListener("hashchange", () => visible() && refresh());
   window.AgentNaveStorageSettings = { load: refresh };
   if (!$("pane-storage")?.hidden) void refresh();
-})();
+}

@@ -1,5 +1,5 @@
 "use strict";
-(function () {
+{
   const { h, $, L, load, post, shellOS } = AN;
   const root = $("general-prefs");
   let data = null;
@@ -225,4 +225,4 @@
   addEventListener("hashchange", () => visible() && refresh());
   window.AgentNaveGeneralSettings = { load: refresh };
   if (!$("pane-general")?.hidden) void refresh();
-})();
+}
