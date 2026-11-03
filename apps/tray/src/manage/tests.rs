@@ -59,6 +59,8 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
             .iter()
             .all(|r| r["status"] == "deleted")
     );
+    assert!(!root.path().join("seats/old").exists());
+    assert!(root.path().join("seats/newly-finished").is_dir());
     // The emptied workspace's handover goes with its last conversation.
     let handovers: i64 = crate::db::read(root.path())
         .unwrap()
@@ -167,7 +169,7 @@ fn take(lock: &File) {
 }
 
 #[test]
-fn cleanup_cascades_rows_and_keeps_lock_inode_and_seat_files() {
+fn cleanup_cascades_rows_and_seat_files_and_keeps_lock_inode() {
     let root = tempfile::tempdir().unwrap();
     fixture(root.path(), "idle");
     set(
@@ -180,7 +182,7 @@ fn cleanup_cascades_rows_and_keeps_lock_inode_and_seat_files() {
     for table in ["conversations", "tasks", "views"] {
         assert_eq!(count(root.path(), table, "idle"), 0);
     }
-    assert!(root.path().join("seats/idle/a/output.txt").is_file());
+    assert!(!root.path().join("seats/idle").exists());
     // A handle opened before cleanup still excludes a handle opened afterward.
     take(&lock);
     assert!(matches!(
