@@ -1774,9 +1774,10 @@ function renderConv(c, ctx) {
   )
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
-  const privateChat = state.drawer.kind === "desk" && c.threads.some(t => t.kind === "desk" && t.key === state.drawer.key);
+  const desk = state.drawer.kind === "desk" ? state.drawer.key : null;
+  // A chained read in a desk view follows what that view shows, from the complete history.
   AN.voice?.controls(true, state.drawer.kind === "room" ? { group: c.group, id: state.drawer.id } : null, ctx,
-    privateChat ? state.drawer.key : null);
+    desk, desk ? chat => deskStream(chat.messages, contextOf(chat)).shown : null);
   if (state.drawer.kind === "all") {
     renderDirectory(c, ctx);
     return;

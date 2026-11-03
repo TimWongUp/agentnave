@@ -70,10 +70,11 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
     voice: AN.voice, requests, sounds, ctx, feed, nodes,
     async scope(value) { config.read_scope = value; await feed(ctx.c.messages); await flush(); },
     stop() { nodes.find(n => n.tag === "button.voice-stop").listeners.click(); },
-    private(desk, messages = []) {
+    // A desk view, showing what chat.js's desk stream would: here, the desk's own messages.
+    private(desk, messages = [], shown = chat => chat.messages.filter(m => m.desk === desk.key)) {
       ctx.desks = new Map([[desk.key, desk]]);
       rooms.set("/app/chats/workspace/history", { ...ctx.c, messages, desks: [desk] });
-      AN.voice.controls(true, null, ctx, desk.key);
+      AN.voice.controls(true, null, ctx, desk.key, shown);
       return starter(messages);
     },
     room(messages, id = "room", desks = null) {
@@ -209,19 +210,22 @@ test("returning to the directory keeps playing, keeps the channel and reads the 
   assert.deepEqual(app.requests.map(r => r.text), ["meeting-answer", "private-answer"]);
 });
 
-test("private play-from-start reads only that employee's private history and excludes meeting excerpts", async () => {
+test("desk play-from-start reads what that desk view shows, meeting messages included", async () => {
   const app = await office(false);
   const messages = [
     message("old-question", "2025-01-01T00:00:01Z", { desk: "employee", kind: "prompt", speaker: { role: "manager", provider: "codex" } }),
     message("old-answer", "2025-01-01T00:00:02Z", { desk: "employee" }),
     message("other-employee", "2025-01-01T00:00:03Z"),
-    message("meeting-excerpt", "2025-01-01T00:00:04Z", { desk: "employee", thread: { kind: "room", id: "room" } }),
+    message("meeting-answer", "2025-01-01T00:00:04Z", { desk: "employee", conversation: "room", thread: { kind: "room", id: "room" } }),
+    message("meeting-peer", "2025-01-01T00:00:05Z", { desk: "peer", conversation: "room", thread: { kind: "room", id: "room" } }),
+    message("later-meeting", "2025-01-01T00:00:06Z", { desk: "peer", conversation: "room", thread: { kind: "room", id: "room" } }),
   ];
-  const button = app.private({ key: "employee", provider: "codex", model: "gpt" }, messages);
+  const shown = new Set(["old-question", "old-answer", "meeting-answer", "meeting-peer"]);
+  const button = app.private({ key: "employee", provider: "codex", model: "gpt" }, messages, chat => chat.messages.filter(m => shown.has(m.id)));
   assert.equal(button.hidden, false);
   await button.listeners.click(); await flush();
-  await app.end(); await app.end();
-  assert.deepEqual(app.requests.map(r => r.text), ["old-question", "old-answer"]);
+  await app.end(); await app.end(); await app.end();
+  assert.deepEqual(app.requests.map(r => r.text), ["old-question", "old-answer", "meeting-answer", "meeting-peer"]);
 });
 
 test("existing boss messages and employee answers use their displayed text in time order", async () => {

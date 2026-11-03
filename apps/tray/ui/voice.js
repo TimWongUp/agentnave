@@ -6,7 +6,7 @@
   let queue = [], current = null, generation = 0, failures = 0, halted = false;
   let running = false, loading = null, baselineEpoch = 0;
   let roomView = null, playlistScope = null, playlistFetch = null;
-  let privateView = null, channelVisible = false, paused = false, wakePlayback = null;
+  let privateView = null, deskShown = null, channelVisible = false, paused = false, wakePlayback = null;
   const switchButton = label => h("button.voice-toggle", { type: "button", hidden: true, "aria-label": label, "aria-pressed": "false" }, h("span.voice-track"), label);
   // Auto read speaks new messages as they arrive; chaining follows a clicked message down its conversation.
   const toggle = switchButton("新消息自动读"), chain = switchButton("点读后连播");
@@ -324,8 +324,9 @@
       rooms: new Map((chat.rooms || []).map(r => [r.id, r])) };
     // A briefing waits for its answer, as in auto read.
     const answered = new Set(chat.messages.filter(m => m.kind === "reply" && eligible(m) && scopedMessage(m)).map(answerKey).filter(Boolean));
+    const shown = target.shown && new Set(target.shown(chat).map(m => m.id));
     const list = chat.messages.filter(m => eligible(m) && (m.kind !== "instruction" || !answerKey(m) || answered.has(answerKey(m)))
-      && (target.private ? privateMessage(m, target.id) : m.conversation === target.id)).map(m => item(m, ctx));
+      && (shown ? shown.has(m.id) : m.conversation === target.id)).map(m => item(m, ctx));
     list.sort((a, b) => a.time - b.time);
     return beforeAnswers(list);
   }
@@ -340,13 +341,13 @@
     changed();
     void drain();
     const target = config?.continue_read !== true ? null : roomView ? roomView
-      : privateView ? { group: channelContext?.c.group || group, id: privateView, private: true }
+      : privateView ? { group: channelContext?.c.group || group, id: privateView, shown: deskShown }
         : m.conversation ? { group, id: m.conversation } : null;
     if (!target) return;
     const load = playlistFetch = new AbortController();
     playlistScope = target.id;
     try {
-      const path = target.private ? "history" : `focus/${encodeURIComponent(target.id)}`;
+      const path = target.shown ? "history" : `focus/${encodeURIComponent(target.id)}`;
       const response = await fetch(`/app/chats/${encodeURIComponent(target.group)}/${path}`,
         { cache: "no-store", signal: load.signal });
       if (!response.ok) throw new Error("无法读取完整对话消息");
@@ -373,12 +374,13 @@
       }
     }
   }
-  function controls(visible, room = null, ctx = null, desk = null) {
+  function controls(visible, room = null, ctx = null, desk = null, shown = null) {
     // A chained read belongs to the open conversation; auto read does not.
     if (playlistScope && (channelVisible !== visible || roomView?.id !== room?.id || roomView?.group !== room?.group || privateView !== desk))
       dropPlaylist();
     roomView = room;
     privateView = desk;
+    deskShown = shown;
     channelVisible = visible;
     channelContext = ctx;
     updateChannel();
