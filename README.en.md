@@ -36,10 +36,12 @@ has gone to the meeting room, and what everyone said.
 
 | Role                                                | Supported                                                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes |
+| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot (Linux only) |
 | **Teammate** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
 
 The boss side is wider: any of these hosts can be the boss, desktop apps included, while teammates are only the CLIs listed. A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a meeting.
+
+Grok Bot connects only through an MCP stdio connector on Linux; integration through the macOS / Windows App is not provided. It is not a valid `AGENTNAVE_HOST` value and connects as an unknown host (`host_source: "unknown"`), so AgentNave cannot automatically read back its boss model or session file. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
 ## 🎀 Meet the team
 
@@ -79,7 +81,9 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0
 
 Then follow the [installation guide](docs/installation.md) to register the MCP server, install the
 [agentnave-manager](skills/agentnave-manager/SKILL.md) and [agentnave-handover](skills/agentnave-handover/SKILL.md) Skills and verify both. The guide is written for Agents, so you
-can hand it straight to yours and let it check and install. The optional
+can hand it straight to yours and let it check and install. **Headless Linux (no App)**: bots such as Grok Bot that run on Linux
+and connect only as an MCP connector follow the [Linux after-install guide](docs/linux-after-install.md) (in Chinese) to walk
+the user through setup; config file details are in the [headless Linux host guide](docs/linux-headless.md) (in Chinese). The optional
 [agentnave-review Skill](skills/agentnave-review/SKILL.md) adds a risk-graded review gate for PRs and merges, staffed by
 read-only reviewer CLIs that AgentNave dispatches.
 
