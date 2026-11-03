@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -245,6 +246,27 @@ def test_unreadable_orphan_seat_is_removed_without_ending_the_pass(tmp_path: Pat
                 path.chmod(0o700)
     assert not seat.exists()
     assert not (tmp_path / "locks/orphan.lock").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows only")
+def test_orphan_seat_junctions_are_removed_without_touching_their_targets(tmp_path: Path) -> None:
+    import _winapi  # pyright: ignore[reportMissingModuleSource]
+
+    fixture(tmp_path, "saved")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("keep")
+    (outside / "keep").chmod(stat.S_IREAD)
+    (tmp_path / "seats/inner").mkdir(parents=True)
+    _winapi.CreateJunction(str(outside), str(tmp_path / "seats/inner/link"))
+    _winapi.CreateJunction(str(outside), str(tmp_path / "seats/whole"))
+    for name in ["inner", "whole"]:
+        os.utime(tmp_path / "seats" / name, (_NOW - 2 * 86400, _NOW - 2 * 86400))
+    cleanup(tmp_path, now=_NOW)
+    assert not (tmp_path / "seats/inner").exists()
+    assert not os.path.lexists(tmp_path / "seats/whole")
+    assert (outside / "keep").read_text() == "keep"
+    assert not os.access(outside / "keep", os.W_OK)
 
 
 def test_orphan_sweeps_spare_case_variants_and_symlinked_directories(tmp_path: Path) -> None:
