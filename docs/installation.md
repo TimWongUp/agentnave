@@ -577,7 +577,11 @@ transaction or automatic host configuration update.
 
 ### Upgrading to v0.66.1
 
-This release fixes three relay defects around runtime upgrades: the relay now notifies hosts on
+This release lets the macOS menu bar count use a chosen font, documents `settings.json` for
+installations without the App, and makes the service reclaim orphan conversation locks, orphan
+isolated seat directories, used native-session locks and empty unclaimed handovers older than 90
+days, regardless of the history retention setting. It also fixes three relay defects around
+runtime upgrades: the relay now notifies hosts on
 any protocol version when a swapped-in child publishes a different tool list, a late answer to the
 relay's own timed-out probe no longer reaches the host, and a child it had to kill is reaped
 instead of being left as a zombie. Tool receipts keep their added fields and are therefore not
