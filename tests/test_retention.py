@@ -205,8 +205,13 @@ def test_orphan_seats_expire_after_one_day_without_following_symlinks(tmp_path: 
     outside.mkdir()
     (outside / "keep").write_text("keep")
     (tmp_path / "seats/old/link").symlink_to(outside, target_is_directory=True)
-    (tmp_path / "seats/linked").symlink_to(outside, target_is_directory=True)
-    os.utime(tmp_path / "seats/linked", (_NOW - 2 * 86400, _NOW - 2 * 86400), follow_symlinks=False)
+    # Windows cannot age a symlink itself; the linked seat is then left out.
+    linked = os.utime in os.supports_follow_symlinks
+    if linked:
+        (tmp_path / "seats/linked").symlink_to(outside, target_is_directory=True)
+        os.utime(
+            tmp_path / "seats/linked", (_NOW - 2 * 86400, _NOW - 2 * 86400), follow_symlinks=False
+        )
     os.utime(tmp_path / "seats/old", (_NOW - 2 * 86400, _NOW - 2 * 86400))
     (tmp_path / "locks").mkdir()
     with lock_file(tmp_path / "locks/busy.lock", "busy"):
