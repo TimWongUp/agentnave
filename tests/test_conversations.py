@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 from mcp import Client
 
-import agentnave.conversations as conversations_module
+import agentnave.conversations_store as conversations_module
 from agentnave import mcp_runtime, mcp_server, views
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
@@ -1742,7 +1742,7 @@ async def test_native_model_is_saved_and_round_recipients_match_selected_seats(
     def native_model(_host: object, _session: str | None) -> str:
         return current_model
 
-    monkeypatch.setattr("agentnave.conversations.session_model", native_model)
+    monkeypatch.setattr("agentnave.conversations_store.session_model", native_model)
     async with Client(mcp) as client:
         task = await _call(
             client,
