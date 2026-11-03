@@ -1032,7 +1032,7 @@ async def list_all(
     *,
     ctx: Context[Runtime],
 ) -> ListPayload:
-    """List invocation metadata and saved conversations, newest first; open a read-only dashboard.
+    """List invocation metadata and saved conversations, newest first.
     writable=false: continue at the owning server or when idle. Private: never send to seats.
     """
     conversations = _conversations(ctx)
@@ -1065,10 +1065,6 @@ async def list_all(
         "total": len(matching),
         "unavailable": conversations.unavailable,
     }
-    try:
-        result["dashboard_url"] = conversations.open_dashboard(history_loaded=True)
-    except OSError as exc:
-        result["dashboard_error"] = str(exc)
     return result
 
 

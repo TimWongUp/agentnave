@@ -72,6 +72,15 @@ fn routes_serve_views_and_reject_everything_else() {
 
     assert!(String::from_utf8_lossy(&reader.respond("/").body).contains("url=/chat/"));
     assert_eq!(reader.respond("/panel/").status, 200);
+    for (path, mime) in [
+        ("/avatars.js", "text/javascript; charset=utf-8"),
+        ("/avatar-claude.svg", "image/svg+xml"),
+    ] {
+        let response = reader.respond(path);
+        assert_eq!(response.status, 200, "{path}");
+        assert_eq!(response.content_type, mime, "{path}");
+        assert!(!response.body.is_empty(), "{path}");
+    }
     for path in [
         "/manage/",
         "/manage/manage.css",

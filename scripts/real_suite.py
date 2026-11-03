@@ -4,8 +4,8 @@ This consumes provider quota. Each run first covers every service mode once, the
 cycling short tasks until --duration seconds have passed in total, watching for leaked
 provider processes. Workspace and report stay under /tmp/agentnave-real-<time>/. History goes
 there too, so App member defaults are not read and only the cheap models below and no
-permission options are passed. --real-history saves into ~/.agentnave instead, so the App and
-dashboard show the run live and App member defaults apply. Prompts ask for plain text without
+permission options are passed. --real-history saves into ~/.agentnave instead, so the App
+shows the run live and App member defaults apply. Prompts ask for plain text without
 tools. The server never dispatches its host's
 own CLI with start_agent, so run from a plain terminal to cover that CLI's tasks; group seats
 include it either way.
@@ -205,18 +205,9 @@ class Suite:
             return None
 
         await self.guarded("list_tools", "-", tools())
-        await self.guarded("dashboard", "-", self._dashboard())
         await self.guarded("list_members", "-", self._members())
         for provider in self.providers:
             await self.guarded("provider_details", provider, self._describe(provider))
-
-    async def _dashboard(self) -> str | None:
-        listed = await self.call("list", {})
-        url = listed.get("dashboard_url")
-        if url is None:
-            return f"no dashboard: {listed.get('dashboard_error')}"
-        print(f"\n  dashboard: {url}\n")
-        return None
 
     async def _members(self) -> str | None:
         await self.call("list_members", {})
@@ -479,8 +470,6 @@ class Suite:
 
     async def history(self) -> str | None:
         listed = await self.call("list", {"limit": 200})
-        if "dashboard_url" not in listed and "dashboard_error" not in listed:
-            raise ToolFailure("list returned no dashboard link")
         conversations = [
             item
             for item in listed["conversations"]
@@ -627,7 +616,7 @@ async def main() -> int:
     parser.add_argument(
         "--real-history",
         action="store_true",
-        help="save into ~/.agentnave so the App and dashboard show the run live; App member "
+        help="save into ~/.agentnave so the App shows the run live; App member "
         "defaults apply. Test data uses role real-suite for later cleanup.",
     )
     args = parser.parse_args()

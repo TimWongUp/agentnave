@@ -68,7 +68,6 @@ async def test_real_suite_reads_its_own_history_and_checks_the_recalled_token(
             content = {"updates": [update]}
         elif name == "list":
             content = {
-                "dashboard_url": "http://localhost/",
                 "conversations": [
                     {"conversation_id": "user-task", "title": "User history"},
                     {"conversation_id": "suite-task", "title": "Suite task"},

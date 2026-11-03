@@ -1,9 +1,8 @@
-"""Saved conversations, reviewable shows, and the read-only dashboard."""
+"""Saved conversations, reviewable shows, and tray view snapshots."""
 
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 import os
 import shutil
@@ -19,7 +18,6 @@ from uuid import uuid4
 from agentnave import views
 from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
-from agentnave.dashboard import Dashboard
 from agentnave.db import Database, Workspace
 from agentnave.group import (
     Entry,
@@ -167,7 +165,7 @@ def _entry_source(state: Conversation, entry: EntryRecord) -> str:
     return f"{state.title} · {origin} · {entry.time}"
 
 
-_LIVE_SECONDS = 1.5  # also how often the dashboard re-projects running work
+_LIVE_SECONDS = 1.5  # refresh interval for the tray app’s live reply tails
 _STALE_LIVE_SECONDS = 3600
 # Relay identity is only a connection diagnostic, never a host chat identity.
 _RELAY_SESSION = os.environ.get("AGENTNAVE_MANAGER_SESSION", "")
@@ -191,7 +189,7 @@ Record.project = _project
 
 
 class Conversations(Groups):
-    """Saved groups and private task history, with review and optional dashboard projection.
+    """Saved groups and private task history, with review and tray view snapshots.
 
     Writes take the conversation's OS lock; idle conversations release it once saved.
     Running processes never survive a restart.
@@ -215,12 +213,6 @@ class Conversations(Groups):
         self.task_invocations: dict[str, tuple[str, str]] = {}
         manager.on_forget = self._forget_invocation
         self.collectors: set[asyncio.Task[None]] = set()
-        self.dashboard: Dashboard | None = None
-        self.tokens: dict[str, tuple[str, str]] = {}  # conversation id -> public, director
-        self._published: dict[str, Conversation] = {}  # the state each dashboard view shows
-        self.home_token = uuid4().hex
-        self.refresher: asyncio.Task[None] | None = None
-        self.refresh_error: str | None = None
         # Workspace key -> (the boss key now writing it, that boss's own chat id as passed).
         self._bosses: dict[str, tuple[str, str]] = {}
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
@@ -244,9 +236,7 @@ class Conversations(Groups):
         for conversation_id in set(self.records) - set(found):
             if self.records[conversation_id].lock is None:
                 self._forget(conversation_id)  # deleted by another server or the App
-        previous_error = self.refresh_error
         writable: dict[str, bool] = {}
-        read_error: str | None = None
         for conversation_id in found:
             record = self.records.get(conversation_id)
             try:
@@ -259,23 +249,13 @@ class Conversations(Groups):
                     self._forget(conversation_id)  # deleted since the listing
             except (OSError, ValueError) as exc:
                 if isinstance(exc, OSError) and record is not None:
-                    # Keep the last readable state and its URLs through transient I/O failures.
-                    read_error = str(exc)
+                    # Keep the last readable state through transient I/O failures.
                     writable[conversation_id] = False
                 else:
                     self._forget(conversation_id)
                 self.unavailable.append(
                     Unavailable(path=f"{self.db.path}#{conversation_id}", reason=str(exc))
                 )
-        self.refresh_error = read_error
-        for record in list(self.records.values()):
-            # Re-project only what changed: a reload replaces the state object.
-            if (
-                record.state is not self._published.get(record.state.id)
-                or self.refresh_error != previous_error
-            ):
-                self._publish(record, home=False)
-        self._publish_home()
         return writable
 
     def record(self, conversation_id: str) -> Record:
@@ -292,7 +272,6 @@ class Conversations(Groups):
             record.acquire()
         except FileNotFoundError:
             self._forget(conversation_id)
-            self._publish_home()
             raise KeyError(f"unknown conversation_id: {conversation_id}") from None
         return record
 
@@ -342,7 +321,6 @@ class Conversations(Groups):
             for key, value in self.task_invocations.items()
             if value[0] != conversation_id
         }
-        self._unpublish(conversation_id)
 
     def _forget_invocation(self, invocation_id: str) -> None:
         self.task_invocations.pop(invocation_id, None)
@@ -408,7 +386,7 @@ class Conversations(Groups):
         state.manager_session = manager_session
         record = Record.create(self.db, self.locks, state)
         self.records[state.id] = record
-        self._publish(record)
+        self._ensure_live_writer(record)
         boss = self._bosses.get(manager_session or "")
         if manager_session is not None and boss is not None:
             # Who leads this workspace, and where its transcript is for a later handover.
@@ -772,7 +750,7 @@ class Conversations(Groups):
                         )
                         for item in added
                     )
-            self._publish(record)
+            self._ensure_live_writer(record)
             result = _find(record.state, round_id)
             assert result is not None
             return result
@@ -1093,7 +1071,7 @@ class Conversations(Groups):
             started = True
             self.running_tasks[task.id] = invocation_id
             self.task_invocations[invocation_id] = (record.state.id, task.id)
-            self._publish(record)
+            self._ensure_live_writer(record)
             collector = asyncio.create_task(self._collect(record, task.id, invocation_id))
             self.collectors.add(collector)
             collector.add_done_callback(self.collectors.discard)
@@ -1135,7 +1113,7 @@ class Conversations(Groups):
             finish("interrupted", "history_write_failed; use wait for the invocation result")
             record.saved = record.state.model_copy(deep=True)
         self.running_tasks.pop(task_id, None)
-        self._publish(record)
+        self._ensure_live_writer(record)
         self._release_idle(record)
 
     # Group hooks
@@ -1225,7 +1203,7 @@ class Conversations(Groups):
                 seat.committed = seat.committed or (round_.number, run.seat_id) in committed
                 seat.review = self.reviews.get(round_.id, {}).get(run.seat_id)
         self._persist(record)
-        self._publish(record)
+        self._ensure_live_writer(record)
         self._release_idle(record)
 
     async def _approve(self, round_: Round, runs: list[SeatRun]) -> set[str]:
@@ -1269,32 +1247,7 @@ class Conversations(Groups):
     def _ready(self, round_: Round) -> str | None:
         return "review_needed" if "pending" in self.reviews.get(round_.id, {}).values() else None
 
-    # Dashboard
-
-    def open_dashboard(self, *, history_loaded: bool = False) -> str:
-        if self.dashboard is None:
-            self.dashboard = Dashboard()
-            try:
-                if history_loaded:
-                    for record in list(self.records.values()):
-                        self._publish(record, home=False)
-                else:
-                    self.scan()  # projects every readable conversation
-            except OSError:
-                self.dashboard.close()
-                self.dashboard = None
-                self.tokens.clear()
-                self._published.clear()
-                raise
-            self.refresher = asyncio.create_task(self._refresh_running())
-        self._publish_home()
-        return self.dashboard.url(self.home_token)
-
-    def urls(self, conversation_id: str) -> tuple[str, str] | None:
-        if self.dashboard is None or conversation_id not in self.tokens:
-            return None
-        public, director = self.tokens[conversation_id]
-        return self.dashboard.url(public), self.dashboard.url(director)
+    # Live tray views
 
     def _running(self, record: Record) -> bool:
         group = self._groups.get(record.state.id)
@@ -1302,9 +1255,8 @@ class Conversations(Groups):
             task.id in self.running_tasks for task in record.state.tasks
         )
 
-    def _tails(self, record: Record) -> tuple[dict[str, str], dict[str, int]]:
+    def _tails(self, record: Record) -> dict[str, str]:
         tails: dict[str, str] = {}
-        elapsed: dict[str, int] = {}
         group = self._groups.get(record.state.id)
         if group is not None and group.active is not None:
             for run in group.active.runs:
@@ -1320,90 +1272,19 @@ class Conversations(Groups):
             if task.id in self.running_tasks:
                 invocation_id = self.running_tasks[task.id]
                 tails[task.id] = self.manager.recent_output(invocation_id)[0]
-                elapsed[task.id] = self.manager.snapshot(invocation_id).elapsed_ms
                 task.reported_model = (
                     self.manager.reported_model(invocation_id) or task.reported_model
                 )
-        return tails, elapsed
+        return tails
 
-    def _publish(self, record: Record, *, home: bool = True) -> None:
+    def _ensure_live_writer(self, record: Record) -> None:
         if self.live_writer is None and self._running(record):
             self.live_writer = asyncio.create_task(self._write_live())
-        if self.dashboard is None:
-            return
-        state = record.state
-        self._published[state.id] = state
-        public, director = self.tokens.setdefault(state.id, (uuid4().hex, uuid4().hex))
-        tails, elapsed = self._tails(record)
-        if state.kind == "show":
-            self.dashboard.update(public, views.public(state, stale=self.refresh_error is not None))
-        self.dashboard.update(
-            director,
-            views.director(
-                state,
-                public_url=self.dashboard.url(public) if state.kind == "show" else "",
-                home_url=self.dashboard.url(self.home_token),
-                storage=str(self.db.path),
-                tails=tails,
-                elapsed=elapsed,
-                refresh_error=self.refresh_error,
-            ),
-        )
-        if home:
-            self._publish_home()
-
-    def _unpublish(self, conversation_id: str) -> None:
-        tokens = self.tokens.pop(conversation_id, ())
-        self._published.pop(conversation_id, None)
-        if self.dashboard is not None:
-            for token in tokens:
-                self.dashboard.snapshots.pop(token, None)
-
-    def _publish_home(self) -> None:
-        if self.dashboard is None:
-            return
-        self.dashboard.update(
-            self.home_token,
-            views.home(
-                [
-                    (record.state, self.dashboard.url(self.tokens[record.state.id][1]))
-                    for record in self.records.values()
-                    if record.state.id in self.tokens
-                ],
-                self.unavailable,
-                str(self.root),
-                refresh_error=self.refresh_error,
-            ),
-        )
-
-    async def _refresh_running(self) -> None:
-        # Reply tails live only in memory, so running work is re-projected while it runs;
-        # saved conversations are re-read now and then for other servers' changes.
-        active = False
-        for tick in itertools.count(1):
-            await asyncio.sleep(1.5)
-            if self.dashboard is None or time.monotonic() - self.dashboard.last_access > 10:
-                active = False
-                continue
-            if not active or tick % 5 == 0:
-                previous_error = self.refresh_error
-                try:
-                    self.scan()
-                except OSError as exc:
-                    self.refresh_error = str(exc)
-                    if self.refresh_error != previous_error:
-                        for record in list(self.records.values()):
-                            self._publish(record, home=False)
-                        self._publish_home()
-            active = True
-            for record in list(self.records.values()):
-                if self._running(record):
-                    self._publish(record, home=False)
 
     def _live_tails(self, record: Record) -> dict[str, object]:
         """What running work adds to the saved views: reply tails, reported models, what each
         CLI is doing now and when its reply last grew."""
-        tails, _ = self._tails(record)
+        tails = self._tails(record)
         state = record.state
         latest = state.rounds[-1].seats if state.rounds else []
         invocations = dict(self.running_tasks)
@@ -1490,10 +1371,9 @@ class Conversations(Groups):
         try:
             await asyncio.gather(*self.collectors, return_exceptions=True)
         finally:
-            for task in (self.refresher, self.live_writer):
-                if task is not None:
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+            if self.live_writer is not None:
+                self.live_writer.cancel()
+                await asyncio.gather(self.live_writer, return_exceptions=True)
             # Write each group's final state once more: an earlier failed save may have left
             # a stale running round or undecided review on disk.
             groups = {item.group.id: item.group for item in self._rounds.values()}
@@ -1515,8 +1395,6 @@ class Conversations(Groups):
                     self._persist(record)
                 except OSError as exc:
                     print(f"agentnave: could not save {conversation_id}: {exc}", file=sys.stderr)
-            if self.dashboard is not None:
-                self.dashboard.close()
             for record in self.records.values():
                 record.release()
             self.manager.on_forget = None

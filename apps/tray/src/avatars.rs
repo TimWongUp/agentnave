@@ -52,7 +52,7 @@ fn validate(key: &str, image: &str) -> Result<(), String> {
 pub fn asset(name: &str) -> Option<(&'static str, &'static [u8])> {
     macro_rules! asset {
         ($name:literal) => {
-            include_bytes!(concat!("../../../src/agentnave/dashboard_assets/", $name))
+            include_bytes!(concat!("../ui/avatars/", $name))
         };
     }
     Some(match name {
