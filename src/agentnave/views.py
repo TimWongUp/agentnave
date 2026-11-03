@@ -282,6 +282,15 @@ def timeline(
             "order": latest.order,
             "status": "review" if latest.pending_review() else latest.status,
         }
+    messages = _timeline_messages(state, since_round, include_private)
+
+    data["messages"] = _latest(data, messages, limit)
+    return data
+
+
+def _timeline_messages(
+    state: Conversation, since_round: int, include_private: bool
+) -> list[dict[str, object]]:
     # Per round: private instructions, answers outside the entries, and the seat order.
     extra: dict[int, tuple[list[dict[str, object]], list[dict[str, object]], list[str]]] = {}
     for round_ in state.rounds:
@@ -327,8 +336,7 @@ def timeline(
         position = {seat_id: index for index, seat_id in enumerate(order)}
         answers.sort(key=lambda message: position.get(str(message.get("seat")), len(order)))
         messages.extend([*head, *before, *answers, *tail])
-    data["messages"] = _latest(data, messages, limit)
-    return data
+    return messages
 
 
 def _latest(
