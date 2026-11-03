@@ -392,12 +392,26 @@ def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None
 def _migrated_seats(connection: sqlite3.Connection) -> dict[str, str]:
     """Drop only the retired Git-check option, preserving every other stored seat field."""
     updates: dict[str, str] = {}
-    for id_, raw in connection.execute("SELECT id, seats FROM conversations WHERE kind = 'show'"):
-        seats = cast(list[dict[str, object]], json.loads(raw))
+    # Legacy rows are deleted anyway; a malformed row is left as it is, as loading skips it.
+    rows = connection.execute(
+        "SELECT id, seats FROM conversations WHERE kind = 'show' "
+        "AND substr(manager_session, 1, 2) = 's-'"
+    )
+    for id_, raw in rows:
+        try:
+            seats: object = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(seats, list):
+            continue
         changed = False
-        for seat in seats:
-            options = cast(dict[str, object], seat.get("provider_options", {}))
-            if "skip_git_repo_check" in options:
+        for seat in cast(list[object], seats):
+            options = (
+                cast(dict[str, object], seat).get("provider_options")
+                if isinstance(seat, dict)
+                else None
+            )
+            if isinstance(options, dict) and "skip_git_repo_check" in options:
                 del options["skip_git_repo_check"]
                 changed = True
         if changed:

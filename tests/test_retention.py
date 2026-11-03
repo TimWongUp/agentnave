@@ -605,6 +605,21 @@ def test_v1_migration_preserves_busy_history_and_retries_after_unlock(
         database.close()
 
 
+def test_v1_migration_skips_malformed_meeting_seats(tmp_path: Path) -> None:
+    fixture(tmp_path, "bad", group=_WORKSPACE)
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("PRAGMA user_version = 1")
+        db.execute("UPDATE conversations SET kind = 'show', seats = '{' WHERE id = 'bad'")
+    database = Database(tmp_path)
+    try:
+        database.revisions()
+    finally:
+        database.close()
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("SELECT seats FROM conversations WHERE id = 'bad'").fetchone()[0] == "{"
+
+
 def test_v1_migration_rolls_back_schema_and_history_on_delete_failure(tmp_path: Path) -> None:
     fixture(tmp_path, "old", group="legacy")
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
