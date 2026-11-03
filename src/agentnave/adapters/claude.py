@@ -124,31 +124,7 @@ class ClaudeAdapter(AdapterHooks):
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
         if event_type == "system":
-            subtype = event.get("subtype")
-            if subtype == "api_retry":
-                # Only the native error category, never the full error payload.
-                return ProviderActivity(
-                    "retry",
-                    "system.api_retry",
-                    "retrying",
-                    message=brief(event.get("error")),
-                    blocking_error=(
-                        str(event["error"])
-                        if event.get("error")
-                        in (
-                            "authentication_failed",
-                            "permission_denied",
-                            "insufficient_quota",
-                            "billing_error",
-                            "invalid_api_key",
-                        )
-                        else None
-                    ),
-                )
-            if subtype == "status":
-                return ProviderActivity("lifecycle", "system.status", brief(event.get("status")))
-            if subtype in ("init", "hook_started", "hook_response"):
-                return ProviderActivity("lifecycle", f"system.{subtype}", str(subtype))
+            return self._system_activity(event)
         if event_type == "stream_event":
             nested = object_dict(event.get("event"))
             block = object_dict(nested.get("content_block"))
@@ -222,6 +198,34 @@ class ClaudeAdapter(AdapterHooks):
                 brief(event.get("subtype")),
                 blocking_error="provider_failed" if failed else None,
             )
+        return None
+
+    def _system_activity(self, event: dict[str, object]) -> ProviderActivity | None:
+        subtype = event.get("subtype")
+        if subtype == "api_retry":
+            # Only the native error category, never the full error payload.
+            return ProviderActivity(
+                "retry",
+                "system.api_retry",
+                "retrying",
+                message=brief(event.get("error")),
+                blocking_error=(
+                    str(event["error"])
+                    if event.get("error")
+                    in (
+                        "authentication_failed",
+                        "permission_denied",
+                        "insufficient_quota",
+                        "billing_error",
+                        "invalid_api_key",
+                    )
+                    else None
+                ),
+            )
+        if subtype == "status":
+            return ProviderActivity("lifecycle", "system.status", brief(event.get("status")))
+        if subtype in ("init", "hook_started", "hook_response"):
+            return ProviderActivity("lifecycle", f"system.{subtype}", str(subtype))
         return None
 
     def _denials_warning(self, denials: list[object]) -> str:
