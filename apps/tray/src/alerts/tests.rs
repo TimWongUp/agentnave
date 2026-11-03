@@ -30,12 +30,23 @@ impl Fixture {
     }
 
     fn observe(&self, monitor: &mut Monitor, options: &Options) -> Vec<Notice> {
-        monitor.observe(self.reader.alert_observations().unwrap(), options)
+        monitor
+            .observe(self.reader.alert_observations().unwrap(), options)
+            .into_iter()
+            .map(|(key, notice)| {
+                monitor.seen.insert(key);
+                notice
+            })
+            .collect()
     }
 }
 
 fn options() -> Options {
-    Options::from(json!({"alerts": {"notify": "system"}}).as_object().unwrap())
+    Options::from(
+        json!({"general": {"language": "zh"}, "alerts": {"notify": "system"}})
+            .as_object()
+            .unwrap(),
+    )
 }
 
 fn task(status: &str, ms: u64) -> Value {
@@ -108,20 +119,191 @@ fn a_seat_finishing_does_not_notify_until_the_whole_round_finishes_once() {
 }
 
 #[test]
-fn a_review_pause_ends_a_serial_round_and_does_not_notify_again_after_approval() {
+fn a_serial_review_pause_waits_for_the_entire_round_before_checking_the_threshold() {
     let f = Fixture::new();
     let mut show = show(&[seat("a", "running", None), seat("b", "not_started", None)]);
     f.save("room", &show, &[]);
     let mut monitor = Monitor::default();
     f.observe(&mut monitor, &options());
-    show["round"]["seats"][0] = seat("a", "succeeded", Some("2026-10-15T00:10:00Z"));
+    show["round"]["seats"][0] = seat("a", "succeeded", Some("2026-10-15T00:01:00Z"));
     show["round"]["seats"][0]["review"] = json!("pending");
     f.save("room", &show, &[]);
-    assert_eq!(f.observe(&mut monitor, &options()).len(), 1);
+    assert!(f.observe(&mut monitor, &options()).is_empty());
     show["round"]["seats"][0]["review"] = json!("publish");
     show["round"]["seats"][1] = seat("b", "succeeded", Some("2026-10-15T00:20:00Z"));
     f.save("room", &show, &[]);
+    assert_eq!(f.observe(&mut monitor, &options()).len(), 1);
     assert!(f.observe(&mut monitor, &options()).is_empty());
+}
+
+#[test]
+fn cancelled_or_interrupted_meetings_do_not_report_completion_or_problems() {
+    let f = Fixture::new();
+    let mut monitor = Monitor::default();
+    let mut opts = options();
+    opts.problems = true;
+    f.observe(&mut monitor, &opts);
+    let mut meeting = show(&[seat("a", "cancelled", Some("2026-10-15T00:20:00Z"))]);
+    meeting["round"]["status"] = json!("cancelled");
+    f.save("cancelled", &meeting, &[]);
+    meeting["round"]["status"] = json!("interrupted");
+    meeting["round"]["seats"][0]["status"] = json!("interrupted");
+    f.save("interrupted", &meeting, &[]);
+    assert!(f.observe(&mut monitor, &opts).is_empty());
+}
+
+#[test]
+fn round_end_never_repeats_a_seat_failure_or_ignores_the_problem_switch() {
+    let f = Fixture::new();
+    let meeting = show(&[
+        seat("a", "failed", Some("2026-10-15T00:20:00Z")),
+        seat("b", "succeeded", Some("2026-10-15T00:20:00Z")),
+    ]);
+    let mut monitor = Monitor::default();
+    let mut opts = options();
+    f.observe(&mut monitor, &opts);
+    f.save("room", &meeting, &[]);
+    let notices = f.observe(&mut monitor, &opts);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].body, "本轮结束 · 20分0秒");
+    opts.problems = true;
+    f.save("room-2", &meeting, &[]);
+    let notices = f.observe(&mut monitor, &opts);
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|n| n.body.starts_with("失败"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|n| n.body.starts_with("本轮结束"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn retrying_a_failed_seat_can_notify_about_the_new_attempt_once() {
+    let f = Fixture::new();
+    let mut monitor = Monitor::default();
+    let mut opts = options();
+    opts.problems = true;
+    f.observe(&mut monitor, &opts);
+    let mut meeting = show(&[
+        seat("a", "failed", Some("2026-10-15T00:01:00Z")),
+        seat("b", "running", None),
+    ]);
+    f.save("room", &meeting, &[]);
+    assert_eq!(f.observe(&mut monitor, &opts).len(), 1);
+    meeting["round"]["seats"][0] = seat("a", "running", None);
+    f.save("room", &meeting, &[]);
+    assert!(f.observe(&mut monitor, &opts).is_empty());
+    meeting["round"]["seats"][0] = seat("a", "failed", Some("2026-10-15T00:02:00Z"));
+    f.save("room", &meeting, &[]);
+    assert_eq!(f.observe(&mut monitor, &opts).len(), 1);
+    assert!(f.observe(&mut monitor, &opts).is_empty());
+    // A complete retry can also occur between polls without exposing running state.
+    meeting["round"]["seats"][0]["finished"] = json!("2026-10-15T00:03:00Z");
+    f.save("room", &meeting, &[]);
+    assert_eq!(f.observe(&mut monitor, &opts).len(), 1);
+}
+
+#[test]
+fn launch_errors_without_finish_times_rearm_after_an_observed_retry() {
+    let f = Fixture::new();
+    let mut monitor = Monitor::default();
+    let mut opts = options();
+    opts.problems = true;
+    f.observe(&mut monitor, &opts);
+    let mut meeting = show(&[seat("a", "failed", None), seat("b", "running", None)]);
+    f.save("room", &meeting, &[]);
+    assert_eq!(f.observe(&mut monitor, &opts).len(), 1);
+    assert!(f.observe(&mut monitor, &opts).is_empty());
+    meeting["round"]["seats"][0]["status"] = json!("running");
+    f.save("room", &meeting, &[]);
+    assert!(f.observe(&mut monitor, &opts).is_empty());
+    meeting["round"]["seats"][0]["status"] = json!("failed");
+    f.save("room", &meeting, &[]);
+    assert_eq!(f.observe(&mut monitor, &opts).len(), 1);
+}
+
+#[test]
+fn an_entire_round_pending_review_notifies_once_before_and_after_publication() {
+    let f = Fixture::new();
+    let mut monitor = Monitor::default();
+    f.observe(&mut monitor, &options());
+    let mut meeting = show(&[seat("a", "succeeded", Some("2026-10-15T00:20:00Z"))]);
+    meeting["round"]["status"] = json!("review");
+    meeting["round"]["seats"][0]["review"] = json!("pending");
+    f.save("room", &meeting, &[]);
+    assert_eq!(
+        f.observe(&mut monitor, &options())[0].body,
+        "待审核 · 20分0秒"
+    );
+    meeting["round"]["status"] = json!("finished");
+    meeting["round"]["seats"][0]["review"] = json!("publish");
+    f.save("room", &meeting, &[]);
+    assert!(f.observe(&mut monitor, &options()).is_empty());
+}
+
+#[test]
+fn failed_delivery_is_not_consumed_before_a_successful_send() {
+    let f = Fixture::new();
+    let mut monitor = Monitor::default();
+    f.observe(&mut monitor, &options());
+    f.save("task", &task("succeeded", 600_000), &[]);
+    let pending = monitor.observe(f.reader.alert_observations().unwrap(), &options());
+    assert_eq!(pending.len(), 1);
+    // Simulate native permission denial: no successful-send acknowledgement.
+    assert_eq!(f.observe(&mut monitor, &options()).len(), 1);
+    assert!(f.observe(&mut monitor, &options()).is_empty());
+}
+
+#[test]
+fn system_language_uses_the_same_os_locale_resolution_as_the_interface() {
+    let opts = Options::from(
+        json!({"general": {"language": "system"}})
+            .as_object()
+            .unwrap(),
+    );
+    assert_eq!(
+        opts.english,
+        crate::preferences::general::resolved_language(
+            "system",
+            &sys_locale::get_locale().unwrap_or_default()
+        ) == "en"
+    );
+    assert!(!options().english);
+}
+
+#[test]
+fn partial_startup_read_does_not_establish_a_baseline_or_replay_after_recovery() {
+    let f = Fixture::new();
+    f.save("task", &task("succeeded", 600_000), &[]);
+    f.save("broken", &task("succeeded", 600_000), &[]);
+    let db = crate::db::write(f.dir.path()).unwrap().unwrap();
+    db.execute(
+        "UPDATE views SET body = '{bad', rev = rev + 1 WHERE conversation_id = 'broken'",
+        [],
+    )
+    .unwrap();
+    assert!(f.reader.alert_observations().is_err());
+    let mut monitor = Monitor::default();
+    assert!(!monitor.initialized);
+    f.save("broken", &task("succeeded", 600_000), &[]);
+    assert!(f.observe(&mut monitor, &options()).is_empty());
+    f.save("new", &task("succeeded", 600_000), &[]);
+    db.execute(
+        r#"UPDATE views SET body = '{"version":1}', rev = rev + 1 WHERE conversation_id = 'broken'"#,
+        [],
+    )
+    .unwrap();
+    assert!(f.reader.alert_observations().is_err());
+    f.save("broken", &task("succeeded", 600_000), &[]);
+    assert_eq!(f.observe(&mut monitor, &options()).len(), 1);
 }
 
 #[test]

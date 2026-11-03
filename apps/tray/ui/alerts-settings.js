@@ -108,7 +108,7 @@
 
     const testBtn = h("button", {
       type: "button",
-      disabled: busy || testing,
+      disabled: busy || testing || off,
     }, L("发一条测试通知", "Send test notification"));
     testBtn.addEventListener("click", () => void sendTest());
 

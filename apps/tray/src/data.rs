@@ -662,7 +662,6 @@ impl Reader {
             } else {
                 UNIX_EPOCH + Duration::from_millis(u64::try_from(written_ms).unwrap_or(0))
             };
-            let readable = saved.is_some();
             let (view, live_updated) = match current {
                 Some((view, updated_at)) => (Some(view), updated_at),
                 None => (saved, None),
@@ -677,7 +676,7 @@ impl Reader {
                     live: is_live,
                     live_updated,
                 });
-            } else if !readable {
+            } else {
                 overview.unavailable.push((
                     format!("{}#{id}", crate::db::path(&self.root).display()),
                     "视图快照无法读取或版本不受支持".to_owned(),

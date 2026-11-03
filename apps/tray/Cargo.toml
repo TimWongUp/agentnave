@@ -49,6 +49,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
 
 [target.'cfg(windows)'.dependencies]
+notify-rust = "4"
 windows = { version = "0.62", features = ["UI_Notifications"] }
 
 [target.'cfg(unix)'.dependencies]

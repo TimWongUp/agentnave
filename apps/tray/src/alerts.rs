@@ -2,9 +2,12 @@
 //! so enabling them never replays work that ended earlier in this App process.
 
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::thread;
 
 use serde_json::{Map, Value, json};
 use tauri::AppHandle;
+#[cfg(not(windows))]
 use tauri_plugin_notification::NotificationExt;
 
 use crate::data::{Reader, Response};
@@ -19,6 +22,8 @@ pub(crate) use projection::observations;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Outcome {
     Completed,
+    RoundEnded,
+    Review,
     Failed,
     Blocked,
 }
@@ -30,6 +35,7 @@ pub(crate) struct Observation {
     title: String,
     meeting: bool,
     problem: bool,
+    unstamped_problem: bool,
     outcome: Outcome,
     elapsed_ms: Option<u64>,
 }
@@ -55,12 +61,14 @@ impl Options {
                 .unwrap_or(10)
                 * 60_000,
             problems: field("problems").and_then(Value::as_bool).unwrap_or(false),
-            // `system` follows the contract's initial Chinese fallback.
-            english: document
-                .get("general")
-                .and_then(|v| v.get("language"))
-                .and_then(Value::as_str)
-                == Some("en"),
+            english: crate::preferences::general::resolved_language(
+                document
+                    .get("general")
+                    .and_then(|v| v.get("language"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("system"),
+                &sys_locale::get_locale().unwrap_or_default(),
+            ) == "en",
         }
     }
 
@@ -85,9 +93,13 @@ impl Observation {
     fn notice(&self, english: bool) -> Notice {
         let status = match (self.outcome, english) {
             (Outcome::Completed, false) => "完成",
+            (Outcome::RoundEnded, false) => "本轮结束",
+            (Outcome::Review, false) => "待审核",
             (Outcome::Failed, false) => "失败",
             (Outcome::Blocked, false) => "受阻",
             (Outcome::Completed, true) => "Completed",
+            (Outcome::RoundEnded, true) => "Round ended",
+            (Outcome::Review, true) => "Awaiting review",
             (Outcome::Failed, true) => "Failed",
             (Outcome::Blocked, true) => "Blocked",
         };
@@ -108,14 +120,41 @@ impl Observation {
 pub(crate) struct Monitor {
     initialized: bool,
     seen: HashSet<String>,
+    unstamped_problems: HashSet<String>,
 }
 
 impl Monitor {
-    fn observe(&mut self, events: Vec<Observation>, options: &Options) -> Vec<Notice> {
+    fn observe(&mut self, events: Vec<Observation>, options: &Options) -> Vec<(String, Notice)> {
+        // Launch errors may have no saved finish time. An observed return to running
+        // rearms only these events; timestamped results already identify each attempt.
+        // A retry wholly between polls cannot be distinguished without a saved attempt id
+        // when neither failure has a finish time.
+        let current: HashSet<_> = events
+            .iter()
+            .filter(|e| e.unstamped_problem)
+            .map(|e| e.key.clone())
+            .collect();
+        for key in self.unstamped_problems.difference(&current) {
+            self.seen.remove(key);
+        }
+        self.unstamped_problems = current;
         let mut notices = Vec::new();
         for event in events {
-            if self.seen.insert(event.key.clone()) && self.initialized && options.accepts(&event) {
-                notices.push(event.notice(options.english));
+            if self.seen.contains(&event.key) {
+                continue;
+            }
+            if !self.initialized {
+                self.seen.insert(event.key);
+            } else if options.accepts(&event) {
+                notices.push((event.key.clone(), event.notice(options.english)));
+            } else if !options.enabled
+                || (options.meetings_only && !event.meeting)
+                || (event.problem && !options.problems)
+                || event.elapsed_ms.is_some()
+            {
+                // Final events filtered by user settings are never replayed. Missing
+                // duration can still be repaired, so leave that event eligible.
+                self.seen.insert(event.key);
             }
         }
         self.initialized = true;
@@ -127,23 +166,44 @@ impl Monitor {
             return;
         };
         let document = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
-        for notice in self.observe(events, &Options::from(&document)) {
-            if let Err(reason) = send(app, &notice) {
-                eprintln!("agentnave: notification: {reason}");
+        let options = Options::from(&document);
+        for (key, notice) in self.observe(events, &options) {
+            match send(app, &notice, false, options.english) {
+                Ok(()) => {
+                    self.seen.insert(key);
+                }
+                Err(reason) => eprintln!("agentnave: notification: {reason}"),
             }
         }
     }
 }
 
-fn send(app: &AppHandle, notice: &Notice) -> Result<(), String> {
-    permission::check(app)?;
-    let notification = app.notification();
-    notification
-        .builder()
-        .title(&notice.title)
-        .body(&notice.body)
-        .show()
-        .map_err(|e| e.to_string())
+/// Native permission callbacks must not stall tray counts or keep-awake polling.
+pub(crate) fn start(app: AppHandle, reader: Arc<Reader>) {
+    thread::spawn(move || {
+        let mut monitor = Monitor::default();
+        loop {
+            monitor.tick(&app, &reader);
+            thread::sleep(crate::POLL);
+        }
+    });
+}
+
+fn send(app: &AppHandle, notice: &Notice, request: bool, english: bool) -> Result<(), String> {
+    permission::check(app, request, english)?;
+    #[cfg(windows)]
+    {
+        permission::send_windows(app, &notice.title, &notice.body, english)
+    }
+    #[cfg(not(windows))]
+    {
+        app.notification()
+            .builder()
+            .title(&notice.title)
+            .body(&notice.body)
+            .show()
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Test delivery uses the same notification switch and native permission checks.
@@ -171,7 +231,7 @@ pub(crate) fn test(app: &AppHandle, method: &str, action: Option<&str>) -> Respo
         }
         .into(),
     };
-    let result = match send(app, &notice) {
+    let result = match send(app, &notice, true, english) {
         Ok(()) => json!({"sent": true}),
         Err(reason) => json!({"sent": false, "reason": reason}),
     };

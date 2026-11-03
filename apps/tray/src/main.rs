@@ -364,6 +364,7 @@ fn main() {
                 }
             });
             thread::spawn(members::prepare);
+            alerts::start(handle.clone(), reader.clone());
             thread::spawn(move || poll(handle, reader, overview));
             Ok(())
         })
@@ -414,11 +415,8 @@ fn drip(tray: &TrayIcon) {
 }
 
 fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
-    let mut alerts = alerts::Monitor::default();
-    alerts.tick(&app, &reader);
     loop {
         thread::sleep(POLL);
-        alerts.tick(&app, &reader);
         let overview = reader.overview();
         if let Err(error) = preferences::runtime::refresh_working(&app, &overview) {
             eprintln!("无法应用常规设置：{error}");

@@ -14,7 +14,10 @@ impl Reader {
     pub(crate) fn alert_observations(&self) -> Result<Vec<Observation>, String> {
         // A failed database read must not establish an empty startup baseline.
         let database = crate::db::read(&self.root)?;
-        let (_, snapshots) = self.scan();
+        let (overview, snapshots) = self.scan();
+        if !overview.unavailable.is_empty() {
+            return Err("会话视图尚未完整读取".into());
+        }
         let mut cache = self.alerts.lock().unwrap_or_else(|p| p.into_inner());
         let mut events = Vec::new();
         let mut seen = HashSet::new();

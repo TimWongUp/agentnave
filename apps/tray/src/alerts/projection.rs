@@ -28,6 +28,7 @@ pub(crate) fn observations(snapshot: &Snapshot, rounds: &[Value]) -> Vec<Observa
                 title: snapshot.item.title.clone(),
                 meeting: false,
                 problem: outcome != Outcome::Completed,
+                unstamped_problem: false,
                 outcome,
                 elapsed_ms: task["elapsed_ms"].as_u64(),
             });
@@ -53,7 +54,7 @@ fn terminal(status: &str) -> bool {
 }
 
 /// Start at the boss's task entry, end at the last returned seat, excluding later host
-/// remarks. A review pause ends the round for notification purposes, even in serial mode.
+/// remarks. Serial review pauses with seats still unstarted are not a round's end.
 fn meeting(snapshot: &Snapshot, round: &Value, events: &mut Vec<Observation>) {
     let view = &snapshot.view["director"];
     let number = round["number"].as_u64().unwrap_or_default();
@@ -71,47 +72,71 @@ fn meeting(snapshot: &Snapshot, round: &Value, events: &mut Vec<Observation>) {
             "blocked" => Outcome::Blocked,
             _ => continue,
         };
-        let end = seat_end(view, seat, number).or_else(|| timestamp(&snapshot.item.updated));
+        let finished = seat_end(view, seat, number);
+        let end = finished.or_else(|| timestamp(&snapshot.item.updated));
         events.push(Observation {
-            key: format!("{key}:seat:{}:{outcome:?}", text(seat, "seat_id")),
+            // A retry clears `finished` and saves a new time for its next result,
+            // even when it starts and finishes between two App polls.
+            key: format!(
+                "{key}:seat:{}:{outcome:?}:{}",
+                text(seat, "seat_id"),
+                finished.map(|at| at.to_string()).unwrap_or_default()
+            ),
             title: snapshot.item.title.clone(),
             meeting: true,
             problem: true,
+            unstamped_problem: finished.is_none(),
             outcome,
             elapsed_ms: elapsed(start, end),
         });
     }
-    let reviewing = round["status"] == "review" || seats.iter().any(|s| s["review"] == "pending");
-    let finished = seats.iter().all(|s| terminal(text(s, "status")))
-        || (matches!(
-            text(round, "status"),
-            "finished" | "failed" | "cancelled" | "interrupted"
-        ) && seats
-            .iter()
-            .all(|s| terminal(text(s, "status")) || s["status"] == "not_started"));
-    if !reviewing && !finished {
+    let Some(outcome) = round_outcome(round, &seats) else {
         return;
-    }
+    };
     let end = seats
         .iter()
         .filter_map(|s| seat_end(view, s, number))
         .max()
         .or_else(|| timestamp(&snapshot.item.updated));
-    let outcome = if seats.iter().any(|s| s["status"] == "failed") {
-        Outcome::Failed
-    } else if seats.iter().any(|s| s["status"] == "blocked") {
-        Outcome::Blocked
-    } else {
-        Outcome::Completed
-    };
     events.push(Observation {
         key,
         title: snapshot.item.title.clone(),
         meeting: true,
         problem: false,
+        unstamped_problem: false,
         outcome,
         elapsed_ms: elapsed(start, end),
     });
+}
+
+fn round_outcome(round: &Value, seats: &[&Value]) -> Option<Outcome> {
+    if matches!(text(round, "status"), "cancelled" | "interrupted")
+        || seats
+            .iter()
+            .any(|s| matches!(text(s, "status"), "cancelled" | "interrupted"))
+    {
+        return None;
+    }
+    let reviewing = round["status"] == "review" || seats.iter().any(|s| s["review"] == "pending");
+    let finished = seats.iter().all(|s| terminal(text(s, "status")))
+        || (matches!(text(round, "status"), "finished" | "failed")
+            && seats
+                .iter()
+                .all(|s| terminal(text(s, "status")) || s["status"] == "not_started"));
+    if !finished {
+        return None;
+    }
+    let outcome = if reviewing {
+        Outcome::Review
+    } else if seats
+        .iter()
+        .any(|s| matches!(text(s, "status"), "failed" | "blocked"))
+    {
+        Outcome::RoundEnded
+    } else {
+        Outcome::Completed
+    };
+    Some(outcome)
 }
 
 fn elapsed(start: Option<i64>, end: Option<i64>) -> Option<u64> {
