@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import shutil
 import sqlite3
+import stat
 import threading
 import time
 from collections.abc import Callable
@@ -16,13 +19,140 @@ from pathlib import Path
 from typing import cast
 
 from agentnave.db import NAME, SCHEMA_VERSION, add_handover_schema
-from agentnave.locks import lock_file
+from agentnave.locks import lock_file, release_and_remove
 from agentnave.members import read_history_retention_days
 
 _LOG = logging.getLogger(__name__)
 _CANDIDATE = Path(__file__).with_name("retention-candidate.sql").read_text(encoding="utf-8")
 _INTERVAL = 24 * 60 * 60
 GLOBAL_LOCK = "history-retention.lock"
+_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _lock_path(root: Path, id_: str) -> Path | None:
+    if not _ID.fullmatch(id_):
+        return None
+    path = root / "locks" / f"{id_}.lock"
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return None
+    except FileNotFoundError:
+        pass
+    return path
+
+
+def _exists(connection: sqlite3.Connection, id_: str) -> bool:
+    # The cleanup connection is in autocommit mode: every call gets a new snapshot.
+    return (
+        # NOCASE: a file name differing only in case is the same file on APFS and NTFS.
+        connection.execute(
+            "SELECT 1 FROM conversations WHERE id = ? COLLATE NOCASE", (id_,)
+        ).fetchone()
+        is not None
+    )
+
+
+def _retry_readonly(function: Callable[..., object], path: str, error: BaseException) -> None:
+    if not isinstance(error, PermissionError) or Path(path).is_symlink():
+        raise error
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    if function in (os.open, os.scandir):
+        # An unlistable directory: os.open needs flags, so remove it again now it can be read.
+        shutil.rmtree(path)
+    else:
+        function(path)
+
+
+def _contained(directory: Path) -> bool:
+    """A symlinked seats or locks directory leads outside the data root: never sweep it."""
+    return not directory.is_symlink()
+
+
+def _remove_seat(root: Path, id_: str) -> bool:
+    path = root / "seats" / id_
+    if not _contained(path.parent):
+        return False
+    try:
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path, onexc=_retry_readonly)
+        return True
+    except Exception:
+        _LOG.exception("History retention could not remove seat directory %s", path)
+        return False
+
+
+def _sweep_locks(
+    connection: sqlite3.Connection, root: Path, now: float, stopped: Callable[[], bool]
+) -> None:
+    if not _contained(root / "locks"):
+        return
+    for path in (root / "locks").glob("*.lock"):
+        if stopped():
+            break
+        try:
+            id_ = path.stem
+            if _lock_path(root, id_) is None or _exists(connection, id_):
+                continue
+            if now - path.lstat().st_mtime < 3600:
+                continue
+            with lock_file(path, "Conversation is in use", create=False) as guard:
+                if not _exists(connection, id_):
+                    release_and_remove(guard, path)
+        except (FileNotFoundError, ValueError):
+            continue
+        except Exception:
+            _LOG.exception("History retention skipped orphan lock %s", path)
+
+
+def _sweep_seats(
+    connection: sqlite3.Connection, root: Path, now: float, stopped: Callable[[], bool]
+) -> None:
+    if not _contained(root / "seats") or not _contained(root / "locks"):
+        return
+    for seat in (root / "seats").glob("*"):
+        if stopped():
+            break
+        try:
+            id_ = seat.name
+            path = _lock_path(root, id_)
+            if path is None or _exists(connection, id_):
+                continue
+            info = seat.lstat()
+            if (
+                not (stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode))
+                or now - info.st_mtime < _INTERVAL
+            ):
+                continue
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with lock_file(path, "Conversation is in use") as guard:
+                if not _exists(connection, id_) and _remove_seat(root, id_):
+                    release_and_remove(guard, path)
+        except (FileNotFoundError, ValueError):
+            continue
+        except Exception:
+            _LOG.exception("History retention skipped orphan seat %s", seat)
+
+
+def _expire_handovers(connection: sqlite3.Connection, cutoff: int) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        # Read and delete under the same write transaction, excluding a concurrent claim.
+        for id_, released in connection.execute(
+            "SELECT id, released FROM workspaces WHERE pending = 1 AND NOT EXISTS "
+            "(SELECT 1 FROM conversations WHERE manager_session = workspaces.id)"
+        ).fetchall():
+            timestamp = _timestamp(released)
+            if timestamp is not None and timestamp < cutoff:
+                connection.execute("DELETE FROM workspaces WHERE id = ?", (id_,))
+        connection.execute(
+            "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)"
+        )
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            connection.rollback()
 
 
 def _workspace_ids(connection: sqlite3.Connection, anchor: str) -> list[str]:
@@ -87,10 +217,8 @@ def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: 
     # OS locks precede the SQLite write transaction, so active writers can finish.
     with ExitStack() as locks:
         for id_ in ids:
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", id_):
-                return False
-            path = root / "locks" / f"{id_}.lock"
-            if path.is_symlink() or (path.exists() and not path.is_file()):
+            path = _lock_path(root, id_)
+            if path is None:
                 return False
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -118,6 +246,8 @@ def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: 
                 "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)"
             )
             connection.commit()
+            for id_ in ids:
+                _remove_seat(root, id_)
             return True
         finally:
             if connection.in_transaction:
@@ -129,10 +259,10 @@ def cleanup(
 ) -> int:
     """Delete expired workspaces; lock contention skips this pass, not other services.
 
-    Each workspace is atomic, and lock files and seat directories are always retained.
+    Each workspace is atomic. Orphan resources expire even when history is kept forever.
     """
     days = read_history_retention_days(root)
-    if days is None or not (root / NAME).is_file():
+    if not (root / NAME).is_file():
         return 0
     try:
         guard = lock_file(root / GLOBAL_LOCK, "Another service is cleaning history")
@@ -141,15 +271,26 @@ def cleanup(
     with (
         guard,
         closing(
-            sqlite3.connect((root / NAME).resolve().as_uri() + "?mode=rw", uri=True)
+            sqlite3.connect(
+                (root / NAME).resolve().as_uri() + "?mode=rw", uri=True, isolation_level=None
+            )
         ) as connection,
     ):
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA journal_size_limit = 8388608")
         if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
             return 0
         add_handover_schema(connection)
-        cutoff = int((time.time() if now is None else now) * 1000) - days * _INTERVAL * 1000
+        current = time.time() if now is None else now
+        _sweep_locks(connection, root, current, stopped)
+        _sweep_seats(connection, root, current, stopped)
+        if stopped():
+            return 0
+        _expire_handovers(connection, int((current - 90 * _INTERVAL) * 1000))
+        if days is None:
+            return 0
+        cutoff = int(current * 1000) - days * _INTERVAL * 1000
         seen: set[str] = set()
         removed = 0
         for (anchor,) in connection.execute("SELECT id FROM conversations ORDER BY id").fetchall():

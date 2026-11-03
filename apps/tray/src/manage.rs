@@ -227,9 +227,28 @@ pub fn delete(root: &Path, id: &str) -> Value {
             transaction.commit()
         });
     match deleted {
-        Ok(()) => result(id, "deleted", "已删除会话记录；席位文件保留"),
+        Ok(()) if remove_seats(root, id) => result(id, "deleted", "已删除会话记录"),
+        Ok(()) => result(id, "deleted", "已删除会话记录；席位文件未能删除"),
         Err(e) => result(id, "error", &format!("删除失败：{e}")),
     }
+}
+
+/// Delete an isolated meeting's seat directory once its conversation is gone, still under the
+/// conversation lock. A symlink is removed as a link and never followed; false on failure.
+fn remove_seats(root: &Path, id: &str) -> bool {
+    let parent = root.join("seats");
+    // A symlinked seats directory leads outside the data root.
+    if fs::symlink_metadata(&parent).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return false;
+    }
+    let path = parent.join(id);
+    let removed = match fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return true,
+        Err(e) => Err(e),
+        Ok(meta) if meta.is_dir() => fs::remove_dir_all(&path),
+        Ok(_) => fs::remove_file(&path),
+    };
+    removed.is_ok()
 }
 
 fn conversation_group(connection: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
@@ -432,7 +451,10 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
         Ok(true)
     })();
     match removed {
-        Ok(true) => report("deleted", "已清理工作区历史；席位文件保留"),
+        Ok(true) if expected.iter().all(|id| remove_seats(root, id)) => {
+            report("deleted", "已清理工作区历史")
+        }
+        Ok(true) => report("deleted", "已清理工作区历史；部分席位文件未能删除"),
         Ok(false) => report("changed", "工作区已有新活动或时间无法确认，已整组保留"),
         Err(e) => report("error", &format!("清理失败：{e}")),
     }
