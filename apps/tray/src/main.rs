@@ -1,6 +1,7 @@
 //! AgentNave tray: view and clean up this machine's saved Studio conversations.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod alerts;
 mod avatars;
 mod characters;
 mod data;
@@ -98,6 +99,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
         && !matches!(
             path,
             "/app/preferences"
+                | "/app/alerts/test"
                 | "/app/voice"
                 | "/app/voice/key"
                 | "/app/voice/speak"
@@ -195,6 +197,7 @@ fn main() {
                         data::Response::error(403, "预览版只读：请在正式版里保存改动")
                     }
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
+                    (_, "/app/alerts/test") => alerts::test(&app, method, action),
                     // Whether the page's maximize button should read as maximize or restore.
                     ("GET", "/app/window/state") => {
                         let maximized = app
@@ -360,6 +363,7 @@ fn main() {
                 }
             });
             thread::spawn(members::prepare);
+            alerts::start(handle.clone(), reader.clone());
             thread::spawn(move || poll(handle, reader, overview));
             Ok(())
         })
@@ -839,6 +843,7 @@ mod tests {
         }
         for path in [
             "/app/preferences",
+            "/app/alerts/test",
             "/app/voice",
             "/app/voice/key",
             "/app/voice/speak",

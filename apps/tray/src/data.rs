@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use boss_app::BossApps;
 
+mod alerts;
 pub(crate) mod boss_app;
 
 /// Studio rewrites live files every 1.5s; older ones were left by a server that crashed.
@@ -75,6 +76,9 @@ pub struct Overview {
     /// Most recently changed first.
     pub items: Vec<Item>,
     pub unavailable: Vec<(String, String)>,
+    /// Structured failures for consumers that need to distinguish recovery from new work.
+    unreadable: HashSet<String>,
+    scan_error: Option<String>,
     pub missing: bool,
     pub running: usize,
     pub review: usize,
@@ -148,7 +152,7 @@ impl Response {
 type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 
 /// (view revision, parsed view) of one conversation.
-type CachedView = (i64, Option<Arc<Value>>);
+type CachedView = (i64, Arc<Value>);
 
 /// What identifies a route answer: each snapshot's view, whether the data root exists, and
 /// the reuse window.
@@ -196,6 +200,7 @@ pub struct Reader {
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
     merged: Mutex<HashMap<String, Merged>>,
     routes: Mutex<HashMap<String, RouteAnswer>>,
+    alerts: Mutex<alerts::Cache>,
     boss_apps: BossApps,
 }
 
@@ -209,6 +214,7 @@ impl Reader {
             live_files: Mutex::new(HashMap::new()),
             merged: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
+            alerts: Mutex::new(HashMap::new()),
             boss_apps: BossApps::new(),
         }
     }
@@ -616,6 +622,7 @@ impl Reader {
             Err(error) => Err(error.clone()),
         };
         let rows = rows.unwrap_or_else(|error| {
+            overview.scan_error = Some(error.clone());
             overview
                 .unavailable
                 .push((crate::db::path(&self.root).display().to_string(), error));
@@ -634,7 +641,7 @@ impl Reader {
             }
             seen.insert(id.clone());
             let saved = match cache.get(&id) {
-                Some((cached, value)) if *cached == rev => value.clone(),
+                Some((cached, value)) if *cached == rev => Some(value.clone()),
                 _ => {
                     let value = database
                         .as_ref()
@@ -643,8 +650,13 @@ impl Reader {
                         .and_then(|connection| view_body(connection, &id))
                         .and_then(|body| serde_json::from_str::<Value>(&body).ok())
                         .filter(|value| version(value) == Some(VERSION))
+                        .filter(|value| summary(value).is_some_and(|item| item.id == id))
                         .map(Arc::new);
-                    cache.insert(id.clone(), (rev, value.clone()));
+                    if let Some(value) = &value {
+                        cache.insert(id.clone(), (rev, value.clone()));
+                    } else {
+                        cache.remove(&id);
+                    }
                     value
                 }
             };
@@ -659,7 +671,6 @@ impl Reader {
             } else {
                 UNIX_EPOCH + Duration::from_millis(u64::try_from(written_ms).unwrap_or(0))
             };
-            let readable = saved.is_some();
             let (view, live_updated) = match current {
                 Some((view, updated_at)) => (Some(view), updated_at),
                 None => (saved, None),
@@ -674,7 +685,8 @@ impl Reader {
                     live: is_live,
                     live_updated,
                 });
-            } else if !readable {
+            } else {
+                overview.unreadable.insert(id.clone());
                 overview.unavailable.push((
                     format!("{}#{id}", crate::db::path(&self.root).display()),
                     "视图快照无法读取或版本不受支持".to_owned(),
@@ -792,6 +804,10 @@ impl Reader {
                 "voice-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/voice-settings.js").to_vec(),
+                ),
+                "alerts-settings.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/alerts-settings.js").to_vec(),
                 ),
                 "general-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",

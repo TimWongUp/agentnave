@@ -686,6 +686,12 @@ All checks passed!
       tray_count: true,
       keep_awake: false,
     },
+    alerts: {
+      notify: "off",
+      scope: "all",
+      threshold: 10,
+      problems: false,
+    },
   };
   const preferencesView = () => ({
     preferences: structuredClone(mockPrefs),
@@ -736,8 +742,10 @@ All checks passed!
     }
     if (path === "/app/preferences") {
       if (body.general) Object.assign(mockPrefs.general, body.general);
+      if (body.alerts) Object.assign(mockPrefs.alerts, body.alerts);
       return { saved: true, ...preferencesView() };
     }
+    if (path === "/app/alerts/test") return { sent: true };
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }
     if (path === "/app/onboarding/reopen") { dismissed = false; return { dismissed }; }

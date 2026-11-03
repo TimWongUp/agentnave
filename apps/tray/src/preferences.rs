@@ -14,6 +14,8 @@ pub mod runtime;
 
 const FILE: &str = "preferences.json";
 
+mod alerts;
+
 /// `app_config_dir` of this build: the config folder named by the bundle identifier.
 pub fn dir() -> PathBuf {
     let id = if crate::PREVIEW {
@@ -51,6 +53,7 @@ pub fn state(dir: &Path) -> Value {
 fn validate_field(section: &str, field: &str, value: &Value) -> Result<(), String> {
     match section {
         "general" => general::validate(field, value),
+        "alerts" => alerts::validate(field, value),
         _ => Err(format!("未知的设置分区：{section}")),
     }
 }

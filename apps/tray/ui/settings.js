@@ -717,7 +717,10 @@ function setTab(tab) {
   if (tab === "general") window.AgentNaveGeneralSettings?.load();
   if (tab === "voice") window.AgentNaveVoiceSettings?.load();
   if (tab === "about") loadStatus().then(checkIfStale);
-  if (tab === "members") loadLimit();
+  if (tab === "members") {
+    loadLimit();
+    window.AgentNaveAlertsSettings?.load();
+  }
   if (tab === "advanced") {
     window.AgentNaveSkills?.load();
     loadOrchestration();
