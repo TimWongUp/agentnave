@@ -1553,7 +1553,8 @@ async function loadStatus() {
 // Opening this tab checks again when the automatic daily check is over an hour old. A found
 // update or a failure the user has not retried is left as it is.
 const AUTO_CHECK_AFTER = 60 * 60 * 1000;
-function checkIfStale() {
+async function checkIfStale() {
+  if ((await window.AgentNaveAboutSettings?.automatic()) === false) return;
   const update = appStatus?.update?.state;
   const service = appStatus?.service?.state;
   if (!appStatus || ["checking", "installing", "available", "failed"].includes(update) || ["upgrading", "installing"].includes(service)) return;

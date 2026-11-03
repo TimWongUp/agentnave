@@ -65,7 +65,7 @@
     }
   });
 
-  (async () => {
+  const ready = (async () => {
     try {
       saved = chosen(await preferences());
     } catch (failure) {
@@ -75,4 +75,6 @@
       render();
     }
   })();
+  // The pane's own check on opening obeys the same switch as the App's daily one.
+  window.AgentNaveAboutSettings = { automatic: async () => { await ready; return saved; } };
 })();
