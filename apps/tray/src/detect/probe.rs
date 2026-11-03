@@ -1,4 +1,5 @@
 use super::*;
+use crate::process::kill_group;
 
 /// PATH for a probe: the CLI's own directory, then the inherited PATH, then the common
 /// directories, so `#!/usr/bin/env node` launchers work from an app started by the Finder
@@ -257,17 +258,17 @@ pub(super) fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
         });
     }
     let deadline = Instant::now() + TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-            Ok(None) => {
-                kill_group(&mut child);
-                let _ = child.wait();
-                return Err(format!("{} 秒内未完成", TIMEOUT.as_secs()));
-            }
-            Err(error) => return Err(error.to_string()),
+    let status = match crate::process::wait(
+        &mut child,
+        || Instant::now() < deadline,
+        Duration::from_millis(50),
+    ) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            crate::process::stop(&mut child, false);
+            return Err(format!("{} 秒内未完成", TIMEOUT.as_secs()));
         }
+        Err(error) => return Err(error.to_string()),
     };
     // A descendant still holding the pipes a second after the CLI exited is stopped with its
     // group; the group outlives its reaped leader while members remain, so its ID stays reserved.
@@ -297,21 +298,6 @@ pub(super) fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
         .find(|line| !line.is_empty())
         .map_or_else(|| format!("退出码 {status}"), str::to_owned);
     Err(reason.chars().take(200).collect())
-}
-
-#[cfg(unix)]
-pub(super) fn kill_group(child: &mut std::process::Child) {
-    if let Ok(group) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: kill(2) only sends a signal; a negative ID names the probe's process group.
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub(super) fn kill_group(child: &mut std::process::Child) {
-    let _ = child.kill();
 }
 
 /// Codex's own model cache: listed models by priority, and the effort levels they support.

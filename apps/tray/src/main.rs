@@ -13,6 +13,7 @@ mod manage;
 mod members;
 mod onboarding;
 mod preferences;
+mod process;
 mod proxy;
 mod rules;
 mod settings;

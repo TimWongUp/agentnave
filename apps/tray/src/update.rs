@@ -787,48 +787,15 @@ fn run(uv: &Path, args: &[&str], dirs: &ToolDirs) -> Result<(), String> {
 }
 
 /// `Command::output` bounded by `limit`, stopping the process tree before returning.
-fn output_within(mut command: Command, limit: Duration) -> Result<std::process::Output, String> {
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    let child = command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    let id = child.id();
-    let (done, finished) = std::sync::mpsc::channel();
-    let waiter = thread::spawn(move || {
-        let output = child.wait_with_output();
-        let _ = done.send(());
-        output
-    });
-    if finished.recv_timeout(limit).is_err() {
-        kill(id);
-        let _ = waiter.join();
-        return Err(format!(
+fn output_within(command: Command, limit: Duration) -> Result<std::process::Output, String> {
+    crate::process::output(command, limit).map_err(|error| match error {
+        crate::process::OutputError::Timeout => format!(
             "超过 {} 分钟没有完成，请检查网络后重试",
             limit.as_secs() / 60
-        ));
-    }
-    waiter
-        .join()
-        .map_err(|_| "uv 进程读取失败".to_owned())?
-        .map_err(|error| error.to_string())
-}
-
-fn kill(id: u32) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(id as i32), libc::SIGKILL);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill")
-            .args(["/PID", &id.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .status();
-    }
+        ),
+        crate::process::OutputError::Reader => "uv 进程读取失败".to_owned(),
+        crate::process::OutputError::Io(error) => error.to_string(),
+    })
 }
 
 pub(crate) fn parse(version: &str) -> Vec<u64> {
