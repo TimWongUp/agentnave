@@ -215,19 +215,49 @@ wait(ids=["<invocation_id>"], wait_seconds=240, include_output=true,
 import asyncio, json
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
 SID = "<固定 UUID>"
 txt = lambda r: "\n".join(getattr(c, "text", "") for c in r.content)
+
+
 async def main():
     p = StdioServerParameters(command="/home/<user>/.local/bin/agentnave-mcp", args=[])
     async with stdio_client(p) as (r, w), ClientSession(r, w) as s:
         await s.initialize()
         print(txt(await s.call_tool("list_members", {})))
-        st = json.loads(txt(await s.call_tool("start_agent", {"prompt": "回复：好了",
-              "seat": "explorer-easy", "role": "自检", "cwd": "/tmp", "manager_session_id": SID})))
+        st = json.loads(
+            txt(
+                await s.call_tool(
+                    "start_agent",
+                    {
+                        "prompt": "回复：好了",
+                        "seat": "explorer-easy",
+                        "role": "自检",
+                        "cwd": "/tmp",
+                        "manager_session_id": SID,
+                    },
+                )
+            )
+        )
         while True:
-            w_ = json.loads(txt(await s.call_tool("wait", {"ids": [st["invocation_id"]],
-                  "wait_seconds": 240, "include_output": True, "manager_session_id": SID})))
-            if w_.get("all_finished"): print(w_); break
+            w_ = json.loads(
+                txt(
+                    await s.call_tool(
+                        "wait",
+                        {
+                            "ids": [st["invocation_id"]],
+                            "wait_seconds": 240,
+                            "include_output": True,
+                            "manager_session_id": SID,
+                        },
+                    )
+                )
+            )
+            if w_.get("all_finished"):
+                print(w_)
+                break
+
+
 asyncio.run(main())
 ```
 
