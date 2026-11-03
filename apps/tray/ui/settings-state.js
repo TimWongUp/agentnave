@@ -515,4 +515,3 @@ function setTab(tab) {
 
 const SCENE_IDS = ["task", "discussion"];
 const OFF = "\u0000off"; // The model menu entry that stops a scene from using a CLI.
-
