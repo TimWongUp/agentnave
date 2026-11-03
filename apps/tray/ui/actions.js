@@ -290,6 +290,7 @@ const Actions = (() => {
     const groups = (items) => {
       const result = new Map();
       for (const item of items) {
+        if (!item.group) continue;
         const id = item.group;
         if (!result.has(id)) result.set(id, []);
         result.get(id).push(item);

@@ -1227,7 +1227,7 @@ function renderUpdates() {
       serviceBadge.className = "tag done";
       serviceBadge.textContent = L("安装完成", "Installed");
       serviceMsg.hidden = false;
-      serviceMsg.textContent = L("安装完成，无需仅因版本变化重启 boss 应用。", "Installation complete; no need to restart boss apps just for version changes.");
+      serviceMsg.textContent = L("服务已安装，各 boss 重连后使用新版本。", "Service installed. Each boss will use the new version after reconnecting.");
     } else {
       serviceBadge.hidden = true;
       serviceMsg.hidden = true;

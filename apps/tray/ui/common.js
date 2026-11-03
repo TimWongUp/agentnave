@@ -903,7 +903,7 @@
       }
       running = false;
       // The App normally restarts before this point.
-      show(serviceOnly ? L("本机服务已升级", "Local service upgraded") : L(`已更新到 v${version}`, `Updated to v${version}`), [h("p.upd-p", {}, L("已切换到新版本，无需重连。", "Switched to the new version; no reconnection needed."))], [[L("好", "OK"), close, true]]);
+      show(serviceOnly ? L("本机服务已升级", "Local service upgraded") : L(`已更新到 v${version}`, `Updated to v${version}`), [h("p.upd-p", {}, L("服务已安装，各 boss 重连后使用新版本。", "Service installed. Each boss will use the new version after reconnecting."))], [[L("好", "OK"), close, true]]);
     } catch (error) {
       running = false;
       show(L("更新没有完成", "Update incomplete"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重新检查", "Check again"), () => run(true), true]]);
