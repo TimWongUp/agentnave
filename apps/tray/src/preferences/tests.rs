@@ -181,53 +181,6 @@ fn get_response_backfills_autostart_and_exposes_effective_values_without_writing
 }
 
 #[test]
-fn concurrent_theme_migrations_only_fill_the_missing_value_and_preserve_explicit_choices() {
-    let dir = tempfile::tempdir().unwrap();
-    let runtime = std::sync::Arc::new(runtime::Runtime::default());
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let results = std::thread::scope(|scope| {
-        let threads: Vec<_> = ["light", "dark"]
-            .into_iter()
-            .map(|theme| {
-                let runtime = runtime.clone();
-                let barrier = barrier.clone();
-                let folder = dir.path();
-                scope.spawn(move || {
-                    barrier.wait();
-                    runtime
-                        .migrate_theme(folder, &json!({"general": {"theme": theme}}))
-                        .unwrap()
-                })
-            })
-            .collect();
-        threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .collect::<Vec<_>>()
-    });
-    assert_eq!(results[0], results[1]);
-    assert_eq!(Value::Object(read(dir.path()).unwrap()), results[0]);
-    update(
-        dir.path(),
-        &json!({"general": {"theme": "system", "motion": "reduce"}}),
-    )
-    .unwrap();
-    let migrated = runtime
-        .migrate_theme(dir.path(), &json!({"general": {"theme": "dark"}}))
-        .unwrap();
-    assert_eq!(migrated["general"]["theme"], "system");
-    assert_eq!(migrated["general"]["motion"], "reduce");
-    assert!(
-        runtime
-            .migrate_theme(
-                dir.path(),
-                &json!({"general": {"theme": "dark", "motion": "full"}})
-            )
-            .is_err()
-    );
-}
-
-#[test]
 fn updates_auto_check_is_a_boolean() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("config");

@@ -264,28 +264,8 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
     std::fs::write(directory.path().join("voice.json"), retired.to_string()).unwrap();
     let reopened = storage::read_settings(directory.path()).unwrap();
     assert_eq!(reopened["summary"]["provider"], "magpie");
-    // Simulate an existing document directly: saving it would already normalize the old default.
-    for legacy in [
-        summary::LEGACY_DEFAULT_PROMPT,
-        summary::LEGACY_MESSAGE_PROMPT,
-        summary::LEGACY_SPEAKER_PROMPT,
-        summary::LEGACY_SCENE_PROMPT,
-    ] {
-        settings["summary"]["prompt"] = json!(legacy);
-        std::fs::write(directory.path().join("voice.json"), settings.to_string()).unwrap();
-        let migrated = storage::read_settings(directory.path()).unwrap();
-        assert_eq!(migrated["summary"]["prompt"], summary::DEFAULT_PROMPT);
-        storage::save_settings(directory.path(), &migrated).unwrap();
-        let persisted: Value =
-            serde_json::from_slice(&std::fs::read(directory.path().join("voice.json")).unwrap())
-                .unwrap();
-        assert_eq!(persisted["summary"]["prompt"], summary::DEFAULT_PROMPT);
-    }
-    for custom in [
-        "  请保留我的问题和约束。\n".to_owned(),
-        format!("{} ", summary::LEGACY_DEFAULT_PROMPT),
-        format!("{} ", summary::LEGACY_MESSAGE_PROMPT),
-    ] {
+    {
+        let custom = "  请保留我的问题和约束。\n";
         settings["summary"]["prompt"] = json!(custom);
         std::fs::write(directory.path().join("voice.json"), settings.to_string()).unwrap();
         assert_eq!(

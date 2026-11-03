@@ -3,9 +3,7 @@ use super::*;
 use std::collections::HashSet;
 
 fn eligible(connection: &Connection, ids: &[String], cutoff: i64) -> Result<bool, String> {
-    // Older read-only databases may predate handovers; the preview never migrates them.
-    if crate::db::workspace_has(connection, "pending").map_err(|e| e.to_string())?
-        && connection.query_row(
+    if connection.query_row(
             "SELECT EXISTS (SELECT 1 FROM workspaces JOIN conversations ON manager_session = workspaces.id \
              WHERE conversations.id = ?1 AND pending = 1)",
             [&ids[0]], |row| row.get::<_, bool>(0),

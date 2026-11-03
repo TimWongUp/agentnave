@@ -2,7 +2,6 @@
 // Helpers shared by the panel and the chat page. Classic script, one global: AN.
 // Every node is built with createElement/textContent.
 (function () {
-  const mock = () => (window.AgentNaveMock && window.AgentNaveMock.enabled() ? window.AgentNaveMock : null);
 
   // h("a.row.tone-run", {href}, child, [children]) -> element. "style" goes through CSSOM.
   function h(tag, props, ...kids) {
@@ -38,14 +37,11 @@
   const inApp = () => location.protocol === "agentnave:" || location.hostname === "agentnave.localhost";
 
   async function load(path) {
-    const m = mock();
-    if (m) return m.fetch(path);
     const response = await fetch(path, { cache: "no-store" });
     if (!response.ok) throw Object.assign(new Error(String(response.status)), { status: response.status });
     return response.json();
   }
-  // Real routes in production; mapped to the prototype's files under the mock.
-  const href = (path) => (mock() ? mock().href(path) : path);
+  const href = (path) => path;
 
   // ---- vocabulary ---------------------------------------------------------------------
   // [label, tone]; tone selects one of --run --review --bad --done --idle.
@@ -146,11 +142,6 @@
       .map((l) => l.replace(/^\s{0,3}(#{1,6}|>)\s*/, "").replace(/(\*\*|__|`)/g, "").trimEnd())
       .join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
-  document.addEventListener("click", (event) => {
-    const link = event.target.closest("a[href]");
-    if (mock() && link?.getAttribute("href").startsWith("/app/")) event.preventDefault();
-  });
-
   // Appearance is shared with settings and the panel through App preferences.
   const applyTheme = window.ANAppearance.applyTheme;
   const themeSwitch = () => window.ANAppearance.themeSwitch(h, L);
@@ -235,7 +226,7 @@
   // Optional frames: a character without them keeps the older look (grey idle, gliding seat).
   const EXTRA = ["sad", "walk-1", "walk-2"];
   const missing = new Set();
-  // The App supplies its release version; direct mock pages use a stable preview key.
+  // The App supplies its release version.
   const artVersion = typeof AGENTNAVE_ART_VERSION === "undefined" ? "preview" : AGENTNAVE_ART_VERSION;
   const artUrl = (path) => href(`/art/${path}?v=${encodeURIComponent(artVersion)}`);
   // A family's replacement set (Settings → 头像) wins over the painted one: "@family@version".
@@ -504,15 +495,9 @@
 
 (function () {
   const { h, L, load, href, setText } = AN;
-  const mock = () =>
-    window.AgentNaveMock && window.AgentNaveMock.enabled()
-      ? window.AgentNaveMock
-      : null;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function post(path, body) {
-    const m = mock();
-    if (m && m.post) return m.post(path, body || {});
     const response = await fetch(path, {
       method: "POST",
       headers: {
@@ -917,7 +902,7 @@
         status = await load("/app/status");
       }
       running = false;
-      // The App restarts before this on a real update; only the preview's mock gets here.
+      // The App normally restarts before this point.
       show(serviceOnly ? L("本机服务已升级", "Local service upgraded") : L(`已更新到 v${version}`, `Updated to v${version}`), [h("p.upd-p", {}, L("已切换到新版本，无需重连。", "Switched to the new version; no reconnection needed."))], [[L("好", "OK"), close, true]]);
     } catch (error) {
       running = false;
@@ -1053,7 +1038,7 @@
   // The settings page and the update flow read the status themselves; reuse what they got.
   addEventListener("agentnave:status", ({ detail }) => { status = detail; render(); });
   document.addEventListener("visibilitychange", refresh);
-  // After every deferred script, so the preview's mock backend is in place too.
+  // After every deferred script has initialized.
   addEventListener("DOMContentLoaded", tick);
 })();
 

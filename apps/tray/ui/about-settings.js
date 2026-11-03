@@ -31,7 +31,7 @@
     notice.classList.toggle("error", Boolean(error));
   }
 
-  // Through AN, so the browser preview's mock answers too.
+  // Share the same API path as the other settings pages.
   const preferences = payload => payload === undefined ? load("/app/preferences") : post("/app/preferences", payload);
 
   function chosen(data) {

@@ -31,9 +31,6 @@
     return supplier ? `${supplier}/${model.id}` : model.id;
   }
   async function request(path, payload) {
-    if (window.AgentNaveMock?.enabled()) {
-      return payload === undefined ? window.AgentNaveMock.fetch(path) : window.AgentNaveMock.post(path, payload);
-    }
     const response = await fetch(path, payload === undefined ? { cache: "no-store" } : {
       method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });

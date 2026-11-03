@@ -32,10 +32,9 @@ window.ANAppearance = (() => {
     }
   }
 
-  async function saveTheme(choice, migrate = false) {
+  async function saveTheme(choice) {
     const expected = generation;
     const headers = { "X-AgentNave-Action": "1", "Content-Type": "application/json" };
-    if (migrate) headers["X-AgentNave-Migrate-Theme"] = "1";
     const response = await fetch("/app/preferences", {
       method: "POST", headers,
       body: JSON.stringify({ general: { theme: choice } }),
@@ -53,14 +52,7 @@ window.ANAppearance = (() => {
       if (!response.ok) return;
       const state = await response.json();
       if (!state.preferences || state.error) return;
-      let legacy;
-      try { legacy = localStorage.getItem("agentnave.theme"); } catch { /* optional migration */ }
-      if (!state.preferences.general?.theme && ["system", "light", "dark"].includes(legacy)) {
-        await saveTheme(legacy, true);
-      } else {
-        publish(state.effective?.general || state.preferences.general, expected);
-      }
-      try { localStorage.removeItem("agentnave.theme"); } catch { /* optional migration */ }
+      publish(state.effective?.general || state.preferences.general, expected);
     } catch { /* Keep the attributes the App supplied when preferences cannot be read. */ }
   }
 

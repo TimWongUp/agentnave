@@ -39,7 +39,6 @@ const {
   activities,
 } = AN;
 
-const mockOn = !!(window.AgentNaveMock && window.AgentNaveMock.enabled());
 const narrow = window.matchMedia("(max-width: 760px)");
 const overlay = window.matchMedia("(max-width: 860px)"); // the conversation slides over the floor
 const reduceMotion = AN.reducedMotion;
@@ -159,7 +158,7 @@ function placeOb() {
 
 // ---------------------------------------------------------------- routing
 function groupFromLocation() {
-  if (mockOn && new URLSearchParams(location.search).has("group"))
+  if (new URLSearchParams(location.search).has("group"))
     return new URLSearchParams(location.search).get("group");
   const m = /^\/chat\/([^/]+)/.exec(location.pathname);
   try {

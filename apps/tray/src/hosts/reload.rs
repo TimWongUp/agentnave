@@ -1,8 +1,6 @@
 //! Whether hosts still run an MCP entry from before its last change (ADR-0022).
 use super::*;
 
-/// Matches the relay's own report that an update has waited too long.
-const STALE_RUNTIME_SECONDS: u64 = 600;
 /// A receipt this old with no refresh belongs to a relay that exited without removing it.
 const LINGER_SECONDS: u64 = 150;
 /// Relays prune receipts, ended ones included, after an hour without a write.
@@ -17,8 +15,6 @@ struct Receipts {
 }
 struct Install {
     version: Option<String>,
-    settled: bool,
-    at_ms: Option<u128>,
 }
 
 impl Hosts {
@@ -67,7 +63,7 @@ impl Hosts {
             .as_u64()
             .filter(|_| changed["token"] == token);
         let receipts = self.receipts(host, now, changed["at_ms"].as_u64());
-        let install = self.install(now);
+        let install = self.install();
         let base = if pending {
             ("required", "config")
         } else if manual {
@@ -140,19 +136,11 @@ impl Hosts {
             processes::State::Stopped
         )
     }
-    fn install(&self, now: SystemTime) -> Install {
+    fn install(&self) -> Install {
         let env = crate::update::active_tools(&self.context.app)
             .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")));
-        let installed_at = env.as_deref().and_then(crate::update::installed_since);
         Install {
             version: env.as_deref().and_then(crate::update::installed_version),
-            // A relay swaps to a new install within seconds once idle; much later it is stuck.
-            settled: installed_at
-                .and_then(|since| now.duration_since(since).ok())
-                .is_some_and(|age| age.as_secs() > STALE_RUNTIME_SECONDS),
-            at_ms: installed_at
-                .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
-                .map(|at| at.as_millis()),
         }
     }
     /// A running host can still hold the configuration from before its first MCP connection.
@@ -320,6 +308,13 @@ fn live_state(
     reloaded: bool,
     base: (&'static str, &'static str),
 ) -> (&'static str, &'static str) {
+    if let Some(installed) = install.version.as_deref()
+        && connections
+            .iter()
+            .any(|c| c["runtime_version"].as_str() != Some(installed))
+    {
+        return ("required", "stale");
+    }
     if connections.iter().any(|c| {
         valid_hash(&c["runtime_tools_hash"])
             && valid_hash(&c["host_tools_hash"])
@@ -333,40 +328,8 @@ fn live_state(
     if !delivered || !reloaded {
         return base;
     }
-    // Current relays read the version from every 2026-07-28 result; released ones before v0.35
-    // only from server/discover. For those, a guess: one started before the install reports the
-    // version once it swaps, so none means stuck.
-    let before_install = |c: &Value| {
-        install.at_ms.is_some_and(|at| {
-            c["started_ms"]
-                .as_u64()
-                .is_some_and(|start| u128::from(start) < at)
-        })
-    };
-    let unreported = |c: &Value| c["runtime_version"].as_str().is_none();
-    let behind = |c: &&Value| {
-        if unreported(c) {
-            before_install(c)
-        } else {
-            c["runtime_version"].as_str() != install.version.as_deref()
-        }
-    };
     if install.version.is_none() {
         ("unknown", "connection")
-    } else if connections.iter().any(|c| behind(&c)) {
-        if install.settled {
-            // Long after the install: busy all along, holding an unread result, or a relay
-            // before v0.31.0 that cannot swap for 2026-07-28 hosts.
-            if connections.iter().filter(behind).any(unreported) {
-                ("required", "relay")
-            } else {
-                ("required", "stale")
-            }
-        } else {
-            ("updating", "connection")
-        }
-    } else if connections.iter().any(unreported) {
-        ("unknown", "connection") // running the install, but the host has not shown its version
     } else {
         ("current", "connection")
     }

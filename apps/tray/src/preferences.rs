@@ -115,20 +115,6 @@ pub fn update(dir: &Path, changes: &Value) -> Result<Value, String> {
     Ok(document)
 }
 
-/// Called under Runtime's write lock, shared with all ordinary preference writes.
-fn migrate_theme(dir: &Path, changes: &Value) -> Result<Value, String> {
-    validate_changes(changes)?;
-    if *changes != json!({"general": {"theme": changes["general"]["theme"]}}) {
-        return Err("主题迁移只接受 general.theme".into());
-    }
-    let document = Value::Object(read(dir)?);
-    if document["general"].get("theme").is_some() {
-        Ok(document)
-    } else {
-        update(dir, changes)
-    }
-}
-
 /// The saved language choice; native menus and pages resolve `system` with the OS locale.
 pub fn language(dir: &Path) -> String {
     read(dir)

@@ -621,7 +621,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
     for id in ["codex", "pi"] {
         save(
             &dir.join(format!("{id}.json")),
-            &json!({"version":1,"host":id,"started_ms":1}).to_string(),
+            &json!({"version":1,"host":id,"started_ms":1,"runtime_version":"0.22.0"}).to_string(),
         );
     }
     let pending = hosts.state(&h)["reload"].clone();
@@ -663,7 +663,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
         preferences
     );
 
-    // A version-only update does not require restarting an unchanged MCP interface/config.
+    // Even unchanged tools/config require a reconnect after the installed version changes.
     let site = hosts
         .tool_dirs()
         .unwrap()
@@ -675,7 +675,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
     )
     .unwrap();
     let next = hosts.state(&h)["reload"].clone();
-    assert_eq!(next["state"], "confirmed");
+    assert_eq!(next["state"], "required");
     hosts
         .action(
             "confirm-reload",
@@ -686,7 +686,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
     // An unrelated preference does not affect activation; the MCP entry does.
     let raw = fs::read_to_string(&h.config).unwrap();
     save(&h.config, &format!("{raw}\n[unrelated]\nflag = true\n"));
-    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
     let before = h.read().unwrap();
     let mut entry = before.entry.clone().unwrap();
     entry["args"] = json!(["changed"]);
@@ -722,7 +722,7 @@ fn reload_confirmation_is_per_host_persistent_and_invalidated_by_changes() {
         &h.skill.as_ref().unwrap().join("SKILL.md"),
         "externally changed",
     );
-    assert_eq!(hosts.state(&h)["reload"]["state"], "confirmed");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
 }
 
 #[test]
@@ -779,64 +779,18 @@ fn connection_receipts_confirm_interfaces_and_fresh_sessions_without_hiding_stal
     receipt["host_tools_hash"] = json!("a".repeat(64));
     receipt["runtime_version"] = json!("0.21.0");
     save(&dir.join("new.json"), &receipt.to_string());
-    assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
-    // Long after the install, an old runtime is stuck rather than waiting to swap.
-    let metadata = hosts.context.home.join(
-        ".local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave-0.22.0.dist-info",
-    );
-    use std::time::Duration;
-    let installed_at = |age: u64| {
-        // Windows opens a directory only with backup semantics, and needs attribute-write access.
-        #[cfg(windows)]
-        let directory = {
-            use std::os::windows::fs::OpenOptionsExt;
-            fs::OpenOptions::new()
-                .access_mode(0x0100) // FILE_WRITE_ATTRIBUTES
-                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
-                .open(&metadata)
-        };
-        #[cfg(not(windows))]
-        let directory = fs::File::open(&metadata);
-        directory
-            .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(age))
-            .unwrap();
-    };
-    let now_ms = || {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
-    };
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
     let started = receipt["started_ms"].clone();
-    installed_at(3600);
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
-    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
-    // A connection on the new install that has not shown its version does not hide that.
-    let mut fresh = receipt.clone();
-    fresh["runtime_version"] = Value::Null;
-    fresh["started_ms"] = json!(now_ms());
-    save(&dir.join("fresh.json"), &fresh.to_string());
-    assert_eq!(hosts.state(&h)["reload"]["reason"], "stale");
-    fs::remove_file(dir.join("fresh.json")).unwrap();
-    // Without a version long after the install, a relay started before it has not swapped:
-    // before v0.31.0 it cannot read the version from 2026-07-28 hosts.
-    receipt["runtime_version"] = Value::Null;
-    receipt["started_ms"] = json!(now_ms() - 7_200_000);
-    save(&dir.join("new.json"), &receipt.to_string());
-    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
-    assert_eq!(hosts.state(&h)["reload"]["reason"], "relay");
-    installed_at(0);
-    assert_eq!(hosts.state(&h)["reload"]["state"], "updating");
-    // Started after the install, or at an unreadable time, the version is only unknown.
-    receipt["started_ms"] = json!(now_ms() + 1);
-    save(&dir.join("new.json"), &receipt.to_string());
-    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
-    installed_at(3600);
-    receipt["started_ms"] = Value::Null;
-    save(&dir.join("new.json"), &receipt.to_string());
-    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
-    installed_at(0);
+    // Missing versions are behind regardless of start time or tool-delivery evidence.
+    for start in [json!(1), json!(u64::MAX), Value::Null] {
+        receipt["runtime_version"] = Value::Null;
+        receipt["started_ms"] = start;
+        receipt["runtime_tools_hash"] = Value::Null;
+        save(&dir.join("new.json"), &receipt.to_string());
+        assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    }
+    receipt["runtime_tools_hash"] = json!("a".repeat(64));
     receipt["started_ms"] = started;
     receipt["runtime_version"] = json!("0.22.0");
     save(&dir.join("new.json"), &receipt.to_string());
@@ -1977,7 +1931,7 @@ fn an_equivalent_root_after_upgrade_records_no_reload() {
     hosts
         .action("root", &json!({"id":"codex","path":null}))
         .unwrap();
-    assert_eq!(hosts.state(&h)["reload"]["state"], "unknown");
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
 }
 
 #[test]

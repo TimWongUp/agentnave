@@ -223,16 +223,9 @@ fn main() {
                             Err(error) => data::Response::error(400, &error),
                         }
                     }
-                    (_, "/app/preferences") => preferences::runtime::request(
-                        &app,
-                        method,
-                        action,
-                        request.body(),
-                        request
-                            .headers()
-                            .get("X-AgentNave-Migrate-Theme")
-                            .is_some_and(|value| value == "1"),
-                    ),
+                    (_, "/app/preferences") => {
+                        preferences::runtime::request(&app, method, action, request.body())
+                    }
                     ("GET", "/settings/members") => reader.members(refresh),
                     (_, "/app/service/install") if method != "POST" => {
                         data::Response::error(405, "此操作只接受 POST")

@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 
 const NAME: &str = "agentnave.db";
 /// The schema version this tray understands; servers record theirs in `user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const BUSY: Duration = Duration::from_secs(5);
 
 pub fn path(root: &Path) -> PathBuf {
@@ -31,7 +31,14 @@ fn open(root: &Path, flags: OpenFlags) -> Result<Option<Connection>, String> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
-    if version != SCHEMA_VERSION {
+    if version == 1 && flags.contains(OpenFlags::SQLITE_OPEN_READ_WRITE) {
+        return Err(crate::preferences::general::text(
+            "先重连宿主，让服务完成升级",
+            "Reconnect the host first so the service can finish upgrading",
+        )
+        .to_owned());
+    }
+    if version != SCHEMA_VERSION && version != 1 {
         return Err(format!(
             "会话数据库版本为 {version}，此 App 只支持 {SCHEMA_VERSION}；请更新 App 或服务"
         ));
@@ -53,31 +60,6 @@ pub fn write(root: &Path) -> Result<Option<Connection>, String> {
         .pragma_update(None, "foreign_keys", true)
         .map_err(|e| e.to_string())?;
     Ok(Some(connection))
-}
-
-/// Whether the workspaces table has a column; older servers' databases lack the newer ones.
-pub fn workspace_has(connection: &Connection, column: &str) -> rusqlite::Result<bool> {
-    connection.query_row(
-        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('workspaces') WHERE name = ?1)",
-        [column],
-        |row| row.get(0),
-    )
-}
-
-/// A database an older server created may lack the handover tables and columns.
-pub fn add_handover_schema(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(include_str!("../../../src/agentnave/schema.sql"))?;
-    for column in ["title", "cwd"] {
-        if !workspace_has(connection, column)?
-            && let Err(error) = connection
-                .execute_batch(&format!("ALTER TABLE workspaces ADD COLUMN {column} TEXT"))
-            // A server may have added it first, which is all this wanted.
-            && !workspace_has(connection, column)?
-        {
-            return Err(error);
-        }
-    }
-    Ok(())
 }
 
 /// Build the servers' database for tests, from the same schema file Python uses.
@@ -167,3 +149,6 @@ pub fn put(root: &Path, id: &str, state: &serde_json::Value, view: &serde_json::
         )
         .unwrap();
 }
+
+#[cfg(test)]
+mod tests;

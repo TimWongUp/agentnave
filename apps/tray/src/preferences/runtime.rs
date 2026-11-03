@@ -16,17 +16,6 @@ pub struct Runtime {
     scale: Mutex<u64>,
 }
 
-impl Runtime {
-    pub(super) fn migrate_theme(
-        &self,
-        dir: &std::path::Path,
-        payload: &Value,
-    ) -> Result<Value, String> {
-        let _write = self.writes.lock().unwrap();
-        super::migrate_theme(dir, payload)
-    }
-}
-
 pub fn state(app: &AppHandle) -> Value {
     let mut state = super::state(&super::dir());
     let enabled = match autostart::is_enabled(app) {
@@ -53,13 +42,7 @@ pub(super) fn response(mut state: Value, enabled: bool, scale: u64, preview: boo
     state
 }
 
-pub fn request(
-    app: &AppHandle,
-    method: &str,
-    action: Option<&str>,
-    body: &[u8],
-    migrate: bool,
-) -> Response {
+pub fn request(app: &AppHandle, method: &str, action: Option<&str>, body: &[u8]) -> Response {
     if method == "GET" {
         return Response::json(&state(app));
     }
@@ -73,16 +56,7 @@ pub fn request(
         Ok(value) => value,
         Err(_) => return Response::error(400, "无效的 JSON"),
     };
-    let result = if migrate {
-        app.state::<Runtime>()
-            .migrate_theme(&super::dir(), &payload)
-            .and_then(|document| {
-                apply(app)?;
-                Ok(document)
-            })
-    } else {
-        save(app, &payload)
-    };
+    let result = save(app, &payload);
     match result {
         Ok(document) => Response::json(&json!({"saved": true, "preferences": document})),
         Err(error) => Response::error(400, &error),

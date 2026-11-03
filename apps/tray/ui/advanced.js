@@ -31,20 +31,6 @@ let orchestrationDraft = null; // The document as picked, without the custom tex
 let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
 let ruleOpenError = null; // { path, message }: why a rules file did not open, shown on its row.
 let customTouched = false; // Typed into the editor, so its text is saved even with no boss on it yet.
-const mockOrchestration = {
-  document: { version: 1, preset: "split", apps: { codex: "off" } },
-  error: null,
-  bosses: [
-    { keys: ["claude", "grok"], labels: ["Claude Code", "Grok"], mark: "claude" },
-    { keys: ["codex"], labels: ["Codex"], mark: "codex" },
-  ],
-  presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行复核的规则" },
-  files: [
-    { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
-    { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },
-  ],
-};
-
 const orchestrationShown = () => orchestrationDraft || orchestration?.document;
 const usesCustom = (doc) => doc?.preset === "custom" || Object.values(doc?.apps || {}).includes("custom");
 function orchestrationWanted() {
@@ -62,13 +48,9 @@ function savedView() {
 
 async function loadOrchestration() {
   try {
-    let loaded;
-    if (isMock) loaded = JSON.parse(JSON.stringify(mockOrchestration));
-    else {
-      const response = await fetch("/app/orchestration", { cache: "no-store" });
-      if (!response.ok) throw new Error(AN.L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
-      loaded = await response.json();
-    }
+    const response = await fetch("/app/orchestration", { cache: "no-store" });
+    if (!response.ok) throw new Error(AN.L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
+    const loaded = await response.json();
     // Asked once the answer is in: an edit made while it was on its way stays.
     const keep = orchestrationChanged();
     orchestration = loaded;
@@ -93,16 +75,13 @@ async function saveOrchestration() {
     const seat = wanted[role]?.[difficulty];
     if (seat && !sameJson(seat, orchestration.document[role]?.[difficulty])) await listSeatModel(seat);
   }
-  let data = { files: orchestration.files, bosses: orchestration.bosses, failures: [] };
-  if (!isMock) {
-    const response = await fetch("/app/orchestration", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify(wanted),
-    });
-    data = await response.json().catch(() => ({}));
-    if (!response.ok || data.error) throw new Error(data.error || AN.L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
-  }
+  const response = await fetch("/app/orchestration", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+    body: JSON.stringify(wanted),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.error) throw new Error(data.error || AN.L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
   orchestration.document = wanted;
   orchestration.files = data.files;
   orchestration.bosses = data.bosses;

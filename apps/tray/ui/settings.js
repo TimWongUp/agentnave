@@ -102,9 +102,7 @@ let reviewSeats = {}; // review.json seats; saved on their own, apart from membe
 let reviewError = null;
 let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "auto".
 let permissionsError = null;
-let cliOptions = null; // cli-options.json settings by CLI; they hold for every model of it.
-let cliOptionsError = null;
-let reviewSaves = 0; // Seats, tiers or CLI switches saved so far; a probe answered before a save carries old ones.
+let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
 let missingOpen = false; // The folded list of CLIs not installed here
 let appStatus = null;
@@ -115,143 +113,8 @@ const optionDrafts = new WeakMap();
 let operatedControl = null;
 let pendingDisable = null;
 
-// Determine mock mode
-const isMock = new URLSearchParams(location.search).has("mock");
-
-// Mock data covering:
-// 1. Task mode restricted, discussion mode unrestricted (omitted key).
-// 2. Codex in task mode has models: [] (unlimited models) with default set.
-// 3. Override tri-state example.
-const mockMembersData = {
-  review: { version: 1, seats: {} },
-  permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
-  cli_options: { version: 1, clis: { codex: { skip_git_repo_check: true } } },
-  document: {
-    version: 1,
-    clis: {
-      codex: {
-        models: {
-          "gpt-6.1-sol": {
-            efforts: ["medium", "high", "xhigh"],
-            effort: "high",
-            options: {
-              dangerously_bypass_approvals_and_sandbox: false,
-            },
-            notes: "多文件实现、需要跑测试的任务",
-          },
-          "gpt-5.4-turbo": {},
-        },
-      },
-      claude: {
-        models: {
-          "claude-3-7-sonnet": {
-            effort: "high",
-            options: { custom_timeout: 60 },
-            notes: "通用编码与复杂重构",
-          },
-        },
-      },
-    },
-    modes: {
-      task: {
-        codex: {
-          models: [], // Unlimited models
-          default: "gpt-6.1-sol",
-          overrides: {},
-        },
-        claude: {
-          models: ["claude-3-7-sonnet"],
-          default: "claude-3-7-sonnet",
-          overrides: {
-            // Tri-state override example: effort customized, notes customized, efforts & options inherit
-            "claude-3-7-sonnet": {
-              effort: "medium",
-              notes: "本模式专用说明",
-            },
-          },
-        },
-      },
-      // discussion is omitted => unrestricted mode
-    },
-  },
-  error: null,
-  detected: {
-    codex: {
-      installed: true,
-      path: "/opt/homebrew/bin/codex",
-      version: "0.161.0",
-      source: "codex-cache",
-      error: null,
-      models: [
-        {
-          id: "gpt-6.1-sol",
-          label: "gpt-6.1-sol",
-          default: false,
-          efforts: ["low", "medium", "high", "xhigh"],
-          effort: "medium",
-        },
-        { id: "gpt-5.4-turbo", label: "gpt-5.4-turbo", default: false, effort: "low" },
-      ],
-      native: { model: "gpt-6.1-sol", effort: "medium" },
-      efforts: ["minimal", "low", "medium", "high", "xhigh"],
-    },
-    claude: {
-      installed: true,
-      path: "/usr/local/bin/claude",
-      version: "2.1.308",
-      source: "command",
-      error: null,
-      models: [
-        { id: "claude-3-7-sonnet", label: "claude-3-7-sonnet", default: true },
-        { id: "claude-3-5-haiku", label: "claude-3-5-haiku", default: false },
-      ],
-      native: { model: "claude-3-7-sonnet", effort: null },
-      efforts: ["low", "medium", "high"],
-    },
-    codebuddy: {
-      installed: true,
-      path: "/opt/homebrew/bin/codebuddy",
-      source: "help",
-      error: null,
-      models: [
-        { id: "codebuddy-pro", label: "codebuddy-pro", default: true },
-      ],
-      efforts: [],
-    },
-    grok: {
-      installed: false,
-      path: null,
-      source: "none",
-      error: "未在 PATH 中找到 grok 可执行文件",
-      models: [],
-      efforts: [],
-    },
-    antigravity: {
-      installed: true,
-      path: "/opt/homebrew/bin/agy",
-      source: "command",
-      error: null,
-      models: [
-        { id: "gemini-3.8-flash", label: "gemini-3.8-flash", default: true },
-      ],
-      efforts: ["low", "high"],
-    },
-    pi: {
-      installed: false,
-      path: null,
-      source: "none",
-      error: "未安装",
-      models: [],
-      efforts: [],
-    },
-  },
-};
-
 // API Helpers
 async function apiGetMembers(refresh = false) {
-  if (isMock) {
-    return JSON.parse(JSON.stringify(mockMembersData));
-  }
   const url = refresh ? "/settings/members?refresh=1" : "/settings/members";
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(L(`获取成员配置失败（${res.status}）`, `Failed to load employee settings (${res.status})`));
@@ -259,10 +122,6 @@ async function apiGetMembers(refresh = false) {
 }
 
 async function apiPostReview(doc) {
-  if (isMock) {
-    mockMembersData.review = JSON.parse(JSON.stringify(doc));
-    return;
-  }
   const res = await fetch("/app/review", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
@@ -277,15 +136,9 @@ function takeReview(data) {
   reviewError = data.review_error || null;
   permissionTiers = data.permissions?.clis || null;
   permissionsError = data.permissions_error || null;
-  cliOptions = data.cli_options?.clis || null;
-  cliOptionsError = data.cli_options_error || null;
 }
 
 async function apiPostPermissions(doc) {
-  if (isMock) {
-    mockMembersData.permissions = JSON.parse(JSON.stringify(doc));
-    return;
-  }
   const res = await fetch("/app/permissions", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
@@ -293,69 +146,6 @@ async function apiPostPermissions(doc) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || L(`保存失败（${res.status}）`, `Save failed (${res.status})`));
-}
-
-async function apiPostCliOptions(doc) {
-  if (isMock) {
-    mockMembersData.cli_options = JSON.parse(JSON.stringify(doc));
-    return;
-  }
-  const res = await fetch("/app/cli-options", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-    body: JSON.stringify(doc),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.error) throw new Error(data.error || L(`保存失败（${res.status}）`, `Save failed (${res.status})`));
-}
-
-// Switches that hold for every model of one CLI, saved apart from members.json; an "off"
-// switch removes the key so the CLI's own behaviour applies.
-const CLI_SWITCHES = {
-  codex: [{
-    key: "skip_git_repo_check",
-    label: L("允许在 git 仓库外运行", "Allow running outside git repositories"),
-    on: L("Codex 在任何文件夹都能启动，包括临时目录和其他 App 的工作区。", "Codex can start in any folder, including temp directories and other apps’ workspaces."),
-    off: L("Codex 只在 git 仓库或它信任过的文件夹里启动，其他文件夹会直接报错。", "Codex only starts in git repositories or trusted folders; other folders fail with an error."),
-  }],
-};
-
-async function setCliSwitch(provider, item, enabled) {
-  if (cliOptionsError) return showNotice(L(`${cliOptionsError}；请先修复或删除这个文件`, `${cliOptionsError}; fix or delete this file first`), true);
-  if (busy) return showNotice(L("正在保存，请稍后再选", "Saving in progress; please try again shortly"), true);
-  const options = { ...(cliOptions?.[provider] || {}) };
-  if (enabled) options[item.key] = true;
-  else delete options[item.key];
-  const clis = { ...(cliOptions || {}), [provider]: options };
-  if (!Object.keys(options).length) delete clis[provider];
-  busy = true;
-  updateControls();
-  try {
-    await apiPostCliOptions({ version: 1, clis });
-    cliOptions = clis;
-    reviewSaves += 1;
-    showNotice(L(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型单独干活和新开的会都生效`, `Saved: ${PROVIDER_NAMES[provider]} ${enabled ? "enabled" : "disabled"} “${item.label}” for all models in solo tasks and new meetings`));
-  } catch (err) {
-    showNotice(L(`保存失败: ${err.message}`, `Save failed: ${err.message}`), true);
-  } finally {
-    busy = false;
-    updateControls();
-  }
-  renderCards();
-}
-
-function renderCliSwitches(provider) {
-  return (CLI_SWITCHES[provider] || []).map((item) => {
-    const enabled = cliOptions?.[provider]?.[item.key] === true;
-    return el("label", { className: "member-switch", title: cliOptionsError || L(`${enabled ? item.on : item.off} 选完立即保存。`, `${enabled ? item.on : item.off} Saved immediately when toggled.`) },
-      el("input", {
-        type: "checkbox",
-        dataset: { focusKey: `${provider}/cli/${item.key}` },
-        checked: enabled,
-        disabled: Boolean(cliOptionsError),
-        onChange: (e) => setCliSwitch(provider, item, e.target.checked),
-      }), textNode(item.label));
-  });
 }
 
 // What each tier means for each CLI when a task runs unattended; the server maps the tier to
@@ -419,10 +209,6 @@ function renderPermission(provider) {
 }
 
 async function apiPostMembers(doc) {
-  if (isMock) {
-    mockMembersData.document = JSON.parse(JSON.stringify(doc));
-    return { saved: true };
-  }
   const res = await fetch("/app/members", {
     method: "POST",
     headers: {
@@ -439,18 +225,12 @@ async function apiPostMembers(doc) {
 }
 
 async function apiGetStatus() {
-  if (isMock) {
-    return window.AgentNaveMock.fetch("/app/status");
-  }
   const res = await fetch("/app/status", { cache: "no-store" });
   if (!res.ok) throw new Error(L(`获取状态失败（${res.status}）`, `Failed to load status (${res.status})`));
   return res.json();
 }
 
 async function apiCheckUpdate(quiet = false) {
-  if (isMock) {
-    return window.AgentNaveMock.post("/app/update/check");
-  }
   // quiet: a failed check keeps the previous state instead of reporting a failure.
   const res = await fetch(quiet ? "/app/update/check?quiet=1" : "/app/update/check", {
     method: "POST",
@@ -1190,7 +970,6 @@ function renderCards() {
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     for (const row of rows) card.appendChild(row);
-    if (enabled) for (const row of renderCliSwitches(provider)) card.appendChild(row);
     if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
     cards.appendChild(card);
   }
@@ -1292,9 +1071,9 @@ async function refreshDetection(quiet = false) {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
     detected = data.detected || {};
-    const tiersBefore = JSON.stringify([permissionTiers, permissionsError, cliOptions, cliOptionsError]);
+    const tiersBefore = JSON.stringify([permissionTiers, permissionsError]);
     if (!busy && reviewSaves === seatsBefore) takeReview(data);
-    const tiersChanged = JSON.stringify([permissionTiers, permissionsError, cliOptions, cliOptionsError]) !== tiersBefore;
+    const tiersChanged = JSON.stringify([permissionTiers, permissionsError]) !== tiersBefore;
     // Without unsaved edits, or a save while probing, take the file as read too.
     // An unchanged file keeps the current objects, which the rendered cards still edit.
     const fileDoc = data.document || { version: 1, clis: {}, modes: {} };
@@ -1491,7 +1270,7 @@ function renderUpdates() {
     if (hasAppUpdate) {
       updateHint.textContent = L("先看更新内容，确认后一次完成：升级本机服务，再安装 App 并自动重启。", "Review release notes first; once confirmed, it upgrades the local service, installs the App, and restarts automatically.");
     } else {
-      updateHint.textContent = L("本机服务比 App 旧。升级约需一分钟，空闲后自动切换，正在运行的任务不受影响。", "Local service is older than the App. Upgrading takes ~1 min and switches automatically when idle without affecting running tasks.");
+      updateHint.textContent = L("本机服务比 App 旧。升级约需一分钟，宿主重连后生效。", "Local service is older than the App. Upgrading takes ~1 min and takes effect after reconnecting the host.");
     }
   }
 

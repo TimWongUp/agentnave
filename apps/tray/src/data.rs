@@ -28,8 +28,6 @@ const PANEL_HTML: &[u8] = include_bytes!("../ui/panel.html");
 const PANEL_JS: &[u8] = include_bytes!("../ui/panel.js");
 const PANEL_CSS: &[u8] = include_bytes!("../ui/panel.css");
 const MANAGE_CSS: &[u8] = include_bytes!("../ui/manage.css");
-const TO_OFFICE: &[u8] =
-    br#"<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/chat/">"#;
 const SETTINGS_HTML: &[u8] = include_bytes!("../ui/settings.html");
 const SETTINGS_JS: &[u8] = include_bytes!("../ui/settings.js");
 const SETTINGS_CSS: &[u8] = include_bytes!("../ui/settings.css");
@@ -47,7 +45,6 @@ const COMMON_JS: &[u8] = concat!(
 const HOSTS_JS: &[u8] = include_bytes!("../ui/hosts.js");
 const HOSTS_CSS: &[u8] = include_bytes!("../ui/hosts.css");
 const ONBOARDING_CSS: &[u8] = include_bytes!("../ui/onboarding.css");
-const MOCK_JS: &[u8] = include_bytes!("../ui/mock.js");
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src blob:; base-uri 'none'; frame-ancestors 'none'";
 
@@ -169,17 +166,15 @@ type RouteKey = (
 /// A route answer with the views it was computed from, held so their addresses stay unique.
 type RouteAnswer = (RouteKey, Vec<Arc<Value>>, Response);
 
-/// One server's publication for a conversation: version 1 holds its whole projection,
-/// version 2 (`tails`) only running tasks' and seats' reply tails and reported models.
+/// One server's publication of running tasks' and seats' reply tails and reported models.
 struct Live {
     payload: Arc<Value>,
-    tails: bool,
     updated_at: Option<String>,
 }
 
 /// A live view built once per input: the saved views and live payload it came from (held so
 /// their addresses stay unique), the live time, and the result.
-type Merged = (Option<Arc<Value>>, Arc<Value>, Option<String>, Arc<Value>);
+type Merged = (Arc<Value>, Arc<Value>, Option<String>, Arc<Value>);
 
 pub(crate) struct Snapshot {
     pub item: Item,
@@ -261,16 +256,6 @@ impl Reader {
                     &payload,
                     crate::members::validate_permissions,
                     crate::members::save_permissions,
-                )
-            });
-        }
-        if path == "/app/cli-options" {
-            return post(method, action, body, |payload| {
-                save(
-                    &self.root,
-                    &payload,
-                    crate::members::validate_cli_options,
-                    crate::members::save_cli_options,
                 )
             });
         }
@@ -696,25 +681,6 @@ impl Reader {
                 ));
             }
         }
-        // A version 1 live publication can precede the first disk snapshot.
-        for (id, live) in live {
-            if !valid_id(&id) {
-                continue;
-            }
-            let Some(view) = live_view(&mut merged, &id, None, &live) else {
-                continue;
-            };
-            if let Some(item) = summary(&view).filter(|item| item.id == id) {
-                shown.insert(id.clone());
-                items.push((SystemTime::now(), item.clone()));
-                snapshots.push(Snapshot {
-                    item,
-                    view,
-                    live: true,
-                    live_updated: live.updated_at,
-                });
-            }
-        }
         merged.retain(|id, _| shown.contains(id));
         cache.retain(|id, _| seen.contains(id));
         items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
@@ -795,7 +761,6 @@ impl Reader {
                     Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec())
                 }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
-                "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
                 "" => page(CHAT_HTML),
                 id if valid_id(id) => page(CHAT_HTML),
                 _ => Response::not_found(),
@@ -851,8 +816,6 @@ impl Reader {
         }
         if let ["manage", resource] = parts.as_slice() {
             return match *resource {
-                // Conversations are managed in the office now; old links lead there.
-                "" => Response::ok("text/html; charset=utf-8", TO_OFFICE.to_vec()),
                 "manage.css" => Response::ok("text/css; charset=utf-8", MANAGE_CSS.to_vec()),
                 "state" => Response::json(&crate::manage::list(&self.root, self.overview())),
                 _ => Response::not_found(),
@@ -870,13 +833,11 @@ impl Reader {
                     Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec())
                 }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
-                "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
                 _ => Response::not_found(),
             };
         }
         match parts.as_slice() {
-            // The old workbench address now leads to the chat page.
-            [""] => Response::ok("text/html; charset=utf-8", TO_OFFICE.to_vec()),
+            [""] => page(CHAT_HTML),
             _ => Response::not_found(),
         }
     }
@@ -949,34 +910,28 @@ impl Reader {
                 continue;
             }
             seen.insert(path.clone());
-            let Some(payload) = cached(&mut cache, &path, &meta, |v| {
-                matches!(version(v), Some(VERSION | LIVE_TAILS))
-            }) else {
+            let Some(payload) =
+                cached(&mut cache, &path, &meta, |v| version(v) == Some(LIVE_TAILS))
+            else {
                 continue;
             };
             let Some(Value::Object(conversations)) = payload.get("conversations") else {
                 continue;
             };
             let ids: Vec<String> = conversations.keys().cloned().collect();
-            let tails = version(&payload) == Some(LIVE_TAILS);
-            // Version 2 rewrites only changed content and refreshes its mtime otherwise.
-            let updated_at = if tails {
-                Some(crate::stage::iso(
-                    modified
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_micros() as i64,
-                ))
-            } else {
-                payload["updated_at"].as_str().map(str::to_owned)
-            };
+            // Content changes only when necessary; heartbeats refresh its mtime.
+            let updated_at = Some(crate::stage::iso(
+                modified
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as i64,
+            ));
             found.push((
                 modified,
                 ids.into_iter()
                     .map(|id| {
                         let live = Live {
                             payload: payload.clone(),
-                            tails,
                             updated_at: updated_at.clone(),
                         };
                         (id, live)
@@ -993,8 +948,6 @@ impl Reader {
     }
 }
 
-/// One conversation's live view: a version 1 projection as published, or version 2 tails laid
-/// over the saved views, which they need beneath them. Reused while its inputs are the same.
 /// A write route: an explicit POST with the action header and a JSON body.
 fn post(
     method: &str,
@@ -1055,24 +1008,15 @@ fn live_view(
     live: &Live,
 ) -> Option<Arc<Value>> {
     let view = live.payload.get("conversations")?.get(id)?;
-    let base = if live.tails {
-        Some(saved?.clone())
-    } else if summary(view).is_some() {
-        None
-    } else {
-        return None;
-    };
+    let base = saved?.clone();
     if let Some((held, payload, at, out)) = merged.get(id)
         && Arc::ptr_eq(payload, &live.payload)
         && *at == live.updated_at
-        && held.as_ref().map(Arc::as_ptr) == base.as_ref().map(Arc::as_ptr)
+        && Arc::ptr_eq(held, &base)
     {
         return Some(out.clone());
     }
-    let out = Arc::new(match &base {
-        Some(saved) => lay_tails(saved, view, live.updated_at.as_deref()),
-        None => view.clone(),
-    });
+    let out = Arc::new(lay_tails(&base, view, live.updated_at.as_deref()));
     let entry = (
         base,
         live.payload.clone(),
@@ -1133,20 +1077,15 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
 }
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
-/// its creator; none before a server added the table.
+/// its creator.
 fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
-    // This connection reads only, so it cannot add what an older server's database lacks.
-    let labels = match crate::db::workspace_has(connection, "title") {
-        Ok(true) => "title, cwd",
-        _ => "NULL, NULL",
-    };
     let rows = connection
-        .prepare(&format!(
+        .prepare(
             "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending, \
-             note, released, previous_host, {labels} \
+             note, released, previous_host, title, cwd \
              FROM workspaces WHERE pending = 1 OR owner != id OR previous_host IS NOT NULL \
              ORDER BY id",
-        ))
+        )
         .and_then(|mut statement| {
             statement
                 .query_map([], |row| {

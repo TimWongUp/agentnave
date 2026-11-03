@@ -190,7 +190,7 @@ pub fn rename(root: &Path, id: &str, title: &str) -> Value {
             )
             .optional()?;
         if let Some(mut view) = view.and_then(|body| serde_json::from_str::<Value>(&body).ok()) {
-            for key in ["summary", "director", "public"] {
+            for key in ["summary", "director"] {
                 if view[key].is_object() {
                     view[key]["title"] = json!(title);
                 }
@@ -266,7 +266,6 @@ fn conversation_group(connection: &Connection, id: &str) -> rusqlite::Result<Opt
 /// again (ADR-0033). Other workspaces a boss opened by handing over never had a conversation
 /// to lose, so they stay while the App shows them.
 fn forget_emptied(connection: &Connection, emptied: Option<&str>) -> rusqlite::Result<()> {
-    crate::db::add_handover_schema(connection)?;
     connection.execute(
         "DELETE FROM workspaces WHERE NOT EXISTS \
          (SELECT 1 FROM conversations WHERE manager_session = workspaces.id) \
@@ -308,25 +307,15 @@ pub fn forget(root: &Path, group: &str) -> Value {
     }
 }
 
-/// A workspace keyed by a boss chat; legacy identities have none.
-fn boss_workspace(id: &str) -> bool {
-    id.strip_prefix("s-")
-        .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
-}
-
 /// Mark a workspace as waiting for another boss (ADR-0033). Its boss keeps it until a new chat
 /// takes it over, so this needs no conversation lock.
 pub fn handover(root: &Path, group: &str) -> Value {
-    if !boss_workspace(group) {
-        return result(group, "error", "这个工作区没有记录 boss 聊天，不能交接");
-    }
     let connection = match crate::db::write(root) {
         Ok(Some(connection)) => connection,
         Ok(None) => return result(group, "missing", "工作区已不存在"),
         Err(e) => return result(group, "error", &e),
     };
     let marked = (|| -> rusqlite::Result<bool> {
-        crate::db::add_handover_schema(&connection)?;
         let found: bool = connection.query_row(
             "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?1) \
              OR EXISTS (SELECT 1 FROM workspaces WHERE id = ?1 AND title IS NOT NULL)",
@@ -357,7 +346,7 @@ pub fn handover(root: &Path, group: &str) -> Value {
     }
 }
 
-/// Current members of the anchor's workspace; legacy identities remain individual records.
+/// Current members of the anchor's workspace.
 fn workspace_ids(connection: &Connection, anchor: &str) -> Result<Vec<String>, String> {
     let session: Option<Option<String>> = connection
         .query_row(
@@ -367,11 +356,8 @@ fn workspace_ids(connection: &Connection, anchor: &str) -> Result<Vec<String>, S
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let Some(session) = session else {
+    let Some(Some(session)) = session else {
         return Ok(Vec::new());
-    };
-    let Some(session) = session.filter(|s| boss_workspace(s)) else {
-        return Ok(vec![anchor.to_owned()]);
     };
     connection
         .prepare("SELECT id FROM conversations WHERE manager_session = ?1 ORDER BY id")

@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "clis": {
-    "claude": {
-      "restricted_tools": true
-    }
-  }
-}

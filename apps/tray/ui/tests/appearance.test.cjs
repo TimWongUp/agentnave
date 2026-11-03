@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
-function appearance({ saved = {}, legacy = null, systemReduce = false, failWrite = false, transport } = {}) {
+function appearance({ saved = {}, systemReduce = false, failWrite = false, transport } = {}) {
   const listeners = {}, requests = [], buttons = [], nodes = new Map();
   const on = (name, fn) => { (listeners[name] ||= []).push(fn); };
   const emit = async (name, event = {}) => { for (const fn of listeners[name] || []) await fn(event); };
@@ -14,13 +14,12 @@ function appearance({ saved = {}, legacy = null, systemReduce = false, failWrite
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }, location: { protocol: "agentnave:" }, queueMicrotask,
     matchMedia: query => ({ matches: query.includes("reduced-motion") ? systemReduce : false, addEventListener() {} }),
     addEventListener: on,
-    localStorage: { getItem: () => legacy, removeItem: () => { legacy = null; } },
     async fetch(path, options) {
       requests.push({ path, options });
       if (transport) return transport(path, options);
       if (options?.method === "POST") {
         if (failWrite) return { ok: false, status: 500 };
-        if (!options.headers["X-AgentNave-Migrate-Theme"] || !saved.theme) Object.assign(saved, JSON.parse(options.body).general);
+        Object.assign(saved, JSON.parse(options.body).general);
       }
       return { ok: true, json: async () => ({ preferences: { general: { ...saved } }, error: null }) };
     },
@@ -43,30 +42,9 @@ function appearance({ saved = {}, legacy = null, systemReduce = false, failWrite
     vm.runInNewContext(readFileSync(`${__dirname}/../general-settings.js`, "utf8"), context);
     return nodes.get("general-prefs");
   }
-  return { api: context.window.ANAppearance, root, emit, requests, saved, buttons, h, settings, legacy: () => legacy };
+  return { api: context.window.ANAppearance, root, emit, requests, saved, buttons, h, settings };
 
 }
-
-test("legacy theme migrates once into preferences and is then removed", async () => {
-  const app = appearance({ legacy: "light" });
-  await app.emit("DOMContentLoaded");
-  assert.equal(app.saved.theme, "light");
-  assert.equal(app.root.dataset.theme, "light");
-  assert.equal(app.legacy(), null);
-  await app.emit("focus");
-  assert.equal(app.requests.filter(r => r.options?.method === "POST").length, 1);
-});
-
-test("saved preferences take precedence and failed migrations remain retryable", async () => {
-  const saved = appearance({ saved: { theme: "dark" }, legacy: "light" });
-  await saved.emit("DOMContentLoaded");
-  assert.equal(saved.root.dataset.theme, "dark");
-  assert.equal(saved.requests.length, 1);
-  const failed = appearance({ legacy: "light", failWrite: true });
-  await failed.emit("DOMContentLoaded");
-  assert.equal(failed.legacy(), "light");
-  assert.equal(failed.root.dataset.theme, "dark");
-});
 
 test("all motion choices override or follow the system and native broadcasts reach open pages", async () => {
   const app = appearance({ systemReduce: true });
@@ -114,43 +92,20 @@ test("settings follow a shortcut and let the previous theme be selected again", 
   assert.equal(choices[1].attributes["aria-checked"], "true");
 });
 
-test("a stale GET cannot overwrite migration broadcast from another window", async () => {
+test("a stale GET cannot overwrite preferences broadcast from another window", async () => {
   let release, began;
   const started = new Promise(resolve => { began = resolve; });
-  const saved = {};
+  const saved = { theme: "light" };
   const old = appearance({ transport: async () => {
     began();
     return new Promise(resolve => { release = () => resolve({ ok: true, json: async () => ({ preferences: { general: {} }, effective: { general: { theme: "system" } } }) }); });
   } });
   const pending = old.emit("DOMContentLoaded");
   await started;
-  const migrating = appearance({ saved, legacy: "light" });
-  await migrating.emit("DOMContentLoaded");
   await old.emit("agentnave:preferences", { detail: saved });
   release();
   await pending;
   assert.equal(old.root.dataset.theme, "light");
-});
-
-test("concurrent legacy candidates only fill an unset theme and converge on server choice", async () => {
-  const saved = {};
-  let gets = 0, release;
-  const both = new Promise(resolve => { release = resolve; });
-  const transport = async (path, options) => {
-    if (options?.method === "POST") {
-      if (!options.headers["X-AgentNave-Migrate-Theme"] || !saved.theme) Object.assign(saved, JSON.parse(options.body).general);
-      return { ok: true, json: async () => ({ preferences: { general: { ...saved } } }) };
-    }
-    if (++gets === 2) release();
-    await both;
-    return { ok: true, json: async () => ({ preferences: { general: {} }, effective: { general: { theme: "system" } } }) };
-  };
-  const a = appearance({ legacy: "light", transport });
-  const b = appearance({ legacy: "dark", transport });
-  await Promise.all([a.emit("DOMContentLoaded"), b.emit("DOMContentLoaded")]);
-  assert.equal(saved.theme, "light");
-  assert.equal(a.root.dataset.theme, "light");
-  assert.equal(b.root.dataset.theme, "light");
 });
 
 test("settings.html scripts load in declared order and language switch respects unsaved changes", async () => {

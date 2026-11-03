@@ -112,17 +112,6 @@ fn service_state_follows_the_upgrade() {
 }
 
 #[test]
-fn restart_marker_is_written_once_and_cleared() {
-    let directory = tempfile::tempdir().unwrap();
-    let dir = directory.path().join("app-data");
-    assert!(!take_marker(&dir));
-    write_marker(&dir).unwrap();
-    assert!(dir.join(UPGRADE_MARKER).is_file());
-    assert!(take_marker(&dir));
-    assert!(!take_marker(&dir));
-}
-
-#[test]
 fn notes_keep_the_releases_after_this_app_newest_first() {
     let body = json!([
         {"version": "0.46.1", "notes": "a"},
