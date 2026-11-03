@@ -35,10 +35,12 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 | 角色                                 | 支持                                                                                                                                |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、Grok Bot |
+| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、Grok Bot（仅 Linux） |
 | **组员**（被派活的 CLI）             | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode                         |
 
 老板的范围更大：上面这些宿主都能当老板，桌面端也可以；组员目前只有表里这几个 CLI。宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
+
+Grok Bot 仅通过 Linux 上的 MCP stdio 连接器接入，不提供 macOS / Windows App 接入。它不在 `AGENTNAVE_HOST` 的取值范围内，以未知宿主身份连接（`host_source: "unknown"`），无法自动回读老板模型与会话文件，详见[无头 Linux 宿主指引](docs/linux-headless.md)。
 
 ## 🎀 组员图鉴
 

@@ -36,10 +36,12 @@ has gone to the meeting room, and what everyone said.
 
 | Role                                                | Supported                                                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot |
+| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot (Linux only) |
 | **Teammate** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
 
 The boss side is wider: any of these hosts can be the boss, desktop apps included, while teammates are only the CLIs listed. A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a meeting.
+
+Grok Bot connects only through an MCP stdio connector on Linux; integration through the macOS / Windows App is not provided. It is not a valid `AGENTNAVE_HOST` value and connects as an unknown host (`host_source: "unknown"`), so AgentNave cannot automatically read back its boss model or session file. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
 ## 🎀 Meet the team
 
