@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from agentnave.db import NAME, SCHEMA_VERSION
+from agentnave.db import NAME, SCHEMA_VERSION, add_handover_schema
 from agentnave.locks import lock_file
 from agentnave.members import read_history_retention_days
 
@@ -62,7 +62,7 @@ def _timestamp(value: object) -> int | None:
 def _eligible(connection: sqlite3.Connection, ids: list[str], cutoff: int) -> bool:
     for id_ in ids:
         row = connection.execute(_CANDIDATE, (id_,)).fetchone()
-        if row is None or row[1] is None or row[2] or row[3]:
+        if row is None or row[1] is None or row[2]:
             return False
         try:
             view = cast(dict[str, object], json.loads(row[1]))
@@ -141,6 +141,7 @@ def cleanup(
         connection.execute("PRAGMA synchronous = FULL")
         if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
             return 0
+        add_handover_schema(connection)
         cutoff = int((time.time() if now is None else now) * 1000) - days * _INTERVAL * 1000
         seen: set[str] = set()
         removed = 0

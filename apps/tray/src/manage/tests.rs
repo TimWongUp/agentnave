@@ -17,13 +17,6 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
             id,
         );
     }
-    for id in ["old", "newly-finished"] {
-        set(
-            root.path(),
-            "UPDATE tasks SET status = 'succeeded' WHERE conversation_id = ?1",
-            id,
-        );
-    }
     let ids = vec!["old".to_owned(), "newly-finished".to_owned()];
     let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
     // A conversation created since the preview preserves the whole workspace.
@@ -434,13 +427,6 @@ fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
             "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
             id,
         );
-        if id != "running" {
-            set(
-                root.path(),
-                "UPDATE tasks SET status = 'succeeded' WHERE conversation_id = ?1",
-                id,
-            );
-        }
     }
     for id in ["old-a", "old-b"] {
         crate::db::write(root.path())
@@ -465,7 +451,7 @@ fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
     let lock = lock_file(root.path(), "busy").unwrap();
     take(&lock);
     let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
-    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 2);
     assert!(!crate::db::lock_path(root.path(), "old-a").exists());
     assert_eq!(count(root.path(), "conversations", "old-a"), 1);
     let ids = vec!["old-a".to_owned(), "old-b".to_owned()];
@@ -474,9 +460,66 @@ fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
             .iter()
             .all(|r| r["status"] == "deleted")
     );
-    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
     assert_eq!(
         cleanup(root.path(), &["running".to_owned()], cutoff)[0]["status"],
-        "changed"
+        "deleted"
     );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+}
+
+#[test]
+fn retention_preview_skips_a_corrupt_workspace_and_counts_healthy_ones() {
+    let root = tempfile::tempdir().unwrap();
+    for id in ["broken-a", "broken-b", "healthy"] {
+        fixture(root.path(), id);
+        set(
+            root.path(),
+            "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            id,
+        );
+        set(
+            root.path(),
+            "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+            id,
+        );
+    }
+    for id in ["broken-a", "broken-b"] {
+        set(
+            root.path(),
+            "UPDATE conversations SET manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+            id,
+        );
+    }
+    set(
+        root.path(),
+        "INSERT INTO rounds (id, conversation_id, number, body) VALUES ('r', ?1, 1, '{broken')",
+        "broken-b",
+    );
+    let reader = Reader::new(root.path().to_owned());
+    let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+    assert_eq!(reply.status, 200);
+    let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!(payload["workspaces"], 1);
+    assert_eq!(count(root.path(), "conversations", "broken-a"), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn retention_preview_never_opens_a_recent_conversations_lock() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "recent");
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2026-11-03T00:00:00Z') WHERE conversation_id = ?1",
+        "recent",
+    );
+    let path = crate::db::lock_path(root.path(), "recent");
+    drop(lock_file(root.path(), "recent").unwrap());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    let preview = retention_preview(root.path(), cutoff);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(preview.unwrap(), 0);
 }

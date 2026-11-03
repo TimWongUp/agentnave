@@ -1,12 +1,8 @@
-//! Shared eligibility for manual age cleanup and the read-only storage preview.
+//! Eligibility and short-lived candidate probes for the read-only storage preview.
 use super::*;
 use std::collections::HashSet;
 
-pub(super) fn eligible(
-    connection: &Connection,
-    ids: &[String],
-    cutoff: i64,
-) -> Result<bool, String> {
+fn eligible(connection: &Connection, ids: &[String], cutoff: i64) -> Result<bool, String> {
     for id in ids {
         let row = connection
             .query_row(
@@ -17,16 +13,15 @@ pub(super) fn eligible(
                         row.get::<_, String>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, bool>(2)?,
-                        row.get::<_, bool>(3)?,
                     ))
                 },
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        let Some((created, body, pending, running)) = row else {
+        let Some((created, body, blocked)) = row else {
             return Ok(false);
         };
-        if pending || running {
+        if blocked {
             return Ok(false);
         }
         let created = crate::stage::timestamp(&created);
@@ -47,18 +42,18 @@ pub(super) fn eligible(
     Ok(true)
 }
 
-/// Probe existing locks only: a preview never creates lock files or changes the database.
-fn probe(root: &Path, ids: &[String]) -> Result<Option<Vec<File>>, String> {
-    let mut locks = Vec::new();
+/// Only expired candidates reach this probe. Release each lock immediately, before any
+/// database reads or opening another lock: the preview is advisory and never reserves work.
+fn available(root: &Path, ids: &[String]) -> Result<bool, String> {
     for id in ids {
         if !crate::data::valid_id(id) {
-            return Ok(None);
+            return Ok(false);
         }
         let path = crate::db::lock_path(root, id);
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error.to_string()),
-            Ok(meta) if !meta.is_file() => return Ok(None),
+            Ok(meta) if !meta.is_file() => return Ok(false),
             _ => {}
         }
         let lock = OpenOptions::new()
@@ -67,12 +62,12 @@ fn probe(root: &Path, ids: &[String]) -> Result<Option<Vec<File>>, String> {
             .open(path)
             .map_err(|e| e.to_string())?;
         match lock.try_lock() {
-            Ok(()) => locks.push(lock),
-            Err(TryLockError::WouldBlock) => return Ok(None),
+            Ok(()) => drop(lock),
+            Err(TryLockError::WouldBlock) => return Ok(false),
             Err(error) => return Err(error.to_string()),
         }
     }
-    Ok(Some(locks))
+    Ok(true)
 }
 
 pub(super) fn count(root: &Path, cutoff: i64) -> Result<usize, String> {
@@ -94,11 +89,11 @@ pub(super) fn count(root: &Path, cutoff: i64) -> Result<usize, String> {
         if ids.is_empty() {
             continue;
         }
-        let Some(_locks) = probe(root, &ids)? else {
-            continue;
+        let eligible = {
+            let transaction = connection.transaction().map_err(|e| e.to_string())?;
+            workspace_ids(&transaction, &anchor)? == ids && eligible(&transaction, &ids, cutoff)?
         };
-        let transaction = connection.transaction().map_err(|e| e.to_string())?;
-        if workspace_ids(&transaction, &anchor)? == ids && eligible(&transaction, &ids, cutoff)? {
+        if eligible && available(root, &ids)? {
             count += 1;
         }
     }

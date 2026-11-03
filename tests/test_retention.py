@@ -130,13 +130,21 @@ def test_one_unsafe_sibling_preserves_entire_workspace(tmp_path: Path, reason: s
         elif reason == "missing-view":
             db.execute("DELETE FROM views WHERE conversation_id = 'old-b'")
     (tmp_path / "locks").mkdir(exist_ok=True)
-    guard = lock_file(tmp_path / "locks/old-b.lock", "busy") if reason == "held" else None
+    guard = (
+        lock_file(tmp_path / "locks/old-b.lock", "busy")
+        if reason in {"held", "running", "round"}
+        else None
+    )
     try:
         assert cleanup(tmp_path, now=_NOW) == 0
         assert remaining(tmp_path) == ["old-a", "old-b"]
     finally:
         if guard is not None:
             guard.close()
+    if reason in {"running", "round"}:
+        # Once the writer crashed/released ownership, stale running rows are deletable.
+        assert cleanup(tmp_path, now=_NOW) == 1
+        assert remaining(tmp_path) == []
 
 
 def test_no_setting_and_contended_global_lock_do_not_delete(tmp_path: Path) -> None:
@@ -213,3 +221,34 @@ def test_cleanup_rereads_after_taking_conversation_locks(
     monkeypatch.setattr("agentnave.retention.lock_file", take)
     assert cleanup(tmp_path, now=_NOW) == 0
     assert "old" in remaining(tmp_path)
+
+
+def test_bad_round_preserves_its_workspace_but_does_not_stop_later_cleanup(tmp_path: Path) -> None:
+    settings(tmp_path)
+    fixture(tmp_path, "broken-a")
+    fixture(tmp_path, "broken-b")
+    fixture(tmp_path, "z-good", group=None)
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("INSERT INTO rounds VALUES ('r', 'broken-b', 1, '{broken')")
+    assert cleanup(tmp_path, now=_NOW) == 1
+    assert remaining(tmp_path) == ["broken-a", "broken-b"]
+
+
+@pytest.mark.parametrize("missing", ["tables", "columns"])
+def test_first_cleanup_repairs_legacy_handover_schema(tmp_path: Path, missing: str) -> None:
+    settings(tmp_path)
+    fixture(tmp_path, "old")
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        if missing == "tables":
+            db.execute("DROP TABLE workspaces")
+            db.execute("DROP TABLE former_bosses")
+        else:
+            db.execute("ALTER TABLE workspaces DROP COLUMN title")
+            db.execute("ALTER TABLE workspaces DROP COLUMN cwd")
+    assert cleanup(tmp_path, now=_NOW) == 1
+    assert remaining(tmp_path) == []
+    assert cleanup(tmp_path, now=_NOW) == 0
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
+        assert {"title", "cwd"} <= columns
+        assert db.execute("SELECT count(*) FROM former_bosses").fetchone()[0] == 0
