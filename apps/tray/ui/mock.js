@@ -3,9 +3,7 @@
 // (/app/stage, /app/chats, /app/chats/<group>) plus the existing /app/status, driven by a
 // small time-based scenario so that tails change, members finish and a manager appears.
 //
-// Production: this file ships only as the fallback of load(): enable it with
-//   new URLSearchParams(location.search).has("mock") || location.protocol === "file:"
-// The prototype keeps it always on. Query: ?scene=live|calm|review|failed|six|quiet|empty|error
+// Loaded only by preview.html?mock&scene=live|calm|review|failed|six|quiet|empty|error
 // &update=available|installing|failed &service=older|upgrading|done|failed &at=<seconds into live>
 // &stale (the last check is too old) &fail=download|service|app (the update stops at that step)
 // &restart (reset the scenario clock; it is shared between pages through localStorage).
@@ -15,6 +13,146 @@
   const SCENE = q.get("scene") || (hostScene === "fresh" ? "empty" : "live");
   const enabled = () => q.has("mock") || location.protocol === "file:";
   if (!enabled()) return;
+
+  const mockMembersData = {
+    review: { version: 1, seats: {} },
+    permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
+    document: {
+      version: 1,
+      clis: {
+        codex: {
+          models: {
+            "gpt-6.1-sol": {
+              efforts: ["medium", "high", "xhigh"],
+              effort: "high",
+              options: {
+                dangerously_bypass_approvals_and_sandbox: false,
+              },
+              notes: "多文件实现、需要跑测试的任务",
+            },
+            "gpt-5.4-turbo": {},
+          },
+        },
+        claude: {
+          models: {
+            "claude-3-7-sonnet": {
+              effort: "high",
+              options: { custom_timeout: 60 },
+              notes: "通用编码与复杂重构",
+            },
+          },
+        },
+      },
+      modes: {
+        task: {
+          codex: {
+            models: [], // Unlimited models
+            default: "gpt-6.1-sol",
+            overrides: {},
+          },
+          claude: {
+            models: ["claude-3-7-sonnet"],
+            default: "claude-3-7-sonnet",
+            overrides: {
+              // Tri-state override example: effort customized, notes customized, efforts & options inherit
+              "claude-3-7-sonnet": {
+                effort: "medium",
+                notes: "本模式专用说明",
+              },
+            },
+          },
+        },
+        // discussion is omitted => unrestricted mode
+      },
+    },
+    error: null,
+    detected: {
+      codex: {
+        installed: true,
+        path: "/opt/homebrew/bin/codex",
+        version: "0.161.0",
+        source: "codex-cache",
+        error: null,
+        models: [
+          {
+            id: "gpt-6.1-sol",
+            label: "gpt-6.1-sol",
+            default: false,
+            efforts: ["low", "medium", "high", "xhigh"],
+            effort: "medium",
+          },
+          { id: "gpt-5.4-turbo", label: "gpt-5.4-turbo", default: false, effort: "low" },
+        ],
+        native: { model: "gpt-6.1-sol", effort: "medium" },
+        efforts: ["minimal", "low", "medium", "high", "xhigh"],
+      },
+      claude: {
+        installed: true,
+        path: "/usr/local/bin/claude",
+        version: "2.1.308",
+        source: "command",
+        error: null,
+        models: [
+          { id: "claude-3-7-sonnet", label: "claude-3-7-sonnet", default: true },
+          { id: "claude-3-5-haiku", label: "claude-3-5-haiku", default: false },
+        ],
+        native: { model: "claude-3-7-sonnet", effort: null },
+        efforts: ["low", "medium", "high"],
+      },
+      codebuddy: {
+        installed: true,
+        path: "/opt/homebrew/bin/codebuddy",
+        source: "help",
+        error: null,
+        models: [
+          { id: "codebuddy-pro", label: "codebuddy-pro", default: true },
+        ],
+        efforts: [],
+      },
+      grok: {
+        installed: false,
+        path: null,
+        source: "none",
+        error: "未在 PATH 中找到 grok 可执行文件",
+        models: [],
+        efforts: [],
+      },
+      antigravity: {
+        installed: true,
+        path: "/opt/homebrew/bin/agy",
+        source: "command",
+        error: null,
+        models: [
+          { id: "gemini-3.8-flash", label: "gemini-3.8-flash", default: true },
+        ],
+        efforts: ["low", "high"],
+      },
+      pi: {
+        installed: false,
+        path: null,
+        source: "none",
+        error: "未安装",
+        models: [],
+        efforts: [],
+      },
+    },
+  };
+
+
+  const mockOrchestration = {
+    document: { version: 1, preset: "split", apps: { codex: "off" } },
+    error: null,
+    bosses: [
+      { keys: ["claude", "grok"], labels: ["Claude Code", "Grok"], mark: "claude" },
+      { keys: ["codex"], labels: ["Codex"], mark: "codex" },
+    ],
+    presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行复核的规则" },
+    files: [
+      { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
+      { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },
+    ],
+  };
+
 
   // ---- scenario clock -------------------------------------------------------------------
   const CLOCK_KEY = "agentnave.mock.t0";
@@ -619,21 +757,15 @@ All checks passed!
     throw Object.assign(new Error("404"), { status: 404 });
   }
 
-  // Preview parameters follow chat links; normal app links retain their production routes.
-  const keep = ["scene", "update", "service", "hosts", "activation"].filter((k) => q.has(k)).map((k) => `${k}=${encodeURIComponent(q.get(k))}`);
+  // Keep every prototype navigation on the static preview entry.
   function href(path) {
-    const match = /^\/chat\/?([^/?#]*)(#.*)?$/.exec(path);
-    if (!match) {
-      const settings = /^\/settings\/(#.*)?$/.exec(path);
-      return settings ? `/settings/?${["mock", ...keep].join("&")}${settings[1] || ""}` : path;
-    }
-    const params = ["mock", ...keep];
-    if (location.protocol === "file:") {
-      if (match[1]) params.push(`group=${encodeURIComponent(match[1])}`);
-      return `chat.html?${params.join("&")}${match[2] || ""}`;
-    }
-    if (match[1]) params.push(`group=${encodeURIComponent(match[1])}`);
-    return `/chat/?${params.join("&")}${match[2] || ""}`;
+    const match = /^\/(chat|settings|panel)\/?([^/?#]*)(#.*)?$/.exec(path);
+    if (!match) return path;
+    const params = new URLSearchParams(location.search);
+    params.set("page", match[1]);
+    params.delete("group");
+    if (match[1] === "chat" && match[2]) params.set("group", decodeURIComponent(match[2]));
+    return `preview.html?${params}${match[3] || ""}`;
   }
 
   // Host/onboarding fixtures stay behind the existing explicit mock switch.
@@ -667,8 +799,8 @@ All checks passed!
   const hostView = () => ({ service: { installed: serviceReady, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
     const token = `${host.id}:${host.root.path}`;
     const scene = q.get("activation");
-    const state = scene === "tools" || !mockToolsSynced ? "required" : scene === "updating" ? "updating" : host.id === "codex" && scene !== "unknown" ? "current" : "unknown";
-    return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : state, reason: state === "required" ? "tools" : "connection", connections: state === "unknown" ? 0 : 1, token } : { state: "not_connected" } };
+    const state = scene === "stale" || scene === "tools" || !mockToolsSynced ? "required" : host.id === "codex" && scene !== "unknown" ? "current" : "unknown";
+    return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : state, reason: scene === "stale" ? "stale" : state === "required" ? "tools" : "connection", connections: state === "unknown" ? 0 : 1, token } : { state: "not_connected" } };
   }), backups: { dir: "/preview/backups", config: 0, skill: 0 } });
   const onboarding = () => ({ dismissed, steps: [
     { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
@@ -734,7 +866,11 @@ All checks passed!
     },
   };
   async function p3Fetch(path) {
+    if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
+    if (path === "/app/orchestration") return structuredClone(mockOrchestration);
+    if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays } };
     if (path === "/app/preferences") return preferencesView();
+    if (path === "/app/characters" || path === "/avatars/avatar-settings") return {};
     if (path === "/app/storage") return { path: "/preview/.agentnave", bytes: 48234496, retention_days: mockRetentionDays };
     const storagePreview = /^\/app\/storage\/preview\?days=(\d+)$/.exec(path);
     if (storagePreview) {
@@ -752,6 +888,10 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
+    if (path === "/app/members") { mockMembersData.document = structuredClone(body); return { saved: true }; }
+    if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
+    if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }
+    if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
     if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply?service=1") {
       installedState = { state: "upgrading" };
@@ -834,5 +974,25 @@ All checks passed!
     host.last_action = { ok: true, message: "预览操作完成", at: new Date().toISOString() };
     return { host: structuredClone(host), ok: true, message: host.last_action.message };
   }
-  window.AgentNaveMock = { enabled, fetch: p3Fetch, post, href, scene: SCENE };
+  AN.href = href;
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (input, options = {}) => {
+    const url = new URL(input, location.href);
+    const path = url.pathname + url.search;
+    if (!url.pathname.startsWith("/app/") && url.pathname !== "/settings/members" && url.pathname !== "/avatars/avatar-settings") return realFetch(input, options);
+    try {
+      const value = options.method === "POST" ? await post(path, JSON.parse(options.body || "{}")) : await p3Fetch(path);
+      return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error.message }), { status: error.status || 500 });
+    }
+  };
+  // Static links and links created later follow the same routing as AN.href.
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a[href]");
+    if (!link) return;
+    const path = link.getAttribute("href");
+    if (path.startsWith("/app/")) event.preventDefault();
+    else if (href(path) !== path) link.setAttribute("href", href(path));
+  }, true);
 })();

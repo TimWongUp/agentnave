@@ -675,8 +675,7 @@ const RELOAD_REASONS = {
   host_running: (hint) => [L("接入配置已更新", "Connection config updated"), L(`检测到应用仍在运行，${hint}后生效。`, `App is still running; takes effect after you ${hint}.`)],
   unverified: (hint) => [L("接入配置已更新", "Connection config updated"), L(`尚未确认应用已加载新配置；${hint}后再使用。`, `Not yet verified that the app loaded the new config; ${hint} before use.`)],
   tools: (hint) => [L("有连接仍在用旧工具接口", "A connection is still using the old tool interface"), L(`重新连接 AgentNave MCP，或${hint}；完成后提示自动消除。`, `Reconnect AgentNave MCP, or ${hint}; this notice clears automatically once done.`)],
-  relay: (hint) => [L("有连接未能切换到新版服务", "A connection could not switch to the new service"), L(`这是 v0.31.0 之前启动的旧中继。重新连接 AgentNave MCP，或${hint}；会结束这条连接上运行中的任务。`, `This is an old relay started before v0.31.0. Reconnect AgentNave MCP, or ${hint}; running tasks on this connection will end.`)],
-  stale: (hint) => [L("有连接长时间仍在用旧版服务", "A connection is still using an older service"), L(`通常是任务还在运行或结果未读取，处理完会自动切换。没有任务时，重新连接 AgentNave MCP，或${hint}。`, `Usually a task is still running or its result is unread, and it switches automatically once finished. If idle, reconnect AgentNave MCP or ${hint}.`)],
+  stale: (hint) => [L("需要重连", "Reconnect required"), L(`重新连接 AgentNave MCP，或${hint}，让新版服务生效。`, `Reconnect AgentNave MCP, or ${hint}, to load the new service.`)],
 };
 
 function renderCards() {

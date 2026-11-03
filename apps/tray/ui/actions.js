@@ -198,7 +198,7 @@ const Actions = (() => {
       } else {
         const groups = new Map();
         for (const item of free) {
-          const group = item.group || `c-${item.id}`;
+          const group = item.group;
           if (!groups.has(group)) groups.set(group, []);
           groups.get(group).push(item.id);
         }
@@ -290,7 +290,8 @@ const Actions = (() => {
     const groups = (items) => {
       const result = new Map();
       for (const item of items) {
-        const id = item.group || `c-${item.id}`;
+        if (!item.group) continue;
+        const id = item.group;
         if (!result.has(id)) result.set(id, []);
         result.get(id).push(item);
       }
@@ -376,7 +377,7 @@ const Actions = (() => {
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("工作区", "workspace")) },
-      !id.startsWith("c-") && g.handover !== "pending" && { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
+      g.handover !== "pending" && { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
       { label: L("删除工作区…", "Delete workspace…"), danger: true, run: () => removeGroups([id]) },
     ].filter(Boolean));
   }

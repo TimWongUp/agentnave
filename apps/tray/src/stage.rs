@@ -204,22 +204,9 @@ fn opt_text(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// What a desk's role reads as: Explorer and Worker difficulties are internal and read as none,
-/// and a review role reads in the words the App's review seats use.
+/// The caller's concrete responsibility, independent of its configured seat.
 fn desk_role(identity: &Value) -> Option<String> {
-    let role = opt_text(identity, "role")?;
-    match role.trim() {
-        "explorer-easy" | "explorer-hard" | "worker-easy" | "worker-hard" => None,
-        "correctness-reviewer" => Some("正确性评审".to_owned()),
-        "architecture-reviewer" => Some("架构评审".to_owned()),
-        "security-reviewer" => Some("安全评审".to_owned()),
-        "performance-reviewer" => Some("性能评审".to_owned()),
-        "test-reliability-reviewer" => Some("测试可靠性评审".to_owned()),
-        "simplicity-reviewer" => Some("简化评审".to_owned()),
-        "specialist-reviewer" => Some("专项评审".to_owned()),
-        "adversarial-verifier" => Some("反证复核".to_owned()),
-        _ => Some(role),
-    }
+    opt_text(identity, "role")
 }
 
 /// A desk is one native session: a private thread, or one seat of a saved show.
@@ -541,12 +528,10 @@ impl Group {
         group
     }
 
-    /// Conversations saved before hosts were recorded have neither host nor manager session.
     fn manager_label(&self) -> &str {
-        match self.host.as_deref() {
-            None if self.id.starts_with("c-") => "未记录 boss",
-            host => boss_name(host, self.app).1.unwrap_or(label(host)),
-        }
+        boss_name(self.host.as_deref(), self.app)
+            .1
+            .unwrap_or(label(self.host.as_deref()))
     }
 
     fn header(&self) -> Value {
@@ -1261,16 +1246,10 @@ impl Group {
     }
 }
 
-/// Only true host-chat identities aggregate; old connection UUIDs cannot identify a chat.
+/// Conversations with the same boss chat share a workspace.
 pub(crate) fn chat_group(item: &Item) -> Option<String> {
-    let session = item.manager_session.as_deref().filter(|id| {
-        id.strip_prefix("s-")
-            .is_some_and(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
-    });
-    let id = session
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("c-{}", item.id));
-    valid_id(&id).then_some(id)
+    let id = item.manager_session.as_ref()?;
+    valid_id(id).then(|| id.clone())
 }
 
 /// One snapshot's identity for reuse: its view's address, and whether and when it is live.
@@ -1560,10 +1539,13 @@ mod tests {
     }
 
     #[test]
-    fn a_desk_role_hides_difficulties_and_names_review_roles_in_chinese() {
+    fn a_desk_role_keeps_the_callers_responsibility() {
         let role = |role: &str| desk_role(&serde_json::json!({"role": role}));
-        assert_eq!(role("worker-hard"), None);
-        assert_eq!(role("correctness-reviewer").as_deref(), Some("正确性评审"));
+        assert_eq!(role("worker-hard").as_deref(), Some("worker-hard"));
+        assert_eq!(
+            role("correctness-reviewer").as_deref(),
+            Some("correctness-reviewer")
+        );
         assert_eq!(role("接手方视角").as_deref(), Some("接手方视角"));
     }
 

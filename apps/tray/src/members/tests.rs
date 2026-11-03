@@ -8,7 +8,7 @@ fn document() -> Value {
             "gpt-6.1-sol": {
                 "efforts": ["medium", "high", "xhigh"],
                 "effort": "high",
-                "options": {"skip_git_repo_check": true, "budget": 2.5},
+                "options": {"timeout": 60, "budget": 2.5},
                 "notes": "多文件实现"
             },
             "gpt-6-luna": {}
@@ -235,39 +235,6 @@ fn permission_tiers_save_to_their_own_file() {
 }
 
 #[test]
-fn cli_options_save_to_their_own_file() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("data");
-    let reader = Reader::new(root.clone());
-    assert_eq!(read_cli_options(&root).unwrap(), None);
-    let post = |body: &Value| {
-        reader
-            .request(
-                "POST",
-                "/app/cli-options",
-                Some("1"),
-                &serde_json::to_vec(body).unwrap(),
-            )
-            .status
-    };
-    for clis in [
-        json!({"other": {}}),
-        json!({"codex": true}),
-        json!({"codex": {"model": "m"}}),
-        json!({"codex": {"sandbox": "read-only"}}),
-        json!({"codex": {"skip_git_repo_check": [true]}}),
-    ] {
-        assert_eq!(post(&json!({"version": 1, "clis": clis})), 400);
-    }
-    let options = json!({"version": 1, "clis": {"codex": {"skip_git_repo_check": true}}});
-    assert_eq!(post(&options), 200);
-    assert_eq!(read_cli_options(&root).unwrap(), Some(options));
-    assert!(!root.join(FILE).exists());
-    fs::write(root.join(CLI_OPTIONS_FILE), b"{").unwrap();
-    assert!(read_cli_options(&root).is_err());
-}
-
-#[test]
 fn broken_file_is_reported_and_left_untouched() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -301,7 +268,6 @@ fn app_file_samples_agree_with_the_server() {
             "review" => validate_review,
             "orchestration" => validate_orchestration,
             "permissions" => validate_permissions,
-            "cli-options" => validate_cli_options,
             "settings" => |document| crate::settings::validate(document).map(drop),
             other => panic!("no check for {other} samples"),
         };

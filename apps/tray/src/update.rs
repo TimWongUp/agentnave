@@ -27,9 +27,6 @@ const REPOSITORY: &str = "https://github.com/TimWongUp/agentnave.git";
 const RELEASES: &str = "https://github.com/TimWongUp/agentnave/releases";
 /// How long the panel keeps saying the service was upgraded.
 const UPGRADED_NOTE: Duration = Duration::from_secs(10 * 60);
-/// In the app's own data directory, not the AgentNave data root. Written only by apps before the
-/// service-first update; a restart into this one still finishes what they promised.
-const UPGRADE_MARKER: &str = "upgrade-service-after-restart";
 /// The version an update installed, read once by its first start to say so.
 const UPDATED_MARKER: &str = "updated-to";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
@@ -409,8 +406,7 @@ pub fn apply(app: &AppHandle, service_only: bool) -> Value {
     value
 }
 
-/// At start: note the version an update installed, and run the service upgrade an older app's
-/// one-click update left for after its restart.
+/// At start: note the version an update installed and align the service with the App.
 pub fn resume(app: &AppHandle) {
     let Some(dir) = marker_dir(app) else {
         return;
@@ -421,8 +417,6 @@ pub fn resume(app: &AppHandle) {
     // The service is a separate artifact the hosts start, so it follows the App on every start
     // instead of waiting for a click. A versioned install makes that safe: the running service
     // keeps its own directory, and hosts move over when they next start.
-    // A stale marker from an older app still gets consumed here.
-    let _marked = take_marker(&dir);
     if service_for_app(app).is_object() {
         upgrade_service(app);
     }
@@ -443,17 +437,6 @@ fn take_updated(dir: &Path) -> Option<String> {
     let version = fs::read_to_string(&path).ok()?;
     let _ = fs::remove_file(path);
     Some(version.trim().to_owned()).filter(|version| !version.is_empty())
-}
-
-#[cfg(test)]
-fn write_marker(dir: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dir)?;
-    fs::write(dir.join(UPGRADE_MARKER), VERSION)
-}
-
-/// Remove the marker; true when it was there.
-fn take_marker(dir: &Path) -> bool {
-    fs::remove_file(dir.join(UPGRADE_MARKER)).is_ok()
 }
 
 fn brief(text: &str) -> String {
@@ -1157,11 +1140,6 @@ pub(crate) fn installed_version(env: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// When the installed version arrived: its dist-info directory is created by the install.
-pub(crate) fn installed_since(env: &Path) -> Option<std::time::SystemTime> {
-    installed_metadata(env)?.metadata().ok()?.modified().ok()
-}
-
 /// Recognize the unified runtime by its installed console-script contract, not an old core binary.
 pub(crate) fn unified_service(tools: &Path) -> bool {
     installed_metadata(&tools.join("agentnave"))
@@ -1169,9 +1147,6 @@ pub(crate) fn unified_service(tools: &Path) -> bool {
         .is_some_and(|text| {
             text.lines()
                 .any(|line| line.trim() == "agentnave-mcp = agentnave.relay:main")
-                && !text
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("agentnave-studio-mcp"))
         })
 }
 

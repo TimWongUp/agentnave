@@ -193,15 +193,7 @@ fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
     if prompt.chars().count() > 4000 || prompt.contains('\0') {
         return Err("摘要 Prompt 不能超过 4000 字或包含空字符".into());
     }
-    let prompt = if prompt.trim().is_empty()
-        || [
-            summary::LEGACY_DEFAULT_PROMPT,
-            summary::LEGACY_MESSAGE_PROMPT,
-            summary::LEGACY_SPEAKER_PROMPT,
-            summary::LEGACY_SCENE_PROMPT,
-        ]
-        .contains(&prompt)
-    {
+    let prompt = if prompt.trim().is_empty() {
         summary::DEFAULT_PROMPT
     } else {
         prompt

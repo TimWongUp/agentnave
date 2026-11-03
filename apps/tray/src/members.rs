@@ -33,17 +33,7 @@ pub const REVIEW_ROLES: [&str; 8] = [
 const FILE: &str = "members.json";
 const REVIEW_FILE: &str = "review.json";
 const PERMISSIONS_FILE: &str = "permissions.json";
-const CLI_OPTIONS_FILE: &str = "cli-options.json";
 const ORCHESTRATION_FILE: &str = "orchestration.json";
-/// Options the permission tier decides for some CLI; saved CLI settings never carry them.
-const TIER_KEYS: [&str; 6] = [
-    "permission_mode",
-    "sandbox",
-    "mode",
-    "approve_for_me",
-    "dangerously_bypass_approvals_and_sandbox",
-    "dangerously_skip_permissions",
-];
 /// Per-CLI permission tiers; the server maps each to that CLI's own options. Pi has none.
 const TIERS: [&str; 2] = ["auto", "full"];
 
@@ -449,54 +439,6 @@ pub fn save_permissions(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, PERMISSIONS_FILE, document)
 }
 
-/// cli-options.json: `{"version": 1, "clis": {provider: {key: value}}}`, settings that hold for
-/// every model of a CLI. Kept out of members.json so a server that predates it still reads its
-/// members.
-pub fn validate_cli_options(document: &Value) -> Result<(), String> {
-    let top = object(document, CLI_OPTIONS_FILE)?;
-    only(top, &["version", "clis"], CLI_OPTIONS_FILE)?;
-    if document["version"].as_u64() != Some(1) {
-        return Err(format!("{CLI_OPTIONS_FILE} 的 version 必须为 1"));
-    }
-    for (provider, options) in object(&document["clis"], "clis")? {
-        if !PROVIDERS.contains(&provider.as_str()) {
-            return Err(format!("{provider} 不是受支持的 CLI"));
-        }
-        let options = object(options, &format!("clis.{provider}"))?;
-        if let Some(key) = options.keys().find(|key| {
-            ["model", "effort", "restricted_tools"].contains(&key.as_str())
-                || TIER_KEYS.contains(&key.as_str())
-        }) {
-            return Err(format!("{provider} 的 CLI 设置不能含 {key}"));
-        }
-        if options
-            .values()
-            .any(|value| !(value.is_string() || value.is_number() || value.is_boolean()))
-        {
-            return Err(format!("{provider} 的参数值只支持字符串、数字或布尔值"));
-        }
-    }
-    Ok(())
-}
-
-pub fn read_cli_options(root: &Path) -> Result<Option<Value>, String> {
-    let content = match fs::read(root.join(CLI_OPTIONS_FILE)) {
-        Ok(content) => content,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("无法读取 {CLI_OPTIONS_FILE}：{error}")),
-    };
-    let document = serde_json::from_slice(&content)
-        .map_err(|error| format!("{CLI_OPTIONS_FILE} 损坏：{error}"))?;
-    validate_cli_options(&document)
-        .map_err(|error| format!("{CLI_OPTIONS_FILE} 格式错误：{error}"))?;
-    Ok(Some(document))
-}
-
-pub fn save_cli_options(root: &Path, document: &Value) -> Result<(), String> {
-    validate_cli_options(document)?;
-    write_atomic(root, CLI_OPTIONS_FILE, document)
-}
-
 /// Run at App start: probe the CLIs once so the office can name each CLI's own default model
 /// before Settings is ever opened.
 pub fn prepare() {
@@ -525,10 +467,6 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         Ok(permissions) => (permissions.unwrap_or(Value::Null), Value::Null),
         Err(error) => (Value::Null, json!(error)),
     };
-    let (cli_options, cli_options_error) = match read_cli_options(root) {
-        Ok(options) => (options.unwrap_or(Value::Null), Value::Null),
-        Err(error) => (Value::Null, json!(error)),
-    };
     json!({
         "document": document,
         "error": error,
@@ -536,8 +474,6 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "review_error": review_error,
         "permissions": permissions,
         "permissions_error": permissions_error,
-        "cli_options": cli_options,
-        "cli_options_error": cli_options_error,
         "detected": detected,
     })
 }

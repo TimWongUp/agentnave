@@ -665,14 +665,15 @@ dialog.act::backdrop { background: #0006; }
 .voice-channel { flex: none; container-type: inline-size; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 46px; padding: 7px 12px 7px 16px; border-bottom: 1px solid var(--line); }
 .voice-channel[hidden] { display: none; }
 .voice-roster { flex: none; display: flex; align-items: center; padding-left: 6px; }
-.voice-person, .voice-more { flex: none; width: 30px; height: 30px; margin-left: -6px; border-radius: 50%; box-shadow: 0 0 0 2px var(--solid); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
+.voice-person, .voice-more { --ring: var(--solid); flex: none; width: 30px; height: 30px; margin-left: -6px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
+.voice-person.boss { --ring: var(--im-boss); }
 .voice-person-head { display: grid; place-items: center; width: 100%; height: 100%; }
 .voice-person-head .head { display: block; width: 100%; height: 100%; border-radius: 50%; background: center / cover no-repeat; }
 .voice-channel[data-active="true"] .voice-roster > * + * { margin-left: -14px; }
 .voice-more { display: grid; place-items: center; color: var(--muted); font-size: 10.5px; font-weight: 650; }
 .voice-channel[data-live="true"] .voice-person:not([data-speaking="true"]), .voice-channel[data-live="true"] .voice-more { opacity: .4; }
-.voice-person[data-speaking="true"] { position: relative; z-index: 1; transform: scale(1.1); box-shadow: 0 0 0 2px var(--solid), 0 0 0 4px var(--run); }
-.voice-person[data-preparing="true"] { position: relative; z-index: 1; box-shadow: 0 0 0 2px var(--solid), 0 0 0 4px var(--line); }
+.voice-person[data-speaking="true"] { position: relative; z-index: 1; transform: scale(1.1); box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--run); }
+.voice-person[data-preparing="true"] { position: relative; z-index: 1; box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--line); }
 .voice-status { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; }
 .voice-status[hidden] { display: flex; visibility: hidden; }
 .voice-status-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -744,7 +745,7 @@ dialog.act::backdrop { background: #0006; }
 .tp-im .m-h > time { display: none; }
 .tp-im .m-h > .m-ava { position: absolute; top: 0; left: -42px; }
 .tp-im .msg.boss .m-h > .m-ava { right: -42px; left: auto; }
-.tp-im .m-ava :is(.avatar, .head) { width: 34px; height: 34px; border-radius: 4px; font-size: 13px; }
+.tp-im .m-ava :is(.avatar, .head) { width: 34px; height: 34px; border-radius: 27%; font-size: 13px; }
 .tp-im .m-ava .head { background: var(--im-member) center / cover; }
 .tp-im .m-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 650; color: var(--ink); }
 .tp-im .m-role { flex-shrink: 1; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }

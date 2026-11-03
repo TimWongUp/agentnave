@@ -122,8 +122,11 @@ fn fixture(root: &Path, id: &str) {
         id,
         &json!({"kind": "task", "title": "测试", "tasks": [{"status": "running"}]}),
         &json!({"version": 1, "summary": {"id": id, "title": "测试", "status": "running"},
-                "director": {"title": "测试"}, "public": null}),
+                "director": {"title": "测试"}}),
     );
+    crate::db::write(root).unwrap().unwrap().execute(
+        "UPDATE conversations SET manager_session = 's-' || printf('%032x', rowid) WHERE id = ?1", [id]
+    ).unwrap();
     let seat = root.join("seats").join(id).join("a");
     fs::create_dir_all(&seat).unwrap();
     fs::write(seat.join("output.txt"), "keep").unwrap();
@@ -223,7 +226,6 @@ fn rename_rewrites_conversation_and_view_under_the_lock() {
     let view: Value = serde_json::from_str(&view).unwrap();
     assert_eq!(view["summary"]["title"], "新标题");
     assert_eq!(view["director"]["title"], "新标题");
-    assert!(view["public"].is_null());
     assert_eq!(rename(root.path(), "named", "a\nb")["status"], "error");
     assert_eq!(rename(root.path(), "named", " ")["status"], "error");
     assert_eq!(

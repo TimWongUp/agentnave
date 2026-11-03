@@ -406,7 +406,7 @@
       const character = AN.art.character(person.provider, person.model);
       let rec = participants.get(person.key);
       if (!rec) {
-        rec = { el: h("div.voice-person"), head: h("div.voice-person-head") };
+        rec = { el: h(person.host ? "div.voice-person.boss" : "div.voice-person"), head: h("div.voice-person-head") };
         rec.el.append(rec.head); participants.set(person.key, rec);
       }
       if (rec.character !== character) { rec.head.replaceChildren(AN.art.head(character)); rec.character = character; }
