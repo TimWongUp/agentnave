@@ -52,15 +52,26 @@ def _exists(connection: sqlite3.Connection, id_: str) -> bool:
     )
 
 
-def _retry_readonly(function: Callable[..., object], path: str, error: BaseException) -> None:
-    if not isinstance(error, PermissionError) or Path(path).is_symlink():
-        raise error
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-    if function in (os.open, os.scandir):
-        # An unlistable directory: os.open needs flags, so remove it again now it can be read.
-        shutil.rmtree(path)
-    else:
-        function(path)
+def _make_removable(path: Path) -> None:
+    """Let a seat tree be deleted: CLIs may leave read-only or unlistable directories, and on
+    Windows read-only files. Symlinks and junctions are never followed or changed."""
+    owner = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+    os.chmod(path, owner)
+    for top, directories, files in os.walk(path):
+        # Prune links and Windows junctions so the walk never reaches outside the seat.
+        directories[:] = [
+            name
+            for name in directories
+            if not os.path.islink(os.path.join(top, name))
+            and not os.path.isjunction(os.path.join(top, name))
+        ]
+        for name in directories:
+            os.chmod(os.path.join(top, name), owner)
+        if os.name == "nt":
+            for name in files:
+                child = os.path.join(top, name)
+                if not os.path.islink(child):
+                    os.chmod(child, stat.S_IREAD | stat.S_IWRITE)
 
 
 def _contained(directory: Path) -> bool:
@@ -75,8 +86,11 @@ def _remove_seat(root: Path, id_: str) -> bool:
     try:
         if path.is_symlink():
             path.unlink()
+        elif path.is_junction():
+            os.rmdir(path)  # removes the junction itself, never its target
         elif path.exists():
-            shutil.rmtree(path, onexc=_retry_readonly)
+            _make_removable(path)
+            shutil.rmtree(path)
         return True
     except Exception:
         _LOG.exception("History retention could not remove seat directory %s", path)

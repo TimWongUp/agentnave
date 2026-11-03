@@ -173,6 +173,21 @@ def _version(result: Message | None) -> str | None:
     return str(info.get("version", "")) or None
 
 
+def _probe_reply(message: Message) -> bool:
+    """A reply to this relay's own probe, which never was a host request."""
+    return "method" not in message and str(message.get("id", "")).startswith(f"{_RELAY_ID}-")
+
+
+def _stop(process: subprocess.Popen[bytes]) -> None:
+    """Stop a child and reap it, so no zombie stays behind after the relay swaps."""
+    try:
+        process.wait(_STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(_STOP_SECONDS)
+
+
 def _tools_hash(result: Message | None) -> str | None:
     if not result or result.get("nextCursor"):
         return None  # Partial/paginated lists cannot prove that the full interface was delivered.
@@ -236,7 +251,6 @@ class Relay:
         self.runtime_version: str | None = None
         self.runtime_tools_hash: str | None = None
         self.host_tools_hash: str | None = None
-        self.notify_tools = False
         self.child = _Child(self.command, self._from_child, env=self.env)
 
     def run(self) -> int:
@@ -414,6 +428,8 @@ class Relay:
             if reply is not None:
                 reply.put(messages[0])
                 return
+            if _probe_reply(messages[0]):
+                return  # A probe that timed out: the host never saw the request, nor its reply.
         with self.lock:
             rewritten = False
             delivered_hash = None
@@ -448,13 +464,11 @@ class Relay:
                     if method == "initialize" and result:
                         capabilities = _object(result.get("capabilities")) or {}
                         tools = _object(capabilities.get("tools"))
-                        # Legacy STDIO notifications need no subscription. New protocol versions
-                        # require subscriptions/listen, which this relay does not synthesize.
-                        self.notify_tools = (
-                            tools is not None
-                            and str(result.get("protocolVersion", "")) < "2026-07-28"
-                        )
-                        if self.notify_tools and tools is not None:
+                        # Only a legacy handshake advertises tool change notifications; hosts on
+                        # 2026-07-28 and later are told by the notification a swap writes.
+                        if tools is not None and (
+                            str(result.get("protocolVersion", "")) < "2026-07-28"
+                        ):
                             tools["listChanged"] = True
                             rewritten = True
                     elif method == "tools/list":
@@ -575,10 +589,7 @@ class Relay:
                 old.muted.update(self.listens)
             old.retiring = True
             old.close()
-            try:
-                old.process.wait(_STOP_SECONDS)
-            except subprocess.TimeoutExpired:
-                old.process.kill()
+            _stop(old.process)
             with self.lock:
                 if self.closing.is_set():
                     return "busy"
@@ -588,7 +599,9 @@ class Relay:
                 self.runtime_tools_hash = current_hash
                 changed = current_hash is not None and current_hash != self.host_tools_hash
             self._publish_connection()
-            if changed and self.notify_tools:
+            if changed:
+                # Hosts cache the tool list across the swap, so every protocol version is told
+                # when the new child publishes a different one.
                 with self.out_lock:
                     self.stdout.write(
                         b'{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n'
@@ -599,10 +612,7 @@ class Relay:
         finally:
             if new is not None:
                 new.close()
-                try:
-                    new.process.wait(_STOP_SECONDS)
-                except subprocess.TimeoutExpired:
-                    new.process.kill()
+                _stop(new.process)
             with self.lock:
                 held, self.held, self.paused = self.held, [], False
                 for line in held:

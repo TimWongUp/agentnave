@@ -7,7 +7,9 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -229,16 +231,45 @@ def test_orphan_seats_expire_after_one_day_without_following_symlinks(tmp_path: 
 def test_unreadable_orphan_seat_is_removed_without_ending_the_pass(tmp_path: Path) -> None:
     fixture(tmp_path, "saved")
     seat = tmp_path / "seats/orphan"
-    (seat / "inner").mkdir(parents=True)
-    (seat / "inner/output").write_text("data")
+    (seat / "inner/deep").mkdir(parents=True)
+    (seat / "inner/deep/output").write_text("data")
+    (seat / "inner/deep/output").chmod(0o444)
     os.utime(seat, (_NOW - 2 * 86400, _NOW - 2 * 86400))
+    # A read-only directory blocks unlinking its files; unlistable ones block walking.
+    (seat / "inner/deep").chmod(0o555)
+    (seat / "inner").chmod(0)
     seat.chmod(0)
     try:
         cleanup(tmp_path, now=_NOW)
     finally:
-        if seat.exists():
-            seat.chmod(0o700)
+        for path in [seat, seat / "inner", seat / "inner/deep"]:
+            if path.exists():
+                path.chmod(0o700)
     assert not seat.exists()
+    assert not (tmp_path / "locks/orphan.lock").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows only")
+def test_orphan_seat_junctions_are_removed_without_touching_their_targets(tmp_path: Path) -> None:
+    import subprocess
+
+    def junction(link: Path) -> None:
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)], check=True)
+
+    fixture(tmp_path, "saved")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("keep")
+    (outside / "keep").chmod(stat.S_IREAD)
+    (tmp_path / "seats/inner").mkdir(parents=True)
+    junction(tmp_path / "seats/inner/link")
+    junction(tmp_path / "seats/whole")
+    # utime follows a junction to its target, so age everything by moving the clock instead.
+    cleanup(tmp_path, now=time.time() + 3 * 86400)
+    assert not (tmp_path / "seats/inner").exists()
+    assert not os.path.lexists(tmp_path / "seats/whole")
+    assert (outside / "keep").read_text() == "keep"
+    assert not os.access(outside / "keep", os.W_OK)
 
 
 def test_orphan_sweeps_spare_case_variants_and_symlinked_directories(tmp_path: Path) -> None:
