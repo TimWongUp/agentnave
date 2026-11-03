@@ -229,16 +229,22 @@ def test_orphan_seats_expire_after_one_day_without_following_symlinks(tmp_path: 
 def test_unreadable_orphan_seat_is_removed_without_ending_the_pass(tmp_path: Path) -> None:
     fixture(tmp_path, "saved")
     seat = tmp_path / "seats/orphan"
-    (seat / "inner").mkdir(parents=True)
-    (seat / "inner/output").write_text("data")
+    (seat / "inner/deep").mkdir(parents=True)
+    (seat / "inner/deep/output").write_text("data")
+    (seat / "inner/deep/output").chmod(0o444)
     os.utime(seat, (_NOW - 2 * 86400, _NOW - 2 * 86400))
+    # A read-only directory blocks unlinking its files; unlistable ones block walking.
+    (seat / "inner/deep").chmod(0o555)
+    (seat / "inner").chmod(0)
     seat.chmod(0)
     try:
         cleanup(tmp_path, now=_NOW)
     finally:
-        if seat.exists():
-            seat.chmod(0o700)
+        for path in [seat, seat / "inner", seat / "inner/deep"]:
+            if path.exists():
+                path.chmod(0o700)
     assert not seat.exists()
+    assert not (tmp_path / "locks/orphan.lock").exists()
 
 
 def test_orphan_sweeps_spare_case_variants_and_symlinked_directories(tmp_path: Path) -> None:

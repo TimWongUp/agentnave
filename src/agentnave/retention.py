@@ -52,15 +52,21 @@ def _exists(connection: sqlite3.Connection, id_: str) -> bool:
     )
 
 
-def _retry_readonly(function: Callable[..., object], path: str, error: BaseException) -> None:
-    if not isinstance(error, PermissionError) or Path(path).is_symlink():
-        raise error
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-    if function in (os.open, os.scandir):
-        # An unlistable directory: os.open needs flags, so remove it again now it can be read.
-        shutil.rmtree(path)
-    else:
-        function(path)
+def _make_removable(path: Path) -> None:
+    """Let a seat tree be deleted: CLIs may leave read-only or unlistable directories, and on
+    Windows read-only files. Symlinks are never followed or changed."""
+    owner = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+    os.chmod(path, owner)
+    for top, directories, files in os.walk(path):
+        for name in directories:
+            child = os.path.join(top, name)
+            if not os.path.islink(child):
+                os.chmod(child, owner)
+        if os.name == "nt":
+            for name in files:
+                child = os.path.join(top, name)
+                if not os.path.islink(child):
+                    os.chmod(child, stat.S_IREAD | stat.S_IWRITE)
 
 
 def _contained(directory: Path) -> bool:
@@ -76,7 +82,8 @@ def _remove_seat(root: Path, id_: str) -> bool:
         if path.is_symlink():
             path.unlink()
         elif path.exists():
-            shutil.rmtree(path, onexc=_retry_readonly)
+            _make_removable(path)
+            shutil.rmtree(path)
         return True
     except Exception:
         _LOG.exception("History retention could not remove seat directory %s", path)
