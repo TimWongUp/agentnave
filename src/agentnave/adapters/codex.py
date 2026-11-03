@@ -107,6 +107,7 @@ class CodexAdapter(AdapterHooks):
         "restricted_tools (boolean; native read/tool restrictions)"
     )
     _options = {
+        "skip_git_repo_check",
         "model",
         "effort",
         "approve_for_me",
@@ -131,6 +132,9 @@ class CodexAdapter(AdapterHooks):
 
         argv: list[str] = []
         for key, value in request.provider_options.items():
+            # Old services/seats retain this key; prepare adds it once because Codex rejects duplicates.
+            if key == "skip_git_repo_check":
+                continue
             if key == "model":
                 argv.extend(("--model", str(value)))
             elif key == "effort":

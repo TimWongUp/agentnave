@@ -477,29 +477,6 @@ def test_bad_round_preserves_its_workspace_but_does_not_stop_later_cleanup(tmp_p
 def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> None:
     settings(tmp_path)
     fixture(tmp_path, "modern")
-    seats: list[dict[str, object]] = [
-        {
-            "id": "codex",
-            "provider": "codex",
-            "cwd": str(tmp_path),
-            "provider_options": {
-                "model": "原生模型",
-                "effort": "high",
-                "skip_git_repo_check": True,
-            },
-            "role": "讨论",
-            "access": "read",
-            "extra": {"keep": [1, False]},
-        },
-        {"id": "other", "provider": "claude", "cwd": str(tmp_path), "provider_options": {}},
-    ]
-    for id_, isolated in [("meeting", False), ("isolated", True)]:
-        fixture(tmp_path, id_)
-        with sqlite3.connect(tmp_path / "agentnave.db") as db:
-            db.execute(
-                "UPDATE conversations SET kind = 'show', isolated = ?, seats = ? WHERE id = ?",
-                (isolated, json.dumps(seats, ensure_ascii=False), id_),
-            )
     for id_, identity in [("old", "legacy"), ("empty", ""), ("unknown", None), ("upper", "S-old")]:
         fixture(tmp_path, id_, group=identity)
         seat = tmp_path / "seats" / id_ / "a"
@@ -524,10 +501,7 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
     for _ in range(2):
         database = Database(tmp_path)
         try:
-            assert database.revisions() == {"modern": 1, "meeting": 2, "isolated": 2}
-            for id_ in ("meeting", "isolated"):
-                state, _ = database.load(id_)
-                assert state.seats[0].provider_options == {"model": "原生模型", "effort": "high"}
+            assert database.revisions() == {"modern": 1}
             row = database.workspace(_WORKSPACE)
             if missing == "columns":
                 assert row is not None and row.title is None and row.cwd is None
@@ -539,50 +513,18 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
         assert {"title", "cwd"} <= columns
         for table in ["entries", "rounds", "tasks", "former_bosses"]:
             assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-        assert {row[0] for row in db.execute("SELECT conversation_id FROM views")} == {
-            "modern",
-            "meeting",
-            "isolated",
-        }
-        expected_seats = [
-            dict(seats[0], provider_options={"model": "原生模型", "effort": "high"}),
-            seats[1],
-        ]
-        for id_, raw, isolated in db.execute(
-            "SELECT id, seats, isolated FROM conversations WHERE kind = 'show'"
-        ):
-            assert json.loads(raw) == expected_seats
-            assert bool(isolated) is (id_ == "isolated")
+        assert db.execute("SELECT conversation_id FROM views").fetchall() == [("modern",)]
     assert list((tmp_path / "seats").iterdir()) == []
 
 
-@pytest.mark.parametrize("legacy", [True, False])
-def test_v1_migration_preserves_busy_history_and_retries_after_unlock(
-    tmp_path: Path, legacy: bool
-) -> None:
-    fixture(tmp_path, "old", group="legacy" if legacy else _WORKSPACE)
+def test_v1_migration_preserves_busy_history_and_retries_after_unlock(tmp_path: Path) -> None:
+    fixture(tmp_path, "old", group="legacy")
     seat = tmp_path / "seats/old/a"
     seat.mkdir(parents=True)
     (seat / "output").write_text("preserve")
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         db.execute("ALTER TABLE workspaces DROP COLUMN title")
         db.execute("PRAGMA user_version = 1")
-        if not legacy:
-            db.execute(
-                "UPDATE conversations SET kind = 'show', seats = ? WHERE id = 'old'",
-                (
-                    json.dumps(
-                        [
-                            {
-                                "id": "codex",
-                                "provider": "codex",
-                                "cwd": str(tmp_path),
-                                "provider_options": {"skip_git_repo_check": True},
-                            }
-                        ]
-                    ),
-                ),
-            )
     (tmp_path / "locks").mkdir()
     database = Database(tmp_path)
     try:
@@ -596,28 +538,10 @@ def test_v1_migration_preserves_busy_history_and_retries_after_unlock(
                 assert "title" not in {
                     row[1] for row in db.execute("PRAGMA table_info(workspaces)")
                 }
-        assert database.revisions() == ({} if legacy else {"old": 2})
-        assert seat.parent.exists() is not legacy
-        if not legacy:
-            state, _ = database.load("old")
-            assert state.seats[0].provider_options == {}
+        assert database.revisions() == {}
+        assert not seat.parent.exists()
     finally:
         database.close()
-
-
-def test_v1_migration_skips_malformed_meeting_seats(tmp_path: Path) -> None:
-    fixture(tmp_path, "bad", group=_WORKSPACE)
-    with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        db.execute("PRAGMA user_version = 1")
-        db.execute("UPDATE conversations SET kind = 'show', seats = '{' WHERE id = 'bad'")
-    database = Database(tmp_path)
-    try:
-        database.revisions()
-    finally:
-        database.close()
-    with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert db.execute("SELECT seats FROM conversations WHERE id = 'bad'").fetchone()[0] == "{"
 
 
 def test_v1_migration_rolls_back_schema_and_history_on_delete_failure(tmp_path: Path) -> None:

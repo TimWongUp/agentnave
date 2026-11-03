@@ -280,6 +280,7 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
                 "model": "gpt-5.6-sol",
                 "effort": "high",
                 "sandbox": "workspace-write",
+                "skip_git_repo_check": True,
             },
         )
     )
@@ -302,12 +303,21 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
     assert prepared.stdin == b"do the task"
 
 
+@pytest.mark.parametrize("legacy_git_check", [None, False, True])
 def test_codex_adapter_does_not_supply_model_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_git_check: bool | None
 ) -> None:
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
     monkeypatch.setattr(codex, "_WINDOWS_DESKTOP_CODEX_PATHS", ())
-    prepared = CodexAdapter().prepare(request(tmp_path, "codex"))
+    prepared = CodexAdapter().prepare(
+        request(
+            tmp_path,
+            "codex",
+            provider_options=(
+                {} if legacy_git_check is None else {"skip_git_repo_check": legacy_git_check}
+            ),
+        )
+    )
 
     assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
 
