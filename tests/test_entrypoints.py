@@ -13,7 +13,7 @@ from mcp import Client, StdioServerParameters
 from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent
 
-from agentnave import __version__, mcp_server
+from agentnave import __version__, mcp_runtime, mcp_server
 from agentnave.mcp_projection import without_empty_fields
 from agentnave.mcp_server import mcp
 from agentnave.processes import spawn_process, terminate_process_tree
@@ -38,8 +38,8 @@ def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
     monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr(mcp_server, "HOST", Host())
-    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
+    monkeypatch.setattr(mcp_runtime, "HOST", Host())
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset[str]())
 
 
 def _server_args(module: str) -> list[str]:
@@ -324,7 +324,7 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
         path.write_text(json.dumps({"version": 1, "preset": "split", "worker": {"easy": seat}}))
         missing_cwd = await client.call_tool("start_agent", {"prompt": "ok", "seat": "worker-easy"})
         assert missing_cwd.is_error and "cwd is required" in str(missing_cwd.content)
-        monkeypatch.setattr(mcp_server, "HOST", Host("claude", "env"))
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
         native = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
         )
@@ -378,7 +378,7 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
             )
         )
         assert "output" not in hidden and "output_age_ms" not in hidden
-        monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.4)
+        monkeypatch.setattr("agentnave.mcp_runtime.WAIT_SECONDS", 0.4)
         later = _first(await client.call_tool("wait", {"ids": [invocation_id]}))
         assert later["reason"] == "wait_elapsed"
         assert "output" not in later and "output_age_ms" not in later
@@ -573,7 +573,7 @@ async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
-    monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.05)
+    monkeypatch.setattr("agentnave.mcp_runtime.WAIT_SECONDS", 0.05)
 
     async with Client(mcp) as client:
         started = await client.call_tool(
@@ -672,7 +672,7 @@ async def test_mcp_round_snapshot_holds_back_finished_answers_until_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
-    monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.05)
+    monkeypatch.setattr("agentnave.mcp_runtime.WAIT_SECONDS", 0.05)
     async with Client(mcp) as client:
         started = await client.call_tool(
             "run_round",
@@ -834,7 +834,7 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
         async with asyncio.timeout(1):
             peek = await client.call_tool("wait", {"ids": [sleeping], "wait_seconds": 0})
         assert _payload(peek.structured_content)["reason"] == "wait_elapsed"
-        monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.2)
+        monkeypatch.setattr("agentnave.mcp_runtime.WAIT_SECONDS", 0.2)
         elapsed = _payload((await client.call_tool("wait", {"ids": [sleeping]})).structured_content)
         assert elapsed["reason"] == "wait_elapsed"
         (running,) = cast(list[dict[str, object]], elapsed["updates"])
@@ -854,7 +854,7 @@ async def test_mcp_running_result_can_be_cancelled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
-    monkeypatch.setattr("agentnave.mcp_server.WAIT_SECONDS", 0.01)
+    monkeypatch.setattr("agentnave.mcp_runtime.WAIT_SECONDS", 0.01)
 
     async with Client(mcp) as client:
         started = await client.call_tool(
@@ -1219,8 +1219,8 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
 
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
-    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
-    monkeypatch.setattr(mcp_server, "HOST", Host(name="claude", source="env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host(name="claude", source="env"))
 
     def no_prepare(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("list_members must not prepare CLI commands or discover executables")
@@ -1444,7 +1444,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             await client.call_tool("wait", {"ids": [payload["invocation_id"]]})
             return payload
 
-        monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
         assert listed["restricted"] == ["task", "discussion"]
         members = cast(list[dict[str, object]], listed["members"])
@@ -1468,7 +1468,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "notes": "不限模型",
             "modes": ["discussion"],
         }
-        monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset[str]())
         defaulted = await start({})
         assert defaulted["model"] == "chosen" and defaulted["effort"] == "medium"
         # Without permissions.json every CLI with a tier runs it at "auto".
@@ -1549,7 +1549,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         # The current host's off override suppresses role defaults without deleting saved seats.
         from agentnave.host import Host
 
-        monkeypatch.setattr(mcp_server, "HOST", Host("grok", "env"))
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("grok", "env"))
         (tmp_path / "orchestration.json").write_text(
             json.dumps(
                 {
@@ -1607,7 +1607,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "start_agent", {"provider": "codex", "prompt": "ok", "cwd": str(tmp_path)}
         )
         assert rejected.is_error and "claude/chosen" in str(rejected.content)
-        monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
         rejected = await client.call_tool(
             "start_agent", {"provider": "claude", "prompt": "ok", "cwd": str(tmp_path)}
         )

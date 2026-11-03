@@ -16,7 +16,7 @@ import pytest
 from mcp import Client
 
 import agentnave.conversations as conversations_module
-from agentnave import mcp_server, views
+from agentnave import mcp_runtime, mcp_server, views
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
 from agentnave.db import Database
@@ -41,8 +41,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
     monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
-    monkeypatch.setattr(mcp_server, "HOST", Host())
-    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset[str]())
+    monkeypatch.setattr(mcp_runtime, "HOST", Host())
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset[str]())
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
     # A fake claude that reports what it saw; a SLEEP private instruction keeps it running.
@@ -644,7 +644,7 @@ async def test_review_receipt_reports_failed_final_commit(
 async def test_isolated_show_runs_restricted_seats_in_own_directories(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     data_root.mkdir()
     (data_root / "members.json").write_text(
         json.dumps(
@@ -2396,9 +2396,9 @@ async def test_studio_enforces_discussion_defaults_before_saving(
 ) -> None:
     from agentnave.host import Host
 
-    monkeypatch.setattr(mcp_server, "HOST", Host("claude", "parent"))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "parent"))
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
-    monkeypatch.setattr(mcp_server, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
     data_root.mkdir()
     path = data_root / "members.json"
     document: dict[str, object] = {
@@ -2473,7 +2473,7 @@ async def test_studio_records_defaulted_tasks_and_live_manager(
 ) -> None:
     from agentnave.host import Host
 
-    monkeypatch.setattr(mcp_server, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
 
     data_root.mkdir()

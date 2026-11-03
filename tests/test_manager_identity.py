@@ -10,7 +10,7 @@ from mcp import Client
 from test_conversations import _call, _state, _views, _wait, _wait_task
 from test_conversations import data_root as data_root
 
-from agentnave import mcp_server
+from agentnave import mcp_runtime
 from agentnave.host import Host
 from agentnave.mcp_server import mcp
 
@@ -19,7 +19,7 @@ from agentnave.mcp_server import mcp
 async def test_codex_missing_chat_id_error_explains_how_to_read_it(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(mcp_server, "HOST", Host("codex"))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex"))
     monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
     monkeypatch.setenv("CODEX_THREAD_ID", "not-forwarded-to-mcp-in-production")
     async with Client(mcp) as client:
@@ -42,7 +42,7 @@ async def test_codex_missing_chat_id_error_explains_how_to_read_it(
 async def test_codex_boss_model_reaches_saved_app_views_or_returns_a_diagnostic(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, identity: str
 ) -> None:
-    monkeypatch.setattr(mcp_server, "HOST", Host("codex"))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex"))
     home = tmp_path / "codex"
     monkeypatch.setenv("CODEX_HOME", str(home))
     native = "01a19096-1d71-7771-8056-da1fb28f4e27"
