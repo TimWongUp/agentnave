@@ -21,23 +21,23 @@
 <div id="notices" class="notices"></div>
 <main id="scroll">
   <div id="stage" hidden>
-    <div class="sec" id="sec-live">boss 与办公室<span class="r" id="live-count"></span></div>
+    <div class="sec" id="sec-live" data-en="boss & offices">boss 与办公室<span class="r" id="live-count"></span></div>
     <div id="groups" class="groups"></div>
-    <div class="sec" id="sec-quiet">其他办公室<span class="r" id="quiet-count"></span></div>
+    <div class="sec" id="sec-quiet" data-en="Other offices">其他办公室<span class="r" id="quiet-count"></span></div>
     <div id="quiet" class="quiet"></div>
   </div>
-  <div id="ob-slot" class="ob-slot" hidden><p class="ob-note">在宿主里派出任务后，boss 和它的办公室会出现在这里。</p></div>
+  <div id="ob-slot" class="ob-slot" hidden><p class="ob-note" data-en="Once you dispatch work from a host, boss and its office will appear here.">在宿主里派出任务后，boss 和它的办公室会出现在这里。</p></div>
   <div id="calm" class="calm" hidden></div>
 </main>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 <footer class="foot">
-  <a class="open" href="/chat/">打开 AgentNave</a>
-  <button class="btn ico" id="more" type="button" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="menu"><span aria-hidden="true">⋯</span><i class="more-dot" hidden></i></button>
+  <a class="open" href="/chat/" data-en="Open AgentNave">打开 AgentNave</a>
+  <button class="btn ico" id="more" type="button" aria-label="更多" data-en-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="menu"><span aria-hidden="true">⋯</span><i class="more-dot" hidden></i></button>
   <div class="menu" id="menu" role="menu" hidden>
-    <a href="/settings/" role="menuitem">设置…</a>
-    <a id="update" href="/app/update" role="menuitem">检查更新</a>
+    <a href="/settings/" role="menuitem" data-en="Settings…">设置…</a>
+    <a id="update" href="/app/update" role="menuitem" data-en="Check for updates">检查更新</a>
     <hr>
-    <a href="/app/quit" role="menuitem">退出 AgentNave</a>
+    <a href="/app/quit" role="menuitem" data-en="Quit AgentNave">退出 AgentNave</a>
   </div>
 </footer>
 </body>

@@ -3,6 +3,7 @@
 // Adheres strictly to CSP: Pure DOM construction, no HTML string parsing.
 
 const $ = (id) => document.getElementById(id);
+const L = AN.L || ((zh) => zh);
 
 // Safe DOM element creation
 function el(tag, attrs, ...children) {
@@ -253,7 +254,7 @@ async function apiGetMembers(refresh = false) {
   }
   const url = refresh ? "/settings/members?refresh=1" : "/settings/members";
   const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`获取成员配置失败（${res.status}）`);
+  if (!res.ok) throw new Error(L(`获取成员配置失败（${res.status}）`, `Failed to load employee settings (${res.status})`));
   return res.json();
 }
 
@@ -268,7 +269,7 @@ async function apiPostReview(doc) {
     body: JSON.stringify(doc),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+  if (!res.ok || data.error) throw new Error(data.error || L(`保存失败（${res.status}）`, `Save failed (${res.status})`));
 }
 
 function takeReview(data) {
@@ -291,7 +292,7 @@ async function apiPostPermissions(doc) {
     body: JSON.stringify(doc),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+  if (!res.ok || data.error) throw new Error(data.error || L(`保存失败（${res.status}）`, `Save failed (${res.status})`));
 }
 
 async function apiPostCliOptions(doc) {
@@ -305,7 +306,7 @@ async function apiPostCliOptions(doc) {
     body: JSON.stringify(doc),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.error) throw new Error(data.error || `保存失败（${res.status}）`);
+  if (!res.ok || data.error) throw new Error(data.error || L(`保存失败（${res.status}）`, `Save failed (${res.status})`));
 }
 
 // Switches that hold for every model of one CLI, saved apart from members.json; an "off"
@@ -313,15 +314,15 @@ async function apiPostCliOptions(doc) {
 const CLI_SWITCHES = {
   codex: [{
     key: "skip_git_repo_check",
-    label: "允许在 git 仓库外运行",
-    on: "Codex 在任何文件夹都能启动，包括临时目录和其他 App 的工作区。",
-    off: "Codex 只在 git 仓库或它信任过的文件夹里启动，其他文件夹会直接报错。",
+    label: L("允许在 git 仓库外运行", "Allow running outside git repositories"),
+    on: L("Codex 在任何文件夹都能启动，包括临时目录和其他 App 的工作区。", "Codex can start in any folder, including temp directories and other apps’ workspaces."),
+    off: L("Codex 只在 git 仓库或它信任过的文件夹里启动，其他文件夹会直接报错。", "Codex only starts in git repositories or trusted folders; other folders fail with an error."),
   }],
 };
 
 async function setCliSwitch(provider, item, enabled) {
-  if (cliOptionsError) return showNotice(`${cliOptionsError}；请先修复或删除这个文件`, true);
-  if (busy) return showNotice("正在保存，请稍后再选", true);
+  if (cliOptionsError) return showNotice(L(`${cliOptionsError}；请先修复或删除这个文件`, `${cliOptionsError}; fix or delete this file first`), true);
+  if (busy) return showNotice(L("正在保存，请稍后再选", "Saving in progress; please try again shortly"), true);
   const options = { ...(cliOptions?.[provider] || {}) };
   if (enabled) options[item.key] = true;
   else delete options[item.key];
@@ -333,9 +334,9 @@ async function setCliSwitch(provider, item, enabled) {
     await apiPostCliOptions({ version: 1, clis });
     cliOptions = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型单独干活和新开的会都生效`);
+    showNotice(L(`已保存：${PROVIDER_NAMES[provider]} ${enabled ? "" : "不再"}${item.label}，所有模型单独干活和新开的会都生效`, `Saved: ${PROVIDER_NAMES[provider]} ${enabled ? "enabled" : "disabled"} “${item.label}” for all models in solo tasks and new meetings`));
   } catch (err) {
-    showNotice(`保存失败: ${err.message}`, true);
+    showNotice(L(`保存失败: ${err.message}`, `Save failed: ${err.message}`), true);
   } finally {
     busy = false;
     updateControls();
@@ -346,7 +347,7 @@ async function setCliSwitch(provider, item, enabled) {
 function renderCliSwitches(provider) {
   return (CLI_SWITCHES[provider] || []).map((item) => {
     const enabled = cliOptions?.[provider]?.[item.key] === true;
-    return el("label", { className: "member-switch", title: cliOptionsError || `${enabled ? item.on : item.off} 选完立即保存。` },
+    return el("label", { className: "member-switch", title: cliOptionsError || L(`${enabled ? item.on : item.off} 选完立即保存。`, `${enabled ? item.on : item.off} Saved immediately when toggled.`) },
       el("input", {
         type: "checkbox",
         dataset: { focusKey: `${provider}/cli/${item.key}` },
@@ -359,22 +360,22 @@ function renderCliSwitches(provider) {
 
 // What each tier means for each CLI when a task runs unattended; the server maps the tier to
 // that CLI's own options, "auto" unless the user picked "full". Pi has no approval step.
-const TIERS = [["auto", "自动"], ["full", "完全放开"]];
+const TIERS = [["auto", L("自动", "Auto")], ["full", L("完全放开", "Full access")]];
 // CLIs without a usable automatic reviewer: both tiers grant full access, so there is no choice.
 const FULL_ONLY = {
-  codebuddy: "CodeBuddy 的自动模式在派发时连查看目录都会拒绝，所以直接执行任何命令和改动。",
-  deepseek: "DeepSeek 没有自动审核，所以直接执行任何命令和改动。",
-  zcode: "ZCode 的 auto 模式尚未实现，所以直接执行任何命令和改动。",
-  antigravity: "Antigravity 派发时直接执行任何命令和改动。",
+  codebuddy: L("CodeBuddy 的自动模式在派发时连查看目录都会拒绝，所以直接执行任何命令和改动。", "CodeBuddy’s auto mode rejects even directory listing when dispatched, so it runs with full access."),
+  deepseek: L("DeepSeek 没有自动审核，所以直接执行任何命令和改动。", "DeepSeek has no automatic review, so it runs with full access."),
+  zcode: L("ZCode 的 auto 模式尚未实现，所以直接执行任何命令和改动。", "ZCode’s auto mode is not implemented yet, so it runs with full access."),
+  antigravity: L("Antigravity 派发时直接执行任何命令和改动。", "Antigravity runs with full access when dispatched."),
 };
 const TIER_TEXT = {
   auto: {
-    any: "CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。",
-    codex: "Codex 自动审核放行命令，读写限在工作目录内。",
+    any: L("CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。", "The CLI’s built-in auto-review allows routine commands and edits while blocking obviously dangerous operations."),
+    codex: L("Codex 自动审核放行命令，读写限在工作目录内。", "Codex auto-review allows commands while keeping reads and writes within the working directory."),
   },
   full: {
-    any: "不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。",
-    codex: "不审核也不进沙箱，直接执行任何命令和改动。只在你信任派给它的任务时选。",
+    any: L("不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review. Choose only when you trust the dispatched tasks."),
+    codex: L("不审核也不进沙箱，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review or sandbox. Choose only when you trust the dispatched tasks."),
   },
 };
 
@@ -383,8 +384,8 @@ function permissionTier(provider) {
 }
 
 async function setPermissionTier(provider, tier) {
-  if (permissionsError) return showNotice(`${permissionsError}；请先修复或删除这个文件`, true);
-  if (busy) return showNotice("正在保存，请稍后再选", true);
+  if (permissionsError) return showNotice(L(`${permissionsError}；请先修复或删除这个文件`, `${permissionsError}; fix or delete this file first`), true);
+  if (busy) return showNotice(L("正在保存，请稍后再选", "Saving in progress; please try again shortly"), true);
   const clis = { ...(permissionTiers || {}), [provider]: tier };
   busy = true;
   updateControls();
@@ -392,9 +393,9 @@ async function setPermissionTier(provider, tier) {
     await apiPostPermissions({ version: 1, clis });
     permissionTiers = clis;
     reviewSaves += 1;
-    showNotice(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后单独干活和新开的会都生效`);
+    showNotice(L(`已保存：${PROVIDER_NAMES[provider]} 的权限改为「${TIERS.find(([t]) => t === tier)[1]}」，之后单独干活和新开的会都生效`, `Saved: ${PROVIDER_NAMES[provider]} permissions set to “${TIERS.find(([t]) => t === tier)[1]}” for future solo tasks and new meetings`));
   } catch (err) {
-    showNotice(`权限保存失败: ${err.message}`, true);
+    showNotice(L(`权限保存失败: ${err.message}`, `Failed to save permissions: ${err.message}`), true);
   } finally {
     busy = false;
     updateControls();
@@ -405,11 +406,11 @@ async function setPermissionTier(provider, tier) {
 function renderPermission(provider) {
   if (provider === "pi") return null;
   if (FULL_ONLY[provider]) {
-    return el("span", { className: "member-tier", title: FULL_ONLY[provider] }, textNode("权限"), el("span", {}, "完全放开"));
+    return el("span", { className: "member-tier", title: FULL_ONLY[provider] }, textNode(L("权限", "Permissions")), el("span", {}, L("完全放开", "Full access")));
   }
   const tier = permissionTier(provider);
-  return el("label", { className: "member-tier", title: permissionsError || `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 选完立即保存。` },
-    textNode("权限"),
+  return el("label", { className: "member-tier", title: permissionsError || L(`${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 选完立即保存。`, `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} Saved immediately when selected.`) },
+    textNode(L("权限", "Permissions")),
     el("select", {
       dataset: { focusKey: `${provider}/tier` },
       disabled: Boolean(permissionsError),
@@ -432,7 +433,7 @@ async function apiPostMembers(doc) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) {
-    throw new Error(data.error || `保存失败（${res.status}）`);
+    throw new Error(data.error || L(`保存失败（${res.status}）`, `Save failed (${res.status})`));
   }
   return data;
 }
@@ -442,7 +443,7 @@ async function apiGetStatus() {
     return window.AgentNaveMock.fetch("/app/status");
   }
   const res = await fetch("/app/status", { cache: "no-store" });
-  if (!res.ok) throw new Error(`获取状态失败（${res.status}）`);
+  if (!res.ok) throw new Error(L(`获取状态失败（${res.status}）`, `Failed to load status (${res.status})`));
   return res.json();
 }
 
@@ -458,13 +459,13 @@ async function apiCheckUpdate(quiet = false) {
       "X-AgentNave-Action": "1",
     },
   });
-  if (!res.ok) throw new Error(`检查更新失败（${res.status}）`);
+  if (!res.ok) throw new Error(L(`检查更新失败（${res.status}）`, `Update check failed (${res.status})`));
   return res.json();
 }
 
 // Notice display
 // Settings name the two modes by what the employees do in them.
-const SCENES = { task: "单独干活", discussion: "开会" };
+const SCENES = { task: L("单独干活", "Solo tasks"), discussion: L("开会", "Meetings") };
 function showNotice(msg, isError = false) {
   const notice = $("notice");
   notice.textContent = msg;
@@ -533,15 +534,15 @@ function parseOptionRows(rows) {
   const errors = [];
   const keys = new Set();
   for (const [index, row] of rows.entries()) {
-    const label = `参数第 ${index + 1} 行`;
-    if (!row.key.trim()) errors.push(`${label}：请填写参数键`);
-    if (row.key.trim() && keys.has(row.key)) errors.push(`${label}：参数键 ${row.key} 重复`);
-    if (["model", "effort"].includes(row.key)) errors.push(`${label}：不能使用 ${row.key} 键`);
+    const label = L(`参数第 ${index + 1} 行`, `Option row ${index + 1}`);
+    if (!row.key.trim()) errors.push(L(`${label}：请填写参数键`, `${label}: Enter an option key`));
+    if (row.key.trim() && keys.has(row.key)) errors.push(L(`${label}：参数键 ${row.key} 重复`, `${label}: Duplicate option key ${row.key}`));
+    if (["model", "effort"].includes(row.key)) errors.push(L(`${label}：不能使用 ${row.key} 键`, `${label}: Cannot use ${row.key} as an option key`));
     keys.add(row.key);
     let value = row.raw;
     if (row.type === "number") {
       value = Number(row.raw);
-      if (!row.raw.trim() || !Number.isFinite(value)) errors.push(`${label}：必须为有效有限数字`);
+      if (!row.raw.trim() || !Number.isFinite(value)) errors.push(L(`${label}：必须为有效有限数字`, `${label}: Must be a valid finite number`));
     } else if (row.type === "boolean") {
       value = row.raw === "true";
     }
@@ -552,10 +553,10 @@ function parseOptionRows(rows) {
 
 function effortError(config) {
   if (Object.hasOwn(config, "effort") && !config.effort) {
-    return "默认思考档位不可为空，请选择具体档位或清除默认设置（覆盖时选择继承）";
+    return L("默认思考档位不可为空，请选择具体档位或清除默认设置（覆盖时选择继承）", "Default effort cannot be empty; choose a level or clear the default (or inherit when overriding)");
   }
   if (Object.hasOwn(config, "effort") && config.efforts?.length && !config.efforts.includes(config.effort)) {
-    return `默认思考档位“${config.effort}”不在允许档位中，请重新选择默认档位或调整允许档位（覆盖时也可改为继承）`;
+    return L(`默认思考档位“${config.effort}”不在允许档位中，请重新选择默认档位或调整允许档位（覆盖时也可改为继承）`, `Default effort “${config.effort}” is not in allowed levels; choose another default or adjust allowed levels (or inherit when overriding)`);
   }
   return null;
 }
@@ -564,28 +565,28 @@ function effortError(config) {
 function configurationErrors() {
   const errors = [];
   const add = (provider, model, scope, message) => {
-    if (message) errors.push({ provider, model, scope, message: `${scope} / ${provider} / ${model}：${message}` });
+    if (message) errors.push({ provider, model, scope, message: L(`${scope} / ${provider} / ${model}：${message}`, `${scope} / ${provider} / ${model}: ${message}`) });
   };
   const check = (config, provider, model, scope) => {
     add(provider, model, scope, effortError(config));
     for (const error of parseOptionRows(optionRows(config)).errors) add(provider, model, scope, error);
   };
   for (const [provider, cli] of Object.entries(currentDoc.clis || {})) {
-    for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, "共享");
+    for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, L("共享", "Shared"));
   }
   for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
     const scope = SCENES[mode];
     for (const [provider, selection] of Object.entries(providers)) {
       const models = currentDoc.clis?.[provider]?.models || {};
       for (const model of selection.models) {
-        if (!Object.hasOwn(models, model)) add(provider, model, scope, "模型尚未配置");
+        if (!Object.hasOwn(models, model)) add(provider, model, scope, L("模型尚未配置", "Model is not configured"));
       }
       if (Object.hasOwn(selection, "default") &&
           (!Object.hasOwn(models, selection.default) || (selection.models.length && !selection.models.includes(selection.default)))) {
-        add(provider, selection.default, scope, "默认模型不在允许范围内");
+        add(provider, selection.default, scope, L("默认模型不在允许范围内", "Default model is not in the allowed list"));
       }
       for (const [model, override] of Object.entries(selection.overrides || {})) {
-        if (!Object.hasOwn(models, model)) add(provider, model, scope, "覆盖的模型尚未配置");
+        if (!Object.hasOwn(models, model)) add(provider, model, scope, L("覆盖的模型尚未配置", "Overridden model is not configured"));
         add(provider, model, scope, effortError({ ...models[model], ...override }));
         for (const error of parseOptionRows(optionRows(override)).errors) add(provider, model, scope, error);
       }
@@ -594,7 +595,7 @@ function configurationErrors() {
   for (const [mode, providers] of Object.entries(currentDoc.defaults || {})) {
     const scope = SCENES[mode];
     for (const [provider, model] of Object.entries(providers)) {
-      if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, "默认模型尚未配置");
+      if (!Object.hasOwn(currentDoc.clis?.[provider]?.models || {}, model)) add(provider, model, scope, L("默认模型尚未配置", "Default model is not configured"));
     }
   }
   // A chosen default model runs at a chosen level; only one left to the CLI may go without.
@@ -602,7 +603,7 @@ function configurationErrors() {
     for (const provider of PROVIDERS) {
       const current = slot(scene, provider);
       if (current.model && !current.effort && effortLevels(provider, current.model).length > 1) {
-        add(provider, current.model, SCENES[scene], "要选一个思考档位");
+        add(provider, current.model, SCENES[scene], L("要选一个思考档位", "Choose an effort level"));
       }
     }
   }
@@ -610,7 +611,7 @@ function configurationErrors() {
 }
 
 function updateControls() {
-  $("dirty-text").textContent = dirty ? "有未保存的修改" : "";
+  $("dirty-text").textContent = dirty ? L("有未保存的修改", "Unsaved changes") : "";
   $("members-badge").hidden = !dirty;
   if (!unsaved() && !busy) leaveTarget = null;
   renderLeaveConfirm();
@@ -622,12 +623,12 @@ function updateControls() {
 
   $("save-btn").disabled = !canSave;
   $("refresh-detection").disabled = busy || probing;
-  $("refresh-detection").textContent = probing ? "正在检测…" : "刷新模型列表";
+  $("refresh-detection").textContent = probing ? L("正在检测…", "Detecting…") : L("刷新模型列表", "Refresh models");
 
   // Feedback hints
   const feedback = $("save-feedback");
   if (emptyRestricted) {
-    feedback.textContent = `${SCENES[emptyRestricted] || emptyRestricted}至少要用一个员工`;
+    feedback.textContent = L(`${SCENES[emptyRestricted] || emptyRestricted}至少要用一个员工`, `${SCENES[emptyRestricted] || emptyRestricted} must enable at least one employee`);
     feedback.className = "save-feedback error";
     feedback.dataset.validation = "true";
   } else if (errors.length) {
@@ -649,7 +650,7 @@ function updateControls() {
   if (permSummary) {
     if (permCount > 0) {
       permSummary.hidden = false;
-      permSummary.textContent = `包含 ${permCount} 个权限类默认参数`;
+      permSummary.textContent = L(`包含 ${permCount} 个权限类默认参数`, `Includes ${permCount} permission-related default ${permCount === 1 ? "option" : "options"}`);
     } else {
       permSummary.hidden = true;
       permSummary.textContent = "";
@@ -671,19 +672,19 @@ const limitChanged = () => Boolean($("max-running").options.length) && Number($(
 
 async function loadLimit() {
   if (!$("max-running").options.length) {
-    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? "8（默认）" : String(n)));
+    for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? L("8（默认）", "8 (default)") : String(n)));
     $("max-running").value = "8";
   }
   try {
     const response = await fetch("/app/settings", { cache: "no-store" });
-    if (!response.ok) throw new Error(`读取失败（${response.status}）`);
+    if (!response.ok) throw new Error(L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
     const data = await response.json();
     const keep = limitChanged();
     limitDoc = data.settings;
     if (!keep) $("max-running").value = String(data.settings.max_running);
-    if (data.error) showNotice(`${data.error}；保存会用当前值覆盖`, true);
+    if (data.error) showNotice(L(`${data.error}；保存会用当前值覆盖`, `${data.error}; saving will overwrite with the current value`), true);
   } catch (error) {
-    showNotice(`无法读取同时工作的员工上限：${error.message}`, true);
+    showNotice(L(`无法读取同时工作的员工上限：${error.message}`, `Failed to load max concurrent employees: ${error.message}`), true);
   }
   refreshDirty();
   updateControls();
@@ -697,7 +698,7 @@ async function saveLimit() {
     body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
   });
   const data = await response.json();
-  if (!response.ok || data.error) throw new Error(data.error || `同时工作的员工上限保存失败（${response.status}）`);
+  if (!response.ok || data.error) throw new Error(data.error || L(`同时工作的员工上限保存失败（${response.status}）`, `Failed to save max concurrent employees (${response.status})`));
   limitDoc = { version: 1, max_running: value };
 }
 
@@ -714,7 +715,10 @@ function setTab(tab) {
     else $("nav-" + id).removeAttribute("aria-current");
     $("pane-" + id).hidden = tab !== id;
   }
-  if (tab === "general") window.AgentNaveGeneralSettings?.load();
+  if (tab === "general") {
+    window.AgentNaveLanguageSettings?.load();
+    window.AgentNaveGeneralSettings?.load();
+  }
   if (tab === "voice") window.AgentNaveVoiceSettings?.load();
   if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "members") {
@@ -1008,7 +1012,7 @@ function slotRows(provider, scene, split) {
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
   if (native.model && !all.includes(native.model)) all.unshift(native.model);
-  const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : `${SCENES.task}、${SCENES.discussion}`);
+  const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : L(`${SCENES.task}、${SCENES.discussion}`, `${SCENES.task}, ${SCENES.discussion}`));
   const pick = (change) => changeSlot(provider, scene, change);
   // Turning a CLI off for both scenes asks first when it drops settings.
   const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
@@ -1018,26 +1022,26 @@ function slotRows(provider, scene, split) {
       el("select", {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
-        "aria-label": "默认模型",
+        "aria-label": L("默认模型", "Default model"),
         onChange: (e) => pick({ enabled: true, model: e.target.value, effort: savedEffort(provider, e.target.value || native.model, "") }),
-      }, el("option", { value: OFF, selected: true }, "不用"),
-      ...(native.model ? [] : [el("option", { value: "" }, "CLI 自己决定")]),
-      ...all.map((m) => el("option", { value: m }, m === native.model ? `${m}（CLI 当前设置）` : m))), el("span", { className: "member-reset-slot" })))];
+      }, el("option", { value: OFF, selected: true }, L("不用", "Off")),
+      ...(native.model ? [] : [el("option", { value: "" }, L("CLI 自己决定", "Follow CLI"))]),
+      ...all.map((m) => el("option", { value: m }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m))), el("span", { className: "member-reset-slot" })))];
   }
 
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const model = current.model || (current.allowed ? "" : native.model) || "";
   const options = [
-    el("option", { value: OFF }, "不用"),
-    ...(current.allowed && !model ? [el("option", { value: "", selected: true, disabled: true }, "选一个默认模型")]
-      : native.model ? [] : [el("option", { value: "", selected: !model }, "CLI 自己决定")]),
-    ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? `${m}（CLI 当前设置）` : m)),
+    el("option", { value: OFF }, L("不用", "Off")),
+    ...(current.allowed && !model ? [el("option", { value: "", selected: true, disabled: true }, L("选一个默认模型", "Choose default model"))]
+      : native.model ? [] : [el("option", { value: "", selected: !model }, L("CLI 自己决定", "Follow CLI"))]),
+    ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m)),
   ];
   const modelLine = el("div", { className: "member-line" },
     el("select", {
       className: "member-model",
       dataset: { focusKey: `${key}/model` },
-      "aria-label": "默认模型",
+      "aria-label": L("默认模型", "Default model"),
       onChange: (e) => {
         const value = e.target.value;
         if (value === OFF) return off();
@@ -1050,8 +1054,8 @@ function slotRows(provider, scene, split) {
         type: "button",
         className: "member-reset",
         dataset: { focusKey: `${key}/model-reset` },
-        title: `改回 CLI 当前设置（${native.model}）`,
-        "aria-label": "改回 CLI 当前设置",
+        title: L(`改回 CLI 当前设置（${native.model}）`, `Reset to CLI current (${native.model})`),
+        "aria-label": L("改回 CLI 当前设置", "Reset to CLI current"),
         onClick: () => pick({ model: native.model, effort: savedEffort(provider, native.model, sceneEffort(scene || "task", provider, native.model)) }),
       }, "↺")
       : el("span", { className: "member-reset-slot" }));
@@ -1062,29 +1066,29 @@ function slotRows(provider, scene, split) {
   const levels = model ? effortLevels(provider, model).filter((l) => !range.length || range.includes(l)) : [];
   const cli = model ? cliEffort(provider, model) : null;
   let effortLine = el("span");
-  if (!model) effortLine = el("span", { className: "member-muted" }, "CLI 自己决定");
-  else if (levels.length === 1) effortLine = el("span", { className: "member-muted" }, `只有 ${levels[0]} 一档`);
+  if (!model) effortLine = el("span", { className: "member-muted" }, L("CLI 自己决定", "Follow CLI"));
+  else if (levels.length === 1) effortLine = el("span", { className: "member-muted" }, L(`只有 ${levels[0]} 一档`, `Only ${levels[0]}`));
   else if (levels.length > 1) {
     const shown = current.effort || (levels.includes(cli) ? cli : null);
     effortLine = el("div", { className: "member-line" },
-      el("div", { className: "segment-control member-efforts", role: "radiogroup", "aria-label": "思考档位" },
+      el("div", { className: "segment-control member-efforts", role: "radiogroup", "aria-label": L("思考档位", "Effort") },
         levels.map((level) => el("button", {
           type: "button",
           role: "radio",
           className: `segment-btn${level === shown ? " active" : ""}`,
           "aria-checked": String(level === shown),
-          title: level === cli ? "CLI 当前设置" : null,
+          title: level === cli ? L("CLI 当前设置", "CLI current") : null,
           dataset: { focusKey: `${key}/effort/${level}` },
           onClick: () => pick({ effort: level }),
         }, level))),
-      !shown ? el("span", { className: "member-muted" }, "选一个档位")
+      !shown ? el("span", { className: "member-muted" }, L("选一个档位", "Choose effort"))
         : current.effort && cli && levels.includes(cli) && current.effort !== cli
           ? el("button", {
             type: "button",
             className: "member-reset",
             dataset: { focusKey: `${key}/effort-reset` },
-            title: `改回 CLI 当前设置（${cli}）`,
-            "aria-label": "改回 CLI 当前设置",
+            title: L(`改回 CLI 当前设置（${cli}）`, `Reset to CLI current (${cli})`),
+            "aria-label": L("改回 CLI 当前设置", "Reset to CLI current"),
             onClick: () => pick({ effort: cli }),
           }, "↺")
           : el("span", { className: "member-reset-slot" }));
@@ -1092,16 +1096,16 @@ function slotRows(provider, scene, split) {
 
   const open = pickerOpen === key;
   const summary = current.allowed
-    ? `${offered.length} 个：${offered.slice(0, 3).join("、")}${offered.length > 3 ? " 等" : ""}`
-    : `全部 ${all.length} 个`;
+    ? L(`${offered.length} 个：${offered.slice(0, 3).join("、")}${offered.length > 3 ? " 等" : ""}`, `${offered.length}: ${offered.slice(0, 3).join(", ")}${offered.length > 3 ? ", etc." : ""}`)
+    : L(`全部 ${all.length} 个`, `All ${all.length}`);
   const listButton = el("button", {
     type: "button",
     className: "member-list",
     dataset: { focusKey: `${key}/list` },
-    title: "boss 可以选用的模型",
+    title: L("boss 可以选用的模型", "Models the boss may choose from"),
     "aria-expanded": String(open),
     onClick: () => { pickerOpen = open ? null : key; renderCards(); },
-  }, el("span", { className: "member-muted" }, "可选 "), textNode(summary), el("span", { className: "member-muted" }, open ? " ▴" : " ▾"));
+  }, el("span", { className: "member-muted" }, L("可选 ", "Allowed: ")), textNode(summary), el("span", { className: "member-muted" }, open ? " ▴" : " ▾"));
 
   const rows = [el("div", { className: "member-row" }, label, modelLine, listButton, effortLine)];
   if (open) {
@@ -1121,7 +1125,7 @@ function slotRows(provider, scene, split) {
           onChange: (e) => pick(e.target.checked
             ? { allowed: null, model: current.model === native.model ? "" : current.model }
             : { allowed: [model || all[0]] }),
-        }), textNode("全部模型（以后新出的也算）")),
+        }), textNode(L("全部模型（以后新出的也算）", "All models (including future releases)"))),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
           type: "checkbox",
@@ -1131,7 +1135,7 @@ function slotRows(provider, scene, split) {
           onChange: (e) => toggle(m, e.target.checked),
         }),
         el("span", { className: "member-option-id" }, m),
-        m === model ? el("span", { className: "badge badge-muted" }, "默认") : null))));
+        m === model ? el("span", { className: "badge badge-muted" }, L("默认", "Default")) : null))));
   }
   return rows;
 }
@@ -1164,10 +1168,10 @@ function renderCards() {
         el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
         el("span", { className: "cli-name" }, name),
         info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
-        info.installed ? null : el("span", { className: "badge badge-bad" }, "未安装")),
+        info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed"))),
       el("div", { className: "member-end" },
-        el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": `${name} 的两个场景`, "aria-hidden": enabled ? null : "true" },
-          [[false, "一起设置"], [true, "分开设置"]].map(([value, text]) => el("button", {
+        el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`), "aria-hidden": enabled ? null : "true" },
+          [[false, L("一起设置", "Together")], [true, L("分开设置", "Separate")]].map(([value, text]) => el("button", {
             type: "button",
             role: "radio",
             className: `segment-btn${value === split ? " active" : ""}`,
@@ -1178,16 +1182,16 @@ function renderCards() {
         renderPermission(provider) || el("span")));
     const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
-      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": `确认停用 ${name}` },
-        el("p", {}, `停用会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`),
+      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认停用 ${name}`, `Confirm disabling ${name}`) },
+        el("p", {}, L(`停用会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Disabling clears default and allowed models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
         el("div", { className: "btn-group" },
-          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, "保留启用"),
-          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, "确认停用"))));
+          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, L("保留启用", "Keep enabled")),
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认停用", "Disable")))));
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     for (const row of rows) card.appendChild(row);
     if (enabled) for (const row of renderCliSwitches(provider)) card.appendChild(row);
-    if (info.error) card.appendChild(el("p", { className: "member-error" }, `读取模型列表失败：${info.error}`));
+    if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
     cards.appendChild(card);
   }
 
@@ -1200,9 +1204,9 @@ function renderCards() {
         dataset: { focusKey: "missing/toggle" },
         "aria-expanded": String(missingOpen),
         onClick: () => { missingOpen = !missingOpen; renderCards(); },
-      }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(`未安装的 CLI（${missing.length}）`)));
+      }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(L(`未安装的 CLI（${missing.length}）`, `Uninstalled CLIs (${missing.length})`))));
     if (missingOpen) box.appendChild(el("p", { className: "cli-missing-list" },
-      textNode(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以开始使用。`)));
+      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以开始使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
     cards.appendChild(box);
   }
 
@@ -1236,7 +1240,7 @@ async function saveMembers() {
   busy = true;
   updateControls();
   const feedback = $("save-feedback");
-  feedback.textContent = "正在保存…";
+  feedback.textContent = L("正在保存…", "Saving…");
   feedback.className = "save-feedback";
 
   const saving = JSON.stringify(currentDoc);
@@ -1248,11 +1252,11 @@ async function saveMembers() {
     }
     if (limitChanged()) await saveLimit();
     refreshDirty();
-    feedback.textContent = "设置已保存 · 参数是否有效以 boss 读取时的校验为准";
+    feedback.textContent = L("设置已保存 · 参数是否有效以 boss 读取时的校验为准", "Settings saved · Option validity is verified when read by the boss");
     feedback.className = "save-feedback success";
-    showNotice("设置已保存");
+    showNotice(L("设置已保存", "Settings saved"));
   } catch (err) {
-    feedback.textContent = `保存失败: ${err.message}`;
+    feedback.textContent = L(`保存失败: ${err.message}`, `Save failed: ${err.message}`);
     feedback.className = "save-feedback error";
     showNotice(err.message, true);
     refreshDirty();
@@ -1283,7 +1287,7 @@ async function refreshDetection(quiet = false) {
   const before = savedSnapshot;
   const seatsBefore = reviewSaves;
   updateControls();
-  if (!quiet) showNotice("正在重新检测 CLI 与模型…");
+  if (!quiet) showNotice(L("正在重新检测 CLI 与模型…", "Re-detecting CLIs and models…"));
   try {
     const data = await apiGetMembers(true);
     const changed = JSON.stringify(data.detected || {}) !== JSON.stringify(detected);
@@ -1304,12 +1308,12 @@ async function refreshDetection(quiet = false) {
       documentError = data.error || null;
       renderErrorBanner();
     }
-    if (!quiet) showNotice("检测结果已刷新");
-    else if (changed && currentTab === "members") showNotice("检测到工具或模型列表有变化，已自动刷新");
+    if (!quiet) showNotice(L("检测结果已刷新", "Detection refreshed"));
+    else if (changed && currentTab === "members") showNotice(L("检测到工具或模型列表有变化，已自动刷新", "Detected changes in tools or models; refreshed automatically"));
     // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
     if (!quiet || changed || reloaded || tiersChanged) renderCards();
   } catch (err) {
-    if (!quiet) showNotice(`刷新检测失败: ${err.message}`, true);
+    if (!quiet) showNotice(L(`刷新检测失败: ${err.message}`, `Refresh failed: ${err.message}`), true);
   } finally {
     probing = false;
     updateControls();
@@ -1322,7 +1326,7 @@ function probeWhenStale() {
 
 // Load initial members data
 async function loadMembers() {
-  if (currentTab === "members") showNotice("正在读取成员与模型配置…");
+  if (currentTab === "members") showNotice(L("正在读取成员与模型配置…", "Loading employee and model settings…"));
   try {
     const data = await apiGetMembers(false);
     detected = data.detected || {};
@@ -1333,7 +1337,7 @@ async function loadMembers() {
     renderErrorBanner();
 
     if (documentError) {
-      showNotice(`配置文件损坏: ${documentError}。当前只读，禁止保存。`, true);
+      showNotice(L(`配置文件损坏: ${documentError}。当前只读，禁止保存。`, `Configuration file corrupted: ${documentError}. Read-only; saving is disabled.`), true);
     } else if (currentTab === "members") {
       showNotice("");
     }
@@ -1342,7 +1346,7 @@ async function loadMembers() {
   } catch (err) {
     documentError = err.message;
     renderErrorBanner();
-    showNotice(`读取失败: ${err.message}`, true);
+    showNotice(L(`读取失败: ${err.message}`, `Load failed: ${err.message}`), true);
     updateControls();
   }
 }
@@ -1361,11 +1365,11 @@ function isVersionOlder(a, b) {
 }
 
 function formatTime(iso) {
-  if (!iso) return "尚未检查";
+  if (!iso) return L("尚未检查", "Never");
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString("zh-CN", {
+    return d.toLocaleString(L("zh-CN", "en-US"), {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -1389,19 +1393,19 @@ function renderUpdates() {
   if (updateInfo?.state === "available") {
     appBadge.hidden = false;
     appBadge.className = "tag available";
-    appBadge.textContent = `发现新版 v${updateInfo.version}`;
+    appBadge.textContent = L(`发现新版 v${updateInfo.version}`, `New version v${updateInfo.version}`);
   } else if (updateInfo?.state === "installing") {
     appBadge.hidden = false;
     appBadge.className = "tag installing";
-    appBadge.textContent = "正在下载更新…";
+    appBadge.textContent = L("正在下载更新…", "Downloading update…");
   } else if (updateInfo?.state === "failed") {
     appBadge.hidden = false;
     appBadge.className = "tag failed";
-    appBadge.textContent = "更新失败";
+    appBadge.textContent = L("更新失败", "Update failed");
   } else if (updateInfo?.state === "none") {
     appBadge.hidden = false;
     appBadge.className = "tag done";
-    appBadge.textContent = "已是最新版本";
+    appBadge.textContent = L("已是最新版本", "Up to date");
   } else {
     appBadge.hidden = true;
   }
@@ -1415,7 +1419,7 @@ function renderUpdates() {
     $("service-version").textContent = installedService?.version ? `v${installedService.version}` : "—";
     serviceBadge.hidden = true;
     serviceMsg.hidden = Boolean(installedService?.installed);
-    serviceMsg.textContent = "请在 boss 分区安装本机服务。";
+    serviceMsg.textContent = L("请在 boss 分区安装本机服务。", "Install the local service in the Boss section.");
   } else {
     $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
     const isServiceOutdated =
@@ -1425,26 +1429,26 @@ function renderUpdates() {
     if (["upgrading", "installing"].includes(serviceInfo.state)) {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag upgrading";
-      serviceBadge.textContent = serviceInfo.state === "installing" ? "正在安装…" : "正在升级…";
+      serviceBadge.textContent = serviceInfo.state === "installing" ? L("正在安装…", "Installing…") : L("正在升级…", "Upgrading…");
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "正在从 GitHub 安装或升级本机服务，约需一分钟…";
+      serviceMsg.textContent = L("正在从 GitHub 安装或升级本机服务，约需一分钟…", "Installing or upgrading local service from GitHub (~1 min)…");
     } else if (serviceInfo.state === "failed") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag failed";
-      serviceBadge.textContent = "升级失败";
+      serviceBadge.textContent = L("升级失败", "Upgrade failed");
       serviceMsg.hidden = false;
-      serviceMsg.textContent = serviceInfo.error || "升级服务失败，请重试";
+      serviceMsg.textContent = serviceInfo.error || L("升级服务失败，请重试", "Failed to upgrade service; please try again");
     } else if (isServiceOutdated) {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag outdated";
-      serviceBadge.textContent = "比 App 旧，需要升级";
+      serviceBadge.textContent = L("比 App 旧，需要升级", "Older than App; upgrade needed");
       serviceMsg.hidden = true;
     } else if (serviceInfo.state === "done") {
       serviceBadge.hidden = false;
       serviceBadge.className = "tag done";
-      serviceBadge.textContent = "安装完成";
+      serviceBadge.textContent = L("安装完成", "Installed");
       serviceMsg.hidden = false;
-      serviceMsg.textContent = "安装完成，无需仅因版本变化重启 boss 应用。";
+      serviceMsg.textContent = L("安装完成，无需仅因版本变化重启 boss 应用。", "Installation complete; no need to restart boss apps just for version changes.");
     } else {
       serviceBadge.hidden = true;
       serviceMsg.hidden = true;
@@ -1477,33 +1481,33 @@ function renderUpdates() {
   // One action at a time: with an update found, "更新" leads and checking again stays secondary.
   $("update-badge").hidden = !hasUpdate && updateInfo?.state !== "installing";
   btnCheck.disabled = isUpdating;
-  btnCheck.textContent = hasUpdate ? "重新检查" : "立即检查";
+  btnCheck.textContent = hasUpdate ? L("重新检查", "Check again") : L("立即检查", "Check now");
   // While anything runs the progress line says what; a disabled action would only contradict it.
   btnApply.hidden = !hasUpdate || isUpdating;
-  btnApply.textContent = hasAppUpdate ? `更新到 v${updateInfo.version}…` : "升级本机服务…";
+  btnApply.textContent = hasAppUpdate ? L(`更新到 v${updateInfo.version}…`, `Update to v${updateInfo.version}…`) : L("升级本机服务…", "Upgrade local service…");
   updateHint.hidden = !hasUpdate || isUpdating;
 
   if (hasUpdate) {
     if (hasAppUpdate) {
-      updateHint.textContent = "先看更新内容，确认后一次完成：升级本机服务，再安装 App 并自动重启。";
+      updateHint.textContent = L("先看更新内容，确认后一次完成：升级本机服务，再安装 App 并自动重启。", "Review release notes first; once confirmed, it upgrades the local service, installs the App, and restarts automatically.");
     } else {
-      updateHint.textContent = "本机服务比 App 旧。升级约需一分钟，空闲后自动切换，正在运行的任务不受影响。";
+      updateHint.textContent = L("本机服务比 App 旧。升级约需一分钟，空闲后自动切换，正在运行的任务不受影响。", "Local service is older than the App. Upgrading takes ~1 min and switches automatically when idle without affecting running tasks.");
     }
   }
 
   if (isUpdating) {
     progressBox.hidden = false;
     if (updateInfo?.state === "checking") {
-      progressText.textContent = "正在检查更新…";
+      progressText.textContent = L("正在检查更新…", "Checking for updates…");
     } else if (updateInfo?.state === "installing") {
       const percent = updateInfo.total > 0 ? ` ${Math.min(100, Math.floor(updateInfo.downloaded / updateInfo.total * 100))}%` : "";
       progressText.textContent = {
-        service: "正在更新本机服务，约需一分钟…",
-        app: "正在安装 App…",
-        restart: "正在重启并更新 Skill…",
-      }[updateInfo.step] || `正在下载 App 更新包${percent}…`;
+        service: L("正在更新本机服务，约需一分钟…", "Updating local service (~1 min)…"),
+        app: L("正在安装 App…", "Installing App…"),
+        restart: L("正在重启并更新 Skill…", "Restarting and updating Skill…"),
+      }[updateInfo.step] || L(`正在下载 App 更新包${percent}…`, `Downloading App update${percent}…`);
     } else if (["upgrading", "installing"].includes(serviceInfo?.state)) {
-      progressText.textContent = "正在安装或升级本机服务，约需一分钟…";
+      progressText.textContent = L("正在安装或升级本机服务，约需一分钟…", "Installing or upgrading local service (~1 min)…");
     }
   } else {
     progressBox.hidden = true;
@@ -1513,7 +1517,7 @@ function renderUpdates() {
   $("btn-retry-update").hidden = isUpdating;
   if (hasError && !isUpdating) {
     errorBox.hidden = false;
-    errorText.textContent = updateInfo?.error || serviceInfo?.error || "操作失败，请重试。";
+    errorText.textContent = updateInfo?.error || serviceInfo?.error || L("操作失败，请重试。", "Operation failed. Please try again.");
   } else {
     errorBox.hidden = true;
   }
@@ -1547,7 +1551,7 @@ async function loadStatus() {
     renderUpdates();
     window.dispatchEvent(new CustomEvent("agentnave:status", { detail: appStatus }));
   } catch (err) {
-    showNotice(`获取版本状态失败: ${err.message}`, true);
+    showNotice(L(`获取版本状态失败: ${err.message}`, `Failed to load version status: ${err.message}`), true);
   }
 }
 
@@ -1571,17 +1575,17 @@ async function triggerCheckUpdate(quiet = false) {
     // The server refuses updates while it checks; show that instead of a live button.
     appStatus = { ...appStatus, update: { state: "checking", version: null, error: null } };
     renderUpdates();
-    if (!quiet) showNotice("正在检查更新…");
+    if (!quiet) showNotice(L("正在检查更新…", "Checking for updates…"));
     appStatus = await apiCheckUpdate(quiet);
     const state = appStatus?.update?.state;
     if (!quiet || state === "available") showNotice(
-      state === "failed" ? "检查更新失败" : state === "available" ? `发现新版 v${appStatus.update.version}` : state === "none" ? "已是最新版本" : "检查更新完成",
+      state === "failed" ? L("检查更新失败", "Update check failed") : state === "available" ? L(`发现新版 v${appStatus.update.version}`, `New version v${appStatus.update.version}`) : state === "none" ? L("已是最新版本", "Up to date") : L("检查更新完成", "Update check complete"),
       state === "failed",
     );
   } catch (err) {
     appStatus = previous;
     if (quiet) await loadStatus();
-    else showNotice(`检查更新失败: ${err.message}`, true);
+    else showNotice(L(`检查更新失败: ${err.message}`, `Update check failed: ${err.message}`), true);
   } finally {
     renderUpdates();
   }
@@ -1624,16 +1628,16 @@ function renderLeaveConfirm() {
   box.hidden = !leaveTarget;
   if (!leaveTarget) return box.replaceChildren();
   if (box.childElementCount) return;
-  const stay = el("button", { type: "button", onClick: () => { leaveTarget = null; renderLeaveConfirm(); } }, "继续编辑");
+  const stay = el("button", { type: "button", onClick: () => { leaveTarget = null; renderLeaveConfirm(); } }, L("继续编辑", "Keep editing"));
   box.replaceChildren(
-    el("p", {}, "有未保存的修改，离开设置页会丢失这些修改。"),
+    el("p", {}, L("有未保存的修改，离开设置页会丢失这些修改。", "You have unsaved changes. Leaving Settings will discard them.")),
     el("div", { className: "btn-group" }, stay,
       el("button", { type: "button", className: "danger", onClick: () => {
         const target = leaveTarget;
         dirty = false;
         discardAdvanced();
         location.href = target;
-      } }, "放弃修改并离开")));
+      } }, L("放弃修改并离开", "Discard and leave"))));
   stay.focus({ preventScroll: true });
 }
 document.querySelector("header.bar").addEventListener("click", (e) => {
@@ -1674,8 +1678,8 @@ loadStatus();
       button.setAttribute("aria-checked", on ? "true" : "false");
     }
     document.getElementById("model-names-example").textContent = full
-      ? "显示为 opencode-go/deepseek-v4.1-flash，带上前面的路由"
-      : "显示为 deepseek-v4.1-flash，省去前面的路由 opencode-go/";
+      ? L("显示为 opencode-go/deepseek-v4.1-flash，带上前面的路由", "Shown as opencode-go/deepseek-v4.1-flash, with the routing prefix")
+      : L("显示为 deepseek-v4.1-flash，省去前面的路由 opencode-go/", "Shown as deepseek-v4.1-flash, without the opencode-go/ prefix");
   }
   for (const [key, button] of Object.entries(buttons))
     button.addEventListener("click", () => { AN.setFullModelNames(key === "full"); show(); });

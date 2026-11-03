@@ -5,7 +5,7 @@
 // Every node is created once and then patched in place (keyed by group id / desk key / room id).
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
-  h, $, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
+  h, $, L, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
   setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip,
 } = AN;
 
@@ -42,20 +42,20 @@ const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
 function brief(d) {
   const acts = activities(d);
   const run = acts.filter((a) => a.status === "running");
-  if (run.some((a) => a.kind === "private")) return { mood: "working", word: run.length > 1 ? "私聊中 · 也在开会" : "私聊中" };
-  if (run.length) return { mood: "working", word: "会议里作答中" };
-  if (acts.some((a) => a.status === "review")) return { mood: "meeting", word: "会议里已作答" };
-  if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: "在会议室" };
-  if (d.status === "failed") return { mood: "failed", word: "上次失败" };
-  if (d.status === "pending") return { mood: "idle", word: "等待中" };
-  return dozing(d) ? { mood: "sleep", word: "休息中" } : { mood: "idle", word: "空闲" };
+  if (run.some((a) => a.kind === "private")) return { mood: "working", word: run.length > 1 ? L("私聊中 · 也在开会", "In chat · in meeting") : L("私聊中", "In chat") };
+  if (run.length) return { mood: "working", word: L("会议里作答中", "Replying in meeting") };
+  if (acts.some((a) => a.status === "review")) return { mood: "meeting", word: L("会议里已作答", "Replied in meeting") };
+  if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: L("在会议室", "In meeting") };
+  if (d.status === "failed") return { mood: "failed", word: L("上次失败", "Last failed") };
+  if (d.status === "pending") return { mood: "idle", word: L("等待中", "Pending") };
+  return dozing(d) ? { mood: "sleep", word: L("休息中", "Resting") } : { mood: "idle", word: L("空闲", "Idle") };
 }
 const HEAD = { working: "working", sleep: "sleep" };
 const roomRound = (r) => {
   const n = r.round;
   if (!n) return pick(GROUP, ongoing(r.status))[0];
-  if (urgent(r.status)) return `第 ${n.number} 轮 · ${n.order === "serial" ? "依次回复" : "同时回复"}`;
-  return `第 ${n.number} 轮 · ${pick(GROUP, ongoing(r.status))[0]}`;
+  if (urgent(r.status)) return L(`第 ${n.number} 轮 · ${n.order === "serial" ? "依次回复" : "同时回复"}`, `Round ${n.number} · ${n.order === "serial" ? "In turn" : "In parallel"}`);
+  return L(`第 ${n.number} 轮 · ${pick(GROUP, ongoing(r.status))[0]}`, `Round ${n.number} · ${pick(GROUP, ongoing(r.status))[0]}`);
 };
 const BOARD = () => {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -81,7 +81,7 @@ function updateCell(rec, group, d) {
   setText(rec.cli, cliName(d.provider));
   setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
-  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? " · 声明只读" : d.access === "write" ? " · 声明可写" : ""}${d.private_allowed === false ? " · 仅开会" : ""}\n最近 ${fullTime(d.last_active)}`);
+  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? L(" · 声明只读", " · Read-only") : d.access === "write" ? L(" · 声明可写", " · Writable") : ""}${d.private_allowed === false ? L(" · 仅开会", " · Meetings only") : ""}\n${L(`最近 ${fullTime(d.last_active)}`, `Last active ${fullTime(d.last_active)}`)}`);
   setText(rec.name, deskName(d));
   setText(rec.role, d.role ? `${clip(d.role, 6)} · ` : "");
   setText(rec.word, s.word);
@@ -98,7 +98,7 @@ function updateRoom(rec, group, r, desks) {
   const [word, tone] = pick(GROUP, ongoing(r.status));
   setClass(rec.el, `room tone-${tone}`);
   setAttr(rec.el, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
-  setAttr(rec.el, "title", `会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条`);
+  setAttr(rec.el, "title", L(`会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条`, `Meeting room · ${r.title}\n${word} · ${r.board ?? 0} notes`));
   setText(rec.title, r.title);
   setText(rec.round, roomRound(r));
   const seated = r.seats.map((s) => desks.get(s.desk)).filter(Boolean);
@@ -146,12 +146,12 @@ function updateBlock(rec, m) {
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
   tile(rec, m);
   setClass(rec.presence, m.live ? "presence on" : "presence");
-  setAttr(rec.presence, "title", m.live ? "有任务在运行" : "没有运行中的任务");
+  setAttr(rec.presence, "title", m.live ? L("有任务在运行", "Tasks running") : L("没有运行中的任务", "No running tasks"));
   setAttr(rec.boss, "href", href(`/chat/${m.group}`));
-  setAttr(rec.boss, "title", `${m.label} 里的 boss${m.project ? ` · ${m.project}` : ""}`);
-  setAttr(rec.boss, "aria-label", `${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`);
+  setAttr(rec.boss, "title", `${L(`${m.label} 里的 boss`, `boss in ${m.label}`)}${m.project ? ` · ${m.project}` : ""}`);
+  setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${desks.length} desks, ${rooms.length} meeting rooms, open office`));
   setText(rec.project, name);
-  const [bsTone, bsText] = n ? ["run", `${n} 个在工作`] : urgent(m.status) ? ["run", "会议进行中"] : ["", "空闲"];
+  const [bsTone, bsText] = n ? ["run", L(`${n} 个在工作`, `${n} working`)] : urgent(m.status) ? ["run", L("会议进行中", "In meeting")] : ["", L("空闲", "Idle")];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
   setText(rec.bs, bsText);
   setText(rec.time, relTime(m.updated));
@@ -182,12 +182,12 @@ function updateBlock(rec, m) {
   for (const d of desks) if (!awake.includes(d)) announce(m, d, brief(d));
   const optimized = m.optimized?.count || 0;
   const resting = desks.length - awake.length;
-  const meta = [name === m.label ? "" : chatPlace(m), `${desks.length} 工位`, resting && `${resting} 个休息中`, optimized && `已优化 ${optimized}`, rooms.length && `${rooms.length} 会议室`].filter(Boolean).join(" · ");
+  const meta = [name === m.label ? "" : chatPlace(m), L(`${desks.length} 工位`, `${desks.length} desks`), resting && L(`${resting} 个休息中`, `${resting} resting`), optimized && L(`已优化 ${optimized}`, `${optimized} folded`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
   setText(rec.meta, meta);
   rec.cells.hidden = !ordered.length;
   rec.fold.hidden = awake.length < FOLD_AT;
   if (!rec.fold.hidden) {
-    setText(rec.foldText, folded ? `另外 ${hiddenCount} 个工位${hiddenBusy ? ` · ${hiddenBusy} 个在忙` : ""}` : "收起");
+    setText(rec.foldText, folded ? L(`另外 ${hiddenCount} 个工位${hiddenBusy ? ` · ${hiddenBusy} 个在忙` : ""}`, `${hiddenCount} more desks${hiddenBusy ? ` · ${hiddenBusy} busy` : ""}`) : L("收起", "Collapse"));
     setAttr(rec.fold, "aria-expanded", folded ? "false" : "true");
     setClass(rec.fold, folded && hiddenBusy ? "fold busy" : "fold");
   }
@@ -240,7 +240,7 @@ function announce(m, d, s) {
 let lastState = "";
 function renderState(data) {
   const { running } = data.counts;
-  const pills = [running ? ["run", `${running} 个在工作`] : ["idle", "空闲"]];
+  const pills = [running ? ["run", L(`${running} 个在工作`, `${running} working`)] : ["idle", L("空闲", "Idle")]];
   const key = JSON.stringify(pills);
   if (key === lastState) return;
   lastState = key;
@@ -254,10 +254,10 @@ function showBody(kind, retry) {
   if (showStage || state.calm === kind) { syncOb(); return; }
   state.calm = kind;
   const copy = {
-    loading: ["正在读取…", "", null],
-    no_data: ["还没有办公室", "在 boss 里派出任务或开始会议后，它的工位和会议室会自动出现在这里。", ["打开 AgentNave", "/chat/"]],
-    quiet: ["没有办公室记录", "历史已清理。在 boss 里派出任务或开始会议后，办公室会出现在这里。", ["打开 AgentNave", "/chat/"]],
-    error: ["无法读取办公室数据", "数据目录可能还不存在，或本机服务没有响应。", ["重试", null]],
+    loading: [L("正在读取…", "Loading…"), "", null],
+    no_data: [L("还没有办公室", "No offices yet"), L("在 boss 里派出任务或开始会议后，它的工位和会议室会自动出现在这里。", "Once you dispatch a task or start a meeting in boss, its desks and meeting rooms will appear here."), [L("打开 AgentNave", "Open AgentNave"), "/chat/"]],
+    quiet: [L("没有办公室记录", "No office history"), L("历史已清理。在 boss 里派出任务或开始会议后，办公室会出现在这里。", "History was cleared. Dispatch a task or start a meeting in boss to see offices here."), [L("打开 AgentNave", "Open AgentNave"), "/chat/"]],
+    error: [L("无法读取办公室数据", "Failed to load office data"), L("数据目录可能还不存在，或本机服务没有响应。", "The data folder may not exist yet, or the local service is not responding."), [L("重试", "Retry"), null]],
   }[kind];
   const action = copy[2] && (copy[2][1] ? h("a.calm-link", { href: href(copy[2][1]) }, copy[2][0]) : h("button.calm-link", { type: "button" }, copy[2][0]));
   if (action && !copy[2][1]) action.addEventListener("click", retry);
@@ -270,7 +270,7 @@ function notice(title, detail, action, target, secondary) {
   const button = (text, to) => {
     const link = h("a.notice-action", { href: to }, text);
     if (to === "/app/copy-service-command")
-      link.addEventListener("click", () => { link.textContent = "已复制"; setTimeout(() => (link.textContent = text), 2000); });
+      link.addEventListener("click", () => { link.textContent = L("已复制", "Copied"); setTimeout(() => (link.textContent = text), 2000); });
     return link;
   };
   return h("div.notice", {}, h("div.notice-text", {}, h("strong", {}, title), detail && h("small", {}, detail)), secondary && button(...secondary), action && button(action, target));
@@ -278,9 +278,9 @@ function notice(title, detail, action, target, secondary) {
 function notices(status, offline) {
   const out = [];
   // Only what needs the user: a found update or its progress is the header's update button.
-  if (status?.update?.state === "failed") out.push(notice("更新失败", status.update.error || "检查网络后重试", "重试", "/app/update"));
-  if (status?.service?.state === "failed") out.push(notice("升级本机服务失败", status.service.error, "重试", "/app/upgrade-service", ["复制命令", "/app/copy-service-command"]));
-  if (offline) out.push(notice("读取中断，正在重试", "下方显示的是最近一次成功读取的内容"));
+  if (status?.update?.state === "failed") out.push(notice(L("更新失败", "Update failed"), status.update.error || L("检查网络后重试", "Check your network and try again"), L("重试", "Retry"), "/app/update"));
+  if (status?.service?.state === "failed") out.push(notice(L("升级本机服务失败", "Service upgrade failed"), status.service.error, L("重试", "Retry"), "/app/upgrade-service", [L("复制命令", "Copy command"), "/app/copy-service-command"]));
+  if (offline) out.push(notice(L("读取中断，正在重试", "Connection interrupted, retrying"), L("下方显示的是最近一次成功读取的内容", "Showing the last successfully loaded state below")));
   return out;
 }
 let lastNotices = "";
@@ -291,7 +291,7 @@ function renderNotices(status, offline) {
   $("notices").replaceChildren(...notices(status, offline));
   const update = status?.update;
   const link = $("update");
-  link.replaceChildren(update?.state === "installing" ? "正在更新…" : "检查更新", update?.state === "available" ? h("small", {}, `v${update.version} 可用`) : "");
+  link.replaceChildren(update?.state === "installing" ? L("正在更新…", "Updating…") : L("检查更新", "Check for updates"), update?.state === "available" ? h("small", {}, L(`v${update.version} 可用`, `v${update.version} available`)) : "");
   $("more").querySelector(".more-dot").hidden = update?.state !== "available";
 }
 
@@ -343,7 +343,7 @@ function render(data) {
       let rec = state.blocks.get(id);
       if (!rec) {
         state.blocks.set(id, (rec = createBlock(m)));
-        if (state.ready && busy(m)) spoken.push(`${chatName(m)} 的 boss 开始工作`);
+        if (state.ready && busy(m)) spoken.push(L(`${chatName(m)} 的 boss 开始工作`, `boss in ${chatName(m)} started working`));
       }
       updateBlock(rec, m);
       full.push(rec.el);
@@ -359,8 +359,8 @@ function render(data) {
   reconcile($("quiet"), folded);
   $("sec-live").hidden = !full.length;
   $("sec-quiet").hidden = !folded.length;
-  setText($("live-count"), `${full.length} 个`);
-  setText($("quiet-count"), `${folded.length} 个`);
+  setText($("live-count"), L(`${full.length} 个`, `${full.length}`));
+  setText($("quiet-count"), L(`${folded.length} 个`, `${folded.length}`));
 }
 
 async function refresh() {

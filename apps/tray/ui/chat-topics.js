@@ -78,11 +78,11 @@ function tpDirectory(c, ctx) {
     items.push({
       weight: review ? 0 : running ? 1 : 2,
       time: last?.time || "",
-      tag: "会议",
+      tag: AN.L("会议", "Meeting"),
       title: room.title,
-      status: review ? ["待审核", "review"] : failed ? ["有失败", "bad"] : running ? ["进行中", "run"] : ["已结束", "idle"],
+      status: review ? [AN.L("待审核", "Review"), "review"] : failed ? [AN.L("有失败", "Failed"), "bad"] : running ? [AN.L("进行中", "Running"), "run"] : [AN.L("已结束", "Ended"), "idle"],
       faces: room.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean).slice(0, 4).map((d) => ART.head(deskChar(d))),
-      meta: last ? `第 ${last.round} 轮 · ${last.replies.filter((m) => m.kind === "reply").length}/${total} 已答` : "还没开始",
+      meta: last ? AN.L(`第 ${last.round} 轮 · ${last.replies.filter((m) => m.kind === "reply").length}/${total} 已答`, `Round ${last.round} · ${last.replies.filter((m) => m.kind === "reply").length}/${total} replied`) : AN.L("还没开始", "Not started"),
       line: said ? tpFirst(said.text) : last?.prompt ? tpFirst(last.prompt.text) : "",
       scope: { kind: "room", id: room.id },
     });
@@ -95,9 +95,9 @@ function tpDirectory(c, ctx) {
     items.push({
       weight: running ? 1 : 2,
       time: t.time,
-      tag: "任务",
+      tag: AN.L("任务", "Task"),
       title: tpFirst(t.prompt.text),
-      status: bad ? ["失败", "bad"] : running ? ["进行中", "run"] : last ? ["已完成", "done"] : ["等待中", "idle"],
+      status: bad ? [AN.L("失败", "Failed"), "bad"] : running ? [AN.L("进行中", "Running"), "run"] : last ? [AN.L("已完成", "Done"), "done"] : [AN.L("等待中", "Pending"), "idle"],
       faces: desk ? [ART.head(deskChar(desk))] : [],
       meta: desk ? deskName(desk) : "",
       line: last ? tpSummary(last) : "",
@@ -109,8 +109,8 @@ function tpDirectory(c, ctx) {
     items.push({
       weight: 2,
       time: m.time,
-      tag: "交接",
-      title: m.speaker?.label || "工作区交接",
+      tag: AN.L("交接", "Handover"),
+      title: m.speaker?.label || AN.L("工作区交接", "Workspace handover"),
       faces: [],
       meta: "",
       line: m.text,
@@ -119,8 +119,8 @@ function tpDirectory(c, ctx) {
     });
   }
   items.sort((x, y) => x.weight - y.weight || AN.at(y.time) - AN.at(x.time));
-  const omitted = c.omitted ? [h("div.sep", {}, `更早的 ${c.omitted} 条没有列出`)] : [];
-  if (!items.length) return [...omitted, h("div.dr-empty", {}, "这里还没有消息。")];
+  const omitted = c.omitted ? [h("div.sep", {}, AN.L(`更早的 ${c.omitted} 条没有列出`, `${c.omitted} earlier items omitted`))] : [];
+  if (!items.length) return [...omitted, h("div.dr-empty", {}, AN.L("这里还没有消息。", "No messages yet."))];
   const cards = items.map((item) => {
     const card = h(
       item.scope ? "button.tp-card" : "div.tp-card",
@@ -138,7 +138,7 @@ function tpDirectory(c, ctx) {
 // The fold survives the list being drawn again.
 function handoverNote(note) {
   const box = h("details.tp-card-note", { open: state.expanded.has(note.id) },
-    h("summary", {}, "交接说明"), h("span.tp-card-line.whole", {}, note.text));
+    h("summary", {}, AN.L("交接说明", "Handover notes")), h("span.tp-card-line.whole", {}, note.text));
   box.ontoggle = () => (box.open ? state.expanded.add(note.id) : state.expanded.delete(note.id));
   return box;
 }
@@ -155,7 +155,7 @@ function renderDirectory(c, ctx) {
   setText(el.drSub, c.label);
   el.drAll.hidden = true;
   el.jump.hidden = true;
-  setAttr(el.drawer, "aria-label", "boss 的对话");
+  setAttr(el.drawer, "aria-label", AN.L("boss 的对话", "boss conversations"));
   const key = JSON.stringify([
     c.group, ART.version(),
     c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.detail, m.doing]),

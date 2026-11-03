@@ -104,14 +104,14 @@
   async function loadCatalogs(label) {
     const failures = [];
     const reads = [
-      loadVoices().catch(failure => failures.push(`TTS 目录不可用：${failure.message}`)),
+      loadVoices().catch(failure => failures.push(L(`TTS 目录不可用：${failure.message}`, `TTS catalog unavailable: ${failure.message}`))),
       loadCache(),
     ];
     if (config.summary.enabled) {
-      reads.push(loadSummaryModels().catch(failure => failures.push(`摘要目录不可用：${failure.message}`)));
+      reads.push(loadSummaryModels().catch(failure => failures.push(L(`摘要目录不可用：${failure.message}`, `Summary catalog unavailable: ${failure.message}`))));
     }
     await Promise.all(reads);
-    return failures.length ? `${label}；${failures.join("；")}` : label;
+    return failures.length ? `${label}${L("；", "; ")}${failures.join(L("；", "; "))}` : label;
   }
   async function save(patch) {
     if (busy) return;
@@ -124,16 +124,16 @@
     finally { busy = false; render(); }
   }
   function keyRow(engine = config.engine, label = engine === "minimax" ? "MiniMax" : "ElevenLabs") {
-    const input = h("input", { type: "password", autocomplete: "off", spellcheck: "false", maxlength: "4096", "aria-label": `${engine} API 密钥`, disabled: busy,
-      placeholder: config.keys[engine] ? "已保存，粘贴新密钥可替换" : "粘贴密钥" });
-    const put = h("button", { type: "button", disabled: busy }, "保存");
-    const remove = h("button", { type: "button", disabled: busy || !config.keys[engine] }, "删除");
+    const input = h("input", { type: "password", autocomplete: "off", spellcheck: "false", maxlength: "4096", "aria-label": L(`${engine} API 密钥`, `${engine} API key`), disabled: busy,
+      placeholder: config.keys[engine] ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key") });
+    const put = h("button", { type: "button", disabled: busy }, L("保存", "Save"));
+    const remove = h("button", { type: "button", disabled: busy || !config.keys[engine] }, L("删除", "Delete"));
     async function store(key) {
       if (busy) return;
       busy = true; input.value = ""; stop(); render();
       try {
         config = normalizeConfig(await request("/app/voice/key", { engine, key }));
-        const saved = key ? "密钥已保存" : "密钥已删除";
+        const saved = key ? L("密钥已保存", "API key saved") : L("密钥已删除", "API key deleted");
         let detail = "";
         try {
           if (engine.startsWith("summary")) {
@@ -142,7 +142,9 @@
             await loadVoices();
           }
         } catch (failure) {
-          detail = `；${engine.startsWith("summary") ? "摘要" : "TTS"}目录不可用：${failure.message}`;
+          detail = engine.startsWith("summary")
+            ? L(`；摘要目录不可用：${failure.message}`, `; Summary catalog unavailable: ${failure.message}`)
+            : L(`；TTS目录不可用：${failure.message}`, `; TTS catalog unavailable: ${failure.message}`);
         }
         status(saved + detail);
       }
@@ -151,7 +153,7 @@
     }
     put.addEventListener("click", () => { if (input.value.trim()) void store(input.value); });
     remove.addEventListener("click", () => store(""));
-    return row(h("label", {}, `${label} API 密钥`), h("div.voice-key", {}, input, put, remove));
+    return row(h("label", {}, L(`${label} API 密钥`, `${label} API key`)), h("div.voice-key", {}, input, put, remove));
   }
   // Details keeps the list anchored below its row, independent of the OS select menu placement.
   function picker(label, items, selected, pick, icon = null) {
@@ -187,12 +189,12 @@
     try {
       const response = await fetch("/app/voice/speak", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, signal: pending.signal,
         body: JSON.stringify({ family, text: "大家好，我先说一下我的看法。", full: true, ...(config.voices[family] ? { voice: config.voices[family] } : {}) }) });
-      if (!response.ok) { const data = await response.json(); throw new Error(data.error || "试听失败"); }
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error || L("试听失败", "Preview failed")); }
       if (response.status === 204) return;
       const blob = await response.blob();
       if (pending.signal.aborted) return;
       audioUrl = URL.createObjectURL(blob); audio = new Audio(audioUrl);
-      audio.onended = stop; audio.onerror = () => { status("无法播放试听音频"); stop(); };
+      audio.onended = stop; audio.onerror = () => { status(L("无法播放试听音频", "Cannot play preview audio")); stop(); };
       await audio.play();
     } catch (failure) { if (!pending.signal.aborted) { status(failure.message); stop(); } }
     finally { button.disabled = false; }
@@ -206,13 +208,13 @@
   }
   function promptEditor(key, label, value, limit, persist, reset = false) {
     const input = h("textarea", { rows: limit > 500 ? "4" : "2", maxlength: String(limit), disabled: busy,
-      "aria-label": label, placeholder: limit > 500 ? "摘要要求" : "例如：你是一位冷静可靠、偶尔幽默的同伴，说话直接，关心对方。" });
+      "aria-label": label, placeholder: limit > 500 ? L("摘要要求", "Summary instructions") : L("例如：你是一位冷静可靠、偶尔幽默的同伴，说话直接，关心对方。", "e.g. You are a calm, reliable companion with occasional humor who speaks directly and cares about others.") });
     input.value = drafts.prompts.get(key) ?? value;
     const dirty = () => input.value !== value;
-    const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? "保存" : "已保存");
+    const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? L("保存", "Save") : L("已保存", "Saved"));
     input.addEventListener("input", () => {
       drafts.prompts.set(key, input.value);
-      put.disabled = busy || !dirty(); put.textContent = dirty() ? "保存" : "已保存";
+      put.disabled = busy || !dirty(); put.textContent = dirty() ? L("保存", "Save") : L("已保存", "Saved");
     });
     async function store(text) {
       if (await persist(text)) { drafts.prompts.delete(key); render(); }
@@ -220,14 +222,14 @@
     put.addEventListener("click", () => store(input.value));
     const actions = h("div.voice-prompt-actions", {}, put);
     if (reset) {
-      const restore = h("button", { type: "button", disabled: busy }, "恢复默认");
+      const restore = h("button", { type: "button", disabled: busy }, L("恢复默认", "Restore default"));
       restore.addEventListener("click", () => store("")); actions.append(restore);
     }
     return h("div.voice-prompt-editor", {}, input, actions);
   }
   const platformIcon = id => h("img.voice-platform-icon", { alt: "", src: art.url(["magpie", "custom"].includes(id) ? "logo-default.svg" : `platform/${id}.svg`) });
   function summarySource() {
-    return picker("摘要平台", config.summary_platforms, config.summary.provider, id => {
+    return picker(L("摘要平台", "Summary platform"), config.summary_platforms, config.summary.provider, id => {
       drafts.model = null;
       summarySave({ provider: id, ...(id === config.summary.provider ? {} : { model: "", effort: "" }) });
     }, platformIcon);
@@ -252,61 +254,61 @@
       const next = await request("/app/voice").catch(() => null);
       if (next) config = normalizeConfig(next);
       if (config.chatgpt.signing_in) return watchSignIn();
-      status(await loadCatalogs(config.chatgpt.signed_in ? "ChatGPT 已登录" : config.chatgpt.error || "ChatGPT 未登录"));
+      status(await loadCatalogs(config.chatgpt.signed_in ? L("ChatGPT 已登录", "Signed in to ChatGPT") : config.chatgpt.error || L("ChatGPT 未登录", "Not signed in to ChatGPT")));
       render();
     }, 1500);
   }
   function chatgptAccount() {
     const account = config.chatgpt;
     const action = account.signed_in
-      ? h("button", { type: "button", disabled: busy }, "退出登录")
-      : h("button", { type: "button", disabled: busy }, account.signing_in ? "重新打开登录页" : "登录 ChatGPT");
+      ? h("button", { type: "button", disabled: busy }, L("退出登录", "Sign out"))
+      : h("button", { type: "button", disabled: busy }, account.signing_in ? L("重新打开登录页", "Reopen sign-in page") : L("登录 ChatGPT", "Sign in to ChatGPT"));
     action.addEventListener("click", () => chatgptAction(`/app/voice/chatgpt/${account.signed_in ? "sign-out" : "start"}`));
-    const said = account.signed_in ? [account.user, account.plan].filter(Boolean).join(" · ") : account.signing_in ? "等待浏览器完成登录" : account.error || "";
-    return row("ChatGPT 账号", h("div.voice-chatgpt", {}, h("span", { title: said }, said), action));
+    const said = account.signed_in ? [account.user, account.plan].filter(Boolean).join(" · ") : account.signing_in ? L("等待浏览器完成登录", "Waiting for browser sign-in") : account.error || "";
+    return row(L("ChatGPT 账号", "ChatGPT account"), h("div.voice-chatgpt", {}, h("span", { title: said }, said), action));
   }
   function summaryConnection() {
     const base = h("input.voice-summary-url", { type: "url", value: drafts.base ?? config.summary.base_url,
-      placeholder: "https://api.example.com/v1", disabled: busy, "aria-label": "摘要 API 地址" });
+      placeholder: "https://api.example.com/v1", disabled: busy, "aria-label": L("摘要 API 地址", "Summary API URL") });
     const dirty = () => base.value.trim() !== config.summary.base_url;
-    const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? "保存" : "已保存");
+    const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? L("保存", "Save") : L("已保存", "Saved"));
     base.addEventListener("input", () => {
-      drafts.base = base.value; put.disabled = busy || !dirty(); put.textContent = dirty() ? "保存" : "已保存";
+      drafts.base = base.value; put.disabled = busy || !dirty(); put.textContent = dirty() ? L("保存", "Save") : L("已保存", "Saved");
     });
     put.addEventListener("click", () => { drafts.base = base.value.trim(); summarySave({ base_url: drafts.base }); });
-    return row("摘要 API 地址", h("div.voice-summary-input", {}, base, put));
+    return row(L("摘要 API 地址", "Summary API URL"), h("div.voice-summary-input", {}, base, put));
   }
   function summaryEffort() {
     const supported = summaryModels.find(model => model.id === config.summary.model)?.reasoning_levels || [];
     const effort = config.summary.effort || "";
-    const choices = [["", "自动（最低）"], ...supported.map(level => [level, level])];
-    if (effort && !supported.includes(effort)) choices.push([effort, `${effort}（不可用）`]);
-    const select = h("select.voice-summary-effort", { disabled: busy, "aria-label": "摘要努力程度" });
+    const choices = [["", L("自动（最低）", "Auto (lowest)")], ...supported.map(level => [level, level])];
+    if (effort && !supported.includes(effort)) choices.push([effort, L(`${effort}（不可用）`, `${effort} (unavailable)`)]);
+    const select = h("select.voice-summary-effort", { disabled: busy, "aria-label": L("摘要努力程度", "Summary effort") });
     for (const [value, label] of choices)
       select.append(h("option", { value, selected: value === effort, disabled: Boolean(value) && !supported.includes(value) }, label));
     select.addEventListener("change", () => summarySave({ effort: select.value }));
-    return row("努力程度", select);
+    return row(L("努力程度", "Effort"), select);
   }
   function manualSummaryModel() {
     const fallback = summaryModels.some(item => item.id === config.summary.model) ? "" : config.summary.model;
-    const input = h("input", { value: drafts.model ?? fallback, placeholder: "或手填模型 ID", disabled: busy, "aria-label": "手填摘要模型 ID" });
+    const input = h("input", { value: drafts.model ?? fallback, placeholder: L("或手填模型 ID", "Or enter model ID"), disabled: busy, "aria-label": L("手填摘要模型 ID", "Custom summary model ID") });
     input.addEventListener("input", () => { drafts.model = input.value; });
-    const put = h("button", { type: "button", disabled: busy }, "使用");
+    const put = h("button", { type: "button", disabled: busy }, L("使用", "Use"));
     put.addEventListener("click", () => {
       if (!input.value.trim()) return;
       drafts.model = input.value.trim();
       summarySave({ model: drafts.model, ...(drafts.model === config.summary.model ? {} : { effort: "" }) });
     });
-    return row("摘要模型 ID", h("div.voice-summary-input", {}, input, put));
+    return row(L("摘要模型 ID", "Summary model ID"), h("div.voice-summary-input", {}, input, put));
   }
   function modelSettings() {
-    const enabled = h("input.switch-input", { type: "checkbox", checked: config.summary.enabled, disabled: busy, "aria-label": "使用摘要模型" });
+    const enabled = h("input.switch-input", { type: "checkbox", checked: config.summary.enabled, disabled: busy, "aria-label": L("使用摘要模型", "Use summary model") });
     enabled.addEventListener("change", () => summarySave({ enabled: enabled.checked }));
     const levelLabel = L("摘要详细程度", "Summary level");
     const langLabel = L("朗读语言", "Reading language");
     const summaryOff = !config.summary.enabled;
     const parts = [
-      row("使用摘要模型", enabled),
+      row(L("使用摘要模型", "Use summary model"), enabled),
       row(levelLabel, choiceButtons(levelLabel, config.summary.level, [
         ["short", L("简短", "Short")],
         ["standard", L("标准", "Standard")],
@@ -317,26 +319,26 @@
         ["zh", L("中文", "中文")],
         ["en", L("English", "English")],
       ], language => summarySave({ language }), summaryOff), summaryOff ? ".disabled" : ""),
-      row("摘要平台", summarySource()),
+      row(L("摘要平台", "Summary platform"), summarySource()),
     ];
     const provider = config.summary.provider;
-    if (provider === "custom") parts.push(summaryConnection(), keyRow("summary", "摘要"));
+    if (provider === "custom") parts.push(summaryConnection(), keyRow("summary", L("摘要", "Summary")));
     if (provider === "chatgpt") parts.push(chatgptAccount());
     if (summaryPlatform()) parts.push(keyRow(`summary:${provider}`, config.summary_platforms.find(p => p.id === provider)?.name));
-    const refresh = h("button.voice-refresh", { type: "button", disabled: busy || !config.enabled || !config.summary.enabled }, "刷新");
+    const refresh = h("button.voice-refresh", { type: "button", disabled: busy || !config.enabled || !config.summary.enabled }, L("刷新", "Refresh"));
     refresh.addEventListener("click", async () => {
       busy = true; render();
-      try { await loadSummaryModels(); status("摘要模型已刷新"); }
+      try { await loadSummaryModels(); status(L("摘要模型已刷新", "Summary models refreshed")); }
       catch (failure) { status(failure.message); }
       finally { busy = false; render(); }
     });
     const choices = summaryModels.map(model => ({ id: model.id, name: summaryModelLabel(model) }));
-    const select = picker("摘要模型", choices, config.summary.model, id => {
+    const select = picker(L("摘要模型", "Summary model"), choices, config.summary.model, id => {
       drafts.model = null; summarySave({ model: id, ...(id === config.summary.model ? {} : { effort: "" }) });
     });
-    parts.push(row("摘要模型", h("div.voice-summary-model", {}, select, refresh)), summaryEffort());
+    parts.push(row(L("摘要模型", "Summary model"), h("div.voice-summary-model", {}, select, refresh)), summaryEffort());
     if (provider !== "magpie") parts.push(manualSummaryModel());
-    return section("summary-model", "摘要模型设置", ...parts);
+    return section("summary-model", L("摘要模型设置", "Summary model settings"), ...parts);
   }
   function cacheRow() {
     const label = L("语音缓存", "Voice cache");
@@ -365,17 +367,17 @@
         value => summarySave({ prompt: value }), true)));
   }
   function persona(family, label) {
-    return section(`persona-${family}`, "人设",
-      promptEditor(`persona-${family}`, `${label}人设`, config.personas[family] || "", 500,
+    return section(`persona-${family}`, L("人设", "Persona"),
+      promptEditor(`persona-${family}`, L(`${label}人设`, `${label.trim()} persona`), config.personas[family] || "", 500,
         value => save({ personas: { ...config.personas, [family]: value } }), true));
   }
   function familySettings() {
     const table = h("div.voice-families", {}, h("div.voice-character", {},
       h("div.voice-family", {}, h("span"), h("span", {}, "boss")), persona("boss", "boss ")));
     Object.entries(Avatars.families).forEach(([family, [label]], index) => {
-      const button = h("button.voice-preview", { type: "button", disabled: busy || !config.enabled || !voices.length, "aria-label": `试听${label}音色` }, "试听");
+      const button = h("button.voice-preview", { type: "button", disabled: busy || !config.enabled || !voices.length, "aria-label": L(`试听${label}音色`, `Preview ${label} voice`) }, L("试听", "Preview"));
       button.addEventListener("click", () => preview(family, button));
-      const select = picker(`${label}音色`, voices, config.voices[family] || voices[index % voices.length]?.id,
+      const select = picker(L(`${label}音色`, `${label} voice`), voices, config.voices[family] || voices[index % voices.length]?.id,
         id => save({ voices: { ...config.voices, [family]: id } }));
       table.append(h("div.voice-character", {}, h("div.voice-family", {},
         art.head(art.character("", family), "idle"), h("span", {}, label), select, button), persona(family, label)));
@@ -384,18 +386,18 @@
   }
   function render() {
     if (!config) return;
-    const enabled = h("input.switch-input", { type: "checkbox", checked: config.enabled, disabled: busy, "aria-label": "语音播报" });
+    const enabled = h("input.switch-input", { type: "checkbox", checked: config.enabled, disabled: busy, "aria-label": L("语音播报", "Voice playback") });
     enabled.addEventListener("change", () => save({ enabled: enabled.checked }));
-    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": "新消息自动读" });
+    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": L("新消息自动读", "Auto-read new messages") });
     automatic.addEventListener("change", () => save({ auto_read: automatic.checked }));
-    const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": "点读后连播" });
+    const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": L("点读后连播", "Continue reading after click") });
     chained.addEventListener("change", () => save({ continue_read: chained.checked }));
     const scopeLabel = L("朗读哪些消息", "Messages to read");
     const codeLabel = L("代码和路径", "Code and paths");
     const parts = [
-      row("语音播报", enabled),
-      row("新消息自动读", automatic),
-      row("点读后连播", chained),
+      row(L("语音播报", "Voice playback"), enabled),
+      row(L("新消息自动读", "Auto-read new messages"), automatic),
+      row(L("点读后连播", "Continue reading after click"), chained),
       row(scopeLabel, segments(scopeLabel, "read_scope", [
         ["all", L("全部", "All")],
         ["members", L("只读员工的回答", "Employee replies only")],
@@ -406,17 +408,18 @@
         ["skip", L("跳过不读", "Skip")],
         ["mention", L("说“这里有一段代码”", "Say “Here is a code block”")],
       ])),
-      row("引擎", segments("语音引擎", "engine", [["elevenlabs", "ElevenLabs"], ["minimax", "MiniMax"]])),
+      row(L("引擎", "Engine"), segments(L("语音引擎", "Voice engine"), "engine", [["elevenlabs", "ElevenLabs"], ["minimax", "MiniMax"]])),
       keyRow(),
     ];
-    if (config.engine === "minimax") parts.push(row("地区", segments("MiniMax 地区", "minimax_region", [["cn", "国内"], ["global", "海外"]])));
-    parts.push(row("语音模型", picker("语音模型", models, config.model,
+    if (config.engine === "minimax") parts.push(row(L("地区", "Region"), segments(L("MiniMax 地区", "MiniMax region"), "minimax_region", [["cn", L("国内", "China")], ["global", L("海外", "Global")]])));
+    parts.push(row(L("语音模型", "Voice model"), picker(L("语音模型", "Voice model"), models, config.model,
       id => save({ models: { ...config.models, [config.engine]: id } }))));
     parts.push(cacheRow());
     parts.push(modelSettings());
     parts.push(h("p.voice-cloud", {}, config.summary.enabled
-      ? "回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。" : "回答内容会发送给所选语音引擎。"));
-    root.replaceChildren(...parts, h("h2.voice-group", {}, "角色"), familySettings(), advancedSettings());
+      ? L("回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。", "Replies are sent to the selected summary platform; summary text is sent to the selected voice engine.")
+      : L("回答内容会发送给所选语音引擎。", "Replies are sent to the selected voice engine.")));
+    root.replaceChildren(...parts, h("h2.voice-group", {}, L("角色", "Characters")), familySettings(), advancedSettings());
   }
   // The settings work as soon as they are read; catalogs fill their pickers when they arrive.
   async function load() {
@@ -429,8 +432,9 @@
     }
     catch (failure) { status(failure.message); return; }
     finally { busy = false; render(); }
-    const result = await loadCatalogs("语音设置已加载");
-    if (result !== "语音设置已加载") status(result);
+    const loadedMsg = L("语音设置已加载", "Voice settings loaded");
+    const result = await loadCatalogs(loadedMsg);
+    if (result !== loadedMsg) status(result);
     // Redrawing would take the caret from a field being typed in; wait until it is left.
     const field = root.contains(document.activeElement) && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName) ? document.activeElement : null;
     if (field) field.addEventListener("blur", render, { once: true });

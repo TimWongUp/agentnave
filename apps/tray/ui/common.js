@@ -22,6 +22,16 @@
   // it when serving the page, including the system language, before any text is built.
   const root = document.documentElement;
   const L = (zh, en) => (root.lang.startsWith("en") ? en : zh);
+  if (root.lang.startsWith("en")) {
+    document.querySelectorAll("[data-en]").forEach((node) => {
+      if (node.tagName === "TITLE") document.title = node.dataset.en;
+      const text = [...node.childNodes].find((n) => n.nodeType === 3 && n.nodeValue.trim());
+      if (text) text.nodeValue = node.dataset.en;
+      else if (!node.children.length) node.textContent = node.dataset.en;
+    });
+    document.querySelectorAll("[data-en-title]").forEach((node) => { node.title = node.dataset.enTitle; });
+    document.querySelectorAll("[data-en-label]").forEach((node) => node.setAttribute("aria-label", node.dataset.enLabel));
+  }
 
   // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
   // on Windows, whose WebView2 has no custom schemes. Both are the App; a browser preview is neither.
@@ -40,11 +50,11 @@
   // ---- vocabulary ---------------------------------------------------------------------
   // [label, tone]; tone selects one of --run --review --bad --done --idle.
   const MEMBER = {
-    running: ["进行中", "run"], review: ["待审核", "review"], succeeded: ["已回复", "done"],
-    failed: ["失败", "bad"], blocked: ["受阻", "bad"], cancelled: ["已取消", "idle"],
-    interrupted: ["已中断", "bad"], pending: ["等待中", "idle"],
+    running: [L("进行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], succeeded: [L("已回复", "Replied"), "done"],
+    failed: [L("失败", "Failed"), "bad"], blocked: [L("受阻", "Blocked"), "bad"], cancelled: [L("已取消", "Cancelled"), "idle"],
+    interrupted: [L("已中断", "Interrupted"), "bad"], pending: [L("等待中", "Pending"), "idle"],
   };
-  const GROUP = { running: ["运行中", "run"], review: ["待审核", "review"], failed: ["有失败", "bad"], idle: ["空闲", "idle"] };
+  const GROUP = { running: [L("运行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], failed: [L("有失败", "Failed"), "bad"], idle: [L("空闲", "Idle"), "idle"] };
   const pick = (table, status) => table[status] || [status || "—", "idle"];
   const urgent = (status) => status === "running" || status === "review";
   // What a desk is doing, in one word and tone. A desk in a meeting and a desk chatting privately are
@@ -53,13 +63,13 @@
     const privRun = d.private.running > 0;
     const inReview = d.meeting.status === "review";
     if (d.status === "running") {
-      if (room) return { word: `会议中${inReview ? " · 待审核" : ""} · ${room.title}`, tone: inReview && !privRun ? "review" : "run", working: !inReview || privRun };
-      if (privRun) return { word: "私聊处理中", tone: "run", working: true };
-      return { word: "待审核", tone: "review", working: false };
+      if (room) return { word: `${L("会议中", "In meeting")}${inReview ? L(" · 待审核", " · Review") : ""} · ${room.title}`, tone: inReview && !privRun ? "review" : "run", working: !inReview || privRun };
+      if (privRun) return { word: L("私聊处理中", "In private chat"), tone: "run", working: true };
+      return { word: L("待审核", "Review"), tone: "review", working: false };
     }
-    if (d.status === "pending") return { word: "等待中", tone: "idle", working: false };
-    if (d.status === "failed") return { word: "上次失败", tone: "bad", working: false };
-    return { word: "空闲", tone: "idle", working: false };
+    if (d.status === "pending") return { word: L("等待中", "Pending"), tone: "idle", working: false };
+    if (d.status === "failed") return { word: L("上次失败", "Last failed"), tone: "bad", working: false };
+    return { word: L("空闲", "Idle"), tone: "idle", working: false };
   }
 
   function avatar(provider, model, cls) {
@@ -74,19 +84,19 @@
   };
   function relTime(iso) {
     const s = Math.max(0, (Date.now() - at(iso)) / 1000);
-    if (s < 45) return "刚刚";
-    if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
-    if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
+    if (s < 45) return L("刚刚", "just now");
+    if (s < 3600) return L(`${Math.round(s / 60)} 分钟前`, `${Math.round(s / 60)}m ago`);
+    if (s < 86400) return L(`${Math.floor(s / 3600)} 小时前`, `${Math.floor(s / 3600)}h ago`);
     const d = new Date(at(iso));
     return `${d.getMonth() + 1}/${d.getDate()}`;
   }
-  const clock = (iso) => new Date(at(iso)).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const fullTime = (iso) => new Date(at(iso)).toLocaleString("zh-CN", { hour12: false });
+  const clock = (iso) => new Date(at(iso)).toLocaleTimeString(L("zh-CN", "en-US"), { hour: "2-digit", minute: "2-digit", hour12: false });
+  const fullTime = (iso) => new Date(at(iso)).toLocaleString(L("zh-CN", "en-US"), { hour12: false });
   function dayLabel(iso) {
     const d = new Date(at(iso));
     const today = new Date();
     const diff = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
-    return diff === 0 ? "今天" : diff === 1 ? "昨天" : `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+    return diff === 0 ? L("今天", "Today") : diff === 1 ? L("昨天", "Yesterday") : L(`${d.getMonth() + 1} 月 ${d.getDate()} 日`, d.toLocaleDateString("en-US", { month: "short", day: "numeric" }));
   }
 
   // ---- in-place DOM updates -----------------------------------------------------------
@@ -173,10 +183,10 @@
     // Each glyph fills its 10-unit box (the bar is 48px, half again the system's 32px title bar):
     // a dash as wide as the system's, a square the same measure, and a cross that reads at arm's
     // length instead of the specks a 10px box draws at this height.
-    const minimize = button("win-min", "最小化", glyph("M1 5h8"));
-    const maximize = button("win-max", "最大化",
+    const minimize = button("win-min", L("最小化", "Minimize"), glyph("M1 5h8"));
+    const maximize = button("win-max", L("最大化", "Maximize"),
       glyph("M1.5 1.5h7v7h-7z", "maximize"), glyph("M1.5 3.5h5v5h-5zM3.5 3.5V1.5h5v5H6.5", "restore"));
-    const close = button("win-close", "关闭", glyph("M1.5 1.5l7 7M8.5 1.5l-7 7"));
+    const close = button("win-close", L("关闭", "Close"), glyph("M1.5 1.5l7 7M8.5 1.5l-7 7"));
     minimize.addEventListener("click", () => act("/app/window/minimize"));
     maximize.addEventListener("click", () => act("/app/window/zoom"));
     close.addEventListener("click", () => act("/app/window/close"));
@@ -347,7 +357,7 @@
   // Antigravity has no effort option: each model it lists ends in its level, as in gemini-4-argon-high.
   // Other CLIs' names keep their ending, since a -max there is part of the model's name.
   const deskParts = (d) => {
-    const name = modelName(d.display_model || d.model) || "CLI 默认模型";
+    const name = modelName(d.display_model || d.model) || L("CLI 默认模型", "CLI default model");
     const level = d.provider === "antigravity" ? name.match(/-(low|medium|high)$/) : null;
     return { name: level ? name.slice(0, level.index) : name, effort: d.effort || level?.[1] || "" };
   };
@@ -358,7 +368,7 @@
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
   // The title a reader sees: a workspace waiting for a new boss says so until one takes it over.
-  const shownName = (g) => (g.handover === "pending" ? `「待接手」${chatName(g)}` : chatName(g));
+  const shownName = (g) => (g.handover === "pending" ? L(`「待接手」${chatName(g)}`, `[Handover] ${chatName(g)}`) : chatName(g));
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
   // Cut long labels to n characters (by code point) with an ellipsis.
   const clip = (text, n) => { const chars = [...text]; return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text; };
@@ -493,7 +503,7 @@
 })();
 
 (function () {
-  const { h, load, href, setText } = AN;
+  const { h, L, load, href, setText } = AN;
   const mock = () =>
     window.AgentNaveMock && window.AgentNaveMock.enabled()
       ? window.AgentNaveMock
@@ -521,43 +531,43 @@
   // The install runs for about a minute: POST returns at once, progress is /app/status.service.state.
   async function installService() {
     const started = await post("/app/service/install", {});
-    if (!started.ok) throw new Error(started.message || "已有安装正在进行");
+    if (!started.ok) throw new Error(started.message || L("已有安装正在进行", "An installation is already in progress"));
     for (let i = 0; i < 300; i++) {
       await sleep(800);
       // A closed window stays loaded; check again once it is shown, the install keeps going.
       if (document.hidden) await new Promise((resolve) => document.addEventListener("visibilitychange", resolve, { once: true }));
       const state = (await load("/app/status")).service;
       if (state?.state === "failed")
-        throw new Error(state.error || "安装失败，请重试。");
+        throw new Error(state.error || L("安装失败，请重试。", "Installation failed, please try again."));
       if (state?.state === "done") return;
     }
-    throw new Error("安装超时，请稍后到“设置 → 版本与更新”查看。");
+    throw new Error(L("安装超时，请稍后到“设置 → 版本与更新”查看。", "Installation timed out. Check Settings → About later."));
   }
 
   // ---- 开始使用 -----------------------------------------------------------------------------
   const TITLES = {
-    service: "安装本机服务",
-    host: "接入一个 boss 应用",
-    members: "设置员工",
-    try: "在 boss 里派一次任务",
+    service: L("安装本机服务", "Install local service"),
+    host: L("接入一个 boss 应用", "Connect a boss app"),
+    members: L("设置员工", "Set up employees"),
+    try: L("在 boss 里派一次任务", "Dispatch a task from boss"),
   };
   const FALLBACK = {
-    service: "boss 要通过它才能启动 AgentNave",
-    host: "在设置里一键接入已检测到的应用",
-    members: "选择哪些 CLI 与模型可以当员工",
-    try: "在 boss 里说：用 agentnave 让几位员工各答一遍",
+    service: L("boss 要通过它才能启动 AgentNave", "Required for boss to launch AgentNave"),
+    host: L("在设置里一键接入已检测到的应用", "Connect detected apps with one click in Settings"),
+    members: L("选择哪些 CLI 与模型可以当员工", "Choose which CLIs and models work as employees"),
+    try: L("在 boss 里说：用 agentnave 让几位员工各答一遍", "In boss, say: use agentnave to have a few employees each answer"),
   };
-  const SAMPLE = "用 agentnave 让两位员工各自回答一遍：这个仓库是做什么的？";
+  const SAMPLE = L("用 agentnave 让两位员工各自回答一遍：这个仓库是做什么的？", "Use agentnave to have two employees each answer: what does this repo do?");
   // First pending step -> its one primary action. `to` is a real route; `run` is an in-place action.
   const ACTION = {
     service: {
-      label: "安装本机服务",
-      busy: "安装中，约需一分钟…",
+      label: L("安装本机服务", "Install local service"),
+      busy: L("安装中，约需一分钟…", "Installing, about a minute…"),
       run: installService,
     },
-    host: { label: "去接入 boss", to: "/settings/#hosts" },
-    members: { label: "去设置员工", to: "/settings/#members" },
-    try: { label: "复制示例指令", copy: SAMPLE },
+    host: { label: L("去接入 boss", "Connect boss"), to: "/settings/#hosts" },
+    members: { label: L("去设置员工", "Set up employees"), to: "/settings/#members" },
+    try: { label: L("复制示例指令", "Copy sample prompt"), copy: SAMPLE },
   };
 
   function onboarding({ variant = "compact", onChange } = {}) {
@@ -603,8 +613,8 @@
         "button.ob-x",
         {
           type: "button",
-          "aria-label": "关闭“开始使用”",
-          title: "关闭后不再显示",
+          "aria-label": L("关闭“开始使用”", "Close Getting started"),
+          title: L("关闭后不再显示", "Hide Getting started"),
         },
         "×",
       );
@@ -615,11 +625,11 @@
         h(
           "h2.ob-title",
           { id: "ob-title" },
-          celebrating ? "都准备好了" : "开始使用",
+          celebrating ? L("都准备好了", "All set") : L("开始使用", "Getting started"),
         ),
         h(
           "span.ob-count",
-          { "aria-label": `已完成 ${done} 步，共 ${steps.length} 步` },
+          { "aria-label": L(`已完成 ${done} 步，共 ${steps.length} 步`, `${done} of ${steps.length} steps completed`) },
           `${done}/${steps.length}`,
         ),
         dismiss,
@@ -632,7 +642,7 @@
       const kids = [head, bar];
       if (celebrating) {
         kids.push(
-          h("p.ob-lead", {}, "接入和设置都完成了，这张卡片几秒后自动收起。"),
+          h("p.ob-lead", {}, L("接入和设置都完成了，这张卡片几秒后自动收起。", "Connection and setup are complete. This card will close in a few seconds.")),
         );
       } else {
         if (variant === "full")
@@ -640,7 +650,7 @@
             h(
               "p.ob-lead",
               {},
-              "完成这几步，办公室里就会出现 boss、工位和会议室。",
+              L("完成这几步，办公室里就会出现 boss、工位和会议室。", "Complete these steps to see boss, desks, and meeting rooms in the office."),
             ),
           );
         kids.push(
@@ -671,10 +681,10 @@
               "span.sr-only",
               {},
               step.done
-                ? "（已完成）"
+                ? L("（已完成）", " (completed)")
                 : isCurrent
-                  ? "（当前步骤）"
-                  : "（未完成）",
+                  ? L("（当前步骤）", " (current step)")
+                  : L("（未完成）", " (incomplete)"),
             ),
           ),
           detail && h("span.ob-detail", {}, detail),
@@ -703,18 +713,18 @@
       const btn = h(
         "button.ob-btn" + (pending ? ".pending" : ""),
         { type: "button", disabled: pending },
-        pending ? [h("i.ob-spin"), act.busy] : error && error.step === id && act.run ? "重试" : act.label,
+        pending ? [h("i.ob-spin"), act.busy] : error && error.step === id && act.run ? L("重试", "Retry") : act.label,
       );
       btn.addEventListener("click", async () => {
         if (act.copy) {
           try {
             await navigator.clipboard.writeText(act.copy);
           } catch {
-            setText(btn, "复制失败");
+            setText(btn, L("复制失败", "Copy failed"));
             setTimeout(() => setText(btn, act.label), 2000);
             return;
           }
-          setText(btn, "已复制");
+          setText(btn, L("已复制", "Copied"));
           setTimeout(() => setText(btn, act.label), 2000);
           return;
         }
@@ -724,7 +734,7 @@
         try {
           await act.run();
         } catch (e) {
-          error = { step: id, message: `${e.message || "操作失败"}` };
+          error = { step: id, message: `${e.message || L("操作失败", "Action failed")}` };
         }
         busy = null;
         await refresh();
@@ -739,7 +749,7 @@
       } catch {
         error = {
           step: (ctrl.data.steps.find((s) => !s.done) || {}).id,
-          message: "没能关闭，请稍后再试。",
+          message: L("没能关闭，请稍后再试。", "Could not close. Please try again later."),
         };
       }
       render();
@@ -784,7 +794,7 @@
 // update already running shows its progress. The release notes are plain text set with
 // textContent, never as HTML.
 (function () {
-  const { h, load, post } = AN;
+  const { h, L, load, post } = AN;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let dialog = null;
   let running = false;
@@ -833,9 +843,16 @@
   const close = () => dialog?.close();
   const done = (status) => window.dispatchEvent(new CustomEvent("agentnave:status", { detail: status }));
 
-  const STEPS = [["download", "下载 App 更新包"], ["service", "更新本机服务"], ["app", "安装 App"], ["restart", "重启并更新 Skill"]];
+  const STEPS = [
+    ["download", L("下载 App 更新包", "Download app update")],
+    ["service", L("更新本机服务", "Update local service")],
+    ["app", L("安装 App", "Install app")],
+    ["restart", L("重启并更新 Skill", "Restart and update skills")],
+  ];
   const mb = (bytes) => (bytes / 1048576).toFixed(1);
-  const took = (seconds) => seconds >= 60 ? `已用 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `已用 ${seconds} 秒`;
+  const took = (seconds) => seconds >= 60
+    ? L(`已用 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`, `${Math.floor(seconds / 60)}m ${seconds % 60}s elapsed`)
+    : L(`已用 ${seconds} 秒`, `${seconds}s elapsed`);
   function stepList(update, elapsed, failed) {
     const at = STEPS.findIndex(([key]) => key === update.step);
     return h("ol.upd-steps", {}, ...STEPS.map(([key, label], i) => {
@@ -845,30 +862,32 @@
       const known = update.total > 0;
       const percent = known ? Math.min(100, Math.floor(update.downloaded / update.total * 100)) : 0;
       return h(`li.now${update.downloaded > 0 ? ".told" : ""}`, {}, label, update.downloaded > 0 && h("span.upd-detail", {}, known
-        ? `${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`
-        : `已下载 ${mb(update.downloaded)} MB`),
+        ? L(`${percent}%（${mb(update.downloaded)} / ${mb(update.total)} MB）`, `${percent}% (${mb(update.downloaded)} / ${mb(update.total)} MB)`)
+        : L(`已下载 ${mb(update.downloaded)} MB`, `${mb(update.downloaded)} MB downloaded`)),
         known && h("div.upd-bar", {}, h("i", { style: `width:${percent}%` })));
     }));
   }
   function progress(status) {
     const update = status.update;
-    show(`正在更新到 v${update.version}`, [
+    show(L(`正在更新到 v${update.version}`, `Updating to v${update.version}`), [
       stepList(update, status.elapsed),
-      h("p.upd-note", {}, "正在运行的任务不受影响。"),
+      h("p.upd-note", {}, L("正在运行的任务不受影响。", "Running tasks are not affected.")),
     ], []);
   }
   function serviceProgress(status) {
-    show("正在升级本机服务", [
-      h("p.upd-p", {}, status.elapsed >= 3 ? `约需一分钟，${took(status.elapsed)}。` : "约需一分钟。"),
-      h("p.upd-note", {}, "正在运行的任务不受影响。"),
+    show(L("正在升级本机服务", "Upgrading local service"), [
+      h("p.upd-p", {}, status.elapsed >= 3
+        ? L(`约需一分钟，${took(status.elapsed)}。`, `About a minute, ${took(status.elapsed)}.`)
+        : L("约需一分钟。", "About a minute.")),
+      h("p.upd-note", {}, L("正在运行的任务不受影响。", "Running tasks are not affected.")),
     ], []);
   }
 
   function failure(update) {
-    show("更新没有完成", [
+    show(L("更新没有完成", "Update incomplete"), [
       stepList(update, 0, true),
-      h("p.upd-p.upd-error", {}, update.error || "更新失败"),
-    ], [["关闭", close], ["重试", () => apply(update.version, false), true]]);
+      h("p.upd-p.upd-error", {}, update.error || L("更新失败", "Update failed")),
+    ], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => apply(update.version, false), true]]);
   }
 
   // Report what a started update does until it ends; on a real App update the restart ends it.
@@ -883,10 +902,10 @@
         if (!serviceOnly && update?.state === "failed") {
           running = false;
           if (update.step) return failure(update);
-          throw new Error(update.error || "更新失败");
+          throw new Error(update.error || L("更新失败", "Update failed"));
         }
         if (serviceOnly) {
-          if (service?.state === "failed") throw new Error(service.error || "升级本机服务失败");
+          if (service?.state === "failed") throw new Error(service.error || L("升级本机服务失败", "Failed to upgrade local service"));
           if (!["upgrading", "installing"].includes(service?.state)) break;
           serviceProgress(status);
         } else if (update?.state === "installing") {
@@ -899,10 +918,10 @@
       }
       running = false;
       // The App restarts before this on a real update; only the preview's mock gets here.
-      show(serviceOnly ? "本机服务已升级" : `已更新到 v${version}`, [h("p.upd-p", {}, "已切换到新版本，无需重连。")], [["好", close, true]]);
+      show(serviceOnly ? L("本机服务已升级", "Local service upgraded") : L(`已更新到 v${version}`, `Updated to v${version}`), [h("p.upd-p", {}, L("已切换到新版本，无需重连。", "Switched to the new version; no reconnection needed."))], [[L("好", "OK"), close, true]]);
     } catch (error) {
       running = false;
-      show("更新没有完成", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重新检查", () => run(true), true]]);
+      show(L("更新没有完成", "Update incomplete"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重新检查", "Check again"), () => run(true), true]]);
     }
   }
 
@@ -912,11 +931,11 @@
       if (serviceOnly) serviceProgress({});
       else progress({ update: { version, step: "download" } });
       const status = await post(serviceOnly ? "/app/update/apply?service=1" : "/app/update/apply");
-      if (!status.started) throw new Error("另一项检查或更新正在进行，请稍后重试。");
+      if (!status.started) throw new Error(L("另一项检查或更新正在进行，请稍后重试。", "Another check or update is in progress. Please try again later."));
       return follow(status, serviceOnly);
     } catch (error) {
       running = false;
-      show("更新没有完成", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重新检查", () => run(true), true]]);
+      show(L("更新没有完成", "Update incomplete"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重新检查", "Check again"), () => run(true), true]]);
     }
   }
 
@@ -937,12 +956,14 @@
     // Only a found update can stay if this check fails, so only that one may fail silently.
     const found = status?.update?.state === "available";
     if (recheck || !status || !usable(status)) {
-      const reason = found ? "上次检查已超过一天，先确认有没有更新的版本…" : "正在检查最新版本…";
-      show("检查更新", [h("p.upd-p", {}, reason)], [["取消", close]]);
+      const reason = found
+        ? L("上次检查已超过一天，先确认有没有更新的版本…", "Last checked over a day ago; checking for a newer version first…")
+        : L("正在检查最新版本…", "Checking for the latest version…");
+      show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), close]]);
       try {
         status = await post(found ? "/app/update/check?quiet=1" : "/app/update/check");
       } catch (error) {
-        return show("检查更新失败", [h("p.upd-p.upd-error", {}, error.message)], [["关闭", close], ["重试", () => run(true), true]]);
+        return show(L("检查更新失败", "Update check failed"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => run(true), true]]);
       }
     }
     done(status);
@@ -950,30 +971,30 @@
     const service = status.service;
     if (update?.state === "installing") return follow(status, false);
     if (update?.state === "failed")
-      return show("检查更新失败", [h("p.upd-p.upd-error", {}, update.error || "请检查网络后重试")], [["关闭", close], ["重试", () => run(true), true]]);
+      return show(L("检查更新失败", "Update check failed"), [h("p.upd-p.upd-error", {}, update.error || L("请检查网络后重试", "Please check your network and try again"))], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => run(true), true]]);
     if (update?.state === "available") {
       const items = update.notes?.items || [];
       const link = update.notes?.link;
       const notes = [
         ...(items.length
           ? items.map((item) => h("section.upd-ver", {}, h("h3.upd-v", {}, `v${item.version}`), ...notesNode(item.notes)))
-          : [h("p.upd-p", {}, "这个版本没有附带更新说明。")]),
+          : [h("p.upd-p", {}, L("这个版本没有附带更新说明。", "No release notes included for this version."))]),
         // With items, the link covers the releases older than those the manifest carries.
-        ...(link ? [h("a.upd-link", { href: link, target: "_blank", rel: "noopener" }, items.length ? "更早版本的更新说明见 GitHub" : "在 GitHub 查看更新说明")] : []),
+        ...(link ? [h("a.upd-link", { href: link, target: "_blank", rel: "noopener" }, items.length ? L("更早版本的更新说明见 GitHub", "Older release notes on GitHub") : L("在 GitHub 查看更新说明", "View release notes on GitHub"))] : []),
       ];
-      return show(`有新版本 v${update.version}`, [
-        h("p.upd-sub", {}, `当前 v${status.version}`),
+      return show(L(`有新版本 v${update.version}`, `New version v${update.version}`), [
+        h("p.upd-sub", {}, L(`当前 v${status.version}`, `Current v${status.version}`)),
         h("div.upd-notes", {}, ...notes),
-        h("p.upd-note", {}, "更新时先升级本机服务，再安装 App 并自动重启；服务升级失败就不装 App。"),
-      ], [["稍后", close], ["立即更新", () => apply(update.version, false), true]]);
+        h("p.upd-note", {}, L("更新时先升级本机服务，再安装 App 并自动重启；服务升级失败就不装 App。", "Upgrades the local service first, then installs the app and restarts. If the service upgrade fails, the app will not be installed.")),
+      ], [[L("稍后", "Later"), close], [L("立即更新", "Update now"), () => apply(update.version, false), true]]);
     }
     if (service?.state === "failed")
-      return show("升级本机服务失败", [h("p.upd-p.upd-error", {}, service.error || "升级本机服务失败")],
-        [["关闭", close], ["重试升级", () => apply(status.version, true), true]]);
+      return show(L("升级本机服务失败", "Service upgrade failed"), [h("p.upd-p.upd-error", {}, service.error || L("升级本机服务失败", "Failed to upgrade local service"))],
+        [[L("关闭", "Close"), close], [L("重试升级", "Retry upgrade"), () => apply(status.version, true), true]]);
     if (service?.state === "outdated")
-      return show("升级本机服务", [h("p.upd-p", {}, `本机服务 v${service.version} 比 App v${status.version} 旧。升级约需一分钟，正在运行的任务不受影响。`)],
-        [["稍后", close], ["升级", () => apply(status.version, true), true]]);
-    show("已是最新版本", [h("p.upd-p", {}, `App 与本机服务都是 v${status.version}。`)], [["好", close, true]]);
+      return show(L("升级本机服务", "Upgrade local service"), [h("p.upd-p", {}, L(`本机服务 v${service.version} 比 App v${status.version} 旧。升级约需一分钟，正在运行的任务不受影响。`, `Local service v${service.version} is older than app v${status.version}. Upgrading takes about a minute; running tasks are not affected.`))],
+        [[L("稍后", "Later"), close], [L("升级", "Upgrade"), () => apply(status.version, true), true]]);
+    show(L("已是最新版本", "Up to date"), [h("p.upd-p", {}, L(`App 与本机服务都是 v${status.version}。`, `Both app and local service are on v${status.version}.`))], [[L("好", "OK"), close, true]]);
   }
   AN.updateFlow = run;
   // The menu's "检查更新" and the panel open the main window with ?check-update.
@@ -990,7 +1011,7 @@
 // or for a while after an update; a click runs the update flow. The menu bar panel is too narrow
 // for its dialog and opens the main window's instead.
 (function () {
-  const { h, load } = AN;
+  const { h, L, load } = AN;
   const end = document.querySelector("header.bar .bar-end, header.top .top-end");
   if (!end) return;
   const button = h("button.bar-update", { type: "button", hidden: true });
@@ -1008,11 +1029,11 @@
     const updated = !busy && !found && status?.updated;
     button.hidden = !busy && !found && !updated;
     button.classList.toggle("updated", Boolean(updated));
-    button.textContent = busy ? `更新中${percent(status.update) || "…"}`
-      : updated ? `已更新到 v${status.updated}`
-      : update === "available" ? `↑ ${short ? "" : "更新到 "}v${status.update.version}`
-      : short ? "↑ 升级服务" : "↑ 升级本机服务";
-    button.title = busy ? "查看更新进度" : updated ? "点此查看是否还有更新" : "先看看更新了什么，确认后再更新";
+    button.textContent = busy ? L(`更新中${percent(status.update) || "…"}`, `Updating${percent(status.update) || "…"}`)
+      : updated ? L(`已更新到 v${status.updated}`, `Updated to v${status.updated}`)
+      : update === "available" ? `↑ ${short ? "" : L("更新到 ", "Update to ")}v${status.update.version}`
+      : short ? L("↑ 升级服务", "↑ Upgrade") : L("↑ 升级本机服务", "↑ Upgrade service");
+    button.title = busy ? L("查看更新进度", "View update progress") : updated ? L("点此查看是否还有更新", "Check for more updates") : L("先看看更新了什么，确认后再更新", "Review release notes before updating");
   }
   async function refresh() {
     if (document.hidden) return;
