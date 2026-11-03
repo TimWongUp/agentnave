@@ -6,7 +6,7 @@
   const root = document.getElementById("update-auto-check");
   if (!root) return;
   const notice = document.getElementById("notice");
-  const label = L("自动检查更新", "Check for updates automatically");
+  const label = L("每天自动检查更新", "Check for updates daily");
   let saved = true; // No setting yet means on, like the App before this choice existed.
   let busy = true;
   const input = h("input.switch-input", {
@@ -46,8 +46,8 @@
     try {
       saved = chosen(await preferences({ updates: { auto_check: wanted } }));
       say(saved
-        ? L("已开启自动检查更新", "Automatic update checks are on")
-        : L("已关闭自动检查更新；仍可手动检查", "Automatic update checks are off; you can still check manually"));
+        ? L("已开启每天自动检查更新", "Daily update checks are on")
+        : L("已关闭每天自动检查更新；仍可手动检查", "Daily update checks are off; you can still check manually"));
     } catch (failure) {
       // Show the saved choice again, and say why the click did not hold.
       say(failure.message, true);
