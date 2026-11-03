@@ -5,7 +5,8 @@
 // servers, so conversations in use, running or awaiting review are kept and reported.
 // Loaded before chat.js, which calls it; it reaches chat.js's globals (state, go, refresh,
 // renderList, openScope) only from event handlers, once both scripts have run.
-const Actions = (() => {
+const Actions = {};
+{
   const { h, $, L, load, chatName } = AN;
   const picked = new Set(); // workspace ids picked for a batch action
   let anchor = null; // the last workspace clicked, where a Shift range starts
@@ -393,5 +394,5 @@ const Actions = (() => {
 
   $("cleanup").addEventListener("click", cleanup);
 
-  return { picked, pick, workspaceMenu, roomMenu };
-})();
+  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu });
+}

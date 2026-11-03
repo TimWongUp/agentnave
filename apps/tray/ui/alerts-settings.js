@@ -1,5 +1,5 @@
 "use strict";
-(function () {
+{
   const { h, $, L, load, post } = AN;
   const root = $("alerts-settings");
   let data = null;
@@ -174,4 +174,4 @@
   addEventListener("hashchange", () => visible() && refresh());
   window.AgentNaveAlertsSettings = { load: refresh };
   if (!$("pane-members")?.hidden) void refresh();
-})();
+}

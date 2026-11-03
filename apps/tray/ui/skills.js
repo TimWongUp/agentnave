@@ -1,5 +1,5 @@
 "use strict";
-(function () {
+{
 "use strict";
 // Settings -> 高级 -> 技能. Optional Skills from GET /app/skills, switched per host with POST
 // /app/hosts/skill when 保存设置 is pressed; until then a picked switch only sits in S.want.
@@ -130,4 +130,4 @@ const visible = () => !$("pane-advanced").hidden && !document.hidden;
 document.addEventListener("visibilitychange", () => visible() && refresh());
 addEventListener("focus", () => visible() && refresh());
 if (!$("pane-advanced").hidden) refresh();
-})();
+}

@@ -1,5 +1,5 @@
 "use strict";
-(function () {
+{
   const { h, art, L } = AN;
   const root = document.getElementById("voice-settings");
   let config = null, voices = [], models = [], summaryModels = [], cacheBytes = 0, busy = false, clearingCache = false, loaded = false, audio = null, audioUrl = null, controller = null;
@@ -447,4 +447,4 @@
     if (next && JSON.stringify(next) !== JSON.stringify(config)) void load();
   });
   window.AgentNaveVoiceSettings = { load };
-})();
+}

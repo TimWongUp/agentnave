@@ -7,7 +7,6 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -93,22 +92,16 @@ pub(super) fn probe(context: &Context) -> Shell {
     }
     let mut child = command.spawn().map_err(|_| "无法启动登录 shell")?;
     let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) => return Err("登录 shell 探测失败".into()),
-            Ok(None) if started.elapsed() < Duration::from_secs(3) => {
-                thread::sleep(Duration::from_millis(15))
-            }
-            _ => {
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("登录 shell 探测超时，根目录尚未确认".into());
-            }
+    match crate::process::wait(
+        &mut child,
+        || started.elapsed() < Duration::from_secs(3),
+        Duration::from_millis(15),
+    ) {
+        Ok(Some(status)) if status.success() => {}
+        Ok(Some(_)) => return Err("登录 shell 探测失败".into()),
+        _ => {
+            crate::process::stop(&mut child, true);
+            return Err("登录 shell 探测超时，根目录尚未确认".into());
         }
     }
     use std::io::{Seek, SeekFrom};

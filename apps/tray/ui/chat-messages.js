@@ -1,0 +1,407 @@
+"use strict";
+function inline(parent, text) {
+  let last = 0;
+  for (const m of text.matchAll(/`[^`\n]+`|\*\*[^*\n]+\*\*/g)) {
+    if (m.index > last) parent.append(text.slice(last, m.index));
+    parent.append(
+      m[0][0] === "`"
+        ? h("code", {}, m[0].slice(1, -1))
+        : h("strong", {}, m[0].slice(2, -2)),
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parent.append(text.slice(last));
+  return parent;
+}
+function renderMarkdown(root, text) {
+  const raw = String(text || "").trim();
+  const candidate = raw.replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, "$1");
+  if (/^[\[{]/.test(candidate)) {
+    try {
+      JSON.parse(candidate);
+      root.replaceChildren(h("pre", {}, h("code", {}, candidate)));
+      return;
+    } catch {
+      /* Incomplete JSON remains ordinary message content. */
+    }
+  }
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n");
+  const out = [];
+  let para = [],
+    list = null;
+  const flush = () => {
+    if (para.length) out.push(inline(h("p"), para.join("\n")));
+    para = [];
+    list = null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m;
+    if (/^\s*```/.test(line)) {
+      flush();
+      const code = [];
+      while (++i < lines.length && !/^\s*```/.test(lines[i]))
+        code.push(lines[i]);
+      out.push(h("pre", {}, h("code", {}, code.join("\n"))));
+    } else if ((m = /^\s{0,3}#{1,6}\s+(.*)$/.exec(line))) {
+      flush();
+      out.push(inline(h("p.md-h"), m[1]));
+    } else if ((m = /^\s*([-*]|\d+\.)\s+(.*)$/.exec(line))) {
+      const ordered = /\d/.test(m[1]);
+      if (!list || list.ordered !== ordered) {
+        flush();
+        list = { ordered, node: h(ordered ? "ol" : "ul") };
+        out.push(list.node);
+      }
+      list.node.append(inline(h("li"), m[2]));
+    } else if (!line.trim()) flush();
+    else {
+      if (list) list = null;
+      para.push(line);
+    }
+  }
+  flush();
+  root.replaceChildren(...out);
+}
+
+// ---------------------------------------------------------------- reading a message
+// ctx = lookup tables of the payload being rendered (see contextOf).
+const isBoss = (m) => m.speaker?.role === "manager";
+function speakerDesk(m, ctx) {
+  return m.desk && ctx.desks.get(m.desk);
+}
+function speakerName(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system") return s.label || L("系统", "System");
+  if (isBoss(m)) return "boss";
+  const d = speakerDesk(m, ctx);
+  if (d) return deskName({ ...d, effort: s.effort });
+  return s.model ? deskName(s) : [cliName(s.provider) || L("组员", "Member"), s.effort].filter(Boolean).join(" · ");
+}
+// The role leads the name and the CLI follows it, so several "默认模型" desks stay apart.
+function speakerRole(m, ctx) {
+  return isBoss(m) ? "" : speakerDesk(m, ctx)?.role || "";
+}
+function speakerSub(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system" || isBoss(m)) return "";
+  return cliName(speakerDesk(m, ctx)?.provider || s.provider);
+}
+function speakerFace(m, ctx) {
+  const s = m.speaker || {};
+  if (s.role === "system") return null;
+  // A boss wears the character of the model it ran when it spoke, a former boss included.
+  if (isBoss(m)) return ART.head(ART.character(s.provider || ctx.c.host, s.model), "idle");
+  const d = speakerDesk(m, ctx);
+  return ART.head(d ? deskChar(d) : ART.character(s.provider, s.model), "idle");
+}
+// Recipients as chips. New payloads carry `to: [{key, handle}]`; older ones only `recipients`.
+function targets(m, ctx) {
+  if (Array.isArray(m.to) && m.to.length && typeof m.to[0] === "object")
+    return m.to.map((t) => {
+      if (t.key === "@boss") return { kind: "boss" };
+      if (t.key === "@all") return { kind: "all" };
+      const d = ctx.desks.get(t.key);
+      return { kind: "desk", d, handle: t.handle };
+    });
+  const list = (m.recipients || []).map((r) => {
+    const key = r.seat ? ctx.seatDesk.get(`${m.conversation}|${r.seat}`) : null;
+    const d =
+      (key && ctx.desks.get(key)) ||
+      (m.thread?.kind === "desk" ? ctx.desks.get(m.desk) : null);
+    return { kind: "desk", d, handle: d ? null : AN.modelName(r.model) || r.label };
+  });
+  const room = m.thread?.kind === "room" && ctx.rooms.get(m.thread.id);
+  if (room && list.length > 1 && list.length === room.seats.length)
+    return [{ kind: "all" }];
+  return list;
+}
+function chip(t) {
+  if (t.kind === "boss") return h("span.at.boss", {}, "@boss");
+  if (t.kind === "all")
+    return h("span.at.all", { title: L("会议室里的所有人", "Everyone in the meeting room") }, "@all");
+  const name = t.d ? deskName(t.d) : (t.handle || "").replace(/^@/, "");
+  return h(
+    "span.at.who",
+    { title: t.d ? handleOf(t.d) : t.handle || "" },
+    "@",
+    t.d ? ART.head(deskChar(t.d)) : null,
+    t.d?.role ? h("span.at-role", {}, t.d.role) : null,
+    name,
+  );
+}
+// Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
+// recipients; a reply sits under it with no verb, plus a badge only when it needs attention.
+// Returns [tag, recipients, note, badge].
+function verbOf(m, ctx) {
+  const t = m.thread;
+  const room = t?.kind === "room" ? ctx.rooms.get(t.id) : null;
+  if (m.kind === "handover") return ["", []];
+  if (m.kind === "typing") return ["", [], L("正在输入…", "Typing…"), ""];
+  if (m.kind === "instruction") return ["", targets(m, ctx), "", L("仅 TA 可见", "Private")];
+  if (m.kind === "forward") return [L("转发", "Forward"), targets(m, ctx)];
+  if (isBoss(m)) {
+    if (t?.kind !== "room") return [L("任务", "Task"), targets(m, ctx)];
+    const round = m.round > 0 ? L(`第 ${m.round} 轮`, `Round ${m.round}`) : "";
+    const where = state.drawer.kind === "room" || !room ? round : L(`「${room.title}」${round}`, `"${room.title}"${round ? ` · ${round}` : ""}`);
+    return [m.round > 0 ? L("议题", "Topic") : L("发言", "Note"), targets(m, ctx), where];
+  }
+  // Kept from the other seats in review: a reply only boss sees, never deleted.
+  if (m.kept_private) return ["", [], "", L("未公开 · 仅 boss 可见", "Unpublished · boss only")];
+  if (m.status === "review") return ["", [], "", L("待 boss 审核", "Awaiting boss review")];
+  // A parallel round shows the answers to the other seats once every seat has answered.
+  if (t?.kind === "room" && m.visibility !== "public") return ["", [], "", L("本轮结束后公开", "Visible after round")];
+  return ["", []];
+}
+// Who answers this round, shown by face; the answers themselves follow right below.
+function answeringDesks(m, ctx) {
+  const desks = [...ctx.desks.values()];
+  return (m.answering || []).map((x) => desks.find((d) => d.handle === x)).filter(Boolean);
+}
+function metaOf(m, ctx) {
+  if (Array.isArray(m.answering) && m.answering.length)
+    return L(`${m.answering.length} 位回答`, `${m.answering.length} answering`);
+  if (m.status === "review" && !m.kept_private)
+    return L("boss 公开后，会议室里的其他人才看得到", "Visible to others in the room once boss publishes it");
+  return "";
+}
+// One-line ticker / screen-reader sentence for a message.
+function eventText(m, ctx) {
+  const who = speakerName(m, ctx);
+  const room = m.thread?.kind === "room" ? ctx.rooms.get(m.thread.id) : null;
+  const to = targets(m, ctx)
+    .map((t) =>
+      t.kind === "desk"
+        ? t.d
+          ? deskName(t.d)
+          : (t.handle || "").replace(/^@/, "")
+        : t.kind,
+    )
+    .join(L("、", ", "));
+  const text =
+    m.kind === "handover"
+      ? m.text
+      : m.kind === "instruction"
+      ? `boss @${to}`
+      : m.kind === "forward"
+        ? L(`boss 转发了一条消息${room ? `到「${room.title}」` : ""}`, `boss forwarded a message${room ? ` to "${room.title}"` : ""}`)
+        : isBoss(m)
+          ? room
+            ? L(`boss 在「${room.title}」提出议题`, `boss raised a topic in "${room.title}"`)
+            : L(`boss 给 ${to || "工位"} 布置了任务`, `boss assigned a task to ${to || "desk"}`)
+          : m.kind === "notice"
+            ? `${who} ${m.text}`
+            : m.status === "review"
+              ? L(`${who} 提交了回答，等 boss 审核`, `${who} submitted a reply, awaiting boss review`)
+              : room
+                ? L(`${who} 在「${room.title}」回复了议题`, `${who} replied in "${room.title}"`)
+                : L(`${who} 回复了任务`, `${who} replied to the task`);
+  return { who, text };
+}
+
+// ---------------------------------------------------------------- message nodes
+function createMessage(m) {
+  const rec = { kind: m.kind, text: null };
+  rec.time = h("time");
+  rec.ava = h("span.m-ava");
+  rec.role = h("span.m-role");
+  rec.name = h("b.m-name");
+  rec.who = h("span.m-who");
+  if (m.kind === "notice") {
+    rec.text_ = h("span.note-text");
+    rec.detail = h("small.note-detail");
+    rec.el = h(
+      "div.note",
+      {},
+      rec.ava,
+      rec.role,
+      rec.name,
+      rec.who,
+      rec.text_,
+      rec.time,
+      rec.detail,
+    );
+    return rec;
+  }
+  rec.verb = h("span.m-verb");
+  rec.to = h("div.m-to");
+  rec.verb2 = h("span.m-verb");
+  rec.lock = h("span.m-lock");
+  rec.fwd = h("button.fwd", { type: "button", hidden: true });
+  rec.fwd.addEventListener(
+    "click",
+    () => rec.fwdId && jumpToMessage(rec.fwdId),
+  );
+  rec.md = h("div.md");
+  rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
+  rec.tail = h("div.tail");
+  rec.status = h("div.typing-status", { hidden: true });
+  rec.bub = h(
+    "div.bub",
+    {},
+    m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
+  );
+  rec.metaFaces = h("span.tp-faces");
+  rec.metaText = h("span");
+  rec.meta = h("div.m-meta", { hidden: true }, rec.metaFaces, rec.metaText);
+  rec.more = h("button.more", { type: "button", hidden: true }, L("展开全文", "Show more"));
+  rec.more.addEventListener("click", () => {
+    const id = rec.id;
+    if (state.expanded.has(id)) state.expanded.delete(id);
+    else state.expanded.add(id);
+    // A peer's or handover's collapsed bubble holds one line, not its answer: draw it again.
+    if (rec.el.dataset.peer !== undefined || rec.el.dataset.brief !== undefined) renderAll(state.chat);
+    applyFolds([rec]);
+  });
+  rec.el = h(
+    "article.msg",
+    {},
+    h(
+      "div.m-h",
+      {},
+      rec.ava,
+      rec.role,
+      rec.name,
+      rec.who,
+      rec.verb,
+      rec.verb2,
+      rec.lock,
+      rec.time,
+    ),
+    rec.bub,
+    rec.meta,
+    m.kind === "typing" ? null : rec.more,
+  );
+  return rec;
+}
+function setFace(rec, m, ctx) {
+  const s = m.speaker || {};
+  const key = `${s.role}|${s.provider}|${s.model}|${m.desk}|${isBoss(m) ? `${ctx.c.host}|${ctx.c.app || ""}` : ""}|${ART.version()}`;
+  if (rec.avKey === key) return;
+  rec.avKey = key;
+  const face = speakerFace(m, ctx);
+  rec.ava.replaceChildren(...(face ? [face] : []));
+}
+// A long run's tail can sit unchanged for minutes: say what the CLI is doing and how long the
+// reply has been quiet, so a thinking CLI does not look stuck.
+const STALE_TAIL_MS = 60_000;
+// Codex names its built-in tools by item type; other CLIs report readable tool names.
+const TOOL_WORDS = {
+  command_execution: L("正在运行命令", "Running command"),
+  file_change: L("正在修改文件", "Editing files"),
+  web_search: L("正在搜索网页", "Searching web"),
+};
+function typingStatus(m) {
+  const d = m.doing || "";
+  const tool = d.slice(5);
+  const doing = d === "thinking"
+    ? L("思考中", "Thinking")
+    : d === "retrying"
+      ? L("重试中", "Retrying")
+      : d.startsWith("tool:")
+        ? TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`)
+        : "";
+  const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
+  return [doing, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
+}
+function updateMessage(rec, m, ctx, id) {
+  rec.id = id;
+  const flashing = state.flashId === id ? " flash" : "";
+  setAttr(rec.el, "data-id", id);
+  setAttr(rec.el, "data-conv", m.conversation);
+  setAttr(rec.el, "data-mid", m.message_id);
+  setAttr(rec.el, "data-kind", m.kind);
+  const peer = state.peers?.has(id);
+  setAttr(rec.el, "data-peer", peer ? m.desk : null);
+  setFace(rec, m, ctx);
+  setText(rec.role, speakerRole(m, ctx));
+  setText(rec.name, speakerName(m, ctx));
+  setText(rec.who, speakerSub(m, ctx));
+  setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
+  setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
+  if (m.kind === "notice") {
+    const [, tone] = pick(AN.MEMBER, m.status);
+    setClass(rec.el, `note tone-${tone}${flashing}`);
+    setText(rec.text_, m.text);
+    setText(rec.detail, m.detail || "");
+    return;
+  }
+  AN.voice?.decorate(rec, m, ctx);
+  const [verb, to, verb2 = "", lock = ""] = verbOf(m, ctx);
+  setClass(rec.verb, verb ? "m-verb m-tag" : "m-verb");
+  const priv =
+    m.kind === "instruction" ||
+    (m.thread?.kind === "room" && m.visibility !== "public" && !isBoss(m));
+  setClass(
+    rec.el,
+    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.reply_to ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
+  );
+  setText(rec.verb, verb);
+  setText(rec.verb2, verb2);
+  setText(rec.lock, lock);
+  const toKey = JSON.stringify([ART.version(), ...to.map((t) => [t.kind, t.d?.key, t.d ? deskName(t.d) : t.handle])]);
+  if (rec.toKey !== toKey) {
+    rec.toKey = toKey;
+    rec.to.replaceChildren(...to.map(chip));
+  }
+  const meta = metaOf(m, ctx);
+  rec.meta.hidden = !meta;
+  setClass(rec.meta, m.answering?.length ? "m-meta m-round" : "m-meta");
+  setText(rec.metaText, meta);
+  setAttr(rec.meta, "title", m.answering?.length ? m.answering.map((x) => String(x).replace(/^@/, "")).join("\n") : null);
+  const faces = answeringDesks(m, ctx);
+  const facesKey = JSON.stringify([ART.version(), ...faces.map((d) => d.key)]);
+  if (rec.facesKey !== facesKey) {
+    rec.facesKey = facesKey;
+    rec.metaFaces.replaceChildren(...faces.map((d) => ART.head(deskChar(d))));
+  }
+  if (m.kind !== "typing") {
+    // A forwarded entry quotes a message by id; the card jumps to it while that message is still listed.
+    const f = m.forward;
+    rec.fwd.hidden = !f;
+    if (f) {
+      rec.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
+      setText(rec.fwd, L(`↪ 转发自 ${f.source || "其他消息"}`, `↪ Forwarded from ${f.source || "another message"}`));
+      setClass(rec.fwd, rec.fwdId ? "fwd" : "fwd dead");
+      setAttr(rec.fwd, "aria-disabled", rec.fwdId ? null : "true");
+      setAttr(
+        rec.fwd,
+        "title",
+        rec.fwdId ? L("跳到原消息", "Jump to original message") : L("原消息不在当前列表中", "Original message not in current view"),
+      );
+    }
+  }
+  if (m.kind === "typing") {
+    const status = typingStatus(m);
+    setText(rec.status, status);
+    rec.status.hidden = !status;
+  }
+  const summary = peer && m.kind !== "typing" && !state.expanded.has(id);
+  // A handover note is long: it opens on request, below the one line saying who took over.
+  const brief = m.kind === "handover" && !!m.detail;
+  rec.el.toggleAttribute("data-brief", brief);
+  const note = brief && state.expanded.has(id) ? m.detail : "";
+  const body = m.kind === "handover" ? [m.text, note].filter(Boolean).join("\n\n") : summary ? tpFirst(m.text) : m.text;
+  if (rec.text !== body) {
+    rec.text = body;
+    if (m.kind === "typing") {
+      setText(rec.tail, m.text);
+      rec.dots.hidden = !!m.text;
+      rec.tail.hidden = !m.text;
+    } else if (m.kind === "handover") {
+      setClass(rec.md, "md handover-text");
+      setText(rec.md, body);
+      rec.dirty = true;
+    } else if (summary) {
+      setText(rec.md, body);
+      rec.dirty = true;
+    } else {
+      renderMarkdown(rec.md, m.text);
+      rec.dirty = true; // height changed: measure again
+    }
+  }
+}
+// Fold: clamp by CSS, show the button only when the content really overflows. Discarded answers
+// start folded whatever their length.

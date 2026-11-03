@@ -122,24 +122,7 @@ pub fn validate(document: &Value) -> Result<(), String> {
     };
     let empty = Map::new();
     let clis = object(clis, "clis")?;
-    for (provider, cli) in clis {
-        if !PROVIDERS.contains(&provider.as_str()) {
-            return Err(format!("不支持的 CLI：{provider}"));
-        }
-        let fields = object(cli, &format!("clis.{provider}"))?;
-        only(fields, &["models"], &format!("clis.{provider}"))?;
-        let models = fields
-            .get("models")
-            .ok_or_else(|| format!("clis.{provider} 缺少 models"))?;
-        for (model, shared) in object(models, &format!("clis.{provider}.models"))? {
-            if model.trim().is_empty() {
-                return Err(format!("clis.{provider} 的模型 ID 不能为空"));
-            }
-            let what = format!("{provider} / {model}");
-            settings(shared, &what)?;
-            effort_allowed(shared, None, &what)?;
-        }
-    }
+    validate_clis(clis)?;
     let modes = object(modes, "modes")?;
     for (mode, members) in modes {
         if !MODES.contains(&mode.as_str()) {
@@ -476,6 +459,28 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "permissions_error": permissions_error,
         "detected": detected,
     })
+}
+
+fn validate_clis(clis: &Map<String, Value>) -> Result<(), String> {
+    for (provider, cli) in clis {
+        if !PROVIDERS.contains(&provider.as_str()) {
+            return Err(format!("不支持的 CLI：{provider}"));
+        }
+        let fields = object(cli, &format!("clis.{provider}"))?;
+        only(fields, &["models"], &format!("clis.{provider}"))?;
+        let models = fields
+            .get("models")
+            .ok_or_else(|| format!("clis.{provider} 缺少 models"))?;
+        for (model, shared) in object(models, &format!("clis.{provider}.models"))? {
+            if model.trim().is_empty() {
+                return Err(format!("clis.{provider} 的模型 ID 不能为空"));
+            }
+            let what = format!("{provider} / {model}");
+            settings(shared, &what)?;
+            effort_allowed(shared, None, &what)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@
     const attr = node.tagName === "SCRIPT" ? "src" : "href";
     const path = node.getAttribute(attr);
     node.setAttribute(attr, path === "/avatars.js" ? "avatars/avatars.js" : path.replace(/^\/(chat|panel|settings|manage)\//, ""));
-    if (path.endsWith("/common.js")) {
+    if (path.endsWith("/common-status.js")) {
       const mock = html.createElement("script");
       mock.src = "mock.js";
       mock.defer = true;
