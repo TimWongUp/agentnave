@@ -38,8 +38,9 @@ pub(crate) struct Observation {
     elapsed_ms: Option<u64>,
 }
 
-/// Readable conversations, including those without any finished work yet.
-pub(crate) type Readings = HashMap<String, Vec<Observation>>;
+/// `None` marks an unreadable conversation; an empty vector is a successful read
+/// with no finished work. Both matter when deciding whether to establish a baseline.
+pub(crate) type Readings = HashMap<String, Option<Vec<Observation>>>;
 
 struct Options {
     enabled: bool,
@@ -168,6 +169,8 @@ impl Conversation {
 
 #[derive(Default)]
 pub(crate) struct Monitor {
+    initialized: bool,
+    pending_baselines: HashSet<String>,
     conversations: HashMap<String, Conversation>,
 }
 
@@ -190,7 +193,14 @@ impl Monitor {
         mut send: impl FnMut(&Notice) -> Result<(), String>,
     ) {
         for (id, events) in readings {
-            let baseline = !self.conversations.contains_key(&id);
+            let Some(events) = events else {
+                if !self.conversations.contains_key(&id) {
+                    self.pending_baselines.insert(id);
+                }
+                continue;
+            };
+            let recovered = self.pending_baselines.remove(&id);
+            let baseline = !self.initialized || recovered;
             let conversation = self.conversations.entry(id).or_default();
             for (key, notice) in conversation.observe(events, options, baseline) {
                 let result = send(&notice);
@@ -200,6 +210,7 @@ impl Monitor {
                 }
             }
         }
+        self.initialized = true;
     }
 }
 

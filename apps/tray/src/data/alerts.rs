@@ -14,9 +14,16 @@ impl Reader {
     pub(crate) fn alert_observations(&self) -> Result<Readings, String> {
         // A failed database read must not establish an empty startup baseline.
         let database = crate::db::read(&self.root)?;
-        let (_, snapshots) = self.scan();
+        let (overview, snapshots) = self.scan();
+        if let Some(error) = overview.scan_error {
+            return Err(error);
+        }
         let mut cache = self.alerts.lock().unwrap_or_else(|p| p.into_inner());
-        let mut events = Readings::new();
+        let mut events: Readings = overview
+            .unreadable
+            .into_iter()
+            .map(|id| (id, None))
+            .collect();
         let mut seen = HashSet::new();
         for snapshot in &snapshots {
             let id = &snapshot.item.id;
@@ -30,6 +37,7 @@ impl Reader {
                         Ok(rounds) => rounds,
                         Err(_) => {
                             cache.remove(id);
+                            events.insert(id.clone(), None);
                             continue;
                         }
                     }
@@ -40,7 +48,7 @@ impl Reader {
                 cache.insert(id.clone(), (snapshot.view.clone(), observations));
             }
             if let Some((_, observations)) = cache.get(id) {
-                events.insert(id.clone(), observations.clone());
+                events.insert(id.clone(), Some(observations.clone()));
             }
         }
         cache.retain(|id, _| seen.contains(id));

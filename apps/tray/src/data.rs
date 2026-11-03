@@ -76,6 +76,9 @@ pub struct Overview {
     /// Most recently changed first.
     pub items: Vec<Item>,
     pub unavailable: Vec<(String, String)>,
+    /// Structured failures for consumers that need to distinguish recovery from new work.
+    unreadable: HashSet<String>,
+    scan_error: Option<String>,
     pub missing: bool,
     pub running: usize,
     pub review: usize,
@@ -619,6 +622,7 @@ impl Reader {
             Err(error) => Err(error.clone()),
         };
         let rows = rows.unwrap_or_else(|error| {
+            overview.scan_error = Some(error.clone());
             overview
                 .unavailable
                 .push((crate::db::path(&self.root).display().to_string(), error));
@@ -682,6 +686,7 @@ impl Reader {
                     live_updated,
                 });
             } else {
+                overview.unreadable.insert(id.clone());
                 overview.unavailable.push((
                     format!("{}#{id}", crate::db::path(&self.root).display()),
                     "视图快照无法读取或版本不受支持".to_owned(),
