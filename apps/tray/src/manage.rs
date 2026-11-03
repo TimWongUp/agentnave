@@ -13,6 +13,12 @@ use serde_json::{Value, json};
 
 use crate::data::Overview;
 
+mod retention;
+
+pub fn retention_preview(root: &Path, cutoff: i64) -> Result<usize, String> {
+    retention::count(root, cutoff)
+}
+
 const RETRY: Duration = Duration::from_millis(100);
 const ATTEMPTS: usize = 11;
 
@@ -395,25 +401,8 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
         if workspace_ids(&transaction, anchor)? != expected {
             return Ok(false);
         }
-        for id in &expected {
-            let (created, body): (String, Option<String>) = transaction.query_row(
-                "SELECT created, views.body FROM conversations LEFT JOIN views ON views.conversation_id = conversations.id WHERE conversations.id = ?1",
-                [id], |row| Ok((row.get(0)?, row.get(1)?))
-            ).map_err(|e| e.to_string())?;
-            let created = crate::stage::timestamp(&created);
-            let updated = body
-                .and_then(|body| serde_json::from_str::<Value>(&body).ok())
-                .and_then(|view| {
-                    view["summary"]["updated"]
-                        .as_str()
-                        .and_then(crate::stage::timestamp)
-                });
-            let Some((created, updated)) = created.zip(updated) else {
-                return Ok(false);
-            };
-            if created.max(updated) / 1_000 >= cutoff {
-                return Ok(false);
-            }
+        if !retention::eligible(&transaction, &expected, cutoff)? {
+            return Ok(false);
         }
         let group = conversation_group(&transaction, anchor).map_err(|e| e.to_string())?;
         for id in &expected {

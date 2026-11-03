@@ -16,6 +16,7 @@ mod proxy;
 mod rules;
 mod settings;
 mod stage;
+mod storage;
 mod update;
 mod voice;
 
@@ -114,6 +115,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                 | "/app/window/close"
                 | "/app/update/check"
                 | "/app/rules/open"
+                | "/app/storage/open"
                 | "/app/theme/system"
                 | "/app/theme/light"
                 | "/app/theme/dark"
@@ -177,7 +179,15 @@ fn main() {
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let reader = served.clone();
             let app = ctx.app_handle().clone();
-            let path = request.uri().path().to_owned();
+            let path = match request.uri().path() {
+                "/app/storage/preview" => request
+                    .uri()
+                    .path_and_query()
+                    .map(|path| path.as_str())
+                    .unwrap_or("/app/storage/preview")
+                    .to_owned(),
+                path => path.to_owned(),
+            };
             let label = ctx.webview_label().to_owned();
             let flag = |name: &str| {
                 request
@@ -864,6 +874,12 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/window/close"));
         assert!(!preview_refuses(true, "POST", "/app/update/check"));
         assert!(!preview_refuses(true, "POST", "/app/rules/open"));
+        assert!(!preview_refuses(true, "POST", "/app/storage/open"));
+        assert!(!preview_refuses(
+            true,
+            "GET",
+            "/app/storage/preview?days=30"
+        ));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
     }
 

@@ -17,6 +17,13 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
             id,
         );
     }
+    for id in ["old", "newly-finished"] {
+        set(
+            root.path(),
+            "UPDATE tasks SET status = 'succeeded' WHERE conversation_id = ?1",
+            id,
+        );
+    }
     let ids = vec!["old".to_owned(), "newly-finished".to_owned()];
     let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
     // A conversation created since the preview preserves the whole workspace.
@@ -396,6 +403,10 @@ with (root / 'locks' / 'python.lock').open('a+b') as lock:
         .unwrap();
     assert_eq!(ready.trim(), "locked");
     assert_eq!(delete(root.path(), "python")["status"], "in_use");
+    assert_eq!(
+        cleanup(root.path(), &["python".to_owned()], i64::MAX)[0]["status"],
+        "in_use"
+    );
     let result = thread::scope(|scope| {
         let deleting = scope.spawn(|| delete(root.path(), "python"));
         thread::sleep(Duration::from_millis(150));
@@ -405,4 +416,67 @@ with (root / 'locks' / 'python.lock').open('a+b') as lock:
     });
     assert_eq!(result["status"], "pending_review");
     assert_eq!(count(root.path(), "conversations", "python"), 1);
+}
+
+#[test]
+fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    for id in ["old-a", "old-b", "busy", "pending", "recent", "running"] {
+        fixture(root.path(), id);
+        set(
+            root.path(),
+            "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            id,
+        );
+        set(
+            root.path(),
+            "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+            id,
+        );
+        if id != "running" {
+            set(
+                root.path(),
+                "UPDATE tasks SET status = 'succeeded' WHERE conversation_id = ?1",
+                id,
+            );
+        }
+    }
+    for id in ["old-a", "old-b"] {
+        crate::db::write(root.path())
+            .unwrap()
+            .unwrap()
+            .execute(
+                "UPDATE conversations SET manager_session = ?1 WHERE id = ?2",
+                [workspace, id],
+            )
+            .unwrap();
+    }
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2026-11-03T00:00:00Z') WHERE conversation_id = ?1",
+        "recent",
+    );
+    set(
+        root.path(),
+        r#"INSERT INTO rounds (id, conversation_id, number, body) VALUES ('r', ?1, 1, '{"status":"finished","seats":[{"review":"pending"}]}')"#,
+        "pending",
+    );
+    let lock = lock_file(root.path(), "busy").unwrap();
+    take(&lock);
+    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    assert!(!crate::db::lock_path(root.path(), "old-a").exists());
+    assert_eq!(count(root.path(), "conversations", "old-a"), 1);
+    let ids = vec!["old-a".to_owned(), "old-b".to_owned()];
+    assert!(
+        cleanup(root.path(), &ids, cutoff)
+            .iter()
+            .all(|r| r["status"] == "deleted")
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    assert_eq!(
+        cleanup(root.path(), &["running".to_owned()], cutoff)[0]["status"],
+        "changed"
+    );
 }

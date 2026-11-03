@@ -76,6 +76,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
+from agentnave.retention import Retention
 from agentnave.store import Record, Review
 from agentnave.task_start import (
     READ_ONLY_APPLIED,
@@ -219,6 +220,7 @@ class Runtime:
     def __init__(self) -> None:
         self.manager = InvocationManager()
         self.conversations = Conversations(self.manager, data_root(), host=HOST)
+        self.retention = Retention(data_root())
 
 
 @asynccontextmanager
@@ -228,6 +230,7 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
         yield runtime
     finally:
         try:
+            await runtime.retention.close()
             await runtime.conversations.shutdown()
         finally:
             try:
@@ -1009,7 +1012,10 @@ async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
     """Unlisted: the relay asks this before swapping servers; agents use list."""
     return {
         "invocations": _invocation_items(_manager(ctx)),
-        "restart_safe": _conversations(ctx).restart_safe(),
+        "restart_safe": (
+            _conversations(ctx).restart_safe()
+            and ctx.request_context.lifespan_context.retention.restart_safe()
+        ),
     }
 
 

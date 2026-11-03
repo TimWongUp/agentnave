@@ -284,6 +284,9 @@ impl Reader {
                 )
             });
         }
+        if path == "/app/storage" || path.starts_with("/app/storage/") {
+            return crate::storage::request(&self.root, method, path, action);
+        }
         if path == "/app/settings" {
             if method == "GET" {
                 return Response::json(&crate::settings::state(&self.root));
