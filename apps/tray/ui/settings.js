@@ -1634,19 +1634,17 @@ function renderLeaveConfirm() {
     el("div", { className: "btn-group" }, stay,
       el("button", { type: "button", className: "danger", onClick: () => {
         const target = leaveTarget;
+        leaveTarget = null;
         dirty = false;
         discardAdvanced();
-        location.href = target;
+        if (typeof target === "function") target();
+        else location.href = target;
       } }, L("放弃修改并离开", "Discard and leave"))));
   stay.focus({ preventScroll: true });
 }
-document.querySelector("header.bar").addEventListener("click", (e) => {
-  const link = e.target.closest("a[href]");
-  // The settings link points at this page; following it would reload and drop the edits.
-  if (link?.getAttribute("href") === "/settings/") return e.preventDefault();
-  if (!link || !(unsaved() || busy)) return;
-  e.preventDefault();
-  leaveTarget = link.href;
+function confirmLeave(target) {
+  if (!(unsaved() || busy)) return false;
+  leaveTarget = target;
   // The confirmation sits in the save bar of the page holding the edits.
   const tab = dirty || !advancedChanges().length ? "members" : "advanced";
   if (currentTab !== tab) {
@@ -1654,6 +1652,13 @@ document.querySelector("header.bar").addEventListener("click", (e) => {
     history.replaceState(null, "", `#${tab}`);
   }
   renderLeaveConfirm();
+  return true;
+}
+document.querySelector("header.bar").addEventListener("click", (e) => {
+  const link = e.target.closest("a[href]");
+  // The settings link points at this page; following it would reload and drop the edits.
+  if (link?.getAttribute("href") === "/settings/") return e.preventDefault();
+  if (link && confirmLeave(link.href)) e.preventDefault();
 }, true);
 
 window.addEventListener("beforeunload", (e) => {

@@ -14,18 +14,18 @@ const sameJson = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canon
 // and Worker seats boss reads from list_members. The App writes the modes into the connected boss
 // apps' global rules. The rules files are listed one row per file with every app that reads it.
 const ORCHESTRATION_EFFECTS = {
-  off: L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
-  split: L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划、评审交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration, planning, and review to Explorer, and implementation to Worker, using their quota."),
-  parallel: L("在分工协作之外，互不依赖的步骤会同时派给多个 Worker，实现后再换一个 Explorer 复核，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to multiple Workers in parallel and reviewed by another Explorer afterwards, using more quota."),
-  custom: L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
+  off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
+  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划、评审交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration, planning, and review to Explorer, and implementation to Worker, using their quota."),
+  parallel: AN.L("在分工协作之外，互不依赖的步骤会同时派给多个 Worker，实现后再换一个 Explorer 复核，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to multiple Workers in parallel and reviewed by another Explorer afterwards, using more quota."),
+  custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
 };
 const ORCHESTRATION_ROLES = [
-  ["explorer", "easy", L("Explorer · 简单", "Explorer · Easy"), L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
-  ["explorer", "hard", L("Explorer · 困难", "Explorer · Hard"), L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
-  ["worker", "easy", L("Worker · 简单", "Worker · Easy"), L("可写：实现", "Writable: implement")],
-  ["worker", "hard", L("Worker · 困难", "Worker · Hard"), L("可写：实现", "Writable: implement")],
+  ["explorer", "easy", AN.L("Explorer · 简单", "Explorer · Easy"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
+  ["explorer", "hard", AN.L("Explorer · 困难", "Explorer · Hard"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
+  ["worker", "easy", AN.L("Worker · 简单", "Worker · Easy"), AN.L("可写：实现", "Writable: implement")],
+  ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：实现", "Writable: implement")],
 ];
-const ORCHESTRATION_NAMES = { off: L("关闭", "Off"), split: L("分工协作", "Split"), parallel: L("并行复核", "Parallel"), custom: L("自定义", "Custom") };
+const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行复核", "Parallel"), custom: AN.L("自定义", "Custom") };
 let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
 let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
 let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
@@ -66,13 +66,13 @@ async function loadOrchestration() {
     if (isMock) loaded = JSON.parse(JSON.stringify(mockOrchestration));
     else {
       const response = await fetch("/app/orchestration", { cache: "no-store" });
-      if (!response.ok) throw new Error(L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
+      if (!response.ok) throw new Error(AN.L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
       loaded = await response.json();
     }
     // Asked once the answer is in: an edit made while it was on its way stays.
     const keep = orchestrationChanged();
     orchestration = loaded;
-    if (orchestration.error) showNotice(L(`${orchestration.error}；请先修复或删除这个文件`, `${orchestration.error}; fix or delete this file first`), true);
+    if (orchestration.error) showNotice(AN.L(`${orchestration.error}；请先修复或删除这个文件`, `${orchestration.error}; fix or delete this file first`), true);
     if (!keep) {
       orchestrationDraft = null;
       customTouched = false;
@@ -81,7 +81,7 @@ async function loadOrchestration() {
     }
   } catch (error) {
     orchestration = null;
-    showNotice(L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
+    showNotice(AN.L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
   }
   renderOrchestration();
   renderAdvancedBar();
@@ -101,7 +101,7 @@ async function saveOrchestration() {
       body: JSON.stringify(wanted),
     });
     data = await response.json().catch(() => ({}));
-    if (!response.ok || data.error) throw new Error(data.error || L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
+    if (!response.ok || data.error) throw new Error(data.error || AN.L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
   }
   orchestration.document = wanted;
   orchestration.files = data.files;
@@ -110,7 +110,7 @@ async function saveOrchestration() {
   customTouched = false;
   // The choice is saved even when a rules file could not take it; the list below shows which one.
   const failed = data.failures || [];
-  if (failed.length) throw new Error(L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));
+  if (failed.length) throw new Error(AN.L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));
 }
 
 function viewMode(mode) {
@@ -156,7 +156,7 @@ function modeChip(key, label, tile, mode, savedMode, onSet) {
     type: "button", className: tile ? "skill-chip" : "skill-chip no-tile", dataset: { focusKey: key, pending: String(mode !== savedMode) },
     "aria-pressed": String(on), disabled: Boolean(orchestration.error),
   }, tile, label,
-    mode !== savedMode ? el("small", {}, L("待保存", "Unsaved")) : !on && mode !== "off" ? el("small", {}, L(`现用${ORCHESTRATION_NAMES[mode]}`, `Using ${ORCHESTRATION_NAMES[mode]}`)) : null);
+    mode !== savedMode ? el("small", {}, AN.L("待保存", "Unsaved")) : !on && mode !== "off" ? el("small", {}, AN.L(`现用${ORCHESTRATION_NAMES[mode]}`, `Using ${ORCHESTRATION_NAMES[mode]}`)) : null);
   b.addEventListener("click", () => {
     if (!on) onSet(orchestrationView);
     else if (mode !== "off") onSet("off");
@@ -170,10 +170,10 @@ function renderBossChips() {
   const focusKey = document.activeElement?.dataset?.focusKey;
   const shown = orchestrationShown();
   const saved = orchestration.document;
-  box.replaceChildren(...orchestration.bosses.map((boss) => modeChip(`boss/${boss.keys[0]}`, boss.labels.join(L("、", ", ")),
+  box.replaceChildren(...orchestration.bosses.map((boss) => modeChip(`boss/${boss.keys[0]}`, boss.labels.join(AN.L("、", ", ")),
     AN.hostTile ? AN.hostTile(boss.mark, boss.labels[0]) : null,
     bossMode(shown, boss), bossMode(saved, boss), (mode) => setBossMode(boss, mode))),
-  modeChip("boss/later", L("之后新接入的 boss", "Future connected bosses"), null, shown.preset, saved.preset, setDefaultMode));
+  modeChip("boss/later", AN.L("之后新接入的 boss", "Future connected bosses"), null, shown.preset, saved.preset, setDefaultMode));
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
 }
 
@@ -225,16 +225,16 @@ function renderRuleFiles() {
   if (!orchestration) return list.replaceChildren();
   list.replaceChildren(...orchestration.files.map((file) => {
     const state = !file.target ? null
-      : file.current ? ["written", L("已写入", "Written")]
-        : file.blocked ? ["failed", L("经过符号链接，无法写入", "Goes through a symlink; cannot write")] : ["failed", L("未写入", "Not written")];
+      : file.current ? ["written", AN.L("已写入", "Written")]
+        : file.blocked ? ["failed", AN.L("经过符号链接，无法写入", "Goes through a symlink; cannot write")] : ["failed", AN.L("未写入", "Not written")];
     return el("li", {},
-      el("span", { className: "rule-label" }, file.readers.join(L("、", ", "))),
+      el("span", { className: "rule-label" }, file.readers.join(AN.L("、", ", "))),
       el("code", {}, file.path),
       state && el("span", { className: `rule-state ${state[0]}` }, state[1]),
       ruleOpenError?.path === file.path && el("span", { className: "rule-state failed" }, ruleOpenError.message),
       file.exists
-        ? el("button", { type: "button", onClick: () => openRuleFile(file) }, L("打开", "Open"))
-        : el("span", { className: "rule-missing" }, L("未找到", "Not found")));
+        ? el("button", { type: "button", onClick: () => openRuleFile(file) }, AN.L("打开", "Open"))
+        : el("span", { className: "rule-missing" }, AN.L("未找到", "Not found")));
   }));
 }
 
@@ -246,7 +246,7 @@ async function openRuleFile(file) {
       body: JSON.stringify({ path: file.path }),
     });
     const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || L(`打开失败（${response.status}）`, `Open failed (${response.status})`));
+    if (!response.ok || data.error) throw new Error(data.error || AN.L(`打开失败（${response.status}）`, `Open failed (${response.status})`));
     ruleOpenError = null;
   } catch (error) {
     ruleOpenError = { path: file.path, message: error.message };
@@ -256,14 +256,14 @@ async function openRuleFile(file) {
 
 // agentnave-review roles, in the order the Skill grades them; saved in review.json.
 const REVIEW_ROLES = [
-  ["correctness-reviewer", L("正确性", "Correctness"), L("每次评审必派：行为、回归、边界", "Always dispatched: behavior, regressions, edge cases")],
-  ["architecture-reviewer", L("架构", "Architecture"), L("职责、耦合、公开接口", "Responsibilities, coupling, public interfaces")],
-  ["security-reviewer", L("安全", "Security"), L("信任边界、授权、数据流", "Trust boundaries, authorization, data flow")],
-  ["performance-reviewer", L("性能", "Performance"), L("热路径、规模、资源", "Hot paths, scale, resources")],
-  ["test-reliability-reviewer", L("测试可靠性", "Test reliability"), L("测试能否护住行为", "Whether tests protect behavior")],
-  ["simplicity-reviewer", L("简化", "Simplicity"), L("多余的复杂度", "Unnecessary complexity")],
-  ["specialist-reviewer", L("专项", "Specialist"), L("其他明确的专业领域", "Other specific domain expertise")],
-  ["adversarial-verifier", L("反证", "Adversarial"), L("高风险改动修完后尝试推翻结论", "Attempts to disprove conclusions after high-risk fixes")],
+  ["correctness-reviewer", AN.L("正确性", "Correctness"), AN.L("每次评审必派：行为、回归、边界", "Always dispatched: behavior, regressions, edge cases")],
+  ["architecture-reviewer", AN.L("架构", "Architecture"), AN.L("职责、耦合、公开接口", "Responsibilities, coupling, public interfaces")],
+  ["security-reviewer", AN.L("安全", "Security"), AN.L("信任边界、授权、数据流", "Trust boundaries, authorization, data flow")],
+  ["performance-reviewer", AN.L("性能", "Performance"), AN.L("热路径、规模、资源", "Hot paths, scale, resources")],
+  ["test-reliability-reviewer", AN.L("测试可靠性", "Test reliability"), AN.L("测试能否护住行为", "Whether tests protect behavior")],
+  ["simplicity-reviewer", AN.L("简化", "Simplicity"), AN.L("多余的复杂度", "Unnecessary complexity")],
+  ["specialist-reviewer", AN.L("专项", "Specialist"), AN.L("其他明确的专业领域", "Other specific domain expertise")],
+  ["adversarial-verifier", AN.L("反证", "Adversarial"), AN.L("高风险改动修完后尝试推翻结论", "Attempts to disprove conclusions after high-risk fixes")],
 ];
 let seatsDraft = null; // Review seats as picked; `reviewSeats` holds what is saved.
 const seatsShown = () => seatsDraft || reviewSeats;
@@ -280,10 +280,10 @@ async function listSeatModel(seat) {
     return doc;
   };
   // Until 员工 is read there is nothing to add to: an empty document would replace the file.
-  if (!savedSnapshot && !documentError) throw new Error(L("员工配置还在读取，请稍后再保存", "Employee settings are still loading; please save in a moment"));
+  if (!savedSnapshot && !documentError) throw new Error(AN.L("员工配置还在读取，请稍后再保存", "Employee settings are still loading; please save in a moment"));
   const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
   if (Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model)) return;
-  if (documentError) throw new Error(L("配置文件有错误，请先在“员工”里修复", "Configuration file has errors; fix them in “Employees” first"));
+  if (documentError) throw new Error(AN.L("配置文件有错误，请先在“员工”里修复", "Configuration file has errors; fix them in “Employees” first"));
   await apiPostMembers(add(saved));
   savedSnapshot = JSON.stringify(saved);
   add(currentDoc);
@@ -303,7 +303,7 @@ async function saveSeats() {
 
 function setReviewSeat(role, seat) {
   if (reviewError) {
-    showNotice(L(`${reviewError}；请先修复或删除这个文件`, `${reviewError}; fix or delete this file first`), true);
+    showNotice(AN.L(`${reviewError}；请先修复或删除这个文件`, `${reviewError}; fix or delete this file first`), true);
     return renderReviewSeats();
   }
   const seats = { ...seatsShown() };
@@ -325,7 +325,7 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
 function seatSelects(key, name, seat, onSet) {
   const provider = seat?.provider || "";
   const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
-    .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : L("（没有可选模型）", " (no models available)")), !getAllModelIds(p).length && p !== provider]);
+    .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)")), !getAllModelIds(p).length && p !== provider]);
   const models = provider ? getAllModelIds(provider) : [];
   if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
   const levels = seat?.model ? effortLevels(provider, seat.model) : [];
@@ -344,12 +344,12 @@ function seatSelects(key, name, seat, onSet) {
   const pickModel = (model) => onSet(seatModel(provider, model));
   const pickEffort = (effort) => onSet({ ...seat, effort });
   const efforts = !seat || !levels.length ? [["", "—"]]
-    : [...(seat.effort ? [] : [["", L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
+    : [...(seat.effort ? [] : [["", AN.L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
   return [
-    reviewSelect(`${key}/cli`, L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", L("自动", "Auto")], ...clis], pickCli),
-    reviewSelect(`${key}/model`, L(`${name}的模型`, `Model for ${name}`), seat?.model || "",
+    reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", AN.L("自动", "Auto")], ...clis], pickCli),
+    reviewSelect(`${key}/model`, AN.L(`${name}的模型`, `Model for ${name}`), seat?.model || "",
       seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
-    reviewSelect(`${key}/effort`, L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
+    reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
   ];
 }
 
@@ -363,7 +363,7 @@ function renderReviewSeats() {
     const seat = shown[role];
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-      ...seatSelects(role, L(`${name}评审`, `${name} review`), seat, (next) => setReviewSeat(role, next)));
+      ...seatSelects(role, AN.L(`${name}评审`, `${name} review`), seat, (next) => setReviewSeat(role, next)));
   });
   box.replaceChildren(...rows);
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
@@ -372,9 +372,9 @@ function renderReviewSeats() {
 // What 保存设置 would write, by section.
 function advancedChanges() {
   return [
-    window.AgentNaveSkills?.changed() && L("技能安装", "Skills"),
-    seatsChanged() && L("评审工位", "Review seats"),
-    orchestrationChanged() && L("编排", "Orchestration"),
+    window.AgentNaveSkills?.changed() && AN.L("技能安装", "Skills"),
+    seatsChanged() && AN.L("评审工位", "Review seats"),
+    orchestrationChanged() && AN.L("编排", "Orchestration"),
   ].filter(Boolean);
 }
 
@@ -383,13 +383,13 @@ const customEmpty = () => usesCustom(orchestrationShown()) && !$("custom-text").
 function renderAdvancedBar() {
   const changes = advancedChanges();
   const invalid = orchestrationChanged() && customEmpty();
-  $("advanced-dirty").textContent = changes.length ? L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
+  $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
   $("advanced-badge").hidden = !changes.length;
   $("advanced-save").disabled = busy || !changes.length || invalid;
   $("advanced-discard").disabled = busy || !changes.length;
   const feedback = $("advanced-feedback");
   if (invalid) {
-    feedback.textContent = L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
+    feedback.textContent = AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
     feedback.className = "save-feedback error";
     feedback.dataset.validation = "true";
   } else if (feedback.dataset.validation === "true") {
@@ -426,7 +426,7 @@ async function saveAdvanced() {
   $("pane-advanced").inert = true;
   updateControls();
   const feedback = $("advanced-feedback");
-  feedback.textContent = L("正在保存…", "Saving…");
+  feedback.textContent = AN.L("正在保存…", "Saving…");
   feedback.className = "save-feedback";
   const failures = [];
   const attempt = async (changed, name, save) => {
@@ -434,15 +434,15 @@ async function saveAdvanced() {
     try {
       await save();
     } catch (error) {
-      failures.push(L(`${name}：${error.message}`, `${name}: ${error.message}`));
+      failures.push(AN.L(`${name}：${error.message}`, `${name}: ${error.message}`));
     }
   };
-  await attempt(seatsChanged, L("评审工位", "Review seats"), saveSeats);
-  await attempt(orchestrationChanged, L("编排", "Orchestration"), saveOrchestration);
+  await attempt(seatsChanged, AN.L("评审工位", "Review seats"), saveSeats);
+  await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
   failures.push(...await window.AgentNaveSkills.save());
   busy = false;
   $("pane-advanced").inert = false;
-  feedback.textContent = failures.length ? failures.join(L("；", "; ")) : L("设置已保存", "Settings saved");
+  feedback.textContent = failures.length ? failures.join(AN.L("；", "; ")) : AN.L("设置已保存", "Settings saved");
   feedback.className = `save-feedback ${failures.length ? "error" : "success"}`;
   renderOrchestration();
   renderReviewSeats();

@@ -20,6 +20,10 @@
 
   async function save(language) {
     if (busy) return;
+    if (typeof confirmLeave === "function" && confirmLeave(() => {
+      history.replaceState(null, "", "#general");
+      void save(language);
+    })) return;
     busy = true;
     render();
     try {
