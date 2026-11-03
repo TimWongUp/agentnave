@@ -18,8 +18,11 @@
     return node;
   }
   const $ = (id) => document.getElementById(id);
-  // Bilingual text: the page's <html lang> carries the App's interface language.
-  const L = (zh, en) => (document.documentElement.lang.startsWith("en") ? en : zh);
+  // Bilingual text: the page's <html lang> carries the App's interface language. The App sets
+  // it when serving the page; "follow the system" is settled here, before any text is built.
+  const root = document.documentElement;
+  if (root.dataset.lang === "system" && /^en\b/i.test(navigator.language || "")) root.lang = "en";
+  const L = (zh, en) => (root.lang.startsWith("en") ? en : zh);
 
   // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
   // on Windows, whose WebView2 has no custom schemes. Both are the App; a browser preview is neither.
