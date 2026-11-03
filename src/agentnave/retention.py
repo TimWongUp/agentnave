@@ -54,14 +54,19 @@ def _exists(connection: sqlite3.Connection, id_: str) -> bool:
 
 def _make_removable(path: Path) -> None:
     """Let a seat tree be deleted: CLIs may leave read-only or unlistable directories, and on
-    Windows read-only files. Symlinks are never followed or changed."""
+    Windows read-only files. Symlinks and junctions are never followed or changed."""
     owner = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
     os.chmod(path, owner)
     for top, directories, files in os.walk(path):
+        # Prune links and Windows junctions so the walk never reaches outside the seat.
+        directories[:] = [
+            name
+            for name in directories
+            if not os.path.islink(os.path.join(top, name))
+            and not os.path.isjunction(os.path.join(top, name))
+        ]
         for name in directories:
-            child = os.path.join(top, name)
-            if not os.path.islink(child):
-                os.chmod(child, owner)
+            os.chmod(os.path.join(top, name), owner)
         if os.name == "nt":
             for name in files:
                 child = os.path.join(top, name)
@@ -81,6 +86,8 @@ def _remove_seat(root: Path, id_: str) -> bool:
     try:
         if path.is_symlink():
             path.unlink()
+        elif path.is_junction():
+            os.rmdir(path)  # removes the junction itself, never its target
         elif path.exists():
             _make_removable(path)
             shutil.rmtree(path)
