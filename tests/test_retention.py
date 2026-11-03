@@ -225,6 +225,22 @@ def test_orphan_seats_expire_after_one_day_without_following_symlinks(tmp_path: 
     assert all((tmp_path / "seats" / name).exists() for name in ["new", "saved", "busy", "bad.id"])
 
 
+@pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="needs POSIX permissions")
+def test_unreadable_orphan_seat_is_removed_without_ending_the_pass(tmp_path: Path) -> None:
+    fixture(tmp_path, "saved")
+    seat = tmp_path / "seats/orphan"
+    (seat / "inner").mkdir(parents=True)
+    (seat / "inner/output").write_text("data")
+    os.utime(seat, (_NOW - 2 * 86400, _NOW - 2 * 86400))
+    seat.chmod(0)
+    try:
+        cleanup(tmp_path, now=_NOW)
+    finally:
+        if seat.exists():
+            seat.chmod(0o700)
+    assert not seat.exists()
+
+
 def test_orphan_sweeps_spare_case_variants_and_symlinked_directories(tmp_path: Path) -> None:
     fixture(tmp_path, "keep")
     old = (_NOW - 2 * 86400, _NOW - 2 * 86400)

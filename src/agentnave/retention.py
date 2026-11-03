@@ -56,7 +56,11 @@ def _retry_readonly(function: Callable[..., object], path: str, error: BaseExcep
     if not isinstance(error, PermissionError) or Path(path).is_symlink():
         raise error
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-    function(path)
+    if function in (os.open, os.scandir):
+        # An unlistable directory: os.open needs flags, so remove it again now it can be read.
+        shutil.rmtree(path)
+    else:
+        function(path)
 
 
 def _contained(directory: Path) -> bool:
@@ -74,7 +78,7 @@ def _remove_seat(root: Path, id_: str) -> bool:
         elif path.exists():
             shutil.rmtree(path, onexc=_retry_readonly)
         return True
-    except OSError:
+    except Exception:
         _LOG.exception("History retention could not remove seat directory %s", path)
         return False
 
@@ -98,7 +102,7 @@ def _sweep_locks(
                     release_and_remove(guard, path)
         except (FileNotFoundError, ValueError):
             continue
-        except OSError:
+        except Exception:
             _LOG.exception("History retention skipped orphan lock %s", path)
 
 
@@ -127,7 +131,7 @@ def _sweep_seats(
                     release_and_remove(guard, path)
         except (FileNotFoundError, ValueError):
             continue
-        except OSError:
+        except Exception:
             _LOG.exception("History retention skipped orphan seat %s", seat)
 
 
