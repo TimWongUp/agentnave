@@ -35,7 +35,7 @@ CLI：可以单独派一位，也可以拉几位一起，并联各答各的，�
 
 | 角色                                 | 支持                                                                                                                                |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes |
+| **老板**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、Grok Bot |
 | **组员**（被派活的 CLI）             | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode                         |
 
 老板的范围更大：上面这些宿主都能当老板，桌面端也可以；组员目前只有表里这几个 CLI。宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
@@ -74,6 +74,7 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0
 
 然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager](skills/agentnave-manager/SKILL.md) 和 [agentnave-handover](skills/agentnave-handover/SKILL.md) Skill，再做验证。
 安装指南本来就是写给 Agent 看的，可以直接交给你的 Agent，让它照着检查和安装。
+**无头 Linux（没有 App）**：比如 Grok Bot 这类跑在 Linux 上、只能以 MCP 连接器接入的 bot，按 [Linux 装完后的设置指引](docs/linux-after-install.md) 一步步带用户完成设置，配置文件的细节见 [无头 Linux 宿主接入指引](docs/linux-headless.md)。
 可选的 [agentnave-review Skill](skills/agentnave-review/SKILL.md) 是一道按风险分级的 PR／合并评审门，评审工位也由 AgentNave 派出去的只读 CLI 担任。
 
 任务和会议的历史保存在 `~/.agentnave/`（也可以用 `AGENTNAVE_DATA_DIR` 指定别的目录）。各 CLI 的登录、配置和原生会话仍归 CLI 自己管。
