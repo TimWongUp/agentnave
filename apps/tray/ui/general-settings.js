@@ -1,6 +1,6 @@
 "use strict";
 (function () {
-  const { h, $, L, load, post } = AN;
+  const { h, $, L, load, post, shellOS } = AN;
   const root = $("general-prefs");
   let data = null;
   let busy = false;
@@ -14,6 +14,7 @@
     open_on_start: true,
     tray_click: "panel",
     tray_count: true,
+    tray_font: "futura",
     keep_awake: false,
   };
 
@@ -65,10 +66,22 @@
     },
     {
       key: "tray_count",
+      macOnly: true,
       label: () => L("菜单栏显示工作人数", "Show active count in menu bar"),
       choices: () => [
         [true, L("显示", "Show")],
         [false, L("隐藏", "Hide")],
+      ],
+    },
+    {
+      key: "tray_font",
+      macOnly: true,
+      label: () => L("菜单栏数字字体", "Menu bar count font"),
+      choices: () => [
+        ["futura", "Futura", "font-family: Futura; font-weight: 500"],
+        ["baskerville", "Baskerville", "font-family: Baskerville; font-style: italic"],
+        ["typewriter", "Typewriter", "font-family: 'American Typewriter'"],
+        ["marker", "Marker", "font-family: 'Marker Felt'"],
       ],
     },
     {
@@ -151,13 +164,15 @@
       return input;
     }
     const control = h("div.segment-control", { role: "radiogroup", "aria-label": label });
-    for (const [choice, text] of item.choices()) {
+    // A third entry styles that choice, e.g. in its own font.
+    for (const [choice, text, style] of item.choices()) {
       const active = val === choice;
       const btn = h(`button.segment-btn${active ? ".active" : ""}`, {
         type: "button",
         role: "radio",
         "aria-checked": String(active),
         disabled,
+        ...(style && { style }),
       }, text);
       btn.addEventListener("click", () => {
         if (effectiveValue(item.key) !== choice) void save(item.key, choice);
@@ -170,7 +185,8 @@
   function render() {
     if (!root || !data) return;
     root.replaceChildren(
-      ...ITEMS.map((item) => h("div.setting-row", {}, h("h2", {}, item.label()), renderControl(item))),
+      // Only the macOS menu bar shows the count beside the icon.
+      ...ITEMS.filter((item) => !item.macOnly || shellOS() === "macos").map((item) => h("div.setting-row", {}, h("h2", {}, item.label()), renderControl(item))),
     );
   }
 

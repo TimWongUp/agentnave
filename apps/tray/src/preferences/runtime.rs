@@ -166,7 +166,7 @@ pub fn zoom(window: &tauri::WebviewWindow) -> Result<(), String> {
 
 pub fn refresh_working(app: &AppHandle, overview: &Overview) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id(crate::TRAY) {
-        let _ = tray.set_title(Some(crate::running_badge(overview)));
+        crate::badge::show(&tray, crate::badge::count(overview));
     }
     app.state::<Runtime>()
         .awake
