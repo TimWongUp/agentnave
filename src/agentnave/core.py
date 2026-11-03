@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Container, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -31,7 +31,12 @@ from agentnave.models import (
     InvocationStatus,
     ProviderActivity,
 )
-from agentnave.processes import spawn_process, terminate_process_tree
+from agentnave.processes import (
+    ProviderCompletion,
+    SupervisedProcess,
+    spawn_process,
+    terminate_process_tree,
+)
 
 _MAX_STDOUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 8 * 1024 * 1024
@@ -221,6 +226,117 @@ class _StreamDiagnostics:
             else:
                 lines.append("".join(char for char in line if char.isprintable()))
         return "\n".join(lines) or "[no complete diagnostic line retained]"
+
+
+@dataclass
+class _RunIO:
+    stdout_task: asyncio.Task[_CapturedStream]
+    stderr_task: asyncio.Task[_CapturedStream]
+    stdin_task: asyncio.Task[None]
+    completion_task: asyncio.Task[ProviderCompletion]
+    cancel_task: asyncio.Task[bool]
+    exceeded_task: asyncio.Task[bool]
+    stall_task: asyncio.Task[None]
+    output_exceeded: asyncio.Event
+    stdout_diagnostics: _StreamDiagnostics
+    stderr_diagnostics: _StreamDiagnostics
+
+    @property
+    def tasks(self) -> tuple[asyncio.Task[object], ...]:
+        return (
+            self.stdout_task,
+            self.stderr_task,
+            self.stdin_task,
+            self.completion_task,
+            self.cancel_task,
+            self.exceeded_task,
+            self.stall_task,
+        )
+
+
+def _start_run_io(
+    record: _InvocationRecord,
+    adapter: ProviderAdapter,
+    prepared: PreparedCommand,
+    supervised: SupervisedProcess,
+) -> _RunIO:
+    process = supervised.process
+    assert process.stdout is not None and process.stderr is not None and process.stdin is not None
+    output_exceeded = asyncio.Event()
+    stdout_diagnostics = _StreamDiagnostics()
+    stderr_diagnostics = _StreamDiagnostics()
+    stdout_task = asyncio.create_task(
+        _read_limited(
+            process.stdout,
+            _MAX_STDOUT_BYTES,
+            output_exceeded,
+            lambda line: record.observe_event(line, adapter),
+            prepared.capture_line,
+            prepared.skip_oversized_line,
+            event_limit=_MAX_EVENT_BYTES,
+            diagnostics=stdout_diagnostics,
+        )
+    )
+    stderr_task = asyncio.create_task(
+        _read_limited(
+            process.stderr,
+            _MAX_STDERR_BYTES,
+            output_exceeded,
+            diagnostics=stderr_diagnostics,
+        )
+    )
+    stdin_task = asyncio.create_task(_write_stdin(process.stdin, prepared.stdin))
+    completion_task = supervised.completion
+    cancel_task = asyncio.create_task(record.cancel_event.wait())
+    exceeded_task = asyncio.create_task(output_exceeded.wait())
+    stall_task = asyncio.create_task(_stall_guard(record))
+    return _RunIO(
+        stdout_task=stdout_task,
+        stderr_task=stderr_task,
+        stdin_task=stdin_task,
+        completion_task=completion_task,
+        cancel_task=cancel_task,
+        exceeded_task=exceeded_task,
+        stall_task=stall_task,
+        output_exceeded=output_exceeded,
+        stdout_diagnostics=stdout_diagnostics,
+        stderr_diagnostics=stderr_diagnostics,
+    )
+
+
+def _run_outcome(
+    record: _InvocationRecord,
+    io: _RunIO,
+    done: Container[asyncio.Task[object]],
+) -> tuple[InvocationStatus | None, InvocationError | None, int | None]:
+    provider_returncode: int | None = None
+    # A guard that fires in the same tick as a real signal must not mask it: the guard
+    # only ends a run that would otherwise keep going. Cancellation and a provider that
+    # already exited are outcomes, so they are settled before the stall error.
+    if io.exceeded_task in done and io.output_exceeded.is_set():
+        terminal = InvocationStatus.FAILED
+        error = _OUTPUT_LIMIT_ERROR
+    elif io.cancel_task in done and record.cancel_event.is_set():
+        terminal = InvocationStatus.CANCELLED
+        error = InvocationError("cancelled", "invocation was cancelled")
+    elif io.completion_task in done:
+        completion = io.completion_task.result()
+        if completion.kind == "exit" and completion.returncode is not None:
+            provider_returncode = completion.returncode
+            terminal = None
+            error = None
+        else:
+            terminal = InvocationStatus.FAILED
+            error = InvocationError(
+                ("launch_error" if completion.kind == "launch_error" else "supervision_lost"),
+                completion.message or "provider supervisor failed",
+            )
+    else:
+        # The stall guard is the only trigger left, and the provider had not exited:
+        # stop it as the retry policy did before the guard existed.
+        terminal = InvocationStatus.FAILED
+        error = _RETRY_STALL_ERROR
+    return terminal, error, provider_returncode
 
 
 def _output_limit_error(
@@ -564,7 +680,6 @@ class InvocationManager:
     ) -> InvocationResult:
         started = record.started_at
         supervised = None
-        provider_returncode: int | None = None
         tasks: list[asyncio.Task[object]] = []
         try:
             supervised = await spawn_process(prepared.argv, prepared.cwd)
@@ -574,95 +689,31 @@ class InvocationManager:
             if process.stdout is None or process.stderr is None or process.stdin is None:
                 raise RuntimeError("provider subprocess pipes were not created")
 
-            output_exceeded = asyncio.Event()
-            stdout_diagnostics = _StreamDiagnostics()
-            stderr_diagnostics = _StreamDiagnostics()
-            stdout_task = asyncio.create_task(
-                _read_limited(
-                    process.stdout,
-                    _MAX_STDOUT_BYTES,
-                    output_exceeded,
-                    lambda line: record.observe_event(line, adapter),
-                    prepared.capture_line,
-                    prepared.skip_oversized_line,
-                    event_limit=_MAX_EVENT_BYTES,
-                    diagnostics=stdout_diagnostics,
-                )
-            )
-            stderr_task = asyncio.create_task(
-                _read_limited(
-                    process.stderr,
-                    _MAX_STDERR_BYTES,
-                    output_exceeded,
-                    diagnostics=stderr_diagnostics,
-                )
-            )
-            stdin_task = asyncio.create_task(_write_stdin(process.stdin, prepared.stdin))
-            completion_task = supervised.completion
-            cancel_task = asyncio.create_task(record.cancel_event.wait())
-            exceeded_task = asyncio.create_task(output_exceeded.wait())
-            stall_task = asyncio.create_task(_stall_guard(record))
-            tasks.extend(
-                (
-                    stdout_task,
-                    stderr_task,
-                    stdin_task,
-                    completion_task,
-                    cancel_task,
-                    exceeded_task,
-                    stall_task,
-                )
-            )
+            io = _start_run_io(record, adapter, prepared, supervised)
+            tasks.extend(io.tasks)
 
             done, _ = await asyncio.wait(
-                (completion_task, cancel_task, exceeded_task, stall_task),
+                (io.completion_task, io.cancel_task, io.exceeded_task, io.stall_task),
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            # A guard that fires in the same tick as a real signal must not mask it: the guard
-            # only ends a run that would otherwise keep going. Cancellation and a provider that
-            # already exited are outcomes, so they are settled before the stall error.
-            if exceeded_task in done and output_exceeded.is_set():
-                terminal = InvocationStatus.FAILED
-                error = _OUTPUT_LIMIT_ERROR
-            elif cancel_task in done and record.cancel_event.is_set():
-                terminal = InvocationStatus.CANCELLED
-                error = InvocationError("cancelled", "invocation was cancelled")
-            elif completion_task in done:
-                completion = completion_task.result()
-                if completion.kind == "exit" and completion.returncode is not None:
-                    provider_returncode = completion.returncode
-                    terminal = None
-                    error = None
-                else:
-                    terminal = InvocationStatus.FAILED
-                    error = InvocationError(
-                        (
-                            "launch_error"
-                            if completion.kind == "launch_error"
-                            else "supervision_lost"
-                        ),
-                        completion.message or "provider supervisor failed",
-                    )
-            else:
-                # The stall guard is the only trigger left, and the provider had not exited:
-                # stop it as the retry policy did before the guard existed.
-                terminal = InvocationStatus.FAILED
-                error = _RETRY_STALL_ERROR
+            terminal, error, provider_returncode = _run_outcome(record, io, done)
 
             record.phase = InvocationPhase.STOPPING
-            await terminate_process_tree(process, 0.2 if completion_task in done else 2.0)
-            stdout, stderr = await _finish_streams(stdout_task, stderr_task)
+            await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
+            stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
             # The provider may exit before the readers notice the limit while draining.
             if terminal is None and (
                 stdout.exceeded
                 or stderr.exceeded
-                or stdout_diagnostics.exceeded_reason is not None
-                or stderr_diagnostics.exceeded_reason is not None
+                or io.stdout_diagnostics.exceeded_reason is not None
+                or io.stderr_diagnostics.exceeded_reason is not None
             ):
                 terminal = InvocationStatus.FAILED
                 error = _OUTPUT_LIMIT_ERROR
             if error is _OUTPUT_LIMIT_ERROR:
-                error = _output_limit_error(stdout, stderr, stdout_diagnostics, stderr_diagnostics)
+                error = _output_limit_error(
+                    stdout, stderr, io.stdout_diagnostics, io.stderr_diagnostics
+                )
             parse_returncode = provider_returncode
             if parse_returncode is None:
                 parse_returncode = process.returncode if process.returncode is not None else 1
