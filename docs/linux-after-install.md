@@ -9,9 +9,13 @@
 - 除模型相关的选择外，有推荐默认值的设置不要问，直接用默认值；用户主动提出要改时再改。模型相关的必须问，问的时候标出推荐项。
 - 用户没回答第 3 步之前，**不要启用任何 CLI**；权限只写默认的 `auto`，用户没明确要求之前绝不写 `full`。用户暂停过的 CLI，要等用户明确说恢复才动。
 - 登录只有两种做法：把桌面交给用户，让用户自己扫码或登录；或者走 CLI 自带的登录流程。**绝不在聊天里要 token 或密码**。API key 一律用密钥表单收，写进文件后 `chmod 600`，永远不要回显。
-- 每次改 `~/.agentnave/*.json` 之前，先备份：
+- 数据根目录默认 `~/.agentnave/`；设过 `AGENTNAVE_DATA_DIR` 时，连接器也要传入同一目录。每次改配置前，先创建目录并备份：
   ```bash
-  B=~/agentnave-backup-$(date +%m%d%H%M); mkdir -p $B; cp -a ~/.agentnave/*.json $B/ 2>/dev/null; echo $B
+  mkdir -p "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}"
+  B="$HOME/agentnave-backup-$(date +%m%d%H%M)"
+  mkdir -p "$B"
+  cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/." "$B/"
+  echo "$B"
   ```
 - 改文件用 python 或 jq，先写到 `.tmp` 再 `mv` 过去。服务每次调用都会重新读文件，**改完不用重启**。
 - 文中的验证都用连接器的 `list_members`。连接器暂时用不了时，改用独立客户端做检查（§5.3）。Grok Bot 的命令是：
@@ -23,17 +27,17 @@
 ```bash
 which agentnave-mcp; uv tool list | grep agentnave
 ```
-验证：二进制在 `~/.local/bin/agentnave-mcp`，版本和预期一致（例如 v0.66.0）。不对的话按 §1.1 重装，这一步不用问用户。
+验证：二进制在 `~/.local/bin/agentnave-mcp`，版本和预期一致（例如 v1.0.0）。不对的话按 §1.1 重装，这一步不用问用户。
 
 ## 1. 接入宿主
 
 用户让你装 AgentNave 就已经包含接入，这一步不用问，直接执行：
-- 先看宿主里是否已有 `agentnave` 连接器：已有且 `connected`、工具数对，就直接跳到生成 UUID；已有但工具对不上，说明是升级后 schema 过期，按下面的 ⚠️ 处理。
+- 先看宿主里是否已有 `agentnave` 连接器：已有且 `connected`、工具数对，就直接跳到确认聊天身份；已有但工具对不上，先按 §2.2 重连并检查。
 - Grok Bot：用 `AddMcpServer`，名字填 `agentnave`，命令填 `/home/box/.local/bin/agentnave-mcp`（写完整路径）。
 - 其他宿主：添加 stdio 服务器，`{"command":"/home/<user>/.local/bin/agentnave-mcp","args":[]}`。
-- 生成一个 UUID 作为固定的 `manager_session_id`，记进你的记忆，以后一直复用（§6.4）：
+- 先读取当前聊天的原生会话 ID；只有宿主不提供时，才生成一个 UUID，作为本聊天固定的 `manager_session_id`（§2.3、§6.4）。也可按聊天注入 `AGENTNAVE_HOST_SESSION_ID`，不要跨聊天复用：
   `python3 -c "import uuid;print(uuid.uuid4())"`
-- ⚠️ v0.66.0 及以前：升级后必须删掉连接器再重新添加（§2.2、§6.3）。删除连接器要用户亲手打字要求才能执行。
+- 升级按 §2.2：App 安装后需宿主重连，uv 原地升级会在空闲时切换。从 1.0 以前升级时，先断开同一数据目录的所有旧服务连接并备份，再升级、重连；新服务启动会迁移会话库到 v2，并删除旧身份记录及关联数据和席位目录，迁移期间不要让旧服务继续连接。无需例行删除连接器。
 
 验证：连接器状态显示 `connected`，有 9 个工具。
 
@@ -53,12 +57,21 @@ for c in pi codebuddy dsh codex agy claude grok zcode; do printf "%-10s " $c; co
 按回答写 `members.json`：没选的 CLI 不写进 `modes`，就等于暂停。 这段写法会整份重写文件，只适合首次设置；之后修改用 [linux-headless.md §7](linux-headless.md) 的增量写法。
 ```bash
 python3 - <<'PY'
-import json; chosen=["<组员1>","<组员2>"]      # ← 用户的回答（组员名）
-d={"version":1,"clis":{c:{"models":{}} for c in chosen},
-   "modes":{m:{c:{"models":[]} for c in chosen} for m in ("task","discussion")}}
-json.dump(d,open("/home/box/.agentnave/members.json.tmp","w"),indent=2)
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+root.mkdir(parents=True, exist_ok=True)
+chosen = ["<组员1>", "<组员2>"]  # ← 用户的回答（组员名）
+d = {
+    "version": 1,
+    "clis": {c: {"models": {}} for c in chosen},
+    "modes": {m: {c: {"models": []} for c in chosen} for m in ("task", "discussion")},
+}
+json.dump(d, open(root / "members.json.tmp", "w"), indent=2)
+(root / "members.json.tmp").replace(root / "members.json")
 PY
-mv ~/.agentnave/members.json.tmp ~/.agentnave/members.json
 ```
 验证：`list_members` 返回 `configured: true`，`members` 里正好是选中的这些 CLI。
 
@@ -95,7 +108,7 @@ mv ~/.agentnave/members.json.tmp ~/.agentnave/members.json
 ```bash
 jq --arg m "opencode-go/deepseek-v4.1-flash" '.clis.pi.models[$m]={} |
   (.modes.task.pi, .modes.discussion.pi) = {"models":[$m],"default":$m}' \
-  ~/.agentnave/members.json > /tmp/m.json && mv /tmp/m.json ~/.agentnave/members.json
+  "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/members.json" > /tmp/m.json && mv /tmp/m.json "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/members.json"
 ```
 验证：`list_members` 里这个 CLI 显示了选定的模型，并且标为 `default`。
 
@@ -107,7 +120,7 @@ jq --arg m "opencode-go/deepseek-v4.1-flash" '.clis.pi.models[$m]={} |
 按回答修改：选了档位就写 `clis.<cli>.models.<m>.effort`；选“CLI 默认”就不写（§3.1）。
 ```bash
 jq --arg m "opencode-go/deepseek-v4.1-flash" '.clis.pi.models[$m].effort="high"' \
-  ~/.agentnave/members.json > /tmp/m.json && mv /tmp/m.json ~/.agentnave/members.json
+  "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/members.json" > /tmp/m.json && mv /tmp/m.json "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/members.json"
 ```
 验证：`list_members` 里这个模型显示了选定的 `effort`。
 
@@ -127,7 +140,8 @@ jq --arg m "opencode-go/deepseek-v4.1-flash" '.clis.pi.models[$m].effort="high"'
 
 按回答写 `orchestration.json`（下面是示例值，换成用户选的）。工位必须填实际的模型 ID，**不要写 `effective_apps`**（§3.2）：
 ```bash
-cat > ~/.agentnave/orchestration.json <<'J'
+mkdir -p "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}"
+cat > "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/orchestration.json" <<'J'
 {"version":1,"preset":"split",
  "explorer":{"easy":{"provider":"pi","model":"opencode-go/deepseek-v4.1-flash"},
              "hard":{"provider":"deepseek","model":"deepseek-flash"}},
@@ -148,10 +162,22 @@ J
 按回答写 `review.json`（示例值，换成用户选的），共 8 个角色，名字见 §3.3：
 ```bash
 python3 - <<'PY'
-import json; seat={"provider":"pi","model":"opencode-go/deepseek-v4.1-flash"}
-roles="correctness architecture security performance test-reliability simplicity specialist".split()
-d={"version":1,"seats":{**{r+"-reviewer":seat for r in roles},"adversarial-verifier":seat}}
-json.dump(d,open("/home/box/.agentnave/review.json","w"),indent=2)
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+root.mkdir(parents=True, exist_ok=True)
+seat = {"provider": "pi", "model": "opencode-go/deepseek-v4.1-flash"}
+roles = (
+    "correctness architecture security performance test-reliability simplicity specialist".split()
+)
+d = {
+    "version": 1,
+    "seats": {**{r + "-reviewer": seat for r in roles}, "adversarial-verifier": seat},
+}
+json.dump(d, open(root / "review.json.tmp", "w"), indent=2)
+(root / "review.json.tmp").replace(root / "review.json")
 PY
 ```
 验证：`list_members.review` 有这些角色，`review_error` 为空。
@@ -162,20 +188,32 @@ PY
 
 ```bash
 python3 - <<'PY'
-import json; chosen=["<组员1>","<组员2>"]      # ← 第 3 步的组员
-json.dump({"version":1,"clis":{c:"auto" for c in chosen}},open("/home/box/.agentnave/permissions.json","w"),indent=2)
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
+root.mkdir(parents=True, exist_ok=True)
+chosen = ["<组员1>", "<组员2>"]  # ← 第 3 步的组员
+json.dump(
+    {"version": 1, "clis": {c: "auto" for c in chosen}},
+    open(root / "permissions.json.tmp", "w"),
+    indent=2,
+)
+(root / "permissions.json.tmp").replace(root / "permissions.json")
 PY
 ```
-验证：`list_members.permissions` 都是 auto。CodeBuddy、DeepSeek、Antigravity、ZCode 的 `auto` 档本身就是全权限，会显示为 `full`，这是正常的。
+验证：`list_members.permissions` 返回全部 7 个有档位的 CLI，不限于已选组员，也不含 Pi。默认 claude、grok、codex 显示 `auto`；codebuddy、deepseek、antigravity、zcode 的 `auto` 档本身就是全权限，会显示为 `full`，这是正常的。
 
 ## 8. 其他设置
 
 不问用户，直接写默认值：同时运行上限 8，历史自动清理 90 天。第 10 步总结里要说明超过 90 天的旧对话记录会被自动删除，可以改成永不、30 或 180 天。
 
 ```bash
-jq -n '{version:1,max_running:8,history_retention_days:90}' > ~/.agentnave/settings.json
+mkdir -p "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}"
+jq -n '{version:1,max_running:8,history_retention_days:90}' > "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/settings.json"
 ```
-验证：用 `python3 -m json.tool` 检查格式。清理设置最长 24 小时后才会生效（§7.1）。
+验证：用 `python3 -m json.tool` 检查格式。`version` 必须是整数 1，`max_running` 必须是 1–32 的整数，否则派发报 `SettingsFileError` 并关闭清理；仅 `history_retention_days` 非法时关闭清理并记录 warning，派发仍可用。清理设置在服务启动或下一轮清理时生效，最长 24 小时（§7.1）。
 
 ## 9. 安装 skill
 
@@ -185,7 +223,7 @@ jq -n '{version:1,max_running:8,history_retention_days:90}' > ~/.agentnave/setti
 ```bash
 EXTRA=""                                # 第 6 步选了装：EXTRA=agentnave-review
 SRC=~/.local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave/skills
-DEST=/home/box/agent-data/workflows      # Grok Bot 的全局 skill 仓库；其他 bot 换成自己的目录
+DEST="$HOME/agent-data/workflows"      # Grok Bot 的全局 skill 仓库；其他 bot 换成自己的目录
 for s in agentnave-manager $EXTRA; do   # 第 6 步选了装时 EXTRA=agentnave-review
   [ -d "$DEST/$s" ] && mv "$DEST/$s" "$HOME/$s-backup-$(date +%m%d%H%M)"; cp -a "$SRC/$s" "$DEST/$s"; done
 ```
@@ -200,8 +238,7 @@ for s in agentnave-manager $EXTRA; do   # 第 6 步选了装时 EXTRA=agentnave-
    start_agent(prompt="回复：好了", seat="explorer-easy",   # 没开编排时改用 provider="<第 3 步选的第一个 CLI>"
                role="自检", cwd="/tmp",
                manager_session_id="<固定 UUID>")
-   wait(ids=["<invocation_id>"], wait_seconds=240, include_output=true,
-        manager_session_id="<固定 UUID>")
+   wait(ids=["<invocation_id>"], wait_seconds=240, include_output=true)
    ```
    期望：`succeeded`，输出“好了”（本机实测由 Pi 执行，大约 5 秒）。返回 `Boss model unknown` 警告是正常的（§8.4），不要因此重复调用。
 
