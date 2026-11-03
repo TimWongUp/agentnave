@@ -250,7 +250,10 @@ def test_unreadable_orphan_seat_is_removed_without_ending_the_pass(tmp_path: Pat
 
 @pytest.mark.skipif(os.name != "nt", reason="junctions are Windows only")
 def test_orphan_seat_junctions_are_removed_without_touching_their_targets(tmp_path: Path) -> None:
-    import _winapi  # pyright: ignore[reportMissingModuleSource]
+    import subprocess
+
+    def junction(link: Path) -> None:
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)], check=True)
 
     fixture(tmp_path, "saved")
     outside = tmp_path / "outside"
@@ -258,8 +261,8 @@ def test_orphan_seat_junctions_are_removed_without_touching_their_targets(tmp_pa
     (outside / "keep").write_text("keep")
     (outside / "keep").chmod(stat.S_IREAD)
     (tmp_path / "seats/inner").mkdir(parents=True)
-    _winapi.CreateJunction(str(outside), str(tmp_path / "seats/inner/link"))
-    _winapi.CreateJunction(str(outside), str(tmp_path / "seats/whole"))
+    junction(tmp_path / "seats/inner/link")
+    junction(tmp_path / "seats/whole")
     for name in ["inner", "whole"]:
         os.utime(tmp_path / "seats" / name, (_NOW - 2 * 86400, _NOW - 2 * 86400))
     cleanup(tmp_path, now=_NOW)
