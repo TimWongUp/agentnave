@@ -176,6 +176,11 @@ mod text {
 
     /// `text` in the PostScript font `name`, its digits as tall as the N; None if the font is missing.
     pub fn draw(name: &str, text: &str, height: u32) -> Option<Text> {
+        // The poll thread never drains a pool of its own; release AppKit's temporaries per draw.
+        objc2::rc::autoreleasepool(|_| render(name, text, height))
+    }
+
+    fn render(name: &str, text: &str, height: u32) -> Option<Text> {
         let name = NSString::from_str(name);
         let probe = NSFont::fontWithName_size(&name, 40.0)?;
         let font = NSFont::fontWithName_size(&name, 40.0 * CAP / probe.capHeight())?;
