@@ -3,6 +3,7 @@ use reqwest::blocking::RequestBuilder;
 use std::net::IpAddr;
 use std::sync::{Arc, Weak};
 
+mod catalog;
 pub(super) mod chatgpt;
 #[cfg(test)]
 mod tests;
@@ -294,6 +295,9 @@ fn parse_models(items: &[&Value]) -> Vec<SummaryModel> {
         .iter()
         .filter_map(|item| {
             let id = model_id(item).filter(|id| valid_summary_model(id))?;
+            if !catalog::suitable_for_summary(item, id) {
+                return None;
+            }
             let display_name = item["display_name"]
                 .as_str()
                 .filter(|name| !name.trim().is_empty())
