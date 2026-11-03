@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::hosts::ToolDirs;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -349,6 +349,25 @@ pub fn check(app: &AppHandle, manual: bool) {
         return;
     };
     tauri::async_runtime::spawn(finish_check(app.clone(), manual, before));
+}
+
+/// The check the App runs by itself at start and once a day, skipped while the setting is off.
+/// The loop keeps going, so turning the setting back on resumes with the next round.
+pub fn auto_check(app: &AppHandle) {
+    let preferences = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
+    if automatic_check_enabled(&preferences) {
+        check(app, false);
+    }
+}
+
+/// Automatic checks run unless the App setting is explicitly off; no file, no section or a
+/// value this build cannot read keeps the previous behaviour.
+fn automatic_check_enabled(preferences: &Map<String, Value>) -> bool {
+    preferences
+        .get("updates")
+        .and_then(|updates| updates.get("auto_check"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 /// `POST /app/update/check`: check now and answer with the result. The service version is
