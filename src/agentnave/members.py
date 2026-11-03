@@ -12,7 +12,7 @@ from typing import Literal, cast, get_args
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentnave.adapters import get_adapter
-from agentnave.adapters.base import RESTRICTED_EXTRA_OPTIONS, restricted_options
+from agentnave.adapters.base import restricted_options
 from agentnave.host import Host, HostName, HostSource
 from agentnave.models import InvocationRequest, ProviderOption
 
@@ -56,10 +56,6 @@ class PermissionFileError(ValueError):
     """The App-owned permissions.json cannot be read or validated."""
 
 
-class CLIOptionsFileError(ValueError):
-    """The App-owned cli-options.json cannot be read or validated."""
-
-
 class CapacityError(ValueError):
     """Starting would exceed the App's limit on concurrently running CLI processes."""
 
@@ -75,7 +71,6 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
         "approve_for_me",
         "dangerously_bypass_approvals_and_sandbox",
         "dangerously_skip_permissions",
-        "skip_git_repo_check",
         "agent",
         "tools",
         "mode",
@@ -137,7 +132,7 @@ PERMISSION_KEYS: dict[str, frozenset[str]] = {
 def validate_provider_options(request: InvocationRequest) -> None:
     adapter = get_adapter(request.provider)
     try:
-        normalized, _ = restricted_options(request)
+        normalized, _ = restricted_options(request, adapter)
         adapter.option_args(normalized)
     except ValueError as exc:
         raise AdapterOptionsError(str(exc)) from exc
@@ -327,7 +322,7 @@ class MemberFile(StrictModel):
         for key, value in config.options.items():
             if model is None and key in _MODEL_EXECUTION_OPTIONS:
                 continue
-            if restricted and key not in RESTRICTED_EXTRA_OPTIONS.get(provider, set()):
+            if restricted and key not in get_adapter(provider).restricted_extra_options:
                 continue
             if key not in result:
                 result[key] = value
@@ -340,25 +335,6 @@ class PermissionFile(StrictModel):
 
     version: int = Field(ge=1, le=1)
     clis: dict[ProviderName, PermissionTier] = {}
-
-
-class CLIOptionsFile(StrictModel):
-    """cli-options.json: settings that hold for every model of a CLI. Apart from members.json
-    so older servers keep reading their members."""
-
-    version: int = Field(ge=1, le=1)
-    clis: dict[ProviderName, dict[str, ProviderOption]] = {}
-
-    @model_validator(mode="after")
-    def option_keys(self) -> CLIOptionsFile:
-        for provider, options in self.clis.items():
-            # Permission keys belong to the tier, never to saved defaults.
-            reserved = {"model", "effort", "restricted_tools"} | PERMISSION_KEYS.get(
-                provider, frozenset()
-            )
-            if found := sorted(reserved.intersection(options)):
-                raise ValueError(f"clis.{provider} must not contain {', '.join(found)}")
-        return self
 
 
 def data_root() -> Path:
@@ -384,10 +360,6 @@ def _read_app_file[T: BaseModel](name: str, model: type[T], error: type[ValueErr
         return model.model_validate_json(content)
     except ValueError as exc:
         raise error(f"Invalid {name}: {exc}. {_repair(name)}") from exc
-
-
-def read_cli_options() -> CLIOptionsFile | None:
-    return _read_app_file("cli-options.json", CLIOptionsFile, CLIOptionsFileError)
 
 
 def read_permissions() -> PermissionFile | None:
@@ -515,28 +487,6 @@ def read_members() -> MemberFile | None:
     return _read_app_file("members.json", MemberFile, MemberFileError)
 
 
-def add_cli_options(
-    provider: str,
-    saved: Mapping[str, ProviderOption],
-    result: dict[str, ProviderOption],
-    restricted: bool,
-) -> list[str]:
-    """Fill CLI-wide settings, which hold whichever model runs, the CLI's own default included.
-
-    The caller and the model's own options win on the same key; restricted runs take only
-    the extras that grant no tools. Returns the keys added.
-    """
-    unrestricted = not restricted and result.get("restricted_tools") is not True
-    added = [
-        key
-        for key in saved
-        if key not in result
-        and (unrestricted or key in RESTRICTED_EXTRA_OPTIONS.get(provider, set()))
-    ]
-    result.update({key: saved[key] for key in added})
-    return added
-
-
 def apply_member(
     document: MemberFile | None,
     mode: Mode,
@@ -546,7 +496,6 @@ def apply_member(
     *,
     restricted: bool = False,
     permissions: PermissionFile | None = None,
-    cli_options: CLIOptionsFile | None = None,
     seat: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, ProviderOption], list[str]]:
     if document is not None:
@@ -556,8 +505,6 @@ def apply_member(
     else:
         check_excluded(mode, provider, excluded)
         result, applied = dict(options), []
-    if cli_options is not None:
-        applied += add_cli_options(provider, cli_options.clis.get(provider, {}), result, restricted)
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
@@ -708,16 +655,11 @@ class MemberList(StrictModel):
     # The App permission tier of each CLI that has one, "auto" unless the user picked "full".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
-    # Settings the user saved for a whole CLI; they apply to every model of it and are not
-    # repeated in each member's options.
-    cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
-    cli_options_error: str | None = None
 
 
 def _member_modes(
     document: MemberFile | None,
     excluded: frozenset[str],
-    cli_options: dict[ProviderName, dict[str, ProviderOption]],
 ) -> dict[Mode, ModeStatus]:
     modes: dict[Mode, ModeStatus] = {}
     for mode in ("task", "discussion"):
@@ -740,7 +682,6 @@ def _member_modes(
                     if effort is not None:
                         options["effort"] = effort
                     # Validate what a dispatch would send; options below stay the model's own.
-                    add_cli_options(provider, cli_options.get(provider, {}), options, False)
                     error = None
                     try:
                         request = InvocationRequest(
@@ -832,15 +773,7 @@ def _compact_members(modes: dict[Mode, ModeStatus], excluded: frozenset[str]) ->
 
 def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     document = read_members()
-    cli_options: dict[ProviderName, dict[str, ProviderOption]] = {}
-    cli_options_error = None
-    try:
-        saved_options = read_cli_options()
-    except CLIOptionsFileError as exc:
-        cli_options_error = str(exc)
-    else:
-        cli_options = saved_options.clis if saved_options else {}
-    modes = _member_modes(document, excluded, cli_options)
+    modes = _member_modes(document, excluded)
     # Review seats are not checked against clis: a removed model is reported here, and the
     # review Skill picks a replacement at dispatch time. A broken review.json leaves members alone.
     review: dict[ReviewRole, ReviewSeatStatus] = {}
@@ -888,8 +821,6 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         orchestration_error=orchestration_error,
         permissions=permissions,
         permissions_error=permissions_error,
-        cli_options=cli_options,
-        cli_options_error=cli_options_error,
     )
 
 

@@ -31,15 +31,13 @@ from agentnave.group import (
 )
 from agentnave.host import (
     Host,
-    boss_key,
     detect_host,
     host_session_id,
-    session_file,
-    session_model,
 )
 from agentnave.locks import release_and_remove
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
+from agentnave.native_sessions import boss_key, session_file, session_model
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -179,7 +177,7 @@ _MANAGER_STARTED_AT = os.environ.get("AGENTNAVE_MANAGER_STARTED_AT") or now()
 
 
 def _project(record: Record) -> bytes:
-    return _json(views.snapshot(record.state, str(record.db.path)))
+    return _json(views.snapshot(record.state))
 
 
 def _json(data: object) -> bytes:
@@ -974,14 +972,7 @@ class Conversations(Groups):
             # Held by the run until it ends: no other server can resume this session meanwhile.
             native_lock = self.manager.reserve(request)
             record = self.writable(conversation_id) if conversation_id else None
-            if (
-                record is not None
-                and record.state.manager_session != manager_session
-                and (
-                    manager_session is not None
-                    or (record.state.manager_session or "").startswith("s-")
-                )
-            ):
+            if record is not None and record.state.manager_session != manager_session:
                 raise ValueError(self._not_yours("Task conversation", record.state.manager_session))
             if request.session_id:
                 # Under the native-session lock, include other chats' active bindings.
@@ -999,16 +990,9 @@ class Conversations(Groups):
                             item
                             for item in self.records.values()
                             if item.state.kind == "task"
-                            and (
-                                item.state.manager_session == manager_session
-                                or (
-                                    manager_session is None
-                                    and not (item.state.manager_session or "").startswith("s-")
-                                )
-                            )
+                            and item.state.manager_session == manager_session
                             and any(map(resumes, item.state.tasks))
                         ),
-                        # Old versions could split a session after archiving its first record.
                         # Continue the most recent binding, independent of directory order.
                         key=lambda item: (
                             max(task.time for task in item.state.tasks if resumes(task)),
@@ -1020,14 +1004,6 @@ class Conversations(Groups):
                     if record is not None:
                         # Keep a native session together within this manager chat.
                         record = self.writable(record.state.id)
-                # Older servers hold the session lock only while starting; their saved running
-                # task still marks the session busy.
-                if any(
-                    task.status == "running" and resumes(task)
-                    for item in self.records.values()
-                    for task in item.state.tasks
-                ):
-                    raise ValueError("This native session already has an active task")
             if record is None:
                 conversation_id = uuid4().hex
                 record = self._create(

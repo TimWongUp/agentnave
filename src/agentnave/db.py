@@ -14,9 +14,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
+from agentnave.locks import locked_conversations, remove_seats
 from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 NAME = "agentnave.db"
 
 # Shared with the tray app's tests, which build the same database.
@@ -103,12 +104,14 @@ class Database:
                         raise
                     connection.execute("COMMIT")
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version == 1:
+                    _migrate_v1(connection, self.path.parent)
+                    version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version != SCHEMA_VERSION:
                     raise sqlite3.DatabaseError(
                         f"{self.path} has schema version {version}; this AgentNave reads "
                         f"version {SCHEMA_VERSION}"
                     )
-                add_handover_schema(connection)
             except BaseException:
                 connection.close()
                 raise
@@ -381,42 +384,52 @@ class Workspace(NamedTuple):
     cwd: str | None
 
 
-def add_handover_schema(connection: sqlite3.Connection) -> None:
-    """Idempotent handover additions shared by normal connections and history cleanup."""
-    tables = {
+def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None:
+    """Delete rows and their cascades under the caller's transaction and OS locks."""
+    connection.executemany("DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids])
+
+
+def _legacy_ids(connection: sqlite3.Connection) -> list[str]:
+    return [
         row[0]
         for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name IN ('workspaces', 'former_bosses')"
+            "SELECT id FROM conversations WHERE manager_session IS NULL "
+            "OR substr(manager_session, 1, 2) != 's-' ORDER BY id"
         )
-    }
-    if tables != {"workspaces", "former_bosses"}:
-        connection.execute("BEGIN IMMEDIATE")
-        try:
-            for statement in _SCHEMA.split(";"):
-                if statement.strip():
-                    connection.execute(statement)
-        except BaseException:
-            connection.rollback()
-            raise
-        connection.execute("COMMIT")
-    _add_workspace_columns(connection)
+    ]
 
 
-def _add_workspace_columns(connection: sqlite3.Connection) -> None:
-    """A database an older server created lacks them; older servers ignore them."""
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
-    if {"title", "cwd"} <= columns:
-        return
-    connection.execute("BEGIN IMMEDIATE")
+def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
+    """Upgrade atomically after locking old conversations; busy history stays v1."""
+    ids = _legacy_ids(connection)
     try:
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
-        for column in {"title", "cwd"} - columns:
-            connection.execute(f"ALTER TABLE workspaces ADD COLUMN {column} TEXT")
-    except BaseException:
-        connection.rollback()
-        raise
-    connection.execute("COMMIT")
+        with locked_conversations(root, ids):
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version == SCHEMA_VERSION:
+                    return  # Another new server finished while this one acquired the locks.
+                if version != 1 or _legacy_ids(connection) != ids:
+                    raise OSError("History changed during migration; reconnect the host to retry")
+                for statement in _SCHEMA.split(";"):
+                    if statement.strip():
+                        connection.execute(statement)
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
+                for column in ("title", "cwd"):
+                    if column not in columns:
+                        connection.execute(f"ALTER TABLE workspaces ADD COLUMN {column} TEXT")
+                remove_conversations(connection, ids)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.commit()
+                remove_seats(root, ids)
+            finally:
+                if connection.in_transaction:
+                    connection.rollback()
+    except ValueError as exc:
+        raise OSError(
+            "History migration is blocked by an in-use or unsafe old conversation; "
+            "disconnect old hosts and reconnect to retry"
+        ) from exc
 
 
 def _row(row: tuple[object, ...]) -> Workspace:

@@ -15,7 +15,6 @@ from agentnave.adapters.base import (
     clean_model,
     error_summary,
     failure_status,
-    normalized_usage,
     option_args,
     parse_json_lines,
     parse_json_object,
@@ -30,6 +29,8 @@ def _capture_line(line: bytes) -> bytes:
 
 class ZcodeAdapter(AdapterHooks):
     name = "zcode"
+    options_description = "permission_mode (auto, build, edit, plan, yolo, guarded); model accepts providerId/modelId; effort is native thoughtLevel; restricted_tools is not supported"
+    supports_restricted_tools = False
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         args = option_args(
@@ -52,7 +53,7 @@ class ZcodeAdapter(AdapterHooks):
             "options": dict(request.provider_options),
         }
         return PreparedCommand(
-            (sys.executable, "-I", str(Path(__file__).parents[1] / "zcode_protocol.py")),
+            (sys.executable, "-I", str(Path(__file__).with_name("zcode_protocol.py"))),
             request.cwd,
             json.dumps(payload).encode(),
             session_id=session_id,
@@ -88,9 +89,7 @@ class ZcodeAdapter(AdapterHooks):
         result = next((e for e in reversed(events) if e.get("type") == "result"), None)
         output = str(result.get("output", "")) if result else ""
         if returncode == 0 and result is not None and result.get("failed") is False:
-            return ParsedProviderResult(
-                InvocationStatus.SUCCEEDED, output, session_id, normalized_usage(result)
-            )
+            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
         error = next((str(e["message"]) for e in reversed(events) if e.get("type") == "error"), "")
         error = (
             error

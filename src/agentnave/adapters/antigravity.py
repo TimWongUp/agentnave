@@ -15,7 +15,6 @@ from agentnave.adapters.base import (
     brief,
     error_summary,
     failure_status,
-    normalized_usage,
     object_dict,
     parse_json_lines,
     parse_json_object,
@@ -128,6 +127,12 @@ def write_restricted_profile(directory: Path) -> None:
 
 class AntigravityAdapter(AdapterHooks):
     name = "antigravity"
+    options_description = (
+        "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
+        "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
+        "restricted_tools (boolean; tool-free profile, only in a dedicated seat cwd that already "
+        "contains it)"
+    )
     _options = {
         "model": "--model",
         "effort": "--effort",
@@ -142,7 +147,7 @@ class AntigravityAdapter(AdapterHooks):
     _boolean_options = {"disable_slash_commands", "sandbox", "dangerously_skip_permissions"}
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
         argv = [
@@ -255,7 +260,6 @@ class AntigravityAdapter(AdapterHooks):
         raw_output = payload.get("response", "")
         output = raw_output if isinstance(raw_output, str) else str(raw_output)
         session_id = payload.get("conversation_id")
-        usage = normalized_usage(payload)
         provider_status = payload.get("status")
         explicit_error = payload.get("error")
 
@@ -292,7 +296,7 @@ class AntigravityAdapter(AdapterHooks):
             and ((normalized_status == "SUCCESS" and not explicit_error) or turn_answered)
             and not blocked_by_stderr
         ):
-            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id, usage)
+            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
 
         if normalized_status is None:
             status_message = "antigravity result omitted status"
@@ -314,7 +318,7 @@ class AntigravityAdapter(AdapterHooks):
             status = InvocationStatus.BLOCKED
         else:
             status = failure_status(message)
-        return ParsedProviderResult(status, output, session_id, usage, message)
+        return ParsedProviderResult(status, output, session_id, message)
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         unknown = sorted(set(request.provider_options) - set(self._options))

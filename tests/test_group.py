@@ -78,7 +78,6 @@ class FakeManager:
                     request.provider,
                     output or f"answer-{invocation_id}",
                     session_id,
-                    {},
                     1,
                     error,
                 )

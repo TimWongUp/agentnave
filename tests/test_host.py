@@ -17,7 +17,8 @@ from agentnave.process_info import _ProcessInfo  # pyright: ignore[reportPrivate
 def test_session_copied_between_project_folders_reads_the_live_transcript(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave.host import Host, session_file, session_model
+    from agentnave.host import Host
+    from agentnave.native_sessions import session_file, session_model
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     session = "01a14d5a-d23d-7263-b50d-ca6b5ac429dd"
@@ -49,7 +50,8 @@ def test_session_copied_between_project_folders_reads_the_live_transcript(
 def test_session_file_finds_each_kind_of_host_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave.host import Host, boss_key, session_file, shared_session_id
+    from agentnave.host import Host
+    from agentnave.native_sessions import boss_key, session_file, shared_session_id
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -88,7 +90,8 @@ def test_session_file_finds_each_kind_of_host_record(
 def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentnave.host import Host, session_model
+    from agentnave.host import Host
+    from agentnave.native_sessions import session_model
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     session = "01a14d5a-d23d-7263-b50d-ca6b5ac429dd"
@@ -117,7 +120,7 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     assert session_model(Host("codex"), session) == "current-model"
     from datetime import UTC, datetime
 
-    from agentnave.host import _lines_from_end  # pyright: ignore[reportPrivateUsage]
+    from agentnave.native_sessions import _lines_from_end  # pyright: ignore[reportPrivateUsage]
 
     lines = tmp_path / "lines.txt"
     lines.write_bytes(b"old\n" + b"x" * 9 + b"\nnew\n")
@@ -217,7 +220,7 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     monkeypatch.setenv("HERMES_HOME", "hermes")
     assert session_model(Host("hermes"), hermes) is None
     # Malformed protobuf ends the scan instead of growing one varint without bound.
-    from agentnave.host import _proto_fields  # pyright: ignore[reportPrivateUsage]
+    from agentnave.native_sessions import _proto_fields  # pyright: ignore[reportPrivateUsage]
 
     assert list(_proto_fields(b"\xff" * 100_000)) == []
 
@@ -335,7 +338,8 @@ def test_zcode_reads_only_native_assistant_model(
 ) -> None:
     import sqlite3
 
-    from agentnave.host import Host, _match, session_model  # pyright: ignore[reportPrivateUsage]
+    from agentnave.host import Host, _match  # pyright: ignore[reportPrivateUsage]
+    from agentnave.native_sessions import session_model  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     database = tmp_path / ".zcode/cli/db/db.sqlite"

@@ -1,6 +1,5 @@
 -- The conversation database (ADR-0026): Python creates it, the tray reads and cleans it.
--- Every statement is idempotent: servers run it on each connection, so tables added later
--- (like workspaces) reach databases created by older versions without a version change.
+-- Used for new databases and the one-time v1 migration. Future schema changes need a version.
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('show', 'task')),

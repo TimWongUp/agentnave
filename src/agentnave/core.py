@@ -553,7 +553,6 @@ class InvocationManager:
                 record.request.provider,
                 "",
                 record.request.session_id,
-                {},
                 _duration_ms(record.started_at),
                 InvocationError(
                     "internal_error", "Unexpected invocation failure; inspect server logs."
@@ -677,7 +676,6 @@ class InvocationManager:
                     record.request.provider,
                     partial,
                     parsed.session_id or prepared.session_id or record.request.session_id,
-                    parsed.usage,
                     _duration_ms(started),
                     error,
                 )
@@ -693,7 +691,6 @@ class InvocationManager:
                 record.request.provider,
                 parsed.output if parsed.status is InvocationStatus.SUCCEEDED else partial,
                 parsed.session_id or prepared.session_id,
-                parsed.usage,
                 _duration_ms(started),
                 parsed_error,
                 warnings=parsed.warnings,
@@ -704,7 +701,6 @@ class InvocationManager:
                 record.request.provider,
                 "",
                 record.request.session_id,
-                {},
                 _duration_ms(started),
                 InvocationError("launch_error", str(exc)),
             )

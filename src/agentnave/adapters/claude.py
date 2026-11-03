@@ -12,10 +12,8 @@ from agentnave.adapters.base import (
     ParsedProviderResult,
     PreparedCommand,
     brief,
-    clean_model,
     error_summary,
     failure_status,
-    normalized_usage,
     object_dict,
     option_args,
     parse_json_lines,
@@ -24,6 +22,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.native_sessions import assistant_model
 
 # CodeBuddy leaves permission_denials empty and reports a denial only in the tool result.
 _DENIED = re.compile(r"Error: Permission to use (\S{1,64}) has been denied")
@@ -76,22 +75,9 @@ def _result_capture() -> Callable[[bytes], bytes]:
     return capture
 
 
-def assistant_model(event: dict[str, object]) -> str | None:
-    """The main assistant's model; a subagent's messages carry parent_tool_use_id."""
-    if event.get("parent_tool_use_id") is not None:
-        return None
-    kind = event.get("type")
-    if kind == "assistant":
-        return clean_model(object_dict(event.get("message")).get("model"))
-    if kind == "stream_event":
-        nested = object_dict(event.get("event"))
-        if nested.get("type") == "message_start":
-            return clean_model(object_dict(nested.get("message")).get("model"))
-    return None
-
-
 class ClaudeAdapter(AdapterHooks):
     name = "claude"
+    options_description = "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)"
     executable = "claude"
     _options = {
         "model": "--model",
@@ -114,7 +100,7 @@ class ClaudeAdapter(AdapterHooks):
         return option_args(request, self._options)
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         argv = [
             resolve_executable(self.executable),
             "--print",
@@ -278,7 +264,6 @@ class ClaudeAdapter(AdapterHooks):
         raw_output = payload.get("result", "")
         output = raw_output if isinstance(raw_output, str) else str(raw_output)
         session_id = payload.get("session_id")
-        usage = normalized_usage(payload)
         is_error = bool(payload.get("is_error", False))
         subtype = payload.get("subtype")
         stop_reason = payload.get("stop_reason")
@@ -304,7 +289,7 @@ class ClaudeAdapter(AdapterHooks):
             )
             warnings = (self._denials_warning(denials),) if denials else ()
             return ParsedProviderResult(
-                InvocationStatus.SUCCEEDED, output, session_id, usage, warnings=warnings
+                InvocationStatus.SUCCEEDED, output, session_id, warnings=warnings
             )
 
         if refused:
@@ -325,4 +310,4 @@ class ClaudeAdapter(AdapterHooks):
                 if message.lower().startswith("not logged in")
                 else failure_status(message)
             )
-        return ParsedProviderResult(status, output, session_id, usage, message)
+        return ParsedProviderResult(status, output, session_id, message)
