@@ -334,4 +334,10 @@
   .voice-family > .head { width: 28px; height: 28px; }
   .voice-character > .voice-section { margin: -2px 14px 12px; }
 }
+.alerts-card { display: flex; flex-direction: column; gap: 12px; }
+.alerts-card h2 { margin-bottom: 4px; }
+.alerts-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.alerts-row + .alerts-row { padding-top: 12px; border-top: 1px solid var(--line); }
+.alerts-row.disabled { opacity: 0.5; }
+.alerts-label { font-size: 13px; font-weight: 550; color: var(--ink); }
 

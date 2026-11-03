@@ -796,6 +796,10 @@ impl Reader {
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/voice-settings.js").to_vec(),
                 ),
+                "alerts-settings.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/alerts-settings.js").to_vec(),
+                ),
                 "general-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/general-settings.js").to_vec(),
