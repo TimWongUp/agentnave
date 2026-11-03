@@ -3,6 +3,15 @@
 //! stdin for its model metadata; they never start a model turn. Each model carries the efforts
 //! the CLI itself offers for it.
 
+mod locate;
+mod probe;
+use probe::*;
+
+#[cfg(windows)]
+pub(crate) use locate::uninstall_icon;
+use locate::*;
+pub(crate) use locate::{executable, locate};
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -629,105 +638,13 @@ fn probe_path(provider: &str, path: &Path) -> Value {
         _ => configured(provider),
     };
     let dsh_effort = dsh_dump.and_then(|dump| dsh_default(dump, "reasoningEffort"));
-    let listed = match provider {
-        "codex" => codex_models().map(|(models, levels)| {
-            if !levels.is_empty() {
-                efforts = levels;
-            }
-            ("codex-cache", models)
-        }),
-        // Its own model picker; the aliases alone when it cannot answer.
-        "claude" => Ok(claude_models(path).map_or_else(
-            |_| {
-                let aliases = CLAUDE_ALIASES.iter();
-                (
-                    "aliases",
-                    aliases.map(|alias| model(alias, alias, false)).collect(),
-                )
-            },
-            |models| ("initialize", models),
-        )),
-        "deepseek" => {
-            // The composed profile's default first, then the official models and the ones
-            // its configured providers (a gateway, say) declare.
-            let mut ids: Vec<String> = Vec::new();
-            let declared_efforts = dsh_dump
-                .map(|dump| dsh_provider_models(dump))
-                .unwrap_or_default();
-            let declared = declared_efforts.iter().map(|(id, _)| id.clone());
-            for id in configured_model
-                .iter()
-                .cloned()
-                .chain(DEEPSEEK_CATALOG.iter().map(|id| (*id).to_owned()))
-                .chain(declared)
-            {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-            }
-            let models = ids
-                .iter()
-                .map(|id| {
-                    let mut listed = model(id, id, configured_model.as_ref() == Some(id));
-                    // A declared model offers the levels it declares; the official ones keep
-                    // the route's levels.
-                    if let Some((_, efforts)) = declared_efforts.iter().find(|(m, _)| m == id) {
-                        listed["efforts"] = json!(efforts);
-                    }
-                    listed
-                })
-                .collect();
-            let source = if dsh_dump.is_some() {
-                "config"
-            } else {
-                "catalog"
-            };
-            Ok((source, models))
-        }
-        "grok" => run(path, &["models"]).map(|out| {
-            let cache = dirs::home_dir()
-                .and_then(|home| std::fs::read_to_string(home.join(".grok/models_cache.json")).ok())
-                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .unwrap_or(Value::Null);
-            let mut models = grok_models(&out);
-            for listed in &mut models {
-                let id = listed["id"].as_str().unwrap_or("").to_owned();
-                if let Some(efforts) = grok_efforts(&cache, &id) {
-                    listed["efforts"] = json!(efforts);
-                }
-                if let Some(effort) = grok_default_effort(&cache, &id) {
-                    listed["effort"] = json!(effort);
-                }
-            }
-            ("command", models)
-        }),
-        "antigravity" => run(path, &["models"]).map(|out| ("command", agy_models(&out))),
-        // Pi answers over RPC with each model's thinking levels; the listing has no levels.
-        "pi" => pi_rpc_models(path)
-            .map(|models| ("rpc", models))
-            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out)))),
-        "codebuddy" => run(path, &["--help"]).map(|out| {
-            let mut models = codebuddy_models(&out);
-            let reasoning = codebuddy_reasoning();
-            for listed in &mut models {
-                let Some(own) = listed["id"].as_str().and_then(|id| reasoning.get(id)) else {
-                    continue;
-                };
-                // CodeBuddy offers every level for a model that lists none.
-                if own["supportedEfforts"]
-                    .as_array()
-                    .is_some_and(|l| !l.is_empty())
-                {
-                    listed["efforts"] = own["supportedEfforts"].clone();
-                }
-                if let Some(effort) = own["defaultEffort"].as_str().or(own["effort"].as_str()) {
-                    listed["effort"] = json!(effort);
-                }
-            }
-            ("help", models)
-        }),
-        _ => Err("未知 CLI".to_owned()),
-    };
+    let listed = listed_models(
+        provider,
+        path,
+        &mut efforts,
+        dsh_dump,
+        configured_model.as_ref(),
+    );
     match listed {
         Ok((source, models)) => {
             let native = native_model(&models, configured_model.as_deref());
@@ -787,686 +704,117 @@ fn probe_path(provider: &str, path: &Path) -> Value {
     }
 }
 
-fn expand(entry: &str) -> Option<PathBuf> {
-    match entry.strip_prefix("~/") {
-        Some(rest) => dirs::home_dir().map(|home| home.join(rest)),
-        None => Some(PathBuf::from(entry)),
-    }
-}
-
-fn common_dirs() -> Vec<PathBuf> {
-    if cfg!(windows) {
-        // npm's global prefix. `codex`, and the npm install of `pi` and `codebuddy`, land there as
-        // `.cmd` shims; a desktop app started before that PATH entry existed would miss them.
-        return dirs::data_dir()
-            .map(|roaming| roaming.join("npm"))
-            .filter(|dir| dir.is_dir())
-            .into_iter()
-            .collect();
-    }
-    COMMON_DIRS
-        .iter()
-        .filter_map(|entry| expand(entry))
-        .filter(|dir| dir.is_dir())
-        .collect()
-}
-
-pub(crate) fn executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-    }
-    #[cfg(not(unix))]
-    path.is_file()
-}
-
-/// The Codex or DeepSeek Harness desktop bundles on macOS, then PATH, then the common
-/// install directories.
-fn find(name: &str) -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    let desktop: &[&str] = match name {
-        "codex" => &DESKTOP_CODEX,
-        "dsh" => &DESKTOP_DSH,
-        _ => &[],
-    };
-    #[cfg(target_os = "macos")]
-    if let Some(path) = desktop
-        .iter()
-        .filter_map(|entry| expand(entry))
-        .find(|path| executable(path))
-    {
-        return Some(path);
-    }
-    #[cfg(windows)]
-    if let Some(path) = desktop_binary(name) {
-        return Some(path);
-    }
-    let names: Vec<String> = if cfg!(windows) {
-        ["exe", "cmd", "bat"]
-            .iter()
-            .map(|ext| format!("{name}.{ext}"))
-            .collect()
-    } else {
-        vec![name.to_owned()]
-    };
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&inherited)
-        .chain(common_dirs())
-        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
-        .find(|path| executable(path))
-}
-
-/// A CLI that ships inside a desktop app instead of going on PATH.
-#[cfg(windows)]
-fn desktop_binary(name: &str) -> Option<PathBuf> {
-    match name {
-        // The DeepSeek Harness desktop app keeps its CLI under its install directory.
-        "dsh" => bundled_in_app("DeepSeek Harness", "resources/runtime/cli/bin/dsh.cmd"),
-        // The Codex desktop app installs the whole CLI too.
-        "codex" => codex_bundled(),
-        _ => None,
-    }
-}
-
-#[cfg(windows)]
-fn bundled_in_app(app: &str, relative: &str) -> Option<PathBuf> {
-    let dir = install_dir(app).or_else(|| {
-        // The uninstall entry is the answer; the default per-user location is the fallback.
-        let local = dirs::data_local_dir()?;
-        Some(local.join("Programs").join(app))
-    })?;
-    let path = dir.join(relative);
-    executable(&path).then_some(path)
-}
-
-/// The Codex desktop app ships `codex.exe` twice: a stable copy it hands to plugins, and the
-/// app's own copies under `%LOCALAPPDATA%\OpenAI\Codex\bin\<content hash>`, which cannot be
-/// spelled out. Prefer the stable copy and fall back to the newest hash directory.
-#[cfg(windows)]
-fn codex_bundled() -> Option<PathBuf> {
-    if let Some(home) = dirs::home_dir() {
-        let stable = home.join(".codex/plugins/.plugin-appserver/codex.exe");
-        if executable(&stable) {
-            return Some(stable);
-        }
-    }
-    let bin = dirs::data_local_dir()?.join("OpenAI/Codex/bin");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(bin)
-        .ok()?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path().join("codex.exe"))
-        .filter(|path| executable(path))
-        .collect();
-    found.sort_by_key(|path| path.metadata().and_then(|meta| meta.modified()).ok());
-    found.pop()
-}
-
-/// Where an app installed itself, according to the uninstall entry Windows keeps for it.
-#[cfg(windows)]
-fn install_dir(display_name: &str) -> Option<PathBuf> {
-    for root in UNINSTALL_ROOTS {
-        let Some(key) = uninstall_key(root, display_name) else {
-            continue;
-        };
-        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
-            let dir = PathBuf::from(dir);
-            if dir.is_dir() {
-                return Some(dir);
+fn listed_models(
+    provider: &str,
+    path: &Path,
+    efforts: &mut Vec<String>,
+    dsh_dump: Option<&String>,
+    configured_model: Option<&String>,
+) -> Result<(&'static str, Vec<Value>), String> {
+    match provider {
+        "codex" => codex_models().map(|(models, levels)| {
+            if !levels.is_empty() {
+                *efforts = levels;
             }
-        }
-        // Electron apps often leave `InstallLocation` out but point `DisplayIcon` at their exe.
-        if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            let exe = icon.split(',').next().unwrap_or(&icon).trim();
-            if let Some(parent) = Path::new(exe).parent() {
-                return Some(parent.to_path_buf());
+            ("codex-cache", models)
+        }),
+        // Its own model picker; the aliases alone when it cannot answer.
+        "claude" => Ok(claude_models(path).map_or_else(
+            |_| {
+                let aliases = CLAUDE_ALIASES.iter();
+                (
+                    "aliases",
+                    aliases.map(|alias| model(alias, alias, false)).collect(),
+                )
+            },
+            |models| ("initialize", models),
+        )),
+        "deepseek" => deepseek_listing(dsh_dump, configured_model),
+        "grok" => run(path, &["models"]).map(|out| {
+            let cache = dirs::home_dir()
+                .and_then(|home| std::fs::read_to_string(home.join(".grok/models_cache.json")).ok())
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .unwrap_or(Value::Null);
+            let mut models = grok_models(&out);
+            for listed in &mut models {
+                let id = listed["id"].as_str().unwrap_or("").to_owned();
+                if let Some(efforts) = grok_efforts(&cache, &id) {
+                    listed["efforts"] = json!(efforts);
+                }
+                if let Some(effort) = grok_default_effort(&cache, &id) {
+                    listed["effort"] = json!(effort);
+                }
             }
-        }
-    }
-    None
-}
-
-#[cfg(windows)]
-const UNINSTALL_ROOTS: [&str; 3] = [
-    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-];
-
-/// The key whose data mentions `needle`: the uninstall tree is searched by value, since the key
-/// names are GUIDs.
-#[cfg(windows)]
-fn uninstall_key(root: &str, needle: &str) -> Option<String> {
-    registry(&["query", root, "/s", "/f", needle, "/d"])
-        .into_iter()
-        .find(|line| line.trim_start().starts_with("HKEY_"))
-        .map(|line| line.trim().to_owned())
-}
-
-#[cfg(windows)]
-fn registry_value(key: &str, name: &str) -> Option<String> {
-    registry(&["query", key, "/v", name])
-        .into_iter()
-        .find_map(|line| {
-            let line = line.trim_start().strip_prefix(name)?;
-            let (_, rest) = line.split_once("    REG_")?;
-            let (_, value) = rest.split_once("    ")?;
-            Some(value.trim().to_owned())
-        })
-}
-
-#[cfg(windows)]
-fn registry(args: &[&str]) -> Vec<String> {
-    use std::os::windows::process::CommandExt;
-    let Ok(output) = std::process::Command::new("reg")
-        .args(args)
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .output()
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect()
-}
-
-/// A CLI this app knows how to find, including the ones a desktop app bundles instead of
-/// putting on PATH.
-pub(crate) fn locate(name: &str) -> Option<PathBuf> {
-    find(name)
-}
-
-/// The executable an installed app's uninstall entry points at, for apps that install wherever
-/// the user chose and keep no other record (WorkBuddy points `DisplayIcon` at its exe).
-#[cfg(windows)]
-pub(crate) fn uninstall_icon(display_name: &str) -> Option<PathBuf> {
-    for root in UNINSTALL_ROOTS {
-        let Some(key) = uninstall_key(root, display_name) else {
-            continue;
-        };
-        if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            let exe = icon.split(',').next().unwrap_or(&icon).trim();
-            let path = PathBuf::from(exe);
-            if path.is_file() {
-                return Some(path);
-            }
-        }
-        if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
-            let dir = PathBuf::from(dir);
-            if dir.is_dir() {
-                return Some(dir);
-            }
-        }
-    }
-    None
-}
-
-/// PATH for a probe: the CLI's own directory, then the inherited PATH, then the common
-/// directories, so `#!/usr/bin/env node` launchers work from an app started by the Finder
-/// without overriding the toolchain the inherited PATH selects.
-fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    let mut dirs: Vec<PathBuf> = executable
-        .parent()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .collect();
-    for dir in std::env::split_paths(&inherited).chain(common_dirs()) {
-        if !dirs.contains(&dir) {
-            dirs.push(dir);
-        }
-    }
-    std::env::join_paths(dirs).ok()
-}
-
-/// Run a listing command with empty stdin; give up after the timeout.
-fn command(executable: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new(executable);
-    command
-        .args(args)
-        .current_dir(std::env::temp_dir())
-        .stdout(Stdio::piped());
-    if let Some(path) = search_path(executable) {
-        command.env("PATH", path);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    // Its own process group, so a timeout also stops descendants holding the pipes.
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    command
-}
-
-/// Send one request line to a CLI serving requests on stdin and return the first JSON line
-/// `answers` accepts, then stop the CLI with its group. stdin stays open until then, since these
-/// CLIs exit when it closes.
-fn ask(
-    executable: &Path,
-    args: &[&str],
-    request: &Value,
-    answers: impl Fn(&Value) -> bool,
-) -> Result<Value, String> {
-    let mut child = command(executable, args)
-        .stdin(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    let stdin = child.stdin.take();
-    let written = stdin
-        .map(|mut stdin| writeln!(stdin, "{request}").map(|()| stdin))
-        .transpose();
-    let (sender, receiver) = mpsc::channel();
-    if let Some(stdout) = child.stdout.take() {
-        thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if let Ok(value) = serde_json::from_str::<Value>(&line)
-                    && sender.send(value).is_err()
+            ("command", models)
+        }),
+        "antigravity" => run(path, &["models"]).map(|out| ("command", agy_models(&out))),
+        // Pi answers over RPC with each model's thinking levels; the listing has no levels.
+        "pi" => pi_rpc_models(path)
+            .map(|models| ("rpc", models))
+            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out)))),
+        "codebuddy" => run(path, &["--help"]).map(|out| {
+            let mut models = codebuddy_models(&out);
+            let reasoning = codebuddy_reasoning();
+            for listed in &mut models {
+                let Some(own) = listed["id"].as_str().and_then(|id| reasoning.get(id)) else {
+                    continue;
+                };
+                // CodeBuddy offers every level for a model that lists none.
+                if own["supportedEfforts"]
+                    .as_array()
+                    .is_some_and(|l| !l.is_empty())
                 {
-                    break;
+                    listed["efforts"] = own["supportedEfforts"].clone();
+                }
+                if let Some(effort) = own["defaultEffort"].as_str().or(own["effort"].as_str()) {
+                    listed["effort"] = json!(effort);
                 }
             }
-        });
+            ("help", models)
+        }),
+        _ => Err("未知 CLI".to_owned()),
     }
-    let deadline = Instant::now() + TIMEOUT;
-    let answer = loop {
-        if written.is_err() {
-            break Err("无法发送请求".to_owned());
-        }
-        match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok(value) if answers(&value) => break Ok(value),
-            Ok(_) => {}
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                break Err(format!("{} 秒内未完成", TIMEOUT.as_secs()));
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break Err("没有回应".to_owned()),
-        }
-    };
-    kill_group(&mut child);
-    let _ = child.wait();
-    answer
 }
 
-/// Claude Code's own model picker, from its `initialize` control response with hooks off: every
-/// entry but `default`, each with the efforts it offers (none when the model has no effort).
-fn claude_models(path: &Path) -> Result<Vec<Value>, String> {
-    let request = json!({"type": "control_request", "request_id": "agentnave-models",
-        "request": {"subtype": "initialize"}});
-    let args = [
-        "-p",
-        "--settings",
-        r#"{"disableAllHooks":true}"#,
-        "--no-session-persistence",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-    ];
-    let response = ask(path, &args, &request, |line| {
-        line["type"] == "control_response"
-    })?;
-    let models = claude_picker(&response);
-    if models.is_empty() {
-        return Err("Claude 没有列出模型".to_owned());
-    }
-    Ok(models)
-}
-
-fn claude_picker(response: &Value) -> Vec<Value> {
-    let entries = response["response"]["response"]["models"].as_array();
-    entries
+fn deepseek_listing(
+    dsh_dump: Option<&String>,
+    configured_model: Option<&String>,
+) -> Result<(&'static str, Vec<Value>), String> {
+    // The composed profile's default first, then the official models and the ones
+    // its configured providers (a gateway, say) declare.
+    let mut ids: Vec<String> = Vec::new();
+    let declared_efforts = dsh_dump
+        .map(|dump| dsh_provider_models(dump))
+        .unwrap_or_default();
+    let declared = declared_efforts.iter().map(|(id, _)| id.clone());
+    for id in configured_model
         .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let id = entry["value"].as_str().filter(|id| *id != "default")?;
-            let mut listed = model(id, entry["displayName"].as_str().unwrap_or(id), false);
-            listed["efforts"] = match &entry["supportedEffortLevels"] {
-                Value::Array(levels) => Value::Array(levels.clone()),
-                _ => json!([]),
-            };
-            // An alias such as `opus` keeps its per-model settings under the full ID.
-            if let Some(resolved) = entry["resolvedModel"].as_str().filter(|r| *r != id) {
-                listed["resolved"] = json!(resolved);
-            }
-            Some(listed)
-        })
-        .collect()
-}
-
-/// Pi's available models over RPC, as `provider/model` with the thinking levels Pi offers.
-fn pi_rpc_models(path: &Path) -> Result<Vec<Value>, String> {
-    let request = json!({"id": "agentnave-models", "type": "get_available_models"});
-    let response = ask(path, &["--mode", "rpc", "--no-session"], &request, |line| {
-        line["id"] == "agentnave-models"
-    })?;
-    let models = response["data"]["models"]
-        .as_array()
-        .ok_or("Pi 没有列出模型")?;
-    Ok(models
+        .cloned()
+        .chain(DEEPSEEK_CATALOG.iter().map(|id| (*id).to_owned()))
+        .chain(declared)
+    {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let models = ids
         .iter()
-        .filter_map(|entry| {
-            let id = format!("{}/{}", entry["provider"].as_str()?, entry["id"].as_str()?);
-            let mut listed = model(&id, &id, false);
-            listed["efforts"] = json!(pi_levels(entry));
-            Some(listed)
-        })
-        .collect())
-}
-
-/// Pi's `getSupportedThinkingLevels`: only `off` without reasoning; otherwise every level the
-/// model's map does not null out, `xhigh` and `max` only where the map names them.
-fn pi_levels(entry: &Value) -> Vec<&'static str> {
-    if entry["reasoning"] != true {
-        return vec!["off"];
-    }
-    let map = &entry["thinkingLevelMap"];
-    ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
-        .into_iter()
-        .filter(|level| match map.get(level) {
-            Some(Value::Null) => false,
-            Some(_) => true,
-            None => !matches!(*level, "xhigh" | "max"),
-        })
-        .collect()
-}
-
-/// The efforts Grok's model cache lists for one model, `None` when the cache does not know it.
-fn grok_efforts(cache: &Value, model: &str) -> Option<Vec<String>> {
-    let info = &cache["models"].get(model)?["info"];
-    let efforts = info["reasoning_efforts"].as_array();
-    Some(
-        efforts
-            .into_iter()
-            .flatten()
-            .filter_map(|effort| effort["value"].as_str().map(str::to_owned))
-            .collect(),
-    )
-}
-
-/// The `reasoning` settings CodeBuddy's cached product configuration keeps per model
-/// (`~/.codebuddy/local_storage/*.info`: a JSON string of base64 gzip JSON): `supportedEfforts`
-/// and its default level, `defaultEffort` or `effort`.
-fn codebuddy_reasoning() -> Map<String, Value> {
-    let Some(dir) = codebuddy_dir().map(|dir| dir.join("local_storage")) else {
-        return Map::new();
-    };
-    let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
-    entries
-        .filter_map(|entry| {
-            let text: String =
-                serde_json::from_str(&std::fs::read_to_string(entry.path()).ok()?).ok()?;
-            let config = codebuddy_product_config(&text)?;
-            (config["productName"].is_string()).then_some(config)
-        })
-        .flat_map(|config| {
-            let models = config["models"].as_array().cloned().unwrap_or_default();
-            models.into_iter().filter_map(|model| {
-                let reasoning = model["reasoning"].clone();
-                reasoning
-                    .is_object()
-                    .then_some((model["id"].as_str()?.to_owned(), reasoning))
-            })
-        })
-        .collect()
-}
-
-fn codebuddy_product_config(encoded: &str) -> Option<Value> {
-    use base64::Engine;
-    let compressed = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    let mut text = String::new();
-    flate2::read::GzDecoder::new(compressed.as_slice())
-        .read_to_string(&mut text)
-        .ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
-    let mut child = command(executable, args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    let (sender, receiver) = mpsc::channel();
-    for (stream, pipe) in [
-        (
-            0,
-            child
-                .stdout
-                .take()
-                .map(|p| Box::new(p) as Box<dyn Read + Send>),
-        ),
-        (
-            1,
-            child
-                .stderr
-                .take()
-                .map(|p| Box::new(p) as Box<dyn Read + Send>),
-        ),
-    ] {
-        let sender = sender.clone();
-        thread::spawn(move || {
-            let mut text = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut text);
+        .map(|id| {
+            let mut listed = model(id, id, configured_model == Some(id));
+            // A declared model offers the levels it declares; the official ones keep
+            // the route's levels.
+            if let Some((_, efforts)) = declared_efforts.iter().find(|(m, _)| m == id) {
+                listed["efforts"] = json!(efforts);
             }
-            let _ = sender.send((stream, String::from_utf8_lossy(&text).into_owned()));
-        });
-    }
-    let deadline = Instant::now() + TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-            Ok(None) => {
-                kill_group(&mut child);
-                let _ = child.wait();
-                return Err(format!("{} 秒内未完成", TIMEOUT.as_secs()));
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-    };
-    // A descendant still holding the pipes a second after the CLI exited is stopped with its
-    // group; the group outlives its reaped leader while members remain, so its ID stays reserved.
-    let (mut stdout, mut stderr) = (String::new(), String::new());
-    let mut received = 0;
-    let mut killed = false;
-    while received < 2 {
-        match receiver.recv_timeout(Duration::from_secs(1)) {
-            Ok((0, text)) => stdout = text,
-            Ok((_, text)) => stderr = text,
-            Err(_) if !killed => {
-                kill_group(&mut child);
-                killed = true;
-                continue;
-            }
-            Err(_) => break,
-        }
-        received += 1;
-    }
-    if status.success() {
-        return Ok(stdout);
-    }
-    let reason = stderr
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map_or_else(|| format!("退出码 {status}"), str::to_owned);
-    Err(reason.chars().take(200).collect())
-}
-
-#[cfg(unix)]
-fn kill_group(child: &mut std::process::Child) {
-    if let Ok(group) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: kill(2) only sends a signal; a negative ID names the probe's process group.
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_group(child: &mut std::process::Child) {
-    let _ = child.kill();
-}
-
-/// Codex's own model cache: listed models by priority, and the effort levels they support.
-fn codex_models() -> Result<(Vec<Value>, Vec<String>), String> {
-    let home = match std::env::var_os("CODEX_HOME") {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => dirs::home_dir().unwrap_or_default().join(".codex"),
-    };
-    let text = std::fs::read_to_string(home.join("models_cache.json"))
-        .map_err(|error| format!("无法读取 Codex 模型缓存：{error}"))?;
-    parse_codex_cache(&text)
-}
-
-fn parse_codex_cache(text: &str) -> Result<(Vec<Value>, Vec<String>), String> {
-    let cache: Value =
-        serde_json::from_str(text).map_err(|error| format!("Codex 模型缓存损坏：{error}"))?;
-    let mut entries: Vec<&Value> = cache["models"]
-        .as_array()
-        .ok_or("Codex 模型缓存缺少 models")?
-        .iter()
-        .filter(|entry| entry["visibility"].as_str() != Some("hide"))
+            listed
+        })
         .collect();
-    entries.sort_by_key(|entry| entry["priority"].as_i64().unwrap_or(i64::MAX));
-    let mut levels: Vec<String> = Vec::new();
-    let mut models = Vec::new();
-    for entry in entries {
-        let Some(id) = entry["slug"].as_str().or(entry["id"].as_str()) else {
-            continue;
-        };
-        let label = entry["display_name"].as_str().unwrap_or(id);
-        let mut own: Vec<&str> = Vec::new();
-        for level in entry["supported_reasoning_levels"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            if let Some(effort) = level["effort"].as_str().or(level.as_str())
-                && !own.contains(&effort)
-            {
-                own.push(effort);
-                if !levels.iter().any(|known| known == effort) {
-                    levels.push(effort.to_owned());
-                }
-            }
-        }
-        let mut listed = model(id, label, false);
-        // Per-model efforts where the cache knows them; the provider list is the fallback.
-        if entry["supported_reasoning_levels"].is_array() {
-            listed["efforts"] = json!(own);
-        }
-        if let Some(level) = entry["default_reasoning_level"].as_str() {
-            listed["effort"] = json!(level);
-        }
-        models.push(listed);
-    }
-    let rank = |effort: &String| {
-        EFFORT_ORDER
-            .iter()
-            .position(|known| known == effort)
-            .unwrap_or(EFFORT_ORDER.len())
+    let source = if dsh_dump.is_some() {
+        "config"
+    } else {
+        "catalog"
     };
-    levels.sort_by_key(rank);
-    Ok((models, levels))
-}
-
-/// `grok models`: the entries under "Available models:", `(default)` marking the default.
-fn grok_models(text: &str) -> Vec<Value> {
-    let mut models = Vec::new();
-    let mut listing = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with("Available models:") {
-            listing = true;
-            continue;
-        }
-        if !listing {
-            continue;
-        }
-        let Some(entry) = line
-            .strip_prefix('*')
-            .or_else(|| line.strip_prefix('-'))
-            .map(str::trim)
-        else {
-            if !models.is_empty() {
-                break;
-            }
-            continue;
-        };
-        let (id, default) = match entry.strip_suffix("(default)") {
-            Some(id) => (id.trim(), true),
-            None => (entry, false),
-        };
-        if !id.is_empty() {
-            models.push(model(id, id, default));
-        }
-    }
-    models
-}
-
-/// `agy models`: one `id<TAB>label` per line; progress lines carry no tab.
-fn agy_models(text: &str) -> Vec<Value> {
-    text.lines()
-        .filter_map(|line| line.split_once('\t'))
-        .filter(|(id, _)| !id.trim().is_empty())
-        .map(|(id, label)| {
-            let label = label.trim();
-            model(
-                id.trim(),
-                if label.is_empty() { id.trim() } else { label },
-                false,
-            )
-        })
-        .collect()
-}
-
-/// `pi --list-models`: a table whose provider and model columns form `provider/model`.
-fn pi_models(text: &str) -> Vec<Value> {
-    let mut lines = text.lines().skip_while(|line| {
-        let mut columns = line.split_whitespace();
-        !(columns.next() == Some("provider") && columns.next() == Some("model"))
-    });
-    if lines.next().is_none() {
-        return Vec::new();
-    }
-    lines
-        .filter_map(|line| {
-            let mut columns = line.split_whitespace();
-            Some(format!("{}/{}", columns.next()?, columns.next()?))
-        })
-        .map(|id| model(&id, &id, false))
-        .collect()
-}
-
-/// `codebuddy --help`: the list in "Currently supported: (…)" under `--model`.
-fn codebuddy_models(text: &str) -> Vec<Value> {
-    // Help text may wrap at any space, including inside the marker.
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let Some(start) = text.find("Currently supported: (") else {
-        return Vec::new();
-    };
-    let rest = &text[start + "Currently supported: (".len()..];
-    let Some(end) = rest.find(')') else {
-        return Vec::new();
-    };
-    rest[..end]
-        .split(',')
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .enumerate()
-        // The first supported model is the one CodeBuddy runs without `--model`.
-        .map(|(index, id)| model(id, id, index == 0))
-        .collect()
+    Ok((source, models))
 }
 
 #[cfg(test)]
