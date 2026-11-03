@@ -162,6 +162,9 @@ pub fn get(shared: &Path, path: &str) -> Response {
     }
     let root = root(shared);
     let result: Result<Value, String> = (|| {
+        if path == "/app/voice/cache" {
+            return Ok(json!({"bytes": storage::cache_bytes(&root)?}));
+        }
         let settings = storage::read_settings(&root)?;
         let keys = storage::read_keys(&root)?;
         if path == "/app/voice" {
@@ -209,6 +212,7 @@ pub fn request(
     }
     let payload: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
+        Err(_) if path == "/app/voice/cache/clear" && body.is_empty() => json!({}),
         Err(_) => return Response::error(400, "语音请求必须为 JSON 对象"),
     };
     let root = root(shared);
@@ -219,6 +223,9 @@ pub fn request(
             get(shared, "/app/voice")
         }),
         "/app/voice/speak" => speak(&root, &payload),
+        "/app/voice/cache/clear" => {
+            storage::clear_cache(&root).map(|()| Response::json(&json!({"cleared": true})))
+        }
         "/app/voice/summary/models" => summary_models(&root),
         "/app/voice/chatgpt/start" => {
             summary::chatgpt::start(&root).map(|()| get(shared, "/app/voice"))
@@ -262,7 +269,7 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         Some(Value::Bool(boss)) => *boss,
         _ => return Err("boss 必须为布尔值".into()),
     };
-    let (text, to_summarize) = source_text(payload, settings["summary"]["enabled"] == true)?;
+    let (text, to_summarize) = source_text(payload, &settings)?;
     if text.is_empty() && to_summarize.is_none() {
         return Ok(no_audio());
     }
@@ -281,6 +288,7 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
             let character = if boss { "boss" } else { family.unwrap_or("") };
             options["persona"] = settings["personas"][character].clone();
             options["identity"] = json!(scene.identity());
+            options["code"] = settings["code"].clone();
             // A failed summary still speaks: the opening, as without summaries.
             summary::summarize(root, &full_text, &options, summary_key).unwrap_or_else(|error| {
                 notice = Some(format!("摘要失败，已改读开头：{error}"));
@@ -326,15 +334,22 @@ fn audio_key(settings: &Value, engine: &str, voice: &str, text: &str) -> String 
     )
 }
 
-fn source_text(payload: &Value, summary_enabled: bool) -> Result<(String, Option<String>), String> {
+fn source_text(payload: &Value, settings: &Value) -> Result<(String, Option<String>), String> {
     let raw = payload["text"].as_str().ok_or("缺少发言文本")?;
     let full = payload["full"].as_bool().ok_or("full 必须为布尔值")?;
+    let summary_enabled = settings["summary"]["enabled"] == true;
+    let code = settings["code"].as_str().unwrap_or("skip");
+    let language = if summary_enabled && !full {
+        settings["summary"]["language"].as_str().unwrap_or("source")
+    } else {
+        "source"
+    };
     // With summaries on, every message is spoken through the summary model, which knows who
     // speaks to whom; only a full read, like a voice sample, is read as written.
     if !summary_enabled || full {
-        return Ok((text::clean(raw, full), None));
+        return Ok((text::clean_with_code(raw, full, code, language), None));
     }
-    let cleaned = text::clean(raw, true);
+    let cleaned = text::clean_with_code(raw, true, code, language);
     if cleaned.is_empty() {
         return Ok((cleaned, None));
     }

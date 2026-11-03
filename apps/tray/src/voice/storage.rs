@@ -4,7 +4,6 @@ use std::fs;
 use std::io::Write;
 
 static WRITE: Mutex<()> = Mutex::new(());
-const CACHE_LIMIT: u64 = 200 * 1024 * 1024;
 
 pub(super) fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
@@ -15,6 +14,9 @@ fn defaults() -> Value {
         "enabled":false,
         "auto_read":false,
         "continue_read":false,
+        "read_scope":"all",
+        "code":"skip",
+        "cache_limit_mb":200,
         "engine":"elevenlabs",
         "minimax_region":"cn",
         "models":{},
@@ -76,6 +78,20 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
     let continue_read = value.get("continue_read").map_or(Ok(false), |value| {
         value.as_bool().ok_or("点读后连播开关必须为布尔值")
     })?;
+    let read_scope = choice(
+        value,
+        "read_scope",
+        "all",
+        &["all", "members", "boss", "meetings"],
+    )?;
+    let code = choice(value, "code", "skip", &["skip", "mention"])?;
+    let cache_limit_mb = match value.get("cache_limit_mb") {
+        None => 200,
+        Some(value) => value
+            .as_u64()
+            .filter(|limit| [0, 100, 200, 500].contains(limit))
+            .ok_or("语音缓存上限必须为 0、100、200 或 500 MB")?,
+    };
     let engine = value["engine"]
         .as_str()
         .filter(|s| valid_engine(s))
@@ -109,6 +125,9 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
         "enabled":enabled,
         "auto_read":auto_read,
         "continue_read":continue_read,
+        "read_scope":read_scope,
+        "code":code,
+        "cache_limit_mb":cache_limit_mb,
         "engine":engine,
         "minimax_region":region,
         "models":models,
@@ -118,10 +137,32 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
     }))
 }
 
+fn choice<'a>(
+    value: &'a Value,
+    field: &str,
+    default: &'a str,
+    choices: &[&str],
+) -> Result<&'a str, String> {
+    match value.get(field) {
+        None => Ok(default),
+        Some(value) => value
+            .as_str()
+            .filter(|s| choices.contains(s))
+            .ok_or_else(|| format!("{field} 的选项无效")),
+    }
+}
+
 fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
     let default_summary =
         json!({"enabled":false,"provider":"magpie","base_url":"","model":"","effort":""});
     let summary = value.unwrap_or(&default_summary);
+    let level = choice(
+        summary,
+        "level",
+        "standard",
+        &["short", "standard", "detailed"],
+    )?;
+    let language = choice(summary, "language", "source", &["source", "zh", "en"])?;
     let summary_enabled = summary["enabled"].as_bool().ok_or("摘要开关必须为布尔值")?;
     let summary_provider = summary["provider"]
         .as_str()
@@ -157,6 +198,7 @@ fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
             summary::LEGACY_DEFAULT_PROMPT,
             summary::LEGACY_MESSAGE_PROMPT,
             summary::LEGACY_SPEAKER_PROMPT,
+            summary::LEGACY_SCENE_PROMPT,
         ]
         .contains(&prompt)
     {
@@ -170,7 +212,9 @@ fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
             "base_url":summary_base_url,
             "model":summary_model,
             "effort":summary_effort,
-            "prompt":prompt
+            "prompt":prompt,
+            "level":level,
+            "language":language
     }))
 }
 
@@ -315,10 +359,20 @@ pub(super) fn edit_keys(
     write(root, "voice-keys.json", &keys)
 }
 pub(super) fn cached(root: &Path, key: &str, extension: &str) -> Option<Vec<u8>> {
+    let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    if cache_limit(root).ok()? == 0 {
+        return None;
+    }
     fs::read(root.join("voice-cache").join(format!("{key}.{extension}"))).ok()
 }
 pub(super) fn cache(root: &Path, key: &str, bytes: &[u8], extension: &str) -> Result<(), String> {
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    // Read under the same lock as settings writes, so an in-flight request cannot persist
+    // a result after the user has disabled caching.
+    let limit = cache_limit(root)?;
+    if limit == 0 {
+        return Ok(());
+    }
     let save = || -> std::io::Result<()> {
         let dir = root.join("voice-cache");
         fs::create_dir_all(&dir)?;
@@ -341,7 +395,7 @@ pub(super) fn cache(root: &Path, key: &str, bytes: &[u8], extension: &str) -> Re
         files.sort_by_key(|f| f.0);
         let mut total: u64 = files.iter().map(|f| f.1).sum();
         for (_, len, path) in files {
-            if total <= CACHE_LIMIT {
+            if total <= limit {
                 break;
             }
             fs::remove_file(path)?;
@@ -350,4 +404,41 @@ pub(super) fn cache(root: &Path, key: &str, bytes: &[u8], extension: &str) -> Re
         Ok(())
     };
     save().map_err(|_| "无法保存语音缓存".into())
+}
+
+fn cache_limit(root: &Path) -> Result<u64, String> {
+    Ok(read_settings(root)?["cache_limit_mb"]
+        .as_u64()
+        .unwrap_or(200)
+        * 1024
+        * 1024)
+}
+
+pub(super) fn cache_bytes(root: &Path) -> Result<u64, String> {
+    let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut entries = match fs::read_dir(root.join("voice-cache")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(_) => return Err("无法读取语音缓存".into()),
+    };
+    entries.try_fold(0, |total, entry| {
+        let metadata = entry
+            .and_then(|entry| entry.metadata())
+            .map_err(|_| "无法读取语音缓存".to_string())?;
+        Ok(total
+            + if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            })
+    })
+}
+
+pub(super) fn clear_cache(root: &Path) -> Result<(), String> {
+    let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    match fs::remove_dir_all(root.join("voice-cache")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("无法清空语音缓存".into()),
+    }
 }

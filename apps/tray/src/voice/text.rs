@@ -110,6 +110,10 @@ fn table_separator(line: &str) -> bool {
 }
 
 pub fn clean(raw: &str, full: bool) -> String {
+    clean_with_code(raw, full, "skip", "source")
+}
+
+pub(super) fn clean_with_code(raw: &str, full: bool, code: &str, language: &str) -> String {
     let mut fence: Option<char> = None;
     let mut lines = Vec::new();
     let raw_lines: Vec<_> = raw.lines().collect();
@@ -132,6 +136,9 @@ pub fn clean(raw: &str, full: bool) -> String {
                 fence = None;
             } else if fence.is_none() {
                 fence = Some(marker);
+                if code == "mention" {
+                    lines.push(code_notice(raw, language).to_string());
+                }
             }
             continue;
         }
@@ -145,6 +152,20 @@ pub fn clean(raw: &str, full: bool) -> String {
     }
     let text = lines.join("\n");
     if full { text } else { excerpt(&text) }
+}
+
+fn code_notice(raw: &str, language: &str) -> &'static str {
+    let english = language == "en"
+        || (language == "source"
+            && !raw
+                .chars()
+                .any(|c| matches!(c, '\u{3400}'..='\u{9fff}' | '\u{20000}'..='\u{2fa1f}'))
+            && raw.chars().any(|c| c.is_ascii_alphabetic()));
+    if english {
+        "here's a code snippet"
+    } else {
+        "这里有一段代码"
+    }
 }
 fn ends_sentence(chars: &[char], index: usize) -> bool {
     "。！？!?".contains(chars[index])

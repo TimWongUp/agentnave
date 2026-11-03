@@ -374,7 +374,7 @@ fn custom_urls_are_https_or_loopback_without_credentials_query_or_fragment() {
 }
 
 #[test]
-fn summary_output_rejects_empty_symbols_and_length_and_caps_long_text() {
+fn summary_output_rejects_empty_symbols_and_length_without_cutting_complete_speech() {
     for choice in [
         json!({"finish_reason":"stop","message":{"content":""}}),
         json!({"finish_reason":"stop","message":{"content":"……！？"}}),
@@ -385,13 +385,13 @@ fn summary_output_rejects_empty_symbols_and_length_and_caps_long_text() {
     let content = format!("{}。{}。", "甲".repeat(200), "乙".repeat(200));
     let value = json!({"choices":[{"finish_reason":"stop","message":{"content":content}}]});
     let generated = output(&value).unwrap();
-    assert_eq!(generated.chars().count(), 201);
+    assert_eq!(generated, content);
     assert!(generated.ends_with('。'));
 }
 
 #[test]
 fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
-    let server = FakeServer::start(7, |request| {
+    let server = FakeServer::start(10, |request| {
         if request.path.ends_with("/models") {
             return Reply {
                 status: 200,
@@ -423,7 +423,7 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
                 storage::hash(""),
                 "low",
                 "low",
-                DEFAULT_PROMPT,
+                fixed_prompt(DEFAULT_PROMPT, &settings),
                 "",
                 "",
                 "相同长发言"
@@ -462,6 +462,12 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
     changed_model["persona"] = json!("像冷静的主持人一样说话。");
     summarize(directory.path(), "相同长发言", &changed_model, "").unwrap();
     summarize(directory.path(), "相同长发言", &changed_model, "").unwrap();
+    changed_model["level"] = json!("short");
+    summarize(directory.path(), "相同长发言", &changed_model, "").unwrap();
+    changed_model["language"] = json!("en");
+    summarize(directory.path(), "相同长发言", &changed_model, "").unwrap();
+    changed_model["code"] = json!("mention");
+    summarize(directory.path(), "相同长发言", &changed_model, "").unwrap();
     let requests = server.finish();
     let bodies: Vec<Value> = requests
         .iter()
@@ -474,7 +480,7 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
     assert_eq!(bodies[1]["reasoning_effort"], "high");
     assert_eq!(bodies[2]["model"], "model-b");
     assert_eq!(bodies[2]["reasoning_effort"], "high");
-    assert_eq!(bodies.len(), 5);
+    assert_eq!(bodies.len(), 8);
     assert_eq!(
         requests.len() - bodies.len(),
         2,
@@ -490,8 +496,12 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "txt"))
             .count(),
-        6
+        9
     );
+    let system = bodies[7]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("summary.level=short") && system.contains("约 40 字"));
+    assert!(system.contains("Output only English speech"));
+    assert!(system.contains("code=mention") && system.contains("here's a code snippet"));
 }
 
 #[test]
@@ -550,7 +560,7 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         let system = body["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains(expected) && !system.contains(absent));
         // Messages differ only after the fixed head, which providers can then cache.
-        assert!(system.starts_with(&fixed_prompt("保留主要结论。")));
+        assert!(system.starts_with(&fixed_prompt("保留主要结论。", &settings["summary"])));
         assert!(system.contains("保留主要结论。"));
         assert!(system.contains("不替自己回答") && system.contains("不说成已完成"));
         assert!(system.contains("不看你是 boss 还是员工"));

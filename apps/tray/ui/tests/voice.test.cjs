@@ -9,8 +9,8 @@ const message = (id, time, extra = {}) => ({
   speaker: { role: "member", provider: "codex" }, thread: { kind: "desk" }, visibility: "private", ...extra,
 });
 
-async function office(auto_read = true, synthesize = async () => ({}), loadRoom = async data => ({ ok: true, json: async () => structuredClone(data) })) {
-  let config = { enabled: true, auto_read, continue_read: true, engine: "elevenlabs", keys: { elevenlabs: true }, summary: { enabled: true } };
+async function office(auto_read = true, synthesize = async () => ({}), loadRoom = async data => ({ ok: true, json: async () => structuredClone(data) }), read_scope = "all") {
+  let config = { enabled: true, auto_read, continue_read: true, read_scope, engine: "elevenlabs", keys: { elevenlabs: true }, summary: { enabled: true } };
   const requests = [], sounds = [], nodes = [];
   const rooms = new Map();
   function h(tag, attributes = {}, ...children) {
@@ -68,6 +68,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
   AN.voice.controls(true, null, ctx);
   return {
     voice: AN.voice, requests, sounds, ctx, feed, nodes,
+    async scope(value) { config.read_scope = value; await feed(ctx.c.messages); await flush(); },
     stop() { nodes.find(n => n.tag === "button.voice-stop").listeners.click(); },
     private(desk, messages = []) {
       ctx.desks = new Map([[desk.key, desk]]);
@@ -527,4 +528,69 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
   await flush();
   assert.deepEqual(app.requests.slice(fromStart).find(r => r.text === "brief").scene, brief,
     "reading from the start addresses same-family seats exactly like reading one message");
+});
+
+
+test("automatic reads respect all, members, boss and meetings scopes", async () => {
+  const messages = [
+    message("private-boss", "2026-11-01T00:00:01Z", { kind: "prompt", speaker: { role: "manager" } }),
+    message("private-member", "2026-11-01T00:00:02Z"),
+    message("room-boss", "2026-11-01T00:00:03Z", { kind: "prompt", speaker: { role: "manager" }, thread: { kind: "room", id: "room" } }),
+    message("room-member", "2026-11-01T00:00:04Z", { thread: { kind: "room", id: "room" } }),
+  ];
+  for (const [scope, expected] of [
+    ["all", ["private-boss", "private-member", "room-boss", "room-member"]],
+    ["members", ["private-member", "room-member"]],
+    ["boss", ["private-boss", "room-boss"]],
+    ["meetings", ["room-boss", "room-member"]],
+  ]) {
+    const app = await office(true, undefined, undefined, scope);
+    await app.feed(messages);
+    for (const _ of expected) await app.end();
+    assert.deepEqual(app.requests.map(r => r.text), expected, scope);
+  }
+});
+
+test("a manually selected message is always spoken and only its chain uses the read scope", async () => {
+  for (const [scope, firstBoss, expected] of [
+    ["all", true, ["chosen", "member", "boss"]],
+    ["members", true, ["chosen", "member"]],
+    ["boss", false, ["chosen", "boss"]],
+  ]) {
+    const app = await office(false, undefined, undefined, scope);
+    const messages = [
+      message("chosen", "2026-11-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" }, kind: firstBoss ? "prompt" : "reply", speaker: { role: firstBoss ? "manager" : "member" } }),
+      message("member", "2026-11-01T00:00:02Z", { conversation: "room", thread: { kind: "room", id: "room" } }),
+      message("boss", "2026-11-01T00:00:03Z", { conversation: "room", thread: { kind: "room", id: "room" }, kind: "prompt", speaker: { role: "manager" } }),
+    ];
+    const button = app.room(messages);
+    await button.listeners.click();
+    for (const _ of expected) await app.end();
+    assert.deepEqual(app.requests.map(r => r.text), expected, scope);
+  }
+  const app = await office(false, undefined, undefined, "meetings");
+  const desk = { key: "a", provider: "codex" };
+  const messages = [1, 2].map(n => message(`private-${n}`, `2026-11-01T00:00:0${n}Z`, { desk: "a", thread: { kind: "desk", key: "a" } }));
+  const button = app.private(desk, messages);
+  await button.listeners.click();
+  await app.end();
+  assert.deepEqual(app.requests.map(r => r.text), ["private-1"], "meetings scope still allows the clicked private message");
+});
+
+
+test("changing scope filters queued automatic reads while a manual clip stays selected", async () => {
+  const app = await office();
+  const room = { kind: "room", id: "room" };
+  const messages = [
+    message("chosen", "2026-11-01T00:00:01Z", { conversation: "room", thread: room, kind: "prompt", speaker: { role: "manager" } }),
+    message("excluded", "2026-11-01T00:00:02Z", { conversation: "room", thread: room, kind: "prompt", speaker: { role: "manager" } }),
+    message("member", "2026-11-01T00:00:03Z", { conversation: "room", thread: room }),
+  ];
+  const button = app.room(messages);
+  await button.listeners.click();
+  await app.scope("members");
+  assert.equal(app.sounds[0].paused, false, "the explicitly selected boss clip continues");
+  await app.end();
+  assert.equal(app.sounds.length, 2, "the excluded prefetched clip never plays");
+  await app.end();
 });

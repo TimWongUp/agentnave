@@ -43,15 +43,19 @@
       const usable = c => Boolean(c.enabled && c.keys?.[c.engine]);
       // Only a change that silences or redirects playback interrupts it; other settings
       // apply to the next clip.
-      const interrupt = previous && different && (usable(previous) !== usable(next)
+      const shouldInterrupt = previous && different && (usable(previous) !== usable(next)
         || previous.engine !== next.engine || previous.auto_read === true && next.auto_read !== true);
       if (previous && different) {
         if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || usable(previous) !== usable(next)) { skip = true; baselineEpoch++; }
         if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
       }
       config = next;
+      if (previous && previous.read_scope !== next.read_scope) {
+        queue = queue.filter(job => job.chosen || inReadScope(job.boss, Boolean(job.room)) || (job.controller.abort(), false));
+        if (current && !current.chosen && !inReadScope(current.boss, Boolean(current.room))) interrupt();
+      }
       switches();
-      if (interrupt) stop();
+      if (shouldInterrupt) stop();
       else if (different) changed();
     })().finally(() => { loading = null; });
     return loading;
@@ -61,6 +65,15 @@
       && ["prompt", "instruction", "forward", "reply"].includes(m.kind)
       && !["running", "pending", "not_started", "review"].includes(m.status);
   }
+  function inReadScope(boss, room) {
+    switch (config?.read_scope) {
+      case "boss": return boss;
+      case "members": return !boss;
+      case "meetings": return room;
+      default: return true;
+    }
+  }
+  const scopedMessage = m => inReadScope(m.speaker?.role === "manager", m.thread?.kind === "room");
   function privateMessage(m, desk) {
     return m.thread?.kind !== "room" && (m.desk === desk || m.thread?.key === desk
       || m.to?.some(t => t.key === desk));
@@ -285,7 +298,7 @@
       const answer = briefing ? answers.get(briefing) : null;
       const can = eligible(m) && (!briefing || Boolean(answer));
       const seen = observed.get(m.id) === true;
-      if (!baseline && can && !seen && !answer?.seen && ready() && !halted && config.auto_read === true)
+      if (!baseline && can && scopedMessage(m) && !seen && !answer?.seen && ready() && !halted && config.auto_read === true)
         queue.push(item(m, ctx, true));
       observed.set(m.id, seen || can);
     }
@@ -337,7 +350,7 @@
       const known = new Set([current?.id, ...queue.map(job => job.id)]);
       // A briefing still waiting for its answer is not in the list; the chain starts after it.
       const after = start < 0 ? list.filter(job => job.time > chosen.time) : list.slice(start + 1);
-      const rest = after.filter(job => !known.has(job.id));
+      const rest = after.filter(job => !known.has(job.id) && inReadScope(job.boss, Boolean(job.room)));
       for (const job of rest) observed.set(job.id, true);
       queue.push(...rest);
       queue.sort((a, b) => Boolean(b.chosen) - Boolean(a.chosen) || a.time - b.time);

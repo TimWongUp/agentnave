@@ -123,7 +123,7 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
     .unwrap();
     assert_eq!(
         storage::read_settings(root).unwrap()["summary"],
-        json!({"enabled":false,"provider":"magpie","base_url":"","model":"","effort":"","prompt":summary::DEFAULT_PROMPT})
+        json!({"enabled":false,"provider":"magpie","base_url":"","model":"","effort":"","prompt":summary::DEFAULT_PROMPT,"level":"standard","language":"source"})
     );
     let mut with_effort = defaults.clone();
     with_effort["summary"]["effort"] = json!("high");
@@ -269,6 +269,7 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
         summary::LEGACY_DEFAULT_PROMPT,
         summary::LEGACY_MESSAGE_PROMPT,
         summary::LEGACY_SPEAKER_PROMPT,
+        summary::LEGACY_SCENE_PROMPT,
     ] {
         settings["summary"]["prompt"] = json!(legacy);
         std::fs::write(directory.path().join("voice.json"), settings.to_string()).unwrap();
@@ -299,4 +300,142 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
     }
     settings["summary"]["prompt"] = json!("字".repeat(4001));
     assert!(storage::validate(&settings).is_err());
+}
+
+#[test]
+fn speech_options_default_validate_and_enter_the_effective_prompt() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = storage::read_settings(directory.path()).unwrap();
+    assert_eq!(settings["read_scope"], "all");
+    assert_eq!(settings["code"], "skip");
+    assert_eq!(settings["cache_limit_mb"], 200);
+    assert_eq!(settings["summary"]["level"], "standard");
+    assert_eq!(settings["summary"]["language"], "source");
+    let mut summary = settings["summary"].clone();
+    let mut keys = std::collections::HashSet::new();
+    for (level, length) in [
+        ("short", "约 40 字"),
+        ("standard", "约 150 字以内"),
+        ("detailed", "约 300 字以内"),
+    ] {
+        summary["level"] = json!(level);
+        for language in ["source", "zh", "en"] {
+            summary["language"] = json!(language);
+            let prompt = summary::fixed_prompt("保留费用分歧。", &summary);
+            assert!(prompt.contains(length));
+            assert!(prompt.contains(&format!("summary.language={language}")));
+            assert!(prompt.contains("保留费用分歧。"));
+            assert!(!prompt.contains("80 到 120") && !prompt.contains("最多 300"));
+            assert!(keys.insert(storage::hash(&prompt)));
+        }
+    }
+    for (field, invalid) in [
+        ("read_scope", json!("none")),
+        ("code", json!(true)),
+        ("cache_limit_mb", json!(50)),
+        ("cache_limit_mb", json!(200.0)),
+    ] {
+        let mut bad = settings.clone();
+        bad[field] = invalid;
+        assert!(storage::validate(&bad).is_err());
+    }
+    for field in ["level", "language"] {
+        let mut bad = settings.clone();
+        bad["summary"][field] = json!("other");
+        assert!(storage::validate(&bad).is_err());
+    }
+}
+
+#[test]
+fn code_mentions_work_with_and_without_summary_and_ignore_language_when_disabled() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut settings = storage::read_settings(directory.path()).unwrap();
+    let payload = json!({"text":"已完成。\n```rust\nprivate_code();\n```\n继续看 /tmp/a.rs 和 https://example.org", "full":false});
+    settings["code"] = json!("mention");
+    settings["summary"]["language"] = json!("en");
+    let (spoken, summary) = source_text(&payload, &settings).unwrap();
+    assert!(summary.is_none());
+    assert!(spoken.contains("这里有一段代码"));
+    assert!(
+        !spoken.contains("private_code") && !spoken.contains("tmp") && !spoken.contains("https")
+    );
+    settings["summary"]["enabled"] = json!(true);
+    let (_, summary) = source_text(&payload, &settings).unwrap();
+    assert!(summary.unwrap().contains("here's a code snippet"));
+    settings["code"] = json!("skip");
+    assert!(
+        !source_text(&payload, &settings)
+            .unwrap()
+            .1
+            .unwrap()
+            .contains("snippet")
+    );
+    assert_eq!(
+        text::clean_with_code("~~~js\ncode\n~~~\n```py\nmore\n```", true, "mention", "zh"),
+        "这里有一段代码\n这里有一段代码"
+    );
+    assert_eq!(
+        text::clean_with_code("Done.\n```js\ncode\n```", true, "mention", "source"),
+        "Done.\nhere's a code snippet"
+    );
+}
+
+#[test]
+fn disabled_cache_neither_reads_nor_writes_and_clear_preserves_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut settings = storage::read_settings(root).unwrap();
+    settings["cache_limit_mb"] = json!(0);
+    storage::save_settings(root, &settings).unwrap();
+    for extension in ["txt", "mp3"] {
+        storage::cache(root, "disabled", b"unused", extension).unwrap();
+        assert!(storage::cached(root, "disabled", extension).is_none());
+    }
+    assert!(!root.join("voice-cache").exists());
+    assert_eq!(storage::cache_bytes(root).unwrap(), 0);
+    settings["cache_limit_mb"] = json!(100);
+    storage::save_settings(root, &settings).unwrap();
+    storage::cache(root, "summary", b"words", "txt").unwrap();
+    storage::cache(root, "audio", b"mp3", "mp3").unwrap();
+    assert_eq!(storage::cache_bytes(root).unwrap(), 8);
+    settings["cache_limit_mb"] = json!(0);
+    storage::save_settings(root, &settings).unwrap();
+    assert!(storage::cached(root, "audio", "mp3").is_none());
+    storage::cache(root, "late-result", b"mp3", "mp3").unwrap();
+    assert_eq!(storage::cache_bytes(root).unwrap(), 8);
+    storage::clear_cache(root).unwrap();
+    storage::clear_cache(root).unwrap();
+    assert_eq!(storage::cache_bytes(root).unwrap(), 0);
+    assert_eq!(storage::read_settings(root).unwrap(), settings);
+    if !crate::PREVIEW {
+        let response = get(root, "/app/voice/cache");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&response.body).unwrap(),
+            json!({"bytes":0})
+        );
+        let response = request(root, "/app/voice/cache/clear", "POST", Some("1"), b"");
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&response.body).unwrap(),
+            json!({"cleared":true})
+        );
+        assert_eq!(
+            request(root, "/app/voice/cache/clear", "POST", None, b"{}").status,
+            403
+        );
+    }
+}
+
+#[test]
+fn cache_evicts_to_the_selected_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut settings = storage::read_settings(root).unwrap();
+    settings["cache_limit_mb"] = json!(100);
+    storage::save_settings(root, &settings).unwrap();
+    std::fs::create_dir(root.join("voice-cache")).unwrap();
+    let file = std::fs::File::create(root.join("voice-cache/old.mp3")).unwrap();
+    file.set_len(101 * 1024 * 1024).unwrap();
+    storage::cache(root, "new", b"new", "txt").unwrap();
+    assert!(storage::cache_bytes(root).unwrap() <= 100 * 1024 * 1024);
 }
