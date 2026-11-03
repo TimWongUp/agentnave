@@ -24,14 +24,14 @@
   const changed = () => { updateChannel(); window.dispatchEvent(new Event("agentnave:voice")); };
   // Its own banner: the chat refresh hides the connection banner on every poll.
   const banner = document.getElementById("voice-banner");
-  let failureShown = false;
-  function error(message, failure = true) {
+  let shownError = null;
+  function error(message, source, job = null) {
     document.getElementById("voice-banner-text").textContent = message;
     banner.hidden = false;
-    failureShown = failure;
+    shownError = { source, job };
     document.getElementById("announce").textContent = message;
   }
-  function clearError() { banner.hidden = true; failureShown = false; }
+  function clearError() { banner.hidden = true; shownError = null; }
   document.getElementById("voice-banner-close").addEventListener("click", clearError);
   async function state() {
     const response = await fetch("/app/voice", { cache: "no-store" });
@@ -43,6 +43,7 @@
     if (loading) return loading;
     loading = (async () => {
       const next = await state();
+      if (shownError?.source === "load") clearError();
       const previous = config;
       const different = !previous || JSON.stringify(previous) !== JSON.stringify(next);
       const usable = c => Boolean(c.enabled && c.keys?.[c.engine]);
@@ -52,8 +53,8 @@
         || previous.engine !== next.engine || previous.auto_read === true && next.auto_read !== true);
       if (previous && different) {
         clearError();
+        halted = false; failures = 0;
         if (previous.enabled !== next.enabled || previous.auto_read !== next.auto_read || usable(previous) !== usable(next)) { skip = true; baselineEpoch++; }
-        if (!previous.enabled && next.enabled) { halted = false; failures = 0; }
       }
       config = next;
       if (previous && previous.read_scope !== next.read_scope) {
@@ -180,7 +181,7 @@
       throw new Error(data.error || L("语音播报合成失败", "Voice synthesis failed"));
     }
     const notice = response.headers.get("X-AgentNave-Notice");
-    if (notice) error(decodeURIComponent(notice), false);
+    if (notice) job.notice = decodeURIComponent(notice);
     return response.blob();
   }
   function prepare(job) {
@@ -247,6 +248,7 @@
     if (token !== generation) return;
     if (failure) throw failure;
     if (!blob) return;
+    if (job.notice) error(job.notice, "notice", job);
     job.url = URL.createObjectURL(blob);
     job.audio = new Audio(job.url);
     job.speaking = true;
@@ -258,6 +260,7 @@
       job.audio.onerror = () => reject(new Error(L("无法播放语音播报", "Failed to play voice audio")));
       job.audio.play().catch(failure => { if (!paused) reject(failure); });
     });
+    return true;
   }
   // While a clip plays, the next two are already being synthesized.
   function prefetch() {
@@ -276,12 +279,15 @@
         prefetch();
         changed();
         try {
-          await play(job, token);
-          if (token === generation) { failures = 0; if (failureShown) clearError(); }
+          const played = await play(job, token);
+          if (token === generation && played) {
+            failures = 0;
+            if (shownError?.source === "playback" || shownError?.source === "notice" && shownError.job !== job) clearError();
+          }
         } catch (failure) {
           if (token === generation) {
             failures++;
-            error(failures >= 3 ? L(`语音播报已停止：${failure.message}。请重新开启语音。`, `Voice readout stopped: ${failure.message}. Re-enable voice to continue.`) : failure.message);
+            error(failures >= 3 ? L(`语音播报已停止：${failure.message}。请重新开启语音。`, `Voice readout stopped: ${failure.message}. Re-enable voice to continue.`) : failure.message, "playback");
             if (failures >= 3) { halted = true; stop(); }
           }
         } finally {
@@ -322,7 +328,7 @@
     if (current) prefetch();
     // Playback only updates its channel and message controls.
     queueMicrotask(drain);
-    void reload().catch(failure => error(failure.message));
+    void reload().catch(failure => error(failure.message, "load"));
   }
   // The messages of one conversation a chained read follows, in the order they are shown.
   function playable(chat, target) {
@@ -371,7 +377,7 @@
       queue = beforeAnswers(queue);
       if (current) prefetch();
     } catch (failure) {
-      if (playlistFetch === load) error(failure.message);
+      if (playlistFetch === load) error(failure.message, "read");
     } finally {
       if (playlistFetch === load) {
         playlistFetch = null;
@@ -490,7 +496,7 @@
       config = data; failures = 0; halted = false; clearError();
       if (field === "auto_read") { skip = true; baselineEpoch++; }
       changed();
-    } catch (failure) { error(failure.message); }
+    } catch (failure) { error(failure.message, "save"); }
     finally { switches(); }
   }
   toggle.addEventListener("click", () => flip("auto_read"));
@@ -498,5 +504,5 @@
   document.addEventListener("visibilitychange", () => { skip = true; baselineEpoch++; stop(); });
   window.addEventListener("pagehide", stop);
   AN.voice = { ingest, decorate, pollToken: () => baselineEpoch, controls, stop, beforeAnswers };
-  void reload().catch(failure => error(failure.message));
+  void reload().catch(failure => error(failure.message, "load"));
 })();
