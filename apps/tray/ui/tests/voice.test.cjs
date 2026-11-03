@@ -9,7 +9,7 @@ const message = (id, time, extra = {}) => ({
   speaker: { role: "member", provider: "codex" }, thread: { kind: "desk" }, visibility: "private", ...extra,
 });
 
-async function office(auto_read = true, synthesize = async () => ({}), loadRoom = async data => ({ ok: true, json: async () => structuredClone(data) }), read_scope = "all") {
+async function office(auto_read = true, synthesize = async () => ({}), loadRoom = async data => ({ ok: true, json: async () => structuredClone(data) }), read_scope = "all", transport = async () => null) {
   let config = { enabled: true, auto_read, continue_read: true, read_scope, engine: "elevenlabs", keys: { elevenlabs: true }, summary: { enabled: true } };
   const requests = [], sounds = [], nodes = [];
   const rooms = new Map();
@@ -22,7 +22,11 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
     nodes.push(node);
     return node;
   }
-  const document = { hidden: false, getElementById: id => Object.assign(h("div"), { id }), addEventListener() {} };
+  const elements = new Map();
+  const document = { hidden: false, documentElement: { style: { setProperty() {} } }, getElementById: id => {
+    if (!elements.has(id)) elements.set(id, Object.assign(h("div"), { id, hidden: true, getBoundingClientRect: () => ({ height: 32 }) }));
+    return elements.get(id);
+  }, addEventListener() {} };
   class Audio {
     constructor(src) { this.text = decodeURIComponent(src.slice(5)); this.currentTime = 0; this.paused = true; this.plays = 0; sounds.push(this); }
     play() { this.paused = false; this.plays++; return Promise.resolve(); }
@@ -36,11 +40,14 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
   };
   vm.runInNewContext(readFileSync(`${__dirname}/../voice.js`, "utf8"), {
     AN, document, Audio, AbortController, Map, Event, queueMicrotask,
+    ResizeObserver: class { observe() {} },
     Avatars: { family: (provider, model) => model?.includes("claude") ? "claude" : provider === "codex" ? "gpt" : provider || null },
     Date: class extends Date { static now() { return 0; } },
     window: { dispatchEvent() {}, addEventListener() {} },
     URL: { createObjectURL: blob => `blob:${encodeURIComponent(blob.text)}`, revokeObjectURL() {} },
     async fetch(path, options) {
+      const response = await transport(path, options);
+      if (response) return response;
       if (rooms.has(path)) return loadRoom(rooms.get(path));
       if (path === "/app/voice/speak") {
         requests.push(JSON.parse(options.body));
@@ -68,6 +75,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
   AN.voice.controls(true, null, ctx);
   return {
     voice: AN.voice, requests, sounds, ctx, feed, nodes,
+    async settings(patch) { Object.assign(config, patch); await feed(ctx.c.messages); },
     async scope(value) { config.read_scope = value; await feed(ctx.c.messages); await flush(); },
     stop() { nodes.find(n => n.tag === "button.voice-stop").listeners.click(); },
     // A desk view, showing what chat.js's desk stream would: here, the desk's own messages.
@@ -90,6 +98,107 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
     async automatic() { await nodes.find(n => n.tag === "button.voice-toggle").listeners.click(); await flush(); },
   };
 }
+
+test("changing settings after repeated voice failures restores playback and resets the failure count", async () => {
+  let broken = true;
+  const app = await office(true, async () => { if (broken) throw new Error("synthesis failed"); });
+  const banner = app.nodes.find(n => n.id === "voice-banner");
+  const messages = [];
+  for (let n = 1; n <= 3; n++) {
+    messages.push(message(`fail-${n}`, `2026-11-01T00:00:0${n}Z`));
+    await app.feed(messages);
+  }
+  const text = app.nodes.find(n => n.id === "voice-banner-text");
+  assert.match(text.textContent, /已停止/);
+  await app.settings({ summary: { enabled: false } });
+  assert.equal(banner.hidden, true);
+  messages.push(message("retry-failure", "2026-11-01T00:00:04Z"));
+  await app.feed(messages);
+  assert.equal(text.textContent, "synthesis failed", "settings also reset the consecutive failure count");
+  broken = false;
+  messages.push(message("recovered", "2026-11-01T00:00:05Z"));
+  await app.feed(messages);
+  assert.equal(app.sounds.at(-1)?.text, "recovered", "settings changes release the halted player");
+  await app.end();
+  assert.equal(banner.hidden, true, "successful playback clears a playback failure");
+});
+
+test("a 204 skip neither clears playback errors nor resets consecutive failures", async () => {
+  const app = await office(true, async () => { throw new Error("synthesis failed"); }, undefined, "all",
+    async (path, options) => path === "/app/voice/speak" && JSON.parse(options.body).text === "skip" ? { status: 204 } : null);
+  const banner = app.nodes.find(n => n.id === "voice-banner");
+  const messages = [message("fail-1", "2026-11-01T00:00:01Z")];
+  await app.feed(messages);
+  const text = app.nodes.find(n => n.id === "voice-banner-text");
+  messages.push(message("skip", "2026-11-01T00:00:02Z"));
+  await app.feed(messages);
+  assert.equal(banner.hidden, false, "skipping synthesis is not playback recovery");
+  assert.equal(app.sounds.length, 0);
+  for (let n = 2; n <= 3; n++) {
+    messages.push(message(`fail-${n}`, `2026-11-01T00:00:0${n + 1}Z`));
+    await app.feed(messages);
+  }
+  assert.match(text.textContent, /已停止/, "a skipped message does not break the failure streak");
+});
+
+test("a notice belongs to its playing job and clears only after a later job plays successfully", async () => {
+  const app = await office(true, undefined, undefined, "all", async (path, options) => {
+    if (path !== "/app/voice/speak" || JSON.parse(options.body).text !== "notice") return null;
+    return { ok: true, status: 200, headers: { get: () => encodeURIComponent("fallback notice") }, blob: async () => ({ text: "notice" }) };
+  });
+  const banner = app.nodes.find(n => n.id === "voice-banner");
+  await app.feed(["first", "notice", "last"].map((id, n) => message(id, `2026-11-01T00:00:0${n + 1}Z`)));
+  assert.equal(banner.hidden, true, "prefetching a later notice does not show it during the earlier job");
+  await app.end();
+  assert.equal(banner.hidden, false);
+  await app.end();
+  assert.equal(banner.hidden, false, "the job carrying the notice does not clear its own notice");
+  await app.end();
+  assert.equal(banner.hidden, true);
+});
+
+test("finishing a playing message does not clear a full-conversation read failure", async () => {
+  let broken = true;
+  const app = await office(false, undefined, async data => ({ ok: !broken, json: async () => structuredClone(data) }));
+  const button = app.room([message("chosen", "2026-11-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" } })]);
+  await button.listeners.click();
+  const banner = app.nodes.find(n => n.id === "voice-banner");
+  assert.equal(banner.hidden, false);
+  await app.end();
+  assert.equal(banner.hidden, false);
+  await app.feed(app.ctx.c.messages);
+  assert.equal(banner.hidden, false, "a settings reload cannot clear a conversation-read error");
+  broken = false;
+  await button.listeners.click();
+  assert.equal(banner.hidden, true, "successfully loading the conversation on retry clears its read error");
+});
+
+test("settings-load errors survive playback and clear on an unchanged successful reload", async () => {
+  let broken = false;
+  const app = await office(true, undefined, undefined, "all", async path =>
+    path === "/app/voice" && broken ? { ok: false, json: async () => ({ error: "load failed" }) } : null);
+  await app.feed([message("playing", "2026-11-01T00:00:01Z")]);
+  broken = true;
+  await app.feed(app.ctx.c.messages);
+  const banner = app.nodes.find(n => n.id === "voice-banner");
+  assert.equal(banner.hidden, false);
+  await app.end();
+  assert.equal(banner.hidden, false, "playback recovery does not recover settings loading");
+  broken = false;
+  await app.feed(app.ctx.c.messages);
+  assert.equal(banner.hidden, true);
+});
+
+test("settings loading recovers after initial failures without requiring a configuration change", async () => {
+  let broken = true;
+  const app = await office(true, undefined, undefined, "all", async path =>
+    path === "/app/voice" && broken ? { ok: false, json: async () => ({ error: "load failed" }) } : null);
+  const banner = app.nodes.find(n => n.id === "voice-banner");
+  assert.equal(banner.hidden, false);
+  broken = false;
+  await app.feed([]);
+  assert.equal(banner.hidden, true);
+});
 
 test("private instructions use the boss identity and precede each employee's answer in the same round", async () => {
   for (const automatic of [false, true]) {
