@@ -143,7 +143,7 @@ AgentNave 在 46 篇 ADR 中快速迭代，准备发布 1.0 正式版。2026-11-
 
 ## Acceptance criteria
 
-1. `rg "skip_git_repo_check|cli-options|cli_options"` 在 `src/`、`apps/tray/src`、`apps/tray/ui`、`tests/`、`docs/context`、`CONTEXT.md` 中没有生产引用；Codex 在非 Git 目录真实调用成功。
+1. `rg "cli-options|cli_options"` 在 `src/`、`apps/tray/src`、`apps/tray/ui`、`tests/`、`docs/context`、`CONTEXT.md` 中没有生产引用；`skip_git_repo_check` 只剩 Codex Adapter 里「接受并忽略」这一处；Codex 在非 Git 目录真实调用成功。
 2. 视图快照中不再出现 `public`、`workbench_url`、`public_url`、`storage`、`refresh_error`。
 3. 正式构建的托盘二进制里没有 `mock.js` 内容，也没有对应路由。
 4. 服务打开 v1 库后，库变为 `user_version = 2`，旧身份会话为 0 条；服务和托盘代码里没有表、列探测，也没有「非 `s-`」分支。
