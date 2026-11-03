@@ -2317,6 +2317,7 @@ async def test_app_limit_caps_cli_runs_across_tasks_and_seats(
             settings.write_text(json.dumps(invalid))
             broken = await client.call_tool("start_agent", {**task, "prompt": "four"})
             assert broken.is_error and "Repair it in the AgentNave App" in str(broken.content)
+            assert "fix or remove" in str(broken.content)
         await _cancel(client, sleeping["invocation_id"])
         await _cancel(client, second["invocation_id"])
 

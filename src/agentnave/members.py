@@ -365,6 +365,11 @@ def data_root() -> Path:
     return Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
 
 
+def _repair(name: str) -> str:
+    """Hosts without the App (Linux) have no App to repair a file in."""
+    return f"Repair it in the AgentNave App, or fix or remove {data_root() / name}."
+
+
 def _read_app_file[T: BaseModel](name: str, model: type[T], error: type[ValueError]) -> T | None:
     """One App settings file of the data root; None when missing. A broken file raises `error`
     with the App repair hint, never a fallback that would run with other settings."""
@@ -373,11 +378,11 @@ def _read_app_file[T: BaseModel](name: str, model: type[T], error: type[ValueErr
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
-        raise error(f"Unable to read {name}: {exc}. Repair it in the AgentNave App.") from exc
+        raise error(f"Unable to read {name}: {exc}. {_repair(name)}") from exc
     try:
         return model.model_validate_json(content)
     except ValueError as exc:
-        raise error(f"Invalid {name}: {exc}. Repair it in the AgentNave App.") from exc
+        raise error(f"Invalid {name}: {exc}. {_repair(name)}") from exc
 
 
 def read_cli_options() -> CLIOptionsFile | None:
@@ -430,7 +435,7 @@ def read_max_running() -> int:
         return DEFAULT_MAX_RUNNING
     except (OSError, ValueError) as exc:
         raise SettingsFileError(
-            f"Unable to read settings.json: {exc}. Repair it in the AgentNave App."
+            f"Unable to read settings.json: {exc}. {_repair('settings.json')}"
         ) from exc
     settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
     version = settings.get("version")
@@ -439,7 +444,7 @@ def read_max_running() -> int:
     if type(version) is not int or version != 1 or type(value) is not int or not 1 <= value <= 32:
         raise SettingsFileError(
             "Invalid settings.json: needs version 1 and max_running between 1 and 32. "
-            "Repair it in the AgentNave App."
+            + _repair("settings.json")
         )
     return value
 

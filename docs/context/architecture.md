@@ -12,7 +12,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree 或 TUI；历史保留天数由用户在 App 设置、写入数据根 `settings.json`，服务只按它清理过期工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree 或 TUI；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务只按它清理过期工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
 
 ## 进程与模块
 
@@ -68,7 +68,7 @@ App 设置文件各自独立，以便旧版服务仍能读取组员配置：
 | `members.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
 | `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告，需要工位确定 CLI 时拒绝调用 |
 | `permissions.json`、`cli-options.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
-| `settings.json` | App | 每次接纳时读取同时运行上限 |
+| `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |
 
 App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样例由两侧测试共同断言接受或拒绝，保证 App 能保存的服务就能读取。
