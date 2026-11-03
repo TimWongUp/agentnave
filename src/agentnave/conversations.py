@@ -37,6 +37,7 @@ from agentnave.host import (
     session_file,
     session_model,
 )
+from agentnave.locks import release_and_remove
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
 from agentnave.store import (
@@ -1087,7 +1088,7 @@ class Conversations(Groups):
                         self._release_idle(record)
                 finally:
                     if native_lock is not None:
-                        native_lock.close()
+                        release_and_remove(native_lock, Path(native_lock.name))
 
     async def _collect(self, record: Record, task_id: str, invocation_id: str) -> None:
         result = await self.manager.wait(invocation_id)

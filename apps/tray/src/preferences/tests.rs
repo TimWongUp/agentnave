@@ -77,6 +77,15 @@ fn general_validates_all_contract_fields_without_accepting_coercions() {
         ("autostart", vec![json!(true), json!(false)]),
         ("open_on_start", vec![json!(true), json!(false)]),
         ("tray_count", vec![json!(true), json!(false)]),
+        (
+            "tray_font",
+            vec![
+                json!("futura"),
+                json!("baskerville"),
+                json!("typewriter"),
+                json!("marker"),
+            ],
+        ),
         ("keep_awake", vec![json!(true), json!(false)]),
     ] {
         for value in values {
@@ -101,7 +110,7 @@ fn effective_fills_defaults_and_uses_the_os_autostart_value() {
         json!({
             "language": "system", "theme": "system", "motion": "system", "scale": 100,
             "autostart": true, "open_on_start": true, "tray_click": "panel",
-            "tray_count": true, "keep_awake": false,
+            "tray_count": true, "tray_font": "futura", "keep_awake": false,
         })
     );
     let effective = general::effective(

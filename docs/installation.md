@@ -524,6 +524,30 @@ references, matching the source-tag installation route. The workflow also instal
 through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
 
+## Settings without the App
+
+Without the App (Linux, or a host that skips it), the service runs on defaults: each CLI uses its
+own model and effort, the permission tier is `auto`, at most 8 CLI runs are active at once, no
+review or orchestration seats exist (the review Skill picks members itself), and saved history is
+kept forever. App-only features (voice, notifications, appearance, updates) are not available.
+
+To change the run limit or turn on automatic history cleanup, write `settings.json` in the data
+root (`~/.agentnave/`, or `AGENTNAVE_DATA_DIR`). Do not hand-edit it when the App is installed;
+change the setting in the App instead.
+
+```json
+{"version": 1, "max_running": 8, "history_retention_days": 90}
+```
+
+`version` must be `1`. `max_running` is an integer from 1 to 32. `history_retention_days` is 30, 90
+or 180; omit it to keep history forever. Running services read the file without a restart: the
+run limit on the next call, cleanup at its next daily pass or when a service starts. A
+cleanup deletes whole workspaces whose last activity is older than the limit and cannot be undone.
+Invalid `version` or `max_running` makes calls fail with the file's path and disables history
+cleanup until fixed. Invalid `history_retention_days` only disables history cleanup and logs a
+service warning; calls still work. Orphan resource cleanup and expiration of empty pending
+handovers after 90 days run independently of the history retention setting.
+
 ## Upgrade, repair, and rollback
 
 This section replaces an existing installation; it is not part of merely registering another

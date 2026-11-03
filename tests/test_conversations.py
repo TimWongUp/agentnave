@@ -1822,6 +1822,7 @@ async def test_task_start_failure_does_not_leave_a_running_record(
         saved = Record.read(studio.db, studio.locks, record.state.id)
         assert saved.state.tasks[0].status == "failed"
         assert saved.state.tasks[0].error == "start_failed"
+        assert not list((data_root / "native-session-locks").glob("*.lock"))
     finally:
         await studio.close()
 
@@ -2317,6 +2318,7 @@ async def test_app_limit_caps_cli_runs_across_tasks_and_seats(
             settings.write_text(json.dumps(invalid))
             broken = await client.call_tool("start_agent", {**task, "prompt": "four"})
             assert broken.is_error and "Repair it in the AgentNave App" in str(broken.content)
+            assert "fix or remove" in str(broken.content)
         await _cancel(client, sleeping["invocation_id"])
         await _cancel(client, second["invocation_id"])
 

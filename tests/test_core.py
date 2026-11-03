@@ -217,6 +217,7 @@ async def test_active_native_session_cannot_be_resumed_twice(
     tmp_path: Path, fake_adapter: None
 ) -> None:
     manager = InvocationManager()
+    manager.session_locks = tmp_path / "native-session-locks"
     request = InvocationRequest("claude", "sleep", tmp_path, "existing-session")
     first = manager.start(request)
     try:
@@ -226,10 +227,12 @@ async def test_active_native_session_cannot_be_resumed_twice(
         other = manager.start(InvocationRequest("grok", "complete", tmp_path, request.session_id))
         assert await manager.wait(other) is not None
         await manager.cancel(first)
+        assert not list(manager.session_locks.glob("*.lock"))
         resumed = manager.start(
             InvocationRequest("claude", "complete", tmp_path, request.session_id)
         )
         assert await manager.wait(resumed) is not None
+        assert not list(manager.session_locks.glob("*.lock"))
     finally:
         await manager.shutdown()
 

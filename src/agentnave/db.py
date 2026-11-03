@@ -85,6 +85,7 @@ class Database:
             try:
                 self.path.chmod(0o600)
                 connection.execute("PRAGMA journal_mode = WAL")
+                connection.execute("PRAGMA journal_size_limit = 8388608")
                 connection.execute("PRAGMA synchronous = FULL")
                 connection.execute("PRAGMA foreign_keys = ON")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
