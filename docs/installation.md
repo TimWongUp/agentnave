@@ -543,7 +543,10 @@ change the setting in the App instead.
 or 180; omit it to keep history forever. Running services read the file without a restart: the
 run limit on the next call, cleanup at its next daily pass or when a service starts. A
 cleanup deletes whole workspaces whose last activity is older than the limit and cannot be undone.
-An invalid file makes calls fail with the file's path and turns cleanup off until it is fixed.
+Invalid `version` or `max_running` makes calls fail with the file's path and disables history
+cleanup until fixed. Invalid `history_retention_days` only disables history cleanup and logs a
+service warning; calls still work. Orphan resource cleanup and expiration of empty pending
+handovers after 90 days run independently of the history retention setting.
 
 ## Upgrade, repair, and rollback
 

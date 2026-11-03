@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -59,7 +60,7 @@ def test_retention_setting_reads_only_explicit_valid_integers(
         assert read_history_retention_days(tmp_path) is None
 
 
-def test_workspace_cleanup_cascades_and_forgets_handover_but_keeps_files(tmp_path: Path) -> None:
+def test_workspace_cleanup_cascades_and_removes_seats_but_keeps_locks(tmp_path: Path) -> None:
     settings(tmp_path)
     for id_ in ["old-a", "old-b"]:
         fixture(tmp_path, id_)
@@ -74,14 +75,15 @@ def test_workspace_cleanup_cascades_and_forgets_handover_but_keeps_files(tmp_pat
         db.execute("INSERT INTO entries VALUES ('old-a', 0, '{}')")
     seats = tmp_path / "seats/old-a/a"
     seats.mkdir(parents=True)
-    (seats / "output.txt").write_text("keep")
+    (seats / "output.txt").write_text("discard")
+    (seats / "output.txt").chmod(0o400)
     assert cleanup(tmp_path, now=_NOW) == 1
     assert remaining(tmp_path) == []
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         for table in ["workspaces", "former_bosses", "entries", "views"]:
             assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
     assert (tmp_path / "locks/old-a.lock").exists()
-    assert (seats / "output.txt").read_text() == "keep"
+    assert not seats.parent.exists()
 
 
 @pytest.mark.parametrize(
@@ -155,6 +157,167 @@ def test_no_setting_and_contended_global_lock_do_not_delete(tmp_path: Path) -> N
         assert cleanup(tmp_path, now=_NOW) == 0
     assert remaining(tmp_path) == ["old"]
     assert cleanup(tmp_path, now=_NOW) == 1
+
+
+def test_orphan_locks_expire_even_without_history_retention(tmp_path: Path) -> None:
+    fixture(tmp_path, "saved")
+    locks = tmp_path / "locks"
+    locks.mkdir()
+    for name in ["saved", "old", "busy", "new", "bad.id"]:
+        path = locks / f"{name}.lock"
+        path.touch()
+        os.utime(path, (_NOW - 7200, _NOW - 7200))
+    os.utime(locks / "new.lock", (_NOW, _NOW))
+    (locks / "directory.lock").mkdir()
+    (locks / "linked.lock").symlink_to(locks / "old.lock")
+    with lock_file(locks / "busy.lock", "busy"):
+        os.utime(locks / "busy.lock", (_NOW - 7200, _NOW - 7200))
+        with lock_file(tmp_path / GLOBAL_LOCK, "busy"):
+            assert cleanup(tmp_path, now=_NOW) == 0
+            assert (locks / "old.lock").exists()
+        assert cleanup(tmp_path, now=_NOW) == 0
+    assert not (locks / "old.lock").exists()
+    assert (locks / "linked.lock").is_symlink()
+    assert all((locks / f"{name}.lock").exists() for name in ["saved", "busy", "new", "bad.id"])
+    assert (locks / "directory.lock").is_dir()
+    assert remaining(tmp_path) == ["saved"]
+
+
+def test_missing_database_disables_resource_sweep(tmp_path: Path) -> None:
+    path = tmp_path / "locks/old.lock"
+    path.parent.mkdir()
+    path.touch()
+    os.utime(path, (_NOW - 7200, _NOW - 7200))
+    assert cleanup(tmp_path, now=_NOW) == 0
+    assert path.exists()
+    assert not (tmp_path / "agentnave.db").exists()
+
+
+def test_orphan_seats_expire_after_one_day_without_following_symlinks(tmp_path: Path) -> None:
+    fixture(tmp_path, "saved")
+    for name in ["old", "new", "saved", "busy", "bad.id"]:
+        path = tmp_path / "seats" / name
+        path.mkdir(parents=True)
+        (path / "output").write_text("data")
+        os.utime(path, (_NOW - 2 * 86400, _NOW - 2 * 86400))
+    os.utime(tmp_path / "seats/new", (_NOW, _NOW))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("keep")
+    (tmp_path / "seats/old/link").symlink_to(outside, target_is_directory=True)
+    (tmp_path / "seats/linked").symlink_to(outside, target_is_directory=True)
+    os.utime(tmp_path / "seats/linked", (_NOW - 2 * 86400, _NOW - 2 * 86400), follow_symlinks=False)
+    os.utime(tmp_path / "seats/old", (_NOW - 2 * 86400, _NOW - 2 * 86400))
+    (tmp_path / "locks").mkdir()
+    with lock_file(tmp_path / "locks/busy.lock", "busy"):
+        assert cleanup(tmp_path, now=_NOW) == 0
+    assert not (tmp_path / "seats/old").exists()
+    assert not (tmp_path / "seats/linked").is_symlink()
+    assert not (tmp_path / "locks/old.lock").exists()
+    assert not (tmp_path / "locks/linked.lock").exists()
+    assert (outside / "keep").read_text() == "keep"
+    assert all((tmp_path / "seats" / name).exists() for name in ["new", "saved", "busy", "bad.id"])
+
+
+@pytest.mark.parametrize("resource", ["lock", "seat"])
+def test_orphan_sweep_rechecks_database_after_acquiring_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resource: str
+) -> None:
+    from typing import IO
+
+    fixture(tmp_path, "existing")
+    (tmp_path / "locks").mkdir()
+    path = tmp_path / "locks/racing.lock" if resource == "lock" else tmp_path / "seats/racing"
+    if resource == "lock":
+        path.touch()
+    else:
+        path.mkdir(parents=True)
+    os.utime(path, (_NOW - 2 * 86400, _NOW - 2 * 86400))
+
+    def take(path: Path, message: str, *, create: bool = True) -> IO[bytes]:
+        guard = lock_file(path, message, create=create)
+        if path.name == "racing.lock":
+            fixture(tmp_path, "racing", group=None)
+        return guard
+
+    monkeypatch.setattr("agentnave.retention.lock_file", take)
+    assert cleanup(tmp_path, now=_NOW) == 0
+    assert path.exists()
+    assert "racing" in remaining(tmp_path)
+
+
+def test_empty_pending_handovers_expire_at_ninety_days_even_without_history_retention(
+    tmp_path: Path,
+) -> None:
+    fixture(tmp_path, "saved", group="nonempty")
+    db = Database(tmp_path)
+    boundary = datetime.fromtimestamp(_NOW - 90 * 86400, UTC).isoformat()
+    try:
+        for id_, released in [
+            ("expired", _OLD),
+            ("new", "2026-11-03T00:00:00Z"),
+            ("boundary", boundary),
+            ("claimed", _OLD),
+            ("nonempty", _OLD),
+            ("bad-time", "yesterday"),
+        ]:
+            db.release(id_, id_, "codex", None, "handover", released, "title", str(tmp_path))
+        db.claim("claimed", "next-boss", "codex", None)
+        with sqlite3.connect(tmp_path / "agentnave.db") as connection:
+            connection.executemany(
+                "INSERT INTO former_bosses VALUES (?, ?)",
+                [("expired-boss", "expired"), ("kept-boss", "nonempty")],
+            )
+        assert cleanup(tmp_path, now=_NOW) == 0
+        assert db.workspace("expired") is None
+        assert all(
+            db.workspace(id_) is not None
+            for id_ in ["new", "boundary", "claimed", "nonempty", "bad-time"]
+        )
+        with sqlite3.connect(tmp_path / "agentnave.db") as connection:
+            assert connection.execute("SELECT boss FROM former_bosses").fetchall() == [
+                ("kept-boss",)
+            ]
+    finally:
+        db.close()
+
+
+def test_invalid_retention_warns_each_pass_but_dispatch_settings_are_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from agentnave.members import read_max_running
+
+    fixture(tmp_path, "saved")
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    settings(tmp_path, "90")
+    for _ in range(2):
+        assert cleanup(tmp_path, now=_NOW) == 0
+    assert caplog.text.count("History cleanup is disabled") == 2
+    assert "30, 90 or 180" in caplog.text
+    assert str(tmp_path / "settings.json") in caplog.text
+    assert read_max_running() == 8
+    (tmp_path / "settings.json").write_text('{"version":true,"history_retention_days":30}')
+    assert cleanup(tmp_path, now=_NOW) == 0
+    assert caplog.text.count("History cleanup is disabled") == 3
+    assert remaining(tmp_path) == ["saved"]
+
+
+def test_seat_removal_failure_logs_without_rolling_back_committed_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings(tmp_path)
+    fixture(tmp_path, "old")
+    seat = tmp_path / "seats/old"
+    seat.mkdir(parents=True)
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("read-only directory")
+
+    monkeypatch.setattr("agentnave.retention.shutil.rmtree", fail)
+    assert cleanup(tmp_path, now=_NOW) == 1
+    assert remaining(tmp_path) == []
+    assert seat.exists()
+    assert "could not remove seat directory" in caplog.text
 
 
 def test_legacy_sessions_are_individual_workspaces(tmp_path: Path) -> None:

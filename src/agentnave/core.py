@@ -20,7 +20,7 @@ from typing import IO
 
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
-from agentnave.locks import lock_file
+from agentnave.locks import lock_file, release_and_remove
 from agentnave.models import (
     InvocationError,
     InvocationListing,
@@ -300,17 +300,17 @@ class InvocationManager:
             record.task = asyncio.create_task(self._execute(record, adapter, prepared))
         except BaseException:
             if claim is not None:
-                claim.close()
+                release_and_remove(claim, Path(claim.name))
             raise
         if claim is not None:
             held = claim
-            record.task.add_done_callback(lambda _: held.close())
+            record.task.add_done_callback(lambda _: release_and_remove(held, Path(held.name)))
         record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
         return invocation_id
 
     def reserve(self, request: InvocationRequest) -> IO[bytes] | None:
         """Claim the request's native session for one run, across every server sharing the
-        lock directory; closing the handle, or this process ending, releases it."""
+        lock directory; release_and_remove removes it once the run ends."""
         self.check_start(request)
         if request.session_id is None or self.session_locks is None:
             return None

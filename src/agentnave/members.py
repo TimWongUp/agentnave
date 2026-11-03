@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -455,21 +456,32 @@ def read_history_retention_days(root: Path | None = None) -> int | None:
     As with read_max_running, require version 1 and a strict integer; retention is
     fail-closed because a broken configuration must not authorize deleting history.
     """
+    path = (root or data_root()) / "settings.json"
     try:
-        document = json.loads(((root or data_root()) / "settings.json").read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
+        settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
+        version = settings.get("version")
+        value = settings.get("history_retention_days")
+        limit = settings.get("max_running", DEFAULT_MAX_RUNNING)
+        if (
+            type(version) is not int
+            or version != 1
+            or type(limit) is not int
+            or not 1 <= limit <= 32
+            or (value is not None and (type(value) is not int or value not in (30, 90, 180)))
+        ):
+            raise ValueError("invalid retention settings")
+        return cast(int | None, value)
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError):
+        logging.getLogger(__name__).warning(
+            "History cleanup is disabled: invalid settings at %s; use version 1, "
+            "max_running 1..32 and history_retention_days 30, 90 or 180 "
+            "(omit it or use null to keep history forever)",
+            path,
+        )
         return None
-    if not isinstance(document, dict):
-        return None
-    settings = cast(dict[str, object], document)
-    version = settings.get("version")
-    value = settings.get("history_retention_days")
-    if type(version) is not int or version != 1:
-        return None
-    limit = settings.get("max_running", DEFAULT_MAX_RUNNING)
-    if type(limit) is not int or not 1 <= limit <= 32:
-        return None
-    return value if type(value) is int and value in (30, 90, 180) else None
 
 
 def _field(value: object, key: str) -> object:
