@@ -1,20 +1,44 @@
 "use strict";
 (function () {
-  const { h, art } = AN;
+  const { h, art, L } = AN;
   const root = document.getElementById("voice-settings");
-  let config = null, voices = [], models = [], summaryModels = [], busy = false, loaded = false, audio = null, audioUrl = null, controller = null;
+  let config = null, voices = [], models = [], summaryModels = [], cacheBytes = 0, busy = false, clearingCache = false, loaded = false, audio = null, audioUrl = null, controller = null;
   const drafts = { base: null, model: null, prompts: new Map() };
   const status = (message) => { document.getElementById("notice").textContent = message; };
+  function normalizeConfig(raw) {
+    if (!raw) return raw;
+    return {
+      read_scope: "all",
+      code: "skip",
+      cache_limit_mb: 200,
+      ...raw,
+      summary: {
+        level: "standard",
+        language: "source",
+        ...(raw.summary || {}),
+      },
+    };
+  }
+  function formatBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
   function summaryModelLabel(model) {
     const supplier = model.owned_by && !model.id.startsWith(`${model.owned_by}/`) ? model.owned_by : "";
     return supplier ? `${supplier}/${model.id}` : model.id;
   }
   async function request(path, payload) {
+    if (window.AgentNaveMock?.enabled()) {
+      return payload === undefined ? window.AgentNaveMock.fetch(path) : window.AgentNaveMock.post(path, payload);
+    }
     const response = await fetch(path, payload === undefined ? { cache: "no-store" } : {
       method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "无法保存语音设置");
+    if (!response.ok) throw new Error(data.error || L("无法保存语音设置", "Failed to save voice settings"));
     return data;
   }
   function stop() {
@@ -23,18 +47,23 @@
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     audioUrl = null;
   }
-  function segments(label, field, choices) {
+  function choiceButtons(label, current, choices, pick, disabled = false) {
     const control = h("div.segment-control", { role: "radiogroup", "aria-label": label });
     for (const [value, name] of choices) {
-      const button = h(`button.segment-btn${config[field] === value ? ".active" : ""}`, {
-        type: "button", role: "radio", "aria-checked": String(config[field] === value), disabled: busy,
+      const active = current === value;
+      const button = h(`button.segment-btn${active ? ".active" : ""}`, {
+        type: "button", role: "radio", "aria-checked": String(active), disabled: busy || disabled,
       }, name);
-      button.addEventListener("click", () => save({ [field]: value, ...(field === "engine" ? { voices: {} } : {}) }));
+      button.addEventListener("click", () => { if (!active) pick(value); });
       control.append(button);
     }
     return control;
   }
-  const row = (label, control) => h("div.setting-row", {}, h("h2", {}, label), control);
+  function segments(label, field, choices, disabled = false) {
+    return choiceButtons(label, config[field], choices,
+      value => save({ [field]: value, ...(field === "engine" ? { voices: {} } : {}) }), disabled);
+  }
+  const row = (label, control, extraClass = "") => h(`div.setting-row${extraClass}`, {}, h("h2", {}, label), control);
   // A long editor takes the row's whole width under its label.
   const wide = (label, control) => h("div.setting-row.voice-wide", {}, h("h2", {}, label), control);
   // A catalog that arrives after the engine changed belongs to the old engine and is dropped.
@@ -54,9 +83,30 @@
     if (!config.enabled || !config.summary.enabled || !summaryUsable()) return;
     summaryModels = await request("/app/voice/summary/models", {});
   }
+  async function loadCache() {
+    const res = await request("/app/voice/cache").catch(() => null);
+    if (res && typeof res.bytes === "number") cacheBytes = res.bytes;
+  }
+  async function clearCache() {
+    if (busy || clearingCache) return;
+    clearingCache = true; render();
+    try {
+      await request("/app/voice/cache/clear", {});
+      cacheBytes = 0;
+      await loadCache();
+      status(L("语音缓存已清空", "Voice cache cleared"));
+    } catch (failure) {
+      status(failure.message);
+    } finally {
+      clearingCache = false; render();
+    }
+  }
   async function loadCatalogs(label) {
     const failures = [];
-    const reads = [loadVoices().catch(failure => failures.push(`TTS 目录不可用：${failure.message}`))];
+    const reads = [
+      loadVoices().catch(failure => failures.push(`TTS 目录不可用：${failure.message}`)),
+      loadCache(),
+    ];
     if (config.summary.enabled) {
       reads.push(loadSummaryModels().catch(failure => failures.push(`摘要目录不可用：${failure.message}`)));
     }
@@ -67,8 +117,8 @@
     if (busy) return;
     busy = true; stop(); render();
     try {
-      config = await request("/app/voice", { ...config, ...patch });
-      status(await loadCatalogs("语音设置已保存"));
+      config = normalizeConfig(await request("/app/voice", { ...config, ...patch }));
+      status(await loadCatalogs(L("语音设置已保存", "Voice settings saved")));
       return true;
     } catch (failure) { status(failure.message); return false; }
     finally { busy = false; render(); }
@@ -82,7 +132,7 @@
       if (busy) return;
       busy = true; input.value = ""; stop(); render();
       try {
-        config = await request("/app/voice/key", { engine, key });
+        config = normalizeConfig(await request("/app/voice/key", { engine, key }));
         const saved = key ? "密钥已保存" : "密钥已删除";
         let detail = "";
         try {
@@ -189,7 +239,7 @@
   async function chatgptAction(path) {
     if (busy) return;
     busy = true; render();
-    try { config = await request(path, {}); }
+    try { config = normalizeConfig(await request(path, {})); }
     catch (failure) { status(failure.message); }
     finally { busy = false; render(); watchSignIn(); }
   }
@@ -200,7 +250,7 @@
     if (!config?.chatgpt.signing_in) return;
     signInTimer = setTimeout(async () => {
       const next = await request("/app/voice").catch(() => null);
-      if (next) config = next;
+      if (next) config = normalizeConfig(next);
       if (config.chatgpt.signing_in) return watchSignIn();
       status(await loadCatalogs(config.chatgpt.signed_in ? "ChatGPT 已登录" : config.chatgpt.error || "ChatGPT 未登录"));
       render();
@@ -252,7 +302,23 @@
   function modelSettings() {
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.summary.enabled, disabled: busy, "aria-label": "使用摘要模型" });
     enabled.addEventListener("change", () => summarySave({ enabled: enabled.checked }));
-    const parts = [row("使用摘要模型", enabled), row("摘要平台", summarySource())];
+    const levelLabel = L("摘要详细程度", "Summary level");
+    const langLabel = L("朗读语言", "Reading language");
+    const summaryOff = !config.summary.enabled;
+    const parts = [
+      row("使用摘要模型", enabled),
+      row(levelLabel, choiceButtons(levelLabel, config.summary.level, [
+        ["short", L("简短", "Short")],
+        ["standard", L("标准", "Standard")],
+        ["detailed", L("详细", "Detailed")],
+      ], level => summarySave({ level }))),
+      row(langLabel, choiceButtons(langLabel, config.summary.language, [
+        ["source", L("跟随原文", "Follow source")],
+        ["zh", L("中文", "中文")],
+        ["en", L("English", "English")],
+      ], language => summarySave({ language }), summaryOff), summaryOff ? ".disabled" : ""),
+      row("摘要平台", summarySource()),
+    ];
     const provider = config.summary.provider;
     if (provider === "custom") parts.push(summaryConnection(), keyRow("summary", "摘要"));
     if (provider === "chatgpt") parts.push(chatgptAccount());
@@ -270,9 +336,33 @@
     });
     parts.push(row("摘要模型", h("div.voice-summary-model", {}, select, refresh)), summaryEffort());
     if (provider !== "magpie") parts.push(manualSummaryModel());
-    parts.push(wide("摘要 Prompt", promptEditor("summary", "摘要 Prompt", config.summary.prompt, 4000,
-      value => summarySave({ prompt: value }), true)));
     return section("summary-model", "摘要模型设置", ...parts);
+  }
+  function cacheRow() {
+    const label = L("语音缓存", "Voice cache");
+    const clearBtn = h("button", {
+      type: "button",
+      disabled: busy || clearingCache || !cacheBytes,
+    }, L("立即清空", "Clear now"));
+    clearBtn.addEventListener("click", () => void clearCache());
+    return row(label, h("div.voice-cache", {},
+      segments(label, "cache_limit_mb", [
+        [100, "100 MB"],
+        [200, "200 MB"],
+        [500, "500 MB"],
+        [0, L("不缓存", "No cache")],
+      ]),
+      h("div.voice-cache-meta", {},
+        h("span.voice-cache-size", {}, L(`当前占用 ${formatBytes(cacheBytes)}`, `Used ${formatBytes(cacheBytes)}`)),
+        clearBtn,
+      ),
+    ));
+  }
+  function advancedSettings() {
+    const promptLabel = L("摘要 Prompt", "Summary prompt");
+    return section("advanced", L("高级", "Advanced"),
+      wide(promptLabel, promptEditor("summary", promptLabel, config.summary.prompt, 4000,
+        value => summarySave({ prompt: value }), true)));
   }
   function persona(family, label) {
     return section(`persona-${family}`, "人设",
@@ -300,22 +390,40 @@
     automatic.addEventListener("change", () => save({ auto_read: automatic.checked }));
     const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": "点读后连播" });
     chained.addEventListener("change", () => save({ continue_read: chained.checked }));
-    const parts = [row("语音播报", enabled), row("新消息自动读", automatic), row("点读后连播", chained),
-      row("引擎", segments("语音引擎", "engine", [["elevenlabs", "ElevenLabs"], ["minimax", "MiniMax"]])), keyRow()];
+    const scopeLabel = L("朗读哪些消息", "Messages to read");
+    const codeLabel = L("代码和路径", "Code and paths");
+    const parts = [
+      row("语音播报", enabled),
+      row("新消息自动读", automatic),
+      row("点读后连播", chained),
+      row(scopeLabel, segments(scopeLabel, "read_scope", [
+        ["all", L("全部", "All")],
+        ["members", L("只读员工的回答", "Employee replies only")],
+        ["boss", L("只读 boss 的发言", "Boss messages only")],
+        ["meetings", L("只读会议", "Meetings only")],
+      ])),
+      row(codeLabel, segments(codeLabel, "code", [
+        ["skip", L("跳过不读", "Skip")],
+        ["mention", L("说“这里有一段代码”", "Say “Here is a code block”")],
+      ])),
+      row("引擎", segments("语音引擎", "engine", [["elevenlabs", "ElevenLabs"], ["minimax", "MiniMax"]])),
+      keyRow(),
+    ];
     if (config.engine === "minimax") parts.push(row("地区", segments("MiniMax 地区", "minimax_region", [["cn", "国内"], ["global", "海外"]])));
     parts.push(row("语音模型", picker("语音模型", models, config.model,
       id => save({ models: { ...config.models, [config.engine]: id } }))));
+    parts.push(cacheRow());
     parts.push(modelSettings());
     parts.push(h("p.voice-cloud", {}, config.summary.enabled
       ? "回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。" : "回答内容会发送给所选语音引擎。"));
-    root.replaceChildren(...parts, h("h2.voice-group", {}, "角色"), familySettings());
+    root.replaceChildren(...parts, h("h2.voice-group", {}, "角色"), familySettings(), advancedSettings());
   }
   // The settings work as soon as they are read; catalogs fill their pickers when they arrive.
   async function load() {
     if (busy) return;
     busy = true;
     try {
-      config = await request("/app/voice");
+      config = normalizeConfig(await request("/app/voice"));
       loaded = true;
       watchSignIn();
     }
@@ -334,7 +442,7 @@
   // Coming back only reloads what another window changed, so the click that refocused still lands.
   addEventListener("focus", async () => {
     if (!loaded || busy || location.hash !== "#voice") return;
-    const next = await request("/app/voice").catch(() => null);
+    const next = normalizeConfig(await request("/app/voice").catch(() => null));
     if (next && JSON.stringify(next) !== JSON.stringify(config)) void load();
   });
   window.AgentNaveVoiceSettings = { load };

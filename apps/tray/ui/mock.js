@@ -699,8 +699,44 @@ All checks passed!
     autostart_available: !q.has("preview"),
     error: null,
   });
+  let mockVoiceCacheBytes = 14820352;
+  const mockVoice = {
+    enabled: true,
+    auto_read: true,
+    continue_read: true,
+    read_scope: "all",
+    code: "skip",
+    cache_limit_mb: 200,
+    engine: "elevenlabs",
+    minimax_region: "cn",
+    model: "eleven_turbo_v2_5",
+    models: { elevenlabs: "eleven_turbo_v2_5", minimax: "speech-01-turbo" },
+    keys: { elevenlabs: true, minimax: false },
+    voices: {},
+    personas: {},
+    chatgpt: { signed_in: true, signing_in: false, user: "preview@example.com", plan: "Plus", error: null },
+    summary_platforms: [
+      { id: "chatgpt", name: "ChatGPT" },
+      { id: "magpie", name: "Magpie" },
+      { id: "custom", name: "自定义" },
+    ],
+    summary: {
+      enabled: true,
+      level: "standard",
+      language: "source",
+      provider: "chatgpt",
+      model: "gpt-5.4-mini",
+      effort: "",
+      base_url: "",
+      prompt: "",
+    },
+  };
   async function p3Fetch(path) {
     if (path === "/app/preferences") return preferencesView();
+    if (path === "/app/voice") return structuredClone(mockVoice);
+    if (path === "/app/voice/cache") return { bytes: mockVoiceCacheBytes };
+    if (path.startsWith("/app/voice/models/")) return [{ id: mockVoice.model, name: mockVoice.model }];
+    if (path.startsWith("/app/voice/voices/")) return [{ id: "voice-1", name: "默认音色" }];
     if (path === "/app/hosts") return structuredClone(hostView());
     if (path === "/app/skills") return { skills: [{ name: "agentnave-review", title: "AgentNave 评审门控", description: "代码评审门控：创建或更新 PR、用户要求评审代码或合并到主分支前使用。", content: "---\nname: agentnave-review\n---\n\n# AgentNave 评审门控\n\n（预览）完整写法在 App 中读取内嵌的 SKILL.md。" }] };
     if (path === "/app/onboarding") return onboarding();
@@ -745,6 +781,20 @@ All checks passed!
       return { saved: true, ...preferencesView() };
     }
     if (path === "/app/alerts/test") return { sent: true };
+    if (path === "/app/voice") {
+      Object.assign(mockVoice, body);
+      if (body.summary) mockVoice.summary = { ...mockVoice.summary, ...body.summary };
+      return structuredClone(mockVoice);
+    }
+    if (path === "/app/voice/key") {
+      mockVoice.keys[body.engine] = Boolean(body.key);
+      return structuredClone(mockVoice);
+    }
+    if (path === "/app/voice/summary/models") return [{ id: "gpt-5.4-mini", owned_by: "openai", reasoning_levels: ["low", "medium"] }];
+    if (path === "/app/voice/cache/clear") {
+      mockVoiceCacheBytes = 0;
+      return { cleared: true };
+    }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
     if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }
     if (path === "/app/onboarding/reopen") { dismissed = false; return { dismissed }; }
