@@ -370,16 +370,16 @@ pub(super) fn cache(root: &Path, key: &str, bytes: &[u8], extension: &str) -> Re
     // Read under the same lock as settings writes, so an in-flight request cannot persist
     // a result after the user has disabled caching.
     let limit = cache_limit(root)?;
-    if limit == 0 {
+    if limit == 0 || bytes.len() as u64 > limit {
         return Ok(());
     }
     let save = || -> std::io::Result<()> {
         let dir = root.join("voice-cache");
         fs::create_dir_all(&dir)?;
+        let saved = dir.join(format!("{key}.{extension}"));
         let mut file = tempfile::NamedTempFile::new_in(&dir)?;
         file.write_all(bytes)?;
-        file.persist(dir.join(format!("{key}.{extension}")))
-            .map_err(|e| e.error)?;
+        file.persist(&saved).map_err(|e| e.error)?;
         let mut files: Vec<_> = fs::read_dir(&dir)?
             .filter_map(Result::ok)
             .filter(|e| {
@@ -397,6 +397,10 @@ pub(super) fn cache(root: &Path, key: &str, bytes: &[u8], extension: &str) -> Re
         for (_, len, path) in files {
             if total <= limit {
                 break;
+            }
+            // Coarse timestamps or clock changes must not evict the entry just written.
+            if path == saved {
+                continue;
             }
             fs::remove_file(path)?;
             total -= len;

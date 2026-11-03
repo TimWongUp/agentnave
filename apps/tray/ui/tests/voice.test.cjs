@@ -24,7 +24,7 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
   }
   const document = { hidden: false, getElementById: id => Object.assign(h("div"), { id }), addEventListener() {} };
   class Audio {
-    constructor() { this.currentTime = 0; this.paused = true; this.plays = 0; sounds.push(this); }
+    constructor(src) { this.text = decodeURIComponent(src.slice(5)); this.currentTime = 0; this.paused = true; this.plays = 0; sounds.push(this); }
     play() { this.paused = false; this.plays++; return Promise.resolve(); }
     pause() { this.paused = true; }
     removeAttribute() {}
@@ -39,12 +39,12 @@ async function office(auto_read = true, synthesize = async () => ({}), loadRoom 
     Avatars: { family: (provider, model) => model?.includes("claude") ? "claude" : provider === "codex" ? "gpt" : provider || null },
     Date: class extends Date { static now() { return 0; } },
     window: { dispatchEvent() {}, addEventListener() {} },
-    URL: { createObjectURL: () => "blob:test", revokeObjectURL() {} },
+    URL: { createObjectURL: blob => `blob:${encodeURIComponent(blob.text)}`, revokeObjectURL() {} },
     async fetch(path, options) {
       if (rooms.has(path)) return loadRoom(rooms.get(path));
       if (path === "/app/voice/speak") {
         requests.push(JSON.parse(options.body));
-        return { ok: true, status: 200, headers: { get: () => null }, blob: () => synthesize(JSON.parse(options.body), options.signal) };
+        return { ok: true, status: 200, headers: { get: () => null }, blob: async () => { await synthesize(JSON.parse(options.body), options.signal); return { text: JSON.parse(options.body).text }; } };
       }
       if (options?.method === "POST") config = JSON.parse(options.body);
       return { ok: true, json: async () => structuredClone(config) };
@@ -591,6 +591,46 @@ test("changing scope filters queued automatic reads while a manual clip stays se
   await app.scope("members");
   assert.equal(app.sounds[0].paused, false, "the explicitly selected boss clip continues");
   await app.end();
-  assert.equal(app.sounds.length, 2, "the excluded prefetched clip never plays");
+  assert.deepEqual(app.sounds.map(s => s.text), ["chosen", "member"], "the excluded prefetched clip never plays");
   await app.end();
+  assert.deepEqual(app.sounds.map(s => s.text), ["chosen", "member"]);
+});
+
+
+test("boss-only playback omits private instructions whose paired reply is outside the scope", async () => {
+  const room = { kind: "room", id: "room" };
+  const messages = [
+    message("topic", "2026-11-01T00:00:01Z", { conversation: "room", round: 1, thread: room, kind: "prompt", speaker: { role: "manager" } }),
+    message("instruction", "2026-11-01T00:00:02Z", { conversation: "room", round: 1, thread: room, desk: "a", kind: "instruction", speaker: { role: "manager" } }),
+    message("answer", "2026-11-01T00:00:03Z", { conversation: "room", round: 1, thread: room, desk: "a" }),
+    message("summary", "2026-11-01T00:00:04Z", { conversation: "room", round: 1, thread: room, kind: "prompt", speaker: { role: "manager" } }),
+  ];
+  for (const automatic of [false, true]) {
+    const app = await office(automatic, undefined, undefined, "boss");
+    const button = app.room(messages);
+    if (automatic) await app.feed(messages);
+    else await button.listeners.click();
+    await app.end();
+    await app.end();
+    assert.deepEqual(app.requests.map(r => r.text), ["topic", "summary"]);
+    assert.deepEqual(app.sounds.map(s => s.text), ["topic", "summary"]);
+  }
+});
+
+test("changing scope interrupts an excluded automatic clip and plays the eligible queued reply", async () => {
+  const app = await office();
+  const messages = [
+    message("current-boss", "2026-11-01T00:00:01Z", { kind: "prompt", speaker: { role: "manager" } }),
+    message("queued-boss", "2026-11-01T00:00:02Z", { kind: "prompt", speaker: { role: "manager" } }),
+    message("member", "2026-11-01T00:00:03Z"),
+  ];
+  await app.feed(messages);
+  assert.equal(app.sounds[0].text, "current-boss");
+  assert.equal(app.sounds[0].paused, false);
+  await app.scope("members");
+  assert.equal(app.sounds[0].paused, true, "an automatically selected out-of-scope clip stops immediately");
+  assert.deepEqual(app.sounds.map(s => s.text), ["current-boss", "member"]);
+  assert.equal(app.sounds[1].paused, false);
+  await app.end();
+  assert.deepEqual(app.sounds.map(s => s.text), ["current-boss", "member"], "the excluded prefetched boss clip is never played");
 });

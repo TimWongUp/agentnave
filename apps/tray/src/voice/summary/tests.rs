@@ -513,6 +513,7 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = storage::read_settings(directory.path()).unwrap();
     settings["enabled"] = json!(true);
+    settings["code"] = json!("mention");
     settings["summary"] = summary_settings(&server.root, "custom", "model");
     settings["summary"]["prompt"] = json!("保留主要结论。");
     settings["personas"] =
@@ -560,7 +561,10 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         let system = body["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains(expected) && !system.contains(absent));
         // Messages differ only after the fixed head, which providers can then cache.
-        assert!(system.starts_with(&fixed_prompt("保留主要结论。", &settings["summary"])));
+        let mut options = settings["summary"].clone();
+        options["code"] = json!("mention");
+        assert!(system.starts_with(&fixed_prompt("保留主要结论。", &options)));
+        assert!(system.contains("code=mention") && system.contains("原话含代码提示时保留该提示"));
         assert!(system.contains("保留主要结论。"));
         assert!(system.contains("不替自己回答") && system.contains("不说成已完成"));
         assert!(system.contains("不看你是 boss 还是员工"));

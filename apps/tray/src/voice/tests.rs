@@ -319,11 +319,22 @@ fn speech_options_default_validate_and_enter_the_effective_prompt() {
         ("detailed", "约 300 字以内"),
     ] {
         summary["level"] = json!(level);
-        for language in ["source", "zh", "en"] {
+        let language_rules = [
+            ("source", "跟随原文的语言输出"),
+            ("zh", "只用中文输出"),
+            ("en", "Output only English speech"),
+        ];
+        for (language, rule) in language_rules {
             summary["language"] = json!(language);
             let prompt = summary::fixed_prompt("保留费用分歧。", &summary);
             assert!(prompt.contains(length));
             assert!(prompt.contains(&format!("summary.language={language}")));
+            assert!(prompt.contains(rule));
+            for (other, other_rule) in language_rules {
+                if other != language {
+                    assert!(!prompt.contains(other_rule));
+                }
+            }
             assert!(prompt.contains("保留费用分歧。"));
             assert!(!prompt.contains("80 到 120") && !prompt.contains("最多 300"));
             assert!(keys.insert(storage::hash(&prompt)));
@@ -436,6 +447,13 @@ fn cache_evicts_to_the_selected_limit() {
     std::fs::create_dir(root.join("voice-cache")).unwrap();
     let file = std::fs::File::create(root.join("voice-cache/old.mp3")).unwrap();
     file.set_len(101 * 1024 * 1024).unwrap();
+    // A future-dated old file makes the new entry sort first, even with coarse timestamps.
+    file.set_times(
+        std::fs::FileTimes::new()
+            .set_modified(std::time::SystemTime::now() + Duration::from_secs(60)),
+    )
+    .unwrap();
     storage::cache(root, "new", b"new", "txt").unwrap();
     assert!(storage::cache_bytes(root).unwrap() <= 100 * 1024 * 1024);
+    assert_eq!(storage::cached(root, "new", "txt").unwrap(), b"new");
 }
