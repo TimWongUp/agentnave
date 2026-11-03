@@ -10,6 +10,7 @@ mod hosts;
 mod manage;
 mod members;
 mod onboarding;
+mod preferences;
 mod proxy;
 mod rules;
 mod settings;
@@ -97,7 +98,8 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
         && method != "GET"
         && !matches!(
             path,
-            "/app/voice"
+            "/app/preferences"
+                | "/app/voice"
                 | "/app/voice/key"
                 | "/app/voice/speak"
                 | "/app/voice/summary/models"
@@ -794,6 +796,7 @@ mod tests {
     fn a_preview_build_refuses_every_write_but_moving_its_window() {
         for (method, path) in [
             ("POST", "/app/members"),
+            ("POST", "/app/settings"),
             ("POST", "/app/characters/gpt"),
             ("POST", "/app/service/install"),
             ("POST", "/app/update/apply"),
@@ -803,6 +806,7 @@ mod tests {
             assert!(!preview_refuses(false, method, path), "{method} {path}");
         }
         for path in [
+            "/app/preferences",
             "/app/voice",
             "/app/voice/key",
             "/app/voice/speak",

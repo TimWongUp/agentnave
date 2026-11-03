@@ -277,6 +277,23 @@ impl Reader {
                 )
             });
         }
+        if path == "/app/preferences" {
+            let dir = crate::preferences::dir();
+            if method == "GET" {
+                return Response::json(&crate::preferences::state(&dir));
+            }
+            if method != "POST" {
+                return Response::error(405, "此路由只接受 GET 或 POST");
+            }
+            return with_payload(action, body, |payload| {
+                match crate::preferences::update(&dir, &payload) {
+                    Ok(document) => {
+                        Response::json(&json!({"saved": true, "preferences": document}))
+                    }
+                    Err(error) => Response::error(400, &error),
+                }
+            });
+        }
         if path == "/app/settings" {
             if method == "GET" {
                 return Response::json(&crate::settings::state(&self.root));
@@ -777,14 +794,14 @@ impl Reader {
                 }
                 "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
                 "mock.js" => Response::ok("text/javascript; charset=utf-8", MOCK_JS.to_vec()),
-                "" => Response::ok("text/html; charset=utf-8", CHAT_HTML.to_vec()),
-                id if valid_id(id) => Response::ok("text/html; charset=utf-8", CHAT_HTML.to_vec()),
+                "" => page(CHAT_HTML),
+                id if valid_id(id) => page(CHAT_HTML),
                 _ => Response::not_found(),
             };
         }
         if let ["settings", resource] = parts.as_slice() {
             return match *resource {
-                "" => Response::ok("text/html; charset=utf-8", SETTINGS_HTML.to_vec()),
+                "" => page(SETTINGS_HTML),
                 "voice-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/voice-settings.js").to_vec(),
@@ -821,7 +838,7 @@ impl Reader {
         }
         if let ["panel", resource] = parts.as_slice() {
             return match *resource {
-                "" => Response::ok("text/html; charset=utf-8", PANEL_HTML.to_vec()),
+                "" => page(PANEL_HTML),
                 "panel.js" => Response::ok("text/javascript; charset=utf-8", PANEL_JS.to_vec()),
                 "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
                 "onboarding.css" => {
@@ -967,6 +984,15 @@ fn post(
 }
 
 /// The action header and JSON body of a write, for a route that has already checked its method.
+/// A page in the interface language the user picked.
+fn page(html: &[u8]) -> Response {
+    let language = crate::preferences::language(&crate::preferences::dir());
+    Response::ok(
+        "text/html; charset=utf-8",
+        crate::preferences::localize(html, &language),
+    )
+}
+
 fn with_payload(
     action: Option<&str>,
     body: &[u8],

@@ -18,6 +18,11 @@
     return node;
   }
   const $ = (id) => document.getElementById(id);
+  // Bilingual text: the page's <html lang> carries the App's interface language. The App sets
+  // it when serving the page; "follow the system" is settled here, before any text is built.
+  const root = document.documentElement;
+  if (root.dataset.lang === "system" && /^en\b/i.test(navigator.language || "")) root.lang = "en";
+  const L = (zh, en) => (root.lang.startsWith("en") ? en : zh);
 
   // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
   // on Windows, whose WebView2 has no custom schemes. Both are the App; a browser preview is neither.
@@ -406,7 +411,7 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, load, href, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 })();
 
 
