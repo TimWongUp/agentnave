@@ -80,7 +80,6 @@ AgentNave 在 46 篇 ADR 中快速迭代，准备发布 1.0 正式版。2026-11-
    - `UPGRADE_MARKER`；
    - 主题从 localStorage 迁移；
    - 语音旧默认 prompt 识别；
-   - uv 旧目录布局回退与旧 launcher 路径；
    - `agentnave-studio-mcp` 排除；
    - 旧工作台重定向；
    - 托盘里按「非 `s-` 身份」区分的分支。
@@ -139,7 +138,7 @@ AgentNave 在 46 篇 ADR 中快速迭代，准备发布 1.0 正式版。2026-11-
 - **依赖方向**：`adapters/` 不导入 `agentnave.host`，`host.py` 不导入 `adapters`，用 grep 检查。
 - **Codex 真实调用**：至少一次通过 AgentNave 在非 Git 目录派发 Codex 并成功（真实调用已预授权）。
 - **界面**：托盘改动先用 `scripts/preview_tray.sh` 给用户目测，确认 mock 没进正式包，静态 `?mock` 预览可用。
-- **删除 uv 旧目录回退前**：确认 App 1.0 启动后，宿主配置都指向版本化入口。
+- **uv 旧目录回退**：已核实自定义入口和直接写在宿主配置里的命令不会被改写，因此保留这项回退（见 ADR-0050）。
 
 ## Acceptance criteria
 
