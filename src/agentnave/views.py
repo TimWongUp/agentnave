@@ -1,12 +1,14 @@
-"""Whitelisted dashboard projections. Public views carry only committed entries."""
+"""Saved tray projections and manager-readable history.
+
+Public views carry only committed entries.
+"""
 
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timedelta
 
-from agentnave.store import Conversation, EntryRecord, RoundRecord, Unavailable
+from agentnave.store import Conversation, EntryRecord, RoundRecord
 
 _ABSENT = {
     "failed": "失败",
@@ -14,10 +16,6 @@ _ABSENT = {
     "cancelled": "已取消",
     "interrupted": "已中断",
 }
-
-
-def _encode(data: dict[str, object]) -> bytes:
-    return json.dumps(data, ensure_ascii=False).encode()
 
 
 def _speaker(entry: EntryRecord) -> str | None:
@@ -117,11 +115,7 @@ def _show(state: Conversation, view: str) -> dict[str, object]:
     }
 
 
-def public(state: Conversation, *, stale: bool = False) -> bytes:
-    return _encode(_show(state, "public") | {"stale": stale})
-
-
-def _round(round_: RoundRecord, tails: dict[str, str]) -> dict[str, object]:
+def _round(round_: RoundRecord) -> dict[str, object]:
     return {
         "number": round_.number,
         "order": round_.order,
@@ -132,7 +126,7 @@ def _round(round_: RoundRecord, tails: dict[str, str]) -> dict[str, object]:
                 "seat_id": seat.seat_id,
                 "status": seat.status,
                 "instruction": seat.instruction,
-                "output": tails.get(seat.seat_id) if seat.status == "running" else seat.output,
+                "output": None if seat.status == "running" else seat.output,
                 "review": seat.review,
                 "error": seat.error,
                 "reported_model": seat.reported_model,
@@ -143,44 +137,17 @@ def _round(round_: RoundRecord, tails: dict[str, str]) -> dict[str, object]:
     }
 
 
-def director(
-    state: Conversation,
-    *,
-    public_url: str,
-    home_url: str,
-    storage: str,
-    tails: dict[str, str],
-    elapsed: dict[str, int] | None = None,
-    refresh_error: str | None = None,
-) -> bytes:
-    """Private desk view. tails maps running seat or task ids to in-memory reply tails."""
-    return _encode(
-        _director(
-            state,
-            public_url=public_url,
-            home_url=home_url,
-            storage=storage,
-            tails=tails,
-            elapsed=elapsed,
-            refresh_error=refresh_error,
-        )
-    )
-
-
 def _director(
     state: Conversation,
     *,
     public_url: str,
     home_url: str,
     storage: str,
-    tails: dict[str, str],
-    elapsed: dict[str, int] | None,
-    refresh_error: str | None,
 ) -> dict[str, object]:
     common: dict[str, object] = {
         "workbench_url": home_url,
         "storage": storage,
-        "refresh_error": refresh_error,
+        "refresh_error": None,
         "created": state.created,
         "cwd": conversation_cwd(state),
     }
@@ -191,8 +158,6 @@ def _director(
                 "message_id": f"{state.id}:t:{task.id}",
                 "thread": _thread(task.provider, task.session_id),
             }
-            | ({"output": tails[task.id]} if task.id in tails else {})
-            | ({"elapsed_ms": elapsed[task.id]} if elapsed and task.id in elapsed else {})
             for task in state.tasks
         ]
         return {
@@ -251,11 +216,11 @@ def _director(
     data.update(
         {
             "public_url": public_url,
-            "status": "idle" if latest is None else _round(latest, {})["status"],
+            "status": "idle" if latest is None else _round(latest)["status"],
             "speaking": [seat.seat_id for seat in latest.seats if seat.status == "running"]
             if latest
             else [],
-            "round": _round(latest, tails) if latest else None,
+            "round": _round(latest) if latest else None,
         }
     )
     return data
@@ -458,39 +423,6 @@ def snapshot(state: Conversation, storage: str) -> dict[str, object]:
             public_url=f"/p/{state.id}/" if show else "",
             home_url="/",
             storage=storage,
-            tails={},
-            elapsed=None,
-            refresh_error=None,
         ),
         "public": _show(state, "public") | {"stale": False} if show else None,
     }
-
-
-def home(
-    shows: list[tuple[Conversation, str]],
-    unavailable: list[Unavailable],
-    storage: str,
-    *,
-    refresh_error: str | None = None,
-) -> bytes:
-    return _encode(
-        {
-            "view": "workbench",
-            "id": "workbench",
-            "title": "工作台",
-            "seats": [],
-            "messages": [],
-            "shows": [
-                {
-                    "title": state.title,
-                    "mode": state.kind,
-                    "director_url": url,
-                    "status": _status(state),
-                }
-                for state, url in shows
-            ],
-            "refresh_error": refresh_error,
-            "unavailable": [item.model_dump() for item in unavailable],
-            "storage": storage,
-        }
-    )

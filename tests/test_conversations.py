@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
-from urllib.request import urlopen
 
 import pytest
 from mcp import Client
@@ -20,7 +19,6 @@ import agentnave.conversations as conversations_module
 from agentnave import mcp_server, views
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
-from agentnave.dashboard import Dashboard
 from agentnave.db import Database
 from agentnave.group import GroupSeat
 from agentnave.mcp_server import mcp
@@ -176,11 +174,6 @@ async def _live(data_root: Path) -> dict[str, object]:
     raise AssertionError("no live views were written")
 
 
-def _fetch(url: str) -> str:
-    with urlopen(url, timeout=3) as response:
-        return response.read().decode()
-
-
 @pytest.mark.asyncio
 async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
     tmp_path: Path, data_root: Path
@@ -284,22 +277,18 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         ]
         assert "SECRET-B" not in prompt
 
-        dashboard = await _call(client, "list", {})
         view = await _call(client, "read_conversation", {"conversation_id": group_id})
         assert "public_url" not in view and "director_url" not in view
-        home = await asyncio.to_thread(_fetch, str(dashboard["dashboard_url"]) + "state")
-        shown = json.loads(home)
-        director = await asyncio.to_thread(_fetch, str(shown["shows"][0]["director_url"]) + "state")
-        public = await asyncio.to_thread(_fetch, str(json.loads(director)["public_url"]) + "state")
-        assert "SECRET-B" not in public and "round" not in json.loads(public)
-        assert json.loads(director)["round"]["seats"][0]["seat_id"] == "c"
-        private = json.loads(director)["private_messages"]
+        snapshot = _views(data_root, group_id)
+        director, public = snapshot["director"], snapshot["public"]
+        assert "SECRET-B" not in str(public) and "round" not in public
+        assert director["round"]["seats"][0]["seat_id"] == "c"
+        private = director["private_messages"]
         assert len(private) == 1
         assert private[0]["round"] == 1 and private[0]["seat_id"] == "b"
         assert private[0]["text"] == _seats(waited)[1]["output"]
         private_time = private[0]["time"]
-        assert "private_messages" not in json.loads(public)
-        assert "Quiz" in home and "SECRET-B" not in home
+        assert "private_messages" not in public
         # Read back like the App: final messages only, private ones on request.
         b_private = str(_seats(waited)[1]["output"])
         assert "SECRET-B" not in str(view) and b_private not in str(view)
@@ -1488,80 +1477,6 @@ async def test_close_retries_a_task_after_its_terminal_save_fails(
     assert studio.records[conversation_id].lock is None
 
 
-@pytest.mark.asyncio
-async def test_dashboard_failure_does_not_repeat_or_lose_started_task(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def fail(_self: Conversations, *, history_loaded: bool = False) -> str:
-        raise OSError("viewer unavailable")
-
-    monkeypatch.setattr(Conversations, "open_dashboard", fail)
-    async with Client(mcp) as client:
-        started = await _call(
-            client, "start_agent", {"provider": "claude", "prompt": "once", "cwd": str(tmp_path)}
-        )
-        assert "dashboard_error" not in started  # tasks never start the viewer
-        done = await _wait_task(client, started["invocation_id"])
-        assert done["status"] == "succeeded"
-        listed = await _call(client, "list", {})
-        assert listed["dashboard_error"] == "viewer unavailable" and listed["total"] == 1
-        view = await _call(
-            client, "read_conversation", {"conversation_id": started["conversation_id"]}
-        )
-        assert len(cast(list[object], view["tasks"])) == 1
-
-
-@pytest.mark.asyncio
-async def test_dashboard_refresh_sleeps_when_idle_and_recovers_read_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = InvocationManager()
-    studio = Conversations(manager, tmp_path / "history")
-    studio.open_dashboard()
-    assert studio.dashboard is not None and studio.refresher is not None
-    studio.refresher.cancel()
-    await asyncio.gather(studio.refresher, return_exceptions=True)
-    dashboard = studio.dashboard
-    original_sleep = asyncio.sleep
-    sleeps = 0
-    scans = 0
-    original_scan = studio.scan
-
-    async def step(_delay: float) -> None:
-        nonlocal sleeps
-        sleeps += 1
-        # No reader at tick 1. Tick 2 requests state, tick 5 recovers.
-        if sleeps == 2:
-            await asyncio.to_thread(_fetch, dashboard.url(studio.home_token) + "state")
-        if sleeps == 3:
-            assert studio.refresh_error == "read failed"
-            state = json.loads(
-                await asyncio.to_thread(_fetch, dashboard.url(studio.home_token) + "state")
-            )
-            assert state["refresh_error"] == "read failed"
-        if sleeps == 6:
-            assert studio.refresh_error is None
-            raise asyncio.CancelledError
-        await original_sleep(0)
-
-    def scan() -> dict[str, bool]:
-        nonlocal scans
-        scans += 1
-        if scans == 1:
-            raise OSError("read failed")
-        return original_scan()
-
-    monkeypatch.setattr(studio, "scan", scan)
-    monkeypatch.setattr(asyncio, "sleep", step)
-    try:
-        with pytest.raises(asyncio.CancelledError):
-            await studio._refresh_running()  # pyright: ignore[reportPrivateUsage]
-        assert scans == 2
-    finally:
-        await studio.close()
-        await manager.shutdown()
-
-
 def test_private_history_keeps_empty_answers_and_omits_missing_outputs() -> None:
     state = Conversation(
         id="empty-private",
@@ -1630,7 +1545,7 @@ def test_host_projection_does_not_collide_with_director_seat() -> None:
             EntryRecord(round=1, kind="answer", seat="director", text="seat", time="now"),
         ],
     )
-    projected = json.loads(views.public(state))
+    projected = cast(dict[str, Any], views.snapshot(state, "")["public"])
     assert [m["speaker"] for m in projected["messages"]] == ["@host", "director"]
     assert [m["message_id"] for m in projected["messages"]] == ["show:e:0", "show:e:1"]
 
@@ -1653,15 +1568,7 @@ def test_task_director_exposes_manager_identity() -> None:
             )
         ],
     )
-    projected = json.loads(
-        views.director(
-            state,
-            public_url="",
-            home_url="/",
-            storage="/tmp",
-            tails={},
-        )
-    )
+    projected = cast(dict[str, Any], views.snapshot(state, "/tmp")["director"])
     assert projected["host"] == "codex"
     assert projected["cwd"] == "/tmp"
     assert projected["tasks"][0]["manager_model"] == "gpt-6"
@@ -1669,21 +1576,6 @@ def test_task_director_exposes_manager_identity() -> None:
     assert "session_id" not in projected["tasks"][0]
     assert projected["tasks"][0]["thread"] is None
     assert projected["created"] == state.created
-
-
-def test_idle_http_connection_does_not_block_state_requests() -> None:
-    import socket
-
-    dashboard = Dashboard()
-    dashboard.update("test", b'{"view":"public"}')
-    try:
-        with (
-            socket.create_connection(("127.0.0.1", dashboard.server.server_port)),
-            urlopen(dashboard.url("test") + "state", timeout=0.5) as response,
-        ):
-            assert response.status == 200
-    finally:
-        dashboard.close()
 
 
 def test_writer_can_acquire_after_brief_probe_lock(
@@ -1714,7 +1606,7 @@ def test_writer_can_acquire_after_brief_probe_lock(
 
 
 @pytest.mark.asyncio
-async def test_write_receipts_are_small_and_old_history_has_a_viewer(
+async def test_write_receipts_are_small_and_list_reads_old_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with Client(mcp) as client:
@@ -1748,8 +1640,8 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
     async with Client(mcp) as client:
         listed = await _call(client, "list", {})
         assert scans == 1
-        home = json.loads(await asyncio.to_thread(_fetch, str(listed["dashboard_url"]) + "state"))
-        assert home["shows"][0]["title"] == "History"
+        assert cast(list[dict[str, object]], listed["conversations"])[0]["title"] == "History"
+        assert "dashboard_url" not in listed and "dashboard_error" not in listed
         assert "director_url" not in listed and "public_url" not in listed
         names = {tool.name for tool in (await client.list_tools()).tools}
         # The relay's list_invocations probe stays callable but is never listed.
@@ -1765,18 +1657,9 @@ async def test_write_receipts_are_small_and_old_history_has_a_viewer(
             "read_conversation",
         }
 
-    def fail(_self: Conversations, *, history_loaded: bool = False) -> str:
-        raise OSError("viewer failed")
-
-    monkeypatch.setattr(Conversations, "open_dashboard", fail)
-    async with Client(mcp) as client:
-        listed = await _call(client, "list", {})
-        assert listed["dashboard_error"] == "viewer failed"
-        assert cast(list[dict[str, object]], listed["conversations"])[0]["title"] == "History"
-
 
 @pytest.mark.asyncio
-async def test_history_io_failure_keeps_urls_until_recovery(
+async def test_history_io_failure_keeps_last_readable_state_until_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "history"
@@ -1785,9 +1668,8 @@ async def test_history_io_failure_keeps_urls_until_recovery(
     manager = InvocationManager()
     studio = Conversations(manager, root)
     try:
-        studio.open_dashboard()
-        urls = studio.urls("known")
-        assert urls is not None
+        assert studio.scan()["known"] is True
+        known = studio.records["known"].state
         original_load = Database.load
 
         def fail(_self: Database, _conversation_id: str) -> tuple[Conversation, int]:
@@ -1797,16 +1679,13 @@ async def test_history_io_failure_keeps_urls_until_recovery(
         with sqlite3.connect(root / "agentnave.db") as connection:  # changed: reread
             connection.execute("UPDATE conversations SET rev = rev + 1 WHERE id = 'known'")
         assert studio.scan()["known"] is False
-        assert studio.urls("known") == urls
-        failed = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
-        assert failed["stale"] is True and failed["title"] == "Known"
-        assert "temporary history read failure" not in str(failed)
-        assert studio.refresh_error == "temporary history read failure"
+        assert studio.records["known"].state is known
+        assert studio.unavailable[0].reason == "temporary history read failure"
+        assert _views(root, "known")["public"]["title"] == "Known"
         monkeypatch.setattr(Database, "load", original_load)
         assert studio.scan()["known"] is True
-        assert studio.urls("known") == urls
-        recovered = json.loads(await asyncio.to_thread(_fetch, urls[0] + "state"))
-        assert recovered["stale"] is False and studio.refresh_error is None
+        assert studio.records["known"].state.title == "Known"
+        assert studio.unavailable == []
     finally:
         await studio.close()
         await manager.shutdown()
@@ -1914,7 +1793,7 @@ async def test_native_model_is_saved_and_round_recipients_match_selected_seats(
     saved = Record.read(Database(data_root), data_root / "locks", str(show["group_id"]))
     saved.state.rounds[0].seats[0].status = "failed"
     saved.state.rounds[0].seats[0].error = "launch_error: missing binary"
-    projected = json.loads(views.public(saved.state))
+    projected = cast(dict[str, Any], views.snapshot(saved.state, "")["public"])
     assert [target["seat"] for target in projected["messages"][0]["recipients"]] == ["a"]
 
 
@@ -2602,7 +2481,7 @@ async def test_studio_enforces_discussion_defaults_before_saving(
 
 
 @pytest.mark.asyncio
-async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
+async def test_studio_records_defaulted_tasks_and_live_manager(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agentnave.host import Host
@@ -2610,10 +2489,6 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
     monkeypatch.setattr(mcp_server, "HOST", Host("codex", "env"))
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
 
-    def unavailable(_studio: Conversations) -> str:
-        raise OSError("viewer unavailable")
-
-    monkeypatch.setattr(Conversations, "open_dashboard", unavailable)
     data_root.mkdir()
     (data_root / "members.json").write_text(
         json.dumps(
@@ -2639,7 +2514,6 @@ async def test_studio_records_defaulted_tasks_and_live_manager_without_viewer(
                 "cwd": str(tmp_path),
             },
         )
-        assert "dashboard_error" not in first  # tasks never start the viewer
         assert first["model"] == "chosen" and first["effort"] == "high"
         assert first["defaults_applied"] == ["model", "effort", "agent", "permission_mode"]
         saved = _state(data_root, str(first["conversation_id"]))
@@ -2693,32 +2567,6 @@ async def test_show_permission_reads_current_discussion_members(data_root: Path)
         path.write_text("{", encoding="utf-8")
         rejected = await client.call_tool("list_members", {"provider": "claude"})
         assert rejected.is_error and "AgentNave App" in str(rejected.content)
-
-
-def test_dashboard_serves_fixed_model_logos_without_allowing_writes() -> None:
-    from urllib.error import HTTPError
-    from urllib.request import Request
-
-    dashboard = Dashboard()
-    dashboard.update("public", b'{"view":"public"}')
-    url = dashboard.url("public")
-    try:
-        with urlopen(url + "avatar-settings") as response:
-            assert json.load(response) == {}
-            assert response.headers["Cache-Control"] == "no-store"
-        with urlopen(url + "avatar-claude.svg") as response:
-            assert response.headers["Content-Type"] == "image/svg+xml"
-            assert response.read().startswith(b"<svg")
-        for request, status in [
-            (Request(url + "avatar-settings", headers={"Origin": "https://example.com"}), 403),
-            (url.replace("/public/", "/missing/") + "avatar-settings", 404),
-            (Request(url + "app/avatars", data=b"{}", method="POST"), 501),
-        ]:
-            with pytest.raises(HTTPError) as error:
-                urlopen(request)
-            assert error.value.code == status
-    finally:
-        dashboard.close()
 
 
 @pytest.mark.asyncio

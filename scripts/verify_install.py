@@ -1,4 +1,4 @@
-"""Check the installed launcher and its on-demand dashboard.
+"""Check the installed STDIO launcher and saved history listing.
 
 Usage: python verify_install.py <agentnave-mcp> [legacy-studio-launcher]
 """
@@ -72,10 +72,10 @@ async def _check(launcher: str, home: Path) -> None:
         names = [tool.name for tool in (await client.list_tools()).tools]
         assert names == TOOLS, names
         assert not any(home.iterdir()), f"{launcher} wrote files before any request"
-        assert not _listening(), f"{launcher} listens before a saved operation or history listing"
+        assert not _listening(), f"{launcher} listens before a request"
         opened = await client.call_tool("list", {})
         assert not opened.is_error, opened.content
-        assert _listening(), "history listing did not start the dashboard"
+        assert not _listening(), "history listing started a TCP listener"
 
 
 async def main(launcher: str, *legacy_launchers: str) -> None:

@@ -87,13 +87,13 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v0
 | `wait`              | 默认最多等 240 秒，任一任务或轮次就绪即返回；`0` 即时核验进展         |
 | `cancel`            | 停止任务或轮次，返回它的最终结果                                     |
 | `decide_answers`    | 开了审核时，逐条决定回答公开还是留作私聊                             |
-| `list`              | 列出当前句柄和已保存的对话，并启动只读看板                           |
+| `list`              | 列出当前句柄和已保存的对话                                           |
 | `read_conversation` | 按 App 里看到的样子读回一段对话                                      |
 | `list_members`      | 读取 App 里设定的组员默认值，以及某个 CLI 支持的参数                 |
 | `handover`          | 把本聊天的整个工作区交给另一个老板聊天，或列出、认领等待接手的工作区 |
 
 没传的 model、effort 和 options 会套用 App 里的组员默认值，仍没有档位时按 CLI 自身设置的档位传入；回执的 `defaults_applied` 会写明补了哪些；显式参数优先。
-CLI 选择与参数见 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，审核、主持人发言、隔离席位和看板见[会话指南](docs/studio.md)，
+CLI 选择与参数见 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，审核、主持人发言和隔离席位见[会话指南](docs/studio.md)，
 稳定接口与输出上限见[架构说明](docs/context/architecture.md)。
 
 ## 🧭 分工：AgentNave 管什么

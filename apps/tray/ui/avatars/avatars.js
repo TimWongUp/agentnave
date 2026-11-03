@@ -1,5 +1,5 @@
 "use strict";
-// Shared by the tray and capability-scoped browser dashboard. All images stay local.
+// Model logos for the tray app. All images stay local.
 (function () {
   const base = new URL(".", document.currentScript.src);
   // Official LobeHub icons, fixed. Mono marks are dark ink, shown light on a dark tile.

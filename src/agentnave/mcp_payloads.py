@@ -176,5 +176,3 @@ class ListPayload(TypedDict):
     conversations: list[ConversationSummary]
     total: int
     unavailable: list[Unavailable]
-    dashboard_url: NotRequired[str]
-    dashboard_error: NotRequired[str]

@@ -712,7 +712,7 @@ impl Reader {
         (overview, snapshots)
     }
 
-    /// Serve one path of the `agentnave` scheme: the dashboard assets and its `state` JSON.
+    /// Serve one path of the `agentnave` scheme: the tray assets and saved conversation views.
     pub fn respond(&self, path: &str) -> Response {
         if path == "/app/voice" || path.starts_with("/app/voice/") {
             return crate::voice::get(&self.root, path);
