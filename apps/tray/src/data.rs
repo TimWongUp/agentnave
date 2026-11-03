@@ -284,6 +284,9 @@ impl Reader {
                 )
             });
         }
+        if path == "/app/storage" || path.starts_with("/app/storage/") {
+            return crate::storage::request(&self.root, method, path, action);
+        }
         if path == "/app/settings" {
             if method == "GET" {
                 return Response::json(&crate::settings::state(&self.root));
@@ -812,6 +815,10 @@ impl Reader {
                 "about-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",
                     include_bytes!("../ui/about-settings.js").to_vec(),
+                ),
+                "storage-settings.js" => Response::ok(
+                    "text/javascript; charset=utf-8",
+                    include_bytes!("../ui/storage-settings.js").to_vec(),
                 ),
                 "general-settings.js" => Response::ok(
                     "text/javascript; charset=utf-8",

@@ -13,6 +13,12 @@ use serde_json::{Value, json};
 
 use crate::data::Overview;
 
+mod retention;
+
+pub fn retention_preview(root: &Path, cutoff: i64) -> Result<usize, String> {
+    retention::count(root, cutoff)
+}
+
 const RETRY: Duration = Duration::from_millis(100);
 const ATTEMPTS: usize = 11;
 

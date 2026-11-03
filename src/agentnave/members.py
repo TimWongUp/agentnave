@@ -444,6 +444,29 @@ def read_max_running() -> int:
     return value
 
 
+def read_history_retention_days(root: Path | None = None) -> int | None:
+    """Invalid or unreadable settings disable deletion, never prevent service startup.
+
+    As with read_max_running, require version 1 and a strict integer; retention is
+    fail-closed because a broken configuration must not authorize deleting history.
+    """
+    try:
+        document = json.loads(((root or data_root()) / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    settings = cast(dict[str, object], document)
+    version = settings.get("version")
+    value = settings.get("history_retention_days")
+    if type(version) is not int or version != 1:
+        return None
+    limit = settings.get("max_running", DEFAULT_MAX_RUNNING)
+    if type(limit) is not int or not 1 <= limit <= 32:
+        return None
+    return value if type(value) is int and value in (30, 90, 180) else None
+
+
 def _field(value: object, key: str) -> object:
     return cast(dict[str, object], value).get(key) if isinstance(value, dict) else None
 

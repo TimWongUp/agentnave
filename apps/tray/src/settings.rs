@@ -1,7 +1,7 @@
 //! App settings shared with the service: `settings.json` in the data root.
 //!
-//! The service reads `max_running` before each start and ignores other keys; the App also caps
-//! how many desks an office draws with it. Only the App writes the file.
+//! The service reads `max_running` before each start and retention before each cleanup pass.
+//! The App also caps how many desks an office draws. Only the App writes the file.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -14,10 +14,10 @@ pub const DEFAULT_MAX_RUNNING: u64 = 8;
 const MAX_RUNNING: std::ops::RangeInclusive<u64> = 1..=32;
 
 pub fn defaults() -> Value {
-    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING})
+    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null})
 }
 
-/// The normalized document (only `version` and `max_running`); the same rules as the service:
+/// The normalized known settings; the same rules as the service:
 /// unknown keys are ignored and a missing `max_running` means the default.
 pub fn validate(document: &Value) -> Result<Value, String> {
     let object = document.as_object().ok_or("设置必须为 JSON 对象")?;
@@ -31,7 +31,16 @@ pub fn validate(document: &Value) -> Result<Value, String> {
             .filter(|value| MAX_RUNNING.contains(value))
             .ok_or("max_running 必须为 1–32 的整数")?,
     };
-    Ok(json!({"version": 1, "max_running": max_running}))
+    let retention = match object.get("history_retention_days") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|days| matches!(days, 30 | 90 | 180))
+                .ok_or("history_retention_days 必须为 null、30、90 或 180")?,
+        ),
+    };
+    Ok(json!({"version": 1, "max_running": max_running, "history_retention_days": retention}))
 }
 
 /// The saved document; `None` when there is none yet.
@@ -120,7 +129,7 @@ mod tests {
         assert_eq!(max_running(root.path()), 2);
         assert_eq!(
             state(root.path())["settings"],
-            json!({"version": 1, "max_running": 2})
+            json!({"version": 1, "max_running": 2, "history_retention_days": null})
         );
         save(
             root.path(),
@@ -131,7 +140,7 @@ mod tests {
             serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
         assert_eq!(
             saved,
-            json!({"version": 1, "max_running": 5, "future": true, "x": 1})
+            json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null})
         );
         // Saving one other key keeps the saved limit, and a broken saved limit falls back.
         save(root.path(), &json!({"version": 1, "y": 2})).unwrap();
@@ -153,5 +162,38 @@ mod tests {
         let broken = state(root.path());
         assert!(broken["error"].as_str().unwrap().contains("损坏"));
         assert_eq!(broken["settings"]["max_running"], DEFAULT_MAX_RUNNING);
+    }
+
+    #[test]
+    fn retention_is_strict_and_partial_saves_keep_it() {
+        let root = tempfile::tempdir().unwrap();
+        for days in [json!(null), json!(30), json!(90), json!(180)] {
+            save(
+                root.path(),
+                &json!({"version": 1, "history_retention_days": days}),
+            )
+            .unwrap();
+            save(root.path(), &json!({"version": 1, "max_running": 4})).unwrap();
+            assert_eq!(
+                state(root.path())["settings"]["history_retention_days"],
+                days
+            );
+        }
+        for days in [
+            json!(0),
+            json!(31),
+            json!(-30),
+            json!(30.0),
+            json!(true),
+            json!("30"),
+        ] {
+            assert!(
+                save(
+                    root.path(),
+                    &json!({"version": 1, "history_retention_days": days})
+                )
+                .is_err()
+            );
+        }
     }
 }

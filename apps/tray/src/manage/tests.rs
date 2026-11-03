@@ -396,6 +396,10 @@ with (root / 'locks' / 'python.lock').open('a+b') as lock:
         .unwrap();
     assert_eq!(ready.trim(), "locked");
     assert_eq!(delete(root.path(), "python")["status"], "in_use");
+    assert_eq!(
+        cleanup(root.path(), &["python".to_owned()], i64::MAX)[0]["status"],
+        "in_use"
+    );
     let result = thread::scope(|scope| {
         let deleting = scope.spawn(|| delete(root.path(), "python"));
         thread::sleep(Duration::from_millis(150));
@@ -405,4 +409,213 @@ with (root / 'locks' / 'python.lock').open('a+b') as lock:
     });
     assert_eq!(result["status"], "pending_review");
     assert_eq!(count(root.path(), "conversations", "python"), 1);
+}
+
+#[test]
+fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    for id in ["old-a", "old-b", "busy", "pending", "recent", "running"] {
+        fixture(root.path(), id);
+        set(
+            root.path(),
+            "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            id,
+        );
+        set(
+            root.path(),
+            "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+            id,
+        );
+    }
+    for id in ["old-a", "old-b"] {
+        crate::db::write(root.path())
+            .unwrap()
+            .unwrap()
+            .execute(
+                "UPDATE conversations SET manager_session = ?1 WHERE id = ?2",
+                [workspace, id],
+            )
+            .unwrap();
+    }
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2026-11-03T00:00:00Z') WHERE conversation_id = ?1",
+        "recent",
+    );
+    set(
+        root.path(),
+        r#"INSERT INTO rounds (id, conversation_id, number, body) VALUES ('r', ?1, 1, '{"status":"finished","seats":[{"review":"pending"}]}')"#,
+        "pending",
+    );
+    let lock = lock_file(root.path(), "busy").unwrap();
+    take(&lock);
+    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 2);
+    assert!(!crate::db::lock_path(root.path(), "old-a").exists());
+    assert_eq!(count(root.path(), "conversations", "old-a"), 1);
+    let ids = vec!["old-a".to_owned(), "old-b".to_owned()];
+    assert!(
+        cleanup(root.path(), &ids, cutoff)
+            .iter()
+            .all(|r| r["status"] == "deleted")
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    assert_eq!(
+        cleanup(root.path(), &["running".to_owned()], cutoff)[0]["status"],
+        "deleted"
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+}
+
+#[test]
+fn retention_preview_skips_a_corrupt_workspace_and_counts_healthy_ones() {
+    for corruption in ["round", "utf8", "deep-json"] {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["broken-a", "broken-b", "healthy"] {
+            fixture(root.path(), id);
+            set(
+                root.path(),
+                "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+                id,
+            );
+            set(
+                root.path(),
+                "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+                id,
+            );
+        }
+        for id in ["broken-a", "broken-b"] {
+            set(
+                root.path(),
+                "UPDATE conversations SET manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+                id,
+            );
+        }
+        match corruption {
+            "round" => set(
+                root.path(),
+                "INSERT INTO rounds (id, conversation_id, number, body) VALUES ('r', ?1, 1, '{broken')",
+                "broken-b",
+            ),
+            "utf8" => set(
+                root.path(),
+                "UPDATE views SET body = CAST(X'80' AS TEXT) WHERE conversation_id = ?1",
+                "broken-b",
+            ),
+            _ => {
+                let body = format!("{}0{}", "[".repeat(10000), "]".repeat(10000));
+                crate::db::write(root.path())
+                    .unwrap()
+                    .unwrap()
+                    .execute(
+                        "UPDATE views SET body = ?1 WHERE conversation_id = 'broken-b'",
+                        [body],
+                    )
+                    .unwrap();
+            }
+        }
+        let reader = Reader::new(root.path().to_owned());
+        let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+        assert_eq!(reply.status, 200);
+        let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(payload["workspaces"], 1);
+        assert_eq!(count(root.path(), "conversations", "broken-a"), 1);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn retention_preview_never_opens_a_recent_conversations_lock() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "recent");
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2026-11-03T00:00:00Z') WHERE conversation_id = ?1",
+        "recent",
+    );
+    let path = crate::db::lock_path(root.path(), "recent");
+    drop(lock_file(root.path(), "recent").unwrap());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    let preview = retention_preview(root.path(), cutoff);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(preview.unwrap(), 0);
+}
+
+#[test]
+fn retention_preview_preserves_waiting_handovers_until_claimed() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "old");
+    let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    set(
+        root.path(),
+        "UPDATE conversations SET created = '2020-01-01T00:00:00Z', manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+        "old",
+    );
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+        "old",
+    );
+    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    assert_eq!(handover(root.path(), workspace)["status"], "waiting");
+    set(
+        root.path(),
+        "UPDATE workspaces SET note = 'new note' WHERE id = ?1",
+        workspace,
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    let reader = Reader::new(root.path().to_owned());
+    let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+    assert_eq!(reply.status, 200);
+    let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!(payload["workspaces"], 0);
+    set(
+        root.path(),
+        "UPDATE workspaces SET pending = 0, owner = 'new-boss' WHERE id = ?1",
+        workspace,
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+}
+
+#[test]
+fn retention_preview_skips_unreadable_owners_and_ids_without_losing_healthy_counts() {
+    for column in ["manager_session", "id"] {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["broken", "healthy"] {
+            fixture(root.path(), id);
+            set(
+                root.path(),
+                "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+                id,
+            );
+            set(
+                root.path(),
+                "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+                id,
+            );
+        }
+        let connection = crate::db::write(root.path()).unwrap().unwrap();
+        // Simulate corrupt stored text, including an ID that normal writers cannot produce.
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        connection
+            .execute(
+                &format!(
+                    "UPDATE conversations SET {column} = CAST(X'80' AS TEXT) WHERE id = 'broken'"
+                ),
+                [],
+            )
+            .unwrap();
+        let reader = Reader::new(root.path().to_owned());
+        let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+        assert_eq!(reply.status, 200, "{column}");
+        let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(payload["workspaces"], 1, "{column}");
+        assert_eq!(count(root.path(), "conversations", "healthy"), 1);
+    }
 }

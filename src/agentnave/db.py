@@ -107,20 +107,7 @@ class Database:
                         f"{self.path} has schema version {version}; this AgentNave reads "
                         f"version {SCHEMA_VERSION}"
                     )
-                if not connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name = 'former_bosses'"
-                ).fetchone():
-                    # Created by an older version: add the tables it lacks (all idempotent).
-                    connection.execute("BEGIN IMMEDIATE")
-                    try:
-                        for statement in _SCHEMA.split(";"):
-                            if statement.strip():
-                                connection.execute(statement)
-                    except BaseException:
-                        connection.rollback()
-                        raise
-                    connection.execute("COMMIT")
-                _add_workspace_columns(connection)
+                add_handover_schema(connection)
             except BaseException:
                 connection.close()
                 raise
@@ -391,6 +378,28 @@ class Workspace(NamedTuple):
     previous_file: str | None
     title: str | None
     cwd: str | None
+
+
+def add_handover_schema(connection: sqlite3.Connection) -> None:
+    """Idempotent handover additions shared by normal connections and history cleanup."""
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name IN ('workspaces', 'former_bosses')"
+        )
+    }
+    if tables != {"workspaces", "former_bosses"}:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _SCHEMA.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.execute("COMMIT")
+    _add_workspace_columns(connection)
 
 
 def _add_workspace_columns(connection: sqlite3.Connection) -> None:

@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-16
+- 按天数的自动清理改由服务执行，托盘只保留手动清理，见 [ADR-0046](0046-service-history-retention.md)。
 - 托盘另可在同一把锁下改名，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
 - 锁移到 `locks/<会话ID>.lock`，删除对象改为数据库中的会话行（级联），见 [ADR-0026](0026-sqlite-conversation-store.md)。
 - 独立的管理页面已并入办公室：右键工作区或会议室改名、删除，可多选；路由与锁不变。
