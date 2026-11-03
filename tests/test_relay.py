@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -564,3 +565,168 @@ def test_relay_recovers_after_long_capped_backoff(
     finally:
         relay.child.close()
         relay.child.process.wait(timeout=5)
+
+
+def test_relay_tells_hosts_without_handshake_that_the_tools_changed(tmp_path: Path) -> None:
+    host = Host(tmp_path)
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "modern", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+    def whoami() -> dict[str, Any]:
+        return host.call("tools/call", {"name": "whoami", "_meta": meta})["structuredContent"]
+
+    try:
+        host.call("server/discover", {"_meta": meta})
+        host.call("tools/list", {"_meta": meta})
+        first = whoami()
+        # The new install publishes the same tools, so the host has nothing to reload.
+        host.install("1.1")
+        deadline = time.monotonic() + 10
+        while (second := whoami())["pid"] == first["pid"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert second["pid"] != first["pid"]
+        assert host.notifications == []
+        # A changed interface makes the host's cached tools stale: it must hear about it, even
+        # though this protocol version has no initialize handshake to advertise listChanged.
+        host.busy.with_suffix(".tools").write_text(
+            '{"type":"object","properties":{"new":{"type":"string"}}}'
+        )
+        host.install("1.2")
+        deadline = time.monotonic() + 10
+        while (third := whoami())["pid"] == second["pid"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert third["pid"] != second["pid"]
+        assert host.notifications == [
+            {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+        ]
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert host.code == [0]
+
+
+def test_timed_out_probe_reply_never_reaches_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(launcher, "_PROBE_SECONDS", 0.01)
+    stdout = io.BytesIO()
+    relay = launcher.Relay(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        site=tmp_path,
+        stdin=io.BytesIO(),
+        stdout=stdout,
+        interval=0.05,
+        env={**os.environ, "AGENTNAVE_DATA_DIR": str(tmp_path / "data")},
+    )
+    sent: list[bytes] = []
+
+    def capture(line: bytes) -> None:
+        sent.append(line)
+
+    monkeypatch.setattr(relay.child, "send", capture)
+    try:
+        assert relay._ask(relay.child, "tools/list", {}) is None  # pyright: ignore[reportPrivateUsage]
+        probe = json.loads(sent[-1])
+        assert probe["id"] not in relay.replies  # The timeout dropped the routing entry.
+        late = json.dumps({"jsonrpc": "2.0", "id": probe["id"], "result": {"tools": []}})
+        relay._from_child(relay.child, late.encode() + b"\n")  # pyright: ignore[reportPrivateUsage]
+        assert stdout.getvalue() == b""
+    finally:
+        relay.child.close()
+        relay.child.process.wait(timeout=5)
+
+
+def _stubborn_child() -> subprocess.Popen[bytes]:
+    """A child that ignores SIGTERM, so only kill() can stop it."""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+            "print('ready', flush=True); time.sleep(60)",
+        ],
+        stdout=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline() == b"ready\n"
+    return process
+
+
+def _process_state(pid: int) -> str | None:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return None
+
+
+def _settled_state(pid: int) -> str | None:
+    """Wait for /proc to settle: a reaped child disappears, an unreaped one stays "Z"."""
+    deadline = time.monotonic() + 2
+    state = _process_state(pid)
+    while state not in (None, "Z") and time.monotonic() < deadline:
+        time.sleep(0.01)
+        state = _process_state(pid)
+    return state
+
+
+class _StandIn:
+    """A child handle the swap starts and stops without talking to it."""
+
+    def __init__(self, process: subprocess.Popen[bytes]) -> None:
+        self.retiring = True
+        self.muted: set[str] = set()
+        self.process = process
+
+    def send(self, line: bytes) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux /proc")
+@pytest.mark.parametrize("branch", ["retired_child", "failed_candidate"])
+def test_swap_reaps_the_child_it_kills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, branch: str
+) -> None:
+    stubborn = _stubborn_child()
+
+    def stand_in(*_args: object, **_kwargs: object) -> _StandIn:
+        return _StandIn(stubborn)
+
+    monkeypatch.setattr(launcher, "_Child", stand_in)
+    relay = launcher.Relay(
+        [],
+        site=tmp_path,
+        stdin=io.BytesIO(),
+        stdout=io.BytesIO(),
+        interval=0.05,
+        env={**os.environ, "AGENTNAVE_DATA_DIR": str(tmp_path / "data")},
+    )
+    monkeypatch.setattr(launcher, "_STOP_SECONDS", 0.02)
+
+    def idle_always(_child: object) -> bool:
+        return True
+
+    def legacy() -> bool:
+        return True
+
+    def answer(*_args: object) -> dict[str, Any] | None:
+        return {"result": {}} if branch == "retired_child" else None
+
+    monkeypatch.setattr(relay, "_idle", idle_always)
+    monkeypatch.setattr(relay, "_legacy", legacy)
+    monkeypatch.setattr(relay, "_ask", answer)
+    try:
+        assert relay._swap() == ("swapped" if branch == "retired_child" else "failed")  # pyright: ignore[reportPrivateUsage]
+        state = _settled_state(stubborn.pid)
+        assert state is None, f"pid={stubborn.pid} left as {state} after a {branch} kill"
+    finally:
+        if stubborn.returncode is None:
+            stubborn.kill()
+        stubborn.wait()
+        assert stubborn.stdout is not None
+        stubborn.stdout.close()
