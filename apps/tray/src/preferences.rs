@@ -54,7 +54,18 @@ fn validate_field(section: &str, field: &str, value: &Value) -> Result<(), Strin
     match section {
         "general" => general::validate(field, value),
         "alerts" => alerts::validate(field, value),
+        "updates" => updates(field, value),
         _ => Err(format!("未知的设置分区：{section}")),
+    }
+}
+
+fn updates(field: &str, value: &Value) -> Result<(), String> {
+    match field {
+        "auto_check" => match value.as_bool() {
+            Some(_) => Ok(()),
+            None => Err("updates.auto_check 必须为 true 或 false".into()),
+        },
+        _ => Err(format!("未知的设置项：updates.{field}")),
     }
 }
 

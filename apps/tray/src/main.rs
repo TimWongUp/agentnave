@@ -356,7 +356,7 @@ fn main() {
                     update::resume(&resumer);
                     thread::spawn(move || {
                         loop {
-                            update::check(&checker, false);
+                            update::auto_check(&checker);
                             thread::sleep(update::EVERY);
                         }
                     });

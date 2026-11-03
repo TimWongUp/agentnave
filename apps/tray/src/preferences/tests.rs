@@ -217,3 +217,26 @@ fn concurrent_theme_migrations_only_fill_the_missing_value_and_preserve_explicit
             .is_err()
     );
 }
+
+#[test]
+fn updates_auto_check_is_a_boolean() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("config");
+    update(&folder, &json!({"updates": {"auto_check": false}})).unwrap();
+    assert_eq!(
+        read(&folder).unwrap()["updates"]["auto_check"],
+        json!(false)
+    );
+    for bad in [
+        json!({"updates": {"auto_check": "off"}}),
+        json!({"updates": {"auto_check": null}}),
+        json!({"updates": {"typo": true}}),
+        json!({"updates": true}),
+    ] {
+        assert!(update(&folder, &bad).is_err(), "{bad}");
+    }
+    assert_eq!(
+        read(&folder).unwrap()["updates"]["auto_check"],
+        json!(false)
+    );
+}

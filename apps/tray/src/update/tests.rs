@@ -37,6 +37,25 @@ fn a_found_update_is_used_for_a_day() {
     assert!(!check_fresh(Some(now - FOUND_FOR), now));
 }
 
+#[test]
+fn automatic_checks_are_on_unless_the_app_setting_is_off() {
+    let preferences = |value: Value| value.as_object().unwrap().clone();
+    assert!(automatic_check_enabled(&preferences(json!({}))));
+    assert!(automatic_check_enabled(&preferences(
+        json!({"updates": {}})
+    )));
+    assert!(automatic_check_enabled(&preferences(
+        json!({"updates": {"auto_check": true}})
+    )));
+    assert!(!automatic_check_enabled(&preferences(
+        json!({"updates": {"auto_check": false}})
+    )));
+    // A value this build cannot read must not turn the checks off.
+    assert!(automatic_check_enabled(&preferences(
+        json!({"updates": {"auto_check": "off"}})
+    )));
+}
+
 // `sleep` and `sh` come from Git for Windows on a CI runner, not from the OS; a plain Windows
 // machine has neither, so the timeout path is covered on POSIX only.
 #[cfg(unix)]

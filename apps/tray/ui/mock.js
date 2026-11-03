@@ -741,8 +741,7 @@ All checks passed!
       return { ...await p3Fetch("/app/status"), started: true };
     }
     if (path === "/app/preferences") {
-      if (body.general) Object.assign(mockPrefs.general, body.general);
-      if (body.alerts) Object.assign(mockPrefs.alerts, body.alerts);
+      for (const [section, fields] of Object.entries(body)) mockPrefs[section] = { ...mockPrefs[section], ...fields };
       return { saved: true, ...preferencesView() };
     }
     if (path === "/app/alerts/test") return { sent: true };
