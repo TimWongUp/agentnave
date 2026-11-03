@@ -83,22 +83,29 @@ pub(super) fn count(root: &Path, cutoff: i64) -> Result<usize, String> {
     let Some(mut connection) = crate::db::read(root)? else {
         return Ok(0);
     };
-    let anchors: Vec<String> = connection
+    let anchors: Vec<rusqlite::Result<String>> = connection
         .prepare("SELECT id FROM conversations ORDER BY id")
-        .and_then(|mut query| query.query_map([], |row| row.get(0))?.collect())
+        .and_then(|mut query| Ok(query.query_map([], |row| row.get(0))?.collect()))
         .map_err(|e| e.to_string())?;
     let mut seen = HashSet::new();
     let mut count = 0;
     for anchor in anchors {
+        let anchor = match anchor {
+            Ok(anchor) => anchor,
+            Err(error) => {
+                eprintln!("Storage preview skipped unreadable conversation ID: {error}");
+                continue;
+            }
+        };
         if seen.contains(&anchor) {
             continue;
         }
-        let ids = workspace_ids(&connection, &anchor)?;
-        seen.extend(ids.iter().cloned());
-        if ids.is_empty() {
-            continue;
-        }
         let candidate = (|| -> Result<bool, String> {
+            let ids = workspace_ids(&connection, &anchor)?;
+            seen.extend(ids.iter().cloned());
+            if ids.is_empty() {
+                return Ok(false);
+            }
             let eligible = {
                 let transaction = connection.transaction().map_err(|e| e.to_string())?;
                 workspace_ids(&transaction, &anchor)? == ids

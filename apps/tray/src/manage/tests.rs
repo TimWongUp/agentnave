@@ -580,3 +580,42 @@ fn retention_preview_preserves_waiting_handovers_until_claimed() {
     );
     assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
 }
+
+#[test]
+fn retention_preview_skips_unreadable_owners_and_ids_without_losing_healthy_counts() {
+    for column in ["manager_session", "id"] {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["broken", "healthy"] {
+            fixture(root.path(), id);
+            set(
+                root.path(),
+                "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+                id,
+            );
+            set(
+                root.path(),
+                "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+                id,
+            );
+        }
+        let connection = crate::db::write(root.path()).unwrap().unwrap();
+        // Simulate corrupt stored text, including an ID that normal writers cannot produce.
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        connection
+            .execute(
+                &format!(
+                    "UPDATE conversations SET {column} = CAST(X'80' AS TEXT) WHERE id = 'broken'"
+                ),
+                [],
+            )
+            .unwrap();
+        let reader = Reader::new(root.path().to_owned());
+        let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+        assert_eq!(reply.status, 200, "{column}");
+        let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(payload["workspaces"], 1, "{column}");
+        assert_eq!(count(root.path(), "conversations", "healthy"), 1);
+    }
+}
