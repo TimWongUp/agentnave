@@ -1,11 +1,17 @@
 # ADR-0006：核心收敛为子代理与协作轮次，节目、历史与看板拆为工作室包
 
-> 核心／工作室分层及无历史约定已被 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代；下文保留当时的取舍。
-
-- 状态：已接受（v0.15.0）；“拆为两个发行包”一节已被 [ADR-0009](0009-single-package-two-entry-points.md) 取代
+- 状态：部分取代
 - 日期：2026-10-11
+- 接受版本：v0.15.0。
 - 取代 [ADR-0005](0005-director-controlled-discussion-rooms.md) 的讨论室、统一工作台与 Dashboard 归属；[ADR-0002](0002-lightweight-cli-subagent-adapter.md) 的“Invocation 只在进程内存在”在核心包内恢复为完整约束。
-- 核心协作组遵守 Provider 排除配置的条款已移除：排除项只约束 `start_agent`，当前合同见[架构与边界](../context/architecture.md)。
+- 核心协作组遵守 Provider 排除配置的条款由 [ADR-0013](0013-members-defaults-and-host-identity.md) 取代：排除项只约束单任务，不约束会议。
+- “拆为两个发行包”由 [ADR-0009](0009-single-package-two-entry-points.md) 取代
+- 核心／工作室分层及无历史约定由 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代；下文保留当时的取舍。
+- 并发不设上限的条款由 [ADR-0025](0025-session-desks-and-running-limit.md) 取代
+- 会议席位上限由 6 改为 7（2026-10-20，提交 `0350ec2e`，代码修订，见 [architecture.md](../context/architecture.md)）。
+
+- 工具名称与集合由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订
+- 保留工作室浏览器看板的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
 
 ## 背景
 

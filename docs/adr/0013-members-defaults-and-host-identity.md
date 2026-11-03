@@ -1,7 +1,15 @@
 # ADR-0013：App 组员默认值、模式强制与宿主归属
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-16
+- 核心不持久化的条款由 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代
+- 进程级主控身份由 [ADR-0017](0017-manager-chat-session-identity.md) 修订
+- 组员身份、模式命名与群聊展示由 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 修订
+- 无配置时的模型预填行为由 [ADR-0020](0020-prefill-main-model-defaults.md) 修订；后由 ADR-0028 取代该预填。
+- 不受限模式的默认模型由 [ADR-0021](0021-keep-default-models-when-unrestricted.md) 补充
+- 工具名与工具集合由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订
+- 权限默认值范围及无配置时的原生行为由 [ADR-0032](0032-cli-permission-tiers.md) 修订
+- 工位默认模型、档位套用与名单校验例外由 [ADR-0038](0038-role-applies-app-seat.md) 修订
 
 本决定取代 [ADR-0012](0012-tray-conversation-cleanup.md) 中关于 `profiles.json` 的增补：App 改为维护唯一的 `members.json`，核心与工作室只读、每次调用现读；旧档案迁移只由 App 负责，服务不兼读两种真源。顶层 `version`、`clis`、`modes` 三项必填，与第一期共享契约修订 1 一致。
 

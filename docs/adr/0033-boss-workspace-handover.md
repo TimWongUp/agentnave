@@ -1,9 +1,10 @@
 # ADR-0033：boss 工作区交接
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-28
 - 修订：2026-11-01，见文末「修订：只有 boss 的工作区与接手 Skill」。
 - 修订 [ADR-0017](0017-manager-chat-session-identity.md) 的“记录永远归原 boss”与“磁盘只存归属哈希”；扩展 [ADR-0026](0026-sqlite-conversation-store.md) 的表。
+- 加表、加列不升 `user_version` 及托盘补表补列的做法由 [ADR-0048](0048-sqlite-schema-evolution.md) 取代
 
 ## 背景
 

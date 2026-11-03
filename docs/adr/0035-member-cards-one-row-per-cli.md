@@ -1,8 +1,10 @@
 # ADR-0035：员工卡片一行设好一个 CLI，需要时再分开两个场景
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-30
 - 取代 [ADR-0021](0021-keep-default-models-when-unrestricted.md) 中设置页「自选」开关的交互，以及 [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0029](0029-settings-without-free-text.md) 中的档位条与“设为默认”；`members.json` 结构不变。
+- 选回 CLI 当前档位即跟随、不写入配置的条款由 [ADR-0042](0042-pass-cli-default-effort.md) 取代
+- Codex 仓库检查开关由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代：固定传 `--skip-git-repo-check`。
 
 ## 背景
 

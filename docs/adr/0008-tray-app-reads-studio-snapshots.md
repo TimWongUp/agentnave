@@ -1,9 +1,17 @@
 # ADR-0008：托盘应用只读展示工作室数据，工作室写出视图快照与运行文件
 
-- 状态：已接受（第一期：工作室数据合同；第二期：macOS 菜单栏应用 `apps/tray`；第三期起：macOS 发布产物与应用内更新；第四期：群聊面板与任务原文）
+- 状态：部分取代
 - 日期：2026-10-15
+- 接受阶段：第一期工作室数据合同；第二期 macOS 菜单栏应用 `apps/tray`；第三期起 macOS 发布产物与应用内更新；第四期群聊面板与任务原文。
 - 取代 [ADR-0002](0002-lightweight-cli-subagent-adapter.md) 中“不提供桌面状态 App”的条款；核心包边界不变。
-- 视图快照改存 SQLite `views` 表，`state.json`／`views.json` 不再存在，见 [ADR-0026](0026-sqlite-conversation-store.md)。
+- 视图快照位置由 [ADR-0026](0026-sqlite-conversation-store.md) 取代：改存 SQLite `views` 表，`state.json`／`views.json` 不再存在。
+- 托盘不写数据根的边界由 [ADR-0012](0012-tray-conversation-cleanup.md) 修订
+- 只复制服务升级命令的条款由 [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md) 取代
+- 群聊汇总与办公室展示由 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 修订
+- 视图快照独立保存、失败不回滚状态的条款由 [ADR-0026](0026-sqlite-conversation-store.md) 取代：权威状态与快照在同一事务内保存。
+- 浏览器后备与共享看板前端的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
+- 更新是唯一出站请求、完全不监听端口的条款由 [ADR-0044](0044-meeting-voice-cloud-and-key-input.md) 修订：增加云端语音、摘要请求与本机登录回调。
+- live v1 运行快照的兼容读取由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代
 
 ## 背景
 

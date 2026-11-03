@@ -3,7 +3,7 @@
 ## Scope and authority
 
 - `README.md` 面向首次使用者；当前行为以代码、Adapter、CLI/MCP schema 与测试为真源。
-- 项目特有术语见 `CONTEXT.md`，稳定边界见 `docs/context/architecture.md`，收敛理由见 `docs/adr/0002-lightweight-cli-subagent-adapter.md`。
+- 项目特有术语见 `CONTEXT.md`；现行架构基线是 `docs/context/architecture.md`，ADR 索引与各篇状态见 `docs/adr/README.md`。
 - 仓库外的旧版 AgentNave 上下文不是当前 Authority；除非用户明确要求，否则不读取或同步。
 
 ## Implementation boundaries

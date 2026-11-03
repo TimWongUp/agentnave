@@ -1,8 +1,12 @@
 # ADR-0024：工具收敛为 8 个，审核改为公开／不公开
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-23
 - 修订 [ADR-0007](0007-wait-any-ready-subset.md) 的等待工具名、[ADR-0016](0016-single-core-and-mcp-entrypoint.md) 的工具数、[ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 的访问等级修订与被丢弃回答的说法、[ADR-0023](0023-explicit-desk-continuation.md) 中按访问等级筛选续接线程的条款；扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘写入范围。不改变 Manager 拥有编排决策、Provider 原生权限是安全边界的约定。
+- 八个工具的集合由 [ADR-0033](0033-boss-workspace-handover.md) 修订：新增 `handover`，现为 9 个公开工具；标题保留历史数量。
+- 只在 `list` 启动浏览器看板的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
+- App 只给模板、不写全局规则的条款由 [ADR-0037](0037-app-writes-orchestration-rules.md) 取代
+- `access` 一律不拒绝调用的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位推断值与显式声明不一致时拒绝。
 
 ## 背景
 

@@ -1,8 +1,12 @@
 # ADR-0014：托盘维护组员配置、探测 CLI 模型，并一键全部更新
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-16
 - 修订 [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md) 第 6 条与“后果”中“只在用户点击后执行”的范围；修订 [ADR-0012](0012-tray-conversation-cleanup.md) 修订段的托盘写入对象。
+- 静态档位表与只运行列举／帮助命令的探测方式由 [ADR-0034](0034-models-and-efforts-from-each-cli.md) 修订
+- 允许手填模型 ID 的条款由 [ADR-0029](0029-settings-without-free-text.md) 取代
+- “更新服务须用户点击”由 [ADR-0047](0047-versioned-service-install.md) 修订为 App 启动自动跟进。
+- 旧 App 升级标记的兼容读取由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代
 
 ## 背景
 

@@ -1,8 +1,10 @@
 # ADR-0028：默认模型与档位跟随 CLI 自身设置
 
-- 状态：已接受；档位部分由 [ADR-0042](0042-pass-cli-default-effort.md) 修订
+- 状态：部分取代
 - 日期：2026-10-24
 - 取代 [ADR-0020](0020-prefill-main-model-defaults.md)；修订 [ADR-0021](0021-keep-default-models-when-unrestricted.md) 中“重新开启自选时按检测补主力模型”。
+- 档位条与“设为默认”的交互由 [ADR-0035](0035-member-cards-one-row-per-cli.md) 取代
+- 跟随 CLI 档位及回执只报告 App 默认值的条款由 [ADR-0042](0042-pass-cli-default-effort.md) 修订
 
 ## 背景
 

@@ -1,11 +1,13 @@
 # ADR-0018：主控工作区、工位与会议室
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-18
-- 私聊默认续接由 [ADR-0023](0023-explicit-desk-continuation.md) 改为显式 `continue_desk`。
-- 工位身份改为原生线程、显示数受同时运行上限约束，见 [ADR-0025](0025-session-desks-and-running-limit.md)。
-- 访问等级改为只记录、被丢弃的回答改称不公开，见 [ADR-0024](0024-consolidated-tools-and-private-review.md)。
+- 私聊默认续接由 [ADR-0023](0023-explicit-desk-continuation.md) 取代：改为显式 `continue_desk`。
+- 工位身份与显示上限由 [ADR-0025](0025-session-desks-and-running-limit.md) 取代：工位即原生线程，显示数受同时运行上限约束。
+- 访问等级强制与被丢弃回答的说法由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 取代：只记录访问等级，回答改称不公开。
 - 修订 [ADR-0013](0013-members-defaults-and-host-identity.md) 的组员身份与模式命名、[ADR-0017](0017-manager-chat-session-identity.md) 的 App 群聊展示；不改变 Manager 拥有编排决策、Provider 原生权限是安全边界的约定。
+- 访问等级不由服务推断的条款由 [ADR-0038](0038-role-applies-app-seat.md) 取代：私聊工位推断访问等级并拒绝矛盾声明。
+- 旧身份记录逐条独立展示的条款由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代：1.0 迁移时删除。
 
 ## 背景
 

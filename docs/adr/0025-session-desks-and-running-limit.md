@@ -1,8 +1,9 @@
 # ADR-0025：工位即原生线程，并发上限决定显示上限
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-10-24
 - 取代 [ADR-0023](0023-explicit-desk-continuation.md) 的 `continue_desk`，修订 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 的工位身份；会议室、转发与 Manager 拥有编排决策的约定不变。
+- `role` 与访问等级只作显示标签的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位可套用参数并推断访问等级。
 
 ## 背景
 
