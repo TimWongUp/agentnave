@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import stat
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -263,9 +264,8 @@ def test_orphan_seat_junctions_are_removed_without_touching_their_targets(tmp_pa
     (tmp_path / "seats/inner").mkdir(parents=True)
     junction(tmp_path / "seats/inner/link")
     junction(tmp_path / "seats/whole")
-    for name in ["inner", "whole"]:
-        os.utime(tmp_path / "seats" / name, (_NOW - 2 * 86400, _NOW - 2 * 86400))
-    cleanup(tmp_path, now=_NOW)
+    # utime follows a junction to its target, so age everything by moving the clock instead.
+    cleanup(tmp_path, now=time.time() + 3 * 86400)
     assert not (tmp_path / "seats/inner").exists()
     assert not os.path.lexists(tmp_path / "seats/whole")
     assert (outside / "keep").read_text() == "keep"
