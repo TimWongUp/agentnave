@@ -103,6 +103,8 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                 | "/app/voice"
                 | "/app/voice/key"
                 | "/app/voice/speak"
+                | "/app/voice/cache"
+                | "/app/voice/cache/clear"
                 | "/app/voice/summary/models"
                 | "/app/voice/chatgpt/start"
                 | "/app/voice/chatgpt/sign-out"
@@ -847,6 +849,8 @@ mod tests {
             "/app/voice",
             "/app/voice/key",
             "/app/voice/speak",
+            "/app/voice/cache",
+            "/app/voice/cache/clear",
             "/app/voice/summary/models",
             "/app/voice/chatgpt/start",
             "/app/voice/chatgpt/sign-out",
