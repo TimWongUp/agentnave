@@ -64,7 +64,7 @@ class GrokAdapter(AdapterHooks):
         return option_args(request, self._options)
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         options = self.option_args(request)
         prompt = request.prompt.encode()
         fd, raw_path = tempfile.mkstemp(prefix="agentnave-prompt-", suffix=".txt")

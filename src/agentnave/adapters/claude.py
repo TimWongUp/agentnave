@@ -100,7 +100,7 @@ class ClaudeAdapter(AdapterHooks):
         return option_args(request, self._options)
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         argv = [
             resolve_executable(self.executable),
             "--print",

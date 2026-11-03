@@ -86,7 +86,7 @@ class PiAdapter(AdapterHooks):
         return option_args(request, self._options)
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         argv = [resolve_executable("pi"), "--print", "--mode", "json"]
         if request.session_id is not None:
             argv.extend(("--session", request.session_id))

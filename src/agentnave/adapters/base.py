@@ -166,16 +166,15 @@ def option_args(request: InvocationRequest, allowlist: dict[str, str]) -> tuple[
     return tuple(args)
 
 
-def restricted_options(request: InvocationRequest) -> tuple[InvocationRequest, bool]:
+def restricted_options(
+    request: InvocationRequest, adapter: ProviderAdapter
+) -> tuple[InvocationRequest, bool]:
     """Explicit opt-in only; restricted profiles cannot enable other tools."""
     options = dict(request.provider_options)
     enabled = options.pop("restricted_tools", False)
     if not isinstance(enabled, bool):
         raise ValueError("restricted_tools must be a boolean")
     if enabled:
-        from agentnave.adapters import get_adapter
-
-        adapter = get_adapter(request.provider)
         if not adapter.supports_restricted_tools:
             raise ValueError("restricted_tools requires a registered provider")
         allowed = {"model", "effort"} | adapter.restricted_extra_options

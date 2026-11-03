@@ -156,7 +156,7 @@ class CodexAdapter(AdapterHooks):
         return tuple(argv)
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         argv = [_codex_executable(), "exec"]
         if request.session_id is not None:
             argv.append("resume")

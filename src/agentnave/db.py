@@ -12,8 +12,9 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
+from agentnave.locks import locked_conversations, remove_seats
 from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord
 
 SCHEMA_VERSION = 2
@@ -383,6 +384,27 @@ class Workspace(NamedTuple):
     cwd: str | None
 
 
+def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None:
+    """Delete rows and their cascades under the caller's transaction and OS locks."""
+    connection.executemany("DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids])
+
+
+def _migrated_seats(connection: sqlite3.Connection) -> dict[str, str]:
+    """Drop only the retired Git-check option, preserving every other stored seat field."""
+    updates: dict[str, str] = {}
+    for id_, raw in connection.execute("SELECT id, seats FROM conversations WHERE kind = 'show'"):
+        seats = cast(list[dict[str, object]], json.loads(raw))
+        changed = False
+        for seat in seats:
+            options = cast(dict[str, object], seat.get("provider_options", {}))
+            if "skip_git_repo_check" in options:
+                del options["skip_git_repo_check"]
+                changed = True
+        if changed:
+            updates[id_] = json.dumps(seats, ensure_ascii=False)
+    return updates
+
+
 def _legacy_ids(connection: sqlite3.Connection) -> list[str]:
     return [
         row[0]
@@ -394,18 +416,22 @@ def _legacy_ids(connection: sqlite3.Connection) -> list[str]:
 
 
 def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
-    """Upgrade atomically, after locking every old conversation; busy history stays v1."""
-    from agentnave.retention import locked_conversations, remove_conversations, remove_seats
-
+    """Upgrade atomically after locking affected conversations; busy history stays v1."""
     ids = _legacy_ids(connection)
+    seats = _migrated_seats(connection)
     try:
-        with locked_conversations(root, ids):
+        with locked_conversations(root, sorted(set(ids) | seats.keys())):
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version == SCHEMA_VERSION:
                     return  # Another new server finished while this one acquired the locks.
-                if version != 1 or _legacy_ids(connection) != ids:
+                current_seats = _migrated_seats(connection)
+                if (
+                    version != 1
+                    or _legacy_ids(connection) != ids
+                    or current_seats.keys() != seats.keys()
+                ):
                     raise OSError("History changed during migration; reconnect the host to retry")
                 for statement in _SCHEMA.split(";"):
                     if statement.strip():
@@ -414,6 +440,10 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
                 for column in ("title", "cwd"):
                     if column not in columns:
                         connection.execute(f"ALTER TABLE workspaces ADD COLUMN {column} TEXT")
+                connection.executemany(
+                    "UPDATE conversations SET seats = ?, rev = rev + 1 WHERE id = ?",
+                    [(body, id_) for id_, body in current_seats.items()],
+                )
                 remove_conversations(connection, ids)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 connection.commit()
@@ -423,7 +453,7 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
                     connection.rollback()
     except ValueError as exc:
         raise OSError(
-            "History migration is blocked by an in-use or unsafe old conversation; "
+            "History migration is blocked by an in-use or unsafe conversation needing upgrade; "
             "disconnect old hosts and reconnect to retry"
         ) from exc
 

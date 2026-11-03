@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "clis": {
-    "codex": {
-      "sandbox": "read-only"
-    }
-  }
-}

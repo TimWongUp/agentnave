@@ -87,7 +87,7 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
 
 @pytest.mark.parametrize(
     "sample",
-    sorted(path for path in APP_FILES.glob("*/*.json") if path.parent.name != "cli-options"),
+    sorted(APP_FILES.glob("*/*.json")),
     ids=lambda path: f"{path.parent.name}/{path.stem}",
 )
 def test_app_file_samples_agree_with_the_tray(

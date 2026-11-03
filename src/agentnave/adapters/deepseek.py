@@ -226,7 +226,7 @@ class DeepSeekAdapter(AdapterHooks):
         return tuple(rows)
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         options = dict(request.provider_options)
         route = options.get("provider")
         if "model" not in options and route is not None:

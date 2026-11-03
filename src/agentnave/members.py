@@ -132,7 +132,7 @@ PERMISSION_KEYS: dict[str, frozenset[str]] = {
 def validate_provider_options(request: InvocationRequest) -> None:
     adapter = get_adapter(request.provider)
     try:
-        normalized, _ = restricted_options(request)
+        normalized, _ = restricted_options(request, adapter)
         adapter.option_args(normalized)
     except ValueError as exc:
         raise AdapterOptionsError(str(exc)) from exc

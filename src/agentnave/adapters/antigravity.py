@@ -147,7 +147,7 @@ class AntigravityAdapter(AdapterHooks):
     _boolean_options = {"disable_slash_commands", "sandbox", "dangerously_skip_permissions"}
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        request, discussion = restricted_options(request)
+        request, discussion = restricted_options(request, self)
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
         argv = [

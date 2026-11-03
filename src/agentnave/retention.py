@@ -5,40 +5,33 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
-import shutil
 import sqlite3
 import stat
 import threading
 import time
-from collections.abc import Callable, Generator
-from contextlib import ExitStack, closing, contextmanager
+from collections.abc import Callable
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from agentnave.db import NAME, SCHEMA_VERSION
-from agentnave.locks import lock_file, release_and_remove
+from agentnave.db import NAME, SCHEMA_VERSION, remove_conversations
+from agentnave.locks import (
+    contained_directory,
+    conversation_lock_path,
+    lock_file,
+    locked_conversations,
+    release_and_remove,
+    remove_seat,
+    remove_seats,
+)
 from agentnave.members import read_history_retention_days
 
 _LOG = logging.getLogger(__name__)
 _CANDIDATE = Path(__file__).with_name("retention-candidate.sql").read_text(encoding="utf-8")
 _INTERVAL = 24 * 60 * 60
 GLOBAL_LOCK = "history-retention.lock"
-_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-
-
-def _lock_path(root: Path, id_: str) -> Path | None:
-    if not _ID.fullmatch(id_):
-        return None
-    path = root / "locks" / f"{id_}.lock"
-    try:
-        if not stat.S_ISREG(path.lstat().st_mode):
-            return None
-    except FileNotFoundError:
-        pass
-    return path
 
 
 def _exists(connection: sqlite3.Connection, id_: str) -> bool:
@@ -52,62 +45,17 @@ def _exists(connection: sqlite3.Connection, id_: str) -> bool:
     )
 
 
-def _make_removable(path: Path) -> None:
-    """Let a seat tree be deleted: CLIs may leave read-only or unlistable directories, and on
-    Windows read-only files. Symlinks and junctions are never followed or changed."""
-    owner = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
-    os.chmod(path, owner)
-    for top, directories, files in os.walk(path):
-        # Prune links and Windows junctions so the walk never reaches outside the seat.
-        directories[:] = [
-            name
-            for name in directories
-            if not os.path.islink(os.path.join(top, name))
-            and not os.path.isjunction(os.path.join(top, name))
-        ]
-        for name in directories:
-            os.chmod(os.path.join(top, name), owner)
-        if os.name == "nt":
-            for name in files:
-                child = os.path.join(top, name)
-                if not os.path.islink(child):
-                    os.chmod(child, stat.S_IREAD | stat.S_IWRITE)
-
-
-def _contained(directory: Path) -> bool:
-    """A symlinked seats or locks directory leads outside the data root: never sweep it."""
-    return not directory.is_symlink()
-
-
-def _remove_seat(root: Path, id_: str) -> bool:
-    path = root / "seats" / id_
-    if not _contained(path.parent):
-        return False
-    try:
-        if path.is_symlink():
-            path.unlink()
-        elif path.is_junction():
-            os.rmdir(path)  # removes the junction itself, never its target
-        elif path.exists():
-            _make_removable(path)
-            shutil.rmtree(path)
-        return True
-    except Exception:
-        _LOG.exception("History retention could not remove seat directory %s", path)
-        return False
-
-
 def _sweep_locks(
     connection: sqlite3.Connection, root: Path, now: float, stopped: Callable[[], bool]
 ) -> None:
-    if not _contained(root / "locks"):
+    if not contained_directory(root / "locks"):
         return
     for path in (root / "locks").glob("*.lock"):
         if stopped():
             break
         try:
             id_ = path.stem
-            if _lock_path(root, id_) is None or _exists(connection, id_):
+            if conversation_lock_path(root, id_) is None or _exists(connection, id_):
                 continue
             if now - path.lstat().st_mtime < 3600:
                 continue
@@ -123,14 +71,14 @@ def _sweep_locks(
 def _sweep_seats(
     connection: sqlite3.Connection, root: Path, now: float, stopped: Callable[[], bool]
 ) -> None:
-    if not _contained(root / "seats") or not _contained(root / "locks"):
+    if not contained_directory(root / "seats") or not contained_directory(root / "locks"):
         return
     for seat in (root / "seats").glob("*"):
         if stopped():
             break
         try:
             id_ = seat.name
-            path = _lock_path(root, id_)
+            path = conversation_lock_path(root, id_)
             if path is None or _exists(connection, id_):
                 continue
             info = seat.lstat()
@@ -141,7 +89,7 @@ def _sweep_seats(
                 continue
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with lock_file(path, "Conversation is in use") as guard:
-                if not _exists(connection, id_) and _remove_seat(root, id_):
+                if not _exists(connection, id_) and remove_seat(root, id_):
                     release_and_remove(guard, path)
         except (FileNotFoundError, ValueError):
             continue
@@ -223,32 +171,6 @@ def _eligible(connection: sqlite3.Connection, ids: list[str], cutoff: int) -> bo
         if created is None or updated is None or max(created, updated) >= cutoff:
             return False
     return True
-
-
-@contextmanager
-def locked_conversations(root: Path, ids: list[str]) -> Generator[None]:
-    """Hold the same OS locks as App and server writers, before a DB transaction."""
-    if not _contained(root / "locks"):
-        raise ValueError("Unsafe conversation lock directory")
-    with ExitStack() as locks:
-        for id_ in ids:
-            path = _lock_path(root, id_)
-            if path is None:
-                raise ValueError("Unsafe conversation lock")
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            locks.enter_context(lock_file(path, "Conversation is in use"))
-        yield
-
-
-def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None:
-    """Delete rows and their cascades under the caller's transaction and OS locks."""
-    connection.executemany("DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids])
-
-
-def remove_seats(root: Path, ids: list[str]) -> None:
-    """Reclaim deleted conversations' directories while their OS locks are still held."""
-    for id_ in ids:
-        _remove_seat(root, id_)
 
 
 def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: int) -> bool:
