@@ -8,6 +8,11 @@ pub fn validate(field: &str, value: &Value) -> Result<(), String> {
         "theme" => super::one_of(value, &["system", "light", "dark"], &name),
         "motion" => super::one_of(value, &["system", "reduce", "full"], &name),
         "tray_click" => super::one_of(value, &["panel", "office"], &name),
+        "tray_font" => super::one_of(
+            value,
+            &["futura", "baskerville", "typewriter", "marker"],
+            &name,
+        ),
         "scale" if matches!(value.as_u64(), Some(90 | 100 | 115)) => Ok(()),
         "scale" => Err(format!("{name} 必须为 90、100 或 115")),
         "autostart" | "open_on_start" | "tray_count" | "keep_awake" if value.is_boolean() => Ok(()),
@@ -22,7 +27,7 @@ pub fn effective(document: &Value, autostart: bool) -> Value {
     let mut result = json!({
         "language": "system", "theme": "system", "motion": "system", "scale": 100,
         "autostart": autostart, "open_on_start": true, "tray_click": "panel",
-        "tray_count": true, "keep_awake": false,
+        "tray_count": true, "tray_font": "futura", "keep_awake": false,
     });
     if let Some(saved) = document["general"].as_object() {
         for (field, value) in saved {
