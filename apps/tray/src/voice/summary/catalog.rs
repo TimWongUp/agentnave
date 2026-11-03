@@ -3,7 +3,7 @@
 //! Explicit capability fields decide first: a populated modality list without `text` means the
 //! model cannot take a text chat, and a Google entry that lists generation methods without
 //! `generateContent` is not a chat model. Missing or empty fields prove nothing, so those entries
-//! those fields fall through to the name check. Names only remove dedicated endpoints that can
+//! fall through to the name check. Names only remove dedicated endpoints that can
 //! still pass a capability check, such as speech-to-text models that answer in text.
 
 use serde_json::Value;
