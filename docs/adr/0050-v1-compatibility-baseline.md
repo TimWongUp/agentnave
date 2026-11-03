@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-03
-- 取代 [ADR-0017](0017-manager-chat-session-identity.md) 中「旧历史保留内容并独立展示」的条款，以及 [ADR-0038](0038-role-applies-app-seat.md) 中「`role` 兼当编排工位名的旧写法继续有效」的条款。
+- 取代 [ADR-0017](0017-manager-chat-session-identity.md)、[ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 中旧历史独立展示的条款，[ADR-0038](0038-role-applies-app-seat.md) 中「`role` 兼当编排工位名的旧写法继续有效」的条款，[ADR-0008](0008-tray-app-reads-studio-snapshots.md) 的 live v1 兼容读取，[ADR-0014](0014-tray-members-and-one-click-update.md) 的旧升级标记兼容，以及 [ADR-0035](0035-member-cards-one-row-per-cli.md) 的 Codex 仓库检查开关。
 
 1.0.0 是最低兼容版本。早于它的程序和数据，只做一次性迁移，不再保留运行时兼容分支。这样定的前提是：App 每次启动都跟进服务（[ADR-0047](0047-versioned-service-install.md)），新 App 搭配旧服务的情况只会出现在宿主重连之前。
 
