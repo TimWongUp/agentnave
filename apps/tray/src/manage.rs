@@ -236,7 +236,12 @@ pub fn delete(root: &Path, id: &str) -> Value {
 /// Delete an isolated meeting's seat directory once its conversation is gone, still under the
 /// conversation lock. A symlink is removed as a link and never followed; false on failure.
 fn remove_seats(root: &Path, id: &str) -> bool {
-    let path = root.join("seats").join(id);
+    let parent = root.join("seats");
+    // A symlinked seats directory leads outside the data root.
+    if fs::symlink_metadata(&parent).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return false;
+    }
+    let path = parent.join(id);
     let removed = match fs::symlink_metadata(&path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return true,
         Err(e) => Err(e),

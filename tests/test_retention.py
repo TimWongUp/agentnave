@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -222,6 +223,29 @@ def test_orphan_seats_expire_after_one_day_without_following_symlinks(tmp_path: 
     assert not (tmp_path / "locks/linked.lock").exists()
     assert (outside / "keep").read_text() == "keep"
     assert all((tmp_path / "seats" / name).exists() for name in ["new", "saved", "busy", "bad.id"])
+
+
+def test_orphan_sweeps_spare_case_variants_and_symlinked_directories(tmp_path: Path) -> None:
+    fixture(tmp_path, "keep")
+    old = (_NOW - 2 * 86400, _NOW - 2 * 86400)
+    (tmp_path / "seats/KEEP").mkdir(parents=True)
+    (tmp_path / "locks").mkdir()
+    (tmp_path / "locks/KEEP.lock").touch()
+    for path in [tmp_path / "seats/KEEP", tmp_path / "locks/KEEP.lock"]:
+        os.utime(path, old)
+    assert cleanup(tmp_path, now=_NOW) == 0
+    assert (tmp_path / "seats/KEEP").is_dir() and (tmp_path / "locks/KEEP.lock").is_file()
+
+    outside = tmp_path / "outside"
+    (outside / "notes").mkdir(parents=True)
+    (outside / "cache.lock").touch()
+    for path in [outside / "notes", outside / "cache.lock"]:
+        os.utime(path, old)
+    for name in ["seats", "locks"]:
+        shutil.rmtree(tmp_path / name)
+        (tmp_path / name).symlink_to(outside, target_is_directory=True)
+    assert cleanup(tmp_path, now=_NOW) == 0
+    assert (outside / "notes").is_dir() and (outside / "cache.lock").is_file()
 
 
 @pytest.mark.parametrize("resource", ["lock", "seat"])

@@ -44,7 +44,10 @@ def _lock_path(root: Path, id_: str) -> Path | None:
 def _exists(connection: sqlite3.Connection, id_: str) -> bool:
     # The cleanup connection is in autocommit mode: every call gets a new snapshot.
     return (
-        connection.execute("SELECT 1 FROM conversations WHERE id = ?", (id_,)).fetchone()
+        # NOCASE: a file name differing only in case is the same file on APFS and NTFS.
+        connection.execute(
+            "SELECT 1 FROM conversations WHERE id = ? COLLATE NOCASE", (id_,)
+        ).fetchone()
         is not None
     )
 
@@ -56,8 +59,15 @@ def _retry_readonly(function: Callable[..., object], path: str, error: BaseExcep
     function(path)
 
 
+def _contained(directory: Path) -> bool:
+    """A symlinked seats or locks directory leads outside the data root: never sweep it."""
+    return not directory.is_symlink()
+
+
 def _remove_seat(root: Path, id_: str) -> bool:
     path = root / "seats" / id_
+    if not _contained(path.parent):
+        return False
     try:
         if path.is_symlink():
             path.unlink()
@@ -72,6 +82,8 @@ def _remove_seat(root: Path, id_: str) -> bool:
 def _sweep_locks(
     connection: sqlite3.Connection, root: Path, now: float, stopped: Callable[[], bool]
 ) -> None:
+    if not _contained(root / "locks"):
+        return
     for path in (root / "locks").glob("*.lock"):
         if stopped():
             break
@@ -93,6 +105,8 @@ def _sweep_locks(
 def _sweep_seats(
     connection: sqlite3.Connection, root: Path, now: float, stopped: Callable[[], bool]
 ) -> None:
+    if not _contained(root / "seats") or not _contained(root / "locks"):
+        return
     for seat in (root / "seats").glob("*"):
         if stopped():
             break
