@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use boss_app::BossApps;
 
+mod alerts;
 pub(crate) mod boss_app;
 
 /// Studio rewrites live files every 1.5s; older ones were left by a server that crashed.
@@ -196,6 +197,7 @@ pub struct Reader {
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
     merged: Mutex<HashMap<String, Merged>>,
     routes: Mutex<HashMap<String, RouteAnswer>>,
+    alerts: Mutex<alerts::Cache>,
     boss_apps: BossApps,
 }
 
@@ -209,6 +211,7 @@ impl Reader {
             live_files: Mutex::new(HashMap::new()),
             merged: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
+            alerts: Mutex::new(HashMap::new()),
             boss_apps: BossApps::new(),
         }
     }

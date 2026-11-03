@@ -1,6 +1,7 @@
 //! AgentNave tray: view and clean up this machine's saved Studio conversations.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod alerts;
 mod avatars;
 mod characters;
 mod data;
@@ -98,6 +99,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
         && !matches!(
             path,
             "/app/preferences"
+                | "/app/alerts/test"
                 | "/app/voice"
                 | "/app/voice/key"
                 | "/app/voice/speak"
@@ -169,6 +171,7 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_notification::init())
         .manage(preferences::runtime::Runtime::default())
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let reader = served.clone();
@@ -195,6 +198,7 @@ fn main() {
                         data::Response::error(403, "预览版只读：请在正式版里保存改动")
                     }
                     ("GET", "/app/status") => data::Response::json(&update::status(&app)),
+                    (_, "/app/alerts/test") => alerts::test(&app, method, action),
                     // Whether the page's maximize button should read as maximize or restore.
                     ("GET", "/app/window/state") => {
                         let maximized = app
@@ -410,8 +414,11 @@ fn drip(tray: &TrayIcon) {
 }
 
 fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
+    let mut alerts = alerts::Monitor::default();
+    alerts.tick(&app, &reader);
     loop {
         thread::sleep(POLL);
+        alerts.tick(&app, &reader);
         let overview = reader.overview();
         if let Err(error) = preferences::runtime::refresh_working(&app, &overview) {
             eprintln!("无法应用常规设置：{error}");
@@ -839,6 +846,7 @@ mod tests {
         }
         for path in [
             "/app/preferences",
+            "/app/alerts/test",
             "/app/voice",
             "/app/voice/key",
             "/app/voice/speak",
