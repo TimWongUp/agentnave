@@ -470,38 +470,58 @@ fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
 
 #[test]
 fn retention_preview_skips_a_corrupt_workspace_and_counts_healthy_ones() {
-    let root = tempfile::tempdir().unwrap();
-    for id in ["broken-a", "broken-b", "healthy"] {
-        fixture(root.path(), id);
-        set(
-            root.path(),
-            "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
-            id,
-        );
-        set(
-            root.path(),
-            "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
-            id,
-        );
+    for corruption in ["round", "utf8", "deep-json"] {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["broken-a", "broken-b", "healthy"] {
+            fixture(root.path(), id);
+            set(
+                root.path(),
+                "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+                id,
+            );
+            set(
+                root.path(),
+                "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+                id,
+            );
+        }
+        for id in ["broken-a", "broken-b"] {
+            set(
+                root.path(),
+                "UPDATE conversations SET manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+                id,
+            );
+        }
+        match corruption {
+            "round" => set(
+                root.path(),
+                "INSERT INTO rounds (id, conversation_id, number, body) VALUES ('r', ?1, 1, '{broken')",
+                "broken-b",
+            ),
+            "utf8" => set(
+                root.path(),
+                "UPDATE views SET body = CAST(X'80' AS TEXT) WHERE conversation_id = ?1",
+                "broken-b",
+            ),
+            _ => {
+                let body = format!("{}0{}", "[".repeat(10000), "]".repeat(10000));
+                crate::db::write(root.path())
+                    .unwrap()
+                    .unwrap()
+                    .execute(
+                        "UPDATE views SET body = ?1 WHERE conversation_id = 'broken-b'",
+                        [body],
+                    )
+                    .unwrap();
+            }
+        }
+        let reader = Reader::new(root.path().to_owned());
+        let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+        assert_eq!(reply.status, 200);
+        let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(payload["workspaces"], 1);
+        assert_eq!(count(root.path(), "conversations", "broken-a"), 1);
     }
-    for id in ["broken-a", "broken-b"] {
-        set(
-            root.path(),
-            "UPDATE conversations SET manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
-            id,
-        );
-    }
-    set(
-        root.path(),
-        "INSERT INTO rounds (id, conversation_id, number, body) VALUES ('r', ?1, 1, '{broken')",
-        "broken-b",
-    );
-    let reader = Reader::new(root.path().to_owned());
-    let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
-    assert_eq!(reply.status, 200);
-    let payload: Value = serde_json::from_slice(&reply.body).unwrap();
-    assert_eq!(payload["workspaces"], 1);
-    assert_eq!(count(root.path(), "conversations", "broken-a"), 1);
 }
 
 #[cfg(unix)]
@@ -522,4 +542,41 @@ fn retention_preview_never_opens_a_recent_conversations_lock() {
     let preview = retention_preview(root.path(), cutoff);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(preview.unwrap(), 0);
+}
+
+#[test]
+fn retention_preview_preserves_waiting_handovers_until_claimed() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "old");
+    let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    set(
+        root.path(),
+        "UPDATE conversations SET created = '2020-01-01T00:00:00Z', manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+        "old",
+    );
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+        "old",
+    );
+    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    assert_eq!(handover(root.path(), workspace)["status"], "waiting");
+    set(
+        root.path(),
+        "UPDATE workspaces SET note = 'new note' WHERE id = ?1",
+        workspace,
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    let reader = Reader::new(root.path().to_owned());
+    let reply = reader.request("GET", "/app/storage/preview?days=30", None, b"");
+    assert_eq!(reply.status, 200);
+    let payload: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!(payload["workspaces"], 0);
+    set(
+        root.path(),
+        "UPDATE workspaces SET pending = 0, owner = 'new-boss' WHERE id = ?1",
+        workspace,
+    );
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
 }

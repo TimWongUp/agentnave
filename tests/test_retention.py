@@ -65,7 +65,7 @@ def test_workspace_cleanup_cascades_and_forgets_handover_but_keeps_files(tmp_pat
         fixture(tmp_path, id_)
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         db.execute(
-            "INSERT INTO workspaces (id, owner, pending, title) VALUES (?, ?, 1, 'keep')",
+            "INSERT INTO workspaces (id, owner, pending, title) VALUES (?, ?, 0, 'keep')",
             (_WORKSPACE, _WORKSPACE),
         )
         db.execute(
@@ -196,7 +196,7 @@ async def test_worker_does_not_block_loop_and_shutdown_joins_inflight_pass(
         await worker.close()
 
 
-@pytest.mark.parametrize("change", ["activity", "sibling"])
+@pytest.mark.parametrize("change", ["activity", "sibling", "handover"])
 def test_cleanup_rereads_after_taking_conversation_locks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
@@ -210,6 +210,14 @@ def test_cleanup_rereads_after_taking_conversation_locks(
         if path.name == "old.lock":
             if change == "sibling":
                 fixture(tmp_path, "new-sibling")
+            elif change == "handover":
+                db = Database(tmp_path)
+                try:
+                    db.release(
+                        _WORKSPACE, _WORKSPACE, "codex", None, "new note", "2026-11-03T00:00:00Z"
+                    )
+                finally:
+                    db.close()
             else:
                 with sqlite3.connect(tmp_path / "agentnave.db") as db:
                     db.execute(
@@ -252,3 +260,83 @@ def test_first_cleanup_repairs_legacy_handover_schema(tmp_path: Path, missing: s
         columns = {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
         assert {"title", "cwd"} <= columns
         assert db.execute("SELECT count(*) FROM former_bosses").fetchone()[0] == 0
+
+
+def test_pending_handover_preserves_note_until_claimed(tmp_path: Path) -> None:
+    settings(tmp_path)
+    fixture(tmp_path, "old")
+    db = Database(tmp_path)
+    try:
+        db.release(
+            _WORKSPACE, _WORKSPACE, "codex", None, "new handover note", "2026-11-03T00:00:00Z"
+        )
+        assert cleanup(tmp_path, now=_NOW) == 0
+        waiting = db.workspace(_WORKSPACE)
+        assert waiting is not None and waiting.pending and waiting.note == "new handover note"
+        empty_workspace = "s-" + "b" * 32
+        db.release(
+            empty_workspace,
+            empty_workspace,
+            "codex",
+            None,
+            "empty workspace note",
+            "2026-11-03T00:00:00Z",
+        )
+        db.claim(_WORKSPACE, "new-boss", "codex", None)
+        assert cleanup(tmp_path, now=_NOW) == 1
+        waiting_empty = db.workspace(empty_workspace)
+        assert waiting_empty is not None and waiting_empty.note == "empty workspace note"
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("broken", ["utf8", "deep-json"])
+def test_bad_view_skips_whole_workspace_and_logs_while_cleaning_healthy_ones(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, broken: str
+) -> None:
+    settings(tmp_path)
+    fixture(tmp_path, "a-broken")
+    fixture(tmp_path, "b-sibling")
+    fixture(tmp_path, "z-good", group=None)
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        if broken == "utf8":
+            db.execute(
+                "UPDATE views SET body = CAST(X'80' AS TEXT) WHERE conversation_id = 'a-broken'"
+            )
+        else:
+            body = (
+                '{"summary":{"updated":"2020-01-01T00:00:00Z"},"x":'
+                + "[" * 10000
+                + "0"
+                + "]" * 10000
+                + "}"
+            )
+            db.execute("UPDATE views SET body = ? WHERE conversation_id = 'a-broken'", (body,))
+    assert cleanup(tmp_path, now=_NOW) == 1
+    assert remaining(tmp_path) == ["a-broken", "b-sibling"]
+    assert "a-broken" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_background_pass_survives_unexpected_exception_and_retries_next_period(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    completed = threading.Event()
+    calls: list[Path] = []
+
+    def pass_(root: Path, **_kwargs: object) -> int:
+        calls.append(root)
+        if len(calls) == 1:
+            raise RecursionError("nested view")
+        completed.set()
+        return 0
+
+    monkeypatch.setattr("agentnave.retention.cleanup", pass_)
+    monkeypatch.setattr("agentnave.retention._INTERVAL", 0.02)
+    worker = Retention(tmp_path)
+    try:
+        assert await asyncio.to_thread(completed.wait, 1)
+        assert "History retention pass failed" in caplog.text
+    finally:
+        await worker.close()
+    assert len(calls) >= 2

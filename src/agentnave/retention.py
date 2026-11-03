@@ -60,6 +60,12 @@ def _timestamp(value: object) -> int | None:
 
 
 def _eligible(connection: sqlite3.Connection, ids: list[str], cutoff: int) -> bool:
+    if connection.execute(
+        "SELECT 1 FROM workspaces JOIN conversations ON manager_session = workspaces.id "
+        "WHERE conversations.id = ? AND pending = 1",
+        (ids[0],),
+    ).fetchone():
+        return False
     for id_ in ids:
         row = connection.execute(_CANDIDATE, (id_,)).fetchone()
         if row is None or row[1] is None or row[2]:
@@ -69,6 +75,7 @@ def _eligible(connection: sqlite3.Connection, ids: list[str], cutoff: int) -> bo
             summary = cast(dict[str, object], view["summary"])
             updated = _timestamp(summary["updated"])
         except (ValueError, TypeError, KeyError):
+            _LOG.exception("History retention skipped conversation %s: unreadable view", id_)
             return False
         created = _timestamp(row[0])
         if created is None or updated is None or max(created, updated) >= cutoff:
@@ -101,7 +108,7 @@ def _remove(connection: sqlite3.Connection, root: Path, ids: list[str], cutoff: 
                 "DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids]
             )
             connection.execute(
-                "DELETE FROM workspaces WHERE NOT EXISTS "
+                "DELETE FROM workspaces WHERE pending != 1 AND NOT EXISTS "
                 "(SELECT 1 FROM conversations WHERE manager_session = workspaces.id) "
                 "AND (id IS ? OR title IS NULL "
                 "OR NOT (pending = 1 OR owner != id OR previous_host IS NOT NULL))",
@@ -150,14 +157,19 @@ def cleanup(
                 break
             if anchor in seen:
                 continue
-            ids = _workspace_ids(connection, anchor)
-            seen.update(ids)
-            if (
-                ids
-                and _eligible(connection, ids, cutoff)
-                and _remove(connection, root, ids, cutoff)
-            ):
-                removed += 1
+            try:
+                ids = _workspace_ids(connection, anchor)
+                seen.update(ids)
+                if (
+                    ids
+                    and _eligible(connection, ids, cutoff)
+                    and _remove(connection, root, ids, cutoff)
+                ):
+                    removed += 1
+            except Exception:
+                # A single damaged workspace must not prevent healthy workspaces expiring.
+                # _remove rolls back its transaction and releases its locks before this log.
+                _LOG.exception("History retention skipped workspace anchored by %s", anchor)
         return removed
 
 
@@ -176,7 +188,7 @@ class Retention:
             self._busy.set()
             try:
                 cleanup(self.root, stopped=self._stop.is_set)
-            except (OSError, ValueError, sqlite3.Error):
+            except Exception:
                 _LOG.exception("History retention pass failed; history preserved for retry")
             finally:
                 self._busy.clear()

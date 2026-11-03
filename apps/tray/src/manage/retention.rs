@@ -3,6 +3,15 @@ use super::*;
 use std::collections::HashSet;
 
 fn eligible(connection: &Connection, ids: &[String], cutoff: i64) -> Result<bool, String> {
+    // Older read-only databases may predate handovers; the preview never migrates them.
+    if crate::db::workspace_has(connection, "pending").map_err(|e| e.to_string())?
+        && connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM workspaces JOIN conversations ON manager_session = workspaces.id \
+             WHERE conversations.id = ?1 AND pending = 1)",
+            [&ids[0]], |row| row.get::<_, bool>(0),
+        ).map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
     for id in ids {
         let row = connection
             .query_row(
@@ -89,12 +98,18 @@ pub(super) fn count(root: &Path, cutoff: i64) -> Result<usize, String> {
         if ids.is_empty() {
             continue;
         }
-        let eligible = {
-            let transaction = connection.transaction().map_err(|e| e.to_string())?;
-            workspace_ids(&transaction, &anchor)? == ids && eligible(&transaction, &ids, cutoff)?
-        };
-        if eligible && available(root, &ids)? {
-            count += 1;
+        let candidate = (|| -> Result<bool, String> {
+            let eligible = {
+                let transaction = connection.transaction().map_err(|e| e.to_string())?;
+                workspace_ids(&transaction, &anchor)? == ids
+                    && eligible(&transaction, &ids, cutoff)?
+            };
+            Ok(eligible && available(root, &ids)?)
+        })();
+        match candidate {
+            Ok(true) => count += 1,
+            Ok(false) => {}
+            Err(error) => eprintln!("Storage preview skipped workspace {anchor}: {error}"),
         }
     }
     Ok(count)
