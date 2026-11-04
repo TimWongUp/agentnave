@@ -13,17 +13,18 @@ PTY 驱动交互 Claude Code 的 spike 已跑通：bracketed paste 投递任务�
 
 ## 决定
 
-- **默认关闭的开关**。App 在 Claude 员工卡片上提供「交互模式」开关，私聊与会议共用；关闭时行为与现在完全相同。先支持 macOS 和 Linux（Linux 单独做真实验收）；Windows 和用 API key 的用户继续用 `-p`。隔离会议席位和受限工具运行继续用 `-p`。开关存于数据根 `settings.json`（App 写入，旧服务忽略多出的键，损坏时与同文件其他设置一样返回 App 修复错误）；服务在入口把它转成 Claude Adapter 的选项并在 `defaults_applied` 注明，调用方显式传这个选项时以显式值为准。它不是权限键，不受权限档位约束。
+- **默认关闭的开关**。App 在 Claude 员工卡片上提供「交互模式」开关，私聊与会议共用；关闭时行为与现在完全相同。先支持 macOS 和 Linux（Linux 单独做真实验收）；Windows 继续用 `-p`。订阅登录、长期 token（`CLAUDE_CODE_OAUTH_TOKEN`）和 API key 都是官方认证方式，一样走交互模式。隔离会议席位和受限工具运行继续用 `-p`。开关存于数据根 `settings.json`（App 写入，旧服务忽略多出的键，损坏时与同文件其他设置一样返回 App 修复错误）；服务在入口把它转成 Claude Adapter 的选项并在 `defaults_applied` 注明，调用方显式传这个选项时以显式值为准。它不是权限键，不受权限档位约束。
 - **形状**。开关打开时，Claude Adapter 的 Provider argv 换成 AgentNave 自带的 helper，由 helper 在同一 supervisor 进程组里建 PTY、启动 `claude`；进程所有权、取消和清理与现在相同。helper 就是 Provider 进程：它把 transcript 和 hooks 归一成事件写到 stdout，由 Claude Adapter 解析；hooks 与 helper 之间的通道是 helper 私有的，只在该调用自己的临时目录里。核心看到的仍是一个 Provider 进程和一串事件。一次调用一个进程，回合结束即退出，不保活。模型、档位、权限档位的映射与 `-p` 相同；hooks 设置文件属于协议必需参数，与用户自己的 hooks 合并生效。
 - **投递内容不变**。服务追加的派发前缀和任务原文与 `-p` 完全相同，整段 bracketed paste 投递，不拆成按键加粘贴，也不放进系统提示。粘贴前清理控制字符和会提前结束粘贴的转义序列；以 `/`、`!`、`#`、`&` 开头时加防护，不被当作斜杠命令、Bash 模式或记忆写入。
 - **环境**。AgentNave 不设置 `CLAUDE_CODE_ENTRYPOINT`。服务现在已对所有路径清掉宿主会话 ID `CLAUDE_CODE_SESSION_ID`；交互路径另由 helper 在启动 `claude` 前清掉宿主带下来的其余 Claude 变量（`CLAUDECODE`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_CHILD_SESSION` 等具名清单）：继承 `CLAUDE_CODE_CHILD_SESSION` 会关掉 transcript，属于协议必需。服务的进程环境和 `-p` 路径不变。不使用 `CLAUDE_CODE_SKIP_PROMPT_HISTORY`，它会同时关掉 transcript 和续接。
 - **启动阶段**。粘贴前必须先排除已知启动屏，就绪判定不能只看提示符：
   - 首次引导（文字风格、安全须知、终端设置）：按默认走完。文字风格和安全须知回车，终端设置按 Esc 跳过，不改用户的终端；同一屏应答三次仍在，报 BLOCKED。
   - 文件夹信任框：自动选「信任」。选项默认停在「No, exit」，先移到「Yes」并等画面稳定再回车，盲按回车会退出。回执 `warnings` 注明已信任的目录。
+  - API key 确认框：环境里的 `ANTHROPIC_API_KEY` 第一次出现时，Claude Code 问是否使用它，选「Yes」。选项默认停在「No (recommended)」，同样先移到「Yes」等画面稳定再回车。Claude 会把这个 key 的末 20 位记进用户配置的已批准列表；`-p` 本来不问、直接用它。回执 `warnings` 注明。
   - 权限档位的确认框（完全放开档的免责框、自动档的启用确认）：用户在 App 选档位就是同意；helper 在自己的 `--settings` 里写 `skipDangerousModePermissionPrompt`、`skipAutoPermissionPrompt`，属于协议必需参数，不写用户配置。仍然出现就报 BLOCKED。
   - 冷恢复额度框（「Resume this conversation? … will use about N% of your 5-hour usage limit」）：调用方传了 `session_id` 就是要续接，按 Esc 原样恢复，回执 `warnings` 写明闲置时长、token 数和额度百分比。
   - 从摘要恢复框：报 BLOCKED。永不选摘要（会改上下文），永不选「不再询问」（会写用户配置）；能实测后再评估是否改为只选原样恢复。
-  - 登录、API key 确认或不认识的屏：报 BLOCKED，不按键。
+  - 登录或不认识的屏：报 BLOCKED，不按键。
   - 投递顺序：确认弹框已消失、输入框为空后粘贴；确认粘贴在输入框里后回车；回车后用 transcript 核对 user 行。
 - **运行阶段不按键**。弹框只经 hooks 应答（ADR-0057）。画面出现弹框而 hook 没收到，按通道异常报 BLOCKED；hook 待答期间不向终端写任何键。
 - **终态**。回合结束取 transcript 最终回答；`StopFailure` 的 `error`（认证、限流、服务端错误等）映射到现有失败类别；进程意外退出按失败处理。探测或启动失败报 BLOCKED，不自动退回 `-p`；boss 可以显式关掉该选项，本次改用 `-p`。
