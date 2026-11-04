@@ -108,12 +108,12 @@ _Avoid_: Review（专指会议答案的审核）
 
 ## 编排档位（Orchestration Preset）
 
-用户在 App「高级」页按 boss 选定并保存的编排规则：关闭、分工协作、并行复核或自定义，存于 `orchestration.json`；读同一规则文件的 boss 共用一档，之后新接入的 boss 用单独选的默认档。保存后 App 把各自的正文写进每个已接入宿主读取的全局规则文件中 `<!-- AGENTNAVE:START -->` 与 `<!-- AGENTNAVE:END -->` 之间，每个应用一份；关闭即删掉这一段。规则只约束主对话 boss，服务不据此调度。
+用户在 App「高级」页按 boss 选定并保存的编排规则：关闭、分工协作、并行分工或自定义，存于 `orchestration.json`；读同一规则文件的 boss 共用一档，之后新接入的 boss 用单独选的默认档。保存后 App 把各自的正文写进每个已接入宿主读取的全局规则文件中 `<!-- AGENTNAVE:START -->` 与 `<!-- AGENTNAVE:END -->` 之间，每个应用一份；关闭即删掉这一段。规则只约束主对话 boss，服务不据此调度。
 _Avoid_: 编排引擎、调度
 
 ## Explorer／Worker
 
-编排中的两类工位：Explorer 只读，做探索、规划、评审；Worker 可写，做实现。各有简单、困难两档，用户在 App 选 CLI、模型和可选档位，存于 `orchestration.json`；当前接入行启用编排时，`list_members` 的 `orchestration` 才返回工位及可用性，派发才套用角色默认值，boss 按任务难度二选一。关闭保留已保存的选择。与宿主同类的工位标 `native=true`，交给宿主自带的子代理，评审工位同样如此。
+编排中的两类工位：Explorer 只读，做探索、规划、评审；Worker 可写，做实现。各有简单、困难两档，Worker 另有界面简单、困难两档，用于页面、样式、交互和看图的实现，没设时沿用 Worker 同档；用户在 App 选 CLI、模型和可选档位，存于 `orchestration.json`；当前接入行启用编排时，`list_members` 的 `orchestration` 才返回工位及可用性，派发才套用角色默认值，boss 按任务难度选档，涉及界面的实现改用界面档。关闭保留已保存的选择。与宿主同类的工位标 `native=true`，交给宿主自带的子代理，评审工位同样如此。
 
 ## 权限档位（Permission Tier）
 

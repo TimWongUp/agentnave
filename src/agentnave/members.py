@@ -32,8 +32,15 @@ type ReviewRole = Literal[
 ]
 type Difficulty = Literal["easy", "hard"]
 type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
-# Task roles naming an Explorer or Worker difficulty in orchestration.json.
-type OrchestrationRole = Literal["explorer-easy", "explorer-hard", "worker-easy", "worker-hard"]
+# Task roles naming an Explorer or Worker seat in orchestration.json.
+type OrchestrationRole = Literal[
+    "explorer-easy",
+    "explorer-hard",
+    "worker-easy",
+    "worker-hard",
+    "worker-frontend-easy",
+    "worker-frontend-hard",
+]
 
 
 class MemberFileError(ValueError):
@@ -195,6 +202,12 @@ class OrchestrationFile(BaseModel):
     effective_apps: dict[str, OrchestrationPreset] | None = None
     explorer: dict[Difficulty, ReviewSeat] = {}
     worker: dict[Difficulty, ReviewSeat] = {}
+    # A key of its own, which servers that predate it ignore instead of rejecting the file.
+    worker_frontend: dict[Difficulty, ReviewSeat] = {}
+
+    def interface_workers(self) -> dict[Difficulty, ReviewSeat]:
+        """The interface Worker seats, an unset one filled from the Worker seat of its difficulty."""
+        return {**self.worker, **self.worker_frontend}
 
     def enabled(self, host: Host) -> bool:
         key = host.app_id or host.name or ""
@@ -262,9 +275,9 @@ class MemberFile(StrictModel):
         seat: frozenset[str] = frozenset(),
     ) -> tuple[dict[str, ProviderOption], list[str]]:
         """Fill the mode's defaults; `seat` names the keys an App seat set, which the mode's
-        member lists do not restrict (ADR-0038)."""
+        model lists do not restrict (ADR-0038). A CLI the mode leaves out runs for no seat."""
         allowed = self.modes.get(mode)
-        if allowed is not None and provider not in allowed and "model" not in seat:
+        if allowed is not None and provider not in allowed:
             members = [
                 f"{cli}/{model}"
                 for cli, config in allowed.items()
@@ -537,7 +550,7 @@ def add_cli_effort(
 
 def role_seat(role: str | None, host: Host, *, required: bool = False) -> ReviewSeat | None:
     """The App seat a task role names: an agentnave-review role from review.json, or an
-    Explorer/Worker difficulty from orchestration.json. A missing or broken file names none;
+    Explorer/Worker seat from orchestration.json. A missing or broken file names none;
     list_members reports it. Provider inference requires a usable seat instead."""
     role = (role or "").strip()
     seat = None
@@ -546,19 +559,22 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
             review = _read_app_file("review.json", ReviewFile, MemberFileError)
             seat = review.seats.get(cast(ReviewRole, role)) if review else None
         elif role in get_args(OrchestrationRole.__value__):
-            kind, difficulty = role.split("-")
+            kind, _, key = role.rpartition("-")
             roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
             if required and roles is not None and not roles.enabled(host):
                 raise MemberFileError(
                     f"{role} seat is not enabled for this host in orchestration.json; "
                     "enable it in the App or pass provider explicitly"
                 )
-            seats = (
-                (roles.explorer if kind == "explorer" else roles.worker)
-                if roles and roles.enabled(host)
-                else {}
-            )
-            seat = seats.get(cast(Difficulty, difficulty))
+            if not roles or not roles.enabled(host):
+                seat = None
+            else:
+                seats = {
+                    "explorer": roles.explorer,
+                    "worker": roles.worker,
+                    "worker-frontend": roles.interface_workers(),
+                }[kind]
+                seat = seats.get(cast(Difficulty, key))
     except MemberFileError:
         if required:
             raise
@@ -639,6 +655,7 @@ class OrchestrationStatus(StrictModel):
     enabled: bool = False
     explorer: dict[Difficulty, ReviewSeatStatus] = {}
     worker: dict[Difficulty, ReviewSeatStatus] = {}
+    worker_frontend: dict[Difficulty, ReviewSeatStatus] = {}
 
 
 class MemberList(StrictModel):
@@ -793,6 +810,9 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 enabled=True,
                 explorer=_review_status(roles.explorer, modes["task"], excluded, host),
                 worker=_review_status(roles.worker, modes["task"], excluded, host),
+                worker_frontend=_review_status(
+                    roles.interface_workers(), modes["task"], excluded, host
+                ),
             )
     except MemberFileError as exc:
         orchestration_error = str(exc)
@@ -836,11 +856,14 @@ def _review_status[Role: str](
         )
         # The host's own CLI is never dispatched through AgentNave; its built-in subagent does it.
         native = seat.provider == host.provider
-        # The seat is the user's own pick for the role: the task member lists do not restrict it.
+        # The seat is the user's own pick for the role: the task model lists do not restrict it,
+        # but a CLI disabled for private tasks runs for no seat (ADR-0053).
         if native:
             reason = None
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
+        elif mode.restricted and all(m.provider != seat.provider for m in task):
+            reason = "CLI is disabled for private tasks in the App"
         elif member is not None and member.error is not None:
             reason = member.error
         else:

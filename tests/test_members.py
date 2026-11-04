@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from agentnave.members import (
     PermissionFileError,
     ProviderExcludedError,
     ReviewFile,
+    ReviewSeat,
     SettingsFileError,
     apply_member,
     list_members,
@@ -56,6 +57,7 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
         assert bool(status.worker) is enabled
         assert (role_seat("explorer-easy", host) is not None) is enabled
         assert (role_seat("worker-hard", host) is not None) is enabled
+        assert (role_seat("worker-frontend-hard", host) is not None) is enabled
 
     codex, claude = Host("codex", "env"), Host("claude", "env")
     check(codex, False)
@@ -83,6 +85,29 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
     check(codex, False)
     # Turning orchestration off preserves the saved picks for the next enable.
     assert json.loads(path.read_text())["worker"]["hard"] == seat
+
+
+def test_interface_seat_falls_back_to_the_worker_seat_of_its_difficulty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    general = {"provider": "codex", "model": "general"}
+    interface = {"provider": "antigravity", "model": "interface"}
+    document = {
+        "version": 1,
+        "preset": "split",
+        "worker": {"hard": general},
+        "worker_frontend": {"easy": interface},
+    }
+    (tmp_path / "orchestration.json").write_text(json.dumps(document))
+    host = Host("claude", "env")
+    status = list_members(frozenset(), host).orchestration
+    assert set(status.worker) == {"hard"}
+    assert status.worker_frontend["hard"].model == "general"
+    assert status.worker_frontend["easy"].model == "interface"
+    assert cast(ReviewSeat, role_seat("worker-frontend-hard", host)).model == "general"
+    assert cast(ReviewSeat, role_seat("worker-frontend-easy", host)).model == "interface"
+    assert role_seat("worker-easy", host) is None
 
 
 @pytest.mark.parametrize(
@@ -472,6 +497,7 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
                     "correctness-reviewer": {"provider": "grok", "model": "shared"},
                     "security-reviewer": {"provider": "grok", "model": "only-here"},
                     "simplicity-reviewer": {"provider": "pi", "model": "shared"},
+                    "performance-reviewer": {"provider": "codex", "model": "chosen"},
                 },
             }
         )
@@ -486,6 +512,21 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
     assert other_model.provider == "pi" and other_model.provider_options == {}
     assert seats["simplicity-reviewer"].available is None
     assert seats["simplicity-reviewer"].replacement is None
+    # A CLI disabled for private tasks runs for no seat, though seats may pick unlisted models.
+    disabled = seats["performance-reviewer"]
+    assert (
+        disabled.available is False
+        and disabled.reason == "CLI is disabled for private tasks in the App"
+    )
+    assert disabled.replacement is not None and disabled.replacement.provider == "pi"
+    document = read_members()
+    assert document is not None
+    with pytest.raises(ValueError, match="not allowed in task"):
+        document.apply("task", "codex", {"model": "chosen"}, frozenset(), seat=frozenset({"model"}))
+    options, _ = document.apply(
+        "task", "pi", {"model": "unlisted"}, frozenset(), seat=frozenset({"model"})
+    )
+    assert options["model"] == "unlisted"
 
 
 def test_member_list_merges_modes_defaults_and_wildcards_in_member_order(
