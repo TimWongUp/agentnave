@@ -1771,3 +1771,5 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
     // Focusing the conversation returns every message, so every folded desk is listed.
     assert_eq!(resolves(&focused), 208);
 }
+
+mod cli_updates;

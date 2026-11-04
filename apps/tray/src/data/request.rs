@@ -21,6 +21,12 @@ impl Reader {
         if let Some(family) = path.strip_prefix("/app/characters/") {
             return crate::characters::request(&self.root, family, method, action, body);
         }
+        if matches!(
+            path,
+            "/app/cli-updates" | "/app/cli-updates/update" | "/app/cli-install-commands"
+        ) {
+            return Self::cli_updates_request(method, path, action, body);
+        }
         if path == "/app/review" {
             return post(method, action, body, |payload| {
                 save(
@@ -97,6 +103,36 @@ impl Reader {
         }
         self.respond(path)
     }
+    fn cli_updates_request(
+        method: &str,
+        path: &str,
+        action: Option<&str>,
+        body: &[u8],
+    ) -> Response {
+        if path == "/app/cli-updates" || path == "/app/cli-install-commands" {
+            if method != "GET" {
+                return Response::error(405, "此路由只接受 GET");
+            }
+            return Response::json(&if path == "/app/cli-install-commands" {
+                crate::detect::update::install_commands()
+            } else {
+                crate::detect::update::state()
+            });
+        }
+        post(method, action, body, |payload| {
+            let Some(provider) = payload["provider"]
+                .as_str()
+                .filter(|p| crate::members::PROVIDERS.contains(p))
+            else {
+                return Response::error(400, "需要有效的 CLI 名称");
+            };
+            match crate::detect::update::update(provider) {
+                Ok(state) => Response::json(&state),
+                Err(error) => Response::error(400, &error),
+            }
+        })
+    }
+
     fn settings_request(
         &self,
         method: &str,

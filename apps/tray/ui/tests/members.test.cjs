@@ -134,3 +134,17 @@ test("a connection published while the members file is being read is read again 
   await new Promise(setImmediate);
   assert.equal(app.run('slot("task", "grok").enabled'), true);
 });
+
+test("a saved employee without an installed CLI stays known until its removal is saved", () => {
+  const app = editor();
+  app.run(`
+    currentDoc.modes.task.claude = { models: [], overrides: {} };
+    markSaved();
+    setProviderEnabled('claude', false, true);
+    let lastSaved = confirmScenes(JSON.parse(savedSnapshot));
+  `);
+  assert.equal(app.run("known('claude', lastSaved)"), true);
+  assert.equal(app.run("slot('task', 'claude').enabled"), false);
+  app.run("markSaved(); lastSaved = confirmScenes(JSON.parse(savedSnapshot))");
+  assert.equal(app.run("known('claude', lastSaved)"), false);
+});

@@ -134,6 +134,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/member-models.js").to_vec(),
         ),
+        "member-updates.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/member-updates.js").to_vec(),
+        ),
         "member-cards.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/member-cards.js").to_vec(),
