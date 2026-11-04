@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import contextlib
 import glob
 import json
 import os
@@ -37,7 +38,11 @@ STRIP_ENV = (
     "CLAUDE_AGENT_SDK_VERSION",
     "CLAUDE_PROJECT_DIR",
 )
-ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+# CSI, OSC and DCS strings, then any other escape: optional intermediates and a final byte
+# (DECSC `\x1b7`, keypad `\x1b=`, charset `\x1b(B`). An unknown one must never stall the screen.
+ANSI = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\|(?![\[\]P])[ -/]*[0-~])"
+)
 DENIAL = "No one can answer during this run; report the blocked action in the final answer."
 STARTUP_TIMEOUT = 60.0
 
@@ -132,6 +137,8 @@ class Turn:
     user_seen: bool = False
     done: bool = False
     gate_seen: bool = False
+    # Background tool calls still running: like --print, the turn waits for their notifications.
+    background: set[str] = field(default_factory=set[str])
 
     def transcript(self, row: dict[str, object]) -> None:
         event = transcript_event(row, self.session_id)
@@ -140,12 +147,27 @@ class Turn:
             self.user_seen |= is_user_prompt(event)
             if event["type"] == "assistant":
                 self.assistant = cast(dict[str, object], event["message"])
+            self.track_background(event)
         if (
             not row.get("isSidechain")
             and row.get("type") == "system"
             and row.get("subtype") == "turn_duration"
         ):
-            self.done = self.user_seen
+            self.done = self.user_seen and not self.background
+
+    def track_background(self, event: dict[str, object]) -> None:
+        content = cast(dict[str, object], event["message"]).get("content")
+        if event["type"] == "user":
+            text = content if isinstance(content, str) else json.dumps(content)
+            for tool_use in re.findall(r"<tool-use-id>([^<]+)</tool-use-id>", text):
+                self.background.discard(tool_use)
+            return
+        for raw in cast(list[object], content) if isinstance(content, list) else []:
+            block = object_dict(raw)
+            if block.get("type") == "tool_use" and object_dict(block.get("input")).get(
+                "run_in_background"
+            ):
+                self.background.add(str(block.get("id")))
 
     def hook(self, event: dict[str, object]) -> None:
         name = event.get("hook_event_name")
@@ -270,7 +292,10 @@ class Screen:
             if self.pending.startswith("\x1b"):
                 match = ANSI.match(self.pending)
                 if match is None:
-                    break  # An escape sequence split across PTY reads.
+                    if len(self.pending) < 256:
+                        break  # An escape sequence split across PTY reads.
+                    match = re.match(r"\x1b", self.pending)  # Unterminated: drop the ESC only.
+                    assert match is not None
                 code = match.group(0)
                 self.pending = self.pending[len(code) :]
                 if code == "\x1b[6n":
@@ -360,8 +385,14 @@ class Terminal:
         finally:
             os.close(slave)
         os.set_blocking(self.master, False)
+        # Refreshed while running: on cancellation Claude may exit before close() looks.
+        self.groups: set[int] = set()
+        self.groups_at = 0.0
 
     def poll(self) -> str:
+        if time.monotonic() - self.groups_at >= 2:
+            self.groups |= spawned_groups(self.process.pid)
+            self.groups_at = time.monotonic()
         readable, writable, _ = select.select(
             [self.master],
             [self.master] if self.outgoing else [],
@@ -383,16 +414,50 @@ class Terminal:
         return self.screen.text()
 
     def close(self) -> None:
+        """Stop Claude and the commands it started in their own process groups, within the
+        supervisor's two-second grace: those groups would outlive the supervisor's cleanup."""
         try:
+            groups = self.groups | spawned_groups(self.process.pid)
+            signal_groups(groups, signal.SIGTERM)
             if self.process.poll() is None:
                 self.process.terminate()
                 try:
-                    self.process.wait(timeout=2)
+                    self.process.wait(timeout=1)
                 except subprocess.TimeoutExpired:
                     self.process.kill()
                     self.process.wait()
+            signal_groups(groups, signal.SIGKILL)
         finally:
             os.close(self.master)
+
+
+def spawned_groups(root: int) -> set[int]:
+    """Process groups led by descendants of root, other than this helper's own group."""
+    listing = subprocess.run(
+        ["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, check=False
+    ).stdout
+    children: dict[int, list[int]] = {}
+    groups: dict[int, int] = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and all(field.isdigit() for field in fields):
+            pid, ppid, pgid = (int(field) for field in fields)
+            children.setdefault(ppid, []).append(pid)
+            groups[pid] = pgid
+    found: set[int] = set()
+    stack = [root]
+    while stack:
+        for child in children.get(stack.pop(), []):
+            found.add(child)
+            stack.append(child)
+    own = os.getpgrp()
+    return {pid for pid in found if groups.get(pid) == pid and pid != own}
+
+
+def signal_groups(groups: set[int], signum: int) -> None:
+    for group in groups:
+        with contextlib.suppress(OSError):
+            os.killpg(group, signum)
 
 
 class Transcript:

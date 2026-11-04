@@ -51,6 +51,13 @@ def test_screen_erases_dismissed_dialog_and_handles_split_cursor_query() -> None
     assert screen.feed(b"6n") == 1
 
 
+def test_screen_skips_short_escapes_claude_emits_at_startup() -> None:
+    screen = tui.Screen()
+    screen.feed(b"\x1b7\x1b[r\x1b8\x1b=\x1b(B\x1bP>|xterm\x1b\\\x1b[?2004h")
+    screen.feed("❯ ready".encode())
+    assert screen.text() == "❯ ready"
+
+
 def test_transcript_projection_skips_metadata_and_sidechains() -> None:
     message = {
         "role": "assistant",
@@ -298,3 +305,22 @@ def test_fake_claude_turn_through_the_standalone_helper(
         assert "without a corresponding hook" in str(parsed.error_message)
         assert not unexpected_key.exists()
     assert not Path(hook_path.read_text()).parent.exists()
+
+
+def test_turn_waits_for_background_tool_notifications() -> None:
+    turn = tui.Turn("session")
+    start = {
+        "type": "tool_use",
+        "id": "tool-1",
+        "name": "Bash",
+        "input": {"run_in_background": True},
+    }
+    end: dict[str, object] = {"type": "system", "subtype": "turn_duration"}
+    turn.transcript({"type": "user", "message": {"role": "user", "content": "task"}})
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
+    turn.transcript(end)
+    assert not turn.done
+    notice = "<task-notification>\n<tool-use-id>tool-1</tool-use-id>\n</task-notification>"
+    turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
+    turn.transcript(end)
+    assert turn.done
