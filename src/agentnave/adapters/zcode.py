@@ -19,6 +19,7 @@ from agentnave.adapters.base import (
     parse_json_lines,
     parse_json_object,
 )
+from agentnave.adapters.zcode_protocol import command
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 
@@ -31,6 +32,9 @@ class ZcodeAdapter(AdapterHooks):
     name = "zcode"
     options_description = "permission_mode (auto, build, edit, plan, yolo, guarded); model accepts providerId/modelId; effort is native thoughtLevel; restricted_tools is not supported"
     supports_restricted_tools = False
+
+    def executable_path(self) -> str:
+        return command()[0][0]
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         args = option_args(

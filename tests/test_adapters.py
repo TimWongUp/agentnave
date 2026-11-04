@@ -63,6 +63,8 @@ def test_native_models_do_not_attribute_child_or_usage_models_to_main_assistant(
 def no_installed_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Argv assertions use bare names; keep real CLIs on this machine out of resolution.
     monkeypatch.setenv("PATH", str(tmp_path / "no-bin"))
+    # prepare() can read dsh's profile; hiding PATH alone still finds its desktop bundle.
+    monkeypatch.setattr(deepseek_adapter, "_bundled_paths", lambda: ())
 
 
 @pytest.mark.parametrize(
@@ -344,9 +346,11 @@ def test_codex_adapter_prefers_executable_desktop_bundle(
         "session-1",
         "-",
     )
+    assert CodexAdapter().is_installed()
 
     desktop.unlink()
     assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
+    assert not CodexAdapter().is_installed()
 
 
 def test_codex_adapter_uses_path_outside_macos(
@@ -379,8 +383,10 @@ def test_provider_executable_prefers_path_then_common_dirs(
     monkeypatch.setattr(codex.sys, "platform", "linux")
 
     assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == "grok"
+    assert not GrokAdapter().is_installed()
     later = _fake_executable(home / ".grok" / "bin", "grok")
     assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == str(later)
+    assert GrokAdapter().is_installed()
     earlier = _fake_executable(home / ".local" / "bin", "grok")
     assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == str(earlier)
     on_path = _fake_executable(tmp_path / "path-bin", "grok")

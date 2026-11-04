@@ -99,10 +99,13 @@ class ClaudeAdapter(AdapterHooks):
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         return option_args(request, self._options)
 
+    def executable_path(self) -> str:
+        return resolve_executable(self.executable)
+
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
         argv = [
-            resolve_executable(self.executable),
+            self.executable_path(),
             "--print",
             "--output-format",
             "stream-json",

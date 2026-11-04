@@ -116,6 +116,9 @@ class CodexAdapter(AdapterHooks):
     }
     _sandboxes = ("read-only", "workspace-write", "danger-full-access")
 
+    def executable_path(self) -> str:
+        return _codex_executable()
+
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         unknown = sorted(set(request.provider_options) - self._options)
         if unknown:
@@ -161,7 +164,7 @@ class CodexAdapter(AdapterHooks):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
-        argv = [_codex_executable(), "exec"]
+        argv = [self.executable_path(), "exec"]
         if request.session_id is not None:
             argv.append("resume")
         argv.append("--json")

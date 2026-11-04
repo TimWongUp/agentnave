@@ -18,7 +18,6 @@ from agentnave.adapters.base import (
     object_dict,
     parse_json_lines,
     parse_json_object,
-    resolve_executable,
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
@@ -127,6 +126,7 @@ def write_restricted_profile(directory: Path) -> None:
 
 class AntigravityAdapter(AdapterHooks):
     name = "antigravity"
+    executable_name = "agy"
     options_description = (
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
         "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
@@ -151,7 +151,7 @@ class AntigravityAdapter(AdapterHooks):
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
         argv = [
-            resolve_executable("agy"),
+            self.executable_path(),
             "--input-format",
             "stream-json",
             "--output-format",

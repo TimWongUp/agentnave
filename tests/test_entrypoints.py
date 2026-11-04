@@ -14,6 +14,7 @@ from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent
 
 from agentnave import __version__, mcp_runtime, mcp_server
+from agentnave.adapters.base import AdapterHooks
 from agentnave.mcp_projection import without_empty_fields
 from agentnave.mcp_server import mcp
 from agentnave.processes import spawn_process, terminate_process_tree
@@ -35,11 +36,15 @@ EXPECTED_TOOLS = [
 def host_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from agentnave.host import Host
 
+    def installed(_adapter: AdapterHooks) -> bool:
+        return True
+
     monkeypatch.delenv("AGENTNAVE_HOST", raising=False)
     monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS", raising=False)
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(mcp_runtime, "HOST", Host())
     monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset[str]())
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed)
 
 
 def _server_args(module: str) -> list[str]:
@@ -1223,11 +1228,10 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
     monkeypatch.setattr(mcp_runtime, "HOST", Host(name="claude", source="env"))
 
     def no_prepare(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("list_members must not prepare CLI commands or discover executables")
+        raise AssertionError("list_members must not prepare CLI commands")
 
     monkeypatch.setattr(GrokAdapter, "prepare", no_prepare)
     monkeypatch.setattr(AntigravityAdapter, "prepare", no_prepare)
-    monkeypatch.setattr("agentnave.adapters.codex._codex_executable", no_prepare)
     async with Client(mcp) as client:
         missing = await client.call_tool("list_members", {})
         assert not missing.is_error
@@ -1317,6 +1321,24 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         ]
         assert path.read_text(encoding="utf-8") == content
         assert sorted(root.iterdir()) == [path, root / "orchestration.json", root / "review.json"]
+
+        def installed(adapter: AdapterHooks) -> bool:
+            return adapter.name != "claude"
+
+        monkeypatch.setattr(AdapterHooks, "is_installed", installed)
+        uninstalled = _payload((await client.call_tool("list_members", {})).structured_content)
+        claude_member = next(
+            item
+            for item in cast(list[dict[str, object]], uninstalled["members"])
+            if item["provider"] == "claude"
+        )
+        assert claude_member["error"] == "CLI is not installed"
+        native_review = _payload(_payload(uninstalled["review"])["simplicity-reviewer"])
+        assert native_review["native"] is True and "available" not in native_review
+        replacement = _payload(
+            _payload(_payload(uninstalled["review"])["security-reviewer"])["replacement"]
+        )
+        assert replacement["provider"] == "codebuddy"
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
         fresh = _payload((await client.call_tool("list_members", {})).structured_content)
         assert fresh["configured"] is True
