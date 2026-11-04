@@ -642,7 +642,9 @@ dialog.act::backdrop { background: #0006; }
 .voice-channel[hidden] { display: none; }
 .voice-roster { flex: none; display: flex; align-items: center; padding-left: 6px; }
 .voice-person, .voice-more { --ring: var(--solid); flex: none; width: 30px; height: 30px; margin-left: -6px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
-.voice-person.boss { --ring: var(--im-boss); }
+/* the boss wears a small crown: centred on the head, turned, then pushed out until its base rests on the rim */
+.voice-person.boss { position: relative; }
+.voice-person.boss::after { --crown: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 2.5l2.6 3L6 1l2.4 4.5L11 2.5 10 9H2z'/%3E%3C/svg%3E"); content: ""; position: absolute; top: 50%; left: 50%; width: 12px; height: 10px; margin: -5px 0 0 -6px; transform: rotate(-35deg) translateY(-20px); background: var(--boss-crown); -webkit-mask: var(--crown) center / contain no-repeat; mask: var(--crown) center / contain no-repeat; }
 .voice-person-head { display: grid; place-items: center; width: 100%; height: 100%; }
 .voice-person-head .head { display: block; width: 100%; height: 100%; border-radius: 50%; background: center / cover no-repeat; }
 .voice-channel[data-active="true"] .voice-roster > * + * { margin-left: -14px; }

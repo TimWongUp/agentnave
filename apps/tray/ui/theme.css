@@ -21,6 +21,8 @@
   --switch-off: #ffffff26;
   --knob: #c7c7cc;
   --knob-on: #1e1e1e;
+  --boss-crown: #e3b341;
+  --scrollbar: #ffffff4d;
   --run: #4fd6c9;
   --review: #f0b45a;
   --done: #7fca90;
@@ -67,6 +69,8 @@
   --switch-off: #00000029;
   --knob: #fff;
   --knob-on: #fff;
+  --boss-crown: #c99a1e;
+  --scrollbar: #c7c7cc;
   --run: #087c73;
   --review: #c4862a;
   --done: #3d9a56;
@@ -113,6 +117,8 @@
     --switch-off: #00000029;
     --knob: #fff;
     --knob-on: #fff;
+    --boss-crown: #c99a1e;
+    --scrollbar: #c7c7cc;
     --run: #087c73;
     --review: #c4862a;
     --done: #3d9a56;
@@ -139,3 +145,10 @@
     --im-aside: #d6f7c2;
   }
 }
+
+/* Scrollbars everywhere: a light grey thumb on no track (scrollbar-color for Chromium, the
+   pseudo-elements for WebKit). */
+* { scrollbar-color: var(--scrollbar) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: var(--scrollbar) padding-box; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
