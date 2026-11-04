@@ -82,7 +82,9 @@ function sceneEffort(scene, provider, modelId) {
 // the models boss may pick (null: any), and the default model's effort ("" follows the CLI).
 function slot(scene, provider) {
   const selection = isRestricted(scene) ? currentDoc.modes[scene][provider] : null;
-  const enabled = !isRestricted(scene) || Boolean(selection);
+  // An open scene runs what restrict() would freeze it to, so editing another CLI changes nothing here.
+  const enabled = isRestricted(scene) ? Boolean(selection)
+    : Boolean(detected[provider]?.installed || currentDoc.defaults?.[scene]?.[provider]);
   const model = (selection ? selection.default : currentDoc.defaults?.[scene]?.[provider]) || "";
   const allowed = selection?.models?.length ? [...selection.models] : null;
   const effort = enabled ? sceneEffort(scene, provider, model || nativeDefault(provider).model) : "";

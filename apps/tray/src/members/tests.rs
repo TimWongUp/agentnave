@@ -68,7 +68,7 @@ fn connecting_a_boss_keeps_existing_settings_and_confirms_only_missing_entries()
     let dir = tempfile::tempdir().unwrap();
     let original = document();
     save(dir.path(), &original).unwrap();
-    confirm_host(dir.path(), "codex@work").unwrap();
+    confirm_host(dir.path(), "codex@work", false).unwrap();
     let confirmed = read(dir.path()).unwrap().unwrap();
     assert_eq!(confirmed["clis"], original["clis"]);
     assert_eq!(confirmed["modes"]["task"], original["modes"]["task"]);
@@ -82,7 +82,7 @@ fn connecting_a_boss_keeps_existing_settings_and_confirms_only_missing_entries()
 fn connecting_a_boss_creates_its_cli_only_and_maps_host_rows() {
     for (id, provider) in [("claude-desktop", "claude"), ("workbuddy", "codebuddy")] {
         let dir = tempfile::tempdir().unwrap();
-        confirm_host(dir.path(), id).unwrap();
+        confirm_host(dir.path(), id, false).unwrap();
         let confirmed = read(dir.path()).unwrap().unwrap();
         assert_eq!(confirmed["clis"], json!({}));
         for mode in MODES {
@@ -92,12 +92,15 @@ fn connecting_a_boss_creates_its_cli_only_and_maps_host_rows() {
             );
         }
         let bytes = fs::read(dir.path().join(FILE)).unwrap();
-        confirm_host(dir.path(), "hermes").unwrap();
+        confirm_host(dir.path(), "hermes", false).unwrap();
         assert_eq!(fs::read(dir.path().join(FILE)).unwrap(), bytes);
     }
+    // A first boss that is no employee still writes empty lists, so a later start-up does not
+    // migrate every installed CLI in.
     let dir = tempfile::tempdir().unwrap();
-    confirm_host(dir.path(), "hermes").unwrap();
-    assert!(!dir.path().join(FILE).exists());
+    confirm_host(dir.path(), "hermes", false).unwrap();
+    let confirmed = read(dir.path()).unwrap().unwrap();
+    assert_eq!(confirmed["modes"], json!({"task": {}, "discussion": {}}));
 }
 
 fn document() -> Value {

@@ -259,11 +259,18 @@ function markSaved(snapshot = JSON.stringify(currentDoc)) {
   refreshDirty();
 }
 
+// Key order carries no meaning: turning a CLI off and on again moves it to the end of its scene.
+const canonical = (value) => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+    : value;
+const sameJson = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 // Unsaved means the document differs from the saved one, or an edit left an option draft
 // that cannot be written yet.
 function refreshDirty() {
   dirty = limitChanged() || (docVersion !== savedVersion &&
-    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0));
+    (!sameJson(currentDoc, JSON.parse(savedSnapshot || "null")) || configurationErrors().length > 0));
 }
 
 function incDocVersion() {
@@ -274,22 +281,25 @@ function incDocVersion() {
 
 // Host cards publish after a connection. Reload a clean employee editor, or add the CLIs the
 // connection confirmed to unsaved edits, so a later save cannot drop them.
+// The key is only recorded once a read was applied; a skipped or overtaken one is retried by the
+// next publication.
 let membersHostsKey = "";
+let membersHostsReading = false;
 window.addEventListener("agentnave:hosts", async ({ detail }) => {
   const key = JSON.stringify((detail.hosts || [])
     .filter((host) => host.status === "connected")
     .map((host) => [host.id, host.last_action?.at]));
-  if (key === membersHostsKey) return;
-  membersHostsKey = key;
-  if (!savedSnapshot || busy) return;
+  if (key === membersHostsKey || membersHostsReading || !savedSnapshot || busy) return;
   const before = docVersion;
   const snapshot = savedSnapshot;
+  membersHostsReading = true;
   try {
     const data = await apiGetMembers();
     if (busy || savedSnapshot !== snapshot) return;
     if (!dirty && docVersion === before) {
       currentDoc = data.document || { version: 1, clis: {}, modes: {} };
       documentError = data.error || null;
+      membersHostsKey = key;
       markSaved();
       renderErrorBanner();
       renderCards();
@@ -307,12 +317,15 @@ window.addEventListener("agentnave:hosts", async ({ detail }) => {
         added = true;
       }
     }
+    membersHostsKey = key;
     if (!added) return;
     savedSnapshot = JSON.stringify(saved);
     refreshDirty();
     renderCards();
   } catch {
-    // Keep the editor on a transient read failure; refresh detection can read it again.
+    // Keep the editor on a transient read failure; the next publication reads it again.
+  } finally {
+    membersHostsReading = false;
   }
 });
 

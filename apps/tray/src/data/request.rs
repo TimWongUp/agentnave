@@ -243,6 +243,7 @@ impl Reader {
         if let Some(hosts) = guard.as_ref() {
             crate::members::prepare(&self.root, hosts.cached_snapshot(), &detected);
         }
+        crate::members::mark_prepared();
     }
     pub(super) fn boss_homes(&self) -> boss_app::Homes {
         let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
@@ -362,17 +363,25 @@ impl Reader {
                 } else {
                     Vec::new()
                 };
+                // Judged before the connection counts itself as a boss that ran here.
+                let used = operation == "connect"
+                    && crate::members::used_before(&self.root, hosts.cached_snapshot());
                 let result = hosts.action(operation, &payload);
                 // Connecting, removing or moving a host changes which rules files carry the block.
                 if matches!(operation, "connect" | "remove" | "root") {
                     self.sync_rules(hosts, &before);
                 }
-                self.host_action_response(operation, result)
+                self.host_action_response(operation, result, used)
             }
         }
     }
 
-    fn host_action_response(&self, operation: &str, result: Result<Value, String>) -> Response {
+    fn host_action_response(
+        &self,
+        operation: &str,
+        result: Result<Value, String>,
+        used: bool,
+    ) -> Response {
         let mut result = match result {
             Ok(result) => result,
             Err(error) => return Response::error(400, &error),
@@ -383,6 +392,7 @@ impl Reader {
             && let Err(error) = crate::members::confirm_host(
                 &self.root,
                 result["host"]["id"].as_str().unwrap_or_default(),
+                used,
             )
         {
             let message = result["message"].as_str().unwrap_or_default();

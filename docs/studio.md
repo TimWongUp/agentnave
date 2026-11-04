@@ -96,7 +96,7 @@
 
 保存通过带操作请求头的 POST 原子替换 `members.json`。Rust 只校验结构与引用（未知字段、引用未配置的模型、默认模型或默认 effort 不在允许范围），参数是否有效以服务端 Adapter 校验为准；文件损坏时显示错误并禁止页面保存，需先修复文件再重新读取。设置页整份保存，外部编辑后请重新读取；并发编辑以最后一次保存为准。见 [ADR-0014](adr/0014-tray-members-and-one-click-update.md)。
 
-boss 未获点名时先读 `list_members`，从一份 `members` 列表中按模式与说明选择。行内 `modes` 省略即所有模式可用，空数组表示均不可用；task 的宿主排除项会从可用模式中去掉 task，discussion 不受宿主排除影响。有效配置不同的模式拆成各自一行，`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认。顶层 `restricted` 列出受限模式，未受限模式允许任意 provider/model，但 task 仍遵守宿主排除；某 CLI 不限模型时用同一列表中的 `model="*"` 行说明。成员不返回 `valid`，Adapter 参数校验失败时带 `error`；无 `error` 不证明安装、登录、模型可用或任务目录符合要求。
+boss 未获点名时先读 `list_members`，从一份 `members` 列表中按模式与说明选择。行内 `modes` 省略即所有模式可用，空数组表示均不可用；task 的宿主排除项会从可用模式中去掉 task，discussion 不受宿主排除影响。有效配置不同的模式拆成各自一行，`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认。顶层 `restricted` 列出受限模式，未受限模式允许任意 provider/model，但 task 仍遵守宿主排除；某 CLI 不限模型时用同一列表中的 `model="*"` 行说明。成员不返回 `valid`，Adapter 参数校验失败或 CLI 未安装时带 `error`；无 `error` 不证明登录、模型可用或任务目录符合要求。
 
 从包含托盘的版本起，每个 GitHub Release 附带 macOS 通用安装包 `AgentNave_<版本>_universal.dmg`：打开后把 AgentNave 拖进“应用程序”。应用未经 Apple 签名公证，首次打开须在访达中右键“打开”放行。
 

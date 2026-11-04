@@ -5,6 +5,8 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -473,10 +475,9 @@ fn migrate(root: &Path, detected: &Value, has_boss: bool) -> Result<(), String> 
     Ok(())
 }
 
-/// Run once after host detection, while host actions are locked out of the migration.
 /// Whether AgentNave ran here before: a boss was connected or has dispatched work. A missing
 /// file then meant every CLI, so the migration keeps them.
-fn used_before(root: &Path, hosts: &Value) -> bool {
+pub fn used_before(root: &Path, hosts: &Value) -> bool {
     // A boss counts once its config carries the AgentNave entry, even while it needs repair.
     let connected = hosts["hosts"].as_array().is_some_and(|hosts| {
         hosts.iter().any(|host| {
@@ -495,14 +496,36 @@ fn used_before(root: &Path, hosts: &Value) -> bool {
         })
 }
 
+/// Run once after host detection, while host actions are locked out of the migration.
 pub fn prepare(root: &Path, hosts: &Value, detected: &Value) {
     if let Err(error) = migrate(root, detected, used_before(root, hosts)) {
         eprintln!("无法迁移员工名单：{error}");
     }
 }
 
+/// The employee page waits for the start-up migration, so it never edits the list from before.
+static PREPARED: Mutex<bool> = Mutex::new(false);
+static PREPARED_CHANGED: Condvar = Condvar::new();
+
+/// Called once the start-up migration ran or was skipped.
+pub fn mark_prepared() {
+    *PREPARED.lock().unwrap_or_else(|p| p.into_inner()) = true;
+    PREPARED_CHANGED.notify_all();
+}
+
+fn wait_prepared() {
+    if cfg!(test) {
+        return;
+    }
+    let ready = PREPARED.lock().unwrap_or_else(|p| p.into_inner());
+    // Probing the CLIs bounds the wait; past it the page shows the file as it is.
+    let _ = PREPARED_CHANGED.wait_timeout_while(ready, Duration::from_secs(60), |ready| !*ready);
+}
+
 /// Successful boss connections confirm only their own CLI; existing selections stay intact.
-pub fn confirm_host(root: &Path, id: &str) -> Result<(), String> {
+/// `used` is whether AgentNave ran here before this connection, judged by the caller from the
+/// hosts as they were before it.
+pub fn confirm_host(root: &Path, id: &str, used: bool) -> Result<(), String> {
     if crate::PREVIEW {
         return Ok(());
     }
@@ -512,12 +535,8 @@ pub fn confirm_host(root: &Path, id: &str) -> Result<(), String> {
     } else {
         boss
     };
-    if !PROVIDERS.contains(&provider) {
-        return Ok(());
-    }
     // A connection that beats the start-up migration migrates first, so it adds this CLI to
     // what was usable rather than replacing it.
-    let used = used_before(root, &Value::Null);
     let open = match read(root)? {
         None => used,
         Some(document) => MODES
@@ -528,8 +547,10 @@ pub fn confirm_host(root: &Path, id: &str) -> Result<(), String> {
         migrate(root, &crate::detect::detected(false), used)?;
     }
     let mut document = read(root)?.unwrap_or_else(empty);
+    // Even a boss that is no employee (Hermes) writes the lists, so a later start-up does not
+    // take this install for one that ran before.
     let mut changed = confirm_scenes(&mut document, &Value::Null);
-    for mode in MODES {
+    for mode in MODES.iter().filter(|_| PROVIDERS.contains(&provider)) {
         let selection = document["modes"][mode].as_object_mut().unwrap();
         if !selection.contains_key(provider) {
             selection.insert(provider.into(), json!({"models": [], "overrides": {}}));
@@ -561,6 +582,7 @@ fn document_state(root: &Path) -> (Value, Value) {
 
 /// `GET /settings/members`: the document, why it cannot be edited, and the detected CLIs.
 pub fn state(root: &Path, refresh: bool) -> Value {
+    wait_prepared();
     let detected = crate::detect::detected(refresh);
     let (document, error) = document_state(root);
     let (review, review_error) = match read_review(root) {

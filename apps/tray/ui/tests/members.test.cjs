@@ -105,3 +105,31 @@ test("a connection made while employee edits are unsaved joins them instead of b
     assert.equal(app.run("dirty"), true);
   }
 });
+
+test("turning a CLI off and on again leaves nothing unsaved", () => {
+  const app = editor();
+  app.run(`
+    detected.claude = { installed: true };
+    for (const scene of SCENE_IDS) currentDoc.modes[scene] = { codex: { models: [], overrides: {} }, claude: { models: [], overrides: {} } };
+    markSaved();
+    setProviderEnabled("codex", false, true);
+    setProviderEnabled("codex", true);
+  `);
+  assert.equal(app.run("dirty"), false);
+});
+
+test("a connection published while the members file is being read is read again later", async () => {
+  const answers = [];
+  const app = editor(() => new Promise((resolve) => answers.push((document) => resolve({ ok: true, json: async () => ({ document }) }))));
+  const hosts = (...ids) => ({ detail: { hosts: ids.map((id) => ({ id, status: "connected", last_action: { at: "1" } })) } });
+  const file = app.doc();
+  const first = app.listeners["agentnave:hosts"](hosts("codex"));
+  await app.listeners["agentnave:hosts"](hosts("codex", "grok"));
+  answers.shift()(file);
+  await first;
+  for (const scene of ["task", "discussion"]) file.modes[scene].grok = { models: [], overrides: {} };
+  const retry = app.listeners["agentnave:hosts"](hosts("codex", "grok"));
+  answers.shift()(file);
+  await retry;
+  assert.equal(app.run('slot("task", "grok").enabled'), true);
+});
