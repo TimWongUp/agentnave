@@ -15,8 +15,8 @@ const sameJson = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canon
 // apps' global rules. The rules files are listed one row per file with every app that reads it.
 const ORCHESTRATION_EFFECTS = {
   off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
-  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划、评审交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration, planning, and review to Explorer, and implementation to Worker, using their quota."),
-  parallel: AN.L("在分工协作之外，互不依赖的步骤会同时派给多个 Worker，实现后再换一个 Explorer 复核，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to multiple Workers in parallel and reviewed by another Explorer afterwards, using more quota."),
+  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration and planning to Explorer, and implementation to Worker, using their quota."),
+  parallel: AN.L("在分工协作之外，互不依赖的步骤会同时派给多个 Worker，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to multiple Workers in parallel, using more quota."),
   custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
 };
 const ORCHESTRATION_ROLES = [
@@ -25,7 +25,7 @@ const ORCHESTRATION_ROLES = [
   ["worker", "easy", AN.L("Worker · 简单", "Worker · Easy"), AN.L("可写：实现", "Writable: implement")],
   ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：实现", "Writable: implement")],
 ];
-const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行复核", "Parallel"), custom: AN.L("自定义", "Custom") };
+const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
 let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
 let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
 let orchestrationView = "off"; // The mode being looked at; looking changes nothing.

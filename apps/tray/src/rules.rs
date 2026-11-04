@@ -17,16 +17,16 @@ const SHARED: &str = "## AgentNave 编排偏好
 - 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数；派发前按 agentnave-manager 调用。
 - Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一，取 `list_members` 的 `orchestration`：`native` 工位交给宿主自带子代理并尽量用该模型，它不经过服务，prompt 要写明非交互，Explorer 还要写明只读；其余派发时 `seat` 用 `explorer-easy`、`explorer-hard`、`worker-easy` 或 `worker-hard`，省略 `provider`、`access` 和模型，服务按 App 工位补齐；`role` 写具体职责，新任务必传 `cwd`。工位不可用时用 `list_members` 的 `replacement`，连同原来的 `seat` 或 `role` 一起传；没有工位时按任务组员选，都不可用时自己做。
 - 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；小事自己做。
-- 探索、规划、评审派 Explorer，实现派 Worker。评审不交给原来的 Worker，尽量换模型。
+- 探索、规划派 Explorer，实现派 Worker。
 - 同一组文件同一时间只有一个 Worker 在写；同一职责续接只传 `session_id`，其余由服务继承；换职责时传新的 `role` 或 `seat` 并给自足简报。
-- 评审按风险定级；启用 agentnave-review 时，评审的定级和选工位都按它，不用 Explorer。
+- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。
 - `succeeded` 不等于完成，boss 核对产物后验收；失败或取消时先核对现状，再决定续接、重派还是收尾。";
 
 const PARALLEL: &str = "
 - 计划确认后，互不依赖的写入步骤并行派给多个 Worker，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。
 - 有实质取舍或分歧时进会议室出决定，会上不改代码。
-- 非琐碎的实现换一个 Explorer 做只读复核；高风险改动按具体的失败假设追加验证。
-- 没有新证据或待解问题时，不再追加讨论、重试和复核。";
+- 不为每次实现另派复核；高风险改动由 boss 针对具体的出错方式追加验证。
+- 没有新证据或待解问题时，不再追加讨论、重试和验证。";
 
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
 pub fn presets() -> Value {

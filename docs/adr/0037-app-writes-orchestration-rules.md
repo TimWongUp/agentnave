@@ -6,6 +6,7 @@
 - 一档对全部宿主生效的条款由 [ADR-0041](0041-orchestration-mode-per-boss.md) 取代
 - 工位只由 `list_members` 回报的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊自动套用工位设置。
 - 自定义编排规则是唯一手填例外的条款由 [ADR-0044](0044-meeting-voice-cloud-and-key-input.md) 修订：增加语音与摘要设置例外。
+- 「并行复核」加上换模型复核的条款由 [ADR-0051](0051-parallel-preset-without-recheck.md) 修订：档位改名「并行分工」，不再逐次复核。
 
 ## 背景
 

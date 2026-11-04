@@ -146,7 +146,7 @@
       { keys: ["claude", "grok"], labels: ["Claude Code", "Grok"], mark: "claude" },
       { keys: ["codex"], labels: ["Codex"], mark: "codex" },
     ],
-    presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行复核的规则" },
+    presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则" },
     files: [
       { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
       { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },

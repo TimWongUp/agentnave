@@ -108,7 +108,7 @@ _Avoid_: Review（专指会议答案的审核）
 
 ## 编排档位（Orchestration Preset）
 
-用户在 App「高级」页按 boss 选定并保存的编排规则：关闭、分工协作、并行复核或自定义，存于 `orchestration.json`；读同一规则文件的 boss 共用一档，之后新接入的 boss 用单独选的默认档。保存后 App 把各自的正文写进每个已接入宿主读取的全局规则文件中 `<!-- AGENTNAVE:START -->` 与 `<!-- AGENTNAVE:END -->` 之间，每个应用一份；关闭即删掉这一段。规则只约束主对话 boss，服务不据此调度。
+用户在 App「高级」页按 boss 选定并保存的编排规则：关闭、分工协作、并行分工或自定义，存于 `orchestration.json`；读同一规则文件的 boss 共用一档，之后新接入的 boss 用单独选的默认档。保存后 App 把各自的正文写进每个已接入宿主读取的全局规则文件中 `<!-- AGENTNAVE:START -->` 与 `<!-- AGENTNAVE:END -->` 之间，每个应用一份；关闭即删掉这一段。规则只约束主对话 boss，服务不据此调度。
 _Avoid_: 编排引擎、调度
 
 ## Explorer／Worker
