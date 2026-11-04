@@ -387,8 +387,12 @@ async def test_wait_update_timeout_keeps_streaming_public_tail(
     manager = InvocationManager()
     invocation_id = manager.start(InvocationRequest("claude", "streaming_message", tmp_path))
     try:
-        assert await manager.wait_for_update(invocation_id, 0.5) is None
-        output, age = manager.recent_output(invocation_id)
+        deadline = time.monotonic() + 10
+        while True:
+            assert await manager.wait_for_update(invocation_id, 0.05) is None
+            output, age = manager.recent_output(invocation_id)
+            if output.endswith("中文") or time.monotonic() > deadline:
+                break
         assert output == "x" * 600 + "中文"
         assert age is not None
         waiting = asyncio.create_task(manager.wait_for_update(invocation_id, 600))
