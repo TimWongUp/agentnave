@@ -218,6 +218,8 @@ async function saveMembers() {
     }
     if (limitChanged()) await saveLimit();
     refreshDirty();
+    // Saved membership decides each card's place and the folded uninstalled list.
+    renderCards();
     feedback.textContent = L("设置已保存 · 参数是否有效以 boss 读取时的校验为准", "Settings saved · Option validity is verified when read by the boss");
     feedback.className = "save-feedback success";
     showNotice(L("设置已保存", "Settings saved"));

@@ -187,6 +187,7 @@ function edited() {
 
 // Change one scene, or both while the card is not split.
 function changeSlot(provider, scene, change) {
+  if (pendingDisable === provider) pendingDisable = null;
   const scenes = scene ? [scene] : SCENE_IDS;
   // A joined card shows the private-task row, so both scenes take it.
   const shown = slot(scene || "task", provider);

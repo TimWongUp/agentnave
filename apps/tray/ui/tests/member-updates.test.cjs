@@ -154,3 +154,21 @@ test("updating disables refresh controls and skips both manual and focus detecti
   ui.run("cliBatch = null; productionUpdateControls()");
   assert.equal(ui.run("$('refresh-detection').disabled"), false);
 });
+
+test("a check with nothing new leaves the cards alone", async () => {
+  const ui = app(async () => ({ ok: true, json: async () => ui.json("cliUpdates") }));
+  ui.run("summaries = []");
+  await ui.run("loadCliUpdates()");
+  assert.equal(ui.run("summaries.length"), 0);
+});
+
+test("a save during the read after an update is not overwritten", async () => {
+  const ui = app(async (url) => {
+    if (String(url).includes("cli-updates")) return { ok: true, json: async () => ({ clis: {} }) };
+    ui.run("savedSnapshot = '{\"saved\":true}'; currentDoc = { saved: true }");
+    return { ok: true, json: async () => ({ ...members, document: { stale: true } }) };
+  });
+  ui.run("savedSnapshot = '{}'; currentDoc = {}");
+  await ui.run('performCliUpdate("codex")');
+  assert.deepEqual(ui.json("currentDoc"), { saved: true });
+});

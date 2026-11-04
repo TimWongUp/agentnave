@@ -18,19 +18,19 @@ async function loadCliInstallCommands() {
 
 // Called only after cards have painted; channel checks never hold up initial members data.
 async function loadCliUpdates() {
-  if (!cliUpdating && !cliBatch) { cliSummary = ""; renderCards(); }
+  if (cliSummary && !cliUpdating && !cliBatch) { cliSummary = ""; renderCards(); }
   const query = ++cliQuery;
+  // A failed check must not leave an older 'update available' result actionable.
+  let latest = { clis: {} };
   try {
     const res = await fetch("/app/cli-updates", { cache: "no-store" });
     if (!res.ok) throw new Error(String(res.status));
-    const data = await res.json();
-    if (query !== cliQuery || cliUpdating || cliBatch) return;
-    cliUpdates = data;
-  } catch (_) {
-    if (query !== cliQuery || cliUpdating || cliBatch) return;
-    // A failed check must not leave an older 'update available' result actionable.
-    cliUpdates = { clis: {} };
-  }
+    latest = await res.json();
+  } catch (_) { /* Nothing to offer until a check succeeds. */ }
+  if (query !== cliQuery || cliUpdating || cliBatch) return;
+  // A check that found nothing new leaves the cards, and any open control in them, alone.
+  if (JSON.stringify(latest) === JSON.stringify(cliUpdates)) return;
+  cliUpdates = latest;
   renderCards();
 }
 
@@ -92,9 +92,12 @@ async function performCliUpdate(provider) {
   } finally {
     // Read the backend's refreshed detection and members document without discarding edits.
     try {
+      const before = savedSnapshot;
+      const seatsBefore = reviewSaves;
       const data = await apiGetMembers(false);
       detected = data.detected || {};
-      if (!dirty && !busy) {
+      // A save made during this read is newer than what it returned.
+      if (!dirty && !busy && savedSnapshot === before && reviewSaves === seatsBefore) {
         currentDoc = data.document || currentDoc;
         markSaved();
         documentError = data.error || null;
