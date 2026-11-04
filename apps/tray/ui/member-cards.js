@@ -105,6 +105,15 @@ function slotAllowedRows({ provider, current, native, all, offered, model, key, 
   return rows;
 }
 
+function renderMembership(provider, enabled) {
+  return el("button", {
+    type: "button",
+    className: "member-toggle",
+    dataset: { focusKey: `${provider}/membership` },
+    onClick: () => setProviderEnabled(provider, !enabled),
+  }, enabled ? L("移除", "Remove") : L("启用", "Enable"));
+}
+
 // One card per CLI: one row for both scenes, or one row each once split.
 function renderCards() {
   const container = $("cli-cards");
@@ -117,6 +126,7 @@ function renderCards() {
   const cards = document.createDocumentFragment();
   // Not installed and named by no scene or default: only in the folded list at the end.
   const missing = [];
+  cards.appendChild(renderCliUpdateSummary());
   // Employees as last saved come first; a card stays put while its switch is being changed.
   const saved = confirmScenes(JSON.parse(savedSnapshot || JSON.stringify(currentDoc)));
   const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
@@ -124,7 +134,7 @@ function renderCards() {
   for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
     const info = detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
     const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
-    const listed = known(provider);
+    const listed = known(provider, saved);
     if (!info.installed && !listed) {
       missing.push(provider);
       continue;
@@ -134,8 +144,9 @@ function renderCards() {
     const head = el("div", { className: "member-head" },
       el("div", { className: "member-title" },
         el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
-        el("span", { className: "cli-name" }, name),
+        el("span", { className: "cli-name", title: name }, name),
         info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
+        renderCliUpdate(provider),
         info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed"))),
       el("div", { className: "member-end" },
         el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`), "aria-hidden": enabled ? null : "true" },
@@ -147,35 +158,23 @@ function renderCards() {
             dataset: { focusKey: `${provider}/split/${value}` },
             onClick: () => value !== split && setSplit(provider, value),
           }, text))),
-        renderPermission(provider) || el("span")));
+        el("div", { className: "member-tail" }, renderPermission(provider) || el("span"), renderMembership(provider, enabled))));
     const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
-      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认停用 ${name}`, `Confirm disabling ${name}`) },
-        el("p", {}, L(`停用会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Disabling clears default and allowed models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
+      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
+        el("p", {}, L(`移除会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default and allowed models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
         el("div", { className: "btn-group" },
-          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, L("保留启用", "Keep enabled")),
-          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认停用", "Disable")))));
+          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, L("保留", "Keep")),
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     for (const row of rows) card.appendChild(row);
     if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
+    card.appendChild(renderCliUpdateError(provider));
     cards.appendChild(card);
   }
 
-  if (missing.length) {
-    const names = missing.map((p) => PROVIDER_NAMES[p] || p);
-    const box = el("div", { className: "cli-missing" },
-      el("button", {
-        type: "button",
-        className: "cli-missing-toggle",
-        dataset: { focusKey: "missing/toggle" },
-        "aria-expanded": String(missingOpen),
-        onClick: () => { missingOpen = !missingOpen; renderCards(); },
-      }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(L(`未安装的 CLI（${missing.length}）`, `Uninstalled CLIs (${missing.length})`))));
-    if (missingOpen) box.appendChild(el("p", { className: "cli-missing-list" },
-      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
-    cards.appendChild(box);
-  }
+  if (missing.length) cards.appendChild(renderMissingClis(missing));
 
   container.replaceChildren(cards);
   updateControls();
@@ -219,6 +218,8 @@ async function saveMembers() {
     }
     if (limitChanged()) await saveLimit();
     refreshDirty();
+    // Saved membership decides each card's place and the folded uninstalled list.
+    renderCards();
     feedback.textContent = L("设置已保存 · 参数是否有效以 boss 读取时的校验为准", "Settings saved · Option validity is verified when read by the boss");
     feedback.className = "save-feedback success";
     showNotice(L("设置已保存", "Settings saved"));
@@ -248,7 +249,7 @@ function renderErrorBanner() {
 // Re-probe the CLIs. A quiet probe runs when Settings opens or regains focus and only speaks
 // up when the lists changed.
 async function refreshDetection(quiet = false) {
-  if (busy || probing) return;
+  if (busy || probing || cliUpdating || cliBatch) return;
   probing = true;
   probedAt = Date.now();
   const before = savedSnapshot;
@@ -279,6 +280,7 @@ async function refreshDetection(quiet = false) {
     else if (changed && currentTab === "members") showNotice(L("检测到工具或模型列表有变化，已自动刷新", "Detected changes in tools or models; refreshed automatically"));
     // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
     if (!quiet || changed || reloaded || tiersChanged) renderCards();
+    void loadCliUpdates();
   } catch (err) {
     if (!quiet) showNotice(L(`刷新检测失败: ${err.message}`, `Refresh failed: ${err.message}`), true);
   } finally {
@@ -288,13 +290,14 @@ async function refreshDetection(quiet = false) {
 }
 
 function probeWhenStale() {
-  if (document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
+  if (!cliUpdating && !cliBatch && document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
 }
 
 // Load initial members data
 async function loadMembers() {
   if (currentTab === "members") showNotice(L("正在读取成员与模型配置…", "Loading employee and model settings…"));
   try {
+    await loadCliInstallCommands();
     const data = await apiGetMembers(false);
     detected = data.detected || {};
     currentDoc = data.document || { version: 1, clis: {}, modes: {} };
@@ -310,6 +313,7 @@ async function loadMembers() {
     }
 
     renderCards();
+    void loadCliUpdates();
   } catch (err) {
     documentError = err.message;
     renderErrorBanner();

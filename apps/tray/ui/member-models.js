@@ -104,9 +104,9 @@ const isSplit = (provider) => splitCards.has(provider) ||
   JSON.stringify(shownSlot("task", provider)) !== JSON.stringify(shownSlot("discussion", provider)) ||
   sceneOverrides("task", provider) !== sceneOverrides("discussion", provider);
 
-// Installed CLIs, and ones a scene still names after they were removed.
-const known = (provider) => detected[provider]?.installed ||
-  SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider] || currentDoc.defaults?.[s]?.[provider]);
+// Keep saved employees in place while their scene membership is being edited.
+const known = (provider, saved) => detected[provider]?.installed ||
+  SCENE_IDS.some((s) => saved?.modes?.[s]?.[provider] || currentDoc.modes?.[s]?.[provider] || currentDoc.defaults?.[s]?.[provider]);
 
 // Handwritten unrestricted scenes remain readable; the App always saves explicit lists.
 function restrict(scene, doc = currentDoc) {
@@ -187,6 +187,7 @@ function edited() {
 
 // Change one scene, or both while the card is not split.
 function changeSlot(provider, scene, change) {
+  if (pendingDisable === provider) pendingDisable = null;
   const scenes = scene ? [scene] : SCENE_IDS;
   // A joined card shows the private-task row, so both scenes take it.
   const shown = slot(scene || "task", provider);
