@@ -89,13 +89,19 @@ test("host events reload clean members and preserve edits made before or during 
 });
 
 test("a connection made while employee edits are unsaved joins them instead of being lost", async () => {
-  let file;
-  const app = editor(async () => ({ ok: true, json: async () => ({ document: file }) }));
-  app.run('setProviderEnabled("codex", false)');
-  file = JSON.parse(app.run("savedSnapshot"));
-  for (const scene of ["task", "discussion"]) file.modes[scene].grok = { models: [], overrides: {} };
-  await app.listeners["agentnave:hosts"]({ detail: { hosts: [{ id: "grok", status: "connected", last_action: { at: "1" } }] } });
-  assert.equal(app.run('slot("task", "grok").enabled'), true);
-  assert.equal(app.run('slot("task", "codex").enabled'), false);
-  assert.equal(app.run("dirty"), true);
+  // The second start is a handwritten file whose scenes are still open.
+  for (const open of [false, true]) {
+    let file;
+    const app = editor(async () => ({ ok: true, json: async () => ({ document: file }) }));
+    if (open) app.run("currentDoc = { version: 1, clis: {}, modes: {} }; markSaved();");
+    app.run('setProviderEnabled("codex", false)');
+    file = { version: 1, clis: {}, modes: {} };
+    for (const scene of ["task", "discussion"]) {
+      file.modes[scene] = { codex: { models: [], overrides: {} }, grok: { models: [], overrides: {} } };
+    }
+    await app.listeners["agentnave:hosts"]({ detail: { hosts: [{ id: "grok", status: "connected", last_action: { at: "1" } }] } });
+    assert.equal(app.run('slot("task", "grok").enabled'), true);
+    assert.equal(app.run('slot("task", "codex").enabled'), false);
+    assert.equal(app.run("dirty"), true);
+  }
 });

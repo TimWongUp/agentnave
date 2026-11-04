@@ -295,7 +295,9 @@ window.addEventListener("agentnave:hosts", async ({ detail }) => {
       renderCards();
       return;
     }
-    const saved = JSON.parse(savedSnapshot);
+    // Expand open scenes the way edited() expanded the editor, so a CLI the user just turned off
+    // still counts as saved and is not merged back.
+    const saved = confirmScenes(JSON.parse(savedSnapshot));
     let added = false;
     for (const scene of SCENE_IDS) {
       for (const [provider, conf] of Object.entries(data.document?.modes?.[scene] || {})) {
