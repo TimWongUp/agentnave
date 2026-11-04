@@ -18,19 +18,23 @@ PTY 驱动交互 Claude Code 的 spike 已跑通：bracketed paste 投递任务�
 - **投递内容不变**。服务追加的派发前缀和任务原文与 `-p` 完全相同，整段 bracketed paste 投递，不拆成按键加粘贴，也不放进系统提示。粘贴前清理控制字符和会提前结束粘贴的转义序列；以 `/`、`!`、`#`、`&` 开头时加防护，不被当作斜杠命令、Bash 模式或记忆写入。
 - **环境**。AgentNave 不设置 `CLAUDE_CODE_ENTRYPOINT`。服务现在已对所有路径清掉宿主会话 ID `CLAUDE_CODE_SESSION_ID`；交互路径另由 helper 在启动 `claude` 前清掉宿主带下来的其余 Claude 变量（`CLAUDECODE`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_CHILD_SESSION` 等具名清单）：继承 `CLAUDE_CODE_CHILD_SESSION` 会关掉 transcript，属于协议必需。服务的进程环境和 `-p` 路径不变。不使用 `CLAUDE_CODE_SKIP_PROMPT_HISTORY`，它会同时关掉 transcript 和续接。
 - **启动阶段**。粘贴前必须先排除已知启动屏，就绪判定不能只看提示符：
-  - 文件夹信任框：受信任仓库下的 worktree 不弹。其他目录在投递前报 BLOCKED，boss 可显式传开关选项「本次改用 `-p`」，回执注明；永久信任只由用户决定。
+  - 首次引导（文字风格、安全须知、终端设置）：按默认走完。文字风格和安全须知回车，终端设置按 Esc 跳过，不改用户的终端；同一屏应答三次仍在，报 BLOCKED。
+  - 文件夹信任框：自动选「信任」。选项默认停在「No, exit」，先移到「Yes」并等画面稳定再回车，盲按回车会退出。回执 `warnings` 注明已信任的目录。
+  - 权限档位的确认框（完全放开档的免责框、自动档的启用确认）：用户在 App 选档位就是同意；helper 在自己的 `--settings` 里写 `skipDangerousModePermissionPrompt`、`skipAutoPermissionPrompt`，属于协议必需参数，不写用户配置。仍然出现就报 BLOCKED。
   - 冷恢复额度框（「Resume this conversation? … will use about N% of your 5-hour usage limit」）：调用方传了 `session_id` 就是要续接，按 Esc 原样恢复，回执 `warnings` 写明闲置时长、token 数和额度百分比。
-  - 从摘要恢复框：只选原样恢复。永不选摘要（会改上下文），永不选「不再询问」（会写用户配置）。
-  - 登录、引导或不认识的屏：报 BLOCKED，不按键。
+  - 从摘要恢复框：报 BLOCKED。永不选摘要（会改上下文），永不选「不再询问」（会写用户配置）；能实测后再评估是否改为只选原样恢复。
+  - 登录、API key 确认或不认识的屏：报 BLOCKED，不按键。
   - 投递顺序：确认弹框已消失、输入框为空后粘贴；确认粘贴在输入框里后回车；回车后用 transcript 核对 user 行。
 - **运行阶段不按键**。弹框只经 hooks 应答（ADR-0057）。画面出现弹框而 hook 没收到，按通道异常报 BLOCKED；hook 待答期间不向终端写任何键。
-- **终态**。回合结束取 transcript 最终回答；`StopFailure` 的 `error`（认证、限流、服务端错误等）映射到现有失败类别；进程意外退出按失败处理。探测或启动失败报 BLOCKED，不自动退回 `-p`；只有上面信任框一种情况，由 boss 显式选择后才改用 `-p`。
+- **终态**。回合结束取 transcript 最终回答；`StopFailure` 的 `error`（认证、限流、服务端错误等）映射到现有失败类别；进程意外退出按失败处理。探测或启动失败报 BLOCKED，不自动退回 `-p`；boss 可以显式关掉该选项，本次改用 `-p`。
+- **后台任务**。回合要等本回合发起的后台调用都收到完成通知才算结束，与 `-p` 一致。Claude 的 Bash 工具给每条命令单开进程组，helper 运行期间记下这些进程组，收尾时与 Claude 一并终止。
 - **缓存**。服务不为缓存保活进程、不定时续期、不主动压缩。prompt cache 在服务端按前缀命中，跨进程可复用；TTL 由认证方式、计费状态和 CLI 策略决定（2.1.308：订阅主线程 1 小时，超额或 API key 5 分钟），AgentNave 不保证。idle compact 只在进程存活时触发，本方案不会触发它，上下文策略仍归 Manager。
 
 ## 取舍
 
 - 交互会话对用户可见：入口记为 `cli`，出现在 Claude Code 的 `/resume` 列表里，任务原文进入 `~/.claude/history.jsonl` 的输入历史。`-p` 没有这些副作用。
 - 依赖 Claude Code「整条消息都是粘贴时按用户请求执行」的行为。长粘贴会被包成 `<pasted_content>`，由远程开关控制；Haiku 实测对遵守度没有可测影响，Sonnet、Opus 没测。
+- 自动信任让 Claude 把目录的信任永久写进用户的 `~/.claude.json`，之后用户自己在该目录打开 Claude 时，项目里的 hooks、MCP 和设置直接生效。`-p` 本来不问信任、按信任运行，当次风险相同，多出的是这条永久记录；换来的是普通用户开箱即用，不必逐个目录手动信任。用户定的原则是尽量少打扰用户。
 - 启动屏和读屏规则跟随 Claude Code 版本和远程开关变化，比 stream-json 脆弱；所以开关默认关闭，失败一律报 BLOCKED 而不是猜。
 - 每次调用多一个 helper 进程和约 4–9 秒启动时间。
 
@@ -45,4 +49,4 @@ PTY 驱动交互 Claude Code 的 spike 已跑通：bracketed paste 投递任务�
 
 ## 接受前须真实验收
 
-auto 模式分类器连续拦截后恢复提示；子代理和后台任务的权限请求；并行的权限请求；`ExitPlanMode`；MCP elicitation；用户 hook 拒绝与本服务允许的合并结果；hook 通道断开和长超时；真实限流菜单（只观察不操作）；OAuth 过期与未登录；拒答映射；真实 supervisor 取消；仓库外 worktree 的信任；Sonnet、Opus 对粘贴简报的遵守度；真实 API 下原样恢复后的完整回合；从摘要恢复框；Linux。
+auto 模式分类器连续拦截后恢复提示；子代理和后台任务的权限请求；并行的权限请求；`ExitPlanMode`；MCP elicitation；用户 hook 拒绝与本服务允许的合并结果；hook 通道断开和长超时；真实限流菜单（只观察不操作）；OAuth 过期与未登录；拒答映射；真实 supervisor 取消；干净账号环境下的首次引导、自动信任与档位确认框；Sonnet、Opus 对粘贴简报的遵守度；真实 API 下原样恢复后的完整回合；从摘要恢复框；Linux。
