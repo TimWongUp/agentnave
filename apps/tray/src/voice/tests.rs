@@ -80,6 +80,12 @@ fn without_a_summary_only_the_opening_paragraphs_are_read() {
     );
     assert_eq!(text::clean(&"字".repeat(300), false).chars().count(), 100);
     assert_eq!(text::clean("短消息。", false), "短消息。");
+    assert_eq!(text::cap("短消息。", 10), "短消息。");
+    assert_eq!(
+        text::cap(&format!("{}。{}", "前".repeat(5), "后".repeat(10)), 10),
+        "前前前前前。"
+    );
+    assert_eq!(text::cap(&"字".repeat(20), 10), "字".repeat(10));
     // A short heading is not all that is read: the paragraph after it follows to a sentence end.
     let headed = format!("结论\n{}。{}", "甲".repeat(60), "乙".repeat(60));
     assert_eq!(
@@ -294,9 +300,9 @@ fn speech_options_default_validate_and_enter_the_effective_prompt() {
     let mut summary = settings["summary"].clone();
     let mut keys = std::collections::HashSet::new();
     for (level, length) in [
-        ("short", "约 40 字"),
-        ("standard", "约 150 字以内"),
-        ("detailed", "约 300 字以内"),
+        ("short", "不超过 40 字，一句话"),
+        ("standard", "不超过 150 字，三句以内"),
+        ("detailed", "不超过 300 字，六句以内"),
     ] {
         summary["level"] = json!(level);
         let language_rules = [
