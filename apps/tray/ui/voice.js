@@ -125,14 +125,14 @@
     return m.conversation && m.round != null && m.desk
       ? JSON.stringify([m.conversation, m.round, m.desk]) : null;
   }
-  // One boss at a time: the message picked by hand last goes first, then the rest of the workspace
-  // speaking now, then each other workspace in turn from its oldest message; each in time order.
+  // One boss at a time: the message picked by hand last and its chain go first, then the rest of
+  // the workspace speaking now, then each other workspace from its oldest message, in time order.
   function arrange() {
     const oldest = new Map();
     for (const job of queue) if (!(oldest.get(job.group) <= job.time)) oldest.set(job.group, job.time);
     const speaking = current?.group ?? speakingGroup;
     const turn = job => job.group === speaking ? -Infinity : oldest.get(job.group);
-    queue.sort((a, b) => (b.chosen || 0) - (a.chosen || 0)
+    queue.sort((a, b) => (b.chosen || b.chain || 0) - (a.chosen || a.chain || 0)
       || (a.group === b.group ? a.time - b.time : turn(a) - turn(b) || String(a.group).localeCompare(String(b.group))));
     queue = beforeAnswers(queue);
   }
@@ -267,7 +267,9 @@
   // Plays a job at once, ahead of the queue. An auto read cut short starts over after it
   // instead of being lost.
   function playNow(job) {
-    queue = queue.filter(other => other !== job);
+    job = queue.find(other => other.id === job.id) || job;
+    queue = queue.filter(other => other.id !== job.id || (other !== job && other.controller.abort(), false));
+    if (current?.id === job.id) { changed(); return; }
     queue.unshift(Object.assign(job, { chosen: ++picks, automatic: false }));
     if (current?.automatic) {
       const { controller, prepared, audio, url, speaking, resolve, reject, notice, chosen, ...copy } = current;
@@ -444,7 +446,11 @@
     // The first is picked by hand, so the read scope does not hide it; what follows keeps to it.
     readable(chat.messages, session.seen, m => { if (followed(chat.group, m)) list.push(item(m, ctx)); }, () => true);
     const latest = beforeAnswers(list.sort((a, b) => a.time - b.time)).at(-1);
-    if (latest) latest.followed = true;
+    if (latest) {
+      latest.followed = true;
+      const key = latest.kind === "reply" && answerKey(latest);
+      latest.briefings = key ? list.filter(job => job.kind === "instruction" && answerKey(job) === key).map(job => job.id) : [];
+    }
     // A message picked in the office meanwhile keeps playing; the latest one waits behind it.
     if (latest && picks === picked) playNow(latest);
     else { if (latest) { queue.push(latest); arrange(); } changed(); void drain(); }
@@ -475,6 +481,13 @@
     if (!follow) return;
     clearTimeout(follow.timer);
     follow = null;
+    // Office polls also observe messages handed to the follower. Removing an unplayed clip
+    // must release its read markers there, including a latest reply's omitted briefing.
+    const pending = [...queue, ...(current?.followed && !current.audio ? [current] : [])];
+    for (const job of pending) if (job.followed && job.group === group) {
+      observed.delete(job.id);
+      for (const id of job.briefings || []) observed.delete(id);
+    }
     queue = queue.filter(job => !job.followed || (job.controller.abort(), false));
     if (current?.followed) interrupt();
     if (!current && !queue.length) paused = false;
@@ -496,6 +509,7 @@
     if (playlistScope) dropPlaylist();
     observed.set(chosen.id, true);
     playNow(queue.find(job => job.id === chosen.id) || chosen);
+    const picked = picks;
     const target = config?.continue_read !== true ? null : roomView ? roomView
       : privateView ? { group: channelContext?.c.group || group, id: privateView, shown: deskShown }
         : m.conversation ? { group, id: m.conversation } : null;
@@ -511,11 +525,16 @@
       if (playlistFetch !== load) return;
       const list = playable(chat, target);
       const start = list.findIndex(job => job.id === chosen.id);
-      const known = new Set([current?.id, ...queue.map(job => job.id)]);
       // A briefing still waiting for its answer is not in the list; the chain starts after it.
       const after = start < 0 ? list.filter(job => job.time > chosen.time) : list.slice(start + 1);
-      const rest = scopedRead(after).filter(job => !known.has(job.id));
-      for (const job of rest) observed.set(job.id, true);
+      const rest = scopedRead(after).filter(job => job.id !== current?.id)
+        .map(job => queue.find(other => other.id === job.id) || job);
+      const ids = new Set(rest.map(job => job.id));
+      queue = queue.filter(job => !ids.has(job.id));
+      for (const job of rest) {
+        observed.set(job.id, true);
+        Object.assign(job, { chain: picked, automatic: false });
+      }
       queue.push(...rest);
       arrange();
       if (shownError?.source === "read") clearError();

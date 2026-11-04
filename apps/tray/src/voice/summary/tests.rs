@@ -445,6 +445,26 @@ fn a_summary_past_three_times_its_limit_is_cut_at_a_sentence_end() {
 }
 
 #[test]
+fn a_summary_cut_to_only_symbols_is_rejected_without_caching() {
+    let server = FakeServer::start(2, |request| {
+        if request.path.ends_with("/models") {
+            return Reply {
+                status: 200,
+                body: json!({"data":[{"id":"model"}]}),
+            };
+        }
+        chat(&format!("{}有内容", "…".repeat(500)))
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let settings = summary_settings(&server.root, "custom", "model");
+    assert_eq!(
+        error_of(summarize(directory.path(), "原话", &settings, "")),
+        "摘要服务返回了空结果"
+    );
+    assert!(!directory.path().join("voice-cache").exists());
+}
+
+#[test]
 fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
     let server = FakeServer::start(10, |request| {
         if request.path.ends_with("/models") {

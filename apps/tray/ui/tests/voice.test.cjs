@@ -659,6 +659,80 @@ test("turning auto read off keeps what listening queued; stopping listening drop
   assert.equal(app.published.at(-1).state, "idle");
 });
 
+test("listening to an automatically playing or queued message never reads its id twice", async () => {
+  for (const queued of [false, true]) {
+    const app = await office();
+    const messages = [1, 2].slice(0, queued ? 2 : 1).map(n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`));
+    await app.feed(messages);
+    app.rooms.set("/app/chats/workspace", { ...app.ctx.c, messages });
+    await app.command("listen", { group: "workspace" });
+    for (let n = 0; n < 4 && app.published.at(-1).state !== "idle"; n++) await app.end();
+    const played = app.sounds.map(sound => sound.text);
+    assert.equal(played.filter(text => text === messages.at(-1).id).length, 1, "listening reuses the same message id");
+    assert.equal(app.requests.filter(request => request.text === messages.at(-1).id).length, 1, "an already prepared clip is reused");
+    assert.equal(app.published.at(-1).state, "idle");
+  }
+});
+
+test("a clicked meeting chain stays ahead of automatic messages across conversations and workspaces", async () => {
+  const app = await office();
+  const meeting = n => message(`meeting-${n}`, `2026-11-01T00:00:0${n + 3}Z`, {
+    conversation: "room", thread: { kind: "room", id: "room" },
+  });
+  const messages = [1, 2, 3].map(meeting);
+  await app.feed([message("interloper", "2026-11-01T00:00:02Z"), messages[1]]);
+  const other = messages => app.voice.ingest({ group: "other", messages }, { ...app.ctx, c: { ...app.ctx.c, group: "other", messages } });
+  other([]); await flush();
+  other([message("old-workspace", "2026-11-01T00:00:01Z")]); await flush();
+  await app.feed([messages[1]]);
+  await app.room(messages).listeners.click();
+  await app.feed([...messages, message("new-interloper", "2026-11-01T00:00:03Z")]);
+  for (let n = 0; n < 3; n++) await app.end();
+  assert.deepEqual(app.sounds.slice(1, 4).map(sound => sound.text), ["meeting-1", "meeting-2", "meeting-3"]);
+  await app.end(); await app.end();
+  assert.deepEqual(app.sounds.slice(4).map(sound => sound.text), ["interloper", "new-interloper", "old-workspace"]);
+});
+
+test("stopping listening restores unread briefings and replies suppressed in the office", async () => {
+  const app = await office();
+  const messages = [message("playing", "2026-11-01T00:00:01Z")];
+  app.rooms.set("/app/chats/workspace", { ...app.ctx.c, messages });
+  await app.command("listen", { group: "workspace" });
+  messages.push(
+    message("briefing", "2026-11-01T00:00:02Z", { conversation: "task", round: 1, desk: "worker", kind: "instruction", speaker: { role: "manager" } }),
+    message("answer", "2026-11-01T00:00:03Z", { conversation: "task", round: 1, desk: "worker" }),
+  );
+  await app.tick();
+  await app.feed(messages);
+  await app.command("unlisten");
+  await app.feed(messages);
+  await app.end();
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["playing", "briefing", "answer"]);
+});
+
+test("canceling a latest reply queued by listening also releases its omitted briefing", async () => {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const app = await office(true, undefined, async data => { await pending; return { ok: true, json: async () => structuredClone(data) }; });
+  const messages = [
+    message("briefing", "2026-11-01T00:00:01Z", { conversation: "task", round: 1, desk: "worker", kind: "instruction", speaker: { role: "manager" } }),
+    message("answer", "2026-11-01T00:00:02Z", { conversation: "task", round: 1, desk: "worker" }),
+  ];
+  app.rooms.set("/app/chats/workspace", { ...app.ctx.c, messages });
+  await app.command("listen", { group: "workspace" });
+  const rec = { bub: { prepend() {} } };
+  app.voice.decorate(rec, message("chosen", "2026-11-01T00:00:03Z"), app.ctx);
+  rec.read.listeners.click();
+  await flush();
+  release(); await flush(); await flush();
+  await app.feed(messages);
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["chosen"]);
+  await app.command("unlisten");
+  await app.feed(messages);
+  await app.end(); await app.end();
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["chosen", "briefing", "answer"]);
+});
+
 test("the album playing heads the playlist and its title opens the conversation", async () => {
   const app = await office();
   app.room([]);

@@ -524,19 +524,21 @@ fn in_place(window: &WebviewWindow, target: &Url) -> bool {
 }
 
 /// Opens the office for listening without bringing it forward: a hidden window on another page
-/// goes back to the office, and without a window one is created hidden. A page the user is
-/// looking at stays; the office opens when they go back to it. Returns whether it is opening.
+/// goes back to the office, and without a window one is created hidden. Settings and management
+/// pages stay, even hidden, to preserve unsaved edits. Returns whether it is opening.
 pub(crate) fn open_office_hidden(app: &AppHandle) -> bool {
     let target = url("/chat/");
     let Some(window) = app.get_webview_window(TRAY) else {
         build_main(app, TRAY, target, false);
         return true;
     };
-    let office = window
-        .url()
-        .is_ok_and(|current| current.path().starts_with("/chat/"));
-    if office {
-        return true;
+    if let Ok(current) = window.url() {
+        if current.path().starts_with("/chat/") {
+            return true;
+        }
+        if current.path().starts_with("/settings/") || current.path().starts_with("/manage/") {
+            return false;
+        }
     }
     if window.is_visible().unwrap_or(false) {
         return false;

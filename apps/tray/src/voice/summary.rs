@@ -710,7 +710,7 @@ fn summarize_at(
             (&session, from_magpie),
         )?
     };
-    let summary = text::cap(&summary, spoken_limit(settings));
+    let summary = clean_output(&text::cap(&summary, spoken_limit(settings)))?;
     storage::cache(root, &cache_key, summary.as_bytes(), "txt")?;
     Ok(summary)
 }
