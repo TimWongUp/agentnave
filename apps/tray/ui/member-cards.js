@@ -117,6 +117,7 @@ function renderCards() {
   const cards = document.createDocumentFragment();
   // Not installed and named by no scene or default: only in the folded list at the end.
   const missing = [];
+  cards.appendChild(renderCliUpdateSummary());
   // Employees as last saved come first; a card stays put while its switch is being changed.
   const saved = confirmScenes(JSON.parse(savedSnapshot || JSON.stringify(currentDoc)));
   const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
@@ -134,8 +135,9 @@ function renderCards() {
     const head = el("div", { className: "member-head" },
       el("div", { className: "member-title" },
         el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
-        el("span", { className: "cli-name" }, name),
+        el("span", { className: "cli-name", title: name }, name),
         info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
+        renderCliUpdate(provider),
         info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed"))),
       el("div", { className: "member-end" },
         el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`), "aria-hidden": enabled ? null : "true" },
@@ -159,23 +161,11 @@ function renderCards() {
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     for (const row of rows) card.appendChild(row);
     if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
+    card.appendChild(renderCliUpdateError(provider));
     cards.appendChild(card);
   }
 
-  if (missing.length) {
-    const names = missing.map((p) => PROVIDER_NAMES[p] || p);
-    const box = el("div", { className: "cli-missing" },
-      el("button", {
-        type: "button",
-        className: "cli-missing-toggle",
-        dataset: { focusKey: "missing/toggle" },
-        "aria-expanded": String(missingOpen),
-        onClick: () => { missingOpen = !missingOpen; renderCards(); },
-      }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(L(`未安装的 CLI（${missing.length}）`, `Uninstalled CLIs (${missing.length})`))));
-    if (missingOpen) box.appendChild(el("p", { className: "cli-missing-list" },
-      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
-    cards.appendChild(box);
-  }
+  if (missing.length) cards.appendChild(renderMissingClis(missing));
 
   container.replaceChildren(cards);
   updateControls();
@@ -279,6 +269,7 @@ async function refreshDetection(quiet = false) {
     else if (changed && currentTab === "members") showNotice(L("检测到工具或模型列表有变化，已自动刷新", "Detected changes in tools or models; refreshed automatically"));
     // A quiet probe that found nothing new leaves the cards, and any input in them, alone.
     if (!quiet || changed || reloaded || tiersChanged) renderCards();
+    void loadCliUpdates();
   } catch (err) {
     if (!quiet) showNotice(L(`刷新检测失败: ${err.message}`, `Refresh failed: ${err.message}`), true);
   } finally {
@@ -310,6 +301,7 @@ async function loadMembers() {
     }
 
     renderCards();
+    void loadCliUpdates();
   } catch (err) {
     documentError = err.message;
     renderErrorBanner();
