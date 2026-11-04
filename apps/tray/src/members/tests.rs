@@ -47,10 +47,12 @@ fn migration_creates_installed_cli_lists_for_an_existing_boss() {
 #[test]
 fn a_boss_that_still_needs_repair_counts_as_used_before() {
     let dir = tempfile::tempdir().unwrap();
-    let hosts = |status: &str| json!({"hosts": [{"id": "codex", "status": status}]});
-    assert!(used_before(dir.path(), &hosts("connected")));
-    assert!(used_before(dir.path(), &hosts("needs_attention")));
-    assert!(!used_before(dir.path(), &hosts("available")));
+    let hosts = |status: &str, entry: bool| json!({"hosts": [{"id": "codex", "status": status, "layers": [{"has_entry": entry}]}]});
+    assert!(used_before(dir.path(), &hosts("connected", true)));
+    assert!(used_before(dir.path(), &hosts("needs_attention", true)));
+    // A broken config of a boss never connected is no sign of earlier use.
+    assert!(!used_before(dir.path(), &hosts("needs_attention", false)));
+    assert!(!used_before(dir.path(), &hosts("available", false)));
     assert!(!used_before(dir.path(), &Value::Null));
 }
 

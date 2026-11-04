@@ -477,12 +477,13 @@ fn migrate(root: &Path, detected: &Value, has_boss: bool) -> Result<(), String> 
 /// Whether AgentNave ran here before: a boss was connected or has dispatched work. A missing
 /// file then meant every CLI, so the migration keeps them.
 fn used_before(root: &Path, hosts: &Value) -> bool {
+    // A boss counts once its config carries the AgentNave entry, even while it needs repair.
     let connected = hosts["hosts"].as_array().is_some_and(|hosts| {
         hosts.iter().any(|host| {
-            matches!(
-                host["status"].as_str(),
-                Some("connected" | "needs_attention")
-            )
+            host["status"] == "connected"
+                || host["layers"]
+                    .as_array()
+                    .is_some_and(|layers| layers.iter().any(|layer| layer["has_entry"] == true))
         })
     });
     connected
