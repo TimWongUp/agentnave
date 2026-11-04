@@ -183,6 +183,9 @@ class DeepSeekAdapter(AdapterHooks):
     def executable(self) -> str:
         return resolve_executable("dsh", _bundled_paths())
 
+    def executable_path(self) -> str:
+        return self.executable()
+
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         """Return the --patch overlay rows; dsh exposes these settings only as profile rows."""
         options = dict(request.provider_options)

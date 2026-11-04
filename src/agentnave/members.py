@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from functools import cache
 from pathlib import Path
 from typing import Literal, cast, get_args
 
@@ -677,6 +678,7 @@ class MemberList(StrictModel):
 def _member_modes(
     document: MemberFile | None,
     excluded: frozenset[str],
+    installed: Callable[[str], bool],
 ) -> dict[Mode, ModeStatus]:
     modes: dict[Mode, ModeStatus] = {}
     for mode in ("task", "discussion"):
@@ -710,6 +712,8 @@ def _member_modes(
                         validate_provider_options(request)
                     except ValueError as exc:
                         error = str(exc)
+                    if not installed(provider):
+                        error = "CLI is not installed"
                     items.append(
                         MemberStatus(
                             provider=provider,
@@ -742,7 +746,7 @@ def _member_modes(
                             options={},
                             notes="不限模型",
                             permitted=mode == "discussion" or provider not in excluded,
-                            error=None,
+                            error=None if installed(provider) else "CLI is not installed",
                         )
                     )
         modes[mode] = ModeStatus(
@@ -789,15 +793,19 @@ def _compact_members(modes: dict[Mode, ModeStatus], excluded: frozenset[str]) ->
 
 
 def list_members(excluded: frozenset[str], host: Host) -> MemberList:
+    @cache
+    def installed(provider: str) -> bool:
+        return get_adapter(provider).is_installed()
+
     document = read_members()
-    modes = _member_modes(document, excluded)
+    modes = _member_modes(document, excluded, installed)
     # Review seats are not checked against clis: a removed model is reported here, and the
     # review Skill picks a replacement at dispatch time. A broken review.json leaves members alone.
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error = None
     try:
         if saved_review := _read_app_file("review.json", ReviewFile, MemberFileError):
-            review = _review_status(saved_review.seats, modes["task"], excluded, host)
+            review = _review_status(saved_review.seats, modes["task"], excluded, host, installed)
     except MemberFileError as exc:
         review_error = str(exc)
     orchestration = OrchestrationStatus()
@@ -808,10 +816,10 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         ) and roles.enabled(host):
             orchestration = OrchestrationStatus(
                 enabled=True,
-                explorer=_review_status(roles.explorer, modes["task"], excluded, host),
-                worker=_review_status(roles.worker, modes["task"], excluded, host),
+                explorer=_review_status(roles.explorer, modes["task"], excluded, host, installed),
+                worker=_review_status(roles.worker, modes["task"], excluded, host, installed),
                 worker_frontend=_review_status(
-                    roles.interface_workers(), modes["task"], excluded, host
+                    roles.interface_workers(), modes["task"], excluded, host, installed
                 ),
             )
     except MemberFileError as exc:
@@ -845,7 +853,11 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
 
 
 def _review_status[Role: str](
-    review: dict[Role, ReviewSeat], mode: ModeStatus, excluded: frozenset[str], host: Host
+    review: dict[Role, ReviewSeat],
+    mode: ModeStatus,
+    excluded: frozenset[str],
+    host: Host,
+    installed: Callable[[str], bool],
 ) -> dict[Role, ReviewSeatStatus]:
     task = mode.members
     seats: dict[Role, ReviewSeatStatus] = {}
@@ -864,6 +876,8 @@ def _review_status[Role: str](
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):
             reason = "CLI is disabled for private tasks in the App"
+        elif not installed(seat.provider):
+            reason = "CLI is not installed"
         elif member is not None and member.error is not None:
             reason = member.error
         else:
