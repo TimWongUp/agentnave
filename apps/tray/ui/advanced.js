@@ -68,6 +68,8 @@ async function loadOrchestration() {
     showNotice(AN.L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
   }
   renderOrchestration();
+  // Review seats list the connected bosses' CLIs too.
+  renderReviewSeats();
   renderAdvancedBar();
 }
 
