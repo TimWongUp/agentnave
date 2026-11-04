@@ -3,6 +3,8 @@
 - 状态：部分取代
 - 日期：2026-10-19
 - MCP 回到十六个工具的条款由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订
+- 拟由 [ADR-0056](0056-boss-answers-native-prompts.md)（提议）修订：运行中允许应答 CLI 自己发起的弹框
+- 拟由 [ADR-0055](0055-claude-interactive-runtime.md)（提议）修订：Claude 可选交互模式，会话出现在 Claude Code 自带的历史里
 
 v0.28.0 曾为普通任务加入 `start_agent(enable_messages=true)` 与 `send_agent_message`，让主控在子代理运行中追加约束。此功能现已整体移除：MCP 回到十六个工具，各 CLI 只保留一次性调用（print／exec），结束后用 `session_id` 续接。
 
