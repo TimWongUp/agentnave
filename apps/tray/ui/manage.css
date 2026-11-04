@@ -75,9 +75,14 @@ p { margin: 0; }
 .nav a { padding: 5px 12px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 550; }
 .nav a:hover { background: var(--hover); color: var(--ink); }
 .bar-end { display: flex; align-items: center; gap: 10px; }
-.bar-update { padding: 4px 12px; border-radius: 999px; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); font-size: 12.5px; font-weight: 600; }
-.bar-update:hover:enabled { border-color: var(--accent); }
-.bar-update.updated { border-color: color-mix(in srgb, var(--run, var(--accent)) 45%, var(--line)); color: var(--run, var(--accent)); }
+.bar-update { position: relative; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: var(--hover); color: var(--muted); font-size: 13px; line-height: 1; cursor: pointer; }
+.bar-update:hover { color: var(--ink); }
+.bar-update[data-state="available"] { color: var(--accent); font-weight: 700; }
+.bar-update[data-state="available"]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.bar-update[data-state="busy"] { color: var(--accent); }
+.bar-update[data-state="busy"] span { display: block; animation: bar-update-spin 1s linear infinite; }
+.bar-update[data-state="updated"] { color: var(--run, var(--accent)); }
+@keyframes bar-update-spin { to { transform: rotate(360deg); } }
 /* The update dialog, shared by the office and settings (common.js). */
 dialog.upd { width: min(480px, 92vw); max-height: min(640px, 86vh); padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: 0 22px 60px #0009; }
 dialog.upd[open] { display: flex; flex-direction: column; }

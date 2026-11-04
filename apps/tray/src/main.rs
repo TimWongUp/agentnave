@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use tauri::http::{Response, header};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::webview::NewWindowResponse;
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{
     AppHandle, LogicalPosition, Manager, Rect, RunEvent, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
@@ -84,6 +84,8 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                 | "/app/voice/summary/models"
                 | "/app/voice/chatgpt/start"
                 | "/app/voice/chatgpt/sign-out"
+                | "/app/voice/player"
+                | "/app/voice/player/command"
                 | "/app/window/drag"
                 | "/app/window/zoom"
                 | "/app/window/minimize"
@@ -488,12 +490,62 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         return;
     }
     if let Some(window) = app.get_webview_window(label) {
-        let _ = window.navigate(target);
+        if !in_place(&window, &target) {
+            let _ = window.navigate(target);
+        }
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
         return;
     }
+    build_main(app, label, target, true);
+}
+
+/// An office already showing goes to another office route in place, so what it plays goes on;
+/// the update check opens its dialog there.
+fn in_place(window: &WebviewWindow, target: &Url) -> bool {
+    let showing = window
+        .url()
+        .is_ok_and(|current| ours(&current) && current.path().starts_with("/chat/"));
+    if !showing || !target.path().starts_with("/chat/") {
+        return false;
+    }
+    // The bare office address only brings the window forward, on whatever it shows.
+    if target.path() == "/chat/" && target.query().is_none() && target.fragment().is_none() {
+        return true;
+    }
+    let path = serde_json::Value::from(destination(target));
+    let script = if target.query().is_some_and(|q| q.contains("check-update")) {
+        format!("if (AN.updateFlow) AN.updateFlow(); else location.assign({path});")
+    } else {
+        format!("if (typeof go === 'function') go({path}); else location.assign({path});")
+    };
+    window.eval(script).is_ok()
+}
+
+/// Opens the office for listening without bringing it forward: a hidden window on another page
+/// goes back to the office, and without a window one is created hidden. A page the user is
+/// looking at stays; the office opens when they go back to it. Returns whether it is opening.
+pub(crate) fn open_office_hidden(app: &AppHandle) -> bool {
+    let target = url("/chat/");
+    let Some(window) = app.get_webview_window(TRAY) else {
+        build_main(app, TRAY, target, false);
+        return true;
+    };
+    let office = window
+        .url()
+        .is_ok_and(|current| current.path().starts_with("/chat/"));
+    if office {
+        return true;
+    }
+    if window.is_visible().unwrap_or(false) {
+        return false;
+    }
+    let _ = window.navigate(target);
+    true
+}
+
+fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
     // The size it was last left at, within the screen; else large enough to show the boss office
     // and a first row of desks, with a margin to the screen's edges.
     let saved = saved_size(app);
@@ -518,6 +570,7 @@ fn open(app: &AppHandle, label: &str, path: &str) {
             height.min(max_height).max(MAIN_MIN.1),
         )
         .min_inner_size(MAIN_MIN.0, MAIN_MIN.1)
+        .visible(show)
         .center();
     // The page's own top bar is the title bar: the window buttons sit in it and follow its theme.
     #[cfg(target_os = "macos")]
@@ -531,6 +584,12 @@ fn open(app: &AppHandle, label: &str, path: &str) {
     let builder = builder.decorations(false);
     let built = builder
         .on_navigation(allowed)
+        // Whatever the office's voice player showed goes with the page; a new office republishes.
+        .on_page_load(|window, payload| {
+            if payload.event() == PageLoadEvent::Started && window.label() == TRAY {
+                voice::player::clear(window.app_handle());
+            }
+        })
         .on_new_window(move |target, _| {
             if !ours(&target) && matches!(target.scheme(), "http" | "https") {
                 browse(&target);
@@ -544,6 +603,9 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         }
         let closing = window.clone();
         window.on_window_event(move |event| {
+            if let WindowEvent::Destroyed = event {
+                voice::player::clear(closing.app_handle());
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 save_size(&closing);
                 // Like other Mac apps, closing only hides the window; the Dock icon brings it back
@@ -557,7 +619,9 @@ fn open(app: &AppHandle, label: &str, path: &str) {
                 let _ = api;
             }
         });
-        let _ = window.set_focus();
+        if show {
+            let _ = window.set_focus();
+        }
     }
 }
 
@@ -784,6 +848,9 @@ impl ProtocolRequest {
                     Ok(_) => data::Response::json(&serde_json::json!({"ok": true})),
                     Err(error) => data::Response::error(400, &error),
                 }
+            }
+            (_, "/app/voice/player" | "/app/voice/player/command") => {
+                voice::player::request(app, label, method, path, action, self.request.body())
             }
             (_, "/app/preferences") => {
                 preferences::runtime::request(app, method, action, self.request.body())

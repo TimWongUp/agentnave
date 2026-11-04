@@ -3,6 +3,7 @@ mod elevenlabs;
 #[cfg(test)]
 mod live;
 mod minimax;
+pub mod player;
 mod scene;
 mod storage;
 mod summary;

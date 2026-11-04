@@ -156,6 +156,14 @@ fn settings_asset(resource: &str) -> Response {
 
 fn chat_asset(resource: &str) -> Response {
     match resource {
+        "voice-menu.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/voice-menu.js").to_vec(),
+        ),
+        "voice-menu.css" => Response::ok(
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/voice-menu.css").to_vec(),
+        ),
         "voice.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/voice.js").to_vec(),
@@ -208,6 +216,14 @@ fn panel_asset(resource: &str) -> Response {
         "" => page(PANEL_HTML),
         "panel.js" => Response::ok("text/javascript; charset=utf-8", PANEL_JS.to_vec()),
         "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
+        "voice-menu.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/voice-menu.js").to_vec(),
+        ),
+        "voice-menu.css" => Response::ok(
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/voice-menu.css").to_vec(),
+        ),
         "appearance.js" => Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec()),
         "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
         "common-select.js" => Response::ok(

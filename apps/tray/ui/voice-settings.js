@@ -385,7 +385,7 @@
     if (!config) return;
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.enabled, disabled: busy, "aria-label": L("语音播报", "Voice playback") });
     enabled.addEventListener("change", () => save({ enabled: enabled.checked }));
-    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": L("新消息自动读", "Auto-read new messages") });
+    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": L("自动读当前工作区", "Auto-read open workspace") });
     automatic.addEventListener("change", () => save({ auto_read: automatic.checked }));
     const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": L("点读后连播", "Continue reading after click") });
     chained.addEventListener("change", () => save({ continue_read: chained.checked }));
@@ -393,7 +393,7 @@
     const codeLabel = L("代码和路径", "Code and paths");
     const parts = [
       row(L("语音播报", "Voice playback"), enabled),
-      row(L("新消息自动读", "Auto-read new messages"), automatic),
+      row(L("自动读当前工作区", "Auto-read open workspace"), automatic),
       row(L("点读后连播", "Continue reading after click"), chained),
       row(scopeLabel, segments(scopeLabel, "read_scope", [
         ["all", L("全部", "All")],
