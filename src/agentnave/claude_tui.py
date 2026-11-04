@@ -82,6 +82,8 @@ def classify_screen(text: str) -> str:
         return "onboarding_enter"
     if "terminal setup?" in lowered:
         return "onboarding_skip"
+    if "do you want to use this api key" in lowered:
+        return "api_key"
     if "bypass permissions mode" in lowered and "i accept" in lowered:
         return "mode_consent"
     if any(
@@ -90,7 +92,6 @@ def classify_screen(text: str) -> str:
             "select login method",
             "/login",
             "paste code here",
-            "do you want to use this api key",
         )
     ):
         return "login"
@@ -111,11 +112,28 @@ def classify_screen(text: str) -> str:
     return "ready" if "❯" in lowered else "unknown"
 
 
-def trust_selected(text: str) -> bool:
+def selected(text: str, label: str) -> bool:
+    """Whether the menu's cursor is on the choice labelled exactly `label`."""
     return any(
-        "❯" in line and "yes, i trust this folder" in line
+        "❯" in line and line.replace("❯", "").strip() == label
         for line in ANSI.sub("", text).lower().splitlines()
     )
+
+
+# Menus whose default is to refuse: the answer, the key that moves to it, and the warning.
+CHOICES = {
+    "trust": (
+        "yes, i trust this folder",
+        b"\x1b[B",
+        "Claude Code now trusts {cwd}: the interactive runtime accepted its folder trust prompt",
+    ),
+    "api_key": (
+        "yes",
+        b"\x1b[A",
+        "Claude Code now uses ANTHROPIC_API_KEY from the environment: the interactive runtime "
+        "approved it as -p would use it",
+    ),
+}
 
 
 def cold_resume_warning(text: str) -> str:
@@ -561,23 +579,21 @@ class Startup:
 
     def press(self, kind: str, key: bytes) -> bool:
         self.tries[kind] = self.tries.get(kind, 0) + 1
-        if self.tries[kind] > STARTUP_TRIES * (2 if kind == "trust" else 1):
+        if self.tries[kind] > STARTUP_TRIES * (2 if kind in CHOICES else 1):
             blocked(self.turn, f"{kind} screen stayed after answering it", self.previous)
             return False
         self.terminal.outgoing.extend(key)
         self.stable_since = time.monotonic()
         return True
 
-    def trust(self, screen: str) -> bool:
-        if not trust_selected(screen):
-            return self.press("trust", b"\x1b[B")
-        warning = (
-            f"Claude Code now trusts {os.getcwd()}: the interactive runtime accepted its folder "
-            "trust prompt"
-        )
+    def choose(self, kind: str, screen: str) -> bool:
+        label, move, warning = CHOICES[kind]
+        if not selected(screen, label):
+            return self.press(kind, move)
+        warning = warning.format(cwd=os.getcwd())
         if warning not in self.turn.warnings:
             self.turn.warnings.append(warning)
-        return self.press("trust", b"\r")
+        return self.press(kind, b"\r")
 
     def step(self, screen: str) -> bool | None:
         """True once ready, False when blocked, None to keep waiting."""
@@ -591,8 +607,8 @@ class Startup:
         settled = now - self.stable_since >= SETTLE and not self.terminal.outgoing
         if not settled:
             return None
-        if kind == "trust":
-            return None if self.trust(screen) else False
+        if kind in CHOICES:
+            return None if self.choose(kind, screen) else False
         if kind in ONBOARDING_KEYS:
             return None if self.press(kind, ONBOARDING_KEYS[kind]) else False
         if kind == "cold_resume" and "cold_resume" not in self.tries:

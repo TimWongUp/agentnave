@@ -36,6 +36,7 @@ def test_paste_sanitizes_controls_and_protects_commands(prefix: str) -> None:
         ("Security notes:\nPress Enter to continue…", "onboarding_enter"),
         ("Use Claude Code's terminal setup?\n❯ 1. Yes", "onboarding_skip"),
         ("Bypass Permissions mode\n❯ No, exit\n  Yes, I accept", "mode_consent"),
+        ("Do you want to use this API key?\n  Yes\n❯ No (recommended)", "api_key"),
         ("❯ Some new menu\nEnter to confirm · Esc to cancel", "unknown"),
         ("❯ Do you want to proceed?", "permission"),
         ("Unrecognized welcome screen", "unknown"),
@@ -59,6 +60,13 @@ def test_settings_carry_the_tier_consent_only(
 ) -> None:
     settings = json.loads(tui.write_settings(tmp_path, extra).read_text())
     assert {k: v for k, v in settings.items() if k != "hooks"} == consent
+
+
+def test_menu_selection_matches_the_whole_choice() -> None:
+    assert tui.selected("  No, exit\n❯ Yes, I trust this folder", "yes, i trust this folder")
+    assert not tui.selected("❯ No, exit\n  Yes, I trust this folder", "yes, i trust this folder")
+    assert tui.selected("❯ Yes\n  No (recommended)", "yes")
+    assert not tui.selected("  Yes\n❯ No (recommended)", "yes")
 
 
 def test_screen_erases_dismissed_dialog_and_handles_split_cursor_query() -> None:
