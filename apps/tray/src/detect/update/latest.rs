@@ -18,32 +18,33 @@ type Entries = HashMap<Channel, (Instant, Option<String>)>;
 static CACHE: LazyLock<Mutex<Entries>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(super) fn cached(channel: &Channel) -> Option<String> {
-    cached_with(
-        &mut CACHE.lock().unwrap_or_else(|p| p.into_inner()),
-        channel,
-        Instant::now(),
-        query,
-    )
+    cached_with(&CACHE, channel, Instant::now(), query)
 }
 
 pub(super) fn cached_with(
-    cache: &mut Entries,
+    cache: &Mutex<Entries>,
     channel: &Channel,
     now: Instant,
     query: impl FnOnce(&Channel) -> Option<String>,
 ) -> Option<String> {
-    if let Some((at, value)) = cache.get(channel) {
-        let ttl = if value.is_some() {
-            6 * 60 * 60
-        } else {
-            15 * 60
-        };
-        if now.saturating_duration_since(*at) < Duration::from_secs(ttl) {
-            return value.clone();
+    {
+        let cache = cache.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((at, value)) = cache.get(channel) {
+            let ttl = if value.is_some() {
+                6 * 60 * 60
+            } else {
+                15 * 60
+            };
+            if now.saturating_duration_since(*at) < Duration::from_secs(ttl) {
+                return value.clone();
+            }
         }
     }
     let value = query(channel).filter(|v| version(v).is_some());
-    cache.insert(channel.clone(), (now, value.clone()));
+    cache
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(channel.clone(), (now, value.clone()));
     value
 }
 

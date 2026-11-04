@@ -473,7 +473,7 @@ function updateControls() {
   const canSave = !busy && dirty && !documentError && !emptyRestricted && errors.length === 0;
 
   $("save-btn").disabled = !canSave;
-  $("refresh-detection").disabled = busy || probing;
+  $("refresh-detection").disabled = busy || probing || !!cliUpdating || !!cliBatch;
   $("refresh-detection").textContent = probing ? L("正在检测…", "Detecting…") : L("刷新模型列表", "Refresh models");
 
   // Feedback hints

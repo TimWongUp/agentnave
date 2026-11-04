@@ -17,7 +17,6 @@ const UPDATE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 #[derive(Debug)]
 struct Plan {
     program: PathBuf,
-    search_path: Option<std::ffi::OsString>,
     args: Vec<String>,
     command: String,
     via: &'static str,
@@ -28,37 +27,58 @@ pub(crate) fn state() -> Value {
     snapshot(&super::detected(false), cached)
 }
 
-fn snapshot(all: &Value, query: impl Fn(&Channel) -> Option<String>) -> Value {
-    let mut clis = serde_json::Map::new();
-    for provider in crate::members::PROVIDERS {
-        let info = &all[provider];
-        if info["installed"] != true {
-            continue;
-        }
-        let plan = info["path"]
-            .as_str()
-            .and_then(|p| install::identify(provider, Path::new(p)));
-        let latest = plan.as_ref().and_then(|plan| query(&plan.channel));
-        let available = latest
-            .as_deref()
-            .zip(info["version"].as_str())
-            .is_some_and(|(a, b)| newer(a, b));
-        clis.insert(
-            (*provider).into(),
-            json!({"version": info["version"], "latest": latest,
-            "update": available, "via": plan.as_ref().map(|p| p.via),
-            "command": plan.as_ref().map(|p| &p.command)}),
-        );
-    }
-    json!({"clis": clis, "install": install::commands(std::env::consts::OS)})
+pub(crate) fn install_commands() -> Value {
+    install::commands(std::env::consts::OS)
+}
+
+fn snapshot(all: &Value, query: impl Fn(&Channel) -> Option<String> + Sync) -> Value {
+    let clis: serde_json::Map<String, Value> = std::thread::scope(|scope| {
+        let probes: Vec<_> = crate::members::PROVIDERS
+            .into_iter()
+            .filter(|provider| all[provider]["installed"] == true)
+            .map(|provider| {
+                let query = &query;
+                (
+                    provider,
+                    scope.spawn(move || cli_state(provider, &all[provider], query)),
+                )
+            })
+            .collect();
+        probes
+            .into_iter()
+            .map(|(provider, probe)| {
+                let state = probe.join().unwrap_or_else(|_| {
+                    json!({
+                        "version": all[provider]["version"], "latest": null,
+                        "update": false, "via": null, "command": null
+                    })
+                });
+                (provider.to_owned(), state)
+            })
+            .collect()
+    });
+    json!({"clis": clis})
+}
+
+fn cli_state(provider: &str, info: &Value, query: impl Fn(&Channel) -> Option<String>) -> Value {
+    let plan = info["path"]
+        .as_str()
+        .and_then(|p| install::identify(provider, Path::new(p)));
+    let latest = plan.as_ref().and_then(|plan| query(&plan.channel));
+    let available = latest
+        .as_deref()
+        .zip(info["version"].as_str())
+        .is_some_and(|(a, b)| newer(a, b));
+    json!({"version": info["version"], "latest": latest, "update": available,
+        "via": plan.as_ref().map(|p| p.via), "command": plan.as_ref().map(|p| &p.command)})
 }
 
 fn claim(preview: bool, lock: &Mutex<()>) -> Result<MutexGuard<'_, ()>, String> {
     if preview {
-        return Err("预览版不执行 CLI 更新 / Preview builds cannot update CLIs".into());
+        return Err("预览版不执行 CLI 更新".into());
     }
     lock.try_lock()
-        .map_err(|_| "已有 CLI 正在更新，请稍后重试 / Another CLI update is running".into())
+        .map_err(|_| "已有 CLI 正在更新，请稍后重试".into())
 }
 
 pub(crate) fn update(provider: &str) -> Result<Value, String> {
@@ -69,14 +89,11 @@ pub(crate) fn update(provider: &str) -> Result<Value, String> {
         .as_str()
         .filter(|_| info["installed"] == true)
         .and_then(|p| install::identify(provider, Path::new(p)))
-        .ok_or("无法安全更新此 CLI / This CLI installation cannot be updated safely")?;
-    let latest =
-        cached(&plan.channel).ok_or("无法查询最新版本 / Could not check the latest version")?;
-    let current = info["version"]
-        .as_str()
-        .ok_or("无法读取当前版本 / Could not read the installed version")?;
+        .ok_or("无法安全更新此 CLI")?;
+    let latest = cached(&plan.channel).ok_or("无法查询最新版本")?;
+    let current = info["version"].as_str().ok_or("无法读取当前版本")?;
     if !newer(&latest, current) {
-        return Err("没有可用的新版 / No newer version available".into());
+        return Err("没有可用的新版".into());
     }
     execute(&plan, UPDATE_TIMEOUT)?;
     let after = super::detected(true);
@@ -92,12 +109,8 @@ pub(crate) fn update(provider: &str) -> Result<Value, String> {
 fn verify(command: &str, before: &str, after: Option<&str>, latest: &str) -> Result<(), String> {
     match after {
         Some(after) if after != before || !newer(latest, after) => Ok(()),
-        Some(after) => Err(format!(
-            "{command}: 仍是旧版本 {after}（最新 {latest}） / Still running the old version"
-        )),
-        None => Err(format!(
-            "{command}: 更新后无法读取版本 / Could not detect the version after updating"
-        )),
+        Some(after) => Err(format!("{command}: 仍是旧版本 {after}（最新 {latest}）")),
+        None => Err(format!("{command}: 更新后无法读取版本")),
     }
 }
 
@@ -105,16 +118,11 @@ fn execute(plan: &Plan, timeout: Duration) -> Result<(), String> {
     let args: Vec<_> = plan.args.iter().map(String::as_str).collect();
     let mut command = super::probe::command(&plan.program, &args);
     command.stdin(Stdio::null()).env("NO_COLOR", "1");
-    if let Some(path) = &plan.search_path {
-        command.env("PATH", path);
-    }
     let output = crate::process::output(command, timeout).map_err(|error| {
         let detail = match error {
             crate::process::OutputError::Io(e) => e.to_string(),
-            crate::process::OutputError::Timeout => "更新超时 / Update timed out".into(),
-            crate::process::OutputError::Reader => {
-                "无法读取更新输出 / Could not read update output".into()
-            }
+            crate::process::OutputError::Timeout => "更新超时".into(),
+            crate::process::OutputError::Reader => "无法读取更新输出".into(),
         };
         format!("{}: {detail}", plan.command)
     })?;
@@ -131,7 +139,7 @@ fn execute(plan: &Plan, timeout: Duration) -> Result<(), String> {
         "{}: {}",
         plan.command,
         if tail.is_empty() {
-            "更新命令失败 / Update command failed"
+            "更新命令失败"
         } else {
             &tail
         }

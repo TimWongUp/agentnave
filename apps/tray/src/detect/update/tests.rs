@@ -26,7 +26,10 @@ fn native_and_desktop_installations() {
         let path = file(temp.path(), relative);
         let plan = install::identify(provider, &path).unwrap();
         assert_eq!(plan.via, "native");
-        assert_eq!(plan.program, path.canonicalize().unwrap());
+        assert_eq!(
+            plan.program,
+            install::command_path(&path.canonicalize().unwrap())
+        );
         assert_eq!(plan.command, format!("{provider} update"));
     }
     let windows = file(temp.path(), ".local/bin/claude.exe");
@@ -60,11 +63,16 @@ fn native_and_desktop_installations() {
 fn follows_symlinks_to_the_same_detected_installation() {
     let temp = TempDir::new().unwrap();
     let real = file(temp.path(), ".codex/packages/standalone/1/codex");
+    fs::write(&real, "#!/bin/sh\nprintf '%s' \"$PATH\" > \"$0.path\"\n").unwrap();
     let link = temp.path().join("codex");
     std::os::unix::fs::symlink(&real, &link).unwrap();
+    let plan = install::identify("codex", &link).unwrap();
+    assert_eq!(plan.program, real.canonicalize().unwrap());
+    execute(&plan, Duration::from_secs(5)).unwrap();
+    let path = fs::read_to_string(real.with_file_name("codex.path")).unwrap();
     assert_eq!(
-        install::identify("codex", &link).unwrap().program,
-        real.canonicalize().unwrap()
+        std::env::split_paths(&path).next().unwrap(),
+        plan.program.parent().unwrap()
     );
 }
 
@@ -75,6 +83,7 @@ fn homebrew_uses_its_own_prefix_and_known_names() {
     for (provider, store, name) in [
         ("claude", "Cellar", "claude-code"),
         ("codex", "Caskroom", "codex"),
+        ("codebuddy", "Cellar", "codebuddy-code"),
         ("pi", "Cellar", "pi-coding-agent"),
         ("grok", "Caskroom", "grok-build"),
     ] {
@@ -151,18 +160,11 @@ fn windows_shims_and_desktop_directories() {
             Some(binary.canonicalize().unwrap())
         );
     }
-    for path in [
-        r"C:\Users\User\AppData\Local\OpenAI\Codex\bin\abc\codex.exe",
-        r"C:\Users\User\.codex\plugins\.plugin-appserver\codex.exe",
-        r"D:\Apps\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd",
-        r"C:\Program Files\WindowsApps\OpenAI.ChatGPT_1.0\app\codex.exe",
-        r"D:\Apps\ZCode\resources\zcode.exe",
-    ] {
-        assert!(install::desktop(Path::new(path), true), "{path}");
-    }
-    assert!(!install::desktop(
-        Path::new(r"C:\Users\User\npm\node_modules\@openai\codex\bin\codex.js"),
-        true
+    let custom = file(temp.path(), "unusual-app/resources/runtime/cli/bin/dsh.cmd");
+    assert!(install::desktop_at(&custom, Some(&custom)));
+    assert!(!install::desktop_at(
+        &file(temp.path(), "npm/node_modules/@deepseek-ai/dsh/cli.js"),
+        Some(&custom)
     ));
 }
 
@@ -177,9 +179,19 @@ fn readonly_npm_directory_is_not_updatable() {
         "system/lib/node_modules/@openai/codex/bin/codex.js",
     );
     let modules = temp.path().join("system/lib/node_modules");
-    fs::set_permissions(&modules, fs::Permissions::from_mode(0o555)).unwrap();
-    assert!(install::identify("codex", &path).is_none());
-    fs::set_permissions(&modules, fs::Permissions::from_mode(0o755)).unwrap();
+    for dir in [
+        modules.clone(),
+        temp.path().join("system/bin"),
+        modules.join("@openai/codex"),
+    ] {
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(
+            install::identify("codex", &path).is_none(),
+            "{}",
+            dir.display()
+        );
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }
 
 #[test]
@@ -250,25 +262,30 @@ fn version_ordering_and_channel_parsers() {
 #[test]
 fn channel_cache_success_failure_and_expiry() {
     use std::time::Instant;
-    let mut cache = std::collections::HashMap::new();
+    let cache = Mutex::new(std::collections::HashMap::new());
     let channel = Channel::Grok("stable".into());
     let now = Instant::now();
-    let get = |cache: &mut _, at, value| latest::cached_with(cache, &channel, at, |_| value);
+    let get = |cache: &Mutex<_>, at, value| {
+        latest::cached_with(cache, &channel, at, |_| {
+            assert!(
+                cache.try_lock().is_ok(),
+                "query must run without the cache lock"
+            );
+            value
+        })
+    };
     assert_eq!(
-        get(&mut cache, now, Some("1.0.0".into())).as_deref(),
+        get(&cache, now, Some("1.0.0".into())).as_deref(),
         Some("1.0.0")
     );
     assert_eq!(
-        get(&mut cache, now + Duration::from_secs(21599), None).as_deref(),
+        get(&cache, now + Duration::from_secs(21599), None).as_deref(),
         Some("1.0.0")
     );
-    assert_eq!(
-        get(&mut cache, now + Duration::from_secs(21600), None),
-        None
-    );
+    assert_eq!(get(&cache, now + Duration::from_secs(21600), None), None);
     assert_eq!(
         get(
-            &mut cache,
+            &cache,
             now + Duration::from_secs(22499),
             Some("2.0.0".into())
         ),
@@ -276,7 +293,7 @@ fn channel_cache_success_failure_and_expiry() {
     );
     assert_eq!(
         get(
-            &mut cache,
+            &cache,
             now + Duration::from_secs(22500),
             Some("2.0.0".into())
         )
@@ -288,9 +305,9 @@ fn channel_cache_success_failure_and_expiry() {
 #[test]
 fn preview_mutex_and_post_update_verification() {
     let lock = Mutex::new(());
-    assert!(claim(true, &lock).unwrap_err().contains("Preview"));
+    assert!(claim(true, &lock).unwrap_err().contains("预览版"));
     let guard = claim(false, &lock).unwrap();
-    assert!(claim(false, &lock).unwrap_err().contains("Another"));
+    assert!(claim(false, &lock).unwrap_err().contains("已有 CLI"));
     drop(guard);
     assert!(claim(false, &lock).is_ok());
     assert!(
@@ -309,6 +326,7 @@ fn snapshot_uses_injected_versions_and_install_commands_are_os_specific() {
     let all = json!({"grok": {"installed": true, "path": path, "version": "1.0.0"},
         "zcode": {"installed": true, "version": "1.0.0"}});
     let state = snapshot(&all, |_| Some("2.0.0".into()));
+    assert!(state.get("install").is_none());
     assert_eq!(state["clis"]["grok"]["update"], true);
     assert_eq!(state["clis"]["zcode"]["update"], false);
     assert_eq!(snapshot(&all, |_| None)["clis"]["grok"]["update"], false);
@@ -342,7 +360,6 @@ fn fake_update_receives_arguments_environment_and_empty_stdin() {
     fs::write(&program, "#!/bin/sh\n[ \"$NO_COLOR\" = 1 ] || exit 2\n[ \"$1\" = update ] || exit 3\nread line && exit 4\nprintf 'first\\nsecond\\n\\033[31mthird\\033[0m\\n\\nfourth\\nfifth\\n' >&2\nexit 1\n").unwrap();
     let plan = Plan {
         program: program.clone(),
-        search_path: None,
         args: vec!["update".into()],
         command: "fake update".into(),
         via: "native",
@@ -358,7 +375,7 @@ fn fake_update_receives_arguments_environment_and_empty_stdin() {
     assert!(
         execute(&plan, Duration::from_millis(30))
             .unwrap_err()
-            .contains("timed out")
+            .contains("更新超时")
     );
     assert_eq!(
         error_tail("\x1b]8;;https://example.com\x1b\\label\x1b]8;;\x07\n"),
@@ -373,15 +390,23 @@ fn fake_npm_updates_the_original_prefix_even_with_spaces() {
     let npm = file(temp.path(), "Node With Spaces/bin/npm");
     fs::write(
         &npm,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nprintf '%s' \"$PATH\" > \"$0.path\"\nexit 0\n",
     )
     .unwrap();
     let path = file(
         temp.path(),
         "Node With Spaces/lib/node_modules/@openai/codex/bin/codex.js",
     );
-    let plan = install::identify("codex", &path).unwrap();
+    let link = temp.path().join("another-cli-dir/codex");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    let plan = install::identify("codex", &link).unwrap();
     execute(&plan, Duration::from_secs(5)).unwrap();
+    let search = fs::read_to_string(npm.with_file_name("npm.path")).unwrap();
+    assert_eq!(
+        std::env::split_paths(&search).next().unwrap(),
+        npm.parent().unwrap().canonicalize().unwrap()
+    );
     let received = fs::read_to_string(npm.with_file_name("npm.args")).unwrap();
     assert_eq!(
         received.lines().collect::<Vec<_>>(),
@@ -398,4 +423,58 @@ fn fake_npm_updates_the_original_prefix_even_with_spaces() {
             "@openai/codex@latest"
         ]
     );
+}
+
+#[test]
+fn windows_npm_falls_back_to_the_detected_command_and_strips_drive_prefixes() {
+    let temp = TempDir::new().unwrap();
+    let binary = file(
+        temp.path(),
+        "Roaming/npm/node_modules/@openai/codex/bin/codex.js",
+    );
+    let npm = file(temp.path(), "Program Files/nodejs/npm.cmd");
+    let plan = install::npm("codex", &binary, true, || Some(npm.clone())).unwrap();
+    assert_eq!(plan.program, npm);
+    assert_eq!(
+        plan.args[3],
+        temp.path().join("Roaming/npm").to_str().unwrap()
+    );
+    assert!(install::npm("codex", &binary, true, || None).is_none());
+    let local = file(temp.path(), "Roaming/npm/npm.cmd");
+    assert_eq!(
+        install::npm("codex", &binary, true, || panic!("local npm wins"))
+            .unwrap()
+            .program,
+        local
+    );
+    assert_eq!(
+        install::command_path(Path::new(r"\\?\C:\Program Files\nodejs\npm.cmd")),
+        Path::new(r"C:\Program Files\nodejs\npm.cmd")
+    );
+    for path in [r"\\?\UNC\server\share\npm.cmd", r"\\server\share\npm.cmd"] {
+        assert_eq!(install::command_path(Path::new(path)), Path::new(path));
+    }
+}
+
+#[test]
+fn snapshot_checks_multiple_channels_in_parallel() {
+    let temp = TempDir::new().unwrap();
+    let a = file(temp.path(), ".codex/packages/standalone/1/codex");
+    let b = file(temp.path(), ".local/share/claude/versions/1");
+    let all = json!({"codex": {"installed": true, "path": a, "version": "1.0.0"},
+        "claude": {"installed": true, "path": b, "version": "1.0.0"}});
+    let started = Mutex::new(0);
+    let wake = std::sync::Condvar::new();
+    let state = snapshot(&all, |_| {
+        let mut count = started.lock().unwrap();
+        *count += 1;
+        wake.notify_all();
+        let (count, _) = wake
+            .wait_timeout_while(count, Duration::from_secs(2), |n| *n < 2)
+            .unwrap();
+        assert_eq!(*count, 2, "both queries must start before either finishes");
+        Some("2.0.0".into())
+    });
+    assert_eq!(state["clis"]["codex"]["update"], true);
+    assert_eq!(state["clis"]["claude"]["update"], true);
 }

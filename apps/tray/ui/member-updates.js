@@ -1,14 +1,24 @@
 "use strict";
 
-let cliUpdates = { clis: {}, install: {} };
+let cliUpdates = { clis: {} };
+let cliInstallCommands = {};
 let cliUpdating = null;
 let cliBatch = null;
 let cliSummary = "";
 const cliUpdateErrors = {};
 let cliQuery = 0;
 
+async function loadCliInstallCommands() {
+  try {
+    const res = await fetch("/app/cli-install-commands", { cache: "no-store" });
+    if (!res.ok) throw new Error(String(res.status));
+    cliInstallCommands = await res.json();
+  } catch (_) { /* Keep commands already loaded from the static route. */ }
+}
+
 // Called only after cards have painted; channel checks never hold up initial members data.
 async function loadCliUpdates() {
+  if (!cliUpdating && !cliBatch) { cliSummary = ""; renderCards(); }
   const query = ++cliQuery;
   try {
     const res = await fetch("/app/cli-updates", { cache: "no-store" });
@@ -19,7 +29,7 @@ async function loadCliUpdates() {
   } catch (_) {
     if (query !== cliQuery || cliUpdating || cliBatch) return;
     // A failed check must not leave an older 'update available' result actionable.
-    cliUpdates = { clis: {}, install: cliUpdates.install };
+    cliUpdates = { clis: {} };
   }
   renderCards();
 }
@@ -148,7 +158,7 @@ function renderMissingClis(missing) {
   const list = el("div", { className: "cli-missing-list" });
   let hasNpm = false;
   for (const provider of missing) {
-    const commands = cliUpdates.install?.[provider] || [];
+    const commands = cliInstallCommands[provider] || [];
     const row = el("div", { className: "cli-install-row" },
       el("span", { className: "cli-install-name" }, PROVIDER_NAMES[provider] || provider));
     const methods = el("div", { className: "cli-install-methods" });

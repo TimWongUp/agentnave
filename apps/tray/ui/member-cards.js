@@ -125,7 +125,7 @@ function renderCards() {
   for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
     const info = detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
     const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
-    const listed = known(provider);
+    const listed = known(provider, saved);
     if (!info.installed && !listed) {
       missing.push(provider);
       continue;
@@ -238,7 +238,7 @@ function renderErrorBanner() {
 // Re-probe the CLIs. A quiet probe runs when Settings opens or regains focus and only speaks
 // up when the lists changed.
 async function refreshDetection(quiet = false) {
-  if (busy || probing) return;
+  if (busy || probing || cliUpdating || cliBatch) return;
   probing = true;
   probedAt = Date.now();
   const before = savedSnapshot;
@@ -279,13 +279,14 @@ async function refreshDetection(quiet = false) {
 }
 
 function probeWhenStale() {
-  if (document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
+  if (!cliUpdating && !cliBatch && document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
 }
 
 // Load initial members data
 async function loadMembers() {
   if (currentTab === "members") showNotice(L("正在读取成员与模型配置…", "Loading employee and model settings…"));
   try {
+    await loadCliInstallCommands();
     const data = await apiGetMembers(false);
     detected = data.detected || {};
     currentDoc = data.document || { version: 1, clis: {}, modes: {} };

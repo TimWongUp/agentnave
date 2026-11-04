@@ -4,8 +4,13 @@ const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
 function app(fetch) {
+  const controls = new Map();
+  const control = (id) => {
+    if (!controls.has(id)) controls.set(id, { options: [], dataset: {}, classList: { toggle() {}, contains() { return false; } } });
+    return controls.get(id);
+  };
   const context = vm.createContext({ AN: {}, fetch,
-    document: { getElementById: () => ({ options: [] }) },
+    document: { getElementById: control },
     window: { addEventListener() {} },
   });
   const run = (code) => vm.runInContext(code, context);
@@ -13,13 +18,15 @@ function app(fetch) {
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
   }
   run(`
-    el = (tag, attrs, ...children) => ({ tag, attrs, children });
+    el = (tag, attrs, ...children) => ({ tag, attrs, children, appendChild(child) { this.children.push(child); } });
+    textNode = (s) => s;
     function renderErrorBanner() {}
     let errors = [], summaries = [];
     function renderCards() {
       errors = PROVIDERS.map(renderCliUpdateError);
       summaries.push(cliBatch ? { ...cliBatch } : null);
     }
+    const productionUpdateControls = updateControls;
     updateControls = () => {};
     detected = { codex: { installed: true }, claude: { installed: true } };
     cliUpdates = { clis: { codex: { update: true, latest: '2.0.0', command: 'codex update' },
@@ -98,4 +105,52 @@ test("a latest query started during an update cannot restore the old version aft
   await query;
   assert.equal(ui.run("cliUpdates.clis.codex.version"), "2.0.0");
   assert.equal(ui.run("cliUpdates.clis.codex.update"), false);
+});
+
+test("static installation commands remain available while latest queries stall or fail", async () => {
+  let rejectLatest;
+  const ui = app((url) => {
+    if (url === "/app/cli-install-commands") return Promise.resolve({ ok: true, json: async () => ({
+      codex: [{ label: "npm", command: "npm install -g @openai/codex" }], grok: [],
+    }) });
+    return new Promise((_resolve, reject) => { rejectLatest = reject; });
+  });
+  await ui.run("loadCliInstallCommands()");
+  ui.run("cliSummary = 'previous batch'; missingOpen = true");
+  const latest = ui.run("loadCliUpdates()");
+  assert.equal(ui.run("cliSummary"), "");
+  const rendered = ui.json("renderMissingClis(['codex', 'grok'])");
+  assert.match(JSON.stringify(rendered), /npm install -g @openai\/codex/);
+  assert.match(JSON.stringify(rendered), /Grok CLI/);
+  rejectLatest(new Error("offline"));
+  await latest;
+  assert.equal(ui.run("cliInstallCommands.codex[0].command"), "npm install -g @openai/codex");
+});
+
+test("updating disables refresh controls and skips both manual and focus detection", async () => {
+  let requests = 0;
+  const ui = app(async () => { requests++; throw new Error("unexpected detection"); });
+  ui.run(readFileSync(`${__dirname}/../member-cards.js`, "utf8"));
+  // Exercise the shared controls with their other sections stubbed out.
+  ui.run(`
+    function advancedChanges() { return []; }
+    function renderLeaveConfirm() {}
+    function renderAdvancedBar() {}
+    emptyScene = () => null;
+    configurationErrors = () => [];
+    countPermissionOptions = () => 0;
+    document.visibilityState = 'visible';
+    cliUpdating = 'codex';
+  `);
+  ui.run("productionUpdateControls()");
+  assert.equal(ui.run("$('refresh-detection').disabled"), true);
+  await ui.run("refreshDetection()");
+  ui.run("probeWhenStale()");
+  assert.equal(requests, 0);
+  ui.run("cliUpdating = null; cliBatch = { provider: 'claude' }; productionUpdateControls()");
+  assert.equal(ui.run("$('refresh-detection').disabled"), true);
+  await ui.run("refreshDetection()");
+  assert.equal(requests, 0);
+  ui.run("cliBatch = null; productionUpdateControls()");
+  assert.equal(ui.run("$('refresh-detection').disabled"), false);
 });

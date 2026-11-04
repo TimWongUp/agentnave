@@ -11,26 +11,55 @@ pub(super) fn package(provider: &str) -> Option<&'static str> {
     }
 }
 
-pub(super) fn desktop(path: &Path, windows: bool) -> bool {
-    let path = path.to_string_lossy().replace('\\', "/").to_lowercase();
-    if path.contains(".app/contents/") {
+fn desktop(provider: &str, path: &Path) -> bool {
+    if path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+        .contains(".app/contents/")
+    {
         return true;
     }
-    windows
-        && (path.contains("/.codex/plugins/.plugin-appserver/")
-            || [
-                "/openai/codex/",
-                "/chatgpt/",
-                "/programs/codex/",
-                "/program files/codex/",
-                "/program files (x86)/codex/",
-                "/deepseek harness/",
-                "/zcode/",
-            ]
-            .iter()
-            .any(|part| path.contains(part))
-            || (path.contains("/windowsapps/")
-                && (path.contains("openai") || path.contains("codex"))))
+    #[cfg(windows)]
+    {
+        let binary = match provider {
+            "deepseek" => "dsh",
+            other => other,
+        };
+        desktop_at(
+            path,
+            super::super::locate::desktop_binary(binary).as_deref(),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = provider;
+        false
+    }
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn desktop_at(path: &Path, bundled: Option<&Path>) -> bool {
+    bundled
+        .and_then(|p| p.canonicalize().ok())
+        .zip(path.canonicalize().ok())
+        .is_some_and(|(bundled, real)| bundled == real)
+}
+
+/// cmd.exe cannot use verbatim drive paths. Extended UNC paths keep their meaning unchanged.
+pub(super) fn command_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\'
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_owned()
 }
 
 /// Follow the same executable reported by detect, including npm's Windows .cmd launcher.
@@ -61,16 +90,14 @@ pub(super) fn target(path: &Path, provider: &str, windows: bool) -> Option<PathB
 }
 
 pub(super) fn identify(provider: &str, path: &Path) -> Option<Plan> {
-    if matches!(provider, "antigravity" | "zcode") || desktop(path, cfg!(windows)) {
+    if matches!(provider, "antigravity" | "zcode") || desktop(provider, path) {
         return None;
     }
     let real = target(path, provider, cfg!(windows))?;
-    if desktop(&real, cfg!(windows)) {
+    if desktop(provider, &real) {
         return None;
     }
-    let mut plan = classify(provider, &real, cfg!(windows))?;
-    plan.search_path = super::super::probe::search_path(path);
-    Some(plan)
+    classify(provider, &real, cfg!(windows))
 }
 
 pub(super) fn classify(provider: &str, real: &Path, windows: bool) -> Option<Plan> {
@@ -94,21 +121,29 @@ pub(super) fn classify(provider: &str, real: &Path, windows: bool) -> Option<Pla
             Channel::Npm(package(provider)?.to_owned())
         };
         return Some(Plan {
-            program: real.to_owned(),
-            search_path: None,
+            program: if windows {
+                command_path(real)
+            } else {
+                real.to_owned()
+            },
             args: vec!["update".into()],
             command: format!("{provider} update"),
             via: "native",
             channel,
         });
     }
-    brew(provider, real).or_else(|| npm(provider, real, windows))
+    brew(provider, real).or_else(|| {
+        npm(provider, real, windows, || {
+            super::super::locate::find_on_path("npm.cmd")
+        })
+    })
 }
 
 fn brew(provider: &str, real: &Path) -> Option<Plan> {
     let names: &[&str] = match provider {
         "claude" => &["claude-code"],
         "codex" => &["codex"],
+        "codebuddy" => &["codebuddy-code"],
         "pi" => &["pi-coding-agent"],
         "grok" => &["grok-build"],
         _ => return None,
@@ -146,7 +181,6 @@ fn brew(provider: &str, real: &Path) -> Option<Plan> {
         };
         return Some(Plan {
             program,
-            search_path: None,
             command: format!("brew {}", args.join(" ")),
             args,
             via: "homebrew",
@@ -156,7 +190,13 @@ fn brew(provider: &str, real: &Path) -> Option<Plan> {
     None
 }
 
-fn npm(provider: &str, real: &Path, windows: bool) -> Option<Plan> {
+pub(super) fn npm(
+    provider: &str,
+    real: &Path,
+    windows: bool,
+    find_npm: impl FnOnce() -> Option<PathBuf>,
+) -> Option<Plan> {
+    let mut find_npm = Some(find_npm);
     let primary = package(provider)?;
     let packages = if provider == "pi" {
         vec![primary, "@mariozechner/pi-coding-agent"]
@@ -186,15 +226,34 @@ fn npm(provider: &str, real: &Path, windows: bool) -> Option<Plan> {
             }
             lib.parent()?
         };
-        let program = prefix.join(if windows { "npm.cmd" } else { "bin/npm" });
+        if !windows && (!writable(&prefix.join("bin")) || !writable(&modules.join(package))) {
+            return None;
+        }
+        let local = prefix.join(if windows { "npm.cmd" } else { "bin/npm" });
+        let program = if super::super::executable(&local) {
+            local
+        } else if windows {
+            find_npm.take()?()?
+        } else {
+            return None;
+        };
         if !super::super::executable(&program) {
             return None;
         }
+        let program = if windows {
+            command_path(&program)
+        } else {
+            program
+        };
+        let prefix = if windows {
+            command_path(prefix)
+        } else {
+            prefix.to_owned()
+        };
         let npm = if windows { "npm.cmd" } else { "npm" };
         let package = format!("{package}@latest");
         return Some(Plan {
             program,
-            search_path: None,
             args: vec![
                 "install".into(),
                 "-g".into(),
