@@ -6,6 +6,10 @@
       "model": "gpt-6.1-sol",
       "effort": "high"
     },
+    "correctness-reviewer-easy": {
+      "provider": "pi",
+      "model": "opencode-go/deepseek-v4.1-flash"
+    },
     "security-reviewer": {
       "provider": "claude",
       "model": "opus"
