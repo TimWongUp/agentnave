@@ -1,6 +1,93 @@
 use super::*;
 use crate::data::Reader;
 
+#[test]
+fn migration_freezes_open_scenes_and_keeps_defaults_and_explicit_selections() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut original = document();
+    original["modes"].as_object_mut().unwrap().remove("task");
+    original["defaults"] = json!({"task": {"codex": "gpt-6.1-sol"}});
+    save(dir.path(), &original).unwrap();
+    let detected = json!({"claude": {"installed": true}, "codex": {"installed": false}});
+    migrate(dir.path(), &detected, false).unwrap();
+    let migrated = read(dir.path()).unwrap().unwrap();
+    assert_eq!(migrated["clis"], original["clis"]);
+    assert_eq!(
+        migrated["modes"]["discussion"],
+        original["modes"]["discussion"]
+    );
+    assert_eq!(
+        migrated["modes"]["task"],
+        json!({
+            "claude": {"models": [], "overrides": {}},
+            "codex": {"models": [], "overrides": {}, "default": "gpt-6.1-sol"}
+        })
+    );
+    assert!(migrated.get("defaults").is_none());
+    // A later installation must not expand the frozen list on the next App start.
+    let bytes = fs::read(dir.path().join(FILE)).unwrap();
+    migrate(dir.path(), &json!({"grok": {"installed": true}}), true).unwrap();
+    assert_eq!(fs::read(dir.path().join(FILE)).unwrap(), bytes);
+}
+
+#[test]
+fn migration_creates_installed_cli_lists_for_an_existing_boss() {
+    let dir = tempfile::tempdir().unwrap();
+    migrate(dir.path(), &json!({"codex": {"installed": true}}), true).unwrap();
+    let migrated = read(dir.path()).unwrap().unwrap();
+    assert_eq!(migrated["clis"], json!({}));
+    for mode in MODES {
+        assert_eq!(
+            migrated["modes"][mode],
+            json!({"codex": {"models": [], "overrides": {}}})
+        );
+    }
+}
+
+#[test]
+fn migration_leaves_a_fresh_install_without_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    migrate(dir.path(), &json!({"codex": {"installed": true}}), false).unwrap();
+    assert!(!dir.path().join(FILE).exists());
+}
+
+#[test]
+fn connecting_a_boss_keeps_existing_settings_and_confirms_only_missing_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = document();
+    save(dir.path(), &original).unwrap();
+    confirm_host(dir.path(), "codex@work").unwrap();
+    let confirmed = read(dir.path()).unwrap().unwrap();
+    assert_eq!(confirmed["clis"], original["clis"]);
+    assert_eq!(confirmed["modes"]["task"], original["modes"]["task"]);
+    assert_eq!(
+        confirmed["modes"]["discussion"]["codex"],
+        json!({"models": [], "overrides": {}})
+    );
+}
+
+#[test]
+fn connecting_a_boss_creates_its_cli_only_and_maps_host_rows() {
+    for (id, provider) in [("claude-desktop", "claude"), ("workbuddy", "codebuddy")] {
+        let dir = tempfile::tempdir().unwrap();
+        confirm_host(dir.path(), id).unwrap();
+        let confirmed = read(dir.path()).unwrap().unwrap();
+        assert_eq!(confirmed["clis"], json!({}));
+        for mode in MODES {
+            assert_eq!(
+                confirmed["modes"][mode],
+                json!({provider: {"models": [], "overrides": {}}})
+            );
+        }
+        let bytes = fs::read(dir.path().join(FILE)).unwrap();
+        confirm_host(dir.path(), "hermes").unwrap();
+        assert_eq!(fs::read(dir.path().join(FILE)).unwrap(), bytes);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    confirm_host(dir.path(), "hermes").unwrap();
+    assert!(!dir.path().join(FILE).exists());
+}
+
 fn document() -> Value {
     json!({
         "version": 1,

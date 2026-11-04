@@ -1,0 +1,85 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const vm = require("node:vm");
+
+function editor(fetch = async () => { throw new Error("unexpected request"); }) {
+  const listeners = {};
+  const context = vm.createContext({
+    AN: {}, structuredClone, fetch,
+    document: { getElementById: () => ({ options: [] }) },
+    window: { addEventListener: (name, fn) => { listeners[name] = fn; } },
+  });
+  const run = (code) => vm.runInContext(code, context);
+  for (const file of ["settings-state.js", "member-models.js"]) {
+    run(readFileSync(`${__dirname}/../${file}`, "utf8"));
+  }
+  run(`
+    updateControls = () => {};
+    function renderCards() {}
+    function renderErrorBanner() {}
+    detected = { codex: { installed: true } };
+    currentDoc = { version: 1, clis: {}, modes: {
+      task: { codex: { models: [], overrides: {} } },
+      discussion: { codex: { models: [], overrides: {} } }
+    } };
+    markSaved();
+  `);
+  return { run, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
+}
+
+test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
+  const app = editor();
+  app.run('setProviderEnabled("codex", false); setProviderEnabled("codex", true)');
+  app.run('detected.claude = { installed: true }');
+  assert.equal(app.run('slot("task", "claude").enabled'), false);
+  assert.equal(app.run('slot("discussion", "claude").enabled'), false);
+  app.run('setProviderEnabled("claude", true)');
+  for (const scene of ["task", "discussion"]) {
+    assert.deepEqual(Object.keys(app.doc().modes[scene]).sort(), ["claude", "codex"]);
+  }
+  assert.equal(Object.hasOwn(app.doc(), "defaults"), false);
+});
+
+test("saving handwritten open scenes moves defaults into the explicit CLI lists", async () => {
+  let sent;
+  const app = editor(async (_url, options) => {
+    sent = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ saved: true }) };
+  });
+  app.run(`currentDoc = {
+    version: 1, clis: { grok: { models: { saved: {} } } }, modes: {},
+    defaults: { task: { grok: "saved" } }
+  }`);
+  assert.equal(app.run('slot("task", "grok").model'), "saved");
+  await app.run("apiPostMembers(currentDoc)");
+  assert.deepEqual(sent.modes.task, {
+    codex: { models: [], overrides: {} },
+    grok: { models: [], overrides: {}, default: "saved" },
+  });
+  assert.deepEqual(sent.modes.discussion, { codex: { models: [], overrides: {} } });
+  assert.equal(Object.hasOwn(sent, "defaults"), false);
+});
+
+test("host events reload clean members and preserve edits made before or during the read", async () => {
+  let answer, requests = 0;
+  const app = editor(() => {
+    requests++;
+    return new Promise((resolve) => { answer = (document) => resolve({ ok: true, json: async () => ({ document }) }); });
+  });
+  const hosts = (at) => ({ detail: { hosts: [{ id: "codex", status: "connected", last_action: { at } }] } });
+  const reloaded = app.listeners["agentnave:hosts"](hosts("1"));
+  const document = app.doc();
+  document.modes.task.claude = { models: [], overrides: {} };
+  answer(document);
+  await reloaded;
+  assert.equal(app.run('slot("task", "claude").enabled'), true);
+
+  const racing = app.listeners["agentnave:hosts"](hosts("2"));
+  app.run('setProviderEnabled("codex", false)');
+  answer(document);
+  await racing;
+  assert.equal(app.run('slot("task", "codex").enabled'), false);
+  await app.listeners["agentnave:hosts"](hosts("3"));
+  assert.equal(requests, 2);
+});

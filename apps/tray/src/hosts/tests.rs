@@ -550,6 +550,49 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
 }
 
 #[test]
+fn host_routes_confirm_members_only_after_a_successful_connection() {
+    let (_temp, hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let reader = Reader::new(directory.path().to_path_buf());
+    reader.use_hosts(hosts);
+    let failed = reader.request(
+        "POST",
+        "/app/hosts/connect",
+        Some("1"),
+        br#"{"id":"unknown"}"#,
+    );
+    assert_eq!(failed.status, 400);
+    assert!(!directory.path().join("members.json").exists());
+    let connected = reader.request(
+        "POST",
+        "/app/hosts/connect",
+        Some("1"),
+        br#"{"id":"codex"}"#,
+    );
+    assert_eq!(connected.status, 200);
+    let result: Value = serde_json::from_slice(&connected.body).unwrap();
+    assert_eq!(result["ok"], true, "{result}");
+    let members = crate::members::read(directory.path()).unwrap().unwrap();
+    for mode in ["task", "discussion"] {
+        assert_eq!(
+            members["modes"][mode],
+            json!({"codex": {"models": [], "overrides": {}}})
+        );
+    }
+    let removed = reader.request("POST", "/app/hosts/remove", Some("1"), br#"{"id":"codex"}"#);
+    assert_eq!(removed.status, 200);
+    assert_eq!(
+        crate::members::read(directory.path()).unwrap().unwrap(),
+        members
+    );
+}
+
+#[test]
 fn first_connection_detects_running_hosts_without_mcp_receipts() {
     let (_temp, mut hosts) = fixture();
     for id in IDS {

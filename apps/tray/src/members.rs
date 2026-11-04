@@ -425,10 +425,92 @@ pub fn save_permissions(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, PERMISSIONS_FILE, document)
 }
 
-/// Run at App start: probe the CLIs once so the office can name each CLI's own default model
-/// before Settings is ever opened.
-pub fn prepare() {
-    crate::detect::detected(false);
+/// Freeze previously unrestricted scenes at the installed CLIs, keeping their defaults.
+fn confirm_scenes(document: &mut Value, detected: &Value) -> bool {
+    let before = document.clone();
+    for mode in MODES {
+        if document["modes"].get(mode).is_some() {
+            continue;
+        }
+        let kept = document["defaults"][mode]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        let mut selection = Map::new();
+        for provider in PROVIDERS {
+            if detected[provider]["installed"] != true && !kept.contains_key(provider) {
+                continue;
+            }
+            let mut member = json!({"models": [], "overrides": {}});
+            if let Some(model) = kept.get(provider) {
+                member["default"] = model.clone();
+            }
+            selection.insert(provider.into(), member);
+        }
+        document["modes"][mode] = Value::Object(selection);
+        if let Some(defaults) = document.get_mut("defaults").and_then(Value::as_object_mut) {
+            defaults.remove(mode);
+        }
+    }
+    if document["defaults"].as_object().is_some_and(Map::is_empty) {
+        document.as_object_mut().unwrap().remove("defaults");
+    }
+    *document != before
+}
+
+fn migrate(root: &Path, detected: &Value, has_boss: bool) -> Result<(), String> {
+    if crate::PREVIEW {
+        return Ok(());
+    }
+    let mut document = match read(root)? {
+        Some(document) => document,
+        None if has_boss => empty(),
+        None => return Ok(()),
+    };
+    if confirm_scenes(&mut document, detected) {
+        save(root, &document)?;
+    }
+    Ok(())
+}
+
+/// Run once after host detection, while host actions are locked out of the migration.
+pub fn prepare(root: &Path, hosts: &Value) {
+    let detected = crate::detect::detected(false);
+    let has_boss = hosts["hosts"]
+        .as_array()
+        .is_some_and(|hosts| hosts.iter().any(|host| host["status"] == "connected"));
+    if let Err(error) = migrate(root, &detected, has_boss) {
+        eprintln!("无法迁移员工名单：{error}");
+    }
+}
+
+/// Successful boss connections confirm only their own CLI; existing selections stay intact.
+pub fn confirm_host(root: &Path, id: &str) -> Result<(), String> {
+    if crate::PREVIEW {
+        return Ok(());
+    }
+    let boss = crate::hosts::boss_of(id);
+    let provider = if boss == "workbuddy" {
+        "codebuddy"
+    } else {
+        boss
+    };
+    if !PROVIDERS.contains(&provider) {
+        return Ok(());
+    }
+    let mut document = read(root)?.unwrap_or_else(empty);
+    let mut changed = confirm_scenes(&mut document, &Value::Null);
+    for mode in MODES {
+        let selection = document["modes"][mode].as_object_mut().unwrap();
+        if !selection.contains_key(provider) {
+            selection.insert(provider.into(), json!({"models": [], "overrides": {}}));
+            changed = true;
+        }
+    }
+    if changed {
+        save(root, &document)?;
+    }
+    Ok(())
 }
 
 /// The editable document and why it cannot be saved. Without the file nothing is written:

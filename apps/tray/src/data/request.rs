@@ -241,6 +241,12 @@ impl Reader {
             self.tools.clone(),
         ));
     }
+    pub fn prepare_members(&self) {
+        let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(hosts) = guard.as_ref() {
+            crate::members::prepare(&self.root, hosts.cached_snapshot());
+        }
+    }
     pub(super) fn boss_homes(&self) -> boss_app::Homes {
         let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
         hosts
@@ -375,12 +381,26 @@ impl Reader {
                 if matches!(operation, "connect" | "remove" | "root") {
                     self.sync_rules(hosts, &before);
                 }
-                match result {
-                    Ok(result) => Response::json(&result),
-                    Err(error) => Response::error(400, &error),
-                }
+                self.host_action_response(operation, result)
             }
         }
+    }
+
+    fn host_action_response(&self, operation: &str, result: Result<Value, String>) -> Response {
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => return Response::error(400, &error),
+        };
+        if operation == "connect"
+            && result["ok"] == true
+            && let Err(error) = crate::members::confirm_host(
+                &self.root,
+                result["host"]["id"].as_str().unwrap_or_default(),
+            )
+        {
+            return Response::error(500, &format!("宿主已接入，但员工确认失败：{error}"));
+        }
+        Response::json(&result)
     }
     /// `GET /settings/members`, re-probing the CLIs when `refresh` is set.
     pub fn members(&self, refresh: bool) -> Response {

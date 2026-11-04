@@ -1,16 +1,6 @@
 "use strict";
 const isRestricted = (scene) => Object.hasOwn(currentDoc.modes || {}, scene);
 
-// Default models of an unrestricted mode; an empty map leaves no `defaults` key behind.
-function setKeptDefaults(kept, mode) {
-  if (Object.keys(kept).length) {
-    currentDoc.defaults = { ...currentDoc.defaults, [mode]: kept };
-  } else if (currentDoc.defaults) {
-    delete currentDoc.defaults[mode];
-    if (!Object.keys(currentDoc.defaults).length) delete currentDoc.defaults;
-  }
-}
-
 // A model the App starts configuring keeps the CLI's own default effort until one is chosen (ADR-0028).
 function ensureCliModel(provider, modelId) {
   if (!currentDoc.clis) currentDoc.clis = {};
@@ -116,33 +106,29 @@ const isSplit = (provider) => splitCards.has(provider) ||
 const known = (provider) => detected[provider]?.installed ||
   SCENE_IDS.some((s) => currentDoc.modes?.[s]?.[provider] || currentDoc.defaults?.[s]?.[provider]);
 
-// A scene names its CLIs only when it must (one is off, a model list or a scene-only effort):
-// every known CLI is listed with any model and keeps its default model (ADR-0021).
-function restrict(scene) {
-  if (isRestricted(scene)) return currentDoc.modes[scene];
-  const kept = currentDoc.defaults?.[scene] || {};
+// Handwritten unrestricted scenes remain readable; the App always saves explicit lists.
+function restrict(scene, doc = currentDoc) {
+  doc.modes ||= {};
+  if (Object.hasOwn(doc.modes, scene)) return doc.modes[scene];
+  const kept = doc.defaults?.[scene] || {};
   const selection = {};
   for (const p of PROVIDERS) {
-    if (!known(p) && !kept[p]) continue;
+    if (!detected[p]?.installed && !kept[p]) continue;
     selection[p] = { models: [], overrides: {} };
     if (kept[p]) selection[p].default = kept[p];
   }
-  currentDoc.modes = { ...currentDoc.modes, [scene]: selection };
-  setKeptDefaults({}, scene);
+  doc.modes[scene] = selection;
+  if (doc.defaults) {
+    delete doc.defaults[scene];
+    if (!Object.keys(doc.defaults).length) delete doc.defaults;
+  }
   return selection;
 }
 
-// A list that names every known CLI with any model and nothing scene-only says no more than
-// an open scene, which also takes CLIs installed later.
-function relax(scene, kept) {
-  const selection = currentDoc.modes?.[scene];
-  if (!selection) return;
-  const entries = Object.entries(selection);
-  const open = entries.every(([, c]) => !c.models?.length && !Object.keys(c.overrides || {}).length);
-  const all = PROVIDERS.every((p) => !kept.has(p) || selection[p]);
-  if (!entries.length || !open || !all) return;
-  delete currentDoc.modes[scene];
-  setKeptDefaults(Object.fromEntries(entries.filter(([, c]) => c.default).map(([p, c]) => [p, c.default])), scene);
+function confirmScenes(doc = currentDoc) {
+  for (const scene of SCENE_IDS) restrict(scene, doc);
+  delete doc.defaults;
+  return doc;
 }
 
 // A model list needs a default model, so following the CLI pins the CLI's own model.
@@ -153,18 +139,11 @@ function writeSlot(scene, provider, next) {
   }
   const native = nativeDefault(provider).model;
   const model = next.model || (next.allowed ? (next.allowed.includes(native) ? native : next.allowed[0]) : "");
-  if (next.allowed || isRestricted(scene)) {
-    const selection = restrict(scene);
-    const conf = (selection[provider] ||= { models: [], overrides: {} });
-    conf.models = next.allowed ? [...new Set([...next.allowed, model])] : [];
-    if (model) conf.default = model;
-    else delete conf.default;
-  } else {
-    const kept = { ...currentDoc.defaults?.[scene] };
-    if (model) kept[provider] = model;
-    else delete kept[provider];
-    setKeptDefaults(kept, scene);
-  }
+  const selection = restrict(scene);
+  const conf = (selection[provider] ||= { models: [], overrides: {} });
+  conf.models = next.allowed ? [...new Set([...next.allowed, model])] : [];
+  if (model) conf.default = model;
+  else delete conf.default;
   for (const m of [model, ...(next.allowed || [])]) if (m) ensureCliModel(provider, m);
 }
 
@@ -199,9 +178,7 @@ function writeEfforts(provider, modelId, wants) {
 }
 
 function edited() {
-  // Known before relaxing: opening one scene must not forget a CLI the other turned off.
-  const kept = new Set(PROVIDERS.filter(known));
-  for (const scene of SCENE_IDS) relax(scene, kept);
+  confirmScenes();
   incDocVersion();
   renderCards();
 }
@@ -241,7 +218,7 @@ function setProviderEnabled(provider, enabled, confirmed = false) {
   pendingDisable = null;
   for (const scene of SCENE_IDS) {
     if (!enabled) delete restrict(scene)[provider];
-    else if (isRestricted(scene)) currentDoc.modes[scene][provider] ||= { models: [], overrides: {} };
+    else restrict(scene)[provider] ||= { models: [], overrides: {} };
   }
   edited();
 }

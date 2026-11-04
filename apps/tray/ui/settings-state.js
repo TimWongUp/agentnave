@@ -209,6 +209,7 @@ function renderPermission(provider) {
 }
 
 async function apiPostMembers(doc) {
+  confirmScenes(doc);
   const res = await fetch("/app/members", {
     method: "POST",
     headers: {
@@ -270,6 +271,31 @@ function incDocVersion() {
   refreshDirty();
   updateControls();
 }
+
+// Host cards publish after a connection. Reload a clean employee editor so a later save
+// cannot overwrite the CLI just confirmed by that connection.
+let membersHostsKey = "";
+window.addEventListener("agentnave:hosts", async ({ detail }) => {
+  const key = JSON.stringify((detail.hosts || [])
+    .filter((host) => host.status === "connected")
+    .map((host) => [host.id, host.last_action?.at]));
+  if (key === membersHostsKey) return;
+  membersHostsKey = key;
+  if (!savedSnapshot || dirty || busy) return;
+  const before = docVersion;
+  const snapshot = savedSnapshot;
+  try {
+    const data = await apiGetMembers();
+    if (dirty || busy || docVersion !== before || savedSnapshot !== snapshot) return;
+    currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+    documentError = data.error || null;
+    markSaved();
+    renderErrorBanner();
+    renderCards();
+  } catch {
+    // Keep the editor on a transient read failure; refresh detection can read it again.
+  }
+});
 
 // Count permission-related options across entire document
 function countPermissionOptions() {

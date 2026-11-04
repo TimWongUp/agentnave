@@ -273,6 +273,7 @@ async function listSeatModel(seat) {
   await apiPostMembers(add(saved));
   savedSnapshot = JSON.stringify(saved);
   add(currentDoc);
+  confirmScenes();
   refreshDirty();
 }
 

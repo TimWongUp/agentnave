@@ -207,7 +207,7 @@ async function saveMembers() {
   feedback.textContent = L("正在保存…", "Saving…");
   feedback.className = "save-feedback";
 
-  const saving = JSON.stringify(currentDoc);
+  const saving = JSON.stringify(confirmScenes());
 
   try {
     if (saving !== savedSnapshot) {

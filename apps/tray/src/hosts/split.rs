@@ -14,7 +14,7 @@ use std::{
 const CLAUDE_DESKTOP: &str = "claude-desktop";
 
 /// The host a row's connections run as; its service knows no other names.
-pub(super) fn boss_of(id: &'static str) -> &'static str {
+pub(crate) fn boss_of(id: &str) -> &str {
     match id {
         CLAUDE_DESKTOP => "claude",
         id => id.split_once('@').map_or(id, |(boss, _)| boss),

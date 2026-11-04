@@ -690,6 +690,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
         let shell = takeover.probe_tools(&host_context);
         thread::spawn(move || {
             takeover.configure_hosts(host_context, shell);
+            takeover.prepare_members();
             // Refreshing repairs host configs and reinstalls Skills; that stays with the installed app.
             if !PREVIEW {
                 takeover.refresh_hosts();
@@ -705,7 +706,6 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             });
         }
     });
-    thread::spawn(members::prepare);
     alerts::start(handle.clone(), reader.clone());
     thread::spawn(move || poll(handle, reader, overview));
     Ok(())
