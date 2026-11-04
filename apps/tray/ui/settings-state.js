@@ -281,21 +281,32 @@ function incDocVersion() {
 
 // Host cards publish after a connection. Reload a clean employee editor, or add the CLIs the
 // connection confirmed to unsaved edits, so a later save cannot drop them.
-// The key is only recorded once a read was applied; a skipped or overtaken one is retried by the
-// next publication.
+// The key is only recorded once a read was applied. Host cards publish only on change, so a read
+// that was skipped or overtaken retries by itself with the latest hosts.
 let membersHostsKey = "";
 let membersHostsReading = false;
-window.addEventListener("agentnave:hosts", async ({ detail }) => {
-  const key = JSON.stringify((detail.hosts || [])
-    .filter((host) => host.status === "connected")
-    .map((host) => [host.id, host.last_action?.at]));
-  if (key === membersHostsKey || membersHostsReading || !savedSnapshot || busy) return;
+let membersHosts = null;
+let membersHostsRetry = null;
+const hostsKey = (hosts) => JSON.stringify((hosts?.hosts || [])
+  .filter((host) => host.status === "connected")
+  .map((host) => [host.id, host.last_action?.at]));
+const retryHosts = () => { membersHostsRetry ||= setTimeout(() => { membersHostsRetry = null; void syncHosts(); }, 1000); };
+
+window.addEventListener("agentnave:hosts", ({ detail }) => {
+  membersHosts = detail;
+  return syncHosts();
+});
+
+async function syncHosts() {
+  const key = hostsKey(membersHosts);
+  if (key === membersHostsKey || membersHostsReading) return;
+  if (!savedSnapshot || busy) return retryHosts();
   const before = docVersion;
   const snapshot = savedSnapshot;
   membersHostsReading = true;
   try {
     const data = await apiGetMembers();
-    if (busy || savedSnapshot !== snapshot) return;
+    if (busy || savedSnapshot !== snapshot) return retryHosts();
     if (!dirty && docVersion === before) {
       currentDoc = data.document || { version: 1, clis: {}, modes: {} };
       documentError = data.error || null;
@@ -323,11 +334,13 @@ window.addEventListener("agentnave:hosts", async ({ detail }) => {
     refreshDirty();
     renderCards();
   } catch {
-    // Keep the editor on a transient read failure; the next publication reads it again.
+    retryHosts();
   } finally {
     membersHostsReading = false;
+    // Hosts published during the read are read again now.
+    if (hostsKey(membersHosts) !== key) void syncHosts();
   }
-});
+}
 
 // Count permission-related options across entire document
 function countPermissionOptions() {

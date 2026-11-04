@@ -6,7 +6,7 @@ const vm = require("node:vm");
 function editor(fetch = async () => { throw new Error("unexpected request"); }) {
   const listeners = {};
   const context = vm.createContext({
-    AN: {}, structuredClone, fetch,
+    AN: {}, structuredClone, fetch, setTimeout: () => 0,
     document: { getElementById: () => ({ options: [] }) },
     window: { addEventListener: (name, fn) => { listeners[name] = fn; } },
   });
@@ -126,10 +126,11 @@ test("a connection published while the members file is being read is read again 
   const first = app.listeners["agentnave:hosts"](hosts("codex"));
   await app.listeners["agentnave:hosts"](hosts("codex", "grok"));
   answers.shift()(file);
-  await first;
+  // No further publication: the first read itself reads again for the hosts it missed.
+  await new Promise(setImmediate);
   for (const scene of ["task", "discussion"]) file.modes[scene].grok = { models: [], overrides: {} };
-  const retry = app.listeners["agentnave:hosts"](hosts("codex", "grok"));
   answers.shift()(file);
-  await retry;
+  await first;
+  await new Promise(setImmediate);
   assert.equal(app.run('slot("task", "grok").enabled'), true);
 });
