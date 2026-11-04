@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -77,8 +81,10 @@ def _result_capture() -> Callable[[bytes], bytes]:
 
 class ClaudeAdapter(AdapterHooks):
     name = "claude"
-    options_description = "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)"
+    options_description = "permission_mode, agent, fallback_model, max_budget_usd, interactive (boolean; interactive Claude runtime), restricted_tools (boolean; restricted tools)"
     executable = "claude"
+    _supports_interactive = True
+    restricted_extra_options = frozenset({"interactive"})
     _options = {
         "model": "--model",
         "effort": "--effort",
@@ -97,6 +103,12 @@ class ClaudeAdapter(AdapterHooks):
     )
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
+        if self._supports_interactive:
+            options = dict(request.provider_options)
+            interactive = options.pop("interactive", False)
+            if not isinstance(interactive, bool):
+                raise ValueError("interactive must be a boolean")
+            request = replace(request, provider_options=options)
         return option_args(request, self._options)
 
     def executable_path(self) -> str:
@@ -104,6 +116,27 @@ class ClaudeAdapter(AdapterHooks):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
+        options = self.option_args(request)
+        if (
+            self._supports_interactive
+            and request.provider_options.get("interactive") is True
+            and not discussion
+            and os.name != "nt"
+        ):
+            argv = [
+                sys.executable,
+                "-I",
+                str(Path(__file__).resolve().parents[1] / "claude_tui.py"),
+                "run",
+                "--claude",
+                self.executable_path(),
+            ]
+            if request.session_id is not None:
+                argv.extend(("--resume", request.session_id))
+            argv.extend(("--", *options))
+            return PreparedCommand(
+                tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
+            )
         argv = [
             self.executable_path(),
             "--print",
@@ -114,7 +147,7 @@ class ClaudeAdapter(AdapterHooks):
         ]
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
-        argv.extend(self.option_args(request))
+        argv.extend(options)
         if discussion:
             argv.extend(self._discussion_args)
         return PreparedCommand(
@@ -276,6 +309,12 @@ class ClaudeAdapter(AdapterHooks):
         stop_reason = payload.get("stop_reason")
         errors = payload.get("errors", payload.get("error"))
         permission_denials = payload.get("permission_denials")
+        raw_warnings = payload.get("warnings")
+        runtime_warnings = (
+            tuple(w for w in cast(list[object], raw_warnings) if isinstance(w, str))
+            if isinstance(raw_warnings, list)
+            else ()
+        )
 
         if not isinstance(session_id, str):
             session_id = None
@@ -294,7 +333,7 @@ class ClaudeAdapter(AdapterHooks):
                     event["permission_denial"] for event in events if "permission_denial" in event
                 ]
             )
-            warnings = (self._denials_warning(denials),) if denials else ()
+            warnings = runtime_warnings + ((self._denials_warning(denials),) if denials else ())
             return ParsedProviderResult(
                 InvocationStatus.SUCCEEDED, output, session_id, warnings=warnings
             )
@@ -317,4 +356,4 @@ class ClaudeAdapter(AdapterHooks):
                 if message.lower().startswith("not logged in")
                 else failure_status(message)
             )
-        return ParsedProviderResult(status, output, session_id, message)
+        return ParsedProviderResult(status, output, session_id, message, runtime_warnings)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,11 +17,13 @@ from agentnave.members import (
     PermissionFile,
     PermissionFileError,
     ProviderExcludedError,
+    ProviderName,
     ReviewFile,
     ReviewSeat,
     SettingsFileError,
     apply_member,
     list_members,
+    read_claude_interactive,
     read_max_running,
     read_members,
     read_permissions,
@@ -131,7 +134,7 @@ def test_app_file_samples_agree_with_the_tray(
     def check() -> object:
         if sample.parent.name == "settings":
             (tmp_path / "settings.json").write_bytes(sample.read_bytes())
-            return read_max_running()
+            return read_max_running(), read_claude_interactive()
         return APP_MODELS[sample.parent.name].model_validate_json(sample.read_bytes())
 
     if sample.stem.startswith("valid-"):
@@ -756,3 +759,43 @@ def test_member_list_keeps_mode_settings_and_expands_only_missing_modes(
         assert wildcard.model == "*"
         assert wildcard.modes == (["discussion"] if provider == "claude" else None)
         assert wildcard.default is None
+
+
+def test_claude_interactive_defaults_are_opt_in_and_explicit_values_win(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+
+    def no_effort(*_: object) -> None:
+        return None
+
+    monkeypatch.setattr("agentnave.members.cli_default_effort", no_effort)
+    assert read_claude_interactive() is False
+    (tmp_path / "settings.json").write_text('{"version": 1, "claude_interactive": true}')
+    assert read_claude_interactive() is True
+    result, applied = apply_member(None, "task", "claude", {}, frozenset())
+    if os.name != "nt":
+        assert result["interactive"] is True and "interactive" in applied
+    cases: list[tuple[ProviderName, dict[str, ProviderOption], bool]] = [
+        ("claude", {"interactive": False}, False),
+        ("claude", {"restricted_tools": True}, False),
+        ("claude", {}, True),
+        ("pi", {}, False),
+    ]
+    for provider, options, restricted in cases:
+        result, applied = apply_member(
+            None, "discussion", provider, options, frozenset(), restricted=restricted
+        )
+        assert result.get("interactive") is not True and "interactive" not in applied
+
+
+def test_claude_interactive_settings_reject_non_boolean_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    for value in ("yes", 1, None):
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"version": 1, "claude_interactive": value})
+        )
+        with pytest.raises(SettingsFileError, match="Repair it in the AgentNave App"):
+            read_claude_interactive()
