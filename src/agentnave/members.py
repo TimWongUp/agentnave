@@ -280,9 +280,9 @@ class MemberFile(StrictModel):
         seat: frozenset[str] = frozenset(),
     ) -> tuple[dict[str, ProviderOption], list[str]]:
         """Fill the mode's defaults; `seat` names the keys an App seat set, which the mode's
-        member lists do not restrict (ADR-0038)."""
+        model lists do not restrict (ADR-0038). A CLI the mode leaves out runs for no seat."""
         allowed = self.modes.get(mode)
-        if allowed is not None and provider not in allowed and "model" not in seat:
+        if allowed is not None and provider not in allowed:
             members = [
                 f"{cli}/{model}"
                 for cli, config in allowed.items()
@@ -859,6 +859,8 @@ def _review_status[Role: str](
             reason = None
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
+        elif mode.restricted and all(m.provider != seat.provider for m in task):
+            reason = "CLI is disabled for private tasks in the App"
         elif member is not None and member.error is not None:
             reason = member.error
         else:

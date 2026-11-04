@@ -496,6 +496,7 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
                     "correctness-reviewer": {"provider": "grok", "model": "shared"},
                     "security-reviewer": {"provider": "grok", "model": "only-here"},
                     "simplicity-reviewer": {"provider": "pi", "model": "shared"},
+                    "performance-reviewer": {"provider": "codex", "model": "chosen"},
                 },
             }
         )
@@ -510,6 +511,21 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
     assert other_model.provider == "pi" and other_model.provider_options == {}
     assert seats["simplicity-reviewer"].available is None
     assert seats["simplicity-reviewer"].replacement is None
+    # A CLI disabled for private tasks runs for no seat, though seats may pick unlisted models.
+    disabled = seats["performance-reviewer"]
+    assert (
+        disabled.available is False
+        and disabled.reason == "CLI is disabled for private tasks in the App"
+    )
+    assert disabled.replacement is not None and disabled.replacement.provider == "pi"
+    document = read_members()
+    assert document is not None
+    with pytest.raises(ValueError, match="not allowed in task"):
+        document.apply("task", "codex", {"model": "chosen"}, frozenset(), seat=frozenset({"model"}))
+    options, _ = document.apply(
+        "task", "pi", {"model": "unlisted"}, frozenset(), seat=frozenset({"model"})
+    )
+    assert options["model"] == "unlisted"
 
 
 def test_member_list_merges_modes_defaults_and_wildcards_in_member_order(

@@ -308,8 +308,12 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
 function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
   const provider = seat?.provider || "";
-  const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
-    .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)")), !getAllModelIds(p).length && p !== provider]);
+  // Only CLIs 员工 lets work alone; a disabled one stays shown while picked, so it can be changed.
+  const usable = (p) => known(p) && slot("task", p).enabled;
+  const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
+    : getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
+  const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
+    .map((p) => [p, PROVIDER_NAMES[p] + note(p), Boolean(note(p)) && p !== provider]);
   const models = provider ? getAllModelIds(provider) : [];
   if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
   const levels = seat?.model ? effortLevels(provider, seat.model) : [];
