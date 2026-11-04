@@ -691,7 +691,9 @@ function renderCards() {
     );
     return;
   }
-  box.replaceChildren(...S.data.hosts.map(buildCard));
+  // Connected bosses first; the rest keep their order below them.
+  const chosen = (host) => (host.layers || []).some((l) => l.has_entry && l.scope !== "project");
+  box.replaceChildren(...[...S.data.hosts].sort((a, b) => chosen(b) - chosen(a)).map(buildCard));
 }
 
 function renderAll() {

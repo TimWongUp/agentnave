@@ -117,8 +117,11 @@ function renderCards() {
   const cards = document.createDocumentFragment();
   // Not installed and named by no scene or default: only in the folded list at the end.
   const missing = [];
+  // Employees as last saved come first; a card stays put while its switch is being changed.
+  const saved = confirmScenes(JSON.parse(savedSnapshot || JSON.stringify(currentDoc)));
+  const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
 
-  for (const provider of PROVIDERS) {
+  for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
     const info = detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
     const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
     const listed = known(provider);
