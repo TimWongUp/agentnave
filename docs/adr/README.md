@@ -58,3 +58,4 @@
 | 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 已接受 | — |
 | 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md) |
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
+| 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
