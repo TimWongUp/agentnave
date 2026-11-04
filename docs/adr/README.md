@@ -24,7 +24,7 @@
 | 0018 | [主控工作区、工位与会议室](0018-office-workspace-desks-and-meeting-rooms.md) | 部分取代 | [ADR-0023](0023-explicit-desk-continuation.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
 | 0019 | [不提供运行中消息](0019-no-running-messages.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md) |
 | 0020 | [首次预填各 CLI 的主力模型](0020-prefill-main-model-defaults.md) | 已被 ADR-0028 取代 | [ADR-0028](0028-follow-cli-default-model.md) |
-| 0021 | [关闭自选时保留各 CLI 的默认模型](0021-keep-default-models-when-unrestricted.md) | 部分取代 | [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md) |
+| 0021 | [关闭自选时保留各 CLI 的默认模型](0021-keep-default-models-when-unrestricted.md) | 部分取代 | [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0054](0054-members-need-confirmation.md) |
 | 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 已接受 | — |
 | 0023 | [私聊续接改为显式开启](0023-explicit-desk-continuation.md) | 已被 ADR-0025 取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md) |
 | 0024 | [工具收敛为 8 个，审核改为公开／不公开](0024-consolidated-tools-and-private-review.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0045](0045-remove-browser-dashboard.md) |
@@ -56,4 +56,5 @@
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | — |
 | 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 已接受 | — |
-| 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 已接受 | — |
+| 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md) |
+| 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
