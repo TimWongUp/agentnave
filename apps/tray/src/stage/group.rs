@@ -110,6 +110,40 @@ impl Group {
             .map(|(_, message)| message.clone())
             .collect()
     }
+    /// Office identities survive the message window without sending older prompt bodies.
+    /// Keep each host's latest activity and last known model on either side of the handover.
+    pub(super) fn boss_messages(&self) -> Vec<Value> {
+        let boundary = (!self.handover.pending)
+            .then(|| self.handover.released.as_deref().and_then(timestamp))
+            .flatten();
+        let mut prompts: Vec<_> = self
+            .messages
+            .iter()
+            .filter(|m| m["speaker"]["role"] == "manager" && m["kind"] == "prompt")
+            .collect();
+        prompts.sort_by_key(|m| timestamp(text(m, "time")));
+        let mut identities = BTreeMap::<(&str, bool), Value>::new();
+        for message in prompts {
+            let after = boundary
+                .is_some_and(|at| timestamp(text(message, "time")).is_some_and(|time| time >= at));
+            let identity = identities
+                .entry((text(&message["speaker"], "provider"), after))
+                .or_insert_with(|| json!({"kind": "prompt", "speaker": message["speaker"]}));
+            identity["time"] = message["time"].clone();
+            if !text(&message["speaker"], "model").is_empty() {
+                identity["speaker"] = message["speaker"].clone();
+            }
+        }
+        let mut messages: Vec<_> = identities.into_values().collect();
+        messages.extend(
+            self.messages
+                .iter()
+                .filter(|m| m["kind"] == "handover")
+                .map(|m| json!({"kind": "handover", "time": m["time"]})),
+        );
+        messages.sort_by_key(|m| timestamp(text(m, "time")));
+        messages
+    }
     /// The desks an office draws, at most `limit` (the App's running limit) unless more are
     /// running or under review, plus the rest as the "optimized" list, most recent first. A
     /// desk whose failure has settled goes there whatever the limit. The

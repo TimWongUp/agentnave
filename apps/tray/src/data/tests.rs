@@ -699,6 +699,55 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
 }
 
 #[test]
+fn boss_identity_survives_the_chat_message_window_without_retaining_prompt_bodies() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut old = task_snapshot("old-boss", "succeeded", "2026-01-01T00:00:00Z");
+    old["director"]["tasks"][0]["manager_reported_model"] = json!("claude-opus-5-5");
+    save(dir.path(), &old);
+    let mut newer = task_snapshot("new-boss", "succeeded", "2026-01-03T01:00:00Z");
+    newer["summary"]["host"] = json!("codex");
+    let template = newer["director"]["tasks"][0].clone();
+    newer["director"]["tasks"] = json!(
+        (0..155)
+            .map(|i| {
+                let mut task = template.clone();
+                task["id"] = json!(format!("t-{i}"));
+                task["time"] = json!(format!("2026-01-03T00:{:02}:{:02}Z", i / 60, i % 60));
+                task["manager_host"] = json!("codex");
+                task["manager_reported_model"] = if i == 0 {
+                    json!("gpt-6.1-sol")
+                } else {
+                    Value::Null
+                };
+                task
+            })
+            .collect::<Vec<_>>()
+    );
+    save(dir.path(), &newer);
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection.execute(
+        "INSERT INTO workspaces (id, owner, owner_host, previous_host, released) VALUES (?1, 'next-boss', 'codex', 'claude', '2026-01-02T00:00:00Z')",
+        [MANAGER],
+    ).unwrap();
+    let reader = Reader::new(dir.path().to_path_buf());
+    let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert_eq!(chat["messages"].as_array().unwrap().len(), 300);
+    assert!(
+        chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["speaker"]["provider"] != "claude" && m["kind"] != "handover")
+    );
+    let identities = chat["boss_messages"].as_array().unwrap();
+    assert_eq!(identities.len(), 3);
+    assert!(identities.iter().all(|m| m.get("text").is_none()));
+    assert_eq!(identities[0]["speaker"]["model"], "claude-opus-5-5");
+    assert_eq!(identities[1]["kind"], "handover");
+    assert_eq!(identities[2]["speaker"]["model"], "gpt-6.1-sol");
+}
+
+#[test]
 fn stage_and_chats_sort_filter_and_enforce_limits() {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..205 {
