@@ -104,7 +104,7 @@ _Avoid_: Review（专指会议答案的审核）
 
 ## 评审工位（Review Seat）
 
-用户在 App 中为评审门控某个角色（如正确性、安全）选定的 CLI、模型与可选档位，存于独立的 `review.json`（不放进 `members.json`，旧版服务仍能读组员），`list_members` 回执附可用性、原因和提供同一模型的其他 CLI。未设置的角色由 boss 自动选组员；当前对话的点名优先于它。
+用户在 App 中为评审门控某个角色（如正确性、安全）选定的 CLI、模型与可选档位，存于独立的 `review.json`（不放进 `members.json`，旧版服务仍能读组员），`list_members` 回执附可用性、原因和提供同一模型的其他 CLI。未设置的角色由 boss 自动选组员；当前对话的点名优先于它。正确性角色另有可选的简单档，供 R1 使用，没设时用正确性工位。
 
 ## 编排档位（Orchestration Preset）
 
