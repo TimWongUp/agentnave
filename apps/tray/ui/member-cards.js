@@ -105,6 +105,15 @@ function slotAllowedRows({ provider, current, native, all, offered, model, key, 
   return rows;
 }
 
+function renderMembership(provider, enabled) {
+  return el("button", {
+    type: "button",
+    className: "member-toggle",
+    dataset: { focusKey: `${provider}/membership` },
+    onClick: () => setProviderEnabled(provider, !enabled),
+  }, enabled ? L("移除", "Remove") : L("启用", "Enable"));
+}
+
 // One card per CLI: one row for both scenes, or one row each once split.
 function renderCards() {
   const container = $("cli-cards");
@@ -149,14 +158,14 @@ function renderCards() {
             dataset: { focusKey: `${provider}/split/${value}` },
             onClick: () => value !== split && setSplit(provider, value),
           }, text))),
-        renderPermission(provider) || el("span")));
+        el("div", { className: "member-tail" }, renderPermission(provider) || el("span"), renderMembership(provider, enabled))));
     const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
-      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认停用 ${name}`, `Confirm disabling ${name}`) },
-        el("p", {}, L(`停用会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Disabling clears default and allowed models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
+      card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
+        el("p", {}, L(`移除会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default and allowed models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
         el("div", { className: "btn-group" },
-          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, L("保留启用", "Keep enabled")),
-          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认停用", "Disable")))));
+          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, L("保留", "Keep")),
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     for (const row of rows) card.appendChild(row);

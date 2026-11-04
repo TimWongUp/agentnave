@@ -177,6 +177,9 @@
 .member-end > .segment-control > .segment-btn, .member-efforts > .segment-btn { flex: 1 1 0; min-width: 0; padding-left: 2px; padding-right: 2px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-hidden { visibility: hidden; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
+.member-tail { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.member-tail > :first-child { flex: 1; }
+.member-toggle { flex: none; font-size: 12px; padding: 4px 10px; }
 .member-tier { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--muted); }
 .member-tier select { flex: 1; min-width: 0; font-size: 12.5px; padding: 4px 8px; }
 .member-switch { display: inline-flex; align-items: center; gap: 8px; padding-left: 30px; font-size: 12.5px; cursor: pointer; }
