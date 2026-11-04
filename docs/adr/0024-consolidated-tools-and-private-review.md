@@ -7,7 +7,7 @@
 - 只在 `list` 启动浏览器看板的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
 - App 只给模板、不写全局规则的条款由 [ADR-0037](0037-app-writes-orchestration-rules.md) 取代
 - `access` 一律不拒绝调用的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位推断值与显式声明不一致时拒绝。
-- 拟由 [ADR-0056](0056-boss-answers-native-prompts.md)（提议）修订工具集合：新增 `answer_prompt`
+- 拟由 [ADR-0057](0057-boss-answers-native-prompts.md)（提议）修订工具集合：新增 `answer_prompt`
 
 ## 背景
 

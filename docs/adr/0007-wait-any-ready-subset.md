@@ -6,7 +6,7 @@
 - `wait_any`、`wait_agent` 与 `wait_round` 工具名由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 取代：合并为 `wait`，就绪子集语义不变。
 - 轮次 `seat_lost` 就绪条件由 [ADR-0039](0039-retry-lost-seat-within-round.md) 补充
 - 服务主动终止情形与终态句柄保留七天的边界由 [ADR-0049](0049-service-initiated-termination.md) 补充
-- 拟由 [ADR-0056](0056-boss-answers-native-prompts.md)（提议）补充：待答弹框是新的就绪原因，收件箱同样返回。
+- 拟由 [ADR-0057](0057-boss-answers-native-prompts.md)（提议）补充：待答弹框是新的就绪原因，收件箱同样返回。
 
 ## 背景
 

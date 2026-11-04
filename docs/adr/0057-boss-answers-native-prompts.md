@@ -1,14 +1,14 @@
-# ADR-0056：运行中的原生弹框由 boss 代答
+# ADR-0057：运行中的原生弹框由 boss 代答
 
 - 状态：提议
 - 日期：2026-11-04
 - 修订 [ADR-0019](0019-no-running-messages.md)：运行中允许应答 CLI 自己发起的弹框；[ADR-0024](0024-consolidated-tools-and-private-review.md) 的工具集合：新增 `answer_prompt`；[ADR-0032](0032-cli-permission-tiers.md) 中「自动」档的含义：CLI 自动审核交回的请求由 boss 决定。
 - 补充 [ADR-0007](0007-wait-any-ready-subset.md)：待答弹框是新的就绪原因，收件箱 `wait` 同样返回。
-- 依赖 [ADR-0055](0055-claude-interactive-runtime.md)。
+- 依赖 [ADR-0056](0056-claude-interactive-runtime.md)。
 
 ## 背景
 
-`-p` 下没有人能应答弹框：需要审批的工具调用要么被 CLI 自动审核放行，要么被直接拒绝，任务照样报成功（ADR-0032）。Claude Code 交互模式（ADR-0055）会在运行中弹出权限框和提问框，并能通过 hooks 把它们交给外部程序应答。没人应答，任务就会一直停着。
+`-p` 下没有人能应答弹框：需要审批的工具调用要么被 CLI 自动审核放行，要么被直接拒绝，任务照样报成功（ADR-0032）。Claude Code 交互模式（ADR-0056）会在运行中弹出权限框和提问框，并能通过 hooks 把它们交给外部程序应答。没人应答，任务就会一直停着。
 
 用户定的原则：「自动」档意味着由 boss 决定。boss 相当于用户，判断权限的能力通常比大多数人强，频繁打扰用户反而低效；派发写入 Worker 本身就是授权。只有真正关键的选择才问用户。
 

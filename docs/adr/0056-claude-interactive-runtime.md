@@ -1,9 +1,9 @@
-# ADR-0055：Claude Code 可选改用交互模式运行
+# ADR-0056：Claude Code 可选改用交互模式运行
 
 - 状态：提议
 - 日期：2026-11-04
 - 修订 [ADR-0019](0019-no-running-messages.md)：Claude 不再只有一次性 print 调用；交互模式会让会话出现在 Claude Code 自带的历史与 `/resume` 列表里。
-- 运行中的原生弹框由 boss 代答，见 [ADR-0056](0056-boss-answers-native-prompts.md)。
+- 运行中的原生弹框由 boss 代答，见 [ADR-0057](0057-boss-answers-native-prompts.md)。
 
 ## 背景
 
@@ -23,7 +23,7 @@ PTY 驱动交互 Claude Code 的 spike 已跑通：bracketed paste 投递任务�
   - 从摘要恢复框：只选原样恢复。永不选摘要（会改上下文），永不选「不再询问」（会写用户配置）。
   - 登录、引导或不认识的屏：报 BLOCKED，不按键。
   - 投递顺序：确认弹框已消失、输入框为空后粘贴；确认粘贴在输入框里后回车；回车后用 transcript 核对 user 行。
-- **运行阶段不按键**。弹框只经 hooks 应答（ADR-0056）。画面出现弹框而 hook 没收到，按通道异常报 BLOCKED；hook 待答期间不向终端写任何键。
+- **运行阶段不按键**。弹框只经 hooks 应答（ADR-0057）。画面出现弹框而 hook 没收到，按通道异常报 BLOCKED；hook 待答期间不向终端写任何键。
 - **终态**。回合结束取 transcript 最终回答；`StopFailure` 的 `error`（认证、限流、服务端错误等）映射到现有失败类别；进程意外退出按失败处理。探测或启动失败报 BLOCKED，不自动退回 `-p`；只有上面信任框一种情况，由 boss 显式选择后才改用 `-p`。
 - **缓存**。服务不为缓存保活进程、不定时续期、不主动压缩。prompt cache 在服务端按前缀命中，跨进程可复用；TTL 由认证方式、计费状态和 CLI 策略决定（2.1.308：订阅主线程 1 小时，超额或 API key 5 分钟），AgentNave 不保证。idle compact 只在进程存活时触发，本方案不会触发它，上下文策略仍归 Manager。
 

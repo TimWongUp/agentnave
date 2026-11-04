@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-10-28
-- 拟由 [ADR-0056](0056-boss-answers-native-prompts.md)（提议）修订「自动」档的含义：CLI 自动审核交回的请求由 boss 决定
+- 拟由 [ADR-0057](0057-boss-answers-native-prompts.md)（提议）修订「自动」档的含义：CLI 自动审核交回的请求由 boss 决定
 
 本决定修订 [ADR-0013](0013-members-defaults-and-host-identity.md) 的组员默认值范围与“无配置文件时保持原生行为”：服务按 CLI 套用权限档位，缺省「自动」；并收窄 [ADR-0029](0029-settings-without-free-text.md) 的取舍“权限类参数不能在 App 里编辑”。
 
