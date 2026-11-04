@@ -471,6 +471,7 @@ pub fn list(installed: &[App], connected: &[App], home: &Path, document: &Value)
         .map(|group| {
             json!({"keys": group.iter().map(|app| app.key).collect::<Vec<_>>(),
                 "labels": group.iter().map(|app| app.label).collect::<Vec<_>>(),
+                "ids": group.iter().map(|app| app.id).collect::<Vec<_>>(),
                 "mark": group[0].id})
         })
         .collect();

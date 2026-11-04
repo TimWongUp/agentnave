@@ -96,14 +96,15 @@ def test_interface_seat_falls_back_to_the_worker_seat_of_its_difficulty(
     document = {
         "version": 1,
         "preset": "split",
-        "worker": {"hard": general, "frontend-easy": interface},
+        "worker": {"hard": general},
+        "worker_frontend": {"easy": interface},
     }
     (tmp_path / "orchestration.json").write_text(json.dumps(document))
     host = Host("claude", "env")
-    worker = list_members(frozenset(), host).orchestration.worker
-    assert set(worker) == {"hard", "frontend-hard", "frontend-easy"}
-    assert worker["frontend-hard"].model == "general"
-    assert worker["frontend-easy"].model == "interface"
+    status = list_members(frozenset(), host).orchestration
+    assert set(status.worker) == {"hard"}
+    assert status.worker_frontend["hard"].model == "general"
+    assert status.worker_frontend["easy"].model == "interface"
     assert cast(ReviewSeat, role_seat("worker-frontend-hard", host)).model == "general"
     assert cast(ReviewSeat, role_seat("worker-frontend-easy", host)).model == "interface"
     assert role_seat("worker-easy", host) is None

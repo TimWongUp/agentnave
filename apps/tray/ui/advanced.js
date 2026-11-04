@@ -24,8 +24,8 @@ const ORCHESTRATION_ROLES = [
   ["explorer", "hard", AN.L("Explorer · 困难", "Explorer · Hard"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
   ["worker", "easy", AN.L("Worker · 简单", "Worker · Easy"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
   ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
-  ["worker", "frontend-easy", AN.L("Worker · 界面 · 简单", "Worker · Interface · Easy"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
-  ["worker", "frontend-hard", AN.L("Worker · 界面 · 困难", "Worker · Interface · Hard"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
+  ["worker_frontend", "easy", AN.L("Worker · 界面 · 简单", "Worker · Interface · Easy"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
+  ["worker_frontend", "hard", AN.L("Worker · 界面 · 困难", "Worker · Interface · Hard"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
 ];
 const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
 let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
@@ -193,8 +193,8 @@ function renderOrchestration() {
     roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
       const seat = shown[role]?.[difficulty];
       // An unset interface seat runs the Worker seat of its difficulty, as the server fills it.
-      const general = difficulty.startsWith("frontend-") && ORCHESTRATION_ROLES.find(([r, d]) => r === role && `frontend-${d}` === difficulty);
-      const unset = general && shown[role]?.[general[1]] ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : undefined;
+      const general = role === "worker_frontend" && shown.worker?.[difficulty] && ORCHESTRATION_ROLES.find(([r, d]) => r === "worker" && d === difficulty);
+      const unset = general ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : undefined;
       return el("div", { className: "review-row" },
         el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
         ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset));
@@ -308,8 +308,10 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
 function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
   const provider = seat?.provider || "";
-  // Only CLIs 员工 lets work alone; a disabled one stays shown while picked, so it can be changed.
-  const usable = (p) => known(p) && slot("task", p).enabled;
+  // Only CLIs 员工 lets work alone, or a connected boss's own CLI, which its built-in subagent
+  // runs; a disabled one stays shown while picked, so it can be changed.
+  const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
+  const usable = (p) => (known(p) && slot("task", p).enabled) || bossClis.includes(p);
   const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
     : getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
   const clis = PROVIDERS.filter((p) => usable(p) || p === provider)

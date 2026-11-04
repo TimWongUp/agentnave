@@ -122,9 +122,10 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
   },
   "worker": {                       // 可写：实现
     "easy": {"provider": "pi",        "model": "opencode-go/deepseek-v4.1-flash"},
-    "hard": {"provider": "codebuddy", "model": "deepseek-v4-pro"},
-    "frontend-hard": {"provider": "antigravity", "model": "gemini-4-argon-medium"}
-                                    // 可选：界面实现；没设时沿用同难度的 easy/hard
+    "hard": {"provider": "codebuddy", "model": "deepseek-v4-pro"}
+  },
+  "worker_frontend": {              // 可选：界面实现；没设的一档沿用 worker 同难度
+    "hard": {"provider": "antigravity", "model": "gemini-4-argon-medium"}
   }
 }
 ```
@@ -347,7 +348,7 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 某个模型的默认档位和参数 | `members.json`：`clis.<cli>.models.<m>.{efforts,effort,options,notes}` | `MemberConfig`（`options` 里不能放 model/effort） | `list_members` 的组员 `options`/`effort` | 不需要 |
 | 每个 CLI 的权限档位 | `permissions.json`：`clis.<cli>` = `auto`/`full` | `PermissionFile`、`PERMISSION_TIERS` | `list_members.permissions`（auto 本身就是全权限的 CLI 会显示为 full） | 不需要 |
 | 编排档位（关闭/分工/并行/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`apps`/`effective_apps` | `OrchestrationFile`；`members.rs` 的 `validate_orchestration`；ADR-0041 | `list_members.orchestration.enabled` | 不需要；**不要写 `effective_apps`**（§3.2） |
-| Explorer/Worker 工位 | `orchestration.json`：`explorer.{easy,hard}`、`worker.{easy,hard,frontend-easy,frontend-hard}` → `{provider,model,effort?}` | `ReviewSeat` | `list_members.orchestration` | 不需要 |
+| Explorer/Worker 工位 | `orchestration.json`：`explorer.{easy,hard}`、`worker.{easy,hard}`、`worker_frontend.{easy,hard}` → `{provider,model,effort?}` | `ReviewSeat` | `list_members.orchestration` | 不需要 |
 | 评审工位（技能 → agentnave-review） | `review.json`：`seats.<role>` | `ReviewFile`；`ui/skills.js`、`ui/advanced.js` | `list_members.review`/`review_error` | 不需要 |
 | 评审门（是否启用 agentnave-review） | **没有对应的服务配置文件**。App 会把这个 skill 按宿主开关（`ui/skills.js`，`/app/hosts/skill`），bot 这边就是装或卸 skill 目录（§6.5） | `apps/tray/src/hosts.rs` | 看 bot 的 skill 列表 | bot 下次读 skill 时生效 |
 | 同时运行上限（默认 8） | `settings.json`：`max_running`，1–32 | `settings.rs`；`members.py` 的 `read_max_running`；`conversations.py` 在每次启动前读取 | 超出时报 `CapacityError`；`version` 或 `max_running` 非法时派发报 `SettingsFileError` 并给出文件路径。`list_members` 不显示这个值 | 不需要 |

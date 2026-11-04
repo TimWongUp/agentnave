@@ -47,7 +47,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档；Worker 另有界面两档（`frontend-easy`、`frontend-hard`），实现涉及界面时改用它，没设时服务沿用 Worker 同档。派发时 `seat` 写成对应的 `explorer-easy`、`worker-frontend-hard` 等，可省略 `provider`、`access` 和模型；`seat` 不显示，`role` 仍照常写具体职责。
+选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档；Worker 另有界面两档（`worker_frontend`），实现涉及界面时改用它，没设时服务沿用 Worker 同档。派发时 `seat` 写成对应的 `explorer-easy`、`worker-frontend-hard` 等，可省略 `provider`、`access` 和模型；`seat` 不显示，`role` 仍照常写具体职责。
 
 | 用户需要 | 调用方式 |
 | --- | --- |

@@ -287,7 +287,9 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "explorer": {"easy" | "hard":
-/// seat}, "worker": {"easy" | "hard" | "frontend-easy" | "frontend-hard": seat}}`. The App writes the chosen rules into the boss apps' global rules and
+/// seat}, "worker": {...}, "worker_frontend": {...}}`. Interface Workers have a key of their own so
+/// servers that predate it ignore them rather than reject the file. The App writes the chosen
+/// rules into the boss apps' global rules and
 /// `effective_apps`, every connected row's mode as its group applies it, for the server.
 pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     let top = object(document, ORCHESTRATION_FILE)?;
@@ -301,6 +303,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             "effective_apps",
             "explorer",
             "worker",
+            "worker_frontend",
         ],
         ORCHESTRATION_FILE,
     )?;
@@ -331,23 +334,13 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     {
         return Err("自定义编排不能为空".into());
     }
-    for role in ["explorer", "worker"] {
+    for role in ["explorer", "worker", "worker_frontend"] {
         let Some(seats) = top.get(role) else { continue };
-        for (key, seat) in object(seats, role)? {
-            let known = match role {
-                "explorer" => matches!(key.as_str(), "easy" | "hard"),
-                _ => matches!(
-                    key.as_str(),
-                    "easy" | "hard" | "frontend-easy" | "frontend-hard"
-                ),
-            };
-            if !known {
-                return Err(match role {
-                    "explorer" => "explorer 只有 easy 与 hard 两档".into(),
-                    _ => "worker 只有 easy、hard、frontend-easy 与 frontend-hard".into(),
-                });
+        for (difficulty, seat) in object(seats, role)? {
+            if !matches!(difficulty.as_str(), "easy" | "hard") {
+                return Err(format!("{role} 只有 easy 与 hard 两档"));
             }
-            validate_seat(seat, &format!("{role}.{key}"))?;
+            validate_seat(seat, &format!("{role}.{difficulty}"))?;
         }
     }
     Ok(())

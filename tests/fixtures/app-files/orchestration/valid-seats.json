@@ -12,8 +12,10 @@
     "hard": {
       "provider": "claude",
       "model": "opus"
-    },
-    "frontend-easy": {
+    }
+  },
+  "worker_frontend": {
+    "easy": {
       "provider": "antigravity",
       "model": "gemini-4-argon-medium"
     }

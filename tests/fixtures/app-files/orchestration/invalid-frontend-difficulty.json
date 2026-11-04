@@ -1,7 +1,7 @@
 {
   "version": 1,
   "preset": "split",
-  "explorer": {
+  "worker_frontend": {
     "frontend-easy": {
       "provider": "codex",
       "model": "gpt-6.1-sol"
