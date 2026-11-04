@@ -14,7 +14,7 @@ pub const DEFAULT_MAX_RUNNING: u64 = 8;
 const MAX_RUNNING: std::ops::RangeInclusive<u64> = 1..=32;
 
 pub fn defaults() -> Value {
-    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null})
+    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": false})
 }
 
 /// The normalized known settings; the same rules as the service:
@@ -40,7 +40,13 @@ pub fn validate(document: &Value) -> Result<Value, String> {
                 .ok_or("history_retention_days 必须为 null、30、90 或 180")?,
         ),
     };
-    Ok(json!({"version": 1, "max_running": max_running, "history_retention_days": retention}))
+    let claude_interactive = match object.get("claude_interactive") {
+        None => false,
+        Some(value) => value.as_bool().ok_or("claude_interactive 必须为布尔值")?,
+    };
+    Ok(
+        json!({"version": 1, "max_running": max_running, "history_retention_days": retention, "claude_interactive": claude_interactive}),
+    )
 }
 
 /// The saved document; `None` when there is none yet.
