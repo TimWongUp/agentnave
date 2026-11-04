@@ -9,12 +9,7 @@ impl Reader {
             }
             return crate::voice::request(&self.root, path, method, action, body);
         }
-        if path == "/app/hosts"
-            || path.starts_with("/app/hosts/")
-            || path == "/app/onboarding"
-            || path == "/app/onboarding/dismiss"
-            || path == "/app/onboarding/reopen"
-        {
+        if path == "/app/hosts" || path.starts_with("/app/hosts/") {
             return self.host_request(method, path, action, body);
         }
         if path == "/app/skills" {
@@ -241,6 +236,15 @@ impl Reader {
             self.tools.clone(),
         ));
     }
+    pub fn prepare_members(&self) {
+        // Probe before taking the lock: probing runs every CLI and would hold up the host page.
+        let detected = crate::detect::detected(false);
+        let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(hosts) = guard.as_ref() {
+            crate::members::prepare(&self.root, hosts.cached_snapshot(), &detected);
+        }
+        crate::members::mark_prepared();
+    }
     pub(super) fn boss_homes(&self) -> boss_app::Homes {
         let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
         hosts
@@ -308,7 +312,7 @@ impl Reader {
         action: Option<&str>,
         body: &[u8],
     ) -> Response {
-        let read = matches!(path, "/app/hosts" | "/app/onboarding");
+        let read = path == "/app/hosts";
         let write = matches!(
             path,
             "/app/hosts/refresh"
@@ -318,8 +322,6 @@ impl Reader {
                 | "/app/hosts/confirm-reload"
                 | "/app/hosts/skill"
                 | "/app/hosts/reveal-backups"
-                | "/app/onboarding/dismiss"
-                | "/app/onboarding/reopen"
         );
         if !read && !write {
             return Response::error(404, "未知路由");
@@ -346,15 +348,6 @@ impl Reader {
                 self.sync_rules(hosts, &[]);
                 Response::json(&snapshot)
             }
-            "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
-            "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {
-                Ok(result) => Response::json(&result),
-                Err(error) => Response::error(500, &error),
-            },
-            "/app/onboarding/reopen" => match crate::onboarding::reopen(hosts) {
-                Ok(result) => Response::json(&result),
-                Err(error) => Response::error(500, &error),
-            },
             "/app/hosts/reveal-backups" => match hosts.reveal_backups() {
                 Ok(result) => Response::json(&result),
                 Err(error) => Response::error(500, &error),
@@ -370,17 +363,42 @@ impl Reader {
                 } else {
                     Vec::new()
                 };
+                // Judged before the connection counts itself as a boss that ran here.
+                let used = operation == "connect"
+                    && crate::members::used_before(&self.root, hosts.cached_snapshot());
                 let result = hosts.action(operation, &payload);
                 // Connecting, removing or moving a host changes which rules files carry the block.
                 if matches!(operation, "connect" | "remove" | "root") {
                     self.sync_rules(hosts, &before);
                 }
-                match result {
-                    Ok(result) => Response::json(&result),
-                    Err(error) => Response::error(400, &error),
-                }
+                self.host_action_response(operation, result, used)
             }
         }
+    }
+
+    fn host_action_response(
+        &self,
+        operation: &str,
+        result: Result<Value, String>,
+        used: bool,
+    ) -> Response {
+        let mut result = match result {
+            Ok(result) => result,
+            Err(error) => return Response::error(400, &error),
+        };
+        // The connection already took effect, so a failed member update is told, not an error.
+        if operation == "connect"
+            && result["ok"] == true
+            && let Err(error) = crate::members::confirm_host(
+                &self.root,
+                result["host"]["id"].as_str().unwrap_or_default(),
+                used,
+            )
+        {
+            let message = result["message"].as_str().unwrap_or_default();
+            result["message"] = json!(format!("{message}；员工名单未更新：{error}"));
+        }
+        Response::json(&result)
     }
     /// `GET /settings/members`, re-probing the CLIs when `refresh` is set.
     pub fn members(&self, refresh: bool) -> Response {

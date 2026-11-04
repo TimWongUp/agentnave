@@ -5,6 +5,8 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -425,23 +427,162 @@ pub fn save_permissions(root: &Path, document: &Value) -> Result<(), String> {
     write_atomic(root, PERMISSIONS_FILE, document)
 }
 
-/// Run at App start: probe the CLIs once so the office can name each CLI's own default model
-/// before Settings is ever opened.
-pub fn prepare() {
-    crate::detect::detected(false);
+/// Freeze previously unrestricted scenes at the installed CLIs, keeping their defaults.
+fn confirm_scenes(document: &mut Value, detected: &Value) -> bool {
+    let before = document.clone();
+    for mode in MODES {
+        if document["modes"].get(mode).is_some() {
+            continue;
+        }
+        let kept = document["defaults"][mode]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        let mut selection = Map::new();
+        for provider in PROVIDERS {
+            if detected[provider]["installed"] != true && !kept.contains_key(provider) {
+                continue;
+            }
+            let mut member = json!({"models": [], "overrides": {}});
+            if let Some(model) = kept.get(provider) {
+                member["default"] = model.clone();
+            }
+            selection.insert(provider.into(), member);
+        }
+        document["modes"][mode] = Value::Object(selection);
+        if let Some(defaults) = document.get_mut("defaults").and_then(Value::as_object_mut) {
+            defaults.remove(mode);
+        }
+    }
+    if document["defaults"].as_object().is_some_and(Map::is_empty) {
+        document.as_object_mut().unwrap().remove("defaults");
+    }
+    *document != before
+}
+
+fn migrate(root: &Path, detected: &Value, has_boss: bool) -> Result<(), String> {
+    if crate::PREVIEW {
+        return Ok(());
+    }
+    let mut document = match read(root)? {
+        Some(document) => document,
+        None if has_boss => empty(),
+        None => return Ok(()),
+    };
+    if confirm_scenes(&mut document, detected) {
+        save(root, &document)?;
+    }
+    Ok(())
+}
+
+/// Whether AgentNave ran here before: a boss was connected or has dispatched work. A missing
+/// file then meant every CLI, so the migration keeps them.
+pub fn used_before(root: &Path, hosts: &Value) -> bool {
+    // A boss counts once its config carries the AgentNave entry, even while it needs repair.
+    let connected = hosts["hosts"].as_array().is_some_and(|hosts| {
+        hosts.iter().any(|host| {
+            host["status"] == "connected"
+                || host["layers"]
+                    .as_array()
+                    .is_some_and(|layers| layers.iter().any(|layer| layer["has_entry"] == true))
+        })
+    });
+    connected
+        || crate::db::read(root).ok().flatten().is_some_and(|db| {
+            db.query_row("SELECT EXISTS (SELECT 1 FROM conversations)", [], |row| {
+                row.get(0)
+            })
+            .unwrap_or(false)
+        })
+}
+
+/// Run once after host detection, while host actions are locked out of the migration.
+pub fn prepare(root: &Path, hosts: &Value, detected: &Value) {
+    if let Err(error) = migrate(root, detected, used_before(root, hosts)) {
+        eprintln!("无法迁移员工名单：{error}");
+    }
+}
+
+/// The employee page waits for the start-up migration, so it never edits the list from before.
+static PREPARED: Mutex<bool> = Mutex::new(false);
+static PREPARED_CHANGED: Condvar = Condvar::new();
+
+/// Called once the start-up migration ran or was skipped.
+pub fn mark_prepared() {
+    *PREPARED.lock().unwrap_or_else(|p| p.into_inner()) = true;
+    PREPARED_CHANGED.notify_all();
+}
+
+fn wait_prepared() {
+    if cfg!(test) {
+        return;
+    }
+    let ready = PREPARED.lock().unwrap_or_else(|p| p.into_inner());
+    // Probing the CLIs bounds the wait; past it the page shows the file as it is.
+    let _ = PREPARED_CHANGED.wait_timeout_while(ready, Duration::from_secs(60), |ready| !*ready);
+}
+
+/// Successful boss connections confirm only their own CLI; existing selections stay intact.
+/// `used` is whether AgentNave ran here before this connection, judged by the caller from the
+/// hosts as they were before it.
+pub fn confirm_host(root: &Path, id: &str, used: bool) -> Result<(), String> {
+    if crate::PREVIEW {
+        return Ok(());
+    }
+    let boss = crate::hosts::boss_of(id);
+    let provider = if boss == "workbuddy" {
+        "codebuddy"
+    } else {
+        boss
+    };
+    // A connection that beats the start-up migration migrates first, so it adds this CLI to
+    // what was usable rather than replacing it.
+    let open = match read(root)? {
+        None => used,
+        Some(document) => MODES
+            .iter()
+            .any(|mode| document["modes"].get(mode).is_none()),
+    };
+    if open {
+        migrate(root, &crate::detect::detected(false), used)?;
+    }
+    let mut document = read(root)?.unwrap_or_else(empty);
+    // Even a boss that is no employee (Hermes) writes the lists, so a later start-up does not
+    // take this install for one that ran before.
+    let mut changed = confirm_scenes(&mut document, &Value::Null);
+    for mode in MODES.iter().filter(|_| PROVIDERS.contains(&provider)) {
+        let selection = document["modes"][mode].as_object_mut().unwrap();
+        if !selection.contains_key(provider) {
+            selection.insert(provider.into(), json!({"models": [], "overrides": {}}));
+            changed = true;
+        }
+    }
+    if changed {
+        save(root, &document)?;
+    }
+    Ok(())
 }
 
 /// The editable document and why it cannot be saved. Without the file nothing is written:
 /// every CLI keeps its own default model and effort.
 fn document_state(root: &Path) -> (Value, Value) {
     match read(root) {
-        Ok(document) => (document.unwrap_or_else(empty), Value::Null),
+        // Without the file no CLI is confirmed yet: both scenes start with an empty list.
+        Ok(document) => (
+            document.unwrap_or_else(|| {
+                let mut document = empty();
+                document["modes"] = json!({"task": {}, "discussion": {}});
+                document
+            }),
+            Value::Null,
+        ),
         Err(error) => (empty(), json!(error)),
     }
 }
 
 /// `GET /settings/members`: the document, why it cannot be edited, and the detected CLIs.
 pub fn state(root: &Path, refresh: bool) -> Value {
+    wait_prepared();
     let detected = crate::detect::detected(refresh);
     let (document, error) = document_state(root);
     let (review, review_error) = match read_review(root) {

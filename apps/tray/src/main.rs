@@ -11,7 +11,6 @@ mod detect;
 mod hosts;
 mod manage;
 mod members;
-mod onboarding;
 mod preferences;
 mod process;
 mod proxy;
@@ -694,6 +693,8 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             if !PREVIEW {
                 takeover.refresh_hosts();
             }
+            // After the repair, which settles each boss's status; probing the CLIs takes a while.
+            takeover.prepare_members();
         });
         if !PREVIEW {
             update::resume(&resumer);
@@ -705,7 +706,6 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             });
         }
     });
-    thread::spawn(members::prepare);
     alerts::start(handle.clone(), reader.clone());
     thread::spawn(move || poll(handle, reader, overview));
     Ok(())

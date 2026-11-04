@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from agentnave.adapters.base import AdapterHooks
 from agentnave.host import Host
 from agentnave.members import (
     MemberFile,
@@ -34,6 +35,11 @@ APP_MODELS: dict[str, type[MemberFile | ReviewFile | OrchestrationFile | Permiss
     "orchestration": OrchestrationFile,
     "permissions": PermissionFile,
 }
+
+
+def _installed_cli(_adapter: AdapterHooks) -> bool:
+    # Configuration tests do not depend on the machine's installed CLIs.
+    return True
 
 
 def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
@@ -472,6 +478,7 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
     (tmp_path / "members.json").write_text(
         json.dumps(
             {
@@ -527,6 +534,87 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
         "task", "pi", {"model": "unlisted"}, frozenset(), seat=frozenset({"model"})
     )
     assert options["model"] == "unlisted"
+
+
+def test_missing_clis_mark_members_and_seats_without_replacing_native_seats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    providers = ("grok", "pi", "claude", "codebuddy")
+    missing = {"grok", "pi", "claude"}
+    calls: dict[str, int] = {}
+
+    def installed(adapter: AdapterHooks) -> bool:
+        calls[adapter.name] = calls.get(adapter.name, 0) + 1
+        return adapter.name not in missing
+
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed)
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {p: {"models": {"shared": {}}} for p in providers},
+                "modes": {
+                    "task": {
+                        p: {"models": ["shared"] if p == "grok" else [], "default": "shared"}
+                        for p in providers
+                    }
+                },
+            }
+        )
+    )
+    unlisted = {"provider": "grok", "model": "unlisted"}
+    shared = {"provider": "pi", "model": "shared"}
+    native = {"provider": "claude", "model": "shared"}
+    (tmp_path / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": unlisted,
+                    "security-reviewer": shared,
+                    "simplicity-reviewer": native,
+                },
+            }
+        )
+    )
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "preset": "split",
+                "explorer": {"easy": unlisted, "hard": native},
+                "worker": {"hard": shared},
+                "worker_frontend": {"easy": shared},
+            }
+        )
+    )
+    result = list_members(frozenset({"claude"}), Host("claude"))
+    assert calls == dict.fromkeys(providers, 1)
+    assert any(m.model == "*" for m in result.members)
+    for member in result.members:
+        assert member.error == ("CLI is not installed" if member.provider in missing else None)
+    unavailable = [
+        result.review["correctness-reviewer"],
+        result.review["security-reviewer"],
+        result.orchestration.explorer["easy"],
+        result.orchestration.worker["hard"],
+        result.orchestration.worker_frontend["easy"],
+    ]
+    for seat in unavailable:
+        assert seat.available is False and seat.reason == "CLI is not installed"
+        assert seat.replacement is not None and seat.replacement.provider == "codebuddy"
+        assert not missing.intersection(seat.alternatives)
+    for seat in (result.review["simplicity-reviewer"], result.orchestration.explorer["hard"]):
+        assert seat.native is True and seat.available is None and seat.reason is None
+        assert seat.replacement is None
+    # A later call resolves afresh, so installing a CLI repairs members and seats immediately.
+    missing.clear()
+    calls.clear()
+    refreshed = list_members(frozenset(), Host())
+    assert all(member.error is None for member in refreshed.members)
+    assert all(seat.available is None for seat in refreshed.review.values())
+    assert calls == dict.fromkeys(providers, 1)
 
 
 def test_member_list_merges_modes_defaults_and_wildcards_in_member_order(
@@ -628,6 +716,7 @@ def test_member_list_keeps_mode_settings_and_expands_only_missing_modes(
     override: dict[str, object],
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
     providers = ("pi", "claude")
     (tmp_path / "members.json").write_text(
         json.dumps(

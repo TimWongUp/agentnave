@@ -3,12 +3,6 @@
 // only change the drafts here; nothing is written until 保存设置. Sections save independently, so
 // one that fails stays unsaved for another try while the others land.
 
-const canonical = (value) => Array.isArray(value) ? value.map(canonical)
-  : value && typeof value === "object"
-    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
-    : value;
-const sameJson = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
-
 // Orchestration lives in orchestration.json: the rules text each boss gets, by mode (`apps`, with
 // `preset` for rows without one, and bosses connected later), the user's own text, and the Explorer
 // and Worker seats boss reads from list_members. The App writes the modes into the connected boss
@@ -273,6 +267,7 @@ async function listSeatModel(seat) {
   await apiPostMembers(add(saved));
   savedSnapshot = JSON.stringify(saved);
   add(currentDoc);
+  confirmScenes();
   refreshDirty();
 }
 

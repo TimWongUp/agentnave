@@ -4,6 +4,7 @@
 - 日期：2026-10-21
 - 重新开启自选时按检测补主力模型由 [ADR-0028](0028-follow-cli-default-model.md) 取代
 - 设置页“自选”开关交互由 [ADR-0035](0035-member-cards-one-row-per-cli.md) 取代
+- App 写出不受限场景与 `defaults` 的做法由 [ADR-0054](0054-members-need-confirmation.md) 取代：场景总是写出名单，服务对手写文件的处理不变
 
 补充 [ADR-0013](0013-members-defaults-and-host-identity.md) 的组员默认值与 [ADR-0020](0020-prefill-main-model-defaults.md) 的首次预填。
 

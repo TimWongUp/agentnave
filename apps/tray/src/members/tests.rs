@@ -1,6 +1,108 @@
 use super::*;
 use crate::data::Reader;
 
+#[test]
+fn migration_freezes_open_scenes_and_keeps_defaults_and_explicit_selections() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut original = document();
+    original["modes"].as_object_mut().unwrap().remove("task");
+    original["defaults"] = json!({"task": {"codex": "gpt-6.1-sol"}});
+    save(dir.path(), &original).unwrap();
+    let detected = json!({"claude": {"installed": true}, "codex": {"installed": false}});
+    migrate(dir.path(), &detected, false).unwrap();
+    let migrated = read(dir.path()).unwrap().unwrap();
+    assert_eq!(migrated["clis"], original["clis"]);
+    assert_eq!(
+        migrated["modes"]["discussion"],
+        original["modes"]["discussion"]
+    );
+    assert_eq!(
+        migrated["modes"]["task"],
+        json!({
+            "claude": {"models": [], "overrides": {}},
+            "codex": {"models": [], "overrides": {}, "default": "gpt-6.1-sol"}
+        })
+    );
+    assert!(migrated.get("defaults").is_none());
+    // A later installation must not expand the frozen list on the next App start.
+    let bytes = fs::read(dir.path().join(FILE)).unwrap();
+    migrate(dir.path(), &json!({"grok": {"installed": true}}), true).unwrap();
+    assert_eq!(fs::read(dir.path().join(FILE)).unwrap(), bytes);
+}
+
+#[test]
+fn migration_creates_installed_cli_lists_for_an_existing_boss() {
+    let dir = tempfile::tempdir().unwrap();
+    migrate(dir.path(), &json!({"codex": {"installed": true}}), true).unwrap();
+    let migrated = read(dir.path()).unwrap().unwrap();
+    assert_eq!(migrated["clis"], json!({}));
+    for mode in MODES {
+        assert_eq!(
+            migrated["modes"][mode],
+            json!({"codex": {"models": [], "overrides": {}}})
+        );
+    }
+}
+
+#[test]
+fn a_boss_that_still_needs_repair_counts_as_used_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let hosts = |status: &str, entry: bool| json!({"hosts": [{"id": "codex", "status": status, "layers": [{"has_entry": entry}]}]});
+    assert!(used_before(dir.path(), &hosts("connected", true)));
+    assert!(used_before(dir.path(), &hosts("needs_attention", true)));
+    // A broken config of a boss never connected is no sign of earlier use.
+    assert!(!used_before(dir.path(), &hosts("needs_attention", false)));
+    assert!(!used_before(dir.path(), &hosts("available", false)));
+    assert!(!used_before(dir.path(), &Value::Null));
+}
+
+#[test]
+fn migration_leaves_a_fresh_install_without_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    migrate(dir.path(), &json!({"codex": {"installed": true}}), false).unwrap();
+    assert!(!dir.path().join(FILE).exists());
+}
+
+#[test]
+fn connecting_a_boss_keeps_existing_settings_and_confirms_only_missing_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = document();
+    save(dir.path(), &original).unwrap();
+    confirm_host(dir.path(), "codex@work", false).unwrap();
+    let confirmed = read(dir.path()).unwrap().unwrap();
+    assert_eq!(confirmed["clis"], original["clis"]);
+    assert_eq!(confirmed["modes"]["task"], original["modes"]["task"]);
+    assert_eq!(
+        confirmed["modes"]["discussion"]["codex"],
+        json!({"models": [], "overrides": {}})
+    );
+}
+
+#[test]
+fn connecting_a_boss_creates_its_cli_only_and_maps_host_rows() {
+    for (id, provider) in [("claude-desktop", "claude"), ("workbuddy", "codebuddy")] {
+        let dir = tempfile::tempdir().unwrap();
+        confirm_host(dir.path(), id, false).unwrap();
+        let confirmed = read(dir.path()).unwrap().unwrap();
+        assert_eq!(confirmed["clis"], json!({}));
+        for mode in MODES {
+            assert_eq!(
+                confirmed["modes"][mode],
+                json!({provider: {"models": [], "overrides": {}}})
+            );
+        }
+        let bytes = fs::read(dir.path().join(FILE)).unwrap();
+        confirm_host(dir.path(), "hermes", false).unwrap();
+        assert_eq!(fs::read(dir.path().join(FILE)).unwrap(), bytes);
+    }
+    // A first boss that is no employee still writes empty lists, so a later start-up does not
+    // migrate every installed CLI in.
+    let dir = tempfile::tempdir().unwrap();
+    confirm_host(dir.path(), "hermes", false).unwrap();
+    let confirmed = read(dir.path()).unwrap().unwrap();
+    assert_eq!(confirmed["modes"], json!({"task": {}, "discussion": {}}));
+}
+
 fn document() -> Value {
     json!({
         "version": 1,
@@ -238,7 +340,6 @@ fn permission_tiers_save_to_their_own_file() {
 fn broken_file_is_reported_and_left_untouched() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    assert_eq!(document_state(root), (empty(), Value::Null));
     fs::write(root.join(FILE), b"{").unwrap();
     let (document, error) = document_state(root);
     assert_eq!(document, empty());
@@ -247,10 +348,12 @@ fn broken_file_is_reported_and_left_untouched() {
 }
 
 #[test]
-fn a_missing_document_stays_missing_so_every_cli_keeps_its_own_default() {
+fn a_missing_document_stays_missing_and_confirms_no_cli() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    assert_eq!(document_state(root), (empty(), Value::Null));
+    let (document, error) = document_state(root);
+    assert_eq!(document["modes"], json!({"task": {}, "discussion": {}}));
+    assert_eq!(error, Value::Null);
     assert!(!root.join(FILE).exists());
 }
 

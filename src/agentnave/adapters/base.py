@@ -91,6 +91,8 @@ class ProviderAdapter(Protocol):
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]: ...
 
+    def is_installed(self) -> bool: ...
+
     def prepare(self, request: InvocationRequest) -> PreparedCommand: ...
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult: ...
@@ -107,9 +109,18 @@ class ProviderAdapter(Protocol):
 class AdapterHooks:
     """What most CLIs do not need: the defaults of the optional ProviderAdapter hooks."""
 
+    name: str
+    executable_name: str | None = None
     options_description = ""
     supports_restricted_tools = True
     restricted_extra_options: frozenset[str] = frozenset()
+
+    def executable_path(self) -> str:
+        return resolve_executable(self.executable_name or self.name)
+
+    def is_installed(self) -> bool:
+        """Resolve the launch executable without preparing a command or starting a process."""
+        return os.path.isabs(self.executable_path())
 
     def event_model(self, event: dict[str, object]) -> str | None:
         """The main assistant's model named by one native stream event."""

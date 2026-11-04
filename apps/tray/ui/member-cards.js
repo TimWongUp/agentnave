@@ -117,8 +117,11 @@ function renderCards() {
   const cards = document.createDocumentFragment();
   // Not installed and named by no scene or default: only in the folded list at the end.
   const missing = [];
+  // Employees as last saved come first; a card stays put while its switch is being changed.
+  const saved = confirmScenes(JSON.parse(savedSnapshot || JSON.stringify(currentDoc)));
+  const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
 
-  for (const provider of PROVIDERS) {
+  for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
     const info = detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
     const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
     const listed = known(provider);
@@ -170,7 +173,7 @@ function renderCards() {
         onClick: () => { missingOpen = !missingOpen; renderCards(); },
       }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(L(`未安装的 CLI（${missing.length}）`, `Uninstalled CLIs (${missing.length})`))));
     if (missingOpen) box.appendChild(el("p", { className: "cli-missing-list" },
-      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以开始使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
+      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
     cards.appendChild(box);
   }
 
@@ -207,7 +210,7 @@ async function saveMembers() {
   feedback.textContent = L("正在保存…", "Saving…");
   feedback.className = "save-feedback";
 
-  const saving = JSON.stringify(currentDoc);
+  const saving = JSON.stringify(confirmScenes());
 
   try {
     if (saving !== savedSnapshot) {

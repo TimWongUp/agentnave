@@ -768,9 +768,9 @@ All checks passed!
     return `preview.html?${params}${match[3] || ""}`;
   }
 
-  // Host/onboarding fixtures stay behind the existing explicit mock switch.
+  // Host fixtures stay behind the existing explicit mock switch.
   const freshHosts = hostScene === "fresh";
-  let serviceReady = !freshHosts, dismissed = false, installedState = null;
+  let serviceReady = !freshHosts, installedState = null;
   const hostRows = ["codex", "pi", "workbuddy", "hermes"].map((id, index) => {
     const root = `/preview/${id}`;
     const label = HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id;
@@ -791,8 +791,6 @@ All checks passed!
     Object.assign(warning, { status: "needs_attention", entry: "agentnave", command: "/missing/agentnave-mcp", command_state: "missing", attention: { code: "command_missing", message: "条目的命令不存在或不可执行" } });
     warning.layers[0].has_entry = true;
   }
-  let membersReady = ["midway", "typical", "done"].includes(hostScene);
-  let triedReady = hostScene === "done";
   const confirmedReloads = new Map();
   let mockToolsSynced = q.get("activation") !== "refresh";
   if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
@@ -802,11 +800,6 @@ All checks passed!
     const state = scene === "stale" || scene === "tools" || !mockToolsSynced ? "required" : host.id === "codex" && scene !== "unknown" ? "current" : "unknown";
     return { ...host, reload: host.status === "connected" ? { state: confirmedReloads.get(host.id) === token ? "confirmed" : state, reason: scene === "stale" ? "stale" : state === "required" ? "tools" : "connection", connections: state === "unknown" ? 0 : 1, token } : { state: "not_connected" } };
   }), backups: { dir: "/preview/backups", config: 0, skill: 0 } });
-  const onboarding = () => ({ dismissed, steps: [
-    { id: "service", done: serviceReady, detail: "安装 AgentNave 本机服务" },
-    { id: "host", done: hostRows.some((h) => h.status === "connected"), detail: "接入一个宿主" },
-    { id: "members", done: membersReady, detail: "选择可以派出的 CLI 与模型" },
-    { id: "try", done: triedReady, detail: "在宿主里派一次任务" }] });
   const mockPrefs = {
     general: {
       theme: "system",
@@ -883,7 +876,6 @@ All checks passed!
     if (path.startsWith("/app/voice/voices/")) return [{ id: "voice-1", name: "默认音色" }];
     if (path === "/app/hosts") return structuredClone(hostView());
     if (path === "/app/skills") return { skills: [{ name: "agentnave-review", title: "AgentNave 评审门控", description: "代码评审门控：创建或更新 PR、用户要求评审代码或合并到主分支前使用。", content: "---\nname: agentnave-review\n---\n\n# AgentNave 评审门控\n\n（预览）完整写法在 App 中读取内嵌的 SKILL.md。" }] };
-    if (path === "/app/onboarding") return onboarding();
     if (path === "/app/status" && installedState) return { ...status(), service: installedState };
     return mockFetch(path);
   }
@@ -950,8 +942,6 @@ All checks passed!
       return { cleared: true };
     }
     if (path === "/app/hosts/refresh") return structuredClone(hostView());
-    if (path === "/app/onboarding/dismiss") { dismissed = true; return { dismissed }; }
-    if (path === "/app/onboarding/reopen") { dismissed = false; return { dismissed }; }
     if (path === "/app/hosts/reveal-backups") return { ok: true, message: "预览：已打开备份目录" };
     if (path === "/app/service/install") { installedState = { state: "installing" }; setTimeout(() => { serviceReady = true; installedState = { state: "done" }; }, 900); return { ok: true }; }
     const host = hostRows.find((h) => h.id === body.id);

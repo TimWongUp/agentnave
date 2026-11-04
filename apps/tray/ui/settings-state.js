@@ -209,6 +209,7 @@ function renderPermission(provider) {
 }
 
 async function apiPostMembers(doc) {
+  confirmScenes(doc);
   const res = await fetch("/app/members", {
     method: "POST",
     headers: {
@@ -258,17 +259,87 @@ function markSaved(snapshot = JSON.stringify(currentDoc)) {
   refreshDirty();
 }
 
+// Key order carries no meaning: turning a CLI off and on again moves it to the end of its scene.
+const canonical = (value) => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+    : value;
+const sameJson = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 // Unsaved means the document differs from the saved one, or an edit left an option draft
 // that cannot be written yet.
 function refreshDirty() {
   dirty = limitChanged() || (docVersion !== savedVersion &&
-    (JSON.stringify(currentDoc) !== savedSnapshot || configurationErrors().length > 0));
+    (!sameJson(currentDoc, JSON.parse(savedSnapshot || "null")) || configurationErrors().length > 0));
 }
 
 function incDocVersion() {
   docVersion++;
   refreshDirty();
   updateControls();
+}
+
+// Host cards publish after a connection. Reload a clean employee editor, or add the CLIs the
+// connection confirmed to unsaved edits, so a later save cannot drop them.
+// The key is only recorded once a read was applied. Host cards publish only on change, so a read
+// that was skipped or overtaken retries by itself with the latest hosts.
+let membersHostsKey = "";
+let membersHostsReading = false;
+let membersHosts = null;
+let membersHostsRetry = null;
+const hostsKey = (hosts) => JSON.stringify((hosts?.hosts || [])
+  .filter((host) => host.status === "connected")
+  .map((host) => [host.id, host.last_action?.at]));
+const retryHosts = () => { membersHostsRetry ||= setTimeout(() => { membersHostsRetry = null; void syncHosts(); }, 1000); };
+
+window.addEventListener("agentnave:hosts", ({ detail }) => {
+  membersHosts = detail;
+  return syncHosts();
+});
+
+async function syncHosts() {
+  const key = hostsKey(membersHosts);
+  if (key === membersHostsKey || membersHostsReading) return;
+  if (!savedSnapshot || busy) return retryHosts();
+  const before = docVersion;
+  const snapshot = savedSnapshot;
+  membersHostsReading = true;
+  try {
+    const data = await apiGetMembers();
+    if (busy || savedSnapshot !== snapshot) return retryHosts();
+    if (!dirty && docVersion === before) {
+      currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+      documentError = data.error || null;
+      membersHostsKey = key;
+      markSaved();
+      renderErrorBanner();
+      renderCards();
+      return;
+    }
+    // Expand open scenes the way edited() expanded the editor, so a CLI the user just turned off
+    // still counts as saved and is not merged back.
+    const saved = confirmScenes(JSON.parse(savedSnapshot));
+    let added = false;
+    for (const scene of SCENE_IDS) {
+      for (const [provider, conf] of Object.entries(data.document?.modes?.[scene] || {})) {
+        if (saved.modes?.[scene]?.[provider]) continue;
+        ((saved.modes ||= {})[scene] ||= {})[provider] = structuredClone(conf);
+        restrict(scene)[provider] ||= structuredClone(conf);
+        added = true;
+      }
+    }
+    membersHostsKey = key;
+    if (!added) return;
+    savedSnapshot = JSON.stringify(saved);
+    refreshDirty();
+    renderCards();
+  } catch {
+    retryHosts();
+  } finally {
+    membersHostsReading = false;
+    // Hosts published during the read are read again now.
+    if (hostsKey(membersHosts) !== key) void syncHosts();
+  }
 }
 
 // Count permission-related options across entire document

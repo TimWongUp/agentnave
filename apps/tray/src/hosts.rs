@@ -23,6 +23,7 @@ use orchestration::{host_env, set_host_env};
 use roots::Root;
 pub(crate) use roots::Shell;
 use serde_json::{Value, json};
+pub(crate) use split::boss_of;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write;

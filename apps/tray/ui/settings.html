@@ -13,7 +13,6 @@
 <script src="/chat/appearance.js" defer></script>
 <script src="/chat/common.js" defer></script>
 <script src="/chat/common-select.js" defer></script>
-<script src="/chat/onboarding.js" defer></script>
 <script src="/chat/update-dialog.js" defer></script>
 <script src="/chat/common-status.js" defer></script>
 <script src="./avatar-settings.js" defer></script>
@@ -95,6 +94,12 @@
   </section>
 
   <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">
+    <div id="avatar-settings" aria-live="polite"></div>
+  </section>
+
+  <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
+    <div id="general-language"></div>
+    <div id="general-prefs"></div>
     <div class="model-names setting-row">
       <div class="setting-copy">
         <h2 data-en="Model names">模型名称</h2>
@@ -105,12 +110,6 @@
         <button id="model-names-full" class="segment-btn" role="radio" type="button" data-en="Full">完整</button>
       </div>
     </div>
-    <div id="avatar-settings" aria-live="polite"></div>
-  </section>
-
-  <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
-    <div id="general-language"></div>
-    <div id="general-prefs"></div>
   </section>
 
   <section id="pane-storage" class="tab-pane" hidden aria-labelledby="nav-storage">
@@ -234,11 +233,6 @@
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="setting-row">
-      <h2 data-en="Getting started">开始使用</h2>
-      <button id="onboarding-reopen" type="button" data-en="Show again">重新显示</button>
     </div>
   </section>
 </main>

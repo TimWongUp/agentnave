@@ -141,21 +141,6 @@ const state = {
   again: false,
 };
 
-const ob = AN.onboarding({ variant: "compact", onChange: () => placeOb() });
-function placeOb() {
-  const none = state.groupsData.length === 0;
-  const full = none && !(narrow.matches && el.app.dataset.view === "list");
-  ob.setVariant(full ? "full" : "compact");
-  const slot = full ? (el.blank.hidden ? null : el.blank) : $("onboard-side");
-  const description = el.blank.querySelector(":scope > p");
-  if (description && none) description.hidden = ob.visible;
-  if (!ob.visible || !slot) {
-    ob.el.remove();
-    return;
-  }
-  if (ob.el.parentNode !== slot) slot.append(ob.el);
-}
-
 // ---------------------------------------------------------------- routing
 function groupFromLocation() {
   if (new URLSearchParams(location.search).has("group"))
@@ -207,7 +192,6 @@ for (const query of [narrow, overlay])
   query.addEventListener("change", () => {
     sync();
     renderList();
-    placeOb();
     if (state.chat) renderAll(state.chat);
   });
 
