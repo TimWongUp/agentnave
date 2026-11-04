@@ -64,6 +64,14 @@ pub(super) fn find(name: &str) -> Option<PathBuf> {
     } else {
         vec![name.to_owned()]
     };
+    search_path(&names)
+}
+
+pub(super) fn find_on_path(name: &str) -> Option<PathBuf> {
+    search_path(&[name.to_owned()])
+}
+
+fn search_path(names: &[String]) -> Option<PathBuf> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     std::env::split_paths(&inherited)
         .chain(common_dirs())

@@ -177,6 +177,9 @@
 .member-end > .segment-control > .segment-btn, .member-efforts > .segment-btn { flex: 1 1 0; min-width: 0; padding-left: 2px; padding-right: 2px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-hidden { visibility: hidden; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
+.member-tail { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.member-tail > :first-child { flex: 1; }
+.member-toggle { flex: none; font-size: 12px; padding: 4px 10px; }
 .member-tier { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--muted); }
 .member-tier select { flex: 1; min-width: 0; font-size: 12.5px; padding: 4px 8px; }
 .member-switch { display: inline-flex; align-items: center; gap: 8px; padding-left: 30px; font-size: 12.5px; cursor: pointer; }
@@ -357,3 +360,24 @@
 .storage-size { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .storage-confirm { margin: 14px -18px -18px; border-top: 1px solid var(--line); border-bottom: 0; border-radius: 0 0 10px 10px; }
 
+
+/* Keep update checks, progress and failures within reserved spaces. */
+.cli-update-slot { display: inline-flex; flex: 0 0 132px; min-width: 0; height: 26px; }
+.cli-update { max-width: 100%; padding: 3px 8px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.member-title > .cli-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cli-version { white-space: nowrap; flex: none; }
+.cli-update-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 32px; font-size: 12.5px; }
+.cli-update-summary > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cli-update-summary > button { flex: none; font-size: 12px; padding: 4px 10px; }
+.cli-update-error { height: 32px; line-height: 16px; overflow: auto; white-space: pre-wrap; }
+.cli-install-row { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cli-install-name { font-weight: 550; color: var(--ink); }
+.cli-install-methods { display: grid; gap: 8px; min-width: 0; }
+.cli-install-command { display: grid; grid-template-columns: 76px minmax(0, 1fr) 64px; align-items: center; gap: 8px; }
+.cli-install-command code { overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; font-size: 11px; }
+.cli-install-copy { padding: 3px 6px; font-size: 11px; }
+.cli-copy-input { position: fixed; top: 0; left: -9999px; }
+@media (max-width: 700px) {
+  .cli-install-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .cli-install-command { grid-template-columns: 70px minmax(0, 1fr) 64px; }
+}

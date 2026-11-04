@@ -5,6 +5,7 @@
 
 mod locate;
 mod probe;
+pub(crate) mod update;
 use probe::*;
 
 #[cfg(windows)]

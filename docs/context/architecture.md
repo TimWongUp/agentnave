@@ -8,7 +8,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | --- | --- |
 | Manager（boss） | 目标解释、任务拆解、角色与模型选择、并行、重试、审核、综合、worktree 与长期任务状态 |
 | AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理 |
-| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务 |
+| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)） |
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
@@ -86,6 +86,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、工作区交接标记、清空工作区时删去交接记录和删除只有 boss 的工作区（不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)）、数据根的设置文件、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。托盘不迁移会话库的 schema：遇到旧版本的库只读展示，写操作提示先重连宿主（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。
 - 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）；语音 API 密钥、自定义口语摘要连接信息、摘要要求及语音人设为例外（[ADR-0044](../adr/0044-meeting-voice-cloud-and-key-input.md)）。
 - 模型与档位以各 CLI 自己给出的为准，App 只探测、不猜测（[ADR-0034](../adr/0034-models-and-efforts-from-each-cli.md)）。
+- 员工页的 CLI 更新只沿该 CLI 原来的安装方式执行，不提权、不替用户安装；没装的 CLI 只给出官方安装命令（[ADR-0055](../adr/0055-app-updates-member-clis.md)）。
 - 应用内更新只访问本仓库的 GitHub Release，用户确认后安装 App（[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）。App 每次启动都把服务对齐到配套版本：新版本装进独立目录，旧目录在不再使用并过宽限期后回收；连接的版本落后时，宿主卡片立即提示重连（[ADR-0047](../adr/0047-versioned-service-install.md)）。
 
 ## 语音播报
