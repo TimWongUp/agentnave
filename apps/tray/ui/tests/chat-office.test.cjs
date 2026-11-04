@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
-function office() {
+function office(character = (_host, model) => model || "default") {
   const node = () => ({
     dataset: {}, classList: { toggle() {} }, children: [],
     replaceChildren(...children) { this.children = children; },
@@ -12,7 +12,7 @@ function office() {
   });
   const context = vm.createContext({
     AN: { at: Date.parse }, window: {}, ResizeObserver: class { observe() {} },
-    ART: { character: (_host, model) => model || "default", figure: node,
+    ART: { character, figure: node,
       head: name => ({ name }), lid: host => ({ host }), url: path => path },
     el: { boss: node() }, state: { groupsData: [], drawer: {} },
     L: zh => zh, cliName: host => host,
@@ -99,4 +99,21 @@ test("a portrait keeps its saved identity when older work leaves the visible mes
   assert.equal(app.rec.char, "gemini-4-argon");
   assert.equal(app.rec.portrait.hidden, false);
   assert.equal(app.rec.portrait.children[0].name, old.speaker.model);
+});
+
+test("the same character stays off the wall across model variants and reappears for a different character", () => {
+  const app = office((_host, model) => model.startsWith("claude-") ? "claude" : "gemini");
+  const c = claimed();
+  const current = speech("antigravity", "gemini-4-argon", "2026-11-04T14:25:03Z");
+  c.messages.push(current);
+  app.update(c);
+  assert.equal(app.rec.portrait.hidden, false);
+  current.speaker.model = "claude-sonnet-4-6";
+  app.update(c);
+  assert.equal(app.rec.char, "claude");
+  assert.equal(app.rec.portrait.hidden, true);
+  current.speaker.model = "gemini-4-argon";
+  app.update(c);
+  assert.equal(app.rec.portrait.hidden, false);
+  assert.equal(app.rec.portrait.children[0].name, "claude");
 });

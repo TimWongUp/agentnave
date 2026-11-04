@@ -361,9 +361,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 
 /* ---- boss office ---- */
 /* the boss before a takeover: a framed head on the wall */
-.boss-portrait { position: absolute; left: 0; top: 4%; width: 16%; aspect-ratio: 1; z-index: 0; padding: 3px; border-radius: 3px; background: #8a5a2b; box-shadow: inset 0 0 0 1px #c89b5e, 0 2px 5px rgb(0 0 0 / 0.28); }
+.boss-portrait { position: absolute; left: 0; top: 4%; width: 18%; aspect-ratio: 1122 / 1402; z-index: 0; }
 .boss-portrait[hidden] { display: none; }
-.boss-portrait .head { display: block; width: 100%; height: 100%; border-radius: 1px; background: var(--wall) center / cover; }
+.boss-portrait .head { position: absolute; left: 16.5%; top: 15.5%; width: 67%; height: 69%; display: block; background: var(--wall) center / cover; }
+.boss-portrait::after { content: ""; position: absolute; inset: 0; background: url("/art/office/portrait-frame.png") center / contain no-repeat; pointer-events: none; }
 .boss-zone .label { position: relative; z-index: 6; text-align: center; margin-top: 0; }
 .boss-zone { padding-top: 8px; padding-bottom: 4px; }
 .label { text-align: center; margin-top: 4px; min-width: 0; }

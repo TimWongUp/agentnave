@@ -245,11 +245,11 @@ function updateBoss(rec, c, n) {
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }
 
-// Once the new boss has spoken, the one before hangs framed on the wall to its left.
+// Once the new boss has spoken, a different former character hangs on the wall to its left.
 function hangPortrait(rec, c, former) {
-  rec.portrait.hidden = !former;
-  setAttr(rec.portrait, "title", c.took_over || null);
   const face = former ? ART.character(former.host, former.model) : "";
+  rec.portrait.hidden = !former || face === rec.char;
+  setAttr(rec.portrait, "title", c.took_over || null);
   if (rec.portraitFace === face) return;
   rec.portraitFace = face;
   rec.portrait.replaceChildren(...(face ? [ART.head(face)] : []));
