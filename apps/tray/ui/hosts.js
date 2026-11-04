@@ -731,11 +731,6 @@ window.addEventListener("agentnave:status", ({ detail }) => {
   if (installing) renderAll();
   else reload();
 });
-$("onboarding-reopen").addEventListener("click", async () => {
-  try { await post("/app/onboarding/reopen"); say(L("已重新显示开始使用，返回办公室或面板即可查看。", "Reopened Getting started; return to Office or the panel to view it.")); }
-  catch { say(L("重新显示失败，请稍后重试。", "Failed to reopen. Please try again later."), true); }
-});
-
 // ---------------------------------------------------------------- boot
 (async function boot(attempt = 0) {
   if (!$("pane-hosts").hidden) say(L("正在读取接入状态…", "Loading connection status…"));

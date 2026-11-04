@@ -61,8 +61,9 @@ install or sign in to CLIs for you.
 
 1. Download `AgentNave_<version>_universal.dmg` from [Releases](https://github.com/TimWongUp/agentnave/releases/latest)
    and drag it into Applications.
-2. Open the App and follow the four 开始使用 (Get started) steps: **install the local service → connect a host → set up
-   teammates → send a task from the host**. Connecting a host also installs the companion `agentnave-manager` and `agentnave-handover` Skills.
+2. Open the App, connect a host on the host connections page, enable other CLIs under **Employees** as needed,
+   then dispatch a task from the host. The App installs the local service automatically. Connecting a host also installs
+   the companion `agentnave-manager` and `agentnave-handover` Skills.
 3. Back in your host, try:
 
    ```text

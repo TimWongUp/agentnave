@@ -11,7 +11,6 @@ mod detect;
 mod hosts;
 mod manage;
 mod members;
-mod onboarding;
 mod preferences;
 mod process;
 mod proxy;

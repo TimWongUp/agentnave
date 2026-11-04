@@ -170,7 +170,7 @@ function renderCards() {
         onClick: () => { missingOpen = !missingOpen; renderCards(); },
       }, el("span", { className: "cli-chevron", "aria-hidden": "true" }), textNode(L(`未安装的 CLI（${missing.length}）`, `Uninstalled CLIs (${missing.length})`))));
     if (missingOpen) box.appendChild(el("p", { className: "cli-missing-list" },
-      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以开始使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
+      textNode(L(`${names.join("、")}。装好后点「刷新模型列表」，就会出现在上面，可以使用。`, `${names.join(", ")}. After installing, click “Refresh models” and they will appear above ready to use.`))));
     cards.appendChild(box);
   }
 

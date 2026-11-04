@@ -21,7 +21,6 @@ const COMMON_JS: &[u8] = concat!(
 .as_bytes();
 const HOSTS_JS: &[u8] = include_bytes!("../../ui/hosts.js");
 const HOSTS_CSS: &[u8] = include_bytes!("../../ui/hosts.css");
-const ONBOARDING_CSS: &[u8] = include_bytes!("../../ui/onboarding.css");
 
 impl Reader {
     /// Serve one path of the `agentnave` scheme: the tray assets and saved conversation views.
@@ -183,16 +182,11 @@ fn chat_asset(resource: &str) -> Response {
             include_bytes!("../../ui/actions.js").to_vec(),
         ),
         "chat.css" => Response::ok("text/css; charset=utf-8", CHAT_CSS.to_vec()),
-        "onboarding.css" => Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec()),
         "appearance.js" => Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec()),
         "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
         "common-select.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/common-select.js").to_vec(),
-        ),
-        "onboarding.js" => Response::ok(
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../ui/onboarding.js").to_vec(),
         ),
         "update-dialog.js" => Response::ok(
             "text/javascript; charset=utf-8",
@@ -214,16 +208,11 @@ fn panel_asset(resource: &str) -> Response {
         "" => page(PANEL_HTML),
         "panel.js" => Response::ok("text/javascript; charset=utf-8", PANEL_JS.to_vec()),
         "panel.css" => Response::ok("text/css; charset=utf-8", PANEL_CSS.to_vec()),
-        "onboarding.css" => Response::ok("text/css; charset=utf-8", ONBOARDING_CSS.to_vec()),
         "appearance.js" => Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec()),
         "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),
         "common-select.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/common-select.js").to_vec(),
-        ),
-        "onboarding.js" => Response::ok(
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../ui/onboarding.js").to_vec(),
         ),
         "update-dialog.js" => Response::ok(
             "text/javascript; charset=utf-8",

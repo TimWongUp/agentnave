@@ -58,7 +58,7 @@ Grok Bot 仅通过 Linux 上的 MCP stdio 连接器接入，不提供 macOS / Wi
 ### 方式一：托盘 App（macOS，推荐）
 
 1. 到 [Releases](https://github.com/TimWongUp/agentnave/releases/latest) 下载 `AgentNave_<版本>_universal.dmg`，拖进「应用程序」。
-2. 打开 App，按「开始使用」走完四步：**安装本机服务 → 接入一个宿主 → 设置组员 → 在宿主里派一次任务**。
+2. 打开 App，在「接入」页接入一个宿主，按需在「员工」里打开其他 CLI，再在宿主里派一次任务。本机服务由 App 自动安装。
    接入宿主时，App 会顺便装好配套的 `agentnave-manager` 和 `agentnave-handover` Skill。
 3. 回到宿主里说一句试试：
 

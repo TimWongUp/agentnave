@@ -9,12 +9,7 @@ impl Reader {
             }
             return crate::voice::request(&self.root, path, method, action, body);
         }
-        if path == "/app/hosts"
-            || path.starts_with("/app/hosts/")
-            || path == "/app/onboarding"
-            || path == "/app/onboarding/dismiss"
-            || path == "/app/onboarding/reopen"
-        {
+        if path == "/app/hosts" || path.starts_with("/app/hosts/") {
             return self.host_request(method, path, action, body);
         }
         if path == "/app/skills" {
@@ -316,7 +311,7 @@ impl Reader {
         action: Option<&str>,
         body: &[u8],
     ) -> Response {
-        let read = matches!(path, "/app/hosts" | "/app/onboarding");
+        let read = path == "/app/hosts";
         let write = matches!(
             path,
             "/app/hosts/refresh"
@@ -326,8 +321,6 @@ impl Reader {
                 | "/app/hosts/confirm-reload"
                 | "/app/hosts/skill"
                 | "/app/hosts/reveal-backups"
-                | "/app/onboarding/dismiss"
-                | "/app/onboarding/reopen"
         );
         if !read && !write {
             return Response::error(404, "未知路由");
@@ -354,15 +347,6 @@ impl Reader {
                 self.sync_rules(hosts, &[]);
                 Response::json(&snapshot)
             }
-            "/app/onboarding" => Response::json(&crate::onboarding::state(hosts, &self.root)),
-            "/app/onboarding/dismiss" => match crate::onboarding::dismiss(hosts) {
-                Ok(result) => Response::json(&result),
-                Err(error) => Response::error(500, &error),
-            },
-            "/app/onboarding/reopen" => match crate::onboarding::reopen(hosts) {
-                Ok(result) => Response::json(&result),
-                Err(error) => Response::error(500, &error),
-            },
             "/app/hosts/reveal-backups" => match hosts.reveal_backups() {
                 Ok(result) => Response::json(&result),
                 Err(error) => Response::error(500, &error),

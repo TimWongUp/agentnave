@@ -1621,15 +1621,13 @@ fn skill_ownership_links_and_refresh_replace_other_copies_after_a_backup() {
 }
 
 #[test]
-fn get_is_read_only_onboarding_uses_cache_and_post_routes_require_action_header() {
+fn get_hosts_is_read_only_and_post_routes_require_action_header() {
     let (_temp, hosts) = fixture();
     let app = hosts.context.app.clone();
     let root = hosts.context.home.join("data");
     let reader = Reader::new(root.clone());
     reader.configure_hosts(hosts.context, hosts.shell.unwrap());
-    for path in ["/app/hosts", "/app/onboarding"] {
-        assert_eq!(reader.request("GET", path, None, b"").status, 200);
-    }
+    assert_eq!(reader.request("GET", "/app/hosts", None, b"").status, 200);
     assert!(!app.exists());
     assert!(!root.exists());
     for path in [
@@ -1637,20 +1635,10 @@ fn get_is_read_only_onboarding_uses_cache_and_post_routes_require_action_header(
         "/app/hosts/root",
         "/app/hosts/confirm-reload",
         "/app/hosts/reveal-backups",
-        "/app/onboarding/dismiss",
-        "/app/onboarding/reopen",
     ] {
         assert_eq!(reader.request("GET", path, None, b"").status, 405);
         assert_eq!(reader.request("POST", path, None, b"{}").status, 403);
     }
-    reader.request("POST", "/app/onboarding/dismiss", Some("1"), b"{}");
-    assert!(app.join("onboarding.dismissed").exists());
-    reader.request("POST", "/app/onboarding/reopen", Some("1"), b"{}");
-    assert!(!app.join("onboarding.dismissed").exists());
-    save(&root.join("members.json"), "{}");
-    let value: Value =
-        serde_json::from_slice(&reader.request("GET", "/app/onboarding", None, b"").body).unwrap();
-    assert_eq!(value["steps"][2]["done"], true);
 }
 
 #[test]

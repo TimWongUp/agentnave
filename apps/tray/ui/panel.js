@@ -15,15 +15,6 @@ const SHOWN = 6; //   ... down to this many
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
 
-const ob = AN.onboarding({ variant: "full", onChange: () => syncOb() });
-function syncOb() {
-  const slot = $("ob-slot");
-  const on = ob.visible && stage.hidden && state.calm === "no_data";
-  slot.hidden = !on;
-  $("calm").hidden = stage.hidden ? on : true; // the card replaces the generic hint
-  if (on && ob.el.parentNode !== slot) slot.prepend(ob.el);
-}
-
 const stage = $("stage");
 const state = {
   blocks: new Map(), // group id -> office block
@@ -251,7 +242,7 @@ function showBody(kind, retry) {
   stage.hidden = !showStage;
   const calm = $("calm");
   calm.hidden = showStage;
-  if (showStage || state.calm === kind) { syncOb(); return; }
+  if (showStage || state.calm === kind) return;
   state.calm = kind;
   const copy = {
     loading: [L("正在读取…", "Loading…"), "", null],
@@ -262,7 +253,6 @@ function showBody(kind, retry) {
   const action = copy[2] && (copy[2][1] ? h("a.calm-link", { href: href(copy[2][1]) }, copy[2][0]) : h("button.calm-link", { type: "button" }, copy[2][0]));
   if (action && !copy[2][1]) action.addEventListener("click", retry);
   calm.replaceChildren(...[h("strong", {}, copy[0]), copy[1] && h("p", {}, copy[1]), action].filter(Boolean));
-  syncOb();
 }
 
 // ---------------------------------------------------------------- update / service notices
@@ -382,5 +372,3 @@ async function refresh() {
 showBody("loading");
 const run = poll(refresh);
 for (const link of document.querySelectorAll("a[href]")) setAttr(link, "href", href(link.getAttribute("href")));
-
-ob.start();

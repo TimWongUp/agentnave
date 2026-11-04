@@ -72,7 +72,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @media (max-width: 1100px) and (min-width: 761px) {
   .app { grid-template-columns: 64px minmax(0, 1fr) var(--conv-w, clamp(300px, 34vw, 400px)); }
   .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-head, .gl-sec, .gi-body, .gl-wrap > .ob-slot, .split-side { display: none; }
+  .side-head, .gl-sec, .gi-body, .split-side { display: none; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi::before { left: 2px; }
 }
@@ -568,7 +568,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 /* ---- narrow: the conversation slides over the floor; very narrow: one column ---- */
 @media (max-width: 860px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-head, .gl-sec, .gi-body, .gl-wrap > .ob-slot, .split { display: none; }
+  .side-head, .gl-sec, .gi-body, .split { display: none; }
   .gi { justify-content: center; padding: 9px 0; }
   .conv { position: fixed; z-index: 30; top: calc(48px + var(--voice-banner-h, 0px)); right: 0; bottom: 0; width: min(400px, 92vw); box-shadow: 0 22px 60px #0009; animation: slide-in 0.25s ease-out; }
   .dr-close { display: grid; place-items: center; }
@@ -576,7 +576,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @keyframes slide-in { from { transform: translateX(40px); opacity: 0; } }
 @media (max-width: 760px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 1fr; }
-  .side-head, .gl-sec, .gi-body, .gl-wrap > .ob-slot { display: revert; }
+  .side-head, .gl-sec, .gi-body { display: revert; }
   .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
@@ -593,9 +593,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 }
 
 .gl-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
-.gl-wrap > .ob-slot:not(:empty) { padding: 2px 2px 8px; }
 .gl-wrap > .gl { padding: 0; overflow: visible; }
-.blank .ob { width: min(440px, 100%); margin-top: 18px; text-align: left; }
 
 /* markdown inside bubbles */
 .md > :first-child { margin-top: 0; }

@@ -424,13 +424,12 @@ function showBlank(kind) {
   el.blank.replaceChildren(
     ...[
       h("strong", {}, text[0]),
-      h("p", { hidden: kind === "nogroups" && ob.visible }, text[1]),
+      h("p", {}, text[1]),
       kind === "missing" &&
         h("a.blank-link", { href: href("/chat/") }, L("回到工作区列表", "Back to workspaces")),
     ].filter(Boolean),
   );
   el.jump.hidden = true;
-  placeOb();
 }
 
 // ---------------------------------------------------------------- refresh
@@ -510,7 +509,6 @@ async function refresh() {
     }
     el.banner.hidden = true;
     state.groupsData = chats.groups;
-    placeOb();
     if (
       state.auto &&
       !narrow.matches &&
@@ -583,5 +581,3 @@ addEventListener("agentnave:voice", () => {
 });
 sync();
 poll(refresh);
-
-ob.start();

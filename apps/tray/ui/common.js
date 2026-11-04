@@ -43,6 +43,38 @@
   }
   const href = (path) => path;
 
+  async function post(path, body) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        "X-AgentNave-Action": "1",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body || {}),
+    });
+    if (!response.ok)
+      throw Object.assign(new Error((await response.json().catch(() => ({}))).error || String(response.status)), {
+        status: response.status,
+      });
+    return response.json();
+  }
+
+  // The install runs for about a minute: POST returns at once, progress is /app/status.service.state.
+  async function installService() {
+    const started = await post("/app/service/install", {});
+    if (!started.ok) throw new Error(started.message || L("已有安装正在进行", "An installation is already in progress"));
+    for (let i = 0; i < 300; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      // A closed window stays loaded; check again once it is shown, the install keeps going.
+      if (document.hidden) await new Promise((resolve) => document.addEventListener("visibilitychange", resolve, { once: true }));
+      const state = (await load("/app/status")).service;
+      if (state?.state === "failed")
+        throw new Error(state.error || L("安装失败，请重试。", "Installation failed, please try again."));
+      if (state?.state === "done") return;
+    }
+    throw new Error(L("安装超时，请稍后到“设置 → 版本与更新”查看。", "Installation timed out. Check Settings → About later."));
+  }
+
   // ---- vocabulary ---------------------------------------------------------------------
   // [label, tone]; tone selects one of --run --review --bad --done --idle.
   const MEMBER = {
@@ -380,5 +412,5 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, load, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 }

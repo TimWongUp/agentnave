@@ -187,11 +187,6 @@ html.paused *, html.paused ::before, html.paused ::after { animation-play-state:
   :root:not([data-motion="reduce"]):not([data-motion="full"]) *, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::before, :root:not([data-motion="reduce"]):not([data-motion="full"]) *::after { animation: none !important; transition: none !important; }
 }
 
-.ob-slot { padding: 14px 2px 8px; }
-.ob-slot .ob-full { max-width: none; }
-.ob-note { color: var(--muted); font-size: 11px; margin: 12px 8px; }
-.ob-slot button, .ob-slot a { cursor: default; }
-
 /* A CLI's mark (art/cli): colour marks as they are, mono ones white on a dark tile. */
 .cli-mark { display: inline-grid; place-items: center; }
 .cli-mark > img { width: 80%; height: 80%; }
