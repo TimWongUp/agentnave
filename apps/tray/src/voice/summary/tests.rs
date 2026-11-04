@@ -428,6 +428,43 @@ fn summary_output_rejects_empty_symbols_and_length_without_cutting_complete_spee
 }
 
 #[test]
+fn a_summary_past_three_times_its_limit_is_cut_at_a_sentence_end() {
+    let server = FakeServer::start(2, |request| {
+        if request.path.ends_with("/models") {
+            return Reply {
+                status: 200,
+                body: json!({"data":[{"id":"model"}]}),
+            };
+        }
+        chat(&"这一句一共有十个字。".repeat(60))
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let settings = summary_settings(&server.root, "custom", "model");
+    let summary = summarize(directory.path(), "很长的原话", &settings, "").unwrap();
+    assert_eq!(summary, "这一句一共有十个字。".repeat(45));
+}
+
+#[test]
+fn a_summary_cut_to_only_symbols_is_rejected_without_caching() {
+    let server = FakeServer::start(2, |request| {
+        if request.path.ends_with("/models") {
+            return Reply {
+                status: 200,
+                body: json!({"data":[{"id":"model"}]}),
+            };
+        }
+        chat(&format!("{}有内容", "…".repeat(500)))
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let settings = summary_settings(&server.root, "custom", "model");
+    assert_eq!(
+        error_of(summarize(directory.path(), "原话", &settings, "")),
+        "摘要服务返回了空结果"
+    );
+    assert!(!directory.path().join("voice-cache").exists());
+}
+
+#[test]
 fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
     let server = FakeServer::start(10, |request| {
         if request.path.ends_with("/models") {
@@ -537,7 +574,7 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
         9
     );
     let system = bodies[7]["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("summary.level=short") && system.contains("约 40 字"));
+    assert!(system.contains("summary.level=short") && system.contains("不超过 40 字"));
     assert!(system.contains("Output only English speech"));
     assert!(system.contains("code=mention") && system.contains("here's a code snippet"));
 }
@@ -612,8 +649,11 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         } else {
             "你是员工 GPT，职责是「探索派」"
         }));
+        // The limit is said last in both messages, after the persona and after the original.
+        assert!(system.ends_with("不超过 150 字，三句以内（at most 150 characters, three sentences or fewer）；放不下就删细节，人设的语气也不能把话拉长。"));
         let original = body["messages"][1]["content"].as_str().unwrap();
         assert!(original.starts_with("下面是你要说的原话"));
+        assert!(original.ends_with("你说出来的话不超过 150 字，三句以内（at most 150 characters, three sentences or fewer）。"));
         assert!(original.contains(if index == 1 {
             "请问应该选哪个方案？"
         } else {

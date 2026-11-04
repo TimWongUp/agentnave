@@ -157,6 +157,7 @@ test("settings.html scripts load in declared order and language switch respects 
     currentScript: { src: "http://127.0.0.1/avatars.js" },
     getElementById: getEl,
     createElement: tag => makeNode(tag),
+    createElementNS: (_ns, tag) => makeNode(tag),
     createTextNode: text => ({ nodeType: 3, textContent: String(text) }),
     createDocumentFragment: () => makeNode("fragment"),
     querySelector: () => makeNode("header"),

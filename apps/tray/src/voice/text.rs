@@ -171,6 +171,18 @@ fn ends_sentence(chars: &[char], index: usize) -> bool {
     "。！？!?".contains(chars[index])
         || (chars[index] == '.' && chars.get(index + 1).is_none_or(|next| next.is_whitespace()))
 }
+/// `text` when it fits in `limit` characters, else cut at its last sentence end within the limit,
+/// or at the limit when no sentence ends in time.
+pub fn cap(text: &str, limit: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= limit {
+        return text.to_string();
+    }
+    let end = (0..limit)
+        .rfind(|index| ends_sentence(&chars, *index))
+        .map_or(limit, |index| index + 1);
+    chars[..end].iter().collect::<String>().trim().to_string()
+}
 /// The opening of cleaned text: whole paragraphs up to `EXCERPT_CHARS`. When those are under
 /// half the limit, as a short heading is, the paragraph that runs past it joins them, cut at its
 /// last sentence end within the limit, else at the limit.
