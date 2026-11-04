@@ -104,7 +104,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 ```text
 目标：<要做什么>
 验收：<怎样算完成>
-返回：<格式、长度、产物位置>
+返回：<要包含和不必包含的内容、格式、产物位置>
 范围：<目录和可改的文件>；保留：<不能动的改动>；授权：<能做到哪一步>
 材料：<规格、ADR、Issue、diff 的绝对路径或 URL，注明用途>
 已知：<已核实的进展和验证、已定决策及理由、试过并放弃的做法、阻塞>
@@ -117,7 +117,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 ```text
 上次之后：<新信息或 boss 的决定>
 这次要做：<下一步>
-返回：<格式、长度>
+返回：<要包含和不必包含的内容、格式>
 ```
 
 **评审**（工位和失败假设按 `agentnave-review`）
@@ -127,7 +127,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 失败假设：<这个工位负责的一个假设>
 证据边界：<规格、ADR、PR 的路径或 URL>
 角色要点：<reviewers.md 对应段落>
-返回：每条 finding 写位置、缺陷、失败场景、严重度、证据类别；结尾说明有无实质 finding 和未审范围；不超过 <N> 字
+返回：每条 finding 写位置、缺陷、失败场景、严重度、证据类别；结尾说明有无实质 finding 和未审范围；不复述代码和规格原文
 ```
 
 **整改**（续接实现者，评审结论可用 `forward` 传入）
@@ -141,9 +141,9 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 服务会在每次派发前加上非交互说明，`access=read` 时再加只读说明，并在回执 `defaults_applied` 注明，这些不用写进 prompt；宿主自带子代理不经过服务，要自己写明。发送前移除密钥、密码和敏感个人信息。长交接写进系统临时目录的专用文档，prompt 要求读取其绝对路径；创建方在接收方用完后清理。
 
-## 回复预算
+## 回复内容
 
-按交付需要和 boss 剩余上下文安排回复长度；多席按本轮合计预算分配。只查状态用 `wait(include_output=false)`，回读历史优先 `read_conversation` 默认结果和 `since_round`，长会话加 `limit` 只取最近若干条。每次调用保留的标准输出上限 1 MiB、stderr 64 KiB，超限报 `output_limit_exceeded` 并终止；长报告、日志或附件让 CLI 保存到约定位置，回复摘要和绝对路径。
+用内容边界控制回复，不靠字数：写明要包含什么、不必包含什么。实现回报改了什么、理由、验证结果和未完成项，不贴代码或 diff；评审只报 finding，不复述代码和规格原文；会议席位给结论、理由和分歧，不复述题目和他人观点。长报告、日志或附件让 CLI 保存到约定位置，回复摘要和绝对路径，boss 需要时再读；`restricted_tools` 的席位不能写文件，长内容分多轮。字数上限只在席位多、boss 上下文紧张或只要一句判断时作为参考给出，多席时写明是每席的上限。只查状态用 `wait(include_output=false)`，回读历史优先 `read_conversation` 默认结果和 `since_round`，长会话加 `limit` 只取最近若干条。每次调用保留的标准输出上限 1 MiB、stderr 64 KiB，超限报 `output_limit_exceeded` 并终止。
 
 ## 等待、验收与取消
 
