@@ -122,29 +122,29 @@ function renderHead(c, n) {
 
 // ---------------------------------------------------------------- boss office
 function bossSpeech(c, match) {
-  for (let i = c.messages.length - 1; i >= 0; i--) {
-    const m = c.messages[i];
-    if (m.speaker?.role === "manager" && match(m)) return m.speaker;
+  const messages = c.boss_messages || c.messages;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.speaker?.role === "manager" && m.kind === "prompt" && match(m)) return m.speaker;
   }
   return null;
 }
-// After a takeover the old boss keeps the seat until the new one speaks in the workspace.
-// Messages name the boss's CLI but not its chat, so the latest handover splits them by time,
-// which tells a takeover by the same CLI apart too. A boss handing on again still holds the
-// seat, and with the handover out of view (withdrawn, or past the messages shown) the CLI
-// alone tells the bosses apart.
+// Only the figure waits for the new boss's first dispatch or speech; the office belongs to
+// the current host immediately. The release time also distinguishes takeovers by the same
+// CLI. A different old host can still speak after release, so time alone is not identity.
 function seatHolder(c) {
-  const marks = c.messages.filter((m) => m.kind === "handover").map((m) => AN.at(m.time));
+  const marks = (c.boss_messages || c.messages).filter((m) => m.kind === "handover").map((m) => AN.at(m.time));
   const at = marks.length && c.handover !== "pending" ? Math.max(...marks) : null;
-  const later = at === null ? (m) => m.speaker.provider === c.host : (m) => AN.at(m.time) >= at;
+  const later = (m) => m.speaker.provider === c.host && (at === null || AN.at(m.time) >= at);
   const earlier = (m) => !later(m);
   const modelOf = (when) => bossSpeech(c, (m) => m.speaker.model && when(m))?.model || "";
   const before = c.previous_host || (c.handover === "changed" && bossSpeech(c, earlier)?.provider) || "";
-  if (!before) return { host: c.host, model: modelOf(() => true), app: c.app || c.host, label: c.label, former: null };
-  // A former boss that never spoke here has no model of its own to show.
+  // Handover metadata alone is not work: only a dispatch or hosting message earns a portrait.
+  const workedBefore = (m) => earlier(m) && m.speaker.provider === before;
+  if (!before || !bossSpeech(c, workedBefore)) return { host: c.host, model: modelOf(later), former: null };
   const former = { host: before, model: modelOf((m) => earlier(m) && m.speaker.provider === before) };
-  if (!bossSpeech(c, later)) return { ...former, app: before, label: c.previous_label || cliName(before), former: null };
-  return { host: c.host, model: modelOf(later), app: c.app || c.host, label: c.label, former };
+  if (!bossSpeech(c, later)) return { ...former, former: null };
+  return { host: c.host, model: modelOf(later), former };
 }
 // `live` only means a server is running work right now; an idle boss dozes off after a while.
 function recentlyActive(c) {
@@ -226,12 +226,12 @@ function updateBoss(rec, c, n) {
   const holder = seatHolder(c);
   const model = holder.model;
   dress(rec, ART.character(holder.host, model), rec.scene, rec.desk);
-  dressBossSet(rec, holder.host);
-  dressLid(rec, holder.app);
+  dressBossSet(rec, c.host);
+  dressLid(rec, c.app || c.host);
   hangPortrait(rec, c, holder.former);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
-  setText(rec.cli, holder.label);
+  setText(rec.cli, c.label);
   setText(
     rec.st,
     n.running ? L(`等 ${n.running} 个回复`, `Waiting on ${n.running}`) : n.review ? L("会议进行中", "In meeting") : L("空闲", "Idle"),
@@ -245,11 +245,11 @@ function updateBoss(rec, c, n) {
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }
 
-// Once the new boss has spoken, the one before hangs framed on the wall to its left.
+// Once the new boss has spoken, a different former character hangs on the wall to its left.
 function hangPortrait(rec, c, former) {
-  rec.portrait.hidden = !former;
-  setAttr(rec.portrait, "title", c.took_over || null);
   const face = former ? ART.character(former.host, former.model) : "";
+  rec.portrait.hidden = !former || face === rec.char;
+  setAttr(rec.portrait, "title", c.took_over || null);
   if (rec.portraitFace === face) return;
   rec.portraitFace = face;
   rec.portrait.replaceChildren(...(face ? [ART.head(face)] : []));

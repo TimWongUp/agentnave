@@ -578,6 +578,7 @@ pub(crate) fn respond(
         value["optimized"] = optimized;
         value["rooms"] = json!(rooms);
         value["messages"] = json!(messages);
+        value["boss_messages"] = json!(group.boss_messages());
         value["omitted"] = json!(group.omitted(focus, complete));
         value["threads"] = json!(group.threads());
         return Response::json(&value);
