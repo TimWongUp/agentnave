@@ -22,8 +22,9 @@ pub const PROVIDERS: [&str; 8] = [
 ];
 const MODES: [&str; 2] = ["task", "discussion"];
 /// The agentnave-review roles whose CLI and model the user may pick.
-pub const REVIEW_ROLES: [&str; 8] = [
+pub const REVIEW_ROLES: [&str; 9] = [
     "correctness-reviewer",
+    "correctness-reviewer-easy",
     "architecture-reviewer",
     "security-reviewer",
     "performance-reviewer",
