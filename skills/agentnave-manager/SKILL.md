@@ -124,7 +124,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ```text
 候选：head <完整 SHA>，base <完整 SHA>，git diff <base>...<head>
-失败假设：<这个工位负责的一个假设>
+失败假设：<这个工位负责的假设>
 证据边界：<规格、ADR、PR 的路径或 URL>
 角色要点：<reviewers.md 对应段落>
 返回：每条 finding 写位置、缺陷、失败场景、严重度、证据类别；结尾说明有无实质 finding 和未审范围；不复述代码和规格原文
