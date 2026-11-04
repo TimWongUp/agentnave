@@ -1,52 +1,6 @@
 /* Menu bar panel: bosses and their offices. With body.glass the window shows the system popover material. */
 :root {
-  color-scheme: dark;
-  --bg: #1e1e1ef5;
-  --glass: #1e1e1ec7;
-  --solid: #1e1e1e;
-  --card: #ffffff0b;
-  --card-hover: #ffffff14;
-  --line: #ffffff14;
-  --line-strong: #ffffff2e;
-  --ink: #f5f5f7;
-  --soft: #d1d1d6;
-  --muted: #98989d;
-  --faint: #62676f;
-  --accent: #f5f5f7;
-  --accent-ink: #1d1d1f;
-  --run: #4fd6c9;
-  --review: #f0b45a;
-  --bad: #ff7d6e;
-  --done: #7fca90;
-  --idle: #7a808a;
-  /* eight manager colours (identity only; status is always a dot plus a word) */
-  --m0: #6ea8ff; --m1: #a88bff; --m2: #e873d6; --m3: #ff7fa2;
-  --m4: #ff9a4d; --m5: #b5d94e; --m6: #3fd08a; --m7: #42c7e6;
   --panel-radius: 16px; /* PANEL_RADIUS in main.rs: the glass and the page share one outline */
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f5f5f7f5;
-  --glass: #f5f5f7c7;
-  --solid: #f5f5f7;
-  --card: #0000000a;
-  --card-hover: #00000012;
-  --line: #00000014;
-  --line-strong: #0000002e;
-  --ink: #1d1d1f;
-  --soft: #3a3a3c;
-  --muted: #6e6e73;
-  --faint: #9a9ea6;
-  --accent: #1d1d1f;
-  --accent-ink: #fff;
-  --run: #0e9d92;
-  --review: #c4862a;
-  --bad: #d65446;
-  --done: #3d9a56;
-  --idle: #8a8f98;
-  --m0: #2f6fe0; --m1: #7a54e0; --m2: #b83fa6; --m3: #d63b6a;
-  --m4: #d9731a; --m5: #6c9a14; --m6: #1f9d62; --m7: #1d89a8;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -54,7 +8,7 @@ html, body { margin: 0; height: 100%; }
 body {
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
   color: var(--ink);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -64,7 +18,7 @@ body {
   overflow: hidden;
 }
 /* The system material is very see-through on recent macOS: a tint of the theme keeps text legible. */
-body.glass { background: var(--glass); border-radius: var(--panel-radius); }
+body.glass { background: color-mix(in srgb, var(--bg) 78%, transparent); border-radius: var(--panel-radius); }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; cursor: default; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
@@ -246,29 +200,3 @@ html.paused *, html.paused ::before, html.paused ::after { animation-play-state:
 .cli-mark.claude-tile { background: #d97757 !important; }
 .cli-mark.claude-tile > img { filter: brightness(0) invert(1); }
 
-/* System appearance is correct before the shared script runs. */
-@media (prefers-color-scheme: light) {
-  :root[data-theme="system"] {
-    color-scheme: light;
-    --bg: #f5f5f7f5;
-    --glass: #f5f5f7c7;
-    --solid: #f5f5f7;
-    --card: #0000000a;
-    --card-hover: #00000012;
-    --line: #00000014;
-    --line-strong: #0000002e;
-    --ink: #1d1d1f;
-    --soft: #3a3a3c;
-    --muted: #6e6e73;
-    --faint: #9a9ea6;
-    --accent: #1d1d1f;
-    --accent-ink: #fff;
-    --run: #0e9d92;
-    --review: #c4862a;
-    --bad: #d65446;
-    --done: #3d9a56;
-    --idle: #8a8f98;
-    --m0: #2f6fe0; --m1: #7a54e0; --m2: #b83fa6; --m3: #d63b6a;
-    --m4: #d9731a; --m5: #6c9a14; --m6: #1f9d62; --m7: #1d89a8;
-  }
-}

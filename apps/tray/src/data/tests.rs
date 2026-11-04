@@ -48,6 +48,7 @@ fn routes_serve_views_and_reject_everything_else() {
     }
     for path in [
         "/manage/manage.css",
+        "/manage/theme.css",
         "/settings/",
         "/settings/settings.js",
         "/settings/advanced.js",

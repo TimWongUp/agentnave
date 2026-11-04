@@ -4,6 +4,7 @@ const PANEL_HTML: &[u8] = include_bytes!("../../ui/panel.html");
 const PANEL_JS: &[u8] = include_bytes!("../../ui/panel.js");
 const PANEL_CSS: &[u8] = include_bytes!("../../ui/panel.css");
 const MANAGE_CSS: &[u8] = include_bytes!("../../ui/manage.css");
+const THEME_CSS: &[u8] = include_bytes!("../../ui/theme.css");
 const SETTINGS_HTML: &[u8] = include_bytes!("../../ui/settings.html");
 const SETTINGS_JS: &[u8] = include_bytes!("../../ui/settings.js");
 const SETTINGS_CSS: &[u8] = include_bytes!("../../ui/settings.css");
@@ -76,6 +77,7 @@ impl Reader {
         if let ["manage", resource] = parts.as_slice() {
             return match *resource {
                 "manage.css" => Response::ok("text/css; charset=utf-8", MANAGE_CSS.to_vec()),
+                "theme.css" => Response::ok("text/css; charset=utf-8", THEME_CSS.to_vec()),
                 "state" => Response::json(&crate::manage::list(&self.root, self.overview())),
                 _ => Response::not_found(),
             };
