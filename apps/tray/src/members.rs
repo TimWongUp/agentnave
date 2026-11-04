@@ -474,12 +474,11 @@ fn migrate(root: &Path, detected: &Value, has_boss: bool) -> Result<(), String> 
 }
 
 /// Run once after host detection, while host actions are locked out of the migration.
-pub fn prepare(root: &Path, hosts: &Value) {
-    let detected = crate::detect::detected(false);
+pub fn prepare(root: &Path, hosts: &Value, detected: &Value) {
     let has_boss = hosts["hosts"]
         .as_array()
         .is_some_and(|hosts| hosts.iter().any(|host| host["status"] == "connected"));
-    if let Err(error) = migrate(root, &detected, has_boss) {
+    if let Err(error) = migrate(root, detected, has_boss) {
         eprintln!("无法迁移员工名单：{error}");
     }
 }
@@ -517,7 +516,15 @@ pub fn confirm_host(root: &Path, id: &str) -> Result<(), String> {
 /// every CLI keeps its own default model and effort.
 fn document_state(root: &Path) -> (Value, Value) {
     match read(root) {
-        Ok(document) => (document.unwrap_or_else(empty), Value::Null),
+        // Without the file no CLI is confirmed yet: both scenes start with an empty list.
+        Ok(document) => (
+            document.unwrap_or_else(|| {
+                let mut document = empty();
+                document["modes"] = json!({"task": {}, "discussion": {}});
+                document
+            }),
+            Value::Null,
+        ),
         Err(error) => (empty(), json!(error)),
     }
 }

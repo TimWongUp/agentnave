@@ -242,9 +242,11 @@ impl Reader {
         ));
     }
     pub fn prepare_members(&self) {
+        // Probe before taking the lock: probing runs every CLI and would hold up the host page.
+        let detected = crate::detect::detected(false);
         let guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(hosts) = guard.as_ref() {
-            crate::members::prepare(&self.root, hosts.cached_snapshot());
+            crate::members::prepare(&self.root, hosts.cached_snapshot(), &detected);
         }
     }
     pub(super) fn boss_homes(&self) -> boss_app::Homes {

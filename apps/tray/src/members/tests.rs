@@ -325,7 +325,6 @@ fn permission_tiers_save_to_their_own_file() {
 fn broken_file_is_reported_and_left_untouched() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    assert_eq!(document_state(root), (empty(), Value::Null));
     fs::write(root.join(FILE), b"{").unwrap();
     let (document, error) = document_state(root);
     assert_eq!(document, empty());
@@ -334,10 +333,12 @@ fn broken_file_is_reported_and_left_untouched() {
 }
 
 #[test]
-fn a_missing_document_stays_missing_so_every_cli_keeps_its_own_default() {
+fn a_missing_document_stays_missing_and_confirms_no_cli() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    assert_eq!(document_state(root), (empty(), Value::Null));
+    let (document, error) = document_state(root);
+    assert_eq!(document["modes"], json!({"task": {}, "discussion": {}}));
+    assert_eq!(error, Value::Null);
     assert!(!root.join(FILE).exists());
 }
 
