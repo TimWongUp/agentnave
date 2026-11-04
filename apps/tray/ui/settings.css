@@ -1,5 +1,5 @@
 /* Settings UI: Members & Models, Versions & Updates */
-/* Adheres to warm neutral palette and native typography from manage.css */
+/* Colours come from theme.css, typography and controls from manage.css */
 
 /* Navigation */
 .badge-dot { display: inline-block; width: 6px; height: 6px; background: var(--warn); border-radius: 50%; margin-left: 6px; vertical-align: middle; }
@@ -17,7 +17,7 @@
 .segment-control { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 2px; }
 .segment-btn { background: transparent; border: 0; color: var(--muted); padding: 5px 16px; font-weight: 550; font-size: 12.5px; border-radius: 6px; }
 .segment-btn:hover:enabled { color: var(--ink); background: var(--hover); }
-.segment-btn.active { background: var(--accent); color: var(--bg); font-weight: 600; }
+.segment-btn.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .guidance { color: var(--muted); font-size: 12px; margin-bottom: 22px; max-width: 860px; line-height: 1.5; }
 .pane-readonly { opacity: 0.65; pointer-events: none; user-select: none; }
 
@@ -47,7 +47,7 @@
 .save-feedback.error { color: var(--bad); }
 .save-feedback.success { color: var(--run); }
 .permission-summary-tag { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--bad) 14%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); color: var(--bad); white-space: nowrap; }
-.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 
 /* Version & Updates panel */
 .updates-panel { max-width: 980px; margin: 10px 0 28px; }
@@ -117,9 +117,10 @@
 .setting-copy { min-width: 0; }
 .setting-example { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
 .setting-copy label { font-weight: 600; color: var(--ink); cursor: pointer; }
-.settings-page input.switch-input { appearance: none; -webkit-appearance: none; display: inline-block; flex: 0 0 34px; width: 34px; height: 20px; margin: 0; padding: 2px; border: 0; border-radius: 20px; background: var(--muted); cursor: pointer; vertical-align: middle; }
-.settings-page input.switch-input::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0003; }
+.settings-page input.switch-input { appearance: none; -webkit-appearance: none; display: inline-block; flex: 0 0 34px; width: 34px; height: 20px; margin: 0; padding: 2px; border: 0; border-radius: 20px; background: var(--switch-off); cursor: pointer; vertical-align: middle; }
+.settings-page input.switch-input::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--knob); box-shadow: 0 1px 3px #0003; }
 .settings-page input.switch-input:checked { background: var(--accent); }
+.settings-page input.switch-input:checked::before { background: var(--knob-on); }
 .settings-page input.switch-input:checked::before { transform: translateX(14px); }
 .settings-page input.switch-input:disabled { opacity: .45; cursor: default; }
 .field-hint { font-size: 12px; line-height: 1.6; }
