@@ -55,4 +55,4 @@
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | — |
-| 0052 | [Explorer、Worker 按前端、后端分类，各分简单、困难两档](0052-orchestration-specialty-seats.md) | 已接受 | — |
+| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 已接受 | — |

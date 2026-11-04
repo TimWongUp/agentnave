@@ -22,8 +22,10 @@ const ORCHESTRATION_EFFECTS = {
 const ORCHESTRATION_ROLES = [
   ["explorer", "easy", AN.L("Explorer · 简单", "Explorer · Easy"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
   ["explorer", "hard", AN.L("Explorer · 困难", "Explorer · Hard"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
-  ["worker", "easy", AN.L("Worker · 简单", "Worker · Easy"), AN.L("可写：实现", "Writable: implement")],
-  ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：实现", "Writable: implement")],
+  ["worker", "easy", AN.L("Worker · 简单", "Worker · Easy"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
+  ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
+  ["worker", "frontend-easy", AN.L("Worker · 界面 · 简单", "Worker · Interface · Easy"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
+  ["worker", "frontend-hard", AN.L("Worker · 界面 · 困难", "Worker · Interface · Hard"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
 ];
 const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
 let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
@@ -190,9 +192,12 @@ function renderOrchestration() {
     const focusKey = document.activeElement?.dataset?.focusKey;
     roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
       const seat = shown[role]?.[difficulty];
+      // An unset interface seat runs the Worker seat of its difficulty, as the server fills it.
+      const general = difficulty.startsWith("frontend-") && ORCHESTRATION_ROLES.find(([r, d]) => r === role && `frontend-${d}` === difficulty);
+      const unset = general && shown[role]?.[general[1]] ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : undefined;
       return el("div", { className: "review-row" },
         el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next)));
+        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset));
     }));
     if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
@@ -301,7 +306,7 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
 }
 
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-function seatSelects(key, name, seat, onSet) {
+function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
   const provider = seat?.provider || "";
   const clis = PROVIDERS.filter((p) => detected[p]?.installed || currentDoc.clis?.[p] || p === provider)
     .map((p) => [p, PROVIDER_NAMES[p] + (getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)")), !getAllModelIds(p).length && p !== provider]);
@@ -325,7 +330,7 @@ function seatSelects(key, name, seat, onSet) {
   const efforts = !seat || !levels.length ? [["", "—"]]
     : [...(seat.effort ? [] : [["", AN.L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
   return [
-    reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", AN.L("自动", "Auto")], ...clis], pickCli),
+    reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", unset], ...clis], pickCli),
     reviewSelect(`${key}/model`, AN.L(`${name}的模型`, `Model for ${name}`), seat?.model || "",
       seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
     reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),

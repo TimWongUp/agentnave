@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "preset": "split",
+  "explorer": {
+    "frontend-easy": {
+      "provider": "codex",
+      "model": "gpt-6.1-sol"
+    }
+  }
+}

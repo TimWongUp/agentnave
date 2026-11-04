@@ -113,7 +113,7 @@ _Avoid_: 编排引擎、调度
 
 ## Explorer／Worker
 
-编排中的两类工位：Explorer 只读，做探索、规划、评审；Worker 可写，做实现。各有简单、困难两档，用户在 App 选 CLI、模型和可选档位，存于 `orchestration.json`；当前接入行启用编排时，`list_members` 的 `orchestration` 才返回工位及可用性，派发才套用角色默认值，boss 按任务难度二选一。关闭保留已保存的选择。与宿主同类的工位标 `native=true`，交给宿主自带的子代理，评审工位同样如此。
+编排中的两类工位：Explorer 只读，做探索、规划、评审；Worker 可写，做实现。各有简单、困难两档，Worker 另有界面简单、困难两档，用于页面、样式、交互和看图的实现，没设时沿用 Worker 同档；用户在 App 选 CLI、模型和可选档位，存于 `orchestration.json`；当前接入行启用编排时，`list_members` 的 `orchestration` 才返回工位及可用性，派发才套用角色默认值，boss 按任务难度选档，涉及界面的实现改用界面档。关闭保留已保存的选择。与宿主同类的工位标 `native=true`，交给宿主自带的子代理，评审工位同样如此。
 
 ## 权限档位（Permission Tier）
 

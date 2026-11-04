@@ -31,9 +31,18 @@ type ReviewRole = Literal[
     "adversarial-verifier",
 ]
 type Difficulty = Literal["easy", "hard"]
+# Workers also have interface seats; an unset one runs the Worker seat of its difficulty.
+type WorkerSeat = Literal["easy", "hard", "frontend-easy", "frontend-hard"]
 type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
-# Task roles naming an Explorer or Worker difficulty in orchestration.json.
-type OrchestrationRole = Literal["explorer-easy", "explorer-hard", "worker-easy", "worker-hard"]
+# Task roles naming an Explorer or Worker seat in orchestration.json.
+type OrchestrationRole = Literal[
+    "explorer-easy",
+    "explorer-hard",
+    "worker-easy",
+    "worker-hard",
+    "worker-frontend-easy",
+    "worker-frontend-hard",
+]
 
 
 class MemberFileError(ValueError):
@@ -194,7 +203,16 @@ class OrchestrationFile(BaseModel):
     apps: dict[str, OrchestrationPreset] = {}
     effective_apps: dict[str, OrchestrationPreset] | None = None
     explorer: dict[Difficulty, ReviewSeat] = {}
-    worker: dict[Difficulty, ReviewSeat] = {}
+    worker: dict[WorkerSeat, ReviewSeat] = {}
+
+    def workers(self) -> dict[WorkerSeat, ReviewSeat]:
+        """The Worker seats, an unset interface seat filled from the Worker seat of its difficulty."""
+        seats = dict(self.worker)
+        for difficulty in get_args(Difficulty.__value__):
+            general = seats.get(difficulty)
+            if general is not None:
+                seats.setdefault(cast(WorkerSeat, f"frontend-{difficulty}"), general)
+        return seats
 
     def enabled(self, host: Host) -> bool:
         key = host.app_id or host.name or ""
@@ -537,7 +555,7 @@ def add_cli_effort(
 
 def role_seat(role: str | None, host: Host, *, required: bool = False) -> ReviewSeat | None:
     """The App seat a task role names: an agentnave-review role from review.json, or an
-    Explorer/Worker difficulty from orchestration.json. A missing or broken file names none;
+    Explorer/Worker seat from orchestration.json. A missing or broken file names none;
     list_members reports it. Provider inference requires a usable seat instead."""
     role = (role or "").strip()
     seat = None
@@ -546,19 +564,19 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
             review = _read_app_file("review.json", ReviewFile, MemberFileError)
             seat = review.seats.get(cast(ReviewRole, role)) if review else None
         elif role in get_args(OrchestrationRole.__value__):
-            kind, difficulty = role.split("-")
+            kind, key = role.split("-", 1)
             roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
             if required and roles is not None and not roles.enabled(host):
                 raise MemberFileError(
                     f"{role} seat is not enabled for this host in orchestration.json; "
                     "enable it in the App or pass provider explicitly"
                 )
-            seats = (
-                (roles.explorer if kind == "explorer" else roles.worker)
-                if roles and roles.enabled(host)
-                else {}
-            )
-            seat = seats.get(cast(Difficulty, difficulty))
+            if not roles or not roles.enabled(host):
+                seat = None
+            elif kind == "explorer":
+                seat = roles.explorer.get(cast(Difficulty, key))
+            else:
+                seat = roles.workers().get(cast(WorkerSeat, key))
     except MemberFileError:
         if required:
             raise
@@ -638,7 +656,7 @@ class ReviewSeatStatus(StrictModel):
 class OrchestrationStatus(StrictModel):
     enabled: bool = False
     explorer: dict[Difficulty, ReviewSeatStatus] = {}
-    worker: dict[Difficulty, ReviewSeatStatus] = {}
+    worker: dict[WorkerSeat, ReviewSeatStatus] = {}
 
 
 class MemberList(StrictModel):
@@ -792,7 +810,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
             orchestration = OrchestrationStatus(
                 enabled=True,
                 explorer=_review_status(roles.explorer, modes["task"], excluded, host),
-                worker=_review_status(roles.worker, modes["task"], excluded, host),
+                worker=_review_status(roles.workers(), modes["task"], excluded, host),
             )
     except MemberFileError as exc:
         orchestration_error = str(exc)

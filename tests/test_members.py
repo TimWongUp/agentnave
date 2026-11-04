@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from agentnave.members import (
     PermissionFileError,
     ProviderExcludedError,
     ReviewFile,
+    ReviewSeat,
     SettingsFileError,
     apply_member,
     list_members,
@@ -56,6 +57,7 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
         assert bool(status.worker) is enabled
         assert (role_seat("explorer-easy", host) is not None) is enabled
         assert (role_seat("worker-hard", host) is not None) is enabled
+        assert (role_seat("worker-frontend-hard", host) is not None) is enabled
 
     codex, claude = Host("codex", "env"), Host("claude", "env")
     check(codex, False)
@@ -83,6 +85,28 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
     check(codex, False)
     # Turning orchestration off preserves the saved picks for the next enable.
     assert json.loads(path.read_text())["worker"]["hard"] == seat
+
+
+def test_interface_seat_falls_back_to_the_worker_seat_of_its_difficulty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    general = {"provider": "codex", "model": "general"}
+    interface = {"provider": "antigravity", "model": "interface"}
+    document = {
+        "version": 1,
+        "preset": "split",
+        "worker": {"hard": general, "frontend-easy": interface},
+    }
+    (tmp_path / "orchestration.json").write_text(json.dumps(document))
+    host = Host("claude", "env")
+    worker = list_members(frozenset(), host).orchestration.worker
+    assert set(worker) == {"hard", "frontend-hard", "frontend-easy"}
+    assert worker["frontend-hard"].model == "general"
+    assert worker["frontend-easy"].model == "interface"
+    assert cast(ReviewSeat, role_seat("worker-frontend-hard", host)).model == "general"
+    assert cast(ReviewSeat, role_seat("worker-frontend-easy", host)).model == "interface"
+    assert role_seat("worker-easy", host) is None
 
 
 @pytest.mark.parametrize(
