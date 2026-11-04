@@ -272,8 +272,8 @@ function incDocVersion() {
   updateControls();
 }
 
-// Host cards publish after a connection. Reload a clean employee editor so a later save
-// cannot overwrite the CLI just confirmed by that connection.
+// Host cards publish after a connection. Reload a clean employee editor, or add the CLIs the
+// connection confirmed to unsaved edits, so a later save cannot drop them.
 let membersHostsKey = "";
 window.addEventListener("agentnave:hosts", async ({ detail }) => {
   const key = JSON.stringify((detail.hosts || [])
@@ -281,16 +281,33 @@ window.addEventListener("agentnave:hosts", async ({ detail }) => {
     .map((host) => [host.id, host.last_action?.at]));
   if (key === membersHostsKey) return;
   membersHostsKey = key;
-  if (!savedSnapshot || dirty || busy) return;
+  if (!savedSnapshot || busy) return;
   const before = docVersion;
   const snapshot = savedSnapshot;
   try {
     const data = await apiGetMembers();
-    if (dirty || busy || docVersion !== before || savedSnapshot !== snapshot) return;
-    currentDoc = data.document || { version: 1, clis: {}, modes: {} };
-    documentError = data.error || null;
-    markSaved();
-    renderErrorBanner();
+    if (busy || savedSnapshot !== snapshot) return;
+    if (!dirty && docVersion === before) {
+      currentDoc = data.document || { version: 1, clis: {}, modes: {} };
+      documentError = data.error || null;
+      markSaved();
+      renderErrorBanner();
+      renderCards();
+      return;
+    }
+    const saved = JSON.parse(savedSnapshot);
+    let added = false;
+    for (const scene of SCENE_IDS) {
+      for (const [provider, conf] of Object.entries(data.document?.modes?.[scene] || {})) {
+        if (saved.modes?.[scene]?.[provider]) continue;
+        ((saved.modes ||= {})[scene] ||= {})[provider] = structuredClone(conf);
+        restrict(scene)[provider] ||= structuredClone(conf);
+        added = true;
+      }
+    }
+    if (!added) return;
+    savedSnapshot = JSON.stringify(saved);
+    refreshDirty();
     renderCards();
   } catch {
     // Keep the editor on a transient read failure; refresh detection can read it again.
