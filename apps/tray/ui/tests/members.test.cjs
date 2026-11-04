@@ -3,11 +3,16 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
-function editor(fetch = async () => { throw new Error("unexpected request"); }) {
-  const listeners = {};
+function editor(fetch = async () => { throw new Error("unexpected request"); }, os = "macos") {
+  const listeners = {}, controls = new Map();
+  const control = (id) => {
+    if (!controls.has(id)) controls.set(id, { options: [], value: "8", classList: { toggle() {} },
+      append(node) { this.options.push(node); } });
+    return controls.get(id);
+  };
   const context = vm.createContext({
-    AN: {}, structuredClone, fetch, setTimeout: () => 0,
-    document: { getElementById: () => ({ options: [] }) },
+    AN: { shellOS: () => os }, structuredClone, fetch, setTimeout: () => 0,
+    document: { getElementById: control },
     window: { addEventListener: (name, fn) => { listeners[name] = fn; } },
   });
   const run = (code) => vm.runInContext(code, context);
@@ -147,4 +152,117 @@ test("a saved employee without an installed CLI stays known until its removal is
   assert.equal(app.run("slot('task', 'claude').enabled"), false);
   app.run("markSaved(); lastSaved = confirmScenes(JSON.parse(savedSnapshot))");
   assert.equal(app.run("known('claude', lastSaved)"), false);
+});
+
+function runtimeEditor(fetch, os) {
+  const app = editor(fetch, os);
+  app.run(readFileSync(`${__dirname}/../member-cards.js`, "utf8"));
+  app.run(`
+    renderCards = () => {};
+    el = (tag, attrs, ...children) => ({ tag, attrs, children });
+    textNode = (s) => s;
+  `);
+  return app;
+}
+
+test("Claude runtime switch is labelled, defaults off, and is hidden on Windows and other cards", async () => {
+  const app = runtimeEditor(async () => ({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8 } }) }));
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  await app.run("loadLimit()");
+  assert.equal(app.run("renderClaudeInteractive('codex')"), null);
+  const row = app.run("renderClaudeInteractive('claude')");
+  assert.equal(row.attrs.className, "member-row member-runtime");
+  const label = row.children[0], input = label.children[0];
+  assert.equal(label.tag, "label");
+  assert.equal(label.children[1], "交互模式运行");
+  assert.equal(input.attrs.checked, false);
+  assert.equal(input.attrs.disabled, false);
+  const windows = runtimeEditor(undefined, "windows");
+  assert.equal(windows.run("renderClaudeInteractive('claude')"), null);
+});
+
+test("runtime saves immediately without changing other settings or the unsaved limit", async () => {
+  const calls = [];
+  const app = runtimeEditor(async (url, options) => {
+    assert.equal(url, "/app/settings");
+    if (options.method === "POST") {
+      calls.push(JSON.parse(options.body));
+      assert.equal(options.headers["X-AgentNave-Action"], "1");
+      return { ok: true, json: async () => ({ saved: true }) };
+    }
+    return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, history_retention_days: 90, claude_interactive: true } }) };
+  });
+  await app.run("loadLimit()");
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.checked"), true);
+  app.run("$('max-running').value = '3'; refreshDirty()");
+  await app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.onChange({ target: { checked: false } })");
+  assert.deepEqual(calls, [{ version: 1, claude_interactive: false }]);
+  assert.equal(app.run("limitChanged()"), true);
+  assert.equal(app.run("dirty"), true);
+  assert.equal(app.run("limitDoc.history_retention_days"), 90);
+  await app.run("saveLimit()");
+  assert.deepEqual(calls[1], { version: 1, max_running: 3 });
+  assert.equal(app.run("limitDoc.claude_interactive"), false);
+});
+
+test("failed writes restore the runtime switch and report preview refusals", async () => {
+  let finish;
+  const app = runtimeEditor(() => new Promise(resolve => { finish = resolve; }));
+  app.run("limitDoc = { version: 1, max_running: 8, claude_interactive: false }");
+  const saving = app.run("setClaudeInteractive(true)");
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  finish({ ok: false, json: async () => ({ error: "预览版不修改正式数据" }) });
+  await saving;
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.checked"), false);
+  assert.equal(app.run("busy"), false);
+  assert.match(app.run("$('notice').textContent"), /预览版不修改正式数据/);
+});
+
+test("broken settings keep the switch disabled until the existing settings save repairs them", async () => {
+  let posts = 0;
+  const app = runtimeEditor(async (_url, options) => {
+    if (options.method === "POST") {
+      posts++;
+      const payload = JSON.parse(options.body);
+      assert.equal(payload.claude_interactive, false);
+      return { ok: true, json: async () => ({ saved: true }) };
+    }
+    return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: false }, error: "claude_interactive 必须为布尔值" }) };
+  });
+  await app.run("loadLimit()");
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  await app.run("setClaudeInteractive(true)");
+  assert.equal(posts, 0);
+  assert.match(app.run("$('notice').textContent"), /claude_interactive/);
+  app.run("$('max-running').value = '3'");
+  await app.run("saveLimit()");
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), false);
+});
+
+test("a settings read started before a runtime save cannot restore its old value", async () => {
+  let finish;
+  const app = runtimeEditor((_url, options) => options.method === "POST"
+    ? Promise.resolve({ ok: true, json: async () => ({ saved: true }) })
+    : new Promise(resolve => { finish = resolve; }));
+  app.run("limitDoc = { version: 1, max_running: 8, claude_interactive: false }");
+  const loading = app.run("loadLimit()");
+  await app.run("setClaudeInteractive(true)");
+  finish({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: false } }) });
+  await loading;
+  assert.equal(app.run("limitDoc.claude_interactive"), true);
+});
+
+
+test("a failed settings read cannot make a limit save reset other runtime settings", async () => {
+  let sent;
+  const app = runtimeEditor(async (_url, options) => {
+    if (options.method !== "POST") throw new Error("offline");
+    sent = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ saved: true }) };
+  });
+  await app.run("loadLimit()");
+  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  app.run("$('max-running').value = '3'");
+  await app.run("saveLimit()");
+  assert.deepEqual(sent, { version: 1, max_running: 3 });
 });
