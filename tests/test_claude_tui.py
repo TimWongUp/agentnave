@@ -32,12 +32,33 @@ def test_paste_sanitizes_controls_and_protects_commands(prefix: str) -> None:
         ("❯ Resume from summary", "summary"),
         ("Resume full session as-is", "summary"),
         ("❯ Select login method", "login"),
+        ("Choose the text style\n❯ ✔ Dark mode", "onboarding_enter"),
+        ("Security notes:\nPress Enter to continue…", "onboarding_enter"),
+        ("Use Claude Code's terminal setup?\n❯ 1. Yes", "onboarding_skip"),
+        ("Bypass Permissions mode\n❯ No, exit\n  Yes, I accept", "mode_consent"),
+        ("❯ Some new menu\nEnter to confirm · Esc to cancel", "unknown"),
         ("❯ Do you want to proceed?", "permission"),
         ("Unrecognized welcome screen", "unknown"),
     ],
 )
 def test_screen_dialogs_take_precedence_over_prompt(text: str, kind: str) -> None:
     assert tui.classify_screen(text) == kind
+
+
+@pytest.mark.parametrize(
+    ("extra", "consent"),
+    [
+        (["--permission-mode", "bypassPermissions"], {"skipDangerousModePermissionPrompt": True}),
+        (["--model", "haiku", "--permission-mode", "auto"], {"skipAutoPermissionPrompt": True}),
+        (["--permission-mode", "default"], {}),
+        (["--permission-mode"], {}),
+    ],
+)
+def test_settings_carry_the_tier_consent_only(
+    extra: list[str], consent: dict[str, object], tmp_path: Path
+) -> None:
+    settings = json.loads(tui.write_settings(tmp_path, extra).read_text())
+    assert {k: v for k, v in settings.items() if k != "hooks"} == consent
 
 
 def test_screen_erases_dismissed_dialog_and_handles_split_cursor_query() -> None:
@@ -207,8 +228,13 @@ def hook(name, **fields):
     return json.loads(result.stdout) if result.stdout else {}
 
 if case == "trust":
-    output("❯ Do you trust this folder?")
-    read_until(b"should-never-be-sent")
+    output("Choose the text style\r\n❯ ✔ Dark mode")
+    read_until(b"\r")
+    output("\x1b[2J\x1b[H❯ No, exit\r\n  Yes, I trust this folder\r\nEnter to confirm")
+    assert b"\r" not in read_until(b"\x1b[B")
+    output("\x1b[2J\x1b[H  No, exit\r\n❯ Yes, I trust this folder\r\nEnter to confirm")
+    read_until(b"\r")
+    output("\x1b[2J\x1b[H")
 elif case == "resume":
     output("Resume this conversation?\r\nThis conversation has been inactive for 3d 19h 47m and is 293.4k tokens long. Resuming it will use about 5% of your 5-hour usage limit.\r\n❯ 1. Resume\r\nEsc to resume")
     read_until(b"\x1b")
@@ -285,10 +311,12 @@ def test_fake_claude_turn_through_the_standalone_helper(
     retained = b"".join(capture(line) for line in completed.stdout.splitlines())
     parsed = adapter.parse(completed.returncode, retained, completed.stderr)
     assert parsed.status is (
-        InvocationStatus.SUCCEEDED if case in ("success", "resume") else InvocationStatus.BLOCKED
+        InvocationStatus.SUCCEEDED
+        if case in ("success", "resume", "trust")
+        else InvocationStatus.BLOCKED
     ), completed.stdout.decode()
     assert parsed.session_id
-    if case in ("success", "resume"):
+    if case in ("success", "resume", "trust"):
         assert parsed.output == "finished"
         assert any("denied 2 tool call(s)" in warning for warning in parsed.warnings)
         events = [
@@ -300,7 +328,7 @@ def test_fake_claude_turn_through_the_standalone_helper(
         assert parsed.session_id == sid
         assert any("5%" in warning for warning in parsed.warnings)
     if case == "trust":
-        assert "interactive=false" in str(parsed.error_message)
+        assert any("now trusts" in warning for warning in parsed.warnings)
     if case == "channel_failure":
         assert "without a corresponding hook" in str(parsed.error_message)
         assert not unexpected_key.exists()

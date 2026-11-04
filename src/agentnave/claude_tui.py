@@ -45,6 +45,12 @@ ANSI = re.compile(
 )
 DENIAL = "No one can answer during this run; report the blocked action in the final answer."
 STARTUP_TIMEOUT = 60.0
+# A startup screen is answered once it has stayed drawn this long: a key sent while a menu is
+# first drawn can be lost to its redraw, and Enter on the trust menu's default exits.
+SETTLE = 0.3
+# Onboarding screens answered with their default, and the key that answers each.
+ONBOARDING_KEYS = {"onboarding_enter": b"\r", "onboarding_skip": b"\x1b"}
+STARTUP_TRIES = 3
 
 
 def object_dict(value: object) -> dict[str, object]:
@@ -70,12 +76,20 @@ def classify_screen(text: str) -> str:
         return "summary"
     if "resume this conversation?" in lowered:
         return "cold_resume"
+    if "choose the text style" in lowered or (
+        "security notes" in lowered and "press enter to continue" in lowered
+    ):
+        return "onboarding_enter"
+    if "terminal setup?" in lowered:
+        return "onboarding_skip"
+    if "bypass permissions mode" in lowered and "i accept" in lowered:
+        return "mode_consent"
     if any(
         s in lowered
         for s in (
             "select login method",
             "/login",
-            "choose the text style",
+            "paste code here",
             "do you want to use this api key",
         )
     ):
@@ -92,7 +106,16 @@ def classify_screen(text: str) -> str:
         )
     ):
         return "permission"
+    if "enter to confirm" in lowered or "press enter to continue" in lowered:
+        return "unknown"
     return "ready" if "❯" in lowered else "unknown"
+
+
+def trust_selected(text: str) -> bool:
+    return any(
+        "❯" in line and "yes, i trust this folder" in line
+        for line in ANSI.sub("", text).lower().splitlines()
+    )
 
 
 def cold_resume_warning(text: str) -> str:
@@ -181,8 +204,11 @@ class Turn:
         self.gate_seen |= gated
         if name == "StopFailure":
             self.error = str(event.get("error") or "Claude StopFailure")
+            detail = event.get("error_details") or event.get("last_assistant_message")
             if self.error in ("authentication_failed", "invalid_api_key"):
                 self.error += ": authentication failed"
+            elif detail:
+                self.error += f": {str(detail)[:300]}"
 
     def result(self) -> dict[str, object]:
         content = self.assistant.get("content")
@@ -215,7 +241,17 @@ def child_environment(executable: str) -> dict[str, str]:
     return env
 
 
-def write_settings(directory: Path) -> Path:
+def tier_consent(extra: list[str]) -> dict[str, object]:
+    """The App permission tier is the user's consent; its confirmation dialog would block."""
+    mode = extra[extra.index("--permission-mode") + 1] if "--permission-mode" in extra[:-1] else ""
+    if mode == "bypassPermissions":
+        return {"skipDangerousModePermissionPrompt": True}
+    if mode == "auto":
+        return {"skipAutoPermissionPrompt": True}
+    return {}
+
+
+def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
     hooks: dict[str, object] = {}
     for name in (
         "PermissionRequest",
@@ -236,7 +272,8 @@ def write_settings(directory: Path) -> Path:
             rule["matcher"] = "AskUserQuestion" if name == "PreToolUse" else "*"
         hooks[name] = [rule]
     path = directory / "settings.json"
-    path.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
+    settings = {"hooks": hooks, **tier_consent(extra or [])}
+    path.write_text(json.dumps(settings), encoding="utf-8")
     return path
 
 
@@ -504,36 +541,82 @@ def blocked(turn: Turn, reason: str, screen: str = "") -> None:
         turn.error += f". Screen: {excerpt}"
 
 
+BLOCKING_SCREENS = {
+    "summary": "summary resume selection is not supported",
+    "login": "handle login or the API key prompt in Claude Code",
+    "mode_consent": "permission tier confirmation dialog is still shown",
+    "permission": "unexpected startup permission dialog; handle it in Claude Code",
+}
+
+
+@dataclass
+class Startup:
+    """Answers Claude Code's startup screens, each once it has settled."""
+
+    terminal: Terminal
+    turn: Turn
+    previous: str = ""
+    stable_since: float = 0.0
+    tries: dict[str, int] = field(default_factory=dict[str, int])
+
+    def press(self, kind: str, key: bytes) -> bool:
+        self.tries[kind] = self.tries.get(kind, 0) + 1
+        if self.tries[kind] > STARTUP_TRIES * (2 if kind == "trust" else 1):
+            blocked(self.turn, f"{kind} screen stayed after answering it", self.previous)
+            return False
+        self.terminal.outgoing.extend(key)
+        self.stable_since = time.monotonic()
+        return True
+
+    def trust(self, screen: str) -> bool:
+        if not trust_selected(screen):
+            return self.press("trust", b"\x1b[B")
+        warning = (
+            f"Claude Code now trusts {os.getcwd()}: the interactive runtime accepted its folder "
+            "trust prompt"
+        )
+        if warning not in self.turn.warnings:
+            self.turn.warnings.append(warning)
+        return self.press("trust", b"\r")
+
+    def step(self, screen: str) -> bool | None:
+        """True once ready, False when blocked, None to keep waiting."""
+        now = time.monotonic()
+        if screen != self.previous:
+            self.previous, self.stable_since = screen, now
+        kind = classify_screen(screen)
+        if kind in BLOCKING_SCREENS:
+            blocked(self.turn, BLOCKING_SCREENS[kind])
+            return False
+        settled = now - self.stable_since >= SETTLE and not self.terminal.outgoing
+        if not settled:
+            return None
+        if kind == "trust":
+            return None if self.trust(screen) else False
+        if kind in ONBOARDING_KEYS:
+            return None if self.press(kind, ONBOARDING_KEYS[kind]) else False
+        if kind == "cold_resume" and "cold_resume" not in self.tries:
+            self.turn.warnings.append(cold_resume_warning(screen))
+            return None if self.press(kind, b"\x1b") else False
+        if kind == "ready" and now - self.stable_since >= 1:
+            return True
+        return None
+
+
 def await_ready(terminal: Terminal, turn: Turn) -> bool:
     deadline = time.monotonic() + STARTUP_TIMEOUT
-    previous, stable_since = "", time.monotonic()
-    resumed = False
+    startup = Startup(terminal, turn, stable_since=time.monotonic())
     while time.monotonic() < deadline:
-        screen = terminal.poll()
-        now = time.monotonic()
-        if screen != previous:
-            previous, stable_since = screen, now
-        kind = classify_screen(screen)
-        if kind in ("trust", "summary", "login", "permission"):
-            reasons = {
-                "trust": "directory is not trusted; pass interactive=false for this run or trust it in Claude Code",
-                "summary": "summary resume selection is not supported in this phase",
-                "login": "handle login or onboarding in Claude Code",
-                "permission": "unexpected startup permission dialog; handle it in Claude Code",
-            }
-            blocked(turn, reasons[kind])
-            return False
-        if kind == "cold_resume" and not resumed and now - stable_since >= 0.5:
-            turn.warnings.append(cold_resume_warning(screen))
-            terminal.outgoing.extend(b"\x1b")
-            resumed = True
-        if kind == "ready" and now - stable_since >= 1 and not terminal.outgoing:
-            return True
+        state = startup.step(terminal.poll())
+        if state is not None:
+            return state
         if terminal.process.poll() is not None:
-            blocked(turn, "Claude exited before becoming ready", screen)
+            blocked(turn, "Claude exited before becoming ready", startup.previous)
             return False
     blocked(
-        turn, "startup timed out without becoming ready; handle the screen in Claude Code", previous
+        turn,
+        "startup timed out without becoming ready; handle the screen in Claude Code",
+        startup.previous,
     )
     return False
 
@@ -612,7 +695,7 @@ def run_main(executable: str, session_id: str | None, extra: list[str], prompt: 
         with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
             directory = Path(tmp)
             args = ["--resume" if session_id else "--session-id", turn.session_id]
-            args.extend([*extra, "--settings", str(write_settings(directory))])
+            args.extend([*extra, "--settings", str(write_settings(directory, extra))])
             try:
                 terminal = Terminal(executable, args)
                 if await_ready(terminal, turn):
