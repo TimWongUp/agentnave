@@ -474,11 +474,28 @@ fn migrate(root: &Path, detected: &Value, has_boss: bool) -> Result<(), String> 
 }
 
 /// Run once after host detection, while host actions are locked out of the migration.
+/// Whether AgentNave ran here before: a boss was connected or has dispatched work. A missing
+/// file then meant every CLI, so the migration keeps them.
+fn used_before(root: &Path, hosts: &Value) -> bool {
+    let connected = hosts["hosts"].as_array().is_some_and(|hosts| {
+        hosts.iter().any(|host| {
+            matches!(
+                host["status"].as_str(),
+                Some("connected" | "needs_attention")
+            )
+        })
+    });
+    connected
+        || crate::db::read(root).ok().flatten().is_some_and(|db| {
+            db.query_row("SELECT EXISTS (SELECT 1 FROM conversations)", [], |row| {
+                row.get(0)
+            })
+            .unwrap_or(false)
+        })
+}
+
 pub fn prepare(root: &Path, hosts: &Value, detected: &Value) {
-    let has_boss = hosts["hosts"]
-        .as_array()
-        .is_some_and(|hosts| hosts.iter().any(|host| host["status"] == "connected"));
-    if let Err(error) = migrate(root, detected, has_boss) {
+    if let Err(error) = migrate(root, detected, used_before(root, hosts)) {
         eprintln!("无法迁移员工名单：{error}");
     }
 }
@@ -496,6 +513,18 @@ pub fn confirm_host(root: &Path, id: &str) -> Result<(), String> {
     };
     if !PROVIDERS.contains(&provider) {
         return Ok(());
+    }
+    // A connection that beats the start-up migration migrates first, so it adds this CLI to
+    // what was usable rather than replacing it.
+    let used = used_before(root, &Value::Null);
+    let open = match read(root)? {
+        None => used,
+        Some(document) => MODES
+            .iter()
+            .any(|mode| document["modes"].get(mode).is_none()),
+    };
+    if open {
+        migrate(root, &crate::detect::detected(false), used)?;
     }
     let mut document = read(root)?.unwrap_or_else(empty);
     let mut changed = confirm_scenes(&mut document, &Value::Null);

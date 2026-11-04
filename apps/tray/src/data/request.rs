@@ -389,10 +389,11 @@ impl Reader {
     }
 
     fn host_action_response(&self, operation: &str, result: Result<Value, String>) -> Response {
-        let result = match result {
+        let mut result = match result {
             Ok(result) => result,
             Err(error) => return Response::error(400, &error),
         };
+        // The connection already took effect, so a failed member update is told, not an error.
         if operation == "connect"
             && result["ok"] == true
             && let Err(error) = crate::members::confirm_host(
@@ -400,7 +401,8 @@ impl Reader {
                 result["host"]["id"].as_str().unwrap_or_default(),
             )
         {
-            return Response::error(500, &format!("宿主已接入，但员工确认失败：{error}"));
+            let message = result["message"].as_str().unwrap_or_default();
+            result["message"] = json!(format!("{message}；员工名单未更新：{error}"));
         }
         Response::json(&result)
     }
