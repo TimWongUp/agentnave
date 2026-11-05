@@ -40,6 +40,8 @@ def test_paste_sanitizes_controls_and_protects_commands(prefix: str) -> None:
         ("Do you want to use this API key?\n  Yes\n❯ No (recommended)", "api_key"),
         ("❯ Some new menu\nEnter to confirm · Esc to cancel", "unknown"),
         ("❯ Do you want to proceed?", "permission"),
+        ("Ready to code?\n Would you like to proceed?\n ❯ 1. Yes", "permission"),
+        ('MCP server "x" requests your input\n  ❯ * Name:', "permission"),
         ("Unrecognized welcome screen", "unknown"),
     ],
 )
@@ -56,11 +58,11 @@ def test_screen_dialogs_take_precedence_over_prompt(text: str, kind: str) -> Non
         (["--permission-mode"], {}),
     ],
 )
-def test_settings_carry_the_tier_consent_only(
+def test_settings_carry_print_parity_and_the_tier_consent_only(
     extra: list[str], consent: dict[str, object], tmp_path: Path
 ) -> None:
     settings = json.loads(tui.write_settings(tmp_path, extra).read_text())
-    assert {k: v for k, v in settings.items() if k != "hooks"} == consent
+    assert {k: v for k, v in settings.items() if k != "hooks"} == {**tui.PRINT_PARITY, **consent}
 
 
 def test_menu_selection_matches_the_whole_choice() -> None:
@@ -395,6 +397,21 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
     turn.transcript(end)
     assert turn.done
+    # An Agent call Claude moved to the background on its own says so only in its result.
+    launch = {"type": "tool_result", "tool_use_id": "agent-1", "content": "launched"}
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {"role": "user", "content": [launch]},
+            "toolUseResult": {"isAsync": True, "status": "async_launched"},
+        }
+    )
+    turn.transcript(end)
+    assert not turn.done
+    notice = notice.replace("tool-1", "agent-1")
+    turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
+    turn.transcript(end)
+    assert turn.done
 
 
 @pytest.mark.parametrize(
@@ -424,6 +441,28 @@ def test_turn_waits_for_background_tool_notifications() -> None:
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
                 "updatedInput": {"questions": [{"question": "Which?"}], "answers": {"Which?": "A"}},
+            },
+        ),
+        (
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "ExitPlanMode",
+                "tool_input": {"plan": "Write a.txt", "planFilePath": "/p.md"},
+            },
+            {"decision": "allow"},
+            {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": {"plan": "Write a.txt", "planFilePath": "/p.md"},
+            },
+        ),
+        (
+            {"hook_event_name": "PreToolUse", "tool_name": "ExitPlanMode", "tool_input": {}},
+            {"decision": "deny", "message": "keep planning"},
+            {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "keep planning",
             },
         ),
     ],
@@ -458,11 +497,26 @@ def test_hook_waits_for_atomic_boss_answer(
         process.wait()
 
 
+def test_elicitation_hook_cancels_like_print(tmp_path: Path) -> None:
+    done = subprocess.run(
+        [sys.executable, "-I", str(Path(tui.__file__)), "hook", str(tmp_path)],
+        input=json.dumps({"hook_event_name": "Elicitation", "mcp_server_name": "x"}).encode(),
+        capture_output=True,
+        timeout=10,
+    )
+    assert done.returncode == 0 and not list(tmp_path.iterdir())
+    assert json.loads(done.stdout) == {
+        "hookSpecificOutput": {"hookEventName": "Elicitation", "action": "cancel"}
+    }
+
+
 def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
     settings = json.loads(tui.write_settings(tmp_path).read_text())
     for name in ("PermissionRequest", "PreToolUse"):
         hook = settings["hooks"][name][0]["hooks"][0]
         assert hook["timeout"] == 604800 and hook["onFailure"] == "block"
+    assert "Elicitation" in settings["hooks"]
+    assert settings["hooks"]["PreToolUse"][0]["matcher"] == "AskUserQuestion|ExitPlanMode"
     event = tui.prompt_event(
         "f" * 32, {"tool_name": "Bash", "tool_input": {"command": "x" * 10000}}
     )
@@ -491,4 +545,12 @@ def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(
     (tmp_path / f"prompt-{'a' * 32}.json").unlink()
     tui.read_hooks(tmp_path, turn)
     assert json.loads(capsys.readouterr().out)["type"] == "agentnave_prompt_closed"
-    assert turn.pending_prompts == {"b" * 32}
+    assert turn.pending_prompts == {"b" * 32} and not turn.denials
+    # A hook that died unanswered (timeout or killed) made Claude refuse the call.
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    path = tmp_path / f"prompt-{'b' * 32}.json"
+    tui.atomic_json(path, {**json.loads(path.read_text()), "hook_pid": dead.pid})
+    tui.read_hooks(tmp_path, turn)
+    assert json.loads(capsys.readouterr().out)["type"] == "agentnave_prompt_closed"
+    assert turn.denials == [{"tool_name": "Bash", "tool_input": {}}] and not turn.pending_prompts

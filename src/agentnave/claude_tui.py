@@ -103,6 +103,8 @@ def classify_screen(text: str) -> str:
             "do you want to create",
             "yes, and don't ask again",
             "enter to select",
+            "would you like to proceed",
+            "requests your input",
         )
     ):
         return "permission"
@@ -188,6 +190,7 @@ class Turn:
             if event["type"] == "assistant":
                 self.assistant = cast(dict[str, object], event["message"])
             self.track_background(event)
+            self.track_async_launch(row)
         if (
             not row.get("isSidechain")
             and row.get("type") == "system"
@@ -209,10 +212,21 @@ class Turn:
             ):
                 self.background.add(str(block.get("id")))
 
+    def track_async_launch(self, row: dict[str, object]) -> None:
+        """Claude may run an Agent call in the background without `run_in_background`; its
+        tool result says so, and the turn still waits for that call's notification."""
+        if not object_dict(row.get("toolUseResult")).get("isAsync"):
+            return
+        content = object_dict(row.get("message")).get("content")
+        for raw in cast(list[object], content) if isinstance(content, list) else []:
+            block = object_dict(raw)
+            if block.get("type") == "tool_result" and isinstance(block.get("tool_use_id"), str):
+                self.background.add(str(block["tool_use_id"]))
+
     def hook(self, event: dict[str, object]) -> None:
         name = event.get("hook_event_name")
         gated = name == "PermissionRequest" or (
-            name == "PreToolUse" and event.get("tool_name") == "AskUserQuestion"
+            name == "PreToolUse" and event.get("tool_name") in INTERACTION_TOOLS
         )
         if name == "PermissionDenied" or (gated and event.get("agentnave_denied")):
             self.denials.append(
@@ -267,6 +281,15 @@ def tier_consent(extra: list[str]) -> dict[str, object]:
     return {}
 
 
+# What -p already does, where the interactive screen would ask instead: it starts the project's
+# .mcp.json servers in a trusted folder, and cancels MCP elicitation forms (Elicitation hook).
+PRINT_PARITY: dict[str, object] = {"enableAllProjectMcpServers": True}
+# Tools that need a user's answer: Claude Code takes a PreToolUse "allow" for them only with
+# updatedInput, and shows its own menu otherwise (hooks reference, "Tools that require user
+# interaction").
+INTERACTION_TOOLS = ("AskUserQuestion", "ExitPlanMode")
+
+
 def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
     hooks: dict[str, object] = {}
     for name in (
@@ -275,6 +298,7 @@ def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
         "PermissionDenied",
         "StopFailure",
         "Notification",
+        "Elicitation",
     ):
         command: dict[str, object] = {
             "type": "command",
@@ -285,10 +309,10 @@ def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
             command.update(timeout=604800, onFailure="block")
         rule: dict[str, object] = {"hooks": [command]}
         if name in ("PermissionRequest", "PermissionDenied", "PreToolUse"):
-            rule["matcher"] = "AskUserQuestion" if name == "PreToolUse" else "*"
+            rule["matcher"] = "|".join(INTERACTION_TOOLS) if name == "PreToolUse" else "*"
         hooks[name] = [rule]
     path = directory / "settings.json"
-    settings = {"hooks": hooks, **tier_consent(extra or [])}
+    settings = {"hooks": hooks, **PRINT_PARITY, **tier_consent(extra or [])}
     path.write_text(json.dumps(settings), encoding="utf-8")
     return path
 
@@ -311,10 +335,11 @@ def hook_reply(event: dict[str, object], answer: dict[str, object]) -> dict[str,
     else:
         output = {"hookEventName": name, "permissionDecision": "allow" if allowed else "deny"}
         if allowed:
-            output["updatedInput"] = {
-                **object_dict(event.get("tool_input")),
-                "answers": object_dict(answer.get("answers")),
-            }
+            # Echo the input: approving a plan passes it through, a question adds its answers.
+            updated = dict(object_dict(event.get("tool_input")))
+            if event.get("tool_name") == "AskUserQuestion":
+                updated["answers"] = object_dict(answer.get("answers"))
+            output["updatedInput"] = updated
         else:
             output["permissionDecisionReason"] = str(answer.get("message") or "Denied by the boss")
     return {"hookSpecificOutput": output}
@@ -323,8 +348,11 @@ def hook_reply(event: dict[str, object], answer: dict[str, object]) -> dict[str,
 def hook_main(directory: Path) -> int:
     event = object_dict(json.load(sys.stdin))
     name = event.get("hook_event_name")
+    if name == "Elicitation":
+        emit({"hookSpecificOutput": {"hookEventName": name, "action": "cancel"}})
+        return 0
     gated = name == "PermissionRequest" or (
-        name == "PreToolUse" and event.get("tool_name") == "AskUserQuestion"
+        name == "PreToolUse" and event.get("tool_name") in INTERACTION_TOOLS
     )
     prompt_id = uuid.uuid4().hex
     if gated:
@@ -647,21 +675,24 @@ def read_hooks(directory: Path, turn: Turn) -> None:
         path.unlink()
     for prompt_id in list(turn.pending_prompts):
         path = directory / f"prompt-{prompt_id}.json"
-        alive = path.exists()
-        if alive:
+        try:
+            event = object_dict(json.loads(path.read_text(encoding="utf-8")))
+        except FileNotFoundError:
+            event = None  # Answered: the hook removed its prompt before replying.
+        if event is not None:
+            pid = event.get("hook_pid")
             try:
-                pid = object_dict(json.loads(path.read_text(encoding="utf-8"))).get("hook_pid")
-            except FileNotFoundError:
-                pid, alive = None, False
-            if isinstance(pid, int):
-                try:
+                if isinstance(pid, int):
                     os.kill(pid, 0)
-                except ProcessLookupError:
-                    alive = False
-        if not alive:
-            turn.pending_prompts.remove(prompt_id)
-            emit({"type": "agentnave_prompt_closed", "prompt_id": prompt_id})
-            path.unlink(missing_ok=True)
+                continue
+            except ProcessLookupError:
+                # Gone unanswered (timeout or killed): Claude's onFailure=block refused the call.
+                turn.denials.append(
+                    {"tool_name": event.get("tool_name"), "tool_input": event.get("tool_input")}
+                )
+        turn.pending_prompts.remove(prompt_id)
+        emit({"type": "agentnave_prompt_closed", "prompt_id": prompt_id})
+        path.unlink(missing_ok=True)
 
 
 def blocked(turn: Turn, reason: str, screen: str = "") -> None:
@@ -777,7 +808,8 @@ def await_turn(
         if turn.pending_prompts:
             dialog_since = None
             continue
-        if classify_screen(screen) == "permission":
+        # Mid-turn, any confirm menu is a dialog no hook answered.
+        if classify_screen(screen) == "permission" or "enter to confirm" in screen.lower():
             dialog_since = dialog_since or now
             if now - dialog_since > 1:
                 reason = "permission dialog without a corresponding hook request"
