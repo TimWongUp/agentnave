@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::data::{Item, Response, Snapshot, valid_id};
 
+mod approvals;
 mod desk;
 mod show;
 mod summary;

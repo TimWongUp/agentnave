@@ -595,6 +595,18 @@ All checks passed!
             { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
             { visibility: "private", thread, desk, message_id: mid },
           ));
+        if (q.has("prompts") && conv === g.convs[0] && sp === conv.specs[0]) {
+          const samples = [
+            { kind: "permission", tool_name: "Write", status: "pending" },
+            { kind: "question", status: "pending" },
+            { kind: "permission", tool_name: "Write", status: "answered", answer: { actor: "boss", decision: "allow" } },
+            { kind: "permission", tool_name: "Bash", status: "answered", answer: { actor: "boss", decision: "deny", message: "超出任务范围" } },
+            { kind: "question", status: "answered", answer: { actor: "boss", answers: { "保存到哪里？": "项目目录", "是否继续？": "是" } } },
+            { kind: "permission", tool_name: "Write", status: "answered", answer: { actor: "service_cancel", decision: "deny" } },
+            { kind: "permission", tool_name: "Write", status: "closed" },
+          ];
+          samples.forEach((approval, i) => out.push(office({ id: `approval:${conv.id}:${i}`, time: stamp(w, e.at - 7 + i), conversation: conv.id, kind: "approval", speaker: speakerOf(e), text: "", approval: { tool_input: JSON.stringify({ file_path: "/tmp/<script>**literal**</script>" }), ...approval }, to: [], reply_to: show ? null : `p:${conv.id}:${e.key}` }, { visibility: "private", thread, desk })));
+        }
         const base = { time: stamp(w, e.at), conversation: conv.id, speaker: speakerOf(e), to: [] };
         if (e.status === "running")
           typing.push(office(

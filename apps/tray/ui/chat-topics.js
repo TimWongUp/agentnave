@@ -36,6 +36,7 @@ function tpTopics(list) {
     return topic;
   };
   for (const m of list) {
+    if (m.kind === "approval") continue;
     const room = m.thread?.kind === "room";
     if (room && m.round > 0) {
       const key = tpRoundKey(m);
