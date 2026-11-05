@@ -592,7 +592,16 @@ class Screen:
 
 
 class Terminal:
+    # Declared here: Windows type checking treats the POSIX-only __init__ as unreachable.
+    screen: Screen
+    outgoing: bytearray
+    master: int
+    process: subprocess.Popen[bytes]
+    groups: set[int]
+    groups_at: float
+
     def __init__(self, executable: str, args: list[str]) -> None:
+        assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
         import fcntl
         import struct
         import termios
@@ -617,7 +626,7 @@ class Terminal:
             os.close(slave)
         os.set_blocking(self.master, False)
         # Refreshed while running: on cancellation Claude may exit before close() looks.
-        self.groups: set[int] = set()
+        self.groups = set()
         self.groups_at = 0.0
 
     def poll(self) -> str:
@@ -647,6 +656,7 @@ class Terminal:
     def close(self) -> None:
         """Stop Claude and the commands it started in their own process groups, within the
         supervisor's two-second grace: those groups would outlive the supervisor's cleanup."""
+        assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
         try:
             groups = self.groups | spawned_groups(self.process.pid)
             signal_groups(groups, signal.SIGTERM)
@@ -664,6 +674,7 @@ class Terminal:
 
 def spawned_groups(root: int) -> set[int]:
     """Process groups led by descendants of root, other than this helper's own group."""
+    assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
     listing = subprocess.run(
         ["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, check=False
     ).stdout
@@ -686,6 +697,7 @@ def spawned_groups(root: int) -> set[int]:
 
 
 def signal_groups(groups: set[int], signum: int) -> None:
+    assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
     for group in groups:
         with contextlib.suppress(OSError):
             os.killpg(group, signum)
