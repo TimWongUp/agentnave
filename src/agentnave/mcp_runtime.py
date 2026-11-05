@@ -203,14 +203,16 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
             f"Unknown argument(s) for {name}: {', '.join(unknown)}. "
             f"Accepted: {', '.join(accepted)}.{hint}"
         )
+    needs_chat = name in _CHAT_TOOLS or (name == "wait" and arguments.get("ids") is None)
     if (
-        name in _CHAT_TOOLS
+        needs_chat
         and arguments.get("manager_session_id") is None
         and not (host_session_id(HOST) or "").strip()
     ):
         problems.append(f"{name} needs manager_session_id. " + session_id_hint(HOST))
     if problems:
-        raise ToolError(" ".join(problems) + " Nothing was started. Correct and retry.")
+        unchanged = "Nothing was received." if name == "wait" else "Nothing was started."
+        raise ToolError(" ".join(problems) + f" {unchanged} Correct and retry.")
 
 
 class _Server(MCPServer[Runtime]):
