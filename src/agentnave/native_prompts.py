@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -12,6 +14,35 @@ from typing import Literal, NotRequired, TypedDict
 
 def timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+MASK = "****"
+# The value after a secret-looking key, in shell (KEY=v), header (Key: v) and JSON ("key": "v").
+_SECRET_VALUE = re.compile(
+    r"(?i)((?:token|password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|"
+    r"credential|authorization|cookie)\w*[\"']?\s*[=:]\s*[\"']?(?:(?:bearer|basic)\s+)?)"
+    r"([^\s\"'\\,;]{4,})"
+)
+_SECRET_TOKENS = re.compile(
+    r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|\bsk-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{30,}"
+    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\b[rsp]k_(?:live|test)_[A-Za-z0-9]{16,}"
+    r"|\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{10,}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
+    r"|(?<=://)[^/\s:@\"']+:[^/\s@\"']+(?=@)",
+    re.DOTALL,
+)
+_SECRET_ENV_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH", re.I)
+
+
+def mask_secrets(text: str) -> str:
+    """Hide credentials in subagent-written prompt content before anyone sees or saves it; the
+    CLI still runs the original input."""
+    for name, value in os.environ.items():
+        if len(value) >= 8 and _SECRET_ENV_NAME.search(name):
+            text = text.replace(value, MASK)
+    text = _SECRET_TOKENS.sub(MASK, text)
+    return _SECRET_VALUE.sub(lambda m: m.group(1) + MASK, text)
 
 
 class PromptPayload(TypedDict):
@@ -36,6 +67,9 @@ class NativePrompt:
     answer: dict[str, object] | None = None
     closed_at: str | None = None
     notified: bool = False
+
+    def __post_init__(self) -> None:
+        self.tool_input = mask_secrets(self.tool_input)
 
     def payload(self) -> PromptPayload:
         result: PromptPayload = {

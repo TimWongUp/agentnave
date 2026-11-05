@@ -1334,3 +1334,23 @@ def test_closed_prompt_is_never_reported_again() -> None:
     assert prompt.status == "closed" and prompt.closed_at
     assert channel.take() is None
     assert not channel.receive(NativePrompt("d" * 32, "permission", "Bash"))
+
+
+@pytest.mark.parametrize(
+    ("tool_input", "masked"),
+    [
+        ({"command": "curl -H 'Authorization: Bearer abcdefgh12345678' x"}, "Authorization: ****"),
+        ({"command": "API_KEY=supersecret123 run"}, "API_KEY=****"),
+        ({"env": {"GITHUB_TOKEN": "ghp_" + "a" * 36}}, '"GITHUB_TOKEN": "****"'),
+        ({"command": "git clone https://me:pa55word@host/x.git"}, "https://****@host"),
+        ({"command": "echo env-secret-value-1"}, "echo ****"),
+        ({"file_path": "/repo/token-utils/a.md"}, "/repo/token-utils/a.md"),
+    ],
+)
+def test_prompt_content_hides_credentials_but_stays_json(
+    tool_input: dict[str, object], masked: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SERVICE_TOKEN", "env-secret-value-1")
+    prompt = NativePrompt("e" * 32, "permission", "Bash", tool_input=json.dumps(tool_input))
+    assert masked in prompt.payload()["tool_input"]
+    assert json.loads(prompt.history()["tool_input"])  # type: ignore[arg-type]
