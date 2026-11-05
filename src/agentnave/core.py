@@ -737,7 +737,9 @@ class InvocationManager:
         supervised = None
         tasks: list[asyncio.Task[object]] = []
         try:
-            supervised = await spawn_process(prepared.argv, prepared.cwd)
+            supervised = await spawn_process(
+                prepared.argv, prepared.cwd, unset_env=prepared.unset_env
+            )
             process = supervised.process
             record.process = process
             if prepared.keep_stdin_open:

@@ -42,6 +42,46 @@ from agentnave.processes import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "host", "cleared"),
+    [
+        ("codebuddy", "workbuddy-desktop", True),
+        ("codebuddy", "cli", False),
+        ("claude", "workbuddy-desktop", False),
+    ],
+)
+async def test_workbuddy_product_config_does_not_change_child_codebuddy_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, host: str, cleared: bool
+) -> None:
+    product_keys = (
+        "ACC_PRODUCT_CONFIG",
+        "ACC_PRODUCT_CONFIG_V2",
+        "ACC_PRODUCT_CONFIG_V3",
+        "ACC_PRODUCT_CONFIG_PATH",
+    )
+    inherited: dict[str, str] = dict.fromkeys(product_keys, "host-product-config")
+    inherited.update(CODEBUDDY_HOST=host, CODEBUDDY_CONFIG_DIR=str(tmp_path))
+    for key, value in inherited.items():
+        monkeypatch.setenv(key, value)
+    script = (
+        "import json,os; "
+        f"values={{key:os.environ.get(key) for key in {tuple(inherited)!r}}}; "
+        "print(json.dumps({'type':'result','result':json.dumps(values),'session_id':'probe'}))"
+    )
+    manager = InvocationManager()
+    request = InvocationRequest(provider, "Check inherited config", tmp_path)
+    prepared = replace(manager.prepare(request), argv=(sys.executable, "-c", script))
+    try:
+        result = await manager.wait(manager.start(request, prepared=prepared), 10)
+        assert result is not None and result.status is InvocationStatus.SUCCEEDED
+        expected = {**inherited, **(dict.fromkeys(product_keys) if cleared else {})}
+        assert json.loads(result.output) == expected
+        assert {key: os.environ[key] for key in inherited} == inherited
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_failed_codex_resume_does_not_reuse_old_turn_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
