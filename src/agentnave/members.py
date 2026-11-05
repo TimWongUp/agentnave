@@ -86,6 +86,7 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
         "project",
         "restricted_tools",
         "disable_slash_commands",
+        "interactive",
     }
 )
 
@@ -100,9 +101,11 @@ type PermissionTier = Literal["auto", "full"]
 PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
     # ZCode's "auto" is reserved and rejects every tool; it has no automatic reviewer yet.
     "zcode": {"auto": {"permission_mode": "yolo"}, "full": {"permission_mode": "yolo"}},
+    # When the chosen mode is unavailable Claude Code starts in manual mode; it then reruns
+    # in the other tier's mode (ADR-0059).
     "claude": {
-        "auto": {"permission_mode": "auto"},
-        "full": {"permission_mode": "bypassPermissions"},
+        "auto": {"permission_mode": "auto", "permission_fallback": "bypassPermissions"},
+        "full": {"permission_mode": "bypassPermissions", "permission_fallback": "auto"},
     },
     "codebuddy": {
         "auto": {"permission_mode": "bypassPermissions"},
@@ -129,7 +132,7 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
 # CLI's tier out; a tier replaces saved model options among them.
 PERMISSION_KEYS: dict[str, frozenset[str]] = {
     "zcode": frozenset({"permission_mode"}),
-    "claude": frozenset({"permission_mode"}),
+    "claude": frozenset({"permission_mode", "permission_fallback"}),
     "codebuddy": frozenset({"permission_mode"}),
     "grok": frozenset({"permission_mode", "sandbox"}),
     "antigravity": frozenset({"mode", "sandbox", "dangerously_skip_permissions"}),
@@ -415,12 +418,11 @@ def check_excluded(mode: Mode, provider: str, excluded: frozenset[str]) -> None:
         raise ProviderExcludedError(f"Provider '{provider}' is excluded by this host")
 
 
-def read_max_running() -> int:
-    """The App's limit on CLI runs (tasks plus seats) this server keeps active at once."""
+def _read_settings() -> dict[str, object]:
     try:
         document = json.loads((data_root() / "settings.json").read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return DEFAULT_MAX_RUNNING
+        return {}
     except (OSError, ValueError) as exc:
         raise SettingsFileError(
             f"Unable to read settings.json: {exc}. {_repair('settings.json')}"
@@ -429,12 +431,28 @@ def read_max_running() -> int:
     version = settings.get("version")
     value = settings.get("max_running", DEFAULT_MAX_RUNNING)
     # Same rules as the App: integers only, so true or 1.0 are not accepted as 1.
-    if type(version) is not int or version != 1 or type(value) is not int or not 1 <= value <= 32:
+    if (
+        type(version) is not int
+        or version != 1
+        or type(value) is not int
+        or not 1 <= value <= 32
+        or type(settings.get("claude_interactive", False)) is not bool
+    ):
         raise SettingsFileError(
-            "Invalid settings.json: needs version 1 and max_running between 1 and 32. "
-            + _repair("settings.json")
+            "Invalid settings.json: needs version 1, max_running between 1 and 32 "
+            "and an optional boolean claude_interactive. " + _repair("settings.json")
         )
-    return value
+    return settings
+
+
+def read_max_running() -> int:
+    """The App's limit on CLI runs (tasks plus seats) this server keeps active at once."""
+    return cast(int, _read_settings().get("max_running", DEFAULT_MAX_RUNNING))
+
+
+def read_claude_interactive() -> bool:
+    """The interactive Claude runtime is on unless the App turned it off (ADR-0056)."""
+    return cast(bool, _read_settings().get("claude_interactive", True))
 
 
 def read_history_retention_days(root: Path | None = None) -> int | None:
@@ -523,6 +541,14 @@ def apply_member(
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
+        if (
+            provider == "claude"
+            and "interactive" not in result
+            and os.name != "nt"
+            and read_claude_interactive()
+        ):
+            result["interactive"] = True
+            applied.append("interactive")
     if "effort" not in result:
         add_cli_effort(document, mode, provider, result, applied)
     return result, applied

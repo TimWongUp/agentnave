@@ -430,6 +430,9 @@ Record.save = save
 mcp_server.main()
 """
     data = tmp_path / "data"
+    # The real server process does not see the suite's print-only Claude fixture.
+    data.mkdir()
+    (data / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
     host = Host(
         tmp_path,
         env={

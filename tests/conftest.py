@@ -10,7 +10,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
 
-from agentnave import mcp_server
+from agentnave import mcp_server, members
 from agentnave.adapters import base
 
 
@@ -18,6 +18,12 @@ from agentnave.adapters import base
 def no_common_provider_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
     # Never let a test fall back to a real provider CLI installed on this machine.
     monkeypatch.setattr(base, "PROVIDER_BIN_DIRS", ())
+
+
+@pytest.fixture(autouse=True)
+def claude_over_print(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fake Claude CLIs here speak --print; a test of the interactive default restores it.
+    monkeypatch.setattr(members, "read_claude_interactive", lambda: False)
 
 
 @pytest.fixture(autouse=True)

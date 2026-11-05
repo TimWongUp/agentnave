@@ -162,10 +162,12 @@ const TIER_TEXT = {
   auto: {
     any: L("CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。", "The CLI’s built-in auto-review allows routine commands and edits while blocking obviously dangerous operations."),
     codex: L("Codex 自动审核放行命令，读写限在工作目录内。", "Codex auto-review allows commands while keeping reads and writes within the working directory."),
+    claude: L("Claude Code 自动审核放行常规命令和改动，明显危险的操作仍会被拦下；这台电脑或账号用不了自动审核时，改为完全放开。", "Claude Code’s auto-review allows routine commands and edits while blocking obviously dangerous operations; where auto-review is unavailable, it runs with full access instead."),
   },
   full: {
     any: L("不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review. Choose only when you trust the dispatched tasks."),
     codex: L("不审核也不进沙箱，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review or sandbox. Choose only when you trust the dispatched tasks."),
+    claude: L("不再审核，直接执行任何命令和改动；完全放开被禁用时，改用自动审核。只在你信任派给它的任务时选。", "Runs any command or edit without review; where full access is disabled, it uses auto-review instead. Choose only when you trust the dispatched tasks."),
   },
 };
 
@@ -518,10 +520,13 @@ function updateControls() {
 // The running limit: settings.json, read by the service before each start. Saved with 员工; its
 // draft is the menu itself.
 let limitDoc = null;
+let limitError = null;
+let limitRevision = 0; // Ignore reads started before an immediate save.
 const limitSaved = () => limitDoc?.max_running ?? 8;
 const limitChanged = () => Boolean($("max-running").options.length) && Number($("max-running").value) !== limitSaved();
 
 async function loadLimit() {
+  const revision = limitRevision;
   if (!$("max-running").options.length) {
     for (let n = 1; n <= 32; n += 1) $("max-running").append(el("option", { value: String(n) }, n === 8 ? L("8（默认）", "8 (default)") : String(n)));
     $("max-running").value = "8";
@@ -530,15 +535,20 @@ async function loadLimit() {
     const response = await fetch("/app/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
     const data = await response.json();
+    if (busy || revision !== limitRevision) return;
     const keep = limitChanged();
     limitDoc = data.settings;
+    limitError = data.error || null;
     if (!keep) $("max-running").value = String(data.settings.max_running);
     if (data.error) showNotice(L(`${data.error}；保存会用当前值覆盖`, `${data.error}; saving will overwrite with the current value`), true);
   } catch (error) {
-    showNotice(L(`无法读取同时工作的员工上限：${error.message}`, `Failed to load max concurrent employees: ${error.message}`), true);
+    if (busy || revision !== limitRevision) return;
+    limitDoc = null;
+    limitError = null;
+    showNotice(L(`无法读取员工运行设置：${error.message}`, `Failed to load employee runtime settings: ${error.message}`), true);
   }
   refreshDirty();
-  updateControls();
+  renderCards();
 }
 
 async function saveLimit() {
@@ -546,11 +556,39 @@ async function saveLimit() {
   const response = await fetch("/app/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-    body: JSON.stringify({ ...(limitDoc || { version: 1 }), version: 1, max_running: value }),
+    body: JSON.stringify({ version: 1, max_running: value, ...(limitError ? { history_retention_days: null, claude_interactive: true } : {}) }),
   });
   const data = await response.json();
   if (!response.ok || data.error) throw new Error(data.error || L(`同时工作的员工上限保存失败（${response.status}）`, `Failed to save max concurrent employees (${response.status})`));
-  limitDoc = { version: 1, max_running: value };
+  limitDoc = { ...(limitDoc || {}), version: 1, max_running: value };
+  if (limitError) Object.assign(limitDoc, { history_retention_days: null, claude_interactive: true });
+  limitError = null;
+  limitRevision += 1;
+}
+
+// This setting applies to both scenes and is saved as soon as it is selected.
+async function setClaudeInteractive(enabled) {
+  if (busy || !limitDoc || limitError) return renderCards();
+  busy = true;
+  limitRevision += 1;
+  updateControls();
+  try {
+    const response = await fetch("/app/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+      body: JSON.stringify({ version: 1, claude_interactive: enabled }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
+    limitDoc = { ...limitDoc, claude_interactive: enabled };
+    showNotice(L("设置已保存", "Settings saved"));
+  } catch (error) {
+    showNotice(L(`交互模式保存失败：${error.message}`, `Failed to save interactive mode: ${error.message}`), true);
+  } finally {
+    busy = false;
+    limitRevision += 1;
+    renderCards();
+  }
 }
 
 const unsaved = () => dirty || advancedChanges().length > 0;

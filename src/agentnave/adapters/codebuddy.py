@@ -11,6 +11,8 @@ class CodeBuddyAdapter(ClaudeAdapter):
         "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)"
     )
     executable = "codebuddy"
+    _supports_interactive = False
+    restricted_extra_options = frozenset()
     _options = {
         "model": "--model",
         "effort": "--effort",

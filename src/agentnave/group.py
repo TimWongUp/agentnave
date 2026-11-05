@@ -21,6 +21,7 @@ from agentnave.models import (
     ProviderOption,
     RoundOrder,
 )
+from agentnave.native_prompts import NativePrompt
 
 type SeatRunStatus = Literal[
     "pending", "running", "succeeded", "failed", "blocked", "cancelled", "not_started"
@@ -109,6 +110,8 @@ class SeatRun:
     snapshot: int = 0
     blockers: list[InvocationError] = field(default_factory=lambda: [])
     reported_blockers: int = 0
+    prompts: list[NativePrompt] = field(default_factory=list[NativePrompt])
+    reported_prompts: set[str] = field(default_factory=set[str])
     reported_lost: bool = False
     output_returned: bool = False
 
@@ -285,6 +288,8 @@ class Groups:
             run.result = None
             run.launch_error = None
             run.blockers = []
+            run.prompts = []
+            run.reported_prompts.clear()
             run.reported_blockers = 0
             run.reported_lost = False
             run.output_returned = False
@@ -299,6 +304,19 @@ class Groups:
         deadline = time.monotonic() + timeout_seconds
         while not round_.finished:
             changed = round_.changed
+            prompted = False
+            for run in round_.runs:
+                if run.status != "running":
+                    continue
+                fresh = {
+                    p.prompt_id
+                    for p in run.prompts
+                    if p.status == "pending" and p.prompt_id not in run.reported_prompts
+                }
+                run.reported_prompts.update(fresh)
+                prompted |= bool(fresh)
+            if prompted:
+                return round_, "prompt_pending"
             blocked = False
             for run in round_.runs:
                 # A seat that already ended makes its earlier blockers stale.
@@ -502,7 +520,10 @@ class Groups:
             return
         while True:
             update = await self.manager.wait_for_update(run.invocation_id, 3600)
-            if isinstance(update, InvocationError):
+            if isinstance(update, NativePrompt):
+                run.prompts.append(update)
+                round_.notify()
+            elif isinstance(update, InvocationError):
                 run.blockers.append(update)
                 round_.notify()
             elif update is not None:

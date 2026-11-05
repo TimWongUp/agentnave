@@ -91,6 +91,7 @@ class SeatRunRecord(BaseModel):
     # Set only in review conversations, once the answer succeeded.
     review: Review | None = None
     committed: bool = False
+    prompts: list[dict[str, object]] = Field(default_factory=list[dict[str, object]])
 
 
 class RoundRecord(BaseModel):
@@ -127,6 +128,7 @@ class TaskRecord(BaseModel):
     access: Literal["read", "write"] | None = None  # declared, never enforced
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
+    prompts: list[dict[str, object]] = Field(default_factory=list[dict[str, object]])
 
 
 class Conversation(BaseModel):
@@ -171,6 +173,10 @@ class Conversation(BaseModel):
                         seat.review = "pending"  # ended before its review began
             if not round_.pending_review():
                 self.commit_ended(round_)
+        for run in [seat for round_ in self.rounds for seat in round_.seats] + self.tasks:
+            for prompt in run.prompts:
+                if prompt.get("status") == "pending":
+                    prompt.update(status="closed", closed_at=now())
         for task in self.tasks:
             if task.status == "running":
                 task.status = "interrupted"

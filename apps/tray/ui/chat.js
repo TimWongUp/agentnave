@@ -189,6 +189,7 @@ function instructionsFirst(replies) {
   const ordered = replies
     .filter((m) => m.kind !== "instruction")
     .flatMap((m) => {
+      if (m.kind === "approval") return [m];
       const asked = waiting.get(m.focus) || [];
       waiting.delete(m.focus);
       return [...asked, m];

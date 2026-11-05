@@ -4,9 +4,20 @@ from typing import cast
 
 # Opaque fields are never traversed; only non-null empty bodies also retain their keys.
 _OPAQUE_FIELDS = frozenset(
-    {"options", "provider_options", "output", "text", "prompt", "note", "notes"}
+    {
+        "options",
+        "provider_options",
+        "output",
+        "text",
+        "prompt",
+        "note",
+        "notes",
+        "tool_input",
+        "questions",
+        "answers",
+    }
 )
-_BODY_FIELDS = frozenset({"output", "text", "prompt"})
+_BODY_FIELDS = frozenset({"output", "text", "prompt", "tool_input"})
 
 # Required reply containers, including the relay's invocations list. Keep the same
 # rule for nested rounds/modes and the untyped history/handover reply containers.
