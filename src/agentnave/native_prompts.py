@@ -19,10 +19,10 @@ def timestamp() -> str:
 MASK = "****"
 # The value after a secret-looking key, in shell (KEY=v), header (Key: v) and JSON ("key": "v").
 # A quoted value, JSON-escaped or not, is hidden up to the same unescaped quote, or to the end
-# of the line when that quote never comes.
+# of the line when that quote never comes. The bounded key suffix keeps the scan linear.
 _SECRET_VALUE = re.compile(
     r"(?i)((?:token|password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"credential|authorization|cookie)\w*(?:\\?[\"'])?\s*[=:]\s*)"
+    r"credential|authorization|cookie)\w{0,40}(?:\\?[\"'])?\s*[=:]\s*)"
     r"(?:(\\?[\"'])[^\n]+?(?=(?<!\\)\2|\n|$)|((?:bearer|basic)\s+)?[^\s\"'\\,;]{4,})"
 )
 _SECRET_TOKENS = re.compile(
