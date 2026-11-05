@@ -30,7 +30,7 @@ fn settings_default_validate_and_save_atomically() {
     assert_eq!(max_running(root.path()), 2);
     assert_eq!(
         state(root.path())["settings"],
-        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": false})
+        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": true})
     );
     save(
         root.path(),
@@ -40,7 +40,7 @@ fn settings_default_validate_and_save_atomically() {
     let saved: Value = serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
     assert_eq!(
         saved,
-        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": false})
+        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": true})
     );
     // Saving one other key keeps the saved limit, and a broken saved limit falls back.
     save(root.path(), &json!({"version": 1, "y": 2})).unwrap();
@@ -98,12 +98,12 @@ fn retention_is_strict_and_partial_saves_keep_it() {
 }
 
 #[test]
-fn claude_interactive_defaults_off_and_partial_saves_preserve_other_settings() {
+fn claude_interactive_defaults_on_and_partial_saves_preserve_other_settings() {
     let root = tempfile::tempdir().unwrap();
-    assert_eq!(state(root.path())["settings"]["claude_interactive"], false);
+    assert_eq!(state(root.path())["settings"]["claude_interactive"], true);
     assert_eq!(
         validate(&json!({"version": 1})).unwrap()["claude_interactive"],
-        false
+        true
     );
     save(
         root.path(),
@@ -143,7 +143,7 @@ fn claude_interactive_defaults_off_and_partial_saves_preserve_other_settings() {
                 .unwrap()
                 .contains("claude_interactive")
         );
-        assert_eq!(broken["settings"]["claude_interactive"], false);
+        assert_eq!(broken["settings"]["claude_interactive"], true);
     }
     save(root.path(), &defaults()).unwrap();
     assert_eq!(state(root.path())["error"], Value::Null);

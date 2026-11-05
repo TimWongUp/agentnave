@@ -14,7 +14,7 @@ pub const DEFAULT_MAX_RUNNING: u64 = 8;
 const MAX_RUNNING: std::ops::RangeInclusive<u64> = 1..=32;
 
 pub fn defaults() -> Value {
-    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": false})
+    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": true})
 }
 
 /// The normalized known settings; the same rules as the service:
@@ -41,7 +41,7 @@ pub fn validate(document: &Value) -> Result<Value, String> {
         ),
     };
     let claude_interactive = match object.get("claude_interactive") {
-        None => false,
+        None => true,
         Some(value) => value.as_bool().ok_or("claude_interactive 必须为布尔值")?,
     };
     Ok(

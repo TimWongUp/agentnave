@@ -54,6 +54,13 @@ def _denied_tools(event: dict[str, object]) -> list[str]:
     return names
 
 
+_MODES = frozenset({"auto", "bypassPermissions"})
+
+
+def _helper() -> str:
+    return str(Path(__file__).resolve().parents[1] / "claude_tui.py")
+
+
 def _result_capture() -> Callable[[bytes], bytes]:
     last_session: str | None = None
 
@@ -82,8 +89,9 @@ def _result_capture() -> Callable[[bytes], bytes]:
 
 class ClaudeAdapter(AdapterHooks):
     name = "claude"
-    options_description = "permission_mode, agent, fallback_model, max_budget_usd, interactive (boolean; interactive Claude runtime), restricted_tools (boolean; restricted tools)"
+    options_description = "permission_mode, permission_fallback (auto or bypassPermissions; set by the permission tier), agent, fallback_model, max_budget_usd, interactive (boolean; interactive Claude runtime), restricted_tools (boolean; restricted tools)"
     executable = "claude"
+    # Claude-only extras: the interactive runtime and the permission tier's fallback mode.
     _supports_interactive = True
     restricted_extra_options = frozenset({"interactive"})
     _options = {
@@ -109,6 +117,14 @@ class ClaudeAdapter(AdapterHooks):
             interactive = options.pop("interactive", False)
             if not isinstance(interactive, bool):
                 raise ValueError("interactive must be a boolean")
+            fallback = options.pop("permission_fallback", None)
+            if fallback is not None and (
+                fallback not in _MODES or options.get("permission_mode") not in _MODES - {fallback}
+            ):
+                raise ValueError(
+                    "permission_fallback must be auto or bypassPermissions, "
+                    "with permission_mode set to the other one"
+                )
             request = replace(request, provider_options=options)
         return option_args(request, self._options)
 
@@ -118,6 +134,7 @@ class ClaudeAdapter(AdapterHooks):
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
         options = self.option_args(request)
+        fallback = request.provider_options.get("permission_fallback")
         if (
             self._supports_interactive
             and request.provider_options.get("interactive") is True
@@ -127,13 +144,15 @@ class ClaudeAdapter(AdapterHooks):
             argv = [
                 sys.executable,
                 "-I",
-                str(Path(__file__).resolve().parents[1] / "claude_tui.py"),
+                _helper(),
                 "run",
                 "--claude",
                 self.executable_path(),
             ]
             if request.session_id is not None:
                 argv.extend(("--resume", request.session_id))
+            if isinstance(fallback, str):
+                argv.extend(("--fallback", fallback))
             argv.extend(("--", *options))
             return PreparedCommand(
                 tuple(argv),
@@ -155,6 +174,21 @@ class ClaudeAdapter(AdapterHooks):
         argv.extend(options)
         if discussion:
             argv.extend(self._discussion_args)
+        elif isinstance(fallback, str) and os.path.isabs(argv[0]):
+            # A missing CLI keeps the direct command, so its launch error stays a launch error.
+            claude = argv.pop(0)
+            argv = [
+                sys.executable,
+                "-I",
+                _helper(),
+                "print",
+                "--claude",
+                claude,
+                "--fallback",
+                fallback,
+                "--",
+                *argv,
+            ]
         return PreparedCommand(
             tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
         )

@@ -190,6 +190,41 @@ def test_interactive_adapter_arguments_and_fallbacks(
         )
     with pytest.raises(ValueError, match="unsupported"):
         CodeBuddyAdapter().option_args(request)
+    # The permission tier's fallback mode wraps -p in the helper and reaches the interactive run.
+    tier = {"permission_mode": "auto", "permission_fallback": "bypassPermissions"}
+    printed = adapter.prepare(InvocationRequest("claude", "work", tmp_path, provider_options=tier))
+    assert printed.argv[3:9] == (
+        "print",
+        "--claude",
+        "/fake/claude",
+        "--fallback",
+        "bypassPermissions",
+        "--",
+    )
+    assert printed.argv[9:] == (
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--permission-mode",
+        "auto",
+    )
+    with monkeypatch.context() as platform:
+        platform.setattr("agentnave.adapters.claude.os.name", "posix")
+        interactive = adapter.prepare(
+            InvocationRequest(
+                "claude", "w", tmp_path, provider_options={**tier, "interactive": True}
+            )
+        )
+    assert interactive.argv[6:8] == ("--fallback", "bypassPermissions")
+    for wrong in ({"permission_fallback": "auto"}, {**tier, "permission_fallback": "default"}):
+        with pytest.raises(ValueError, match="permission_fallback"):
+            adapter.prepare(InvocationRequest("claude", "w", tmp_path, provider_options=wrong))
+    with pytest.raises(ValueError, match="unsupported"):
+        CodeBuddyAdapter().prepare(
+            InvocationRequest("codebuddy", "w", tmp_path, provider_options=tier)
+        )
 
 
 def test_child_environment_only_changes_the_interactive_child(
@@ -495,6 +530,98 @@ def test_hook_waits_for_atomic_boss_answer(
         if process.poll() is None:
             process.kill()
         process.wait()
+
+
+def test_mode_hook_holds_back_only_a_manual_mode_prompt(tmp_path: Path) -> None:
+    settings = json.loads(tui.write_settings(tmp_path, [], check_mode=True).read_text())
+    assert "UserPromptSubmit" in settings["hooks"]
+    assert "UserPromptSubmit" not in json.loads(tui.write_settings(tmp_path).read_text())["hooks"]
+    for mode, held in (("default", True), ("auto", False)):
+        event = {"hook_event_name": "UserPromptSubmit", "permission_mode": mode, "prompt": "x"}
+        output = subprocess.run(
+            [sys.executable, "-I", tui.__file__, "hook", str(tmp_path)],
+            input=json.dumps(event).encode(),
+            capture_output=True,
+            check=True,
+        ).stdout
+        assert (json.loads(output)["decision"] == "block") if held else not output
+        [path] = tmp_path.glob("event-*.json")
+        recorded = json.loads(path.read_text())
+        path.unlink()
+        assert recorded["agentnave_mode_blocked"] is held and "prompt" not in recorded
+
+
+FAKE_PRINT = """#!{python}
+import json, os, subprocess, sys
+args = sys.argv[1:]
+mode = args[args.index("--permission-mode") + 1]
+settings = json.load(open(args[args.index("--settings") + 1]))
+session = args[args.index("--resume") + 1] if "--resume" in args else args[args.index("--session-id") + 1]
+prompt = sys.stdin.buffer.read().decode()
+actual = "default" if mode in os.environ["FAKE_DISABLED"].split(",") else mode
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write(json.dumps({{"mode": mode, "resume": "--resume" in args, "session": session, "prompt": prompt}}) + "\\n")
+[hook] = settings["hooks"]["UserPromptSubmit"][0]["hooks"]
+event = {{"hook_event_name": "UserPromptSubmit", "permission_mode": actual, "prompt": prompt}}
+reply = subprocess.run([hook["command"], *hook["args"]], input=json.dumps(event).encode(), capture_output=True).stdout
+print(json.dumps({{"type": "system", "subtype": "init", "session_id": session, "permissionMode": actual}}))
+text = "blocked by hook" if reply else "done"
+print(json.dumps({{"type": "result", "subtype": "success", "result": text, "session_id": session}}))
+"""
+
+
+@pytest.mark.parametrize(
+    ("disabled", "modes", "status", "warned"),
+    [
+        ("", ["auto"], InvocationStatus.SUCCEEDED, False),
+        ("auto", ["auto", "bypassPermissions"], InvocationStatus.SUCCEEDED, True),
+        ("auto,bypassPermissions", ["auto", "bypassPermissions"], InvocationStatus.BLOCKED, False),
+    ],
+)
+def test_print_wrapper_reruns_once_in_the_fallback_mode(
+    tmp_path: Path, disabled: str, modes: list[str], status: InvocationStatus, warned: bool
+) -> None:
+    script = tmp_path / "claude.py"
+    script.write_text(FAKE_PRINT.format(python=sys.executable))
+    script.chmod(0o755)
+    # Windows starts neither a script nor its shebang; a .cmd shim stands in for claude.cmd.
+    fake = script
+    if os.name == "nt":
+        fake = tmp_path / "claude.cmd"
+        fake.write_text(f'@"{sys.executable}" "{script}" %*\n')
+    log = tmp_path / "calls.jsonl"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            tui.__file__,
+            "print",
+            "--claude",
+            str(fake),
+            "--fallback",
+            "bypassPermissions",
+            "--",
+            "--print",
+            "--permission-mode",
+            "auto",
+        ],
+        input="任务".encode(),
+        capture_output=True,
+        env={**os.environ, "FAKE_DISABLED": disabled, "FAKE_LOG": str(log)},
+        check=False,
+    )
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [call["mode"] for call in calls] == modes
+    # One session: a new one is assigned up front, and the rerun resumes it with the same prompt.
+    assert len({call["session"] for call in calls}) == 1
+    assert [call["resume"] for call in calls] == [False, True][: len(calls)]
+    assert all(call["prompt"] == "任务" for call in calls)
+    parsed = ClaudeAdapter().parse(completed.returncode, completed.stdout, completed.stderr)
+    assert parsed.status is status and parsed.session_id == calls[0]["session"]
+    assert parsed.output == ("done" if status is InvocationStatus.SUCCEEDED else "")
+    assert any("bypassPermissions mode (full access)" in w for w in parsed.warnings) is warned
+    if status is InvocationStatus.BLOCKED:
+        assert "neither auto nor bypassPermissions" in str(parsed.error_message)
 
 
 def test_elicitation_hook_cancels_like_print(tmp_path: Path) -> None:

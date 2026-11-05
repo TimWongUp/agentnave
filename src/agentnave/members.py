@@ -101,9 +101,11 @@ type PermissionTier = Literal["auto", "full"]
 PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
     # ZCode's "auto" is reserved and rejects every tool; it has no automatic reviewer yet.
     "zcode": {"auto": {"permission_mode": "yolo"}, "full": {"permission_mode": "yolo"}},
+    # When the chosen mode is unavailable Claude Code starts in manual mode; it then reruns
+    # in the other tier's mode (ADR-0059).
     "claude": {
-        "auto": {"permission_mode": "auto"},
-        "full": {"permission_mode": "bypassPermissions"},
+        "auto": {"permission_mode": "auto", "permission_fallback": "bypassPermissions"},
+        "full": {"permission_mode": "bypassPermissions", "permission_fallback": "auto"},
     },
     "codebuddy": {
         "auto": {"permission_mode": "bypassPermissions"},
@@ -130,7 +132,7 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
 # CLI's tier out; a tier replaces saved model options among them.
 PERMISSION_KEYS: dict[str, frozenset[str]] = {
     "zcode": frozenset({"permission_mode"}),
-    "claude": frozenset({"permission_mode"}),
+    "claude": frozenset({"permission_mode", "permission_fallback"}),
     "codebuddy": frozenset({"permission_mode"}),
     "grok": frozenset({"permission_mode", "sandbox"}),
     "antigravity": frozenset({"mode", "sandbox", "dangerously_skip_permissions"}),
@@ -449,8 +451,8 @@ def read_max_running() -> int:
 
 
 def read_claude_interactive() -> bool:
-    """Opt-in interactive Claude runtime; absent settings keep the print transport."""
-    return cast(bool, _read_settings().get("claude_interactive", False))
+    """The interactive Claude runtime is on unless the App turned it off (ADR-0056)."""
+    return cast(bool, _read_settings().get("claude_interactive", True))
 
 
 def read_history_retention_days(root: Path | None = None) -> int | None:

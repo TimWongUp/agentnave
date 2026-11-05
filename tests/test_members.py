@@ -220,8 +220,12 @@ def test_missing_members_apply_only_the_default_tier_and_ignore_legacy_profiles(
     assert read_members() is None and not root.exists()
     # Without any App file only the default "auto" permission tier applies.
     assert apply_member(None, "task", "claude", {"model": "explicit"}, frozenset()) == (
-        {"model": "explicit", "permission_mode": "auto"},
-        ["permission_mode"],
+        {
+            "model": "explicit",
+            "permission_mode": "auto",
+            "permission_fallback": "bypassPermissions",
+        },
+        ["permission_mode", "permission_fallback"],
     )
     with pytest.raises(ValueError, match="excluded"):
         apply_member(None, "task", "claude", {}, frozenset({"claude"}))
@@ -463,8 +467,8 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
         None, "discussion", "claude", {}, frozenset(), restricted=True, permissions=tiers
     ) == ({}, [])
     assert apply_member(None, "discussion", "claude", {}, frozenset(), permissions=tiers) == (
-        {"permission_mode": "bypassPermissions"},
-        ["permission_mode"],
+        {"permission_mode": "bypassPermissions", "permission_fallback": "auto"},
+        ["permission_mode", "permission_fallback"],
     )
     # Pi has no approval step; a CLI missing from the file, or no file, runs "auto".
     assert apply_member(None, "task", "pi", {}, frozenset(), permissions=tiers) == ({}, [])
@@ -761,21 +765,25 @@ def test_member_list_keeps_mode_settings_and_expands_only_missing_modes(
         assert wildcard.default is None
 
 
-def test_claude_interactive_defaults_are_opt_in_and_explicit_values_win(
+def test_claude_interactive_is_on_unless_turned_off_and_explicit_values_win(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("agentnave.members.read_claude_interactive", read_claude_interactive)
 
     def no_effort(*_: object) -> None:
         return None
 
     monkeypatch.setattr("agentnave.members.cli_default_effort", no_effort)
-    assert read_claude_interactive() is False
-    (tmp_path / "settings.json").write_text('{"version": 1, "claude_interactive": true}')
+    # Without a saved choice macOS and Linux run Claude interactively; Windows has no runtime.
     assert read_claude_interactive() is True
     result, applied = apply_member(None, "task", "claude", {}, frozenset())
-    if os.name != "nt":
-        assert result["interactive"] is True and "interactive" in applied
+    assert (result.get("interactive") is True) is (os.name != "nt")
+    assert ("interactive" in applied) is (os.name != "nt")
+    (tmp_path / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
+    assert read_claude_interactive() is False
+    assert "interactive" not in apply_member(None, "task", "claude", {}, frozenset())[0]
+    (tmp_path / "settings.json").write_text('{"version": 1, "claude_interactive": true}')
     cases: list[tuple[ProviderName, dict[str, ProviderOption], bool]] = [
         ("claude", {"interactive": False}, False),
         ("claude", {"restricted_tools": True}, False),

@@ -1,6 +1,7 @@
 """One interactive Claude turn, normalized to stream-json. Standalone stdlib helper.
 
-Launched with ``python -I <this file> run`` inside the invocation's supervisor group.
+Launched with ``python -I <this file> run`` inside the invocation's supervisor group;
+``print`` wraps ``claude --print`` with the permission tier's fallback mode instead.
 No process here creates a session or process group; the supervisor owns the tree.
 """
 
@@ -181,6 +182,10 @@ class Turn:
     pending_prompts: set[str] = field(default_factory=set[str])
     # Background tool calls still running: like --print, the turn waits for their notifications.
     background: set[str] = field(default_factory=set[str])
+    # The permission mode Claude Code reported for the prompt, and whether the mode check
+    # held the prompt back to restart in the fallback mode.
+    mode: str = ""
+    mode_blocked: bool = False
 
     def transcript(self, row: dict[str, object]) -> None:
         event = transcript_event(row, self.session_id)
@@ -225,6 +230,9 @@ class Turn:
 
     def hook(self, event: dict[str, object]) -> None:
         name = event.get("hook_event_name")
+        if name == "UserPromptSubmit":
+            self.mode = str(event.get("permission_mode") or "")
+            self.mode_blocked = bool(event.get("agentnave_mode_blocked"))
         gated = name == "PermissionRequest" or (
             name == "PreToolUse" and event.get("tool_name") in INTERACTION_TOOLS
         )
@@ -253,7 +261,7 @@ class Turn:
             "subtype": "error_during_execution" if self.error else "success",
             "is_error": self.error is not None,
             "result": text,
-            "session_id": self.session_id,
+            "session_id": self.session_id or None,
             "stop_reason": self.assistant.get("stop_reason"),
             "permission_denials": self.denials,
             "errors": [self.error] if self.error else [],
@@ -271,9 +279,51 @@ def child_environment(executable: str) -> dict[str, str]:
     return env
 
 
+def mode_of(args: list[str]) -> str:
+    return args[args.index("--permission-mode") + 1] if "--permission-mode" in args[:-1] else ""
+
+
+def with_mode(args: list[str], mode: str) -> list[str]:
+    index = args.index("--permission-mode") + 1
+    return [*args[:index], mode, *args[index + 1 :]]
+
+
+def mode_hook(directory: Path) -> dict[str, object]:
+    """Holds back a prompt Claude Code would run in manual mode (ADR-0059): an unavailable
+    auto or bypassPermissions mode starts as `default` without an error."""
+    command = {
+        "type": "command",
+        "command": sys.executable,
+        "args": ["-I", str(Path(__file__).resolve()), "hook", str(directory)],
+    }
+    return {"UserPromptSubmit": [{"hooks": [command]}]}
+
+
+MODE_HELD = "AgentNave restarts Claude Code in its fallback permission mode for this prompt"
+
+
+def mode_warning(requested: str, fallback: str, actual: str) -> str | None:
+    if actual == requested or not actual:
+        return None
+    if actual == fallback:
+        access = " (full access)" if fallback == "bypassPermissions" else ""
+        return (
+            f"Claude Code {requested} mode is unavailable here, so AgentNave ran it in "
+            f"{fallback} mode{access} instead"
+        )
+    return f"Claude Code ran in {actual} mode instead of the requested {requested} mode"
+
+
+def modes_unavailable(requested: str, fallback: str) -> str:
+    return (
+        f"Claude Code started in manual mode because neither {requested} nor {fallback} mode "
+        "is available here; enable one of them in Claude Code's settings"
+    )
+
+
 def tier_consent(extra: list[str]) -> dict[str, object]:
     """The App permission tier is the user's consent; its confirmation dialog would block."""
-    mode = extra[extra.index("--permission-mode") + 1] if "--permission-mode" in extra[:-1] else ""
+    mode = mode_of(extra)
     if mode == "bypassPermissions":
         return {"skipDangerousModePermissionPrompt": True}
     if mode == "auto":
@@ -290,8 +340,10 @@ PRINT_PARITY: dict[str, object] = {"enableAllProjectMcpServers": True}
 INTERACTION_TOOLS = ("AskUserQuestion", "ExitPlanMode")
 
 
-def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
-    hooks: dict[str, object] = {}
+def write_settings(
+    directory: Path, extra: list[str] | None = None, check_mode: bool = False
+) -> Path:
+    hooks: dict[str, object] = mode_hook(directory) if check_mode else {}
     for name in (
         "PermissionRequest",
         "PreToolUse",
@@ -346,10 +398,20 @@ def hook_reply(event: dict[str, object], answer: dict[str, object]) -> dict[str,
 
 
 def hook_main(directory: Path) -> int:
-    event = object_dict(json.load(sys.stdin))
+    # Bytes: Windows' locale stdin encoding would garble the UTF-8 hook input.
+    event = object_dict(json.loads(sys.stdin.buffer.read()))
     name = event.get("hook_event_name")
     if name == "Elicitation":
         emit({"hookSpecificOutput": {"hookEventName": name, "action": "cancel"}})
+        return 0
+    if name == "UserPromptSubmit":
+        held = event.get("permission_mode") == "default"
+        event = {"hook_event_name": name, "permission_mode": event.get("permission_mode")}
+        atomic_json(
+            directory / f"event-{uuid.uuid4().hex}.json", {**event, "agentnave_mode_blocked": held}
+        )
+        if held:
+            emit({"decision": "block", "reason": MODE_HELD})
         return 0
     gated = name == "PermissionRequest" or (
         name == "PreToolUse" and event.get("tool_name") in INTERACTION_TOOLS
@@ -644,20 +706,26 @@ class Transcript:
         self.path = self.path or self.find()
         if self.path is None:
             return []
+        rows, self.offset = self.rows(self.path, self.offset)
+        return rows
+
+    @staticmethod
+    def rows(path: Path, offset: int) -> tuple[list[dict[str, object]], int]:
+        """Complete JSON object lines from offset on, and the offset after them."""
         rows: list[dict[str, object]] = []
-        with self.path.open("rb") as source:
-            source.seek(self.offset)
+        with path.open("rb") as source:
+            source.seek(offset)
             while line := source.readline():
                 if not line.endswith(b"\n"):
                     break
-                self.offset = source.tell()
+                offset = source.tell()
                 try:
                     value: object = json.loads(line)
                 except ValueError:
                     continue
                 if isinstance(value, dict):
                     rows.append(cast(dict[str, object], value))
-        return rows
+        return rows, offset
 
 
 def read_hooks(directory: Path, turn: Turn) -> None:
@@ -798,6 +866,8 @@ def await_turn(
         answers.poll(directory, turn)
         for row in transcript.read():
             turn.transcript(row)
+        if turn.mode_blocked:
+            return
         if turn.error or (turn.done and not turn.pending_prompts):
             if turn.done and not turn.assistant and not turn.error:
                 turn.error = "Claude turn ended without an assistant message"
@@ -843,32 +913,163 @@ def await_turn(
             return
 
 
-def run_main(executable: str, session_id: str | None, extra: list[str], prompt: str) -> int:
+def drop_empty_session(transcript: Transcript) -> None:
+    """Removes the file of a session this run created without any conversation in it."""
+    path = transcript.find()
+    if path is None:
+        return
+    if not any(row.get("type") in ("user", "assistant") for row in Transcript.rows(path, 0)[0]):
+        path.unlink(missing_ok=True)
+
+
+def run_attempt(
+    executable: str,
+    turn: Turn,
+    transcript: Transcript,
+    args: list[str],
+    prompt: str,
+    check_mode: bool,
+) -> None:
+    terminal: Terminal | None = None
+    turn.mode_blocked = False
+    with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
+        directory = Path(tmp)
+        args = [*args, "--settings", str(write_settings(directory, args, check_mode))]
+        try:
+            terminal = Terminal(executable, args)
+            if await_ready(terminal, turn):
+                await_turn(terminal, turn, transcript, directory, prompt)
+            read_hooks(directory, turn)
+        finally:
+            if terminal is not None:
+                terminal.close()
+
+
+def run_main(
+    executable: str,
+    session_id: str | None,
+    extra: list[str],
+    prompt: str,
+    fallback: str | None = None,
+) -> int:
     turn = Turn(session_id or str(uuid.uuid4()))
     emit({"type": "system", "subtype": "init", "session_id": turn.session_id})
-    terminal: Terminal | None = None
     try:
         if not os.path.isabs(executable):
             raise ValueError("Claude executable must be an absolute path")
         if any(c in turn.session_id for c in ("/", "\\")):
             raise ValueError("invalid session id")
         transcript = Transcript(turn.session_id)
-        with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
-            directory = Path(tmp)
-            args = ["--resume" if session_id else "--session-id", turn.session_id]
-            args.extend([*extra, "--settings", str(write_settings(directory, extra))])
-            try:
-                terminal = Terminal(executable, args)
-                if await_ready(terminal, turn):
-                    await_turn(terminal, turn, transcript, directory, prompt)
-                read_hooks(directory, turn)
-            finally:
-                if terminal is not None:
-                    terminal.close()
+        requested = mode_of(extra)
+        modes = [requested] if fallback is None else [requested, fallback]
+        for mode in modes:
+            session = ["--resume" if session_id else "--session-id", turn.session_id]
+            args = [*session, *(with_mode(extra, mode) if mode != requested else extra)]
+            run_attempt(executable, turn, transcript, args, prompt, fallback is not None)
+            if not turn.mode_blocked or mode == modes[-1]:
+                break
+            if session_id is None:
+                # The interactive runtime cannot resume a session whose only prompt was held
+                # back, so a new session restarts under a new ID and drops the empty one.
+                drop_empty_session(transcript)
+                turn.session_id = str(uuid.uuid4())
+                transcript = Transcript(turn.session_id)
+                emit({"type": "system", "subtype": "init", "session_id": turn.session_id})
+        if turn.mode_blocked and fallback is not None:
+            blocked(turn, modes_unavailable(requested, fallback))
+            if session_id is None:
+                drop_empty_session(transcript)
+                turn.session_id = ""  # Nothing to resume: the result carries no session.
+        elif (
+            fallback is not None
+            and not turn.error
+            and (warning := mode_warning(requested, fallback, turn.mode))
+        ):
+            turn.warnings.append(warning)
     except (OSError, ValueError) as exc:
         blocked(turn, str(exc))
     emit(turn.result())
     return 1 if turn.error else 0
+
+
+def write_line(event: dict[str, object]) -> None:
+    # Bytes, so a Windows console encoding never fails on the CLI's UTF-8 output.
+    sys.stdout.buffer.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+    sys.stdout.buffer.flush()
+
+
+def print_attempt(
+    executable: str, args: list[str], prompt: bytes
+) -> tuple[int, dict[str, object] | None, str, bool]:
+    """Streams one -p run through, holding back its result line. Returns the exit status,
+    the result, and the permission mode with whether the mode check held the prompt."""
+    result: dict[str, object] | None = None
+    with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
+        directory = Path(tmp)
+        settings = directory / "settings.json"
+        settings.write_text(json.dumps({"hooks": mode_hook(directory)}), encoding="utf-8")
+        process = subprocess.Popen(
+            [executable, *args, "--settings", str(settings)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+        try:
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.write(prompt)
+            process.stdin.close()
+            for line in process.stdout:
+                try:
+                    event = object_dict(json.loads(line))
+                except ValueError:
+                    event = {}
+                if event.get("type") == "result":
+                    result = event
+                else:
+                    sys.stdout.buffer.write(line)
+                    sys.stdout.buffer.flush()
+            returncode = process.wait()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        mode, held = "", False
+        for path in directory.glob("event-*.json"):
+            event = object_dict(json.loads(path.read_text(encoding="utf-8")))
+            mode = str(event.get("permission_mode") or "")
+            held = bool(event.get("agentnave_mode_blocked"))
+    return returncode, result, mode, held
+
+
+def print_main(executable: str, fallback: str, args: list[str], prompt: bytes) -> int:
+    """`claude --print` with the permission tier's fallback mode (ADR-0059)."""
+    resume = next((a.split("=", 1)[1] for a in args if a.startswith("--resume=")), None)
+    session_id = resume or str(uuid.uuid4())
+    base = [a for a in args if not a.startswith("--resume=")]
+    requested = mode_of(base)
+    for index, mode in enumerate((requested, fallback)):
+        session = ["--resume", session_id] if resume or index else ["--session-id", session_id]
+        attempt = with_mode(base, mode) if index else base
+        returncode, result, actual, held = print_attempt(executable, [*attempt, *session], prompt)
+        if not held:
+            break
+    else:
+        write_line(
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "result": "",
+                "session_id": session_id,
+                "errors": [f"permission required: {modes_unavailable(requested, fallback)}"],
+            }
+        )
+        return 1
+    if result is not None:
+        if warning := mode_warning(requested, fallback, actual):
+            warnings = result.get("warnings")
+            result["warnings"] = [*(warnings if isinstance(warnings, list) else []), warning]
+        write_line(result)
+    return returncode
 
 
 def terminate(signum: int, _frame: object) -> None:
@@ -882,7 +1083,12 @@ def main() -> int:
     run = sub.add_parser("run")
     run.add_argument("--claude", required=True)
     run.add_argument("--resume")
+    run.add_argument("--fallback")
     run.add_argument("extra", nargs=argparse.REMAINDER)
+    printing = sub.add_parser("print")
+    printing.add_argument("--claude", required=True)
+    printing.add_argument("--fallback", required=True)
+    printing.add_argument("extra", nargs=argparse.REMAINDER)
     hook = sub.add_parser("hook")
     hook.add_argument("directory", type=Path)
     args = parser.parse_args()
@@ -890,9 +1096,10 @@ def main() -> int:
         return hook_main(args.directory)
     signal.signal(signal.SIGTERM, terminate)
     extra = cast(list[str], args.extra)
-    return run_main(
-        args.claude, args.resume, extra[1:] if extra[:1] == ["--"] else extra, read_initial_prompt()
-    )
+    extra = extra[1:] if extra[:1] == ["--"] else extra
+    if args.command == "print":
+        return print_main(args.claude, args.fallback, extra, sys.stdin.buffer.read())
+    return run_main(args.claude, args.resume, extra, read_initial_prompt(), args.fallback)
 
 
 if __name__ == "__main__":

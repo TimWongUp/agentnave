@@ -2418,7 +2418,8 @@ async def test_studio_enforces_discussion_defaults_before_saving(
         assert all(
             seat["model"] == "chosen"
             and seat["effort"] == "high"
-            and seat["defaults_applied"] == ["model", "effort", "permission_mode"]
+            and seat["defaults_applied"]
+            == ["model", "effort", "permission_mode", "permission_fallback"]
             for seat in cast(list[dict[str, object]], show["members"])
         )
         saved = _state(data_root, str(show["group_id"]))
@@ -2426,7 +2427,12 @@ async def test_studio_enforces_discussion_defaults_before_saving(
         assert saved["manager_session"]
         assert all(
             seat["provider_options"]
-            == {"model": "chosen", "effort": "high", "permission_mode": "auto"}
+            == {
+                "model": "chosen",
+                "effort": "high",
+                "permission_mode": "auto",
+                "permission_fallback": "bypassPermissions",
+            }
             for seat in saved["seats"]
         )
         assert all(
@@ -2507,7 +2513,13 @@ async def test_studio_records_defaulted_tasks_and_live_manager(
             },
         )
         assert first["model"] == "chosen" and first["effort"] == "high"
-        assert first["defaults_applied"] == ["model", "effort", "agent", "permission_mode"]
+        assert first["defaults_applied"] == [
+            "model",
+            "effort",
+            "agent",
+            "permission_mode",
+            "permission_fallback",
+        ]
         saved = _state(data_root, str(first["conversation_id"]))
         assert saved["host"] == "codex" and saved["host_source"] == "env"
         manager_session = saved["manager_session"]

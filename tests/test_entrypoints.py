@@ -1112,6 +1112,9 @@ async def test_stdio_enforces_host_exclusions_before_launch(
     excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
+    # The server runs in its own process, outside the suite's print-only Claude fixture.
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
     marker = tmp_path / "codex-started"
     fake_codex = tmp_path / "codex"
     fake_codex.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
@@ -1501,16 +1504,24 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         defaulted = await start({})
         assert defaulted["model"] == "chosen" and defaulted["effort"] == "medium"
         # Without permissions.json every CLI with a tier runs it at "auto".
-        applied = ["model", "effort", "agent", "permission_mode"]
+        applied = ["model", "effort", "agent", "permission_mode", "permission_fallback"]
         assert defaulted["defaults_applied"] == applied
         resumed = await start({}, "session-e2e")
         assert resumed["defaults_applied"] == applied
         explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
-        assert explicit["defaults_applied"] == ["permission_mode"] and explicit["effort"] == "high"
+        assert (
+            explicit["defaults_applied"] == ["permission_mode", "permission_fallback"]
+            and explicit["effort"] == "high"
+        )
         # Old CLI-wide settings are ignored even if their file is malformed.
         (tmp_path / "cli-options.json").write_text("{")
         wide = await start({"model": "chosen"})
-        assert wide["defaults_applied"] == ["effort", "agent", "permission_mode"]
+        assert wide["defaults_applied"] == [
+            "effort",
+            "agent",
+            "permission_mode",
+            "permission_fallback",
+        ]
         # A review or Explorer/Worker role brings the seat the user picked for this CLI.
         seat = {"provider": "claude", "model": "chosen", "effort": "high"}
         (tmp_path / "review.json").write_text(
@@ -1534,6 +1545,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "effort",
             "agent",
             "permission_mode",
+            "permission_fallback",
             "access (correctness-reviewer seat)",
             "read-only instruction (access=read)",
         ]
@@ -1552,6 +1564,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "model",
             "agent",
             "permission_mode",
+            "permission_fallback",
             "access (worker-easy seat)",
         ]
         assert worker["access"] == "write"
@@ -1656,7 +1669,12 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert not grouped.is_error, grouped.content
         seats = cast(list[dict[str, object]], _payload(grouped.structured_content)["members"])
         assert seats[0]["model"] == "chosen" and seats[0]["effort"] == "high"
-        assert seats[0]["defaults_applied"] == ["model", "effort", "permission_mode"]
+        assert seats[0]["defaults_applied"] == [
+            "model",
+            "effort",
+            "permission_mode",
+            "permission_fallback",
+        ]
         assert seats[1]["model"] == "outside" and "effort" not in seats[1]
         cast(dict[str, object], document["modes"])["discussion"] = {}
         path.write_text(json.dumps(document), encoding="utf-8")

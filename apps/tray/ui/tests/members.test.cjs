@@ -224,10 +224,10 @@ test("broken settings keep the switch disabled until the existing settings save 
     if (options.method === "POST") {
       posts++;
       const payload = JSON.parse(options.body);
-      assert.equal(payload.claude_interactive, false);
+      assert.equal(payload.claude_interactive, true);
       return { ok: true, json: async () => ({ saved: true }) };
     }
-    return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: false }, error: "claude_interactive 必须为布尔值" }) };
+    return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: true }, error: "claude_interactive 必须为布尔值" }) };
   });
   await app.run("loadLimit()");
   assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);

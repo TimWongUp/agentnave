@@ -162,10 +162,12 @@ const TIER_TEXT = {
   auto: {
     any: L("CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。", "The CLI’s built-in auto-review allows routine commands and edits while blocking obviously dangerous operations."),
     codex: L("Codex 自动审核放行命令，读写限在工作目录内。", "Codex auto-review allows commands while keeping reads and writes within the working directory."),
+    claude: L("Claude Code 自动审核放行常规命令和改动，明显危险的操作仍会被拦下；这台电脑或账号用不了自动审核时，改为完全放开。", "Claude Code’s auto-review allows routine commands and edits while blocking obviously dangerous operations; where auto-review is unavailable, it runs with full access instead."),
   },
   full: {
     any: L("不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review. Choose only when you trust the dispatched tasks."),
     codex: L("不审核也不进沙箱，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review or sandbox. Choose only when you trust the dispatched tasks."),
+    claude: L("不再审核，直接执行任何命令和改动；完全放开被禁用时，改用自动审核。只在你信任派给它的任务时选。", "Runs any command or edit without review; where full access is disabled, it uses auto-review instead. Choose only when you trust the dispatched tasks."),
   },
 };
 
@@ -554,12 +556,12 @@ async function saveLimit() {
   const response = await fetch("/app/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-    body: JSON.stringify({ version: 1, max_running: value, ...(limitError ? { history_retention_days: null, claude_interactive: false } : {}) }),
+    body: JSON.stringify({ version: 1, max_running: value, ...(limitError ? { history_retention_days: null, claude_interactive: true } : {}) }),
   });
   const data = await response.json();
   if (!response.ok || data.error) throw new Error(data.error || L(`同时工作的员工上限保存失败（${response.status}）`, `Failed to save max concurrent employees (${response.status})`));
   limitDoc = { ...(limitDoc || {}), version: 1, max_running: value };
-  if (limitError) Object.assign(limitDoc, { history_retention_days: null, claude_interactive: false });
+  if (limitError) Object.assign(limitDoc, { history_retention_days: null, claude_interactive: true });
   limitError = null;
   limitRevision += 1;
 }
