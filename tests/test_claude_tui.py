@@ -655,6 +655,13 @@ def test_elicitation_hook_cancels_like_print(tmp_path: Path) -> None:
     }
 
 
+def test_prompt_event_hides_secrets_before_cutting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SERVICE_TOKEN", "env-secret-value-1")
+    command = "x" * 7980 + "env-secret-value-1"
+    event = tui.prompt_event("f" * 32, {"tool_name": "Bash", "tool_input": {"command": command}})
+    assert "env-sec" not in str(event["tool_input"])
+
+
 def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
     settings = json.loads(tui.write_settings(tmp_path).read_text())
     for name in ("PermissionRequest", "PreToolUse"):

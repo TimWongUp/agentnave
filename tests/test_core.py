@@ -1347,6 +1347,7 @@ def test_closed_prompt_is_never_reported_again() -> None:
         ({"file_path": "/repo/token-utils/a.md"}, "/repo/token-utils/a.md"),
         ({"command": 'PASSWORD="two words" run'}, 'PASSWORD=\\"****\\" run'),
         ({"password": "two words"}, '"password": "****"'),
+        ({"command": 'PASSWORD="it\'s two" run'}, 'PASSWORD=\\"****\\" run'),
     ],
 )
 def test_prompt_content_hides_credentials_but_stays_json(

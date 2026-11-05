@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from agentnave.claude_tui.turn import Turn, emit, object_dict
+from agentnave.native_prompts import mask_secrets
 
 # The helper's interpreter arguments: isolated mode keeps the working directory off sys.path.
 HELPER = ("-I", "-m", "agentnave.claude_tui")
@@ -183,8 +184,8 @@ def prompt_event(prompt_id: str, event: dict[str, object]) -> dict[str, object]:
         "prompt_id": prompt_id,
         "kind": "question" if question else "permission",
         "tool_name": event.get("tool_name"),
-        # Twice the shown 4000 characters: the service masks secrets before cutting to that.
-        "tool_input": json.dumps(event.get("tool_input"), ensure_ascii=False)[:8000],
+        # Masked whole before any cut: a cut secret is no longer recognizable.
+        "tool_input": mask_secrets(json.dumps(event.get("tool_input"), ensure_ascii=False))[:8000],
     }
     if question:
         questions = object_dict(event.get("tool_input")).get("questions", [])
