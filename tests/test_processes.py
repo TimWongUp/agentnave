@@ -1,13 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import sys
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from agentnave import processes
+
+
+@pytest.mark.asyncio
+async def test_provider_does_not_inherit_host_listener(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inherited = {
+        "SERVER__PORT": "51153",
+        "SERVER__HOST": "127.0.0.1",
+        "CODEBUDDY_CONFIG_DIR": str(tmp_path),
+    }
+    for name, value in inherited.items():
+        monkeypatch.setenv(name, value)
+    script = (
+        "import json,os; print(json.dumps({name: os.environ.get(name) "
+        f"for name in {tuple(inherited)!r}}}))"
+    )
+    supervised = await processes.spawn_process((sys.executable, "-c", script), tmp_path)
+    try:
+        completion = await asyncio.wait_for(supervised.completion, 10)
+    finally:
+        await processes.terminate_process_tree(supervised.process)
+    stdout, stderr = await supervised.process.communicate()
+
+    assert completion.returncode == 0, stderr
+    assert json.loads(stdout) == {
+        "SERVER__PORT": None,
+        "SERVER__HOST": None,
+        "CODEBUDDY_CONFIG_DIR": str(tmp_path),
+    }
+    assert {name: os.environ[name] for name in inherited} == inherited
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX status pipe")

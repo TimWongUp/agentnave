@@ -44,12 +44,14 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## Provider Adapter
 
-- 每个 Adapter 负责一个 CLI 的命令准备、选项校验、原生事件解析与终态归一化。Provider 专属知识留在 Adapter 内：流事件里的模型、运行后从 CLI 自身文件回读模型、隔离席位目录的准备，都通过 `ProviderAdapter` 的钩子提供；是否支持受限工具运行、受限时额外允许的选项和选项说明也由各 Adapter 声明。核心与历史层不按 Provider 名分支。
+- 每个 Adapter 负责一个 CLI 的命令准备、选项校验、原生事件解析与终态归一化。Provider 专属知识留在 Adapter 内：流事件里的模型、运行后从 CLI 自身文件回读模型、隔离席位目录的准备，都通过 `ProviderAdapter` 的钩子提供；是否支持受限工具运行、受限时额外允许的选项和选项说明也由各 Adapter 声明。Adapter 可在准备的命令中声明需排除的继承环境变量，进程层在启动子进程时应用，不改服务自身环境。核心与历史层不按 Provider 名分支。
 - 可执行文件在每次准备命令时解析，加装或卸载 CLI 下次调用即生效；Adapter 不负责安装、升级或版本比较。
 - 任务原文只存于会话历史，不写服务日志；stderr 只在失败结果中以有界详情返回。
 
 ## 进程所有权与安全边界
 
+- 启动组员前，服务从子进程环境移除父宿主内部 HTTP 服务的监听地址，避免组员复用父进程已占用的端口；不改服务自身环境或组员的原生配置目录。
+- WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
 - macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。

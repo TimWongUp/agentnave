@@ -74,6 +74,7 @@ class PreparedCommand:
     # provider reports its id can still be continued.
     session_id: str | None = None
     keep_stdin_open: bool = False
+    unset_env: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

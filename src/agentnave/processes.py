@@ -35,9 +35,11 @@ class SupervisedProcess:
     completion: asyncio.Task[ProviderCompletion]
 
 
-async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
+async def spawn_process(
+    argv: tuple[str, ...], cwd: Path, *, unset_env: tuple[str, ...] = ()
+) -> SupervisedProcess:
     if os.name == "nt":
-        return await _spawn_windows_process(argv, cwd)
+        return await _spawn_windows_process(argv, cwd, unset_env=unset_env)
     if os.name != "posix":
         raise OSError(f"AgentNave does not support process supervision on {os.name}")
     status_read, status_write = os.pipe()
@@ -54,7 +56,7 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
             pass_fds=(status_write,),
-            env=provider_environment(argv),
+            env=provider_environment(argv, unset_env=unset_env),
         )
     except BaseException:
         os.close(status_read)
@@ -70,7 +72,9 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
 WITHHELD_CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN",)
 
 
-def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
+def provider_environment(
+    argv: tuple[str, ...], *, unset_env: tuple[str, ...] = ()
+) -> dict[str, str]:
     """Inherited environment with PATH completed for the provider only.
 
     Hosts may pass a minimal PATH; `#!/usr/bin/env node` style CLIs then fail even
@@ -81,7 +85,11 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("AGENTNAVE_HOST_SESSION_ID", None)
     env.pop("AGENTNAVE_HOST_APP", None)
-    for name in (*NATIVE_SESSION_ENV.values(), *WITHHELD_CREDENTIALS):
+    # WorkBuddy/CodeBuddy set these to their own live HTTP listener. A nested CLI
+    # must choose its own address, as their native nested-CLI launcher also does.
+    env.pop("SERVER__PORT", None)
+    env.pop("SERVER__HOST", None)
+    for name in (*NATIVE_SESSION_ENV.values(), *WITHHELD_CREDENTIALS, *unset_env):
         env.pop(name, None)
     if os.name == "nt":
         env.update(_system_proxy(env))
@@ -150,7 +158,9 @@ async def terminate_process_tree(
     await process.wait()
 
 
-async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
+async def _spawn_windows_process(
+    argv: tuple[str, ...], cwd: Path, *, unset_env: tuple[str, ...] = ()
+) -> SupervisedProcess:
     status_fd, status_name = tempfile.mkstemp(prefix="agentnave-", suffix=".json")
     os.close(status_fd)
     status_path = Path(status_name)
@@ -175,7 +185,7 @@ async def _spawn_windows_process(argv: tuple[str, ...], cwd: Path) -> Supervised
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            env=provider_environment(argv),
+            env=provider_environment(argv, unset_env=unset_env),
         )
     except BaseException:
         status_path.unlink(missing_ok=True)

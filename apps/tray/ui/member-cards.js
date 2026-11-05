@@ -89,7 +89,7 @@ function slotAllowedRows({ provider, current, native, all, offered, model, key, 
           disabled: !all.length,
           onChange: (e) => pick(e.target.checked
             ? { allowed: null, model: current.model === native.model ? "" : current.model }
-            : { allowed: [model || all[0]] }),
+            : { allowed: all.length ? [...all] : model ? [model] : [] }),
         }), textNode(L("全部模型（以后新出的也算）", "All models (including future releases)"))),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
