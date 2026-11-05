@@ -1296,9 +1296,9 @@ while line := sys.stdin.readline():
             ]
             assert all(isinstance(notice, NativePrompt) for notice in notices)
             assert await manager.wait_for_update(invocation, 0) is None
-            await manager.answer_prompt(invocation, "a" * 32, "boss", "allow")
+            await manager.answer_prompt(invocation, "a" * 32, "allow")
             with pytest.raises(ValueError, match="already answered"):
-                await manager.answer_prompt(invocation, "a" * 32, "boss", "deny")
+                await manager.answer_prompt(invocation, "a" * 32, "deny")
             result = await manager.cancel(invocation)
             assert result.status is InvocationStatus.CANCELLED
             assert [answer["decision"] for answer in sent] == ["allow", "deny"]
@@ -1307,7 +1307,7 @@ while line := sys.stdin.readline():
             assert history[1]["answer"] is not None
             assert cast(dict[str, object], history[1]["answer"])["actor"] == "service_cancel"
             with pytest.raises(ValueError, match="ended"):
-                await manager.answer_prompt(invocation, "b" * 32, "boss", "allow")
+                await manager.answer_prompt(invocation, "b" * 32, "allow")
         finally:
             await manager.shutdown()
 
@@ -1345,6 +1345,8 @@ def test_closed_prompt_is_never_reported_again() -> None:
         ({"command": "git clone https://me:pa55word@host/x.git"}, "https://****@host"),
         ({"command": "echo env-secret-value-1"}, "echo ****"),
         ({"file_path": "/repo/token-utils/a.md"}, "/repo/token-utils/a.md"),
+        ({"command": 'PASSWORD="two words" run'}, 'PASSWORD=\\"****\\" run'),
+        ({"password": "two words"}, '"password": "****"'),
     ],
 )
 def test_prompt_content_hides_credentials_but_stays_json(
@@ -1354,3 +1356,13 @@ def test_prompt_content_hides_credentials_but_stays_json(
     prompt = NativePrompt("e" * 32, "permission", "Bash", tool_input=json.dumps(tool_input))
     assert masked in prompt.payload()["tool_input"]
     assert json.loads(prompt.history()["tool_input"])  # type: ignore[arg-type]
+
+
+def test_prompt_content_hides_credentials_before_cutting_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SERVICE_TOKEN", "env-secret-value-1")
+    prompt = NativePrompt(
+        "e" * 32, "permission", "Bash", tool_input="x" * 3990 + "env-secret-value-1"
+    )
+    assert prompt.tool_input.endswith("****") and "env-sec" not in prompt.tool_input

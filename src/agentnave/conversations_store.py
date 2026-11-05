@@ -366,9 +366,7 @@ class ConversationStore(Groups):
         if session is None or session != record.state.manager_session:
             raise ValueError(self._not_yours("Native prompt", record.state.manager_session))
         # Ownership is resolved live, so the previous boss loses access after handover.
-        await self.manager.answer_prompt(
-            invocation_id, prompt_id, manager_session_id, decision, reason, answers
-        )
+        await self.manager.answer_prompt(invocation_id, prompt_id, decision, reason, answers)
 
     def _forget_invocation(self, invocation_id: str) -> None:
         self.task_invocations.pop(invocation_id, None)

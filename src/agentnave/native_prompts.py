@@ -18,10 +18,11 @@ def timestamp() -> str:
 
 MASK = "****"
 # The value after a secret-looking key, in shell (KEY=v), header (Key: v) and JSON ("key": "v").
+# A quoted value, JSON-escaped or not, is hidden up to its closing quote.
 _SECRET_VALUE = re.compile(
     r"(?i)((?:token|password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"credential|authorization|cookie)\w*[\"']?\s*[=:]\s*[\"']?(?:(?:bearer|basic)\s+)?)"
-    r"([^\s\"'\\,;]{4,})"
+    r"credential|authorization|cookie)\w*(?:\\?[\"'])?\s*[=:]\s*)"
+    r"(?:(\\?[\"'])[^\"'\n]+?(?=\\?[\"'])|((?:bearer|basic)\s+)?[^\s\"'\\,;]{4,})"
 )
 _SECRET_TOKENS = re.compile(
     r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"
@@ -42,7 +43,7 @@ def mask_secrets(text: str) -> str:
         if len(value) >= 8 and _SECRET_ENV_NAME.search(name):
             text = text.replace(value, MASK)
     text = _SECRET_TOKENS.sub(MASK, text)
-    return _SECRET_VALUE.sub(lambda m: m.group(1) + MASK, text)
+    return _SECRET_VALUE.sub(lambda m: m.group(1) + (m.group(2) or m.group(3) or "") + MASK, text)
 
 
 class PromptPayload(TypedDict):
@@ -69,7 +70,8 @@ class NativePrompt:
     notified: bool = False
 
     def __post_init__(self) -> None:
-        self.tool_input = mask_secrets(self.tool_input)
+        # Mask before cutting: a cut can split a secret the mask would no longer recognize.
+        self.tool_input = mask_secrets(self.tool_input)[:4000]
 
     def payload(self) -> PromptPayload:
         result: PromptPayload = {
@@ -159,7 +161,6 @@ class PromptChannel:
         decision: str | None,
         reason: str | None,
         answers: dict[str, str] | None,
-        manager_session_id: str | None,
         *,
         cancel: bool = False,
     ) -> NativePrompt:
@@ -182,9 +183,9 @@ class PromptChannel:
             reply["answers"] = answers
         data = encode(reply)
         prompt.status = "answered"
+        # The raw boss chat ID never reaches disk (ADR-0033); the workspace already names it.
         prompt.answer = {
             **reply,
-            "manager_session_id": manager_session_id,
             "actor": "service_cancel" if cancel else "boss",
             "answered_at": timestamp(),
         }

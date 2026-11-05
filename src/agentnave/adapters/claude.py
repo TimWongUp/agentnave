@@ -56,13 +56,6 @@ def _denied_tools(event: dict[str, object]) -> list[str]:
 _MODES = frozenset({"auto", "bypassPermissions"})
 
 
-def _helper() -> str:
-    # os.path, not pathlib: tests swap os.name, and pathlib then refuses to build paths.
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "claude_tui.py"
-    )
-
-
 def _result_capture() -> Callable[[bytes], bytes]:
     last_session: str | None = None
 
@@ -146,7 +139,8 @@ class ClaudeAdapter(AdapterHooks):
             argv = [
                 sys.executable,
                 "-I",
-                _helper(),
+                "-m",
+                "agentnave.claude_tui",
                 "run",
                 "--claude",
                 self.executable_path(),
@@ -182,7 +176,8 @@ class ClaudeAdapter(AdapterHooks):
             argv = [
                 sys.executable,
                 "-I",
-                _helper(),
+                "-m",
+                "agentnave.claude_tui",
                 "print",
                 "--claude",
                 claude,
@@ -214,7 +209,7 @@ class ClaudeAdapter(AdapterHooks):
             prompt_id,
             "question" if kind == "question" else "permission",
             str(event.get("tool_name", ""))[:200],
-            str(event.get("tool_input", ""))[:4000],
+            str(event.get("tool_input", "")),
             [object_dict(q) for q in cast(list[object], questions)]
             if isinstance(questions, list)
             else [],

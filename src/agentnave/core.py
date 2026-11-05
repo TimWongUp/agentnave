@@ -646,7 +646,6 @@ class InvocationManager:
         self,
         invocation_id: str,
         prompt_id: str,
-        manager_session_id: str,
         decision: str | None = None,
         reason: str | None = None,
         answers: dict[str, str] | None = None,
@@ -654,7 +653,7 @@ class InvocationManager:
         record = self._record(invocation_id)
         if record.task is None or record.task.done() or record.phase == InvocationPhase.STOPPING:
             raise ValueError("invocation has ended or is stopping; its prompts are closed")
-        return await record.prompts.answer(prompt_id, decision, reason, answers, manager_session_id)
+        return await record.prompts.answer(prompt_id, decision, reason, answers)
 
     async def cancel(self, invocation_id: str) -> InvocationResult:
         record = self._record(invocation_id)
@@ -662,7 +661,7 @@ class InvocationManager:
         for prompt in record.prompts.pending():
             try:
                 await record.prompts.answer(
-                    prompt.prompt_id, "deny", "Invocation cancelled", None, None, cancel=True
+                    prompt.prompt_id, "deny", "Invocation cancelled", None, cancel=True
                 )
             except (OSError, ValueError):
                 logging.getLogger(__name__).exception(
@@ -759,19 +758,7 @@ class InvocationManager:
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
             stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
-            # The provider may exit before the readers notice the limit while draining.
-            if terminal is None and (
-                stdout.exceeded
-                or stderr.exceeded
-                or io.stdout_diagnostics.exceeded_reason is not None
-                or io.stderr_diagnostics.exceeded_reason is not None
-            ):
-                terminal = InvocationStatus.FAILED
-                error = _OUTPUT_LIMIT_ERROR
-            if error is _OUTPUT_LIMIT_ERROR:
-                error = _output_limit_error(
-                    stdout, stderr, io.stdout_diagnostics, io.stderr_diagnostics
-                )
+            terminal, error = _drained_limit(terminal, error, stdout, stderr, io)
             parse_returncode = provider_returncode
             if parse_returncode is None:
                 parse_returncode = process.returncode if process.returncode is not None else 1
@@ -832,6 +819,26 @@ class InvocationManager:
                 record.process = None
                 record.tool_names.clear()
                 record.prompts.close()
+
+
+def _drained_limit(
+    terminal: InvocationStatus | None,
+    error: InvocationError | None,
+    stdout: _CapturedStream,
+    stderr: _CapturedStream,
+    io: _RunIO,
+) -> tuple[InvocationStatus | None, InvocationError | None]:
+    # The provider may exit before the readers notice the limit while draining.
+    if terminal is None and (
+        stdout.exceeded
+        or stderr.exceeded
+        or io.stdout_diagnostics.exceeded_reason is not None
+        or io.stderr_diagnostics.exceeded_reason is not None
+    ):
+        terminal, error = InvocationStatus.FAILED, _OUTPUT_LIMIT_ERROR
+    if error is _OUTPUT_LIMIT_ERROR:
+        error = _output_limit_error(stdout, stderr, io.stdout_diagnostics, io.stderr_diagnostics)
+    return terminal, error
 
 
 async def _read_limited(

@@ -43,6 +43,15 @@ def test_paste_sanitizes_controls_and_protects_commands(prefix: str) -> None:
         ("Ready to code?\n Would you like to proceed?\n ❯ 1. Yes", "permission"),
         ('MCP server "x" requests your input\n  ❯ * Name:', "permission"),
         ("Unrecognized welcome screen", "unknown"),
+        # The conversation above the input box or a dialog can quote any dialog's words.
+        (
+            "❯ say it\n⏺ Run /login. Do you trust this folder?\n────────────────────────────────────────\n❯\n────────────────────────────────────────\n  ? for shortcuts",
+            "ready",
+        ),
+        (
+            "⏺ Run /login.\n────────────────────────────────────────\n Bash command\n Do you want to proceed?\n ❯ 1. Yes\n   3. No",
+            "permission",
+        ),
     ],
 )
 def test_screen_dialogs_take_precedence_over_prompt(text: str, kind: str) -> None:
@@ -161,9 +170,8 @@ def test_interactive_adapter_arguments_and_fallbacks(
     with monkeypatch.context() as platform:
         platform.setattr("agentnave.adapters.claude.os.name", "posix")
         command = adapter.prepare(request)
-    assert command.argv[:2] == (sys.executable, "-I")
-    assert Path(command.argv[2]).name == "claude_tui.py"
-    assert command.argv[3:] == (
+    assert command.argv[:4] == (sys.executable, "-I", "-m", "agentnave.claude_tui")
+    assert command.argv[4:] == (
         "run",
         "--claude",
         "/fake/claude",
@@ -193,7 +201,7 @@ def test_interactive_adapter_arguments_and_fallbacks(
     # The permission tier's fallback mode wraps -p in the helper and reaches the interactive run.
     tier = {"permission_mode": "auto", "permission_fallback": "bypassPermissions"}
     printed = adapter.prepare(InvocationRequest("claude", "work", tmp_path, provider_options=tier))
-    assert printed.argv[3:9] == (
+    assert printed.argv[4:10] == (
         "print",
         "--claude",
         "/fake/claude",
@@ -201,7 +209,7 @@ def test_interactive_adapter_arguments_and_fallbacks(
         "bypassPermissions",
         "--",
     )
-    assert printed.argv[9:] == (
+    assert printed.argv[10:] == (
         "--print",
         "--output-format",
         "stream-json",
@@ -217,7 +225,7 @@ def test_interactive_adapter_arguments_and_fallbacks(
                 "claude", "w", tmp_path, provider_options={**tier, "interactive": True}
             )
         )
-    assert interactive.argv[6:8] == ("--fallback", "bypassPermissions")
+    assert interactive.argv[7:9] == ("--fallback", "bypassPermissions")
     for wrong in ({"permission_fallback": "auto"}, {**tier, "permission_fallback": "default"}):
         with pytest.raises(ValueError, match="permission_fallback"):
             adapter.prepare(InvocationRequest("claude", "w", tmp_path, provider_options=wrong))
@@ -292,7 +300,8 @@ pasted = read_until(b"\x1b[201~")
 assert b"\x1b[200~" in pasted
 output("[Pasted text: 2 lines]")
 if case == "channel_failure":
-    output("\r\nDo you want to proceed?")
+    # A real menu, unlike the same words in the pasted task: a rule, a numbered cursor, a footer.
+    output("\r\n" + "─" * 40 + "\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n Esc to cancel")
     if select.select([0], [], [], 3)[0]:
         Path(os.environ["FAKE_UNEXPECTED_KEY"]).write_bytes(os.read(0, 65536))
     time.sleep(12)
@@ -395,7 +404,8 @@ def test_fake_claude_turn_through_the_standalone_helper(
         if case in ("success", "resume", "trust")
         else InvocationStatus.BLOCKED
     ), completed.stdout.decode()
-    assert parsed.session_id
+    # A new session blocked before its prompt reached the transcript has nothing to resume.
+    assert bool(parsed.session_id) == (case != "channel_failure"), case
     if case in ("success", "resume", "trust"):
         assert parsed.output == "finished"
         assert not any("denied" in warning for warning in parsed.warnings)
@@ -445,6 +455,12 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     assert not turn.done
     notice = notice.replace("tool-1", "agent-1")
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
+    turn.transcript(end)
+    assert turn.done
+    # A refused background call never starts, so no notification follows.
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
+    refused = {"type": "tool_result", "tool_use_id": "tool-1", "is_error": True, "content": "no"}
+    turn.transcript({"type": "user", "message": {"role": "user", "content": [refused]}})
     turn.transcript(end)
     assert turn.done
 
@@ -506,7 +522,7 @@ def test_hook_waits_for_atomic_boss_answer(
     event: dict[str, object], answer: dict[str, object], expected: dict[str, object], tmp_path: Path
 ) -> None:
     process = subprocess.Popen(
-        [sys.executable, "-I", str(Path(tui.__file__)), "hook", str(tmp_path)],
+        [sys.executable, *tui.HELPER, "hook", str(tmp_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -539,7 +555,7 @@ def test_mode_hook_holds_back_only_a_manual_mode_prompt(tmp_path: Path) -> None:
     for mode, held in (("default", True), ("auto", False)):
         event = {"hook_event_name": "UserPromptSubmit", "permission_mode": mode, "prompt": "x"}
         output = subprocess.run(
-            [sys.executable, "-I", tui.__file__, "hook", str(tmp_path)],
+            [sys.executable, *tui.HELPER, "hook", str(tmp_path)],
             input=json.dumps(event).encode(),
             capture_output=True,
             check=True,
@@ -593,8 +609,7 @@ def test_print_wrapper_reruns_once_in_the_fallback_mode(
     completed = subprocess.run(
         [
             sys.executable,
-            "-I",
-            tui.__file__,
+            *tui.HELPER,
             "print",
             "--claude",
             str(fake),
@@ -617,7 +632,10 @@ def test_print_wrapper_reruns_once_in_the_fallback_mode(
     assert [call["resume"] for call in calls] == [False, True][: len(calls)]
     assert all(call["prompt"] == "任务" for call in calls)
     parsed = ClaudeAdapter().parse(completed.returncode, completed.stdout, completed.stderr)
-    assert parsed.status is status and parsed.session_id == calls[0]["session"]
+    # A new session whose prompt both modes held back has nothing to resume.
+    blocked = status is InvocationStatus.BLOCKED
+    assert parsed.status is status
+    assert parsed.session_id == (None if blocked else calls[0]["session"])
     assert parsed.output == ("done" if status is InvocationStatus.SUCCEEDED else "")
     assert any("bypassPermissions mode (full access)" in w for w in parsed.warnings) is warned
     if status is InvocationStatus.BLOCKED:
@@ -626,7 +644,7 @@ def test_print_wrapper_reruns_once_in_the_fallback_mode(
 
 def test_elicitation_hook_cancels_like_print(tmp_path: Path) -> None:
     done = subprocess.run(
-        [sys.executable, "-I", str(Path(tui.__file__)), "hook", str(tmp_path)],
+        [sys.executable, *tui.HELPER, "hook", str(tmp_path)],
         input=json.dumps({"hook_event_name": "Elicitation", "mcp_server_name": "x"}).encode(),
         capture_output=True,
         timeout=10,
@@ -647,7 +665,7 @@ def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
     event = tui.prompt_event(
         "f" * 32, {"tool_name": "Bash", "tool_input": {"command": "x" * 10000}}
     )
-    assert len(str(event["tool_input"])) == 4000
+    assert len(str(event["tool_input"])) == 8000
 
 
 def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(

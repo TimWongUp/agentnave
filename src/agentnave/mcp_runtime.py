@@ -401,7 +401,10 @@ def update_payload(
         response["output"] = output
         response["output_age_ms"] = age
     if isinstance(update, NativePrompt):
-        response["prompts"] = [update.payload()]
+        others = manager.pending_prompts(invocation_id)
+        response["prompts"] = [update.payload()] + [
+            prompt.payload() for prompt in others if prompt.prompt_id != update.prompt_id
+        ]
     else:
         if update is not None:
             response["error"] = {"code": update.code, "message": update.message}

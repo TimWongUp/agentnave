@@ -3252,7 +3252,7 @@ async def test_native_prompt_inbox_validation_ownership_and_audit(
         assert ended.is_error and "ended" in str(ended.content)
         saved = _state(data_root, start["conversation_id"])["tasks"][0]["prompts"][0]
         assert saved["status"] == "answered"
-        assert saved["answer"]["manager_session_id"] == "new-owner"
+        assert "manager_session_id" not in saved["answer"] and saved["answer"]["actor"] == "boss"
         assert saved["answer"]["answered_at"] and saved["created_at"]
         assert saved["invocation_id"] == invocation
 

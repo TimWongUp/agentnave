@@ -1,6 +1,6 @@
-# ADR-0056：Claude Code 可选改用交互模式运行
+# ADR-0056：Claude Code 改用交互模式运行
 
-- 状态：提议
+- 状态：已接受
 - 日期：2026-11-04
 - 修订 [ADR-0019](0019-no-running-messages.md)：Claude 不再只有一次性 print 调用；交互模式会让会话出现在 Claude Code 自带的历史与 `/resume` 列表里。
 - 运行中的原生弹框由 boss 代答，见 [ADR-0057](0057-boss-answers-native-prompts.md)。
@@ -13,7 +13,7 @@ PTY 驱动交互 Claude Code 的 spike 已跑通：bracketed paste 投递任务�
 
 ## 决定
 
-- **macOS 与 Linux 默认打开**。App 在 Claude 员工卡片上提供「交互模式」开关，私聊与会议共用，默认打开；关掉后行为与 `-p` 完全相同。Linux 没有 App，默认即交互模式，boss 可显式传 `interactive=false`。Windows 没有交互运行时，App 不显示开关，服务也不套用，一律用 `-p`。订阅登录、长期 token（`CLAUDE_CODE_OAUTH_TOKEN`）和 API key 都是官方认证方式，一样走交互模式。隔离会议席位和受限工具运行继续用 `-p`。开关存于数据根 `settings.json`，缺省即打开（App 写入，旧服务忽略多出的键，损坏时与同文件其他设置一样返回 App 修复错误）；服务在入口把它转成 Claude Adapter 的选项并在 `defaults_applied` 注明，调用方显式传这个选项时以显式值为准。它不是权限键，不受权限档位约束。
+- **macOS 与 Linux 默认打开**。App 在 Claude 员工卡片上提供「交互模式」开关，私聊与会议共用，默认打开；关掉后行为与 `-p` 完全相同。Linux 没有 App，默认即交互模式，boss 可显式传 `interactive=false`。Windows 没有交互运行时，App 不显示开关，服务也不套用，一律用 `-p`。订阅登录和 API key 一样走交互模式；长期 token 不传给子代理（[ADR-0058](0058-claude-stored-login.md)）。隔离会议席位和受限工具运行继续用 `-p`。开关存于数据根 `settings.json`，缺省即打开（App 写入，旧服务忽略多出的键，损坏时与同文件其他设置一样返回 App 修复错误）；服务在入口把它转成 Claude Adapter 的选项并在 `defaults_applied` 注明，调用方显式传这个选项时以显式值为准。它不是权限键，不受权限档位约束。
 - **形状**。开关打开时，Claude Adapter 的 Provider argv 换成 AgentNave 自带的 helper，由 helper 在同一 supervisor 进程组里建 PTY、启动 `claude`；进程所有权、取消和清理与现在相同。helper 就是 Provider 进程：它把 transcript 和 hooks 归一成事件写到 stdout，由 Claude Adapter 解析；hooks 与 helper 之间的通道是 helper 私有的，只在该调用自己的临时目录里。核心看到的仍是一个 Provider 进程和一串事件。一次调用一个进程，回合结束即退出，不保活。模型、档位、权限档位的映射与 `-p` 相同；hooks 设置文件属于协议必需参数，与用户自己的 hooks 合并生效。
 - **投递内容不变**。服务追加的派发前缀和任务原文与 `-p` 完全相同，整段 bracketed paste 投递，不拆成按键加粘贴，也不放进系统提示。粘贴前清理控制字符和会提前结束粘贴的转义序列；以 `/`、`!`、`#`、`&` 开头时加防护，不被当作斜杠命令、Bash 模式或记忆写入。
 - **环境**。AgentNave 不设置 `CLAUDE_CODE_ENTRYPOINT`。服务现在已对所有路径清掉宿主会话 ID `CLAUDE_CODE_SESSION_ID`；交互路径另由 helper 在启动 `claude` 前清掉宿主带下来的其余 Claude 变量（`CLAUDECODE`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_CHILD_SESSION` 等具名清单）：继承 `CLAUDE_CODE_CHILD_SESSION` 会关掉 transcript，属于协议必需。服务的进程环境和 `-p` 路径不变。不使用 `CLAUDE_CODE_SKIP_PROMPT_HISTORY`，它会同时关掉 transcript 和续接。
@@ -51,6 +51,6 @@ PTY 驱动交互 Claude Code 的 spike 已跑通：bracketed paste 投递任务�
 - **固定指令按键、任务正文粘贴，或指令放进 `--append-system-prompt-file`**：实测遵守度与整段粘贴相同；后者只多一点系统提示缓存，还要 Adapter 多加 prompt 参数。不作为默认。
 - **保活进程借 idle compact、续接前主动 `/compact`、定时请求续期缓存**：续接间隔多在 1 小时内，现有缓存已命中；保活改变进程所有权和运行名额，续接时压缩为时已晚，定时请求无人值守地消耗额度。放弃。重新评估的条件：Claude「≥200k 上下文且间隔超过 1 小时」的续接明显增多，默认 TTL 下调，Claude 从会议席位扩展到私聊，Claude Code 提供非交互的官方压缩入口，或回执开始提供上下文大小。
 
-## 接受前须真实验收
+## 尚未真实验收
 
-真实限流菜单（只观察不操作）；auto 模式分类器连续拦截后的恢复提示；冷恢复额度框原样恢复后的完整回合；从摘要恢复框；Linux。
+用户在 2026-11-05 定为默认打开，以下情形尚未真实验收，出现时按上面的规则报 BLOCKED 或按现有映射处理：真实限流菜单（只观察不操作）；auto 模式分类器连续拦截后的恢复提示；冷恢复额度框原样恢复后的完整回合；从摘要恢复框；Linux。
