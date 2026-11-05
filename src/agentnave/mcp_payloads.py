@@ -7,6 +7,7 @@ from typing import Literal, NotRequired, TypedDict
 from pydantic import BaseModel
 
 from agentnave.members import MemberList, ProviderName
+from agentnave.native_prompts import PromptPayload
 from agentnave.store import Unavailable
 
 
@@ -36,7 +37,7 @@ class ActivityPayload(TypedDict):
 class InvocationPayload(TypedDict):
     invocation_id: str
     status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
-    reason: Literal["started", "wait_elapsed", "execution_blocked", "finished"]
+    reason: Literal["started", "wait_elapsed", "execution_blocked", "prompt_pending", "finished"]
     elapsed_ms: NotRequired[int]
     provider: NotRequired[str]
     model: NotRequired[str]
@@ -45,6 +46,7 @@ class InvocationPayload(TypedDict):
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
+    prompts: NotRequired[list[PromptPayload]]
     output_age_ms: NotRequired[int]
     session_id: NotRequired[str]
     message_id: NotRequired[str]  # terminal saved task, referencable by forward
@@ -115,6 +117,7 @@ class SeatRunPayload(TypedDict):
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
+    prompts: NotRequired[list[PromptPayload]]
     output_age_ms: NotRequired[int]
     output_returned: NotRequired[bool]
     session_id: NotRequired[str]

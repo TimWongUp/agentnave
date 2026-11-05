@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -127,7 +128,7 @@ def test_result_keeps_last_answer_denials_stop_failure_and_warnings() -> None:
     assert parsed.output == "partial" and parsed.status is InvocationStatus.SUCCEEDED
     assert "3d 19h 47m" in parsed.warnings[0]
     assert "293.4k" in parsed.warnings[0] and "5%" in parsed.warnings[0]
-    assert "denied 3 tool call(s)" in parsed.warnings[1]
+    assert "denied 1 tool call(s)" in parsed.warnings[1]
     turn.hook({"hook_event_name": "StopFailure", "error": "authentication_failed"})
     # Check StopFailure independently of permission denials (which also block failures).
     turn.denials.clear()
@@ -170,7 +171,8 @@ def test_interactive_adapter_arguments_and_fallbacks(
         "--model",
         "sonnet",
     )
-    assert command.stdin == b"work" and command.capture_line is not None
+    assert command.stdin == b'{"prompt": "work"}\n' and command.capture_line is not None
+    assert command.keep_stdin_open
     with monkeypatch.context() as platform:
         platform.setattr("agentnave.adapters.claude.os.name", "nt")
         assert "--print" in adapter.prepare(request).argv
@@ -267,9 +269,10 @@ if case == "failure":
     hook("StopFailure", error="authentication_failed")
 else:
     response = hook("PermissionRequest", tool_name="Bash", tool_input={"command": "echo example"})
-    assert response["hookSpecificOutput"]["decision"]["behavior"] == "deny"
-    response = hook("PreToolUse", tool_name="AskUserQuestion", tool_input={})
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert response["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+    response = hook("PreToolUse", tool_name="AskUserQuestion", tool_input={"questions": [{"question": "Which?", "options": [{"label": "A"}, {"label": "B"}]}]})
+    assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert response["hookSpecificOutput"]["updatedInput"]["answers"] == {"Which?": "A"}
     with path.open("a") as f:
         for row in [
             {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "child"}]}},
@@ -310,9 +313,41 @@ def test_fake_claude_turn_through_the_standalone_helper(
             "claude", "work", tmp_path, session_id=sid, provider_options={"interactive": True}
         )
     )
-    completed = subprocess.run(
-        command.argv, input=command.stdin, capture_output=True, cwd=tmp_path, timeout=20
+    process = subprocess.Popen(
+        command.argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
     )
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    process.stdin.write(command.stdin or b"")
+    process.stdin.flush()
+    lines: list[bytes] = []
+    try:
+        for line in process.stdout:
+            lines.append(line)
+            event = json.loads(line)
+            if event.get("type") == "agentnave_prompt":
+                answer = {
+                    "type": "agentnave_answer",
+                    "prompt_id": event["prompt_id"],
+                    "decision": "allow",
+                }
+                if event["kind"] == "question":
+                    answer["answers"] = {"Which?": "A"}
+                process.stdin.write((json.dumps(answer) + "\n").encode())
+                process.stdin.flush()
+        process.wait(timeout=20)
+        completed = subprocess.CompletedProcess(
+            command.argv, process.returncode, b"".join(lines), process.stderr.read()
+        )
+    finally:
+        process.kill() if process.poll() is None else None
+        process.wait()
+        process.stdin.close()
+        process.stdout.close()
+        process.stderr.close()
     assert completed.stderr == b"", completed.stderr.decode()
     capture = command.capture_line
     assert capture is not None
@@ -326,7 +361,7 @@ def test_fake_claude_turn_through_the_standalone_helper(
     assert parsed.session_id
     if case in ("success", "resume", "trust"):
         assert parsed.output == "finished"
-        assert any("denied 2 tool call(s)" in warning for warning in parsed.warnings)
+        assert not any("denied" in warning for warning in parsed.warnings)
         events = [
             cast(dict[str, object], json.loads(line)) for line in completed.stdout.splitlines()
         ]
@@ -360,3 +395,100 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
     turn.transcript(end)
     assert turn.done
+
+
+@pytest.mark.parametrize(
+    ("event", "answer", "expected"),
+    [
+        (
+            {"hook_event_name": "PermissionRequest", "tool_name": "Bash"},
+            {"decision": "allow"},
+            {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}},
+        ),
+        (
+            {"hook_event_name": "PermissionRequest", "tool_name": "Edit"},
+            {"decision": "deny", "message": "outside scope"},
+            {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "deny", "message": "outside scope"},
+            },
+        ),
+        (
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "AskUserQuestion",
+                "tool_input": {"questions": [{"question": "Which?"}]},
+            },
+            {"decision": "allow", "answers": {"Which?": "A"}},
+            {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": {"questions": [{"question": "Which?"}], "answers": {"Which?": "A"}},
+            },
+        ),
+    ],
+)
+def test_hook_waits_for_atomic_boss_answer(
+    event: dict[str, object], answer: dict[str, object], expected: dict[str, object], tmp_path: Path
+) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-I", str(Path(tui.__file__)), "hook", str(tmp_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    try:
+        process.stdin.write(json.dumps(event).encode())
+        process.stdin.close()
+        deadline = time.monotonic() + 5
+        while not list(tmp_path.glob("prompt-*.json")) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        path = next(tmp_path.glob("prompt-*.json"))
+        assert process.poll() is None
+        prompt_id = path.stem.removeprefix("prompt-")
+        tui.atomic_json(tmp_path / f"answer-{prompt_id}.json", answer)
+        process.wait(timeout=5)
+        assert process.returncode == 0
+        assert process.stdout is not None
+        assert json.loads(process.stdout.read()) == {"hookSpecificOutput": expected}
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+
+def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
+    settings = json.loads(tui.write_settings(tmp_path).read_text())
+    for name in ("PermissionRequest", "PreToolUse"):
+        hook = settings["hooks"][name][0]["hooks"][0]
+        assert hook["timeout"] == 604800 and hook["onFailure"] == "block"
+    event = tui.prompt_event(
+        "f" * 32, {"tool_name": "Bash", "tool_input": {"command": "x" * 10000}}
+    )
+    assert len(str(event["tool_input"])) == 4000
+
+
+def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    turn = tui.Turn("session")
+    for prompt_id in ["a" * 32, "b" * 32]:
+        tui.atomic_json(
+            tmp_path / f"prompt-{prompt_id}.json",
+            {
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "Bash",
+                "tool_input": {},
+                "hook_pid": os.getpid(),
+            },
+        )
+    tui.read_hooks(tmp_path, turn)
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert len(events) == 2 and all(event["type"] == "agentnave_prompt" for event in events)
+    tui.read_hooks(tmp_path, turn)
+    assert not capsys.readouterr().out
+    (tmp_path / f"prompt-{'a' * 32}.json").unlink()
+    tui.read_hooks(tmp_path, turn)
+    assert json.loads(capsys.readouterr().out)["type"] == "agentnave_prompt_closed"
+    assert turn.pending_prompts == {"b" * 32}

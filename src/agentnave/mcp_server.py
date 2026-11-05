@@ -10,6 +10,7 @@ from agentnave.mcp_history import (
     list_members,
     read_conversation,
 )
+from agentnave.mcp_prompts import answer_prompt
 from agentnave.mcp_rounds import (
     _WORKSPACE_ID,
     ReviewReceipt,
@@ -114,6 +115,7 @@ __all__ = [
     "_known_invocation",
     "_known_round",
     "_ready_handles",
+    "answer_prompt",
     "cancel",
     "list_invocations",
     "start_agent",
@@ -136,6 +138,13 @@ mcp.tool(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )(wait)
+
+mcp.tool(
+    title="Answer a pending native CLI prompt",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
+    ),
+)(answer_prompt)
 
 mcp.tool(
     title="Cancel a task or round",

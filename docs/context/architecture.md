@@ -22,10 +22,12 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## MCP 合同
 
-- 9 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
+- 10 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)、[ADR-0057](../adr/0057-boss-answers-native-prompts.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
 - 可由 Manager 修正的请求错误走 Tool error 并给出重试指引；Provider 执行终态走结构化 Invocation Result，业务失败也尽量保全输出与原生 `session_id`。
 - 每次派发的 prompt 都附加单向编排指令：完成任务后回报 Manager，不再调用 AgentNave，需要决定时写进最终回答；声明 `read` 时再加只读说明（[ADR-0043](../adr/0043-service-prompt-instructions.md)）。服务不检测嵌套、不据此禁用工具；这依赖模型遵守，不是安全边界（[ADR-0031](../adr/0031-prompt-only-orchestration.md)）。
 - Invocation 只在进程内存中，终态保留七天；`wait` 返回就绪子集（[ADR-0007](../adr/0007-wait-any-ready-subset.md)）。没有总运行时限，停止靠显式 `cancel`；服务只在两种故障下主动终止进程树：保留的 stdout、stderr 超限（不静默截断为成功），或 Provider 持续重试满五分钟仍无输出（[ADR-0049](../adr/0049-service-initiated-termination.md)）。
+- 声明支持原生弹框的 Adapter 可保持运行中 stdin 通道，只传回 CLI 自己发起的弹框答复；核心不识别 Provider 协议，决策归当前拥有工作区的 boss。待答弹框唤醒任务、会议与收件箱等待，等待期间不计持续重试，取消先拒绝再终止（[ADR-0057](../adr/0057-boss-answers-native-prompts.md)）。
+- 服务把弹框与答复审计写入任务或席位已有的 JSON 记录，属于服务与托盘共用的历史合同，不引入新表结构。
 - 同一 Provider 的同一原生 session 不得同时续接：数据根下的原生会话锁让共用数据根的各服务互斥。
 - 同时运行的 CLI 进程数（私聊加席位）受 App 设置的上限约束，只在接纳时检查（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)）。
 - 转发只注入本工作区已完成的消息，并声明为数据；历史只保存 boss 原文。

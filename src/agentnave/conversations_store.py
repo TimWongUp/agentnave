@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -198,6 +199,7 @@ class ConversationStore(Groups):
         # invocation id -> (conversation id, task id), for message ids in wait receipts.
         self.task_invocations: dict[str, tuple[str, str]] = {}
         manager.on_forget = self._forget_invocation
+        manager.on_prompt_change = self._save_prompts
         self.collectors: set[asyncio.Task[None]] = set()
         # Workspace key -> (the boss key now writing it, that boss's own chat id as passed).
         self._bosses: dict[str, tuple[str, str]] = {}
@@ -307,6 +309,66 @@ class ConversationStore(Groups):
             for key, value in self.task_invocations.items()
             if value[0] != conversation_id
         }
+
+    def _prompt_record(self, invocation_id: str) -> tuple[Record, TaskRecord | SeatRunRecord]:
+        task = self.task_invocations.get(invocation_id)
+        if task is not None:
+            record = self.record(task[0])
+            return record, next(item for item in record.state.tasks if item.id == task[1])
+        for round_ in self._rounds.values():
+            for run in round_.runs:
+                if run.invocation_id == invocation_id:
+                    record = self.record(round_.group.id)
+                    saved = _find(record.state, round_.id)
+                    if saved is not None:
+                        return record, next(
+                            item for item in saved.seats if item.seat_id == run.seat_id
+                        )
+        raise ValueError("invocation does not belong to a saved task or meeting seat")
+
+    def _prompt_audit(
+        self, saved: list[dict[str, object]], invocation_id: str | None
+    ) -> list[dict[str, object]]:
+        """Saved prompt records updated with what the live invocation still holds."""
+        if invocation_id is None:
+            return saved
+        try:
+            live = self.manager.prompt_history(invocation_id)
+        except KeyError:
+            return saved
+        history = {str(p["prompt_id"]): p for p in saved}
+        history.update({str(p["prompt_id"]): p for p in live})
+        return list(history.values())
+
+    def _save_prompts(self, invocation_id: str) -> None:
+        try:
+            record, item = self._prompt_record(invocation_id)
+        except ValueError:
+            # Not in saved history (yet): nothing to audit, and the prompt itself must go on.
+            logging.getLogger(__name__).warning(
+                "Native prompt of invocation %s has no saved task or seat", invocation_id
+            )
+            return
+        item.prompts = self._prompt_audit(item.prompts, invocation_id)
+        self._persist(record)
+
+    async def answer_prompt(
+        self,
+        invocation_id: str,
+        prompt_id: str,
+        manager_session_id: str,
+        decision: str | None = None,
+        reason: str | None = None,
+        answers: dict[str, str] | None = None,
+    ) -> None:
+        session = self._manager_session(manager_session_id)
+        record, _ = self._prompt_record(invocation_id)
+        if session is None or session != record.state.manager_session:
+            raise ValueError(self._not_yours("Native prompt", record.state.manager_session))
+        # Ownership is resolved live, so the previous boss loses access after handover.
+        await self.manager.answer_prompt(
+            invocation_id, prompt_id, manager_session_id, decision, reason, answers
+        )
 
     def _forget_invocation(self, invocation_id: str) -> None:
         self.task_invocations.pop(invocation_id, None)
@@ -560,6 +622,7 @@ class ConversationStore(Groups):
                 seat.error = f"{error.code}: {error.message}" if error is not None else None
                 seat.committed = seat.committed or (round_.number, run.seat_id) in committed
                 seat.review = self.reviews.get(round_.id, {}).get(run.seat_id)
+                seat.prompts = self._prompt_audit(seat.prompts, run.invocation_id)
         self._persist(record)
         self._ensure_live_writer(record)
         self._release_idle(record)

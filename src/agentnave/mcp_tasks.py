@@ -59,6 +59,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
+from agentnave.native_prompts import NativePrompt
 from agentnave.task_start import (
     StartArguments,
     add_write_warning,
@@ -153,7 +154,7 @@ async def start_agent(
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
     """Start a private CLI task; invocation_id goes to wait, not session_id.
-    No deadline or messages to active tasks; cancel to stop. Reply settings are requested,
+    No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
     not effective; unreceived flags undelivered ends/blockers/reviews for wait.
     """
     manager = _manager(ctx)
@@ -257,13 +258,18 @@ async def _ready_handles(
     invocation_ids: list[str],
     round_ids: list[str],
     timeout_seconds: float,
-) -> tuple[dict[str, InvocationResult | InvocationError], dict[str, tuple[Round, str | None]]]:
+) -> tuple[
+    dict[str, InvocationResult | InvocationError | NativePrompt],
+    dict[str, tuple[Round, str | None]],
+]:
     """Wait until any handle is ready, then collect every handle ready at that moment."""
 
     def ready(found: tuple[Round, str | None]) -> bool:
         return found[0].finished or found[1] is not None
 
-    invocations: asyncio.Task[dict[str, InvocationResult | InvocationError]] | None = None
+    invocations: (
+        asyncio.Task[dict[str, InvocationResult | InvocationError | NativePrompt]] | None
+    ) = None
     if invocation_ids:
         invocations = asyncio.create_task(manager.wait_for_any(invocation_ids, timeout_seconds))
     rounds = {
@@ -279,7 +285,7 @@ async def _ready_handles(
             task.cancel()
         await asyncio.gather(*waiters, return_exceptions=True)
     # A finished waiter already consumed what it reports; poll only the ones cut short.
-    ready_invocations: dict[str, InvocationResult | InvocationError] = {}
+    ready_invocations: dict[str, InvocationResult | InvocationError | NativePrompt] = {}
     if invocations is not None:
         ready_invocations = (
             await manager.wait_for_any(invocation_ids, 0)
@@ -329,11 +335,11 @@ async def wait(
     """Return when any handle is ready; reason=ready contains all ready now in updates (tasks)
     and rounds, not necessarily all finished.
 
-    Ready: terminal; execution_blocked (still running; once/category); review_needed
+    Ready: terminal; prompt_pending (answer_prompt, once/prompt, still running); execution_blocked (still running; once/category); review_needed
     (pending_review needs decide_answers); seat_lost (failed/blocked seat while peers run;
     once/seat, answers withheld; retry via run_round.retry_seats).
     pending_ids lists unreceived ends for the given ids or inbox; all_finished means none
-    remain. Handle blockers/reviews, then wait on pending_ids until all_finished; drop
+    remain. Handle prompts/blockers/reviews, then wait on pending_ids until all_finished; drop
     delivered handles. Ends are never pushed: wait after dispatch or independent work;
     collect every terminal result before ending your turn.
     wait_elapsed gives status/activity; wait again normally. Only wait_seconds=0 adds running
@@ -422,7 +428,7 @@ async def wait(
 class _WaitResults:
     invocation_ids: list[str]
     round_ids: list[str]
-    invocations: dict[str, InvocationResult | InvocationError]
+    invocations: dict[str, InvocationResult | InvocationError | NativePrompt]
     rounds: dict[str, tuple[Round, str | None]]
 
 

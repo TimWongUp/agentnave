@@ -684,6 +684,7 @@ class Conversations(ConversationStore):
             task.elapsed_ms = result.duration_ms
             task.reported_model = result.reported_model or task.reported_model
             task.error = error
+            task.prompts = self._prompt_audit(task.prompts, invocation_id)
 
         error = result.error
         # Keep the provider's own message like a seat does; older records hold only the code.

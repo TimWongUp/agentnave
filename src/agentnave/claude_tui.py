@@ -43,7 +43,6 @@ STRIP_ENV = (
 ANSI = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\|(?![\[\]P])[ -/]*[0-~])"
 )
-DENIAL = "No one can answer during this run; report the blocked action in the final answer."
 STARTUP_TIMEOUT = 60.0
 # A startup screen is answered once it has stayed drawn this long: a key sent while a menu is
 # first drawn can be lost to its redraw, and Enter on the trust menu's default exits.
@@ -177,7 +176,7 @@ class Turn:
     error: str | None = None
     user_seen: bool = False
     done: bool = False
-    gate_seen: bool = False
+    pending_prompts: set[str] = field(default_factory=set[str])
     # Background tool calls still running: like --print, the turn waits for their notifications.
     background: set[str] = field(default_factory=set[str])
 
@@ -215,11 +214,10 @@ class Turn:
         gated = name == "PermissionRequest" or (
             name == "PreToolUse" and event.get("tool_name") == "AskUserQuestion"
         )
-        if gated or name == "PermissionDenied":
+        if name == "PermissionDenied" or (gated and event.get("agentnave_denied")):
             self.denials.append(
                 {"tool_name": event.get("tool_name"), "tool_input": event.get("tool_input")}
             )
-        self.gate_seen |= gated
         if name == "StopFailure":
             self.error = str(event.get("error") or "Claude StopFailure")
             detail = event.get("error_details") or event.get("last_assistant_message")
@@ -284,7 +282,7 @@ def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
             "args": ["-I", str(Path(__file__).resolve()), "hook", str(directory)],
         }
         if name in ("PermissionRequest", "PreToolUse"):
-            command.update(timeout=10, onFailure="block")
+            command.update(timeout=604800, onFailure="block")
         rule: dict[str, object] = {"hooks": [command]}
         if name in ("PermissionRequest", "PermissionDenied", "PreToolUse"):
             rule["matcher"] = "AskUserQuestion" if name == "PreToolUse" else "*"
@@ -295,35 +293,123 @@ def write_settings(directory: Path, extra: list[str] | None = None) -> Path:
     return path
 
 
-def hook_main(directory: Path) -> int:
-    event = cast(dict[str, object], json.load(sys.stdin))
-    # One atomic file per hook also works for simultaneous requests; incomplete writes
-    # never look like valid events to the parent. All files live in this invocation only.
-    path = directory / f"event-{time.time_ns()}-{uuid.uuid4().hex}.json"
+def atomic_json(path: Path, value: dict[str, object]) -> None:
     staging = path.with_suffix(".tmp")
-    staging.write_text(json.dumps(event), encoding="utf-8")
+    staging.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
     staging.replace(path)
+
+
+def hook_reply(event: dict[str, object], answer: dict[str, object]) -> dict[str, object]:
+    """The only encoding of boss decisions into Claude hook output; never persists permissions."""
     name = event.get("hook_event_name")
+    allowed = answer.get("decision") == "allow"
     if name == "PermissionRequest":
-        emit(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": name,
-                    "decision": {"behavior": "deny", "message": DENIAL},
-                }
+        decision: dict[str, object] = {"behavior": "allow" if allowed else "deny"}
+        if not allowed:
+            decision["message"] = str(answer.get("message") or "Denied by the boss")
+        output: dict[str, object] = {"hookEventName": name, "decision": decision}
+    else:
+        output = {"hookEventName": name, "permissionDecision": "allow" if allowed else "deny"}
+        if allowed:
+            output["updatedInput"] = {
+                **object_dict(event.get("tool_input")),
+                "answers": object_dict(answer.get("answers")),
             }
-        )
-    elif name == "PreToolUse" and event.get("tool_name") == "AskUserQuestion":
-        emit(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": name,
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": DENIAL,
-                }
-            }
-        )
+        else:
+            output["permissionDecisionReason"] = str(answer.get("message") or "Denied by the boss")
+    return {"hookSpecificOutput": output}
+
+
+def hook_main(directory: Path) -> int:
+    event = object_dict(json.load(sys.stdin))
+    name = event.get("hook_event_name")
+    gated = name == "PermissionRequest" or (
+        name == "PreToolUse" and event.get("tool_name") == "AskUserQuestion"
+    )
+    prompt_id = uuid.uuid4().hex
+    if gated:
+        path = directory / f"prompt-{prompt_id}.json"
+        atomic_json(path, {**event, "hook_pid": os.getpid()})
+        answer_path = directory / f"answer-{prompt_id}.json"
+        deadline = time.monotonic() + 604790
+        while directory.is_dir() and time.monotonic() < deadline:
+            if answer_path.exists():
+                answer = object_dict(json.loads(answer_path.read_text(encoding="utf-8")))
+                event["agentnave_denied"] = answer.get("decision") != "allow"
+                atomic_json(directory / f"event-{prompt_id}.json", event)
+                emit(hook_reply(event, answer))
+                path.unlink(missing_ok=True)
+                answer_path.unlink(missing_ok=True)
+                return 0
+            time.sleep(0.05)
+        return 1  # Claude's onFailure=block closes a timed-out or disconnected hook.
+    atomic_json(directory / f"event-{prompt_id}.json", event)
     return 0
+
+
+def prompt_event(prompt_id: str, event: dict[str, object]) -> dict[str, object]:
+    question = (
+        event.get("hook_event_name") == "PreToolUse" and event.get("tool_name") == "AskUserQuestion"
+    )
+    result: dict[str, object] = {
+        "type": "agentnave_prompt",
+        "prompt_id": prompt_id,
+        "kind": "question" if question else "permission",
+        "tool_name": event.get("tool_name"),
+        "tool_input": json.dumps(event.get("tool_input"), ensure_ascii=False)[:4000],
+    }
+    if question:
+        questions = object_dict(event.get("tool_input")).get("questions", [])
+        # Preserve question text for the answer mapping; reject unbounded payloads.
+        if not isinstance(questions, list) or len(json.dumps(questions)) > 16000:
+            raise ValueError("AskUserQuestion questions exceeded the native prompt limit")
+        result["questions"] = questions
+    return result
+
+
+class Answers:
+    """Read complete JSON lines without blocking PTY/transcript polling."""
+
+    def __init__(self) -> None:
+        self.pending = bytearray()
+        self.open = True
+
+    def poll(self, directory: Path, turn: Turn) -> None:
+        if not self.open or not select.select([0], [], [], 0)[0]:
+            return
+        chunk = os.read(0, 65536)
+        if not chunk:
+            self.open = False
+            return
+        self.pending.extend(chunk)
+        if len(self.pending) > 1024 * 1024:
+            raise ValueError("native prompt answer exceeded the channel limit")
+        while b"\n" in self.pending:
+            line, _, remainder = self.pending.partition(b"\n")
+            self.pending = bytearray(remainder)
+            answer = object_dict(json.loads(line))
+            prompt_id = answer.get("prompt_id")
+            if (
+                answer.get("type") == "agentnave_answer"
+                and isinstance(prompt_id, str)
+                and prompt_id in turn.pending_prompts
+                and answer.get("decision") in ("allow", "deny")
+            ):
+                atomic_json(directory / f"answer-{prompt_id}.json", answer)
+
+
+def read_initial_prompt() -> str:
+    # No buffered read-ahead: later answer lines stay on the descriptor for Answers.poll.
+    line = bytearray()
+    while chunk := os.read(0, 1):
+        if chunk == b"\n":
+            break
+        line.extend(chunk)
+    value = object_dict(json.loads(line))
+    prompt = value.get("prompt")
+    if not isinstance(prompt, str):
+        raise ValueError("first stdin line must contain a prompt string")
+    return prompt
 
 
 class Screen:
@@ -547,9 +633,35 @@ class Transcript:
 
 
 def read_hooks(directory: Path, turn: Turn) -> None:
+    for path in sorted(directory.glob("prompt-*.json")):
+        prompt_id = path.stem.removeprefix("prompt-")
+        if prompt_id not in turn.pending_prompts:
+            try:
+                event = object_dict(json.loads(path.read_text(encoding="utf-8")))
+            except FileNotFoundError:
+                continue
+            emit(prompt_event(prompt_id, event))
+            turn.pending_prompts.add(prompt_id)
     for path in sorted(directory.glob("event-*.json")):
-        turn.hook(cast(dict[str, object], json.loads(path.read_text(encoding="utf-8"))))
+        turn.hook(object_dict(json.loads(path.read_text(encoding="utf-8"))))
         path.unlink()
+    for prompt_id in list(turn.pending_prompts):
+        path = directory / f"prompt-{prompt_id}.json"
+        alive = path.exists()
+        if alive:
+            try:
+                pid = object_dict(json.loads(path.read_text(encoding="utf-8"))).get("hook_pid")
+            except FileNotFoundError:
+                pid, alive = None, False
+            if isinstance(pid, int):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    alive = False
+        if not alive:
+            turn.pending_prompts.remove(prompt_id)
+            emit({"type": "agentnave_prompt_closed", "prompt_id": prompt_id})
+            path.unlink(missing_ok=True)
 
 
 def blocked(turn: Turn, reason: str, screen: str = "") -> None:
@@ -647,27 +759,28 @@ def await_turn(
     submitted_at: float | None = None
     retried = False
     dialog_since: float | None = None
+    answers = Answers()
     while True:
         screen = terminal.poll()
         now = time.monotonic()
         read_hooks(directory, turn)
+        answers.poll(directory, turn)
         for row in transcript.read():
             turn.transcript(row)
-        if turn.error or turn.done:
+        if turn.error or (turn.done and not turn.pending_prompts):
             if turn.done and not turn.assistant and not turn.error:
                 turn.error = "Claude turn ended without an assistant message"
             return
         if terminal.process.poll() is not None:
             turn.error = f"Claude exited unexpectedly with status {terminal.process.returncode}"
             return
+        if turn.pending_prompts:
+            dialog_since = None
+            continue
         if classify_screen(screen) == "permission":
             dialog_since = dialog_since or now
             if now - dialog_since > 1:
-                reason = (
-                    "permission dialog remained after hook denial"
-                    if turn.gate_seen
-                    else "permission dialog without a corresponding hook request"
-                )
+                reason = "permission dialog without a corresponding hook request"
                 blocked(turn, reason)
                 return
             # Delivery retries must never confirm a native permission menu, even
@@ -746,7 +859,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, terminate)
     extra = cast(list[str], args.extra)
     return run_main(
-        args.claude, args.resume, extra[1:] if extra[:1] == ["--"] else extra, sys.stdin.read()
+        args.claude, args.resume, extra[1:] if extra[:1] == ["--"] else extra, read_initial_prompt()
     )
 
 

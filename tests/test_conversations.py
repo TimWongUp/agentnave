@@ -17,6 +17,8 @@ from mcp import Client
 
 import agentnave.conversations_store as conversations_module
 from agentnave import mcp_runtime, mcp_server, views
+from agentnave.adapters.base import PreparedCommand
+from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
 from agentnave.db import Database
@@ -506,6 +508,8 @@ def test_unreceived_lists_a_seat_blocker_until_a_wait_reports_it() -> None:
         status="running",
         blockers=[InvocationError("provider_blocked", "waiting")],
         reported_blockers=0,
+        prompts=[],
+        reported_prompts=set(),
     )
     round_ = SimpleNamespace(finished=False, runs=[run], unreported_lost=list)
 
@@ -1651,6 +1655,7 @@ async def test_write_receipts_are_small_and_list_reads_old_history(
             "list",
             "list_members",
             "decide_answers",
+            "answer_prompt",
             "handover",
             "read_conversation",
         }
@@ -2373,7 +2378,7 @@ async def test_serial_rounds_keep_a_slot_for_their_next_seat_through_review(
 async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 9 and "list_profiles" not in tools
+        assert len(tools) == 10 and "list_profiles" not in tools
         annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
         assert (await _call(client, "list_members", {}))["configured"] is False
@@ -3113,3 +3118,219 @@ async def test_saved_round_keeps_unread_output_and_only_delivers_it_once(
         await studio.shutdown()
         await studio.manager.shutdown()
         await studio.close()
+
+
+@pytest.fixture
+def native_prompt_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A JSON-lines fake provider exercising the real supervisor and saved conversation path."""
+
+    def prepare(_self: ClaudeAdapter, request: InvocationRequest) -> PreparedCommand:
+        script = """
+import json, sys, time
+initial = json.loads(sys.stdin.readline())['prompt']
+question = 'QUESTION_CASE' in initial
+print(json.dumps({'type':'agentnave_prompt','prompt_id':'c'*32,
+                  'kind':'question' if question else 'permission','tool_name':'AskUserQuestion' if question else 'Bash',
+                  'tool_input':'{}','questions':[{'question':'Which?', 'options':[{'label':'A'},{'label':'B'}]}] if question else []}), flush=True)
+answer = json.loads(sys.stdin.readline())
+time.sleep(0.2)
+print(json.dumps({'type':'result','is_error':False,'session_id':'native-prompt-session',
+                  'result':json.dumps(answer)}), flush=True)
+"""
+        return PreparedCommand(
+            (sys.executable, "-c", script),
+            request.cwd,
+            (json.dumps({"prompt": request.prompt}) + "\n").encode(),
+            keep_stdin_open=True,
+        )
+
+    monkeypatch.setattr(ClaudeAdapter, "prepare", prepare)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question", [False, True])
+async def test_native_prompt_inbox_validation_ownership_and_audit(
+    tmp_path: Path,
+    data_root: Path,
+    native_prompt_provider: None,
+    question: bool,
+) -> None:
+    async with Client(mcp) as client:
+        start = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "QUESTION_CASE" if question else "work",
+                "cwd": str(tmp_path),
+                "title": "Native prompts",
+                "manager_session_id": "owner",
+            },
+        )
+        invocation = start["invocation_id"]
+        update = _data(
+            cast(
+                list[object],
+                (await _call(client, "wait", {"manager_session_id": "owner"}))["updates"],
+            )[0]
+        )
+        assert update["reason"] == "prompt_pending"
+        prompt = _data(cast(list[object], update["prompts"])[0])
+        assert prompt["content_source"] == "subagent_data"
+        assert prompt["tool_input"] == "{}"
+        assert (
+            _state(data_root, start["conversation_id"])["tasks"][0]["prompts"][0]["status"]
+            == "pending"
+        )
+        peek = _data(
+            cast(
+                list[object],
+                (await _call(client, "wait", {"ids": [invocation], "wait_seconds": 0}))["updates"],
+            )[0]
+        )
+        assert peek["reason"] == "wait_elapsed"
+        # Still listed after its one-time wake was taken, so a consumed wake cannot hide it.
+        assert _data(cast(list[object], peek["prompts"])[0])["prompt_id"] == prompt["prompt_id"]
+        base = {
+            "invocation_id": invocation,
+            "prompt_id": prompt["prompt_id"],
+            "manager_session_id": "owner",
+        }
+        valid = {"answers": {"Which?": "A"}} if question else {"decision": "allow"}
+        cases = [
+            ({**base, **valid, "manager_session_id": "intruder"}, "different manager"),
+            ({**base, **valid, "prompt_id": "f" * 32}, "unknown prompt_id"),
+            (
+                {**base, **({"decision": "allow"} if question else {"answers": {"Which?": "A"}})},
+                "require",
+            ),
+        ]
+        if question:
+            cases.append(({**base, "answers": {"Wrong?": "A"}}, "exactly"))
+        else:
+            cases.append(({**base, "decision": "deny", "reason": "two\nlines"}, "single"))
+        for args, expected in cases:
+            response = await client.call_tool("answer_prompt", args)
+            assert response.is_error and expected in str(response.content)
+        # A transferred workspace resolves ownership live, including still-running work.
+        release = await _call(client, "handover", {"release": True, "manager_session_id": "owner"})
+        await _call(
+            client,
+            "handover",
+            {"workspace_id": release["workspace_id"], "manager_session_id": "new-owner"},
+        )
+        old = await client.call_tool("answer_prompt", {**base, **valid})
+        assert old.is_error and "handed its workspace" in str(old.content)
+        receipt = await _call(
+            client, "answer_prompt", {**base, **valid, "manager_session_id": "new-owner"}
+        )
+        assert receipt["status"] == "answered"
+        duplicate = await client.call_tool(
+            "answer_prompt", {**base, **valid, "manager_session_id": "new-owner"}
+        )
+        assert duplicate.is_error and "already answered" in str(duplicate.content)
+        finished = await _wait_task(client, invocation)
+        assert finished["status"] == "succeeded"
+        wire = json.loads(str(finished["output"]))
+        assert wire["decision"] == "allow"
+        assert wire.get("answers") == ({"Which?": "A"} if question else None)
+        ended = await client.call_tool(
+            "answer_prompt", {**base, **valid, "manager_session_id": "new-owner"}
+        )
+        assert ended.is_error and "ended" in str(ended.content)
+        saved = _state(data_root, start["conversation_id"])["tasks"][0]["prompts"][0]
+        assert saved["status"] == "answered"
+        assert saved["answer"]["manager_session_id"] == "new-owner"
+        assert saved["answer"]["answered_at"] and saved["created_at"]
+        assert saved["invocation_id"] == invocation
+
+
+@pytest.mark.asyncio
+async def test_final_task_save_keeps_the_prompt_audit_when_intermediate_saves_fail(
+    tmp_path: Path,
+    data_root: Path,
+    native_prompt_provider: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Lose every intermediate audit save; the task's final save must still carry the audit.
+    def lose(_self: Conversations, _invocation: str) -> None:
+        return None
+
+    monkeypatch.setattr(Conversations, "_save_prompts", lose)
+    async with Client(mcp) as client:
+        start = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "work",
+                "cwd": str(tmp_path),
+                "title": "Audit",
+                "manager_session_id": "owner",
+            },
+        )
+        invocation = start["invocation_id"]
+        update = _data(
+            cast(list[object], (await _call(client, "wait", {"ids": [invocation]}))["updates"])[0]
+        )
+        assert update["reason"] == "prompt_pending"
+        answer = {
+            "invocation_id": invocation,
+            "prompt_id": "c" * 32,
+            "manager_session_id": "owner",
+            "decision": "allow",
+        }
+        assert (await _call(client, "answer_prompt", answer))["status"] == "answered"
+        assert (await _wait_task(client, invocation))["status"] == "succeeded"
+    saved = _state(data_root, start["conversation_id"])["tasks"][0]["prompts"][0]
+    assert saved["status"] == "answered" and saved["answer"]["decision"] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_native_meeting_prompts_wake_once_and_save_seat_audit(
+    tmp_path: Path,
+    data_root: Path,
+    native_prompt_provider: None,
+) -> None:
+    async with Client(mcp) as client:
+        show = await _call(
+            client,
+            "run_round",
+            {
+                "title": "Prompts",
+                "cwd": str(tmp_path),
+                "manager_session_id": "owner",
+                "members": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
+                "seats": ["a", "b"],
+                "prompt": "work",
+            },
+        )
+        round_id = _data(show["round"])["round_id"]
+        answered: set[str] = set()
+        while len(answered) < 2:
+            rounds = cast(
+                list[object],
+                (await _call(client, "wait", {"manager_session_id": "owner"}))["rounds"],
+            )
+            update = _data(rounds[0])
+            assert update["reason"] == "prompt_pending"
+            for raw in cast(list[object], update["seats"]):
+                seat = _data(raw)
+                if seat["seat_id"] in answered or not seat.get("prompts"):
+                    continue
+                answered.add(str(seat["seat_id"]))
+                await _call(
+                    client,
+                    "answer_prompt",
+                    {
+                        "invocation_id": seat["invocation_id"],
+                        "prompt_id": "c" * 32,
+                        "manager_session_id": "owner",
+                        "decision": "deny",
+                        "reason": "outside scope",
+                    },
+                )
+        final = await _wait(client, round_id)
+        assert final["status"] == "finished"
+        seats = _state(data_root, show["group_id"])["rounds"][0]["seats"]
+        assert all(seat["prompts"][0]["answer"]["decision"] == "deny" for seat in seats)

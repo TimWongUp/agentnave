@@ -22,6 +22,7 @@ from agentnave.processes import spawn_process, terminate_process_tree
 EXPECTED_TOOLS = [
     "start_agent",
     "wait",
+    "answer_prompt",
     "cancel",
     "list",
     "list_members",
@@ -416,6 +417,12 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert mcp_server.WAIT_SECONDS == 240
     wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
     assert wait_modes[0]["enum"] == [0, 240]
+    assert tools["answer_prompt"].input_schema["required"] == [
+        "invocation_id",
+        "prompt_id",
+        "manager_session_id",
+    ]
+    assert tools["answer_prompt"].annotations is not None
     cancel = tools["cancel"].annotations
     assert cancel is not None and cancel.destructive_hint is True
     for name in ("wait", "list", "list_members", "read_conversation"):

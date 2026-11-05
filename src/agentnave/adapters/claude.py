@@ -26,6 +26,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.native_prompts import NativePrompt
 from agentnave.native_sessions import assistant_model
 
 # CodeBuddy leaves permission_denials empty and reports a denial only in the tool result.
@@ -135,7 +136,11 @@ class ClaudeAdapter(AdapterHooks):
                 argv.extend(("--resume", request.session_id))
             argv.extend(("--", *options))
             return PreparedCommand(
-                tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
+                tuple(argv),
+                request.cwd,
+                (json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n").encode(),
+                capture_line=_result_capture(),
+                keep_stdin_open=True,
             )
         argv = [
             self.executable_path(),
@@ -153,6 +158,36 @@ class ClaudeAdapter(AdapterHooks):
         return PreparedCommand(
             tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
         )
+
+    def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
+        if event.get("type") not in ("agentnave_prompt", "agentnave_prompt_closed"):
+            return None
+        prompt_id, kind = event.get("prompt_id"), event.get("kind")
+        if (
+            not isinstance(prompt_id, str)
+            or len(prompt_id) != 32
+            or any(c not in "0123456789abcdef" for c in prompt_id)
+        ):
+            return None
+        if event.get("type") == "agentnave_prompt_closed":
+            return NativePrompt(prompt_id, "permission", "", status="closed")
+        if kind not in ("permission", "question"):
+            return None
+        questions = event.get("questions")
+        return NativePrompt(
+            prompt_id,
+            "question" if kind == "question" else "permission",
+            str(event.get("tool_name", ""))[:200],
+            str(event.get("tool_input", ""))[:4000],
+            [object_dict(q) for q in cast(list[object], questions)]
+            if isinstance(questions, list)
+            else [],
+        )
+
+    def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
+        return (
+            json.dumps({"type": "agentnave_answer", **answer}, ensure_ascii=False) + "\n"
+        ).encode()
 
     def event_model(self, event: dict[str, object]) -> str | None:
         return assistant_model(event)

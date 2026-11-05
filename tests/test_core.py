@@ -35,6 +35,7 @@ from agentnave.models import (
     InvocationRequest,
     InvocationStatus,
 )
+from agentnave.native_prompts import NativePrompt, PromptChannel
 from agentnave.processes import (
     _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
 )
@@ -1192,6 +1193,7 @@ def test_a_provider_that_keeps_retrying_is_stopped_after_the_window() -> None:
     stuck = SimpleNamespace(
         retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1,
         retry_at=time.monotonic(),
+        prompts=PromptChannel(),
     )
     asyncio.run(asyncio.wait_for(_stall_guard(cast(Any, stuck), interval=0.01), timeout=2))
 
@@ -1199,7 +1201,7 @@ def test_a_provider_that_keeps_retrying_is_stopped_after_the_window() -> None:
 def test_a_recovered_provider_is_not_stopped() -> None:
     # One retry long ago, then silence: the provider recovered, so the streak is over.
     once = time.monotonic() - _RETRY_STALL_SECONDS - 1
-    recovered = SimpleNamespace(retry_since=once, retry_at=once)
+    recovered = SimpleNamespace(retry_since=once, retry_at=once, prompts=PromptChannel())
     with pytest.raises(TimeoutError):
         asyncio.run(
             asyncio.wait_for(
@@ -1210,7 +1212,7 @@ def test_a_recovered_provider_is_not_stopped() -> None:
 
 
 def test_a_quiet_provider_is_not_stopped() -> None:
-    idle = SimpleNamespace(retry_since=None, retry_at=None)
+    idle = SimpleNamespace(retry_since=None, retry_at=None, prompts=PromptChannel())
     with pytest.raises(TimeoutError):
         asyncio.run(
             asyncio.wait_for(
@@ -1249,3 +1251,86 @@ def test_read_only_tasks_get_the_read_only_instruction(
     manager.prepare(InvocationRequest("codex", "task", tmp_path))
     assert READ_ONLY_INSTRUCTIONS in prompts[0] and prompts[0].endswith("Assigned task:\ntask")
     assert READ_ONLY_INSTRUCTIONS not in prompts[1] and SUBAGENT_INSTRUCTIONS in prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_pending_prompts_wake_once_and_cancel_denies_before_stopping(tmp_path: Path) -> None:
+    script = """
+import json, sys, time
+json.loads(sys.stdin.readline())
+for prompt_id in ['a' * 32, 'b' * 32]:
+    print(json.dumps({'type':'agentnave_prompt', 'prompt_id':prompt_id,
+                     'kind':'permission', 'tool_name':'Bash', 'tool_input':'echo safe'}), flush=True)
+while line := sys.stdin.readline():
+    pass
+"""
+    manager = InvocationManager()
+    sent: list[dict[str, object]] = []
+    adapter = ClaudeAdapter()
+    original = adapter.encode_prompt_answer
+
+    # Capture what the real stdin writer is asked to deliver, including cancel's deny.
+    def encode(answer: dict[str, object]) -> bytes:
+        sent.append(answer)
+        return original(answer)
+
+    from unittest.mock import patch
+
+    def encode_hook(_self: ClaudeAdapter, answer: dict[str, object]) -> bytes:
+        return encode(answer)
+
+    with patch.object(ClaudeAdapter, "encode_prompt_answer", encode_hook):
+        invocation = manager.start(
+            InvocationRequest("claude", "work", tmp_path),
+            prepared=PreparedCommand(
+                (sys.executable, "-c", script),
+                tmp_path,
+                b'{"prompt":"work"}\n',
+                keep_stdin_open=True,
+            ),
+        )
+        try:
+            notices = [
+                await manager.wait_for_update(invocation, 3),
+                await manager.wait_for_update(invocation, 3),
+            ]
+            assert all(isinstance(notice, NativePrompt) for notice in notices)
+            assert await manager.wait_for_update(invocation, 0) is None
+            await manager.answer_prompt(invocation, "a" * 32, "boss", "allow")
+            with pytest.raises(ValueError, match="already answered"):
+                await manager.answer_prompt(invocation, "a" * 32, "boss", "deny")
+            result = await manager.cancel(invocation)
+            assert result.status is InvocationStatus.CANCELLED
+            assert [answer["decision"] for answer in sent] == ["allow", "deny"]
+            assert manager.pending_prompts(invocation) == []
+            history = manager.prompt_history(invocation)
+            assert history[1]["answer"] is not None
+            assert cast(dict[str, object], history[1]["answer"])["actor"] == "service_cancel"
+            with pytest.raises(ValueError, match="ended"):
+                await manager.answer_prompt(invocation, "b" * 32, "boss", "allow")
+        finally:
+            await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_pending_prompt_resets_retry_stall_clock() -> None:
+    channel = PromptChannel()
+    channel.receive(NativePrompt("c" * 32, "permission", "Bash"))
+    record = SimpleNamespace(
+        retry_since=time.monotonic() - _RETRY_STALL_SECONDS - 1,
+        retry_at=time.monotonic(),
+        prompts=channel,
+    )
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(_stall_guard(cast(Any, record), interval=0.001), timeout=0.03)
+    assert record.retry_since is None and record.retry_at is None
+
+
+def test_closed_prompt_is_never_reported_again() -> None:
+    channel = PromptChannel()
+    prompt = NativePrompt("d" * 32, "permission", "Bash")
+    assert channel.receive(prompt)
+    assert not channel.receive(NativePrompt("d" * 32, "permission", "", status="closed"))
+    assert prompt.status == "closed" and prompt.closed_at
+    assert channel.take() is None
+    assert not channel.receive(NativePrompt("d" * 32, "permission", "Bash"))
