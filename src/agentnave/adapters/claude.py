@@ -8,7 +8,6 @@ import re
 import sys
 from collections.abc import Callable
 from dataclasses import replace
-from pathlib import Path
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -58,7 +57,10 @@ _MODES = frozenset({"auto", "bypassPermissions"})
 
 
 def _helper() -> str:
-    return str(Path(__file__).resolve().parents[1] / "claude_tui.py")
+    # os.path, not pathlib: tests swap os.name, and pathlib then refuses to build paths.
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "claude_tui.py"
+    )
 
 
 def _result_capture() -> Callable[[bytes], bytes]:
