@@ -81,6 +81,10 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("AGENTNAVE_HOST_SESSION_ID", None)
     env.pop("AGENTNAVE_HOST_APP", None)
+    # WorkBuddy/CodeBuddy set these to their own live HTTP listener. A nested CLI
+    # must choose its own address, as their native nested-CLI launcher also does.
+    env.pop("SERVER__PORT", None)
+    env.pop("SERVER__HOST", None)
     for name in (*NATIVE_SESSION_ENV.values(), *WITHHELD_CREDENTIALS):
         env.pop(name, None)
     if os.name == "nt":
