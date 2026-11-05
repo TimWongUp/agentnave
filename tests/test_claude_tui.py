@@ -682,6 +682,8 @@ def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
     assert len(str(event["tool_input"])) == 8000
 
 
+# Windows has no interactive runtime, and os.kill(pid, 0) there sends Ctrl+C to the console.
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY runtime")
 def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
