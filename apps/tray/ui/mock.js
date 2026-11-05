@@ -595,6 +595,18 @@ All checks passed!
             { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
             { visibility: "private", thread, desk, message_id: mid },
           ));
+        if (q.has("prompts") && conv === g.convs[0] && sp === conv.specs[0]) {
+          const samples = [
+            { kind: "permission", tool_name: "Write", status: "pending" },
+            { kind: "question", status: "pending" },
+            { kind: "permission", tool_name: "Write", status: "answered", answer: { actor: "boss", decision: "allow" } },
+            { kind: "permission", tool_name: "Bash", status: "answered", answer: { actor: "boss", decision: "deny", message: "超出任务范围" } },
+            { kind: "question", status: "answered", answer: { actor: "boss", answers: { "保存到哪里？": "项目目录", "是否继续？": "是" } } },
+            { kind: "permission", tool_name: "Write", status: "answered", answer: { actor: "service_cancel", decision: "deny" } },
+            { kind: "permission", tool_name: "Write", status: "closed" },
+          ];
+          samples.forEach((approval, i) => out.push(office({ id: `approval:${conv.id}:${i}`, time: stamp(w, e.at - 7 + i), conversation: conv.id, kind: "approval", speaker: speakerOf(e), text: "", approval: { tool_input: JSON.stringify({ file_path: "/tmp/<script>**literal**</script>" }), ...approval }, to: [], reply_to: show ? null : `p:${conv.id}:${e.key}` }, { visibility: "private", thread, desk })));
+        }
         const base = { time: stamp(w, e.at), conversation: conv.id, speaker: speakerOf(e), to: [] };
         if (e.status === "running")
           typing.push(office(
@@ -861,7 +873,7 @@ All checks passed!
   async function p3Fetch(path) {
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
-    if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays } };
+    if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true } };
     if (path === "/app/preferences") return preferencesView();
     if (path === "/app/characters" || path === "/avatars/avatar-settings") return {};
     if (path === "/app/storage") return { path: "/preview/.agentnave", bytes: 48234496, retention_days: mockRetentionDays };
@@ -925,7 +937,7 @@ All checks passed!
     if (path === "/app/settings") {
       if (q.has("preview")) throw Object.assign(new Error("预览版不修改正式数据"), { status: 403 });
       if (Object.hasOwn(body, "history_retention_days")) mockRetentionDays = body.history_retention_days;
-      return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays } };
+      return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true } };
     }
     if (path === "/app/voice") {
       Object.assign(mockVoice, body);

@@ -30,7 +30,7 @@ fn settings_default_validate_and_save_atomically() {
     assert_eq!(max_running(root.path()), 2);
     assert_eq!(
         state(root.path())["settings"],
-        json!({"version": 1, "max_running": 2, "history_retention_days": null})
+        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": true})
     );
     save(
         root.path(),
@@ -40,7 +40,7 @@ fn settings_default_validate_and_save_atomically() {
     let saved: Value = serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
     assert_eq!(
         saved,
-        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null})
+        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": true})
     );
     // Saving one other key keeps the saved limit, and a broken saved limit falls back.
     save(root.path(), &json!({"version": 1, "y": 2})).unwrap();
@@ -95,4 +95,56 @@ fn retention_is_strict_and_partial_saves_keep_it() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn claude_interactive_defaults_on_and_partial_saves_preserve_other_settings() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(state(root.path())["settings"]["claude_interactive"], true);
+    assert_eq!(
+        validate(&json!({"version": 1})).unwrap()["claude_interactive"],
+        true
+    );
+    save(
+        root.path(),
+        &json!({"version": 1, "max_running": 4, "history_retention_days": 90, "future": "keep"}),
+    )
+    .unwrap();
+    for enabled in [true, false] {
+        save(
+            root.path(),
+            &json!({"version": 1, "claude_interactive": enabled}),
+        )
+        .unwrap();
+        save(root.path(), &json!({"version": 1, "max_running": 6})).unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
+        assert_eq!(saved["claude_interactive"], enabled);
+        assert_eq!(saved["max_running"], 6);
+        assert_eq!(saved["history_retention_days"], 90);
+        assert_eq!(saved["future"], "keep");
+        assert_eq!(
+            state(root.path())["settings"]["claude_interactive"],
+            enabled
+        );
+    }
+    for bad in [json!("yes"), json!(1), json!(null), json!([]), json!({})] {
+        let document = json!({"version": 1, "claude_interactive": bad});
+        assert!(save(root.path(), &document).is_err());
+        fs::write(
+            root.path().join(FILE),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        let broken = state(root.path());
+        assert!(
+            broken["error"]
+                .as_str()
+                .unwrap()
+                .contains("claude_interactive")
+        );
+        assert_eq!(broken["settings"]["claude_interactive"], true);
+    }
+    save(root.path(), &defaults()).unwrap();
+    assert_eq!(state(root.path())["error"], Value::Null);
 }

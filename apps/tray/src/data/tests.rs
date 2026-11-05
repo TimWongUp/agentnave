@@ -1,5 +1,7 @@
 use super::*;
 
+mod prompts;
+
 fn snapshot(id: &str, status: &str) -> Value {
     json!({
         "version": 1,

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.native_prompts import NativePrompt
 from agentnave.native_sessions import clean_model as clean_model
 from agentnave.native_sessions import object_dict as object_dict
 from agentnave.native_sessions import parse_json_object as parse_json_object
@@ -72,6 +73,7 @@ class PreparedCommand:
     # A new native session the provider was told to create, so a run stopped before the
     # provider reports its id can still be continued.
     session_id: str | None = None
+    keep_stdin_open: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +105,10 @@ class ProviderAdapter(Protocol):
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None: ...
 
+    def prompt_event(self, event: dict[str, object]) -> NativePrompt | None: ...
+
+    def encode_prompt_answer(self, answer: dict[str, object]) -> bytes: ...
+
     def prepare_seat(self, directory: Path) -> None: ...
 
 
@@ -129,6 +135,12 @@ class AdapterHooks:
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
         """The model a finished run used, read from the CLI's own files when it streams none."""
         return None
+
+    def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
+        return None
+
+    def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
+        raise ValueError("this adapter does not support native prompts")
 
     def prepare_seat(self, directory: Path) -> None:
         """Prepare a dedicated, empty seat directory before restricted runs use it."""

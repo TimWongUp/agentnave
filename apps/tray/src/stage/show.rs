@@ -148,6 +148,7 @@ impl Group {
             }
         }
         self.show_room(&show);
+        self.show_approvals(snapshot);
     }
 
     fn show_entry<'a>(

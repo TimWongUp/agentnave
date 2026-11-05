@@ -114,6 +114,20 @@ function renderMembership(provider, enabled) {
   }, enabled ? L("移除", "Remove") : L("启用", "Enable"));
 }
 
+function renderClaudeInteractive(provider) {
+  if (provider !== "claude" || AN.shellOS?.() === "windows") return null;
+  return el("div", { className: "member-row member-runtime" },
+    el("label", { className: "member-interactive" },
+      el("input", {
+        type: "checkbox",
+        className: "switch-input",
+        dataset: { focusKey: "claude/interactive" },
+        checked: limitDoc?.claude_interactive === true,
+        disabled: busy || !limitDoc || Boolean(limitError),
+        onChange: (e) => setClaudeInteractive(e.target.checked),
+      }), textNode(L("交互模式运行", "Run interactively"))));
+}
+
 // One card per CLI: one row for both scenes, or one row each once split.
 function renderCards() {
   const container = $("cli-cards");
@@ -169,6 +183,8 @@ function renderCards() {
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     for (const row of rows) card.appendChild(row);
+    const runtime = renderClaudeInteractive(provider);
+    if (runtime) card.appendChild(runtime);
     if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
     card.appendChild(renderCliUpdateError(provider));
     cards.appendChild(card);

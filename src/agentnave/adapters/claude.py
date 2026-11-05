@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections.abc import Callable
+from dataclasses import replace
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -22,6 +25,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.native_prompts import NativePrompt
 from agentnave.native_sessions import assistant_model
 
 # CodeBuddy leaves permission_denials empty and reports a denial only in the tool result.
@@ -47,6 +51,9 @@ def _denied_tools(event: dict[str, object]) -> list[str]:
             if isinstance(text, str) and (match := _DENIED.match(text)):
                 names.append(match.group(1))
     return names
+
+
+_MODES = frozenset({"auto", "bypassPermissions"})
 
 
 def _result_capture() -> Callable[[bytes], bytes]:
@@ -77,8 +84,11 @@ def _result_capture() -> Callable[[bytes], bytes]:
 
 class ClaudeAdapter(AdapterHooks):
     name = "claude"
-    options_description = "permission_mode, agent, fallback_model, max_budget_usd, restricted_tools (boolean; restricted tools)"
+    options_description = "permission_mode, permission_fallback (auto or bypassPermissions; set by the permission tier), agent, fallback_model, max_budget_usd, interactive (boolean; interactive Claude runtime), restricted_tools (boolean; restricted tools)"
     executable = "claude"
+    # Claude-only extras: the interactive runtime and the permission tier's fallback mode.
+    _supports_interactive = True
+    restricted_extra_options = frozenset({"interactive"})
     _options = {
         "model": "--model",
         "effort": "--effort",
@@ -97,6 +107,20 @@ class ClaudeAdapter(AdapterHooks):
     )
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
+        if self._supports_interactive:
+            options = dict(request.provider_options)
+            interactive = options.pop("interactive", False)
+            if not isinstance(interactive, bool):
+                raise ValueError("interactive must be a boolean")
+            fallback = options.pop("permission_fallback", None)
+            if fallback is not None and (
+                fallback not in _MODES or options.get("permission_mode") not in _MODES - {fallback}
+            ):
+                raise ValueError(
+                    "permission_fallback must be auto or bypassPermissions, "
+                    "with permission_mode set to the other one"
+                )
+            request = replace(request, provider_options=options)
         return option_args(request, self._options)
 
     def executable_path(self) -> str:
@@ -104,6 +128,35 @@ class ClaudeAdapter(AdapterHooks):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
+        options = self.option_args(request)
+        fallback = request.provider_options.get("permission_fallback")
+        if (
+            self._supports_interactive
+            and request.provider_options.get("interactive") is True
+            and not discussion
+            and os.name != "nt"
+        ):
+            argv = [
+                sys.executable,
+                "-I",
+                "-m",
+                "agentnave.claude_tui",
+                "run",
+                "--claude",
+                self.executable_path(),
+            ]
+            if request.session_id is not None:
+                argv.extend(("--resume", request.session_id))
+            if isinstance(fallback, str):
+                argv.extend(("--fallback", fallback))
+            argv.extend(("--", *options))
+            return PreparedCommand(
+                tuple(argv),
+                request.cwd,
+                (json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n").encode(),
+                capture_line=_result_capture(),
+                keep_stdin_open=True,
+            )
         argv = [
             self.executable_path(),
             "--print",
@@ -114,12 +167,58 @@ class ClaudeAdapter(AdapterHooks):
         ]
         if request.session_id is not None:
             argv.append(f"--resume={request.session_id}")
-        argv.extend(self.option_args(request))
+        argv.extend(options)
         if discussion:
             argv.extend(self._discussion_args)
+        elif isinstance(fallback, str) and os.path.isabs(argv[0]):
+            # A missing CLI keeps the direct command, so its launch error stays a launch error.
+            claude = argv.pop(0)
+            argv = [
+                sys.executable,
+                "-I",
+                "-m",
+                "agentnave.claude_tui",
+                "print",
+                "--claude",
+                claude,
+                "--fallback",
+                fallback,
+                "--",
+                *argv,
+            ]
         return PreparedCommand(
             tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
         )
+
+    def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
+        if event.get("type") not in ("agentnave_prompt", "agentnave_prompt_closed"):
+            return None
+        prompt_id, kind = event.get("prompt_id"), event.get("kind")
+        if (
+            not isinstance(prompt_id, str)
+            or len(prompt_id) != 32
+            or any(c not in "0123456789abcdef" for c in prompt_id)
+        ):
+            return None
+        if event.get("type") == "agentnave_prompt_closed":
+            return NativePrompt(prompt_id, "permission", "", status="closed")
+        if kind not in ("permission", "question"):
+            return None
+        questions = event.get("questions")
+        return NativePrompt(
+            prompt_id,
+            "question" if kind == "question" else "permission",
+            str(event.get("tool_name", ""))[:200],
+            str(event.get("tool_input", "")),
+            [object_dict(q) for q in cast(list[object], questions)]
+            if isinstance(questions, list)
+            else [],
+        )
+
+    def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
+        return (
+            json.dumps({"type": "agentnave_answer", **answer}, ensure_ascii=False) + "\n"
+        ).encode()
 
     def event_model(self, event: dict[str, object]) -> str | None:
         return assistant_model(event)
@@ -276,6 +375,12 @@ class ClaudeAdapter(AdapterHooks):
         stop_reason = payload.get("stop_reason")
         errors = payload.get("errors", payload.get("error"))
         permission_denials = payload.get("permission_denials")
+        raw_warnings = payload.get("warnings")
+        runtime_warnings = (
+            tuple(w for w in cast(list[object], raw_warnings) if isinstance(w, str))
+            if isinstance(raw_warnings, list)
+            else ()
+        )
 
         if not isinstance(session_id, str):
             session_id = None
@@ -294,7 +399,7 @@ class ClaudeAdapter(AdapterHooks):
                     event["permission_denial"] for event in events if "permission_denial" in event
                 ]
             )
-            warnings = (self._denials_warning(denials),) if denials else ()
+            warnings = runtime_warnings + ((self._denials_warning(denials),) if denials else ())
             return ParsedProviderResult(
                 InvocationStatus.SUCCEEDED, output, session_id, warnings=warnings
             )
@@ -317,4 +422,4 @@ class ClaudeAdapter(AdapterHooks):
                 if message.lower().startswith("not logged in")
                 else failure_status(message)
             )
-        return ParsedProviderResult(status, output, session_id, message)
+        return ParsedProviderResult(status, output, session_id, message, runtime_warnings)

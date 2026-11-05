@@ -128,6 +128,7 @@ def _round(round_: RoundRecord) -> dict[str, object]:
                 "error": seat.error,
                 "reported_model": seat.reported_model,
                 "finished": seat.finished,
+                "prompts": seat.prompts,
             }
             for seat in round_.seats
         ],
@@ -176,7 +177,13 @@ def _director(state: Conversation) -> dict[str, object]:
     ]
     # Private instructions go to one seat only; the director view shows them to the boss.
     data["rounds"] = [
-        {"number": round_.number, "seats": [{"seat_id": run.seat_id} for run in round_.seats]}
+        {
+            "number": round_.number,
+            "seats": [
+                {"seat_id": run.seat_id, **({"prompts": run.prompts} if run.prompts else {})}
+                for run in round_.seats
+            ],
+        }
         for round_ in state.rounds
     ]
     # A round's instructions come from the boss that opened it.
