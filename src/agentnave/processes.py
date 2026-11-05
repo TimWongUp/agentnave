@@ -65,6 +65,11 @@ async def spawn_process(argv: tuple[str, ...], cwd: Path) -> SupervisedProcess:
     return SupervisedProcess(process, completion)
 
 
+# Claude Code withholds these from its own children, MCP servers included, so a subagent's
+# login would otherwise depend on which host started the service (ADR-0058).
+WITHHELD_CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN",)
+
+
 def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     """Inherited environment with PATH completed for the provider only.
 
@@ -76,7 +81,7 @@ def provider_environment(argv: tuple[str, ...]) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("AGENTNAVE_HOST_SESSION_ID", None)
     env.pop("AGENTNAVE_HOST_APP", None)
-    for name in NATIVE_SESSION_ENV.values():
+    for name in (*NATIVE_SESSION_ENV.values(), *WITHHELD_CREDENTIALS):
         env.pop(name, None)
     if os.name == "nt":
         env.update(_system_proxy(env))

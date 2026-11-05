@@ -61,3 +61,4 @@
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
 | 0056 | [Claude Code 可选改用交互模式运行](0056-claude-interactive-runtime.md) | 提议 | — |
 | 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 提议 | — |
+| 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |

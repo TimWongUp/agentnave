@@ -37,6 +37,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - 私聊可由工位确定 CLI；需要它确定 CLI 时必须读到可用工位，宿主原生工位由宿主自带子代理执行。新任务的执行目录由调用方明确提供，续接只继承本 boss 的任务元数据并保持原生会话的 Provider 身份。工位决定访问等级，与之矛盾的声明被拒绝；访问等级仍是声明，不改变原生权限。
 - 权限类参数只来自按 CLI 的权限档位（缺省「自动」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加；档位与 App 默认值在续接时同样套用并在回执注明。调用方给出该 CLI 任一权限键时整档不套用；受限工具运行不套用档位；只按 `cli-defaults.json` 回退时不继承权限等执行控制（[ADR-0028](../adr/0028-follow-cli-default-model.md)、[ADR-0032](../adr/0032-cli-permission-tiers.md)）。
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
+- Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN`，Claude 子代理一律用 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据（[ADR-0058](../adr/0058-claude-stored-login.md)）。
 
 ## Provider Adapter
 
