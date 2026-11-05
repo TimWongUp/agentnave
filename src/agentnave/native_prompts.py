@@ -19,12 +19,16 @@ def timestamp() -> str:
 
 MASK = "****"
 # The value after a secret-looking key, in shell (KEY=v), header (Key: v) and JSON ("key": "v").
-# A quoted value, JSON-escaped or not, is hidden up to the same unescaped quote, or to the end
-# of the line when that quote never comes. The bounded key suffix keeps the scan linear.
+# Whole keys are matched once each and checked for a secret word, so the scan stays linear and
+# a long key name is still recognized. A quoted value, JSON-escaped or not, is hidden up to the
+# same unescaped quote, or to the end of the line when that quote never comes.
+_SECRET_KEY = re.compile(
+    r"(?i)token|password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|"
+    r"credential|authorization|cookie"
+)
+_ASSIGNMENT = re.compile(r"(?<![\w-])([\w-]++)(?:\\?[\"'])?\s*[=:]\s*")
 _SECRET_VALUE = re.compile(
-    r"(?i)((?:token|password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"credential|authorization|cookie)\w{0,40}(?:\\?[\"'])?\s*[=:]\s*)"
-    r"(?:(\\?[\"'])[^\n]+?(?=(?<!\\)\2|\n|$)|((?:bearer|basic)\s+)?[^\s\"'\\,;]{4,})"
+    r"(?i)(\\?[\"'])[^\n]+?(?=(?<!\\)\1|\n|$)|((?:bearer|basic)\s+)?[^\s\"'\\,;]{4,}"
 )
 _SECRET_TOKENS = re.compile(
     r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"
@@ -43,11 +47,36 @@ def mask_secrets(text: str) -> str:
     CLI still runs the original input."""
     for name, value in os.environ.items():
         if len(value) >= 8 and _SECRET_ENV_NAME.search(name):
-            # Tool input arrives JSON-encoded, where quotes and backslashes are escaped.
-            for form in (value, json.dumps(value, ensure_ascii=False)[1:-1]):
+            for form in _encoded_forms(value):
                 text = text.replace(form, MASK)
-    text = _SECRET_TOKENS.sub(MASK, text)
-    return _SECRET_VALUE.sub(lambda m: m.group(1) + (m.group(2) or m.group(3) or "") + MASK, text)
+    return _mask_assigned(_SECRET_TOKENS.sub(MASK, text))
+
+
+def _encoded_forms(value: str) -> list[str]:
+    """The value as written, and JSON-escaped up to three levels deep (tool input arrives
+    JSON-encoded, and commands may carry JSON of their own), longest first."""
+    forms = {value}
+    for ascii_only in (False, True):
+        form = value
+        for _ in range(3):
+            form = json.dumps(form, ensure_ascii=ascii_only)[1:-1]
+            forms.add(form)
+    return sorted(forms, key=len, reverse=True)
+
+
+def _mask_assigned(text: str) -> str:
+    parts: list[str] = []
+    end = 0
+    for key in _ASSIGNMENT.finditer(text):
+        if key.start() < end or not _SECRET_KEY.search(key.group(1)):
+            continue
+        value = _SECRET_VALUE.match(text, key.end())
+        if value is None:
+            continue
+        parts.append(text[end : key.end()] + (value.group(1) or value.group(2) or "") + MASK)
+        end = value.end()
+    parts.append(text[end:])
+    return "".join(parts)
 
 
 class PromptPayload(TypedDict):

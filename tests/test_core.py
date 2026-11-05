@@ -1348,6 +1348,7 @@ def test_closed_prompt_is_never_reported_again() -> None:
         ({"command": 'PASSWORD="two words" run'}, 'PASSWORD=\\"****\\" run'),
         ({"password": "two words"}, '"password": "****"'),
         ({"command": 'PASSWORD="it\'s two" run'}, 'PASSWORD=\\"****\\" run'),
+        ({"command": "API_KEY_FOR_A_VERY_LONG_PRIVATE_GATEWAY_SERVICE_NAME=xyz-1234 run"}, "=****"),
     ],
 )
 def test_prompt_content_hides_credentials_but_stays_json(
@@ -1371,3 +1372,8 @@ def test_prompt_content_hides_credentials_before_cutting_it(
     monkeypatch.setenv("SERVICE_PASSWORD", 'demo"pass\\word123')
     encoded = json.dumps({"command": "echo 'demo\"pass\\word123'"})
     assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=encoded).tool_input
+    # A command carrying JSON of its own escapes the secret a second time.
+    twice = json.dumps(
+        {"command": "curl -d " + json.dumps(json.dumps({"v": 'demo"pass\\word123'}))}
+    )
+    assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=twice).tool_input
