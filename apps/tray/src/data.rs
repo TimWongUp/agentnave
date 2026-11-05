@@ -1,6 +1,7 @@
 //! Studio snapshots (ADR-0008) and the tray-only management routes (ADR-0012).
 
 mod assets;
+mod orphaned;
 mod request;
 
 use std::collections::{HashMap, HashSet};
@@ -171,6 +172,8 @@ pub struct Reader {
     /// Parsed views by conversation, keyed on the row's revision, so polling parses only
     /// views that changed.
     summaries: Mutex<HashMap<String, CachedView>>,
+    /// Display-only recovery, reused by revision only after a fresh ownership probe.
+    orphaned: Mutex<HashMap<String, CachedView>>,
     /// Parsed live files, keyed the same way; several routes poll within one publication.
     live_files: Mutex<HashMap<PathBuf, Cached>>,
     /// Live views by conversation, so unchanged inputs keep one Arc for the route caches.
@@ -187,6 +190,7 @@ impl Reader {
             hosts: Mutex::new(None),
             tools: Arc::default(),
             summaries: Mutex::new(HashMap::new()),
+            orphaned: Mutex::new(HashMap::new()),
             live_files: Mutex::new(HashMap::new()),
             merged: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
@@ -263,7 +267,15 @@ impl Reader {
             };
             let (view, live_updated) = match current {
                 Some((view, updated_at)) => (Some(view), updated_at),
-                None => (saved, None),
+                None => (
+                    saved.map(|saved| {
+                        database.as_ref().ok().and_then(Option::as_ref).map_or_else(
+                            || saved.clone(),
+                            |connection| orphaned::view(self, connection, &id, &saved),
+                        )
+                    }),
+                    None,
+                ),
             };
             if let Some(view) = view
                 && let Some(item) = summary(&view).filter(|item| item.id == id)
@@ -285,6 +297,10 @@ impl Reader {
         }
         merged.retain(|id, _| shown.contains(id));
         cache.retain(|id, _| seen.contains(id));
+        self.orphaned
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|id, _| seen.contains(id));
         items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
         overview.items = items.into_iter().map(|(_, item)| item).collect();
         overview.unavailable.sort();

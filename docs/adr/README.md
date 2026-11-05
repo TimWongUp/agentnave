@@ -11,7 +11,7 @@
 | 0005 | [由主控 Agent 导演的公共发言区与独立工作台](0005-director-controlled-discussion-rooms.md) | 已被 ADR-0006 取代 | [ADR-0006](0006-core-rounds-and-studio-split.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md) |
 | 0006 | [核心收敛为子代理与协作轮次，节目、历史与看板拆为工作室包](0006-core-rounds-and-studio-split.md) | 部分取代 | [ADR-0009](0009-single-package-two-entry-points.md)、[ADR-0013](0013-members-defaults-and-host-identity.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md)、[ADR-0045](0045-remove-browser-dashboard.md)；2026-10-20 代码修订（席位上限 7） |
 | 0007 | [`wait_any` 返回就绪子集并只消费回复中的阻塞](0007-wait-any-ready-subset.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0039](0039-retry-lost-seat-within-round.md)、[ADR-0049](0049-service-initiated-termination.md)、[ADR-0057](0057-boss-answers-native-prompts.md)（提议） |
-| 0008 | [托盘应用只读展示工作室数据，工作室写出视图快照与运行文件](0008-tray-app-reads-studio-snapshots.md) | 部分取代 | [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md)、[ADR-0012](0012-tray-conversation-cleanup.md)、[ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
+| 0008 | [托盘应用只读展示工作室数据，工作室写出视图快照与运行文件](0008-tray-app-reads-studio-snapshots.md) | 部分取代 | [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md)、[ADR-0012](0012-tray-conversation-cleanup.md)、[ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0050](0050-v1-compatibility-baseline.md)、[ADR-0058](0058-tray-detects-orphaned-running-work.md) |
 | 0009 | [核心与工作室合为一个发行包，保留两个入口](0009-single-package-two-entry-points.md) | 已被 ADR-0016 取代 | [ADR-0016](0016-single-core-and-mcp-entrypoint.md) |
 | 0010 | [入口经中继启动，升级后在空闲时自动换用新服务](0010-launcher-relay-swaps-upgraded-server.md) | 部分取代 | [ADR-0014](0014-tray-members-and-one-click-update.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0047](0047-versioned-service-install.md) |
 | 0011 | [被派出的 CLI 只能使用零工具 AgentNave 服务](0011-disable-nested-orchestration.md) | 已被 ADR-0031 取代 | [ADR-0031](0031-prompt-only-orchestration.md) |
@@ -29,7 +29,7 @@
 | 0023 | [私聊续接改为显式开启](0023-explicit-desk-continuation.md) | 已被 ADR-0025 取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md) |
 | 0024 | [工具收敛为 8 个，审核改为公开／不公开](0024-consolidated-tools-and-private-review.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0057](0057-boss-answers-native-prompts.md)（提议） |
 | 0025 | [工位即原生线程，并发上限决定显示上限](0025-session-desks-and-running-limit.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md) |
-| 0026 | [会话存储改为 SQLite](0026-sqlite-conversation-store.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0048](0048-sqlite-schema-evolution.md) |
+| 0026 | [会话存储改为 SQLite](0026-sqlite-conversation-store.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0048](0048-sqlite-schema-evolution.md)、[ADR-0058](0058-tray-detects-orphaned-running-work.md) |
 | 0027 | [DeepSeek 官方路由自动恢复已存认证](0027-deepseek-official-route-stored-credentials.md) | 已接受 | — |
 | 0028 | [默认模型与档位跟随 CLI 自身设置](0028-follow-cli-default-model.md) | 部分取代 | [ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0042](0042-pass-cli-default-effort.md) |
 | 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md) |
@@ -61,3 +61,4 @@
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
 | 0056 | [Claude Code 可选改用交互模式运行](0056-claude-interactive-runtime.md) | 提议 | — |
 | 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 提议 | — |
+| 0058 | [托盘识别无人持有的运行记录](0058-tray-detects-orphaned-running-work.md) | 已接受 | — |
