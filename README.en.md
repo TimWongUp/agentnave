@@ -97,7 +97,7 @@ configuration and native sessions stay with that CLI.
 | ------------------- | ----------------------------------------------------------------------------------------- |
 | `start_agent`       | Start one CLI task; returns an `invocation_id` immediately and saves the task             |
 | `run_round`         | Open a meeting of 2–7 seats, run a parallel or serial round, or post a host remark        |
-| `wait`              | Wait up to 240 seconds by default; returns early when ready; use `0` for a progress check |
+| `wait`              | Wait up to 240 seconds; `0` immediately receives ready results or returns progress |
 | `cancel`            | Stop a task or a round and return its final result                                        |
 | `decide_answers`    | With review on, publish each answer or keep it private                                    |
 | `list`              | List current handles and saved conversations                                              |

@@ -23,18 +23,59 @@ async def test_codex_missing_chat_id_error_explains_how_to_read_it(
     monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
     monkeypatch.setenv("CODEX_THREAD_ID", "not-forwarded-to-mcp-in-production")
     async with Client(mcp) as client:
-        for tool in ("start_agent", "run_round"):
+        for tool in ("start_agent", "run_round", "wait"):
             result = await client.call_tool(
                 tool,
                 {"provider": "claude", "cwd": str(tmp_path), "prompt": "check"}
                 if tool == "start_agent"
-                else {"title": "check"},
+                else {"title": "check"}
+                if tool == "run_round"
+                else {},
             )
             assert result.is_error
             error = str(result.content)
             assert "$env:CODEX_THREAD_ID" in error and "printenv CODEX_THREAD_ID" in error
-            assert "failed shell command" in error and "Nothing was started" in error
+            assert "failed shell command" in error
+            assert ("Nothing was received" if tool == "wait" else "Nothing was started") in error
     assert not (data_root / "agentnave.db").exists()
+
+
+@pytest.mark.asyncio
+async def test_anonymous_inbox_rejects_without_receiving_other_chats_results(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex"))
+    monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+    async with Client(mcp) as client:
+        tasks = [
+            await _call(
+                client,
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "cwd": str(tmp_path),
+                    "prompt": "check",
+                    "manager_session_id": chat,
+                },
+            )
+            for chat in ("chat-a", "chat-b")
+        ]
+        for arguments in ({}, {"wait_seconds": 0, "include_output": False}):
+            rejected = await client.call_tool("wait", arguments)
+            assert rejected.is_error
+            assert "needs manager_session_id" in str(rejected.content)
+        explicit = await _call(client, "wait", {"manager_session_id": "chat-a"})
+        updates = cast(list[dict[str, object]], explicit["updates"])
+        assert [item["invocation_id"] for item in updates] == [tasks[0]["invocation_id"]]
+        assert explicit["all_finished"] is True
+        monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "chat-b")
+        injected = await _call(client, "wait", {})
+        updates = cast(list[dict[str, object]], injected["updates"])
+        assert [item["invocation_id"] for item in updates] == [tasks[1]["invocation_id"]]
+        assert injected["all_finished"] is True
+        monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+        reread = await _wait_task(client, tasks[0]["invocation_id"])
+        assert reread["status"] == "succeeded" and reread["output"]
 
 
 @pytest.mark.asyncio

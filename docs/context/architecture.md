@@ -80,7 +80,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 ## 身份与工作区
 
 - 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，否则 macOS／Linux 沿祖先进程只读匹配，Windows 只读环境变量。宿主身份决定单任务排除的同类 Provider，不约束会议席位。
-- `start_agent`、`run_round` 要求 boss 聊天身份 `manager_session_id`；磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0017](../adr/0017-manager-chat-session-identity.md)、[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
+- 派发与按聊天收件均要求可确定的 boss 聊天身份；收件箱不在身份未知时回退为全服务收件（[ADR-0007](../adr/0007-wait-any-ready-subset.md)、[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - 工作区可交给另一个 boss 聊天接手；交接不转移运行中的调用，老 boss 之后的写入被拒绝；没有会话的聊天交出时，`workspaces` 行自带名字和目录，由它承载只有 boss 的工作区（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - boss 与组员的模型优先取原生会话记录中的回报值，其次取调用声明；不从 CLI 全局默认值推测。
 

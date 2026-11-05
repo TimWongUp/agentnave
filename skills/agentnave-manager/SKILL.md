@@ -144,13 +144,13 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 回复内容
 
-用内容边界控制回复，不靠字数：写明要包含什么、不必包含什么。实现回报改了什么、理由、验证结果和未完成项，不贴代码或 diff；评审只报 finding，不复述代码和规格原文；会议席位给结论、理由和分歧，不复述题目和他人观点。长报告、日志或附件让 CLI 保存到约定位置，回复摘要和绝对路径，boss 需要时再读；`restricted_tools` 的席位不能写文件，长内容分多轮。字数上限只在席位多、boss 上下文紧张或只要一句判断时作为参考给出，多席时写明是每席的上限。只查状态用 `wait(include_output=false)`，回读历史优先 `read_conversation` 默认结果和 `since_round`，长会话加 `limit` 只取最近若干条。每次调用保留的标准输出上限 1 MiB、stderr 64 KiB，超限报 `output_limit_exceeded` 并终止。
+用内容边界控制回复，不靠字数：写明要包含什么、不必包含什么。实现回报改了什么、理由、验证结果和未完成项，不贴代码或 diff；评审只报 finding，不复述代码和规格原文；会议席位给结论、理由和分歧，不复述题目和他人观点。长报告、日志或附件让 CLI 保存到约定位置，回复摘要和绝对路径，boss 需要时再读；`restricted_tools` 的席位不能写文件，长内容分多轮。字数上限只在席位多、boss 上下文紧张或只要一句判断时作为参考给出，多席时写明是每席的上限。只要收件摘要、不需要正文时用 `wait(include_output=false)`，它仍会收取就绪结果；之后需要正文，用显式 `ids` 重读任务终态，或用 `read_conversation` 回读。回读历史优先默认结果和 `since_round`，长会话加 `limit` 只取最近若干条。每次调用保留的标准输出上限 1 MiB、stderr 64 KiB，超限报 `output_limit_exceeded` 并终止。
 
 ## 等待、验收与取消
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
    终态和阻塞不会主动推送，只能由 `wait` 收取：手头没有不依赖结果的工作时，派发后立刻单独调用 `wait`；有就先完成当前步骤再调用，并在结束本轮前收齐全部终态。常规省略 `wait_seconds`，`wait_elapsed` 后直接再等。调用已被宿主转入后台的，结束时按宿主提醒或句柄收取。回执里的 `unreceived` 是还没取走的结果，见到就先用 `wait` 收取。
-2. `wait` 的返回值见工具说明：任一就绪即返回，其余下次再等，已终态的处理后从名单移除。仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 单独调用 `wait(wait_seconds=0)`；它遇到就绪项仍正常收取答案或阻塞，并非只读偷看。同时派出多个时用收件箱：省略 `ids`、带上本聊天的 `manager_session_id`。在 Codex 用 `functions.exec` 调 `wait` 时，首行写 `// @exec: {"yield_time_ms": 250000}`；返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id, yield_time_ms=250000)` 等该脚本完成。让出间隔要长过 `wait` 的 240 秒，否则同一结果会被反复轮询，可能被宿主或模型代理当成死循环而中断本轮；外层让出控制权不代表超时。
+2. 常规用收件箱：省略 `ids`、带上派发时相同的 `manager_session_id`，每次重复同样的调用；无显式或宿主注入身份时会报错。定向等待用显式 `ids`，下次传返回的 `pending_ids`；保留已终态句柄会重读结果。任一就绪即返回，先处理阻塞和待审，再继续等到 `all_finished=true`；它只表示所选范围无待收终态，不代表全部成功。遇到 `review_needed` 先用 `decide_answers` 裁决，否则继续 `wait` 会立即返回。仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 调用 `wait(wait_seconds=0)`；它仍会收取就绪答案或阻塞，不是只读查询。在 Codex 用 `functions.exec` 调 `wait` 时，首行写 `// @exec: {"yield_time_ms": 250000}`；返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id, yield_time_ms=250000)` 等该脚本完成。让出间隔要长过 `wait` 的 240 秒，否则同一结果会被反复轮询，可能被宿主或模型代理当成死循环而中断本轮；外层让出控制权不代表超时。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。`seat_lost` 表示某席已失败或受阻而其他席仍在跑，每席提醒一次，只给状态和错误，不交付答案；按 `error` 决定补跑或继续等。
 4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席成功不单独唤醒等待，未就绪快照也不交付该席完整答案。
 5. 终态按 `status`、完整 `output`、`error` 和原生 `session_id` 验收；会议每席全文每轮只给一次，再看用 `read_conversation`。`succeeded` 不证明目标完成，须核对命令、产物或检查。
