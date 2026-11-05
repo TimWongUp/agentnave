@@ -39,7 +39,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是显示给用户看的职责，不影响身份，写这位员工这次具体做什么，如「接手方视角」。用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 传 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`、`worker-frontend-easy`、`worker-frontend-hard`，可省略 `provider`，由服务按 App 工位选 CLI；工位缺失、未启用、文件损坏或属于宿主自带子代理时会报错。最终 `provider` 是工位的 CLI 时，服务套用工位的模型和档位，显式传的 `model`、`effort` 优先。继承与推断的参数来源都列在回执 `defaults_applied` 中。
 
-- 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，省略的 `provider`、`cwd`、`role`、`seat` 继承本 boss 历史中该原生会话最近一次任务，显式值优先；`access` 不继承，只换 `role` 不传 `seat` 时也不再沿用旧工位；不能换 provider。找不到历史或跨 provider 重名时补传 `provider` 和 `cwd`，其他 boss 的历史不提供默认值，`manager_session_id` 仍按上节传入。不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。
+- 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，省略的 `provider`、`cwd`、`role`、`seat` 继承本 boss 历史中该原生会话最近一次任务，显式值优先；`access` 不继承，只换 `role` 不传 `seat` 时也不再沿用旧工位；不能换 provider。找不到历史或跨 provider 重名时补传 `provider` 和 `cwd`，其他 boss 的历史不提供默认值，`manager_session_id` 仍按上节传入。不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。任务已换阶段、旧细节不再需要时，写简报开新线程或新会议，暂停较久后尤其如此，因为缓存过期后续接要整段重建；仍需原始证据时继续续接。
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
 - 转发：私聊默认不带任何工作区上下文。用 `forward` 引用 `wait`、`run_round`、`decide_answers` 回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。只有成功的任务和已提交的会议条目能转发。
 - 同类宿主：与宿主同类的 CLI 被排除出私聊，只用于会议室；需要同类 CLI 执行任务时优先用宿主自带的子代理能力。`list_members` 的 `review`、`orchestration` 把这类工位标为 `native=true`：交给宿主自带子代理，宿主允许时用所选模型。
@@ -124,7 +124,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ```text
 候选：head <完整 SHA>，base <完整 SHA>，git diff <base>...<head>
-失败假设：<这个工位负责的一个假设>
+失败假设：<这个工位负责的假设>
 证据边界：<规格、ADR、PR 的路径或 URL>
 角色要点：<reviewers.md 对应段落>
 返回：每条 finding 写位置、缺陷、失败场景、严重度、证据类别；结尾说明有无实质 finding 和未审范围；不复述代码和规格原文

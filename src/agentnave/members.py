@@ -23,6 +23,7 @@ type ProviderName = Literal[
 type Mode = Literal["task", "discussion"]
 type ReviewRole = Literal[
     "correctness-reviewer",
+    "correctness-reviewer-easy",
     "architecture-reviewer",
     "security-reviewer",
     "performance-reviewer",

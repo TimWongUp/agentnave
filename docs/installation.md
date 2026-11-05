@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.0.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v1.1.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.0.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.1.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -575,21 +575,20 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.0.0
+### Upgrading to v1.1.0
 
-This is the first stable release and the minimum compatibility baseline: older programs and data
-are migrated once, with no runtime compatibility branches kept. The App installs the paired
-service by version at startup; each host uses it only after its MCP connection reconnects, so
-reconnect every host after updating. On first open the service migrates the history database to
-version 2 and deletes legacy-identity conversations (records without a manager chat identity)
-together with their seat directories; this cannot be undone, so back up `agentnave.db` in the
-data directory first if you need them. Until a host reconnects, the App keeps an unmigrated
-database read-only. `cli-options.json` is removed: Codex always runs outside Git repositories
-without configuration, an existing file is ignored, and `list_members` no longer returns
-`cli_options`. `role` no longer doubles as an `explorer-*`/`worker-*` seat name; use `seat`.
+Update the App; it installs the paired service by version at startup, and each host uses it only
+after its MCP connection reconnects, so reconnect every host after updating. With the App, a CLI
+now has to be confirmed under Employees before it can be dispatched. The App migrates once at
+startup: scenes in `members.json` without a list become lists of the CLIs installed at that moment,
+so what can run stays the same; remove any you don't want. Installs without the App are not
+affected, since a scene missing from `members.json` stays unrestricted.
 
-See [v1.0.0 release notes](releases/v1.0.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v0.66.0.md).
+`review.json` gains an optional `correctness-reviewer-easy` seat. A service that hasn't reconnected
+can't read a file that sets it, and all review seats are unavailable until it does.
+
+See [v1.1.0 release notes](releases/v1.1.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.0.0.md).
 
 ## Uninstall
 

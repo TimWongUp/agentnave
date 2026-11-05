@@ -491,13 +491,13 @@ fn revoke(refresh: &str, client: &str) -> Result<(), String> {
 pub(super) fn respond(
     token: &str,
     model: &str,
-    text: &str,
+    message: &str,
     reasoning_effort: Option<&str>,
     system: &str,
     session: &str,
 ) -> Result<String, String> {
     let input = json!([{"type":"message","role":"user",
-        "content":[{"type":"input_text","text":user_message(text)}]}]);
+        "content":[{"type":"input_text","text":message}]}]);
     let mut body = json!({
         "model":model,
         "instructions":system,

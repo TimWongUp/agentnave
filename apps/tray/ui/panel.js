@@ -15,6 +15,84 @@ const SHOWN = 6; //   ... down to this many
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
 
+// ---------------------------------------------------------------- voice
+// The office alone plays, so every click here goes back to it. First in the panel, only while
+// something plays: the album playing. On each workspace and meeting: listen to it, which plays its
+// latest message and then whatever it says next.
+let voiceNow = null, voiceConfig = null;
+// A listen click on its way: the office is opening, or waits until the user leaves the page shown.
+let voiceAsked = null;
+// Without the office open, whether voice can speak comes from its settings; listening opens it.
+const voiceReady = () => voiceNow ? voiceNow.enabled && voiceNow.ready
+  : Boolean(voiceConfig?.enabled && voiceConfig.keys?.[voiceConfig.engine]);
+function voiceCommand(kind, value) {
+  fetch("/app/voice/player/command", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, value }) }).catch(() => {});
+}
+const listening = target => {
+  const follow = voiceNow?.follow;
+  return Boolean(follow && follow.group === target.group && (follow.room || null) === (target.room || null));
+};
+const asked = target => Boolean(voiceAsked && voiceAsked.target.group === target.group && voiceAsked.target.room === (target.room || null));
+function ask(target) {
+  const request = voiceAsked = { target: { group: target.group, room: target.room || null }, deferred: false };
+  redrawListen();
+  fetch("/app/voice/player/command", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "listen", value: request.target }) })
+    .then(response => response.json()).then(reply => { if (voiceAsked === request && reply.opening === false) { request.deferred = true; redrawListen(); } })
+    .catch(() => { if (voiceAsked === request) { voiceAsked = null; redrawListen(); } });
+  // An office that never opens does not leave the button waiting.
+  setTimeout(() => { if (voiceAsked === request && !request.deferred) { voiceAsked = null; redrawListen(); } }, 20000);
+}
+function listenButton() {
+  const button = h("button.voice-listen", { type: "button", hidden: true });
+  button.addEventListener("click", () => {
+    const target = button.target;
+    if (!target) return;
+    if (asked(target)) { voiceAsked = null; voiceCommand("unlisten"); redrawListen(); }
+    else if (listening(target)) voiceCommand("unlisten");
+    else ask(target);
+  });
+  return button;
+}
+function redrawListen() {
+  for (const button of document.querySelectorAll("button.voice-listen")) if (button.target) drawListen(button);
+}
+function drawListen(button, target = button.target) {
+  button.target = target;
+  button.hidden = !voiceReady();
+  const on = listening(target), waiting = !on && asked(target);
+  setText(button, on ? "■" : waiting ? "…" : "▶");
+  const label = on ? L("停止收听", "Stop listening")
+    : waiting ? voiceAsked.deferred ? L("回到办公室后开始收听", "Starts when you go back to the office") : L("正在打开办公室…", "Opening the office…")
+    : target.room ? L("收听这场会议", "Listen to this meeting") : L("收听这个工作区", "Listen to this workspace");
+  button.dataset.waiting = String(waiting);
+  setAttr(button, "title", label);
+  setAttr(button, "aria-label", label);
+  button.dataset.on = String(on);
+}
+{
+  const follow = AN.voiceFollow(voiceCommand), album = AN.voiceAlbum(voiceCommand);
+  const failure = h("p.voice-error", { role: "status", hidden: true });
+  const now = h("div.voice-now", { hidden: true }, follow.el, album.el, failure);
+  $("scroll").prepend(now);
+  const show = snap => {
+    voiceNow = snap;
+    if (voiceAsked && snap?.follow && listening(voiceAsked.target)) voiceAsked = null;
+    now.hidden = !(snap?.enabled && (snap.playing || snap.follow || snap.error));
+    failure.hidden = !snap?.error;
+    setText(failure, snap?.error || "");
+    follow.draw(snap);
+    album.draw(snap?.playing ? snap : null);
+    redrawListen();
+  };
+  const settings = () => load("/app/voice").then(config => { voiceConfig = config; show(voiceNow); }, () => {});
+  addEventListener("agentnave:voice-player", ({ detail }) => show(detail));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) void settings(); });
+  load("/app/voice/player").then(show, () => {});
+  void settings();
+}
+
 const stage = $("stage");
 const state = {
   blocks: new Map(), // group id -> office block
@@ -81,15 +159,17 @@ function updateCell(rec, group, d) {
 
 // ---------------------------------------------------------------- meeting room row
 function createRoom() {
-  const rec = { title: h("b"), round: h("span"), seats: h("span.seats"), seatKey: "" };
-  rec.el = h("a.room", {}, h("span.wb", {}, BOARD()), h("span.rt", {}, rec.title, rec.round), rec.seats);
+  const rec = { title: h("b"), round: h("span"), seats: h("span.seats"), seatKey: "", listen: listenButton() };
+  rec.link = h("a.room", {}, h("span.wb", {}, BOARD()), h("span.rt", {}, rec.title, rec.round), rec.seats);
+  rec.el = h("div.room-row", {}, rec.link, rec.listen);
   return rec;
 }
 function updateRoom(rec, group, r, desks) {
   const [word, tone] = pick(GROUP, ongoing(r.status));
-  setClass(rec.el, `room tone-${tone}`);
-  setAttr(rec.el, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
-  setAttr(rec.el, "title", L(`会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条`, `Meeting room · ${r.title}\n${word} · ${r.board ?? 0} notes`));
+  setClass(rec.link, `room tone-${tone}`);
+  setAttr(rec.link, "href", href(`/chat/${group}#conv:${encodeURIComponent(r.id)}`));
+  drawListen(rec.listen, { group, room: r.id });
+  setAttr(rec.link, "title", L(`会议室 · ${r.title}\n${word} · 会议记录 ${r.board ?? 0} 条`, `Meeting room · ${r.title}\n${word} · ${r.board ?? 0} notes`));
   setText(rec.title, r.title);
   setText(rec.round, roomRound(r));
   const seated = r.seats.map((s) => desks.get(s.desk)).filter(Boolean);
@@ -110,7 +190,8 @@ function createBlock(m) {
   };
   rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile, rec.presence), h("span.who", {}, rec.project, rec.meta), h("span.when", {}, rec.bs, rec.time));
   rec.fold = h("button.fold", { type: "button" }, h("i.chev"), rec.foldText);
-  rec.el = h("section.blk", {}, rec.boss, rec.cells, rec.fold, rec.rooms);
+  rec.listen = listenButton();
+  rec.el = h("section.blk", {}, h("div.boss-row", {}, rec.boss, rec.listen), rec.cells, rec.fold, rec.rooms);
   rec.fold.addEventListener("click", () => {
     if (state.expanded.has(rec.id)) state.expanded.delete(rec.id);
     else state.expanded.add(rec.id);
@@ -139,6 +220,7 @@ function updateBlock(rec, m) {
   setClass(rec.presence, m.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", m.live ? L("有任务在运行", "Tasks running") : L("没有运行中的任务", "No running tasks"));
   setAttr(rec.boss, "href", href(`/chat/${m.group}`));
+  drawListen(rec.listen, { group: m.group, room: null });
   setAttr(rec.boss, "title", `${L(`${m.label} 里的 boss`, `boss in ${m.label}`)}${m.project ? ` · ${m.project}` : ""}`);
   setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${desks.length} desks, ${rooms.length} meeting rooms, open office`));
   setText(rec.project, name);

@@ -237,6 +237,7 @@ async function openRuleFile(file) {
 // agentnave-review roles, in the order the Skill grades them; saved in review.json.
 const REVIEW_ROLES = [
   ["correctness-reviewer", AN.L("正确性", "Correctness"), AN.L("每次评审必派：行为、回归、边界", "Always dispatched: behavior, regressions, edge cases")],
+  ["correctness-reviewer-easy", AN.L("正确性（简单）", "Correctness (easy)"), AN.L("R1 低风险改动用", "For low-risk R1 changes"), AN.L("同正确性", "Same as Correctness")],
   ["architecture-reviewer", AN.L("架构", "Architecture"), AN.L("职责、耦合、公开接口", "Responsibilities, coupling, public interfaces")],
   ["security-reviewer", AN.L("安全", "Security"), AN.L("信任边界、授权、数据流", "Trust boundaries, authorization, data flow")],
   ["performance-reviewer", AN.L("性能", "Performance"), AN.L("热路径、规模、资源", "Hot paths, scale, resources")],
@@ -346,11 +347,11 @@ function renderReviewSeats() {
   if (!box) return;
   const focusKey = document.activeElement?.dataset?.focusKey;
   const shown = seatsShown();
-  const rows = REVIEW_ROLES.map(([role, name, hint]) => {
+  const rows = REVIEW_ROLES.map(([role, name, hint, unset]) => {
     const seat = shown[role];
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-      ...seatSelects(role, AN.L(`${name}评审`, `${name} review`), seat, (next) => setReviewSeat(role, next)));
+      ...seatSelects(role, AN.L(`${name}评审`, `${name} review`), seat, (next) => setReviewSeat(role, next), unset));
   });
   box.replaceChildren(...rows);
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
