@@ -53,14 +53,13 @@ def mask_secrets(text: str) -> str:
 
 
 def _encoded_forms(value: str) -> list[str]:
-    """The value as written, and JSON-escaped up to three levels deep (tool input arrives
-    JSON-encoded, and commands may carry JSON of their own), longest first."""
-    forms = {value}
-    for ascii_only in (False, True):
-        form = value
-        for _ in range(3):
-            form = json.dumps(form, ensure_ascii=ascii_only)[1:-1]
-            forms.add(form)
+    """The value as written, and JSON-escaped up to four levels deep in any mix of ASCII and
+    UTF-8 escaping (tool input arrives JSON-encoded, and commands may carry JSON of their own),
+    longest first. Deliberate obfuscation such as base64 stays out of reach."""
+    forms, level = {value}, {value}
+    for _ in range(4):
+        level = {json.dumps(f, ensure_ascii=a)[1:-1] for f in level for a in (False, True)}
+        forms |= level
     return sorted(forms, key=len, reverse=True)
 
 

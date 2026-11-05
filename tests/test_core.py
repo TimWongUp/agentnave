@@ -1377,3 +1377,5 @@ def test_prompt_content_hides_credentials_before_cutting_it(
         {"command": "curl -d " + json.dumps(json.dumps({"v": 'demo"pass\\word123'}))}
     )
     assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=twice).tool_input
+    mixed = json.dumps(json.dumps('demo"pass\\word123', ensure_ascii=False), ensure_ascii=True)
+    assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=mixed).tool_input
