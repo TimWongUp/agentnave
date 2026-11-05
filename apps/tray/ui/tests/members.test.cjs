@@ -266,3 +266,50 @@ test("a failed settings read cannot make a limit save reset other runtime settin
   await app.run("saveLimit()");
   assert.deepEqual(sent, { version: 1, max_running: 3 });
 });
+
+test("unchecking all models keeps the full model list and default so items can be unchecked and default changed", () => {
+  const app = runtimeEditor();
+  app.run(`
+    function findKey(nodes, key) {
+      for (const node of nodes || []) {
+        if (!node || typeof node !== "object") continue;
+        if (node.attrs?.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    detected.codex = {
+      installed: true,
+      native: { model: "gpt-5-mini" },
+      models: [{ id: "gpt-5" }, { id: "gpt-5-mini" }],
+    };
+    currentDoc.clis.codex = { models: { "o4-mini": {} } };
+    pickerOpen = "codex/task";
+    findKey(slotRows("codex", "task", true), "codex/task/all").attrs.onChange({ target: { checked: false } });
+  `);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex"))')), {
+    enabled: true,
+    model: "gpt-5-mini",
+    allowed: ["gpt-5", "gpt-5-mini", "o4-mini"],
+    effort: "",
+  });
+  assert.equal(app.run('slot("discussion", "codex").allowed'), null);
+
+  app.run('findKey(slotRows("codex", "task", true), "codex/task/allow/o4-mini").attrs.onChange({ target: { checked: false } })');
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["gpt-5", "gpt-5-mini"]);
+  assert.equal(app.run('slot("task", "codex").model'), "gpt-5-mini");
+
+  app.run('findKey(slotRows("codex", "task", true), "codex/task/model").attrs.onChange({ target: { value: "gpt-5" } })');
+  assert.equal(app.run('slot("task", "codex").model'), "gpt-5");
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["gpt-5", "gpt-5-mini"]);
+
+  app.run(`
+    detected.claude = { installed: true, models: [] };
+    currentDoc.modes.task.claude = { models: [], overrides: {}, default: "claude-sonnet-4-5" };
+    pickerOpen = "claude/task";
+    findKey(slotRows("claude", "task", true), "claude/task/all").attrs.onChange({ target: { checked: false } });
+  `);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "claude").allowed)')), ["claude-sonnet-4-5"]);
+  assert.equal(app.run('slot("task", "claude").model'), "claude-sonnet-4-5");
+});
