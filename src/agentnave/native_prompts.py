@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -42,7 +43,9 @@ def mask_secrets(text: str) -> str:
     CLI still runs the original input."""
     for name, value in os.environ.items():
         if len(value) >= 8 and _SECRET_ENV_NAME.search(name):
-            text = text.replace(value, MASK)
+            # Tool input arrives JSON-encoded, where quotes and backslashes are escaped.
+            for form in (value, json.dumps(value, ensure_ascii=False)[1:-1]):
+                text = text.replace(form, MASK)
     text = _SECRET_TOKENS.sub(MASK, text)
     return _SECRET_VALUE.sub(lambda m: m.group(1) + (m.group(2) or m.group(3) or "") + MASK, text)
 

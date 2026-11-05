@@ -1367,3 +1367,7 @@ def test_prompt_content_hides_credentials_before_cutting_it(
         "e" * 32, "permission", "Bash", tool_input="x" * 3990 + "env-secret-value-1"
     )
     assert prompt.tool_input.endswith("****") and "env-sec" not in prompt.tool_input
+    # Quotes and backslashes in a secret are escaped once the input is JSON-encoded.
+    monkeypatch.setenv("SERVICE_PASSWORD", 'demo"pass\\word123')
+    encoded = json.dumps({"command": "echo 'demo\"pass\\word123'"})
+    assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=encoded).tool_input

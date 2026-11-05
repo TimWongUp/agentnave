@@ -58,6 +58,13 @@ def test_screen_dialogs_take_precedence_over_prompt(text: str, kind: str) -> Non
     assert tui.classify_screen(text) == kind
 
 
+def test_open_menu_is_told_apart_from_task_text_that_quotes_one() -> None:
+    menu = "⏺ Run /login.\n────────────────────────────────────────\n Do you want to proceed?\n ❯ 1. Yes\n   3. No\n\n Esc to cancel"
+    assert tui.dialog_open(menu)
+    pasted = "────────────────────────────────────────\n❯ Explain: Do you want to proceed? ❯ 1. Yes · Esc to cancel\n────────────────────────────────────────\n  ? for shortcuts"
+    assert not tui.dialog_open(pasted)
+
+
 @pytest.mark.parametrize(
     ("extra", "consent"),
     [
