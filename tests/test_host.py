@@ -212,9 +212,25 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     with sqlite3.connect(tmp_path / "hermes" / "state.db") as db:
         db.execute("CREATE TABLE sessions (id text, model text)")
         db.execute("INSERT INTO sessions VALUES (?, ?)", (hermes, "deepseek-flash"))
+        db.execute("INSERT INTO sessions VALUES (?, ?)", ("local-" + "a" * 64, "cli-model"))
     db.close()
     assert session_model(Host("hermes"), hermes) == "deepseek-flash"
+    assert session_model(Host("hermes"), "local-" + "a" * 64) == "cli-model"
     assert session_model(Host("hermes"), "../state") is None
+    # Mid-turn the session row still names the last turn's model; the API calls name this one.
+    with sqlite3.connect(tmp_path / "hermes" / "state.db") as db:
+        db.execute("CREATE TABLE session_model_usage (session_id, model, task, last_seen)")
+        db.executemany(
+            "INSERT INTO session_model_usage VALUES (?, ?, ?, ?)",
+            [
+                (hermes, "deepseek-flash", "", 1.0),
+                (hermes, "gemini-flash", "", 2.0),
+                (hermes, "aux-model", "title_generation", 3.0),
+                ("other", "other-model", "", 4.0),
+            ],
+        )
+    db.close()
+    assert session_model(Host("hermes"), hermes) == "gemini-flash"
     # A relative HERMES_HOME has no file URI; it reads as unknown instead of failing the call.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HERMES_HOME", "hermes")

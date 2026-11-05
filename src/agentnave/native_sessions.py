@@ -285,14 +285,25 @@ def _antigravity_model(native_id: str) -> str | None:
 
 
 def _hermes_model(session_id: str) -> str | None:
-    if not re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{4,32}", session_id):
+    # The gateway names its chats by time; the CLI and desktop app use local-<hash>.
+    if not re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{4,32}|local-[0-9a-f]{64}", session_id):
         return None
     path = _hermes_database()
     if not path.is_file():
         return None
     with closing(_read_only(path)) as db:
+        # sessions.model changes only when a turn ends, so mid-turn it still names the last
+        # turn's model; each API call lands in session_model_usage right away.
+        try:
+            used = db.execute(
+                "SELECT model FROM session_model_usage WHERE session_id = ? AND task = '' "
+                "ORDER BY last_seen DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:  # Older Hermes has no such table.
+            used = None
         row = db.execute("SELECT model FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    return clean_model(row[0]) if row is not None else None
+    return clean_model(used[0] if used else None) or clean_model(row[0] if row else None)
 
 
 def _hermes_database() -> Path:
