@@ -252,7 +252,7 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
 
 @pytest.mark.parametrize(
     ("marker", "dispatched"),
-    [("", False), (str(os.getsid(0)), True), ("1", False)],
+    [("", False), ("session", True), ("1", os.name == "nt")],
     ids=["boss", "dispatched", "left-session"],
 )
 def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
@@ -265,7 +265,10 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
             **os.environ,
             "AGENTNAVE_HOST": "codex",
             "AGENTNAVE_DATA_DIR": str(data),
-            "AGENTNAVE_DISPATCHED": marker,
+            # POSIX names this session; os.getsid does not exist on Windows.
+            "AGENTNAVE_DISPATCHED": marker
+            if marker != "session"
+            else ("1" if os.name == "nt" else str(os.getsid(0))),
         },
     )
 
