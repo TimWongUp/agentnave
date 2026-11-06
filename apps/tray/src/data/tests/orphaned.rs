@@ -152,12 +152,12 @@ fn orphaned_projection_rereads_completed_view_and_ignores_newer_live_evidence() 
     drop(lock(root, "task"));
     let reader = Reader::new(root.to_path_buf());
     let connection = crate::db::read(root).unwrap().unwrap();
-    let recovered = crate::data::orphaned::view(&reader, &connection, "task", &stale);
+    let recovered = crate::data::orphaned::view(&reader, &connection, "task", 0, &stale);
     assert_eq!(recovered["summary"]["status"], "interrupted");
     // Simulate a writer completing after scan read rows/body but before its lock probe.
     let done = task_snapshot("task", "succeeded", &now());
     save(root, &done);
-    let latest = crate::data::orphaned::view(&reader, &connection, "task", &stale);
+    let latest = crate::data::orphaned::view(&reader, &connection, "task", 0, &stale);
     assert_eq!(latest["director"]["tasks"][0]["status"], "succeeded");
     assert_eq!(latest["summary"]["status"], "succeeded");
     assert_eq!(*latest, done);
@@ -171,7 +171,7 @@ fn orphaned_projection_rereads_completed_view_and_ignores_newer_live_evidence() 
         &root.join("live/new-owner.json"),
         &json!({"version": 2, "conversations": {"task": {"tasks": {}}}}),
     );
-    let latest = crate::data::orphaned::view(&reader, &connection, "task", &stale);
+    let latest = crate::data::orphaned::view(&reader, &connection, "task", 0, &stale);
     assert_eq!(latest["director"]["tasks"][0]["status"], "running");
 }
 
@@ -248,7 +248,7 @@ fn orphaned_meeting_preserves_completed_failed_and_review_answers() {
     show["director"]["review"] = json!(true);
     show["director"]["private_messages"] = json!([]);
     show["director"]["round"] = json!({"number": 1, "status": "cancelled", "seats": [
-        {"seat_id": "a", "status": "succeeded", "output": "kept answer", "finished": at},
+        {"seat_id": "f", "status": "succeeded", "output": "kept answer", "finished": at},
         {"seat_id": "c", "status": "running", "output": null}]});
     save(root, &show);
     let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -270,7 +270,7 @@ fn orphaned_probe_leaves_the_connection_waiting_for_the_rest_of_the_scan() {
     drop(lock(root, "task"));
     let reader = Reader::new(root.to_path_buf());
     let connection = crate::db::read(root).unwrap().unwrap();
-    orphaned::view(&reader, &connection, "task", 1, &saved);
+    crate::data::orphaned::view(&reader, &connection, "task", 0, &saved);
     let wait: i64 = connection
         .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
         .unwrap();
