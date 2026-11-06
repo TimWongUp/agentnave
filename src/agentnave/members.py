@@ -212,6 +212,11 @@ class OrchestrationFile(BaseModel):
     worker_frontend: dict[Difficulty, ReviewSeat] = {}
     image_generation: ReviewSeat | None = None
 
+    def image_seat(self, host: Host) -> ReviewSeat | None:
+        """The optional image CLI is only advertised to a different provider's host."""
+        seat = self.image_generation
+        return seat if seat is not None and seat.provider != host.provider else None
+
     def interface_workers(self) -> dict[Difficulty, ReviewSeat]:
         """The interface Worker seats, an unset one filled from the Worker seat of its difficulty."""
         return {**self.worker, **self.worker_frontend}
@@ -598,7 +603,7 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
             if not roles or not roles.enabled(host):
                 seat = None
             elif role == "image-generator":
-                seat = roles.image_generation
+                seat = roles.image_seat(host)
             else:
                 kind, _, key = role.rpartition("-")
                 seats = {
@@ -854,7 +859,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                     roles.interface_workers(), modes["task"], excluded, host, installed
                 ),
                 image_generation=_review_status(
-                    {"image-generator": roles.image_generation} if roles.image_generation else {},
+                    {"image-generator": image} if (image := roles.image_seat(host)) else {},
                     modes["task"],
                     excluded,
                     host,

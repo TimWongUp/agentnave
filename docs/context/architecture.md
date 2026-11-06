@@ -43,7 +43,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
 - Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN`，Claude 子代理一律用 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据（[ADR-0058](../adr/0058-claude-stored-login.md)）。
 
-生图工位沿用普通 CLI 调用边界：App 选择对话 CLI 与模型，Provider CLI 拥有其生图工具、服务访问和产物生成；AgentNave 不维护生图模型目录或直接调用生图接口。
+生图工位沿用普通 CLI 调用边界：App 选择对话 CLI 与模型，Provider CLI 拥有其生图工具、服务访问和产物生成；AgentNave 不维护生图模型目录或直接调用生图接口。同类 CLI 的宿主不接收生图工位；生图规则也不写进它会读取的规则文件，共享文件按所有读取方约束。
 
 ## Provider Adapter
 

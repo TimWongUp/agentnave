@@ -439,11 +439,12 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
         monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
         monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
-        assert _payload(listed["orchestration"])["image_generation"] == {**seat, "native": True}
+        assert "image_generation" not in _payload(listed["orchestration"])
+        assert "image-generator" not in str(await client.list_tools())
         native = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
         )
-        assert native.is_error and "built-in subagent" in str(native.content)
+        assert native.is_error and "not configured" in str(native.content)
 
 
 @pytest.mark.asyncio

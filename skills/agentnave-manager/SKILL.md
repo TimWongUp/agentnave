@@ -50,7 +50,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档；Worker 另有界面两档（`worker_frontend`），实现涉及界面时改用它，没设时服务沿用 Worker 同档。派发时 `seat` 写成对应的 `explorer-easy`、`worker-frontend-hard` 等，可省略 `provider`、`access` 和模型；`seat` 不显示，`role` 仍照常写具体职责。
 
-仅当 `list_members` 返回 `orchestration.image_generation` 时，生图任务使用这个可选工位，以 `seat="image-generator"` 派发，不分简单、困难档；未配置时不沿用 Worker。工位选择的是与 CLI 对话的模型，实际生图由它调用自身可用的服务，派发时写清图像需求与产物路径，不传生图模型或接口参数。CLI 是否具备生图能力由其原生工具与配置决定，保存工位不代表能力验证；同类宿主的 `native` 工位仍交给宿主自带能力。
+仅当 `list_members` 返回 `orchestration.image_generation` 时，生图任务使用这个可选工位，以 `seat="image-generator"` 派发，不分简单、困难档；未配置时不沿用 Worker。工位选择的是与 CLI 对话的模型，实际生图由它调用自身可用的服务，派发时写清图像需求与产物路径，不传生图模型或接口参数。CLI 是否具备生图能力由其原生工具与配置决定，保存工位不代表能力验证；同类宿主不会收到这个生图工位；其自身生图能力由宿主原有规则处理。
 
 | 用户需要 | 调用方式 |
 | --- | --- |

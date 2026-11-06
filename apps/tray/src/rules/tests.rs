@@ -379,3 +379,51 @@ fn image_rules_follow_the_optional_seat_and_clear_copied_custom_text() {
     );
     assert!(text_of(&document, "off").is_none());
 }
+
+#[test]
+fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path();
+    let app = |id, root: &str| App {
+        key: id,
+        id,
+        label: id,
+        root: h.join(root),
+    };
+    let apps = [
+        app("codex", ".codex"),
+        app("claude", ".claude"),
+        app("grok", ".grok"),
+        app("workbuddy", ".workbuddy"),
+    ];
+    let mut document =
+        json!({"preset": "split", "image_generation": {"provider": "codex", "model": "chat"}});
+    let rows = wanted(&apps, h, &document);
+    for (path, text) in &rows {
+        assert_eq!(
+            text.contains("image-generator"),
+            !path.starts_with(h.join(".codex"))
+        );
+    }
+    document["image_generation"]["provider"] = json!("claude");
+    let rows = wanted(&apps, h, &document);
+    assert!(
+        rows.iter()
+            .find(|(p, _)| p.starts_with(h.join(".claude")))
+            .is_some_and(|(_, text)| !text.contains("image-generator"))
+    );
+    assert!(
+        rows.iter()
+            .find(|(p, _)| p.starts_with(h.join(".codex")))
+            .unwrap()
+            .1
+            .contains("image-generator")
+    );
+    document["image_generation"]["provider"] = json!("codebuddy");
+    assert!(
+        wanted(&apps, h, &document)
+            .iter()
+            .find(|(p, _)| p.starts_with(h.join(".workbuddy")))
+            .is_some_and(|(_, text)| !text.contains("image-generator"))
+    );
+}

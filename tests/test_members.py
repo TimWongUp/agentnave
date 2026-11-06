@@ -66,12 +66,20 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
         assert status.enabled is enabled
         assert bool(status.explorer) is enabled
         assert bool(status.worker) is enabled
-        assert (status.image_generation is not None) is enabled
+        assert (status.image_generation is not None) is (enabled and host.provider != "claude")
         assert (role_seat("explorer-easy", host) is not None) is enabled
         assert (role_seat("worker-hard", host) is not None) is enabled
         assert (role_seat("worker-frontend-hard", host) is not None) is enabled
-        assert (role_seat("image-generator", host) is not None) is enabled
+        assert (role_seat("image-generator", host) is not None) is (
+            enabled and host.provider != "claude"
+        )
 
+    assert (
+        OrchestrationFile.model_validate(
+            {"version": 1, "image_generation": {"provider": "codebuddy", "model": "chat"}}
+        ).image_seat(Host("workbuddy"))
+        is None
+    )
     codex, claude = Host("codex", "env"), Host("claude", "env")
     check(codex, False)
     document["apps"] = {"codex": "split"}

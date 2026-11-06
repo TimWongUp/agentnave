@@ -275,12 +275,24 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
 fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
-        if let Some(text) = text_of(document, mode_of(document, &group)) {
-            wanted.extend(
-                targets(&group, home)
-                    .into_iter()
-                    .map(|path| (path, text.clone())),
-            );
+        for path in targets(&group, home) {
+            let mut scoped = document.clone();
+            let provider = document["image_generation"]["provider"].as_str();
+            // A shared rules file cannot give one of its readers a rule it must not see.
+            let own_reader = group.iter().any(|app| {
+                let cli = if app.id == "workbuddy" {
+                    "codebuddy"
+                } else {
+                    app.id
+                };
+                provider == Some(cli) && would_read(app, home).contains(&path)
+            });
+            if own_reader {
+                scoped["image_generation"] = Value::Null;
+            }
+            if let Some(text) = text_of(&scoped, mode_of(document, &group)) {
+                wanted.push((path, text));
+            }
         }
     }
     wanted
