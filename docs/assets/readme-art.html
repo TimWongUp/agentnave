@@ -215,6 +215,9 @@
       .chip:nth-child(3) {
         background: var(--lilac);
       }
+      .chip:nth-child(4) {
+        background: var(--mint);
+      }
 
       .room {
         position: absolute;
@@ -265,7 +268,67 @@
         justify-content: space-between;
       }
       .row .scene {
-        width: 196px;
+        width: 148px;
+      }
+      /* the App's player, reading the meeting aloud */
+      .player {
+        position: absolute;
+        right: 14px;
+        top: 58px;
+        width: 158px;
+        padding: 10px;
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: 0 3px 0 rgba(61, 51, 80, 0.12);
+        z-index: 6;
+      }
+      .player .now {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .player .cover {
+        flex: none;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 46px;
+        height: 46px;
+        overflow: hidden;
+        border-radius: 10px;
+        background: var(--lilac);
+      }
+      .player .cover img {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .player .title {
+        font-size: 15px;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
+      .player .who {
+        font-size: 12px;
+        line-height: 1.3;
+        color: var(--soft);
+      }
+      .player .controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 8px;
+        padding: 0 8px;
+        color: var(--ink);
+      }
+      .player .controls svg {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+      }
+      .player .controls .main {
+        width: 24px;
+        height: 24px;
+        color: #ff7a9c;
       }
       /* the boss hands work down to each desk */
       .routes {
@@ -398,11 +461,27 @@
 
       function scene(name, state, { cli, boss = false } = {}) {
         const open = state === "working";
+        const set = boss ? `-${cli}` : "";
         return `<div class="scene${boss ? " boss" : ""}">
-    <img class="l-chair" src="${ART}office/chair.webp">${fig(name, state)}
-    <img class="l-desk" src="${ART}office/${boss ? "boss-desk" : "desk"}.webp">
-    <img class="l-laptop" src="${ART}office/${open ? "laptop" : "laptop-closed"}.webp">
-    ${open && cli ? `<img class="lid" src="${ART}cli/${cli}.svg">` : ""}</div>`;
+    <img class="l-chair" src="${ART}office/${boss ? "boss-" : ""}chair${set}.webp">${fig(name, state)}
+    <img class="l-desk" src="${ART}office/${boss ? "boss-" : ""}desk${set}.webp">
+    <img class="l-laptop" src="${ART}office/${boss ? "boss-" : ""}laptop${open ? "" : "-closed"}${set}.webp">
+    ${open && cli && !boss ? `<img class="lid" src="${ART}cli/${cli}.svg">` : ""}</div>`;
+      }
+
+      function player() {
+        const heads = ["codex", "deepseek", "gemini", "grok"]
+          .map((name) => `<img src="${ART}h/${name}/idle.webp">`)
+          .join("");
+        return `<div class="player">
+    <div class="now"><div class="cover">${heads}</div>
+      <div><div class="title">${T("方案讨论", "Planning")}</div><div class="who">GPT</div></div></div>
+    <div class="controls">
+      <svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5v14L9.5 12z"/></svg>
+      <svg class="main" viewBox="0 0 24 24"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+      <svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5v14l10.5-7z"/></svg>
+    </div>
+  </div>`;
       }
 
       function banner() {
@@ -410,24 +489,27 @@
     <div class="left">
       <img class="mark" src="tim-wong-mark.png">
       <h1>Agent<span class="n">Nave</span></h1>
-      <p class="tag">${T("让你的 Agent <b>当上老板</b>，<br>带一屋子 CLI 小伙伴一起干活", "Your Agent <b>becomes the boss</b>,<br>with a whole office of CLI teammates")}</p>
+      <p class="tag">${T("让你的 Agent <b>当上 boss</b>，<br>带一屋子 CLI 员工一起干活", "Your Agent <b>becomes the boss</b>,<br>with a whole office of CLI employees")}</p>
       <div class="chips">
         <span class="chip">${T("本地 MCP", "Local MCP")}</span>
-        <span class="chip">${T("并联 · 串联协作", "Group rounds")}</span>
-        <span class="chip">${T("托盘小办公室", "Cozy tray office")}</span>
+        <span class="chip">${T("私聊和会议", "Meetings")}</span>
+        <span class="chip">${T("小办公室", "Tray office")}</span>
+        <span class="chip">${T("语音收听", "Listen in")}</span>
       </div>
     </div>
     <div class="room">
       <div class="bunting">${"<i></i>".repeat(14)}</div>
       <svg class="routes" viewBox="0 0 632 544" fill="none" stroke="#ff9fb8" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9">
-        <path d="M300 252 C300 292 110 282 110 322" /><path d="M316 252 V322" /><path d="M332 252 C332 292 512 282 512 322" />
+        <path d="M296 252 C296 300 84 280 84 344" /><path d="M308 252 C308 300 240 290 240 344" /><path d="M324 252 C324 300 392 290 392 344" /><path d="M336 252 C336 300 548 280 548 344" />
       </svg>
       <div class="boss-spot">${scene("claude", "working", { cli: "claude", boss: true })}<span class="plate">boss</span>
-        <span class="say" style="left:-112px;top:62px">${T("派活咯～", "New task!")}</span></div>
+        <span class="say" style="left:-132px;top:62px">${T("派活咯～", "New task!")}</span></div>
+      ${player()}
       <div class="row">
-        <div style="position:relative">${scene("codex", "working", { cli: "codex" })}<span class="say" style="left:8px;top:-34px">${T("收到！", "On it!")}</span></div>
-        <div style="position:relative">${scene("deepseek", "speaking")}<span class="say" style="left:20px;top:-34px">${T("我有个想法～", "Idea time~")}</span></div>
-        <div style="position:relative">${scene("gemini", "done")}<span class="say" style="left:26px;top:-34px">${T("搞定啦 ✨", "All done ✨")}</span></div>
+        <div style="position:relative">${scene("codex", "working", { cli: "codex" })}<span class="say" style="left:10px;top:-40px">${T("收到！", "On it!")}</span></div>
+        <div style="position:relative">${scene("deepseek", "speaking")}<span class="say" style="left:0;top:-40px">${T("我有个想法", "Got an idea")}</span></div>
+        <div style="position:relative">${scene("gemini", "done")}<span class="say" style="left:12px;top:-40px">${T("搞定啦 ✨", "Done ✨")}</span></div>
+        <div style="position:relative">${scene("grok", "working", { cli: "grok" })}<span class="say" style="left:14px;top:-40px">${T("在写了", "Writing")}</span></div>
       </div>
     </div>
   </div>`;
