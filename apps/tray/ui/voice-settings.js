@@ -373,7 +373,7 @@
   function familySettings() {
     const table = h("div.voice-families", {}, h("div.voice-character", {},
       h("div.voice-family", {}, h("span"), h("span", {}, "boss")), persona("boss", "boss ")));
-    Object.entries(Avatars.families).forEach(([family, [label]], index) => {
+    [...Object.entries(Avatars.families), ["default", [L("新同事", "Newcomer")]]].forEach(([family, [label]], index) => {
       const button = h("button.voice-preview", { type: "button", disabled: busy || !config.enabled || !voices.length, "aria-label": L(`试听${label}音色`, `Preview ${label} voice`) }, L("试听", "Preview"));
       button.addEventListener("click", () => preview(family, button));
       const select = picker(L(`${label}音色`, `${label} voice`), voices, config.voices[family] || voices[index % voices.length]?.id,

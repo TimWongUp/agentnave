@@ -581,7 +581,7 @@ fn summary_cache_deduplicates_and_model_or_effort_changes_invalidate() {
 
 #[test]
 fn boss_and_member_prompts_only_change_summary_speech_style() {
-    let server = FakeServer::start(4, |_| Reply {
+    let server = FakeServer::start(6, |_| Reply {
         status: 500,
         body: json!({"error":"summary failed"}),
     });
@@ -589,33 +589,56 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
     let mut settings = storage::read_settings(directory.path()).unwrap();
     settings["enabled"] = json!(true);
     settings["code"] = json!("mention");
+    settings["voices"] = json!({"default":"voice-default"});
     settings["summary"] = summary_settings(&server.root, "custom", "model");
     settings["summary"]["prompt"] = json!("保留主要结论。");
-    settings["personas"] =
-        json!({"boss":"你是一位冷静果断的主持人。","gpt":"你是热心而幽默的同事。"});
+    settings["personas"] = json!({
+        "boss":"你是一位冷静果断的主持人。",
+        "gpt":"你是热心而幽默的同事。",
+        "default":"你是元气满满的萌新实习生。"
+    });
     storage::save_settings(directory.path(), &settings).unwrap();
     storage::save_key(
         directory.path(),
         &json!({"engine":"elevenlabs","key":"fake"}),
     )
     .unwrap();
-    for (boss, text) in [
+    for (family, boss, voice, text) in [
         (
+            json!("gpt"),
             true,
+            json!("voice-a"),
             "请问应该选哪个方案？请比较费用和速度，先不要执行。".repeat(10),
         ),
         (
+            json!("gpt"),
             false,
+            json!("voice-a"),
             "会议总结：已选择方案甲，因为速度更快，费用分歧仍需确认。".repeat(10),
         ),
+        (
+            Value::Null,
+            false,
+            Value::Null,
+            "我已经把这部分整理好了，请大家看看。".repeat(10),
+        ),
     ] {
-        cache_opening(directory.path(), &text);
-        let response = speak(
+        cache_opening_for(
             directory.path(),
-            &json!({"family":"gpt","text":text,"full":false,"boss":boss,"voice":"voice-a",
-                "scene":{"name":"GPT","role":"探索派","room":true,"to":null}}),
-        )
-        .unwrap();
+            &text,
+            voice.as_str().unwrap_or("voice-default"),
+        );
+        let mut payload = json!({
+            "family":family,
+            "text":text,
+            "full":false,
+            "boss":boss,
+            "scene":{"name":"GPT","role":"探索派","room":true,"to":null}
+        });
+        if let Some(voice) = voice.as_str() {
+            payload["voice"] = json!(voice);
+        }
+        let response = speak(directory.path(), &payload).unwrap();
         assert!(response.notice.unwrap().contains("500"));
     }
     let requests = server.finish();
@@ -627,14 +650,20 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
                 .map(|v| v.trim().to_string())
         })
     };
-    assert!(session(1).is_some() && session(1) == session(3));
-    for (index, expected, absent) in [
-        (1, "你是一位冷静果断的主持人。", "你是热心而幽默的同事。"),
-        (3, "你是热心而幽默的同事。", "你是一位冷静果断的主持人。"),
-    ] {
+    assert!(session(1).is_some() && session(1) == session(3) && session(1) == session(5));
+    let default_body: Value = serde_json::from_slice(&requests[5].body).unwrap();
+    let default_system = default_body["messages"][0]["content"].as_str().unwrap();
+    assert!(default_system.contains("你是元气满满的萌新实习生。"));
+    assert!(!default_system.contains("你是一位冷静果断的主持人。"));
+    for (index, is_boss) in [(1, true), (3, false)] {
         let body: Value = serde_json::from_slice(&requests[index].body).unwrap();
         let system = body["messages"][0]["content"].as_str().unwrap();
-        assert!(system.contains(expected) && !system.contains(absent));
+        assert!(system.contains("你是热心而幽默的同事。"));
+        assert_eq!(system.contains("你是一位冷静果断的主持人。"), is_boss);
+        assert_eq!(
+            system.contains("作为 boss 时的角色设定补充（只补充当前作为 boss 的定位，不覆盖上面的角色人设与口吻）"),
+            is_boss
+        );
         // Messages differ only after the fixed head, which providers can then cache.
         let mut options = settings["summary"].clone();
         options["code"] = json!("mention");
@@ -664,9 +693,13 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
 
 /// The audio a failed summary falls back to, so a test never reaches a real voice service.
 fn cache_opening(root: &Path, raw: &str) {
+    cache_opening_for(root, raw, "voice-a");
+}
+
+fn cache_opening_for(root: &Path, raw: &str, voice: &str) {
     let settings = storage::read_settings(root).unwrap();
     let opening = text::excerpt(&text::clean(raw, true));
-    let key = super::super::audio_key(&settings, "elevenlabs", "voice-a", &opening);
+    let key = super::super::audio_key(&settings, "elevenlabs", voice, &opening);
     storage::cache(root, &key, b"opening", "mp3").unwrap();
 }
 
@@ -820,7 +853,9 @@ fn a_chatgpt_catalog_lists_its_slugs_for_pickers_and_their_levels() {
 
 #[test]
 fn openai_chat_gets_its_own_token_limit_field() {
-    let body = for_openai(request_prompt("m", "t", None, "s"));
+    let raw = request_prompt("m", "t", None, "s");
+    assert!(raw.get("temperature").is_none());
+    let body = for_openai(raw);
     assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
     assert_eq!(body["max_completion_tokens"], 1000);
 }
