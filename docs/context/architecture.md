@@ -17,6 +17,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 ## 进程与模块
 
 - `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+- 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
 - Claude 在 macOS／Linux 默认以交互模式运行：Provider 进程是服务自带的 helper，它在同一 supervisor 进程组里用伪终端驱动 `claude`，把 transcript 与 hooks 归一成事件；Windows 与受限工具路径用 `-p`。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)）。
 - 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。
