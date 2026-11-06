@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-banner-en.webp" alt="AgentNave: your Agent becomes the boss, with a whole office of CLI teammates" width="100%">
+  <img src="docs/assets/readme-banner-en.webp" alt="AgentNave: your Agent becomes the boss, with a whole office of CLI employees" width="100%">
 </p>
 
 <p align="center">
@@ -18,17 +18,17 @@
 
 ## 🎬 Live demo
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss sends seven CLI employees to the meeting room for two parallel rounds, then the boss sums up" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss brings six CLI employees into a meeting for two parallel rounds, then the boss sums up" width="100%"></p>
 
 ## ✨ Highlights
 
 ### 🧑‍💼 One boss, a whole office of CLIs
 
-12 hosts can be the boss and 8 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login, configuration and native session, and the `session_id` it leaves lets you continue later.
+12 hosts can be the boss and 8 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
 
 ### 👯 Private tasks and meetings
 
-`start_agent` hands a task to one employee; the result goes back only to the boss. `run_round` brings 2–7 employees into a meeting: by default two parallel rounds, where everyone proposes on their own, then revises after reading all the answers, and the boss sums up. Add a serial round to finish in turns. With review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer.
+Send one employee a task and the result goes back only to the boss, or bring 2–7 employees into a meeting: by default two parallel rounds, where everyone proposes on their own, then revises after reading all the answers, and the boss sums up. Add a serial round to finish in turns. With review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer.
 
 ### 🏢 An office you can see
 
@@ -44,7 +44,7 @@ On macOS and Linux, Claude runs interactively by default, which saves subscripti
 
 ### 🧭 Seats and review
 
-Pick models for the Explorer and Worker seats in the App, with tiers for easy, hard and interface work, and the boss dispatches by difficulty. The optional [agentnave-review](skills/agentnave-review/SKILL.md) Skill is a risk-graded review gate staffed by read-only CLI seats, and its conclusions are kept as a record.
+Pick models for the Explorer and Worker seats in the App, with tiers for easy, hard and interface work, and the boss dispatches by difficulty. You can also add a [review before merging](skills/agentnave-review/SKILL.md): how much review a change gets depends on its risk, reviewers read but never edit, and their conclusions are kept as a record.
 
 ### 🤝 Continue in another chat
 
@@ -61,9 +61,9 @@ Connecting a host installs the Skills, and an employee has to be confirmed befor
 | **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot (Linux only) |
 | **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
 
-A host never sends a single `start_agent` task to its own CLI, though its CLI can take a seat in a meeting.
+A host never sends a single task to its own CLI, though its CLI can take a seat in a meeting.
 
-Grok Bot connects only through an MCP stdio connector on Linux; integration through the macOS / Windows App is not provided. It is not a valid `AGENTNAVE_HOST` value and connects as an unknown host (`host_source: "unknown"`), so AgentNave cannot automatically read back its boss model or session file. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
+Grok Bot connects only on Linux, not through the macOS or Windows App, and its model and sessions can't be read back. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
 ## 🎀 Meet the team
 
@@ -108,60 +108,30 @@ the user through setup; config file details are in the [headless Linux host guid
 Task and meeting history lives in `~/.agentnave/` (or the directory set by `AGENTNAVE_DATA_DIR`). Each CLI's login,
 configuration and native sessions stay with that CLI.
 
-## 🧰 The MCP tools
-
-| Tool                | Purpose                                                                                   |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `start_agent`       | Start one CLI task; returns an `invocation_id` immediately and saves the task             |
-| `run_round`         | Open a meeting of 2–7 seats, run a parallel or serial round, or post a host remark        |
-| `wait`              | Wait up to 240 seconds; `0` immediately receives ready results or returns progress |
-| `cancel`            | Stop a task or a round and return its final result                                        |
-| `decide_answers`    | With review on, publish each answer or keep it private                                    |
-| `list`              | List current handles and saved conversations                                              |
-| `read_conversation` | Read one conversation back as the App shows it                                            |
-| `list_members`      | Read the employee defaults set in the App, and one CLI's options                          |
-| `handover`          | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
-| `answer_prompt`     | Answer a running CLI's permission, question or plan prompt for the user                   |
-
-Omitted model, effort and options use the employee defaults set in the App; a run still without an effort gets the
-CLI's own configured one. Both are listed in `defaults_applied`; explicit parameters win. The [agentnave-manager Skill](skills/agentnave-manager/SKILL.md) covers CLI choice and options, the
-[conversation guide](docs/studio.md) (in Chinese) covers review, host remarks and isolated seats, and
-[architecture](docs/context/architecture.md) lists the stable contracts and output limits.
-
 ## 🧭 Who decides what
 
 AgentNave only sends the work out, looks after the processes and brings the results back intact. How to split a task,
 whom to ask and whether to double-check stay with the boss, who already has the full context.
 
-| AgentNave                                  | The boss (calling Agent)                   |
-| ------------------------------------------ | ------------------------------------------ |
-| Provider command adapters                  | Planning and task decomposition            |
-| In-memory invocation lifecycle             | Provider and model selection               |
-| POSIX process groups / Windows Job Objects | Parallelism, review and synthesis          |
-| Normalized terminal results                | Retries, permissions and worktrees         |
-| Saved parallel and serial meeting rounds   | Who answers, in what order, and acceptance |
+| AgentNave                                | The boss                               |
+| ---------------------------------------- | -------------------------------------- |
+| Starts and stops each CLI                | Plans and splits the work              |
+| Sees tasks through, leaves no strays     | Picks who does it and with which model |
+| Brings the results back intact           | Decides how many at once and any review |
+| Keeps task and meeting records           | Decides whether to retry a failure     |
+| Runs the rounds of a meeting             | Who answers, in what order, how well   |
 
 By default AgentNave runs a dispatched CLI with its own automatic approval
 reviewer, or without approvals where it has none. When Claude runs interactively, the boss answers the prompts
 that still need one. The App can switch a CLI to full access. AgentNave has no
-human-facing CLI: `agentnave-mcp` is only the STDIO entry point an MCP host starts.
+command line for people: you just talk to the boss.
 
 <details>
-<summary>🔒 Lifecycle and security</summary>
+<summary>🔒 What happens to tasks, and security</summary>
 
-Invocation handles live only in the current MCP server process and expire seven days after completion. When the server
-stops, AgentNave makes a best-effort attempt to end processes still in the provider process tree. A restart cannot
-recover old handles, but saved meetings continue and a retained provider `session_id` can be passed to a new
-`start_agent` call.
+When the host closes, AgentNave stops any employee still running. The saved records stay, and saved meetings and past conversations can continue later.
 
-On macOS/Linux each provider runs under a dedicated POSIX process-group supervisor; on Windows under a kill-on-close
-Job Object. Windows providers are created suspended, assigned to the Job Object, and only then resumed, so descendants
-cannot start outside the owned process tree.
-
-**AgentNave is not a sandbox.** On POSIX, a same-user provider with command permission can deliberately daemonize,
-kill its supervisor or otherwise escape process-group cleanup. Windows Job Objects provide tree ownership but do not
-isolate the provider from the user account or the rest of the machine. Provider-native permissions remain the
-security boundary; use OS-level isolation when adversarial containment is required.
+**AgentNave is not a sandbox.** It looks after processes, and what an employee can do depends on each CLI's own permission settings. When you need strict isolation, use isolation at the operating-system level.
 
 </details>
 

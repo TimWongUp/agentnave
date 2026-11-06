@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-banner-zh.webp" alt="AgentNave：让你的 Agent 当上老板，带一屋子 CLI 小伙伴一起干活" width="100%">
+  <img src="docs/assets/readme-banner-zh.webp" alt="AgentNave：让你的 Agent 当上 boss，带一屋子 CLI 员工一起干活" width="100%">
 </p>
 
 <p align="center">
@@ -18,17 +18,17 @@
 
 ## 🎬 实机演示
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 派出 7 个 CLI 员工，在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 请 6 个 CLI 员工开会，在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
 
 ## ✨ 几大特点
 
 ### 🧑‍💼 一个 boss，一屋子 CLI
 
-12 种宿主能当 boss，8 种 CLI 能当员工，派活用的是同一套工具。每个 CLI 继续用自己的登录、配置和原生会话，留下的 `session_id` 之后还能接着聊。
+12 种宿主能当 boss，8 种 CLI 能当员工，派活用的是同一套工具。每个 CLI 继续用自己的登录和配置，聊过的会话之后还能接着聊。
 
 ### 👯 私聊和会议
 
-`start_agent` 派一位员工，结果只回给 boss。`run_round` 请 2–7 位员工开会：默认两轮并联，第一轮各自给方案，第二轮看过大家的回答再补充，最后由 boss 总结；想接力收尾就加一轮串联。开了审核，每条回答由 boss 决定公开还是留作私聊，不公开的回答其他席位看不到。
+可以单独派一位员工，结果只回给 boss；也可以请 2–7 位员工开会：默认两轮并联，第一轮各自给方案，第二轮看过大家的回答再补充，最后由 boss 总结；想接力收尾就加一轮串联。开了审核，每条回答由 boss 决定公开还是留作私聊，不公开的回答其他席位看不到。
 
 ### 🏢 看得见的小办公室
 
@@ -44,7 +44,7 @@
 
 ### 🧭 工位和评审
 
-在 App 里给 Explorer、Worker 工位选好模型，简单、困难和界面任务各有档位，boss 按任务难度派活。可选的 [agentnave-review](skills/agentnave-review/SKILL.md) Skill 是按风险分级的评审门，由只读的 CLI 工位评审，结论留作记录。
+在 App 里给 Explorer、Worker 工位选好模型，简单、困难和界面任务各有档位，boss 按任务难度派活。还可以加一道[合并前评审](skills/agentnave-review/SKILL.md)：按风险大小决定派谁来看，评审的员工只读不改，结论留作记录。
 
 ### 🤝 换个聊天接着干
 
@@ -61,9 +61,9 @@
 | **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、Grok Bot（仅 Linux） |
 | **员工**（被派活的 CLI）          | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode                         |
 
-宿主不会用 `start_agent` 把单个任务派给自己的 CLI，但会议里可以有它的席位。
+宿主不会把单个任务派给自己的 CLI，但会议里可以有它的席位。
 
-Grok Bot 仅通过 Linux 上的 MCP stdio 连接器接入，不提供 macOS / Windows App 接入。它不在 `AGENTNAVE_HOST` 的取值范围内，以未知宿主身份连接（`host_source: "unknown"`），无法自动回读 boss 模型与会话文件，详见[无头 Linux 宿主指引](docs/linux-headless.md)。
+Grok Bot 只能在 Linux 上接入，不支持 macOS 和 Windows App，也看不到它的模型和会话记录，详见[无头 Linux 宿主指引](docs/linux-headless.md)。
 
 ## 🎀 员工图鉴
 
@@ -102,52 +102,27 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1
 
 任务和会议的历史保存在 `~/.agentnave/`（也可以用 `AGENTNAVE_DATA_DIR` 指定别的目录）。各 CLI 的登录、配置和原生会话仍归 CLI 自己管。
 
-## 🧰 MCP 工具一览
-
-| 工具                | 用途                                                                 |
-| ------------------- | -------------------------------------------------------------------- |
-| `start_agent`       | 派一个 CLI 任务，立即返回 `invocation_id`，任务会自动保存            |
-| `run_round`         | 开一场 2–7 席的会议、跑一轮并联或串联，或者以主持人身份发言          |
-| `wait`              | 默认最多等 240 秒，任一任务或轮次就绪即返回；`0` 即时收件或查看进展   |
-| `cancel`            | 停止任务或轮次，返回它的最终结果                                     |
-| `decide_answers`    | 开了审核时，逐条决定回答公开还是留作私聊                             |
-| `list`              | 列出当前句柄和已保存的对话                                           |
-| `read_conversation` | 按 App 里看到的样子读回一段对话                                      |
-| `list_members`      | 读取 App 里设定的员工默认值，以及某个 CLI 支持的参数                 |
-| `handover`          | 把本聊天的整个工作区交给另一个boss聊天，或列出、认领等待接手的工作区 |
-| `answer_prompt`     | 代用户回答运行中 CLI 弹出的权限框、提问框或计划确认                  |
-
-没传的 model、effort 和 options 会套用 App 里的员工默认值，仍没有档位时按 CLI 自身设置的档位传入；回执的 `defaults_applied` 会写明补了哪些；显式参数优先。
-CLI 选择与参数见 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，审核、主持人发言和隔离席位见[会话指南](docs/studio.md)，
-稳定接口与输出上限见[架构说明](docs/context/architecture.md)。
-
 ## 🧭 分工：AgentNave 管什么
 
-AgentNave 只负责把活派出去、管好进程、把结果原样带回来。怎么拆任务、找谁、要不要复核，都由boss来定，因为完整的上下文在boss手里。
+AgentNave 只负责把活派出去、管好进程、把结果原样带回来。怎么拆任务、找谁、要不要复核，都由 boss 来定，因为完整的上下文在 boss 手里。
 
-| AgentNave                         | boss（调用方 Agent）           |
-| --------------------------------- | ------------------------------ |
-| 各 CLI 的命令适配                 | 规划和拆分任务                 |
-| 内存中的调用生命周期              | 选 CLI、选模型                 |
-| POSIX 进程组 / Windows Job Object | 并行度、复核与综合             |
-| 统一格式的终态结果                | 重试、权限和 worktree          |
-| 保存的并联／串联会议轮次          | 谁来答、按什么顺序、答得行不行 |
+| AgentNave                | boss                           |
+| ------------------------ | ------------------------------ |
+| 启动和停止各家 CLI       | 规划和拆分任务                 |
+| 盯着任务跑完，不留残余进程 | 选谁来做、用什么模型           |
+| 把结果原样带回来         | 同时派几位、要不要复核         |
+| 保存任务和会议记录       | 失败了要不要重试               |
+| 主持会议的轮次           | 谁来答、按什么顺序、答得行不行 |
 
 AgentNave 默认让派出去的 CLI 用自带的自动审批；CLI 没有自动审批时就直接放开。Claude 以交互模式运行时，仍要确认的弹框由 boss 代答。在 App 里也可以把某个 CLI 改成完全放开。
-AgentNave 没有给人用的命令行，`agentnave-mcp` 只是 MCP 宿主启动它用的 STDIO 入口。
+AgentNave 没有给人用的命令行，你只需要跟 boss 说话。
 
 <details>
-<summary>🔒 生命周期与安全</summary>
+<summary>🔒 任务的去留与安全</summary>
 
-调用句柄只存在于当前 MCP 服务进程里，完成七天后失效。服务停止时，AgentNave 会尽力结束仍留在 Provider 进程树里的进程。
-重启后找不回旧句柄，但保存的会议可以继续；留下的 Provider `session_id` 也可以传给新的 `start_agent` 接着用。
+宿主关闭时，AgentNave 会停掉还在跑的员工，已保存的记录还在，保存的会议和聊过的会话之后都能继续。
 
-在 macOS／Linux 上，AgentNave 给每个 Provider 配一个专用的 POSIX 进程组 supervisor；在 Windows 上用 kill-on-close 的 Job Object：
-Provider 以挂起状态创建，先加入 Job Object 再恢复运行，子孙进程就不会跑到受管进程树之外。
-
-**AgentNave 不是沙箱。** 在 POSIX 上，有命令权限的同用户 Provider 可以主动脱离守护、杀掉 supervisor，或用别的方式逃出进程组清理。
-Windows Job Object 只管进程树归属，不能把 Provider 和用户账户或机器的其余部分隔离开。真正的安全边界是各 Provider 自己的权限设置；
-需要对抗性隔离时，请使用操作系统级别的隔离。
+**AgentNave 不是沙箱。** 它只负责管好进程，员工能做什么取决于各 CLI 自己的权限设置。需要严格隔离时，请用操作系统级别的隔离。
 
 </details>
 
