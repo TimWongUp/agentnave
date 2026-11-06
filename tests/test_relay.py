@@ -168,13 +168,14 @@ def test_relay_swaps_only_when_idle_and_not_blocked_by_open_group(tmp_path: Path
     assert host.code == [0]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX job control")
-def test_suspending_the_host_group_leaves_the_server_running(tmp_path: Path) -> None:
-    host = Host(tmp_path)
-    host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
-    host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+if sys.platform != "win32":
 
-    assert os.getpgid(host.pid()) != os.getpgrp()
+    def test_suspending_the_host_group_leaves_the_server_running(tmp_path: Path) -> None:
+        host = Host(tmp_path)
+        host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+        assert os.getpgid(host.pid()) != os.getpgrp()
 
 
 def test_relay_swaps_for_hosts_without_handshake_and_hands_over_listen_streams(
