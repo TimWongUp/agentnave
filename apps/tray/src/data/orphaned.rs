@@ -70,7 +70,6 @@ pub(super) fn view(
     reader: &Reader,
     connection: &rusqlite::Connection,
     id: &str,
-    rev: i64,
     saved: &Arc<Value>,
 ) -> Arc<Value> {
     if !unfinished(saved) {
@@ -79,31 +78,22 @@ pub(super) fn view(
     let Some(lock) = probe(&reader.root, id) else {
         return saved.clone();
     };
-    // Already projected at this revision: give the lock straight back, a writer may be asking.
+    // A busy database is insufficient evidence; never wait with the conversation locked.
+    if connection.busy_timeout(Duration::ZERO).is_err() {
+        return saved.clone();
+    }
     let projected = reader
         .orphaned
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get(id)
-        .filter(|(cached, _)| *cached == rev)
-        .map(|(_, value)| value.clone());
-    if let Some(value) = projected {
-        drop(lock);
-        return if reader.live().contains_key(id) {
-            saved.clone()
-        } else {
-            value
-        };
-    }
-    // A busy database is insufficient evidence; never wait with the conversation locked.
-    if connection.busy_timeout(Duration::ZERO).is_err() {
-        return saved.clone();
-    }
-    // One row under the writer's lock; parsing and projection must not delay its next acquire.
+        .map(|(rev, _)| *rev);
+    // One row under the writer's lock, its body only if this revision is new to the projection:
+    // parsing and projecting must not delay the writer's next acquire.
     let latest = connection.query_row(
-        "SELECT rev, body FROM views WHERE conversation_id = ?1",
-        [id],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        "SELECT rev, CASE WHEN rev = ?2 THEN NULL ELSE body END FROM views WHERE conversation_id = ?1",
+        rusqlite::params![id, projected],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
     );
     drop(lock);
     // The scan goes on with this connection, and its other reads may wait.
@@ -122,6 +112,9 @@ pub(super) fn view(
     {
         return value.clone();
     }
+    let Some(body) = body else {
+        return saved.clone();
+    };
     let Some(mut latest) = serde_json::from_str::<Value>(&body)
         .ok()
         .filter(|value| summary(value).is_some_and(|item| item.id == id))
