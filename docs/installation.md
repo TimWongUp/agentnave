@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.1.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v1.2.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.1.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.2.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -258,7 +258,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the sixteen tools and the `codex` exclusion.
+Start a new session and confirm the ten tools and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -317,7 +317,7 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all AgentNave tools (sixteen); a
+tools, then asks whether to enable them. Complete that choice for all AgentNave tools (ten); a
 successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
 per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
@@ -575,20 +575,26 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.1.0
+### Upgrading to v1.2.0
 
 Update the App; it installs the paired service by version at startup, and each host uses it only
-after its MCP connection reconnects, so reconnect every host after updating. With the App, a CLI
-now has to be confirmed under Employees before it can be dispatched. The App migrates once at
-startup: scenes in `members.json` without a list become lists of the CLIs installed at that moment,
-so what can run stays the same; remove any you don't want. Installs without the App are not
-affected, since a scene missing from `members.json` stays unrestricted.
+after its MCP connection reconnects, so reconnect every host after updating. The `answer_prompt`
+tool appears only after that reconnect; on Hermes, also add it to the saved per-tool selection, or
+a task waiting on a native prompt stays stopped.
 
-`review.json` gains an optional `correctness-reviewer-easy` seat. A service that hasn't reconnected
-can't read a file that sets it, and all review seats are unavailable until it does.
+On macOS and Linux, Claude subagents now run interactively by default. Their sessions appear in
+Claude Code's `/resume` list, task text enters `~/.claude/history.jsonl`, and directory trust and
+the last 20 characters of a confirmed API key are recorded permanently in the user's Claude Code
+config. Turn it off with "Run interactively" on the Claude card under Employees, or pass
+`interactive=false` where there is no App.
 
-See [v1.1.0 release notes](releases/v1.1.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.0.0.md).
+Claude subagents now use the login Claude Code stored itself: the service no longer passes
+`CLAUDE_CODE_OAUTH_TOKEN` to them, so a setup that relied on that variable alone has to log in to
+Claude Code first. The App's automatic voice readout is gone; start listening when you want to hear
+a workspace, a meeting or a private chat.
+
+See [v1.2.0 release notes](releases/v1.2.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.1.0.md).
 
 ## Uninstall
 

@@ -68,10 +68,10 @@ Grok Bot 仅通过 Linux 上的 MCP stdio 连接器接入，不提供 macOS / Wi
 
 ### 方式二：手动安装（Windows / Linux，或不装 App）
 
-当前配套版本是 **`v1.1.0`**，运行时和 Skill 都要从这个 tag 安装：
+当前配套版本是 **`v1.2.0`**，运行时和 Skill 都要从这个 tag 安装：
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.1.0"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.2.0"
 ```
 
 然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager](skills/agentnave-manager/SKILL.md) 和 [agentnave-handover](skills/agentnave-handover/SKILL.md) Skill，再做验证。
@@ -94,6 +94,7 @@ uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1
 | `read_conversation` | 按 App 里看到的样子读回一段对话                                      |
 | `list_members`      | 读取 App 里设定的组员默认值，以及某个 CLI 支持的参数                 |
 | `handover`          | 把本聊天的整个工作区交给另一个老板聊天，或列出、认领等待接手的工作区 |
+| `answer_prompt`     | 代用户回答运行中 CLI 弹出的权限框、提问框或计划确认                  |
 
 没传的 model、effort 和 options 会套用 App 里的组员默认值，仍没有档位时按 CLI 自身设置的档位传入；回执的 `defaults_applied` 会写明补了哪些；显式参数优先。
 CLI 选择与参数见 [agentnave-manager Skill](skills/agentnave-manager/SKILL.md)，审核、主持人发言和隔离席位见[会话指南](docs/studio.md)，
@@ -111,7 +112,7 @@ AgentNave 只负责把活派出去、管好进程、把结果原样带回来。�
 | 统一格式的终态结果                | 重试、权限和 worktree          |
 | 保存的并联／串联会议轮次          | 谁来答、按什么顺序、答得行不行 |
 
-派出去的 CLI 没法找人点「批准」，所以 AgentNave 默认让它用自带的自动审批；CLI 没有自动审批时就直接放开。在 App 里也可以把某个 CLI 改成完全放开。
+AgentNave 默认让派出去的 CLI 用自带的自动审批；CLI 没有自动审批时就直接放开。Claude 以交互模式运行时，仍要确认的弹框由 boss 代答。在 App 里也可以把某个 CLI 改成完全放开。
 AgentNave 没有给人用的命令行，`agentnave-mcp` 只是 MCP 宿主启动它用的 STDIO 入口。
 
 <details>
