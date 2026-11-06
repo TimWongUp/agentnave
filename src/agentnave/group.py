@@ -559,7 +559,8 @@ class Groups:
         peers = [
             replace(p, reported=reports.get(p.key.removeprefix(f"seat:{group.id}:"))) for p in peers
         ]
-        member = next(p for p in peers if p.key == f"seat:{group.id}:{seat_id}")
+        key = f"seat:{group.id}:{seat_id}"
+        member = next((p for p in peers if p.key == key), MemberName(key, ""))
         return replace(member, reported=reported).identity(peers)
 
     def _seat_note(self, group: Group, seat_id: str) -> str | None:

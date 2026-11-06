@@ -423,8 +423,10 @@
     const { name, effort } = deskParts(who);
     return effort ? `${name} · ${effort}` : name;
   };
-  const handleOf = (who) => (fullModelNames() ? who.identity?.handle : who.identity?.handle_short) || deskName(who);
-  const fullHandle = (who) => who.identity?.handle || L("未记录身份，重连宿主后更新", "Identity not recorded; reconnect the host to update");
+  const localizedHandle = (identity, handle) => identity?.model_source === "unknown"
+    ? handle?.replace(/^@未记录模型(?=·|$)/, `@${L("未记录模型", "Model not recorded")}`) : handle;
+  const handleOf = (who) => localizedHandle(who.identity, fullModelNames() ? who.identity?.handle : who.identity?.handle_short) || deskName(who);
+  const fullHandle = (who) => localizedHandle(who.identity, who.identity?.handle) || L("未记录身份，重连宿主后更新", "Identity not recorded; reconnect the host to update");
   const cliOf = (who) => who.identity?.cli || cliName(who.provider);
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;

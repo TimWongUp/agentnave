@@ -22,7 +22,7 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
 from agentnave.core import InvocationManager
 from agentnave.db import Database
-from agentnave.group import GroupSeat
+from agentnave.group import Groups, GroupSeat, SeatRun
 from agentnave.mcp_server import mcp
 from agentnave.member_names import seat_identity
 from agentnave.members import CapacityError
@@ -3754,7 +3754,7 @@ def test_private_history_names_keep_old_roles_and_unknown_workspaces_separate(
         studio.db.close()
 
 
-def test_partial_meeting_names_instructions_and_missing_seat() -> None:
+def test_partial_meeting_names_instructions_and_missing_seat(data_root: Path) -> None:
     state = Conversation(
         id="m",
         title="Meeting",
@@ -3800,6 +3800,19 @@ def test_partial_meeting_names_instructions_and_missing_seat() -> None:
     assert [m["identity"]["model"] for m in timeline if m["kind"] == "instruction"] == [
         "claude-haiku-5"
     ] * 3
+    studio = Conversations(InvocationManager(), data_root)
+    record = Record.create(studio.db, studio.locks, state)
+    record.release()
+    studio.scan()
+    try:
+        group = studio._group("m")
+        for groups in (studio, Groups(studio.manager)):
+            prompt = groups._prompt(group, SeatRun("a", None), len(group.entries))
+            assert "legacy" in prompt and "未记录模型" in prompt
+    finally:
+        for record in studio.records.values():
+            record.release()
+        studio.db.close()
     state.rounds[-1].seats[0].reported_model = None
     current = seat_identity(state, "a", number=2, current=True)
     assert current["model"] == "haiku" and current["model_source"] == "requested"

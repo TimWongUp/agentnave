@@ -32,7 +32,7 @@ from agentnave.host import (
 )
 from agentnave.member_names import meeting_members, seat_identity, task_identity
 from agentnave.models import InvocationResult
-from agentnave.naming import MemberIdentity
+from agentnave.naming import MemberIdentity, MemberName
 from agentnave.native_sessions import boss_key, session_file, session_model
 from agentnave.private_naming import naming_peers, naming_scope, private_states
 from agentnave.store import (
@@ -345,7 +345,8 @@ class ConversationStore(Groups):
                 else p
                 for p in peers
             ]
-        member = next(p for p in peers if p.key == f"seat:{group.id}:{seat_id}")
+        key = f"seat:{group.id}:{seat_id}"
+        member = next((p for p in peers if p.key == key), MemberName(key, ""))
         return replace(member, reported=reported or member.reported).identity(peers)
 
     def round_identities(self, round_: Round) -> dict[str, MemberIdentity]:

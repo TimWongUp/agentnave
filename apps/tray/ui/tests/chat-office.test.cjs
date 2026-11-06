@@ -251,3 +251,17 @@ test("native prompt audit events do not count as task answers or meeting replies
   assert.equal(topics[0].replies.length, 0);
   assert.equal(topics[1].replies.length, 0);
 });
+
+
+test("unknown model handles localize without changing service role or duplicate suffix", () => {
+  const who = { identity: { model_source: "unknown", model_short: "未记录模型", numbered: true, ordinal: 2,
+    handle: "@未记录模型·Codex·评审 #2", handle_short: "@未记录模型·Codex·评审 #2" } };
+  for (const english of [false, true]) {
+    const names = common(english);
+    const expected = english ? "@Model not recorded·Codex·评审 #2" : who.identity.handle;
+    assert.equal(names.handleOf(who), expected);
+    assert.equal(names.fullHandle(who), expected);
+    names.setFullModelNames(true);
+    assert.equal(names.handleOf(who), expected);
+  }
+});
