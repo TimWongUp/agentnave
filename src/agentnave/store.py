@@ -292,6 +292,8 @@ class Record:
         refresh and has since let go.
         """
         if self.lock is not None:
+            if self.view_rev != self.rev:
+                self._write_view()
             return True
         try:
             lock = self._lock()

@@ -145,7 +145,7 @@ function scopeHead(c, ctx, shown) {
         key: `desk|${d.key}|${deskChar(desk)}`,
         ico: () => ART.head(deskChar(desk)),
         title: deskName(desk),
-        sub: `${cliName(desk.provider)}${desk.role ? ` · ${desk.role}` : ""} · ${L(`${real} 条消息`, `${real} messages`)}`,
+        sub: `${cliOf(desk)}${desk.role ? ` · ${desk.role}` : ""} · ${L(`${real} 条消息`, `${real} messages`)}`,
       };
   }
   if (d.kind === "room") {

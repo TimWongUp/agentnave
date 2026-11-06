@@ -234,6 +234,19 @@ All checks passed!
   // start/end are scenario seconds (negative = before the demo began); end:null runs forever.
   const deskKey = (provider, model, role) => `${provider}|${model || NATIVE}|${role || ""}`;
   const deskLabel = (provider, model, role) => [model || "未记录模型", HOSTS[provider] || provider, role].filter(Boolean).join(" · ");
+  // Demo identities only: the real ones come from the service. `ordinal` on a spec shows a numbered name.
+  const SPOKEN = { codex: "GPT", claude: "Claude", grok: "Grok", antigravity: "Gemini", codebuddy: "GLM", deepseek: "DeepSeek", pi: "Pi" };
+  const identityOf = (s) => {
+    const model_short = s.model ? s.model.split("/").pop() : "未记录模型";
+    const cli = HOSTS[s.provider] || s.provider;
+    const tail = `·${[cli, s.role].filter(Boolean).join("·")}${s.ordinal ? ` #${s.ordinal}` : ""}`;
+    return {
+      key: s.desk, provider: s.provider, cli, model: s.model, model_short, model_source: s.model ? "native" : "unknown",
+      role: s.role, ordinal: s.ordinal || 1, numbered: Boolean(s.ordinal),
+      handle: `@${s.model || model_short}${tail}`, handle_short: `@${model_short}${tail}`,
+      spoken_name: `${SPOKEN[s.provider] || cli}${s.ordinal ? ` #${s.ordinal}` : ""}`,
+    };
+  };
   const spec = (provider, model, o) => {
     const s = {
       provider,
@@ -249,6 +262,7 @@ All checks passed!
     };
     s.desk = deskKey(provider, s.model, s.role);
     s.deskLabel = deskLabel(provider, s.model, s.role);
+    s.identity = identityOf(s);
     return s;
   };
   const keysOf = (specs) => specs.map((s) => s.key);
@@ -302,6 +316,7 @@ All checks passed!
       specs: [gem, pi],
     };
     const reviewer = spec("codex", "gpt-6.1-sol", {
+      ordinal: 2,
       role: "审查员", access: "read", start: -30, end: 60, pace: 3.6,
       base: ["对照实现者的补丁，逐条检查换进程的边界", "关注 Windows Job Object 路径是否受影响"],
       filler: (k) => `核对第 ${k - 1} 条边界条件…`,
@@ -560,11 +575,11 @@ All checks passed!
   const isActive = (status) => status === "running" || status === "review";
   const office = (msg, { visibility, thread, desk = null, message_id = null, forward = null }) =>
     Object.assign(msg, { visibility, thread, desk, message_id, forward });
-  const recipientOf = (conv, sp) => ({ key: sp.key, provider: sp.provider, model: sp.model, label: sp.label, seat: seatOf(conv, sp) });
+  const recipientOf = (conv, sp) => ({ key: sp.key, provider: sp.provider, model: sp.model, label: sp.label, seat: seatOf(conv, sp), identity: sp.identity });
 
   function messagesOf(g, w) {
     const manager = { role: "manager", provider: g.host, model: null, label: label(g) };
-    const speakerOf = (e) => ({ role: "member", provider: e.provider, model: e.model, label: e.label || e.model });
+    const speakerOf = (e) => ({ role: "member", provider: e.provider, model: e.model, label: e.label || e.model, identity: e.identity });
     const out = [];
     const typing = [];
     for (const conv of g.convs) {
@@ -674,7 +689,7 @@ All checks passed!
     return [...map.values()]
       .sort((a, b) => b.first - a.first || (a.sp.desk < b.sp.desk ? -1 : 1))
       .map((d) => ({
-        key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, label: d.sp.deskLabel,
+        key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, identity: d.sp.identity,
         first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
         status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
         private_allowed: d.sp.provider !== hostCli,
@@ -694,7 +709,7 @@ All checks passed!
         const board = (conv.topics || []).filter((t) => w.s >= t.at).length + (conv.forwards || []).filter((f) => w.s >= f.at).length + es.filter((e) => e.status === "succeeded").length;
         return {
           id: conv.id, title: conv.title, status,
-          seats: conv.specs.map((sp) => ({ seat: seatOf(conv, sp), desk: sp.desk })),
+          seats: conv.specs.map((sp) => ({ seat: seatOf(conv, sp), desk: sp.desk, identity: sp.identity })),
           pending_review: es.filter((e) => e.status === "review").length,
           board,
         };

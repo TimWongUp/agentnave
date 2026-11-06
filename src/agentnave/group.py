@@ -21,6 +21,7 @@ from agentnave.models import (
     ProviderOption,
     RoundOrder,
 )
+from agentnave.naming import MemberIdentity, MemberName
 from agentnave.native_prompts import NativePrompt
 
 type SeatRunStatus = Literal[
@@ -103,6 +104,7 @@ class SeatState:
 class SeatRun:
     seat_id: str
     instruction: str | None
+    identity: MemberIdentity | None = None
     status: SeatRunStatus = "pending"
     invocation_id: str | None = None
     result: InvocationResult | None = None
@@ -496,11 +498,26 @@ class Groups:
         fresh = state.session_id is None
         entries = [
             entry.to_dict()
+            | (
+                {
+                    "identity": self._member_identity(
+                        group, entry.seat_id, entry.reported_model, entry.round
+                    )
+                }
+                if entry.seat_id
+                else {}
+            )
             for entry in group.entries[(0 if fresh else state.cursor) : snapshot]
             # A resumed native session already holds the seat's own answers.
             if fresh or entry.seat_id != run.seat_id
         ]
-        identity = f'Your seat ID is "{run.seat_id}".\n'
+        identity = (
+            "Your identity (JSON data): "
+            + json.dumps(
+                self._member_identity(group, run.seat_id, number=group.rounds), ensure_ascii=False
+            )
+            + "\n"
+        )
         prompt = (
             (_PREAMBLE if fresh else "")
             + identity
@@ -513,6 +530,37 @@ class Groups:
         if run.instruction:
             prompt += "\n\nPrivate instruction for you only:\n" + run.instruction
         return prompt
+
+    def _member_identity(
+        self, group: Group, seat_id: str, reported: str | None = None, number: int | None = None
+    ) -> MemberIdentity:
+        peers = [
+            MemberName(
+                f"seat:{group.id}:{seat.id}",
+                seat.provider,
+                str(seat.provider_options.get("model", "")),
+                role=seat.role,
+                ordinal=index,
+            )
+            for index, seat in enumerate(group.seats.values(), 1)
+        ]
+        reports = {
+            entry.seat_id: entry.reported_model
+            for entry in group.entries
+            if entry.round == number and entry.seat_id is not None
+        }
+        if group.active is not None and group.active.number == number:
+            reports.update(
+                {
+                    r.seat_id: r.result.reported_model if r.result else None
+                    for r in group.active.runs
+                }
+            )
+        peers = [
+            replace(p, reported=reports.get(p.key.removeprefix(f"seat:{group.id}:"))) for p in peers
+        ]
+        member = next(p for p in peers if p.key == f"seat:{group.id}:{seat_id}")
+        return replace(member, reported=reported).identity(peers)
 
     def _seat_note(self, group: Group, seat_id: str) -> str | None:
         """What a resumed seat should know beyond the new entries; nothing by default."""
@@ -574,6 +622,13 @@ class Groups:
 
     def _changed(self, round_: Round) -> None:
         try:
+            for run in round_.runs:
+                run.identity = self._member_identity(
+                    round_.group,
+                    run.seat_id,
+                    run.result.reported_model if run.result is not None else None,
+                    round_.number,
+                )
             self._on_change(round_)
         except Exception as exc:
             # Never launch more work whose outcome could not be recorded.

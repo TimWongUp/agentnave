@@ -52,6 +52,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
+from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import NativePrompt
 from agentnave.retention import Retention
 from agentnave.store import Review
@@ -349,6 +350,8 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
         "reason": "finished",
         "elapsed_ms": result.duration_ms,
     }
+    if result.identity is not None:
+        payload["identity"] = result.identity
     if result.output:
         payload["output"] = result.output
     if result.session_id:
@@ -373,6 +376,8 @@ def update_payload(
     """Final result, or a running snapshot that reports the given blocker."""
     if isinstance(update, InvocationResult):
         response = finished_payload(invocation_id, update)
+        if identity := conversations.task_identity(invocation_id, update):
+            response["identity"] = identity
         message_id = conversations.task_message_id(invocation_id)
         if message_id is not None:
             response["message_id"] = message_id
@@ -388,6 +393,8 @@ def update_payload(
         else "wait_elapsed",
         "elapsed_ms": snapshot.elapsed_ms,
     }
+    if identity := conversations.task_identity(invocation_id):
+        response["identity"] = identity
     activity = snapshot.last_activity
     if activity is not None:
         summary: ActivityPayload = {"kind": activity.kind}
@@ -498,6 +505,8 @@ def _committed_payload(entries: list[CommittedEntry]) -> list[CommittedEntryPayl
             "kind": entry.kind,
             "round": entry.round,
         }
+        if entry.identity is not None:
+            item["identity"] = entry.identity
         if entry.seat is not None:
             item["seat"] = entry.seat
         committed.append(item)
@@ -514,10 +523,15 @@ def round_payload(
     deliver: bool = True,
     reviews: dict[str, Review | None] | None = None,
     entries: list[CommittedEntry] | None = None,
+    identities: dict[str, MemberIdentity] | None = None,
 ) -> RoundPayload:
     seats: list[SeatRunPayload] = []
     for run in round_.runs:
         seat: SeatRunPayload = {"seat_id": run.seat_id, "status": run.status}
+        if run.identity is not None:
+            seat["identity"] = run.identity
+        if identities is not None and run.seat_id in identities:
+            seat["identity"] = identities[run.seat_id]
         if run.invocation_id is not None:
             seat["invocation_id"] = run.invocation_id
         result = run.result

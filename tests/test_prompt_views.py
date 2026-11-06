@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from agentnave.native_prompts import NativePrompt
-from agentnave.store import Conversation, RoundRecord, SeatRunRecord, TaskRecord
+from agentnave.store import Conversation, RoundRecord, SeatRecord, SeatRunRecord, TaskRecord
 from agentnave.views import snapshot
 
 
@@ -40,6 +40,7 @@ def test_tray_snapshots_keep_prompt_audits_for_tasks_and_all_meeting_rounds() ->
         id="meeting",
         title="meeting",
         kind="show",
+        seats=[SeatRecord(id="a", provider="claude", cwd="/tmp")],
         rounds=[
             RoundRecord(
                 id="one",

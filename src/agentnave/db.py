@@ -10,7 +10,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import NamedTuple
 
@@ -208,6 +208,24 @@ class Database:
             }
         )
         return state, int(row[-1])
+
+    def private_conversations(self, workspace: str | None) -> list[Conversation]:
+        """Saved private naming scope, derived from existing task facts."""
+        connection = self._read()
+        if connection is None:
+            return []
+        try:
+            ids = connection.execute(
+                "SELECT id FROM conversations WHERE kind = 'task' AND manager_session IS ?",
+                (workspace,),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise OSError(str(exc)) from exc
+        states: list[Conversation] = []
+        for (id_,) in ids:
+            with suppress(FileNotFoundError):
+                states.append(self.load(id_)[0])
+        return states
 
     # Workspaces (ADR-0033)
 

@@ -600,6 +600,10 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
         if let Some(model) = tail["reported_model"].as_str() {
             target["reported_model"] = json!(model);
         }
+        // A reported model can rename the member while it runs; absent from older servers.
+        if tail["identity"].is_object() {
+            target["identity"] = tail["identity"].clone();
+        }
         // What the CLI is doing now and when its reply last grew; absent from older servers.
         for key in ["doing", "output_at"] {
             if let Some(value) = tail[key].as_str() {

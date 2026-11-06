@@ -163,6 +163,16 @@ mod tests {
     }
 
     #[test]
+    fn a_numbered_spoken_name_keeps_alike_members_apart() {
+        let scene = json!({"scene":{"name":"boss","room":true,"to":[{"name":"Claude #1"},{"name":"Claude #2"}]}});
+        assert!(
+            Scene::of(&scene, true)
+                .identity()
+                .contains("点名对 Claude #1、Claude #2 说话")
+        );
+    }
+
+    #[test]
     fn a_forward_says_whose_words_are_relayed() {
         let scene =
             json!({"scene":{"name":"boss","room":true,"forward":{"name":"GPT","role":"实现"}}});

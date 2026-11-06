@@ -91,6 +91,9 @@ function tpDirectory(c, ctx) {
   for (const t of topics.filter((x) => x.kind === "task")) {
     const last = t.replies.at(-1);
     const desk = ctx.desks.get(t.prompt.desk) || ctx.desks.get(last?.desk);
+    const named = last?.speaker?.identity
+      ? last.speaker
+      : (t.prompt.to || t.prompt.recipients || []).find((target) => target.identity) || {};
     const running = t.replies.some((m) => m.kind === "typing");
     const bad = tpBad(last);
     items.push({
@@ -100,7 +103,7 @@ function tpDirectory(c, ctx) {
       title: tpFirst(t.prompt.text),
       status: bad ? [AN.L("失败", "Failed"), "bad"] : running ? [AN.L("进行中", "Running"), "run"] : last ? [AN.L("已完成", "Done"), "done"] : [AN.L("等待中", "Pending"), "idle"],
       faces: desk ? [ART.head(deskChar(desk))] : [],
-      meta: desk ? deskName(desk) : "",
+      meta: deskName(named),
       line: last ? tpSummary(last) : "",
       scope: desk ? { kind: "desk", key: desk.key } : null,
     });
@@ -159,7 +162,7 @@ function renderDirectory(c, ctx) {
   setAttr(el.drawer, "aria-label", AN.L("boss 的对话", "boss conversations"));
   const key = JSON.stringify([
     c.group, ART.version(),
-    c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.detail, m.doing]),
+    c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.detail, m.doing, m.speaker?.identity, m.speaker?.effort]),
     [...ctx.rooms.values()].map((r) => [r.id, r.title, r.status, r.pending_review]),
     [...ctx.desks.values()].map((d) => [d.key, deskName(d)]),
     c.omitted,

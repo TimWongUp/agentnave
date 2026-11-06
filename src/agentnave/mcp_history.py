@@ -14,6 +14,7 @@ from agentnave import views
 from agentnave.conversations import (
     Conversations,
 )
+from agentnave.conversations_store import naming_peers
 from agentnave.db import Workspace
 from agentnave.mcp_payloads import (
     ListPayload,
@@ -307,7 +308,11 @@ async def read_conversation(
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
     return views.timeline(
-        record.state, since_round=since_round, include_private=include_private, limit=limit
+        record.state,
+        since_round=since_round,
+        include_private=include_private,
+        limit=limit,
+        peers=naming_peers(record),
     ) | {"writable": writable}
 
 

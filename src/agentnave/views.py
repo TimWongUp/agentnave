@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timedelta
 
+from agentnave.member_names import seat_identity, task_identity
+from agentnave.naming import MemberName
+from agentnave.naming import thread as _thread
 from agentnave.store import Conversation, EntryRecord, RoundRecord
 
 _ABSENT = {
@@ -21,13 +23,6 @@ def _speaker(entry: EntryRecord) -> str | None:
     if entry.kind in ("task", "host"):
         return "@host"
     return entry.seat
-
-
-def _thread(provider: str, session_id: str | None) -> str | None:
-    """Opaque private-thread key; views never expose native session IDs."""
-    if session_id is None:
-        return None
-    return hashlib.sha256(f"{provider}\0{session_id}".encode()).hexdigest()[:16]
 
 
 def _show(state: Conversation) -> dict[str, object]:
@@ -55,6 +50,7 @@ def _show(state: Conversation) -> dict[str, object]:
                 "seat": seat_id,
                 "provider": seats[seat_id].provider,
                 "model": reported or seats[seat_id].provider_options.get("model", ""),
+                "identity": seat_identity(state, seat_id, reported=reported, number=number),
             }
             for seat_id, reported in targets
             if seat_id in seats
@@ -72,6 +68,7 @@ def _show(state: Conversation) -> dict[str, object]:
             {
                 "id": seat.id,
                 "label": seat.id,
+                "identity": seat_identity(state, seat.id, current=True),
                 "model": str(seat.provider_options.get("model", "")),
                 "effort": seat.provider_options.get("effort"),
                 "provider": seat.provider,
@@ -84,6 +81,7 @@ def _show(state: Conversation) -> dict[str, object]:
             {
                 "message_id": f"{state.id}:e:{index}",
                 "speaker": _speaker(entry),
+                **_entry_identity(state, entry),
                 "kind": entry.kind,
                 "round": entry.round,
                 "text": (
@@ -112,7 +110,7 @@ def _show(state: Conversation) -> dict[str, object]:
     }
 
 
-def _round(round_: RoundRecord) -> dict[str, object]:
+def _round(state: Conversation, round_: RoundRecord) -> dict[str, object]:
     return {
         "number": round_.number,
         "order": round_.order,
@@ -121,6 +119,9 @@ def _round(round_: RoundRecord) -> dict[str, object]:
         "seats": [
             {
                 "seat_id": seat.seat_id,
+                "identity": seat_identity(
+                    state, seat.seat_id, reported=seat.reported_model, number=round_.number
+                ),
                 "status": seat.status,
                 "instruction": seat.instruction,
                 "output": None if seat.status == "running" else seat.output,
@@ -135,7 +136,7 @@ def _round(round_: RoundRecord) -> dict[str, object]:
     }
 
 
-def _director(state: Conversation) -> dict[str, object]:
+def _director(state: Conversation, peers: list[MemberName] | None = None) -> dict[str, object]:
     common: dict[str, object] = {
         "created": state.created,
         "cwd": conversation_cwd(state),
@@ -146,6 +147,7 @@ def _director(state: Conversation) -> dict[str, object]:
             | {
                 "message_id": f"{state.id}:t:{task.id}",
                 "thread": _thread(task.provider, task.session_id),
+                "identity": task_identity(state, task, peers),
             }
             for task in state.tasks
         ]
@@ -167,6 +169,9 @@ def _director(state: Conversation) -> dict[str, object]:
             "round": round_.number,
             "seat_id": seat.seat_id,
             "text": seat.output,
+            "identity": seat_identity(
+                state, seat.seat_id, reported=seat.reported_model, number=round_.number
+            ),
             "reported_model": seat.reported_model,
             "time": seat.finished or round_times.get(round_.number, state.created),
             "message_id": None,  # answers kept private are never shared, so never forwarded
@@ -180,7 +185,13 @@ def _director(state: Conversation) -> dict[str, object]:
         {
             "number": round_.number,
             "seats": [
-                {"seat_id": run.seat_id, **({"prompts": run.prompts} if run.prompts else {})}
+                {
+                    "seat_id": run.seat_id,
+                    "identity": seat_identity(
+                        state, run.seat_id, reported=run.reported_model, number=round_.number
+                    ),
+                    **({"prompts": run.prompts} if run.prompts else {}),
+                }
                 for run in round_.seats
             ],
         }
@@ -210,11 +221,11 @@ def _director(state: Conversation) -> dict[str, object]:
     ]
     data.update(
         {
-            "status": "idle" if latest is None else _round(latest)["status"],
+            "status": "idle" if latest is None else _round(state, latest)["status"],
             "speaking": [seat.seat_id for seat in latest.seats if seat.status == "running"]
             if latest
             else [],
-            "round": _round(latest) if latest else None,
+            "round": _round(state, latest) if latest else None,
         }
     )
     return data
@@ -230,6 +241,7 @@ def timeline(
     since_round: int = 0,
     include_private: bool = False,
     limit: int | None = None,
+    peers: list[MemberName] | None = None,
 ) -> dict[str, object]:
     """A conversation as the manager reads it back: final messages in order, like the App.
 
@@ -249,6 +261,7 @@ def timeline(
             _compact(
                 {
                     "message_id": f"{state.id}:t:{task.id}",
+                    "identity": task_identity(state, task, peers),
                     "provider": task.provider,
                     "model": task.reported_model or task.model or None,
                     "role": task.role,
@@ -272,6 +285,7 @@ def timeline(
         _compact(
             {
                 "id": seat.id,
+                "identity": seat_identity(state, seat.id, current=True),
                 "provider": seat.provider,
                 "model": seat.provider_options.get("model"),
                 "role": seat.role,
@@ -321,6 +335,9 @@ def _timeline_messages(
                         "round": round_.number,
                         "kind": f"{seat.review}_answer",
                         "seat": seat.seat_id,
+                        "identity": seat_identity(
+                            state, seat.seat_id, reported=seat.reported_model, number=round_.number
+                        ),
                         "text": seat.output,
                     }
                 )
@@ -335,7 +352,7 @@ def _timeline_messages(
         for index, entry in enumerate(state.entries):
             if entry.round != number:
                 continue
-            message = _message(state.id, index, entry)
+            message = _message(state, index, entry)
             if entry.kind in ("answer", "absent"):
                 answers.append(message)
             else:
@@ -355,17 +372,28 @@ def _latest(
     return items[-limit:]
 
 
-def _message(conversation_id: str, index: int, entry: EntryRecord) -> dict[str, object]:
+def _message(state: Conversation, index: int, entry: EntryRecord) -> dict[str, object]:
     return _compact(
         {
-            "message_id": f"{conversation_id}:e:{index}",
+            "message_id": f"{state.id}:e:{index}",
             "round": entry.round,
             "kind": entry.kind,
             "seat": entry.seat,
+            **_entry_identity(state, entry),
             "text": entry.text,
             "forward_source": entry.forward_source,
         }
     )
+
+
+def _entry_identity(state: Conversation, entry: EntryRecord) -> dict[str, object]:
+    if entry.seat is None or entry.kind not in ("answer", "absent"):
+        return {}
+    return {
+        "identity": seat_identity(
+            state, entry.seat, reported=entry.reported_model, number=entry.round
+        )
+    }
 
 
 def _compact(data: dict[str, object]) -> dict[str, object]:
@@ -405,7 +433,7 @@ def _time(text: str) -> datetime | None:
         return None
 
 
-def snapshot(state: Conversation) -> dict[str, object]:
+def snapshot(state: Conversation, peers: list[MemberName] | None = None) -> dict[str, object]:
     """One conversation as the tray app reads it."""
     return {
         "version": 1,
@@ -419,5 +447,5 @@ def snapshot(state: Conversation) -> dict[str, object]:
             "status": _status(state),
             "updated": updated(state),
         },
-        "director": _director(state),
+        "director": _director(state, peers),
     }

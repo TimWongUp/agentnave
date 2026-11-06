@@ -10,7 +10,7 @@ import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, NamedTuple
 from uuid import uuid4
@@ -30,6 +30,9 @@ from agentnave.host import (
     detect_host,
     host_session_id,
 )
+from agentnave.member_names import meeting_members, private_members, seat_identity, task_identity
+from agentnave.models import InvocationResult
+from agentnave.naming import MemberIdentity, MemberName
 from agentnave.native_sessions import boss_key, session_file, session_model
 from agentnave.store import (
     Conversation,
@@ -99,6 +102,7 @@ class CommittedEntry(NamedTuple):
     kind: Literal["task", "host", "answer", "absent", "forward"]
     round: int
     seat: str | None = None
+    identity: MemberIdentity | None = None
 
 
 def task_message_id(conversation_id: str, task_id: str) -> str:
@@ -125,27 +129,15 @@ def _host_label(host: str | None) -> str:
     return f"the {host} boss" if host else "another boss"
 
 
-def _task_source(task: TaskRecord) -> str:
-    model = task.reported_model or task.model or "未记录模型"
-    parts = [model, task.provider]
-    if task.role:
-        parts.append(task.role)
-    return " · ".join(parts) + f" · {task.time}"
+def _task_source(task: TaskRecord, identity: MemberIdentity) -> str:
+    return f"{identity['handle']} · {task.time}"
 
 
 def _entry_source(state: Conversation, entry: EntryRecord) -> str:
     if entry.kind == "answer" and entry.seat is not None:
-        seat = next((item for item in state.seats if item.id == entry.seat), None)
-        if seat is None:
-            origin = entry.seat
-        else:
-            model = (
-                entry.reported_model or str(seat.provider_options.get("model", "")) or "未记录模型"
-            )
-            parts = [model, seat.provider]
-            if seat.role:
-                parts.append(seat.role)
-            origin = " · ".join(parts)
+        origin = seat_identity(
+            state, entry.seat, reported=entry.reported_model, number=entry.round
+        )["handle"]
     elif entry.kind == "host":
         origin = "主持人"
     elif entry.kind == "task":
@@ -168,7 +160,15 @@ _MANAGER_STARTED_AT = os.environ.get("AGENTNAVE_MANAGER_STARTED_AT") or now()
 
 
 def _project(record: Record) -> bytes:
-    return _json(views.snapshot(record.state))
+    return _json(views.snapshot(record.state, naming_peers(record)))
+
+
+def naming_peers(record: Record, state: Conversation | None = None) -> list[MemberName] | None:
+    state = state if state is not None else record.state
+    if state.kind != "task":
+        return None
+    states = record.db.private_conversations(state.manager_session)
+    return private_members([s for s in states if s.id != state.id] + [state])
 
 
 def _json(data: object) -> bytes:
@@ -231,6 +231,8 @@ class ConversationStore(Groups):
                 if record is None:
                     record = Record.read(self.db, self.locks, conversation_id)
                     self.records[conversation_id] = record
+                if record.state.kind == "task":
+                    record.view_rev = None  # other threads can change collision suffixes
                 writable[conversation_id] = record.refresh()
             except FileNotFoundError:
                 if record is None or record.lock is None:
@@ -275,6 +277,86 @@ class ConversationStore(Groups):
         self._unsaved.add(record.state.id)
         record.save()
         self._unsaved.discard(record.state.id)
+        if record.state.kind == "task":
+            try:
+                self._refresh_private_views(record)
+            except (OSError, ValueError):
+                logging.getLogger(__name__).warning("Could not refresh workspace member names")
+
+    def _refresh_private_views(self, changed: Record) -> None:
+        """Never wait on another conversation while holding ours: probes are nonblocking."""
+        for state in self.db.private_conversations(changed.state.manager_session):
+            if state.id == changed.state.id:
+                continue
+            peer = self.records.get(state.id)
+            if peer is None:
+                peer = Record.read(self.db, self.locks, state.id)
+            peer.view_rev = None
+            try:
+                peer.refresh()
+            except (OSError, ValueError):
+                logging.getLogger(__name__).warning(
+                    "Could not refresh private names for %s", state.id
+                )
+
+    def task_identity(
+        self, invocation_id: str, result: InvocationResult | None = None
+    ) -> MemberIdentity | None:
+        found = self.task_invocations.get(invocation_id)
+        if found is None:
+            return None
+        conversation_id, task_id = found
+        record = self.records.get(conversation_id)
+        if record is None:
+            return None
+        task = next((t for t in record.state.tasks if t.id == task_id), None)
+        if task is None:
+            return None
+        task = task.model_copy(
+            update={
+                "reported_model": (result.reported_model if result is not None else None)
+                or self.manager.reported_model(invocation_id)
+                or task.reported_model,
+                "session_id": (result.session_id if result is not None else None)
+                or task.session_id,
+            }
+        )
+        state = record.state.model_copy(
+            update={"tasks": [task if t.id == task_id else t for t in record.state.tasks]}
+        )
+        return task_identity(state, task, naming_peers(record, state))
+
+    def _member_identity(
+        self, group: Group, seat_id: str, reported: str | None = None, number: int | None = None
+    ) -> MemberIdentity:
+        peers = meeting_members(self.records[group.id].state, number)
+        if group.active is not None and group.active.number == number:
+            results = {
+                r.seat_id: r.result.reported_model if r.result else None for r in group.active.runs
+            }
+            peers = [
+                replace(p, reported=results[p.key.rsplit(":", 1)[-1]])
+                if p.key.rsplit(":", 1)[-1] in results
+                else p
+                for p in peers
+            ]
+        member = next(p for p in peers if p.key == f"seat:{group.id}:{seat_id}")
+        return replace(member, reported=reported).identity(peers)
+
+    def round_identities(self, round_: Round) -> dict[str, MemberIdentity]:
+        record = self.records.get(round_.group.id)
+        if record is None:
+            return {r.seat_id: r.identity for r in round_.runs if r.identity is not None}
+        peers = meeting_members(record.state, round_.number)
+        live = {
+            f"seat:{record.state.id}:{r.seat_id}": self.manager.reported_model(r.invocation_id)
+            for r in round_.runs
+            if r.status == "running" and r.invocation_id is not None
+        }
+        peers = [
+            replace(p, reported=live[p.key] or p.reported) if p.key in live else p for p in peers
+        ]
+        return {p.key.removeprefix(f"seat:{record.state.id}:"): p.identity(peers) for p in peers}
 
     def _invalidate_group(self, conversation_id: str) -> None:
         self._groups.pop(conversation_id, None)
@@ -611,6 +693,8 @@ class ConversationStore(Groups):
                 seat.status = run.status
                 if run.result is not None:
                     seat.reported_model = run.result.reported_model or seat.reported_model
+                elif run.invocation_id is None and run.status in ("pending", "running"):
+                    seat.reported_model = None  # a retry has no native model fact yet
                 seat.output = run.result.output if run.result is not None else None
                 if run.result is None:
                     seat.finished = None  # a retried seat starts over
@@ -622,6 +706,14 @@ class ConversationStore(Groups):
                 seat.review = self.reviews.get(round_.id, {}).get(run.seat_id)
                 seat.prompts = self._prompt_audit(seat.prompts, run.invocation_id)
         self._persist(record)
+        for round_ in [r for r in self._rounds.values() if r.group is group]:
+            for run in round_.runs:
+                run.identity = seat_identity(
+                    state,
+                    run.seat_id,
+                    reported=run.result.reported_model if run.result else None,
+                    number=round_.number,
+                )
         self._ensure_live_writer(record)
         self._release_idle(record)
 
@@ -676,6 +768,9 @@ class ConversationStore(Groups):
 
     def _tails(self, record: Record) -> dict[str, str]:
         tails: dict[str, str] = {}
+        before = [(s.reported_model) for r in record.state.rounds for s in r.seats] + [
+            t.reported_model for t in record.state.tasks
+        ]
         group = self._groups.get(record.state.id)
         if group is not None and group.active is not None:
             for run in group.active.runs:
@@ -694,6 +789,11 @@ class ConversationStore(Groups):
                 task.reported_model = (
                     self.manager.reported_model(invocation_id) or task.reported_model
                 )
+        after = [s.reported_model for r in record.state.rounds for s in r.seats] + [
+            t.reported_model for t in record.state.tasks
+        ]
+        if after != before:
+            self._persist(record)
         return tails
 
     def _ensure_live_writer(self, record: Record) -> None:
@@ -715,11 +815,26 @@ class ConversationStore(Groups):
                 if run.status == "running" and run.invocation_id is not None
             }
 
+        identities = (
+            {task.id: task_identity(state, task, naming_peers(record)) for task in state.tasks}
+            if state.kind == "task"
+            else {
+                seat.seat_id: seat_identity(
+                    state,
+                    seat.seat_id,
+                    reported=seat.reported_model,
+                    number=state.rounds[-1].number,
+                )
+                for seat in latest
+            }
+        )
+
         def tail(key: str, reported_model: str | None) -> dict[str, object]:
             doing, output_at = self.manager.progress(invocations[key])
             return {
                 "output": tails[key],
                 "reported_model": reported_model,
+                "identity": identities[key],
                 "doing": doing,
                 "output_at": output_at,
             }

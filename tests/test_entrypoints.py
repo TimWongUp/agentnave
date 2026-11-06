@@ -251,7 +251,7 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
                             model="PRIVATE_MODEL",
                             cwd="/PRIVATE_CWD",
                             prompt="PRIVATE_PROMPT",
-                            role="PRIVATE_ROLE",
+                            role="own-role" if owner == "test-chat" else "PRIVATE_ROLE",
                             session_id="session-e2e",
                             status="succeeded",
                             time="2099-01-01T00:00:00+00:00",
@@ -269,6 +269,7 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
             client, provider="claude", cwd=str(tmp_path), session_id="session-e2e"
         )
         assert "PRIVATE_" not in str(selected)
+        assert cast(dict[str, object], selected["identity"])["role"] == "own-role"
         for arguments in ({}, {"provider": "claude"}):
             foreign = await client.call_tool(
                 "start_agent",

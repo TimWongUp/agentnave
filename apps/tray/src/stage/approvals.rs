@@ -62,7 +62,7 @@ impl Group {
                     &item.updated,
                     &item.id,
                     "approval",
-                    member_speaker(seat),
+                    member_speaker(&identity_of(seat, id, run)),
                     "",
                 );
                 template["round"] = round["number"].clone();

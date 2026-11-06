@@ -33,6 +33,7 @@ from agentnave.conversations_store import (
     _task_source,
     entry_message_id,
     forwarded_prompt,
+    naming_peers,
     normalize_access,
     normalize_role,
     task_message_id,
@@ -46,6 +47,7 @@ from agentnave.group import (
     SeatState,
 )
 from agentnave.locks import release_and_remove
+from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
 from agentnave.store import (
@@ -446,7 +448,11 @@ class Conversations(ConversationStore):
                 raise ForwardError(
                     f"forward id {message_id} is not a succeeded task: {task.status}"
                 )
-            return Forwarded(message_id, task.output, _task_source(task))
+            return Forwarded(
+                message_id,
+                task.output,
+                _task_source(task, task_identity(record.state, task, naming_peers(record))),
+            )
         if not local.isascii() or not local.isdigit():
             raise _missing_forward(message_id)
         index = int(local)
@@ -484,7 +490,15 @@ class Conversations(ConversationStore):
         record = self.record(conversation_id)
         return [
             CommittedEntry(
-                entry_message_id(conversation_id, index), entry.kind, entry.round, entry.seat
+                entry_message_id(conversation_id, index),
+                entry.kind,
+                entry.round,
+                entry.seat,
+                seat_identity(
+                    record.state, entry.seat, reported=entry.reported_model, number=entry.round
+                )
+                if entry.seat is not None
+                else None,
             )
             for index, entry in enumerate(record.state.entries)
             if entry.round == number

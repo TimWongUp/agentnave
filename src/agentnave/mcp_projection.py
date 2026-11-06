@@ -5,6 +5,7 @@ from typing import cast
 # Opaque fields are never traversed; only non-null empty bodies also retain their keys.
 _OPAQUE_FIELDS = frozenset(
     {
+        "identity",
         "options",
         "provider_options",
         "output",
@@ -51,6 +52,9 @@ def without_empty_fields(value: object) -> object:
                 if item is not None:
                     projected[key] = item
                 continue
+            if key == "identity" and isinstance(item, dict):
+                # Keep required empty model facts, but omit absent optional labels.
+                item = {k: v for k, v in cast(dict[str, object], item).items() if v is not None}
             if key not in _OPAQUE_FIELDS:
                 item = without_empty_fields(item)
             if (key in _REQUIRED_CONTAINERS and isinstance(item, (dict, list))) or (

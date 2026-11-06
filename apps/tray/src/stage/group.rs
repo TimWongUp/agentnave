@@ -181,23 +181,6 @@ impl Group {
         });
         (shown, optimized)
     }
-    /// Desks sharing model, CLI and role are numbered in the order they first appeared.
-    pub(super) fn number_desks(&mut self) {
-        let mut same = BTreeMap::<_, Vec<(i64, String)>>::new();
-        for desk in self.desks.values() {
-            same.entry(desk.base())
-                .or_default()
-                .push((desk.first.unwrap_or_default(), desk.key.clone()));
-        }
-        for mut keys in same.into_values().filter(|keys| keys.len() > 1) {
-            keys.sort();
-            for (index, (_, key)) in keys.iter().enumerate() {
-                if let Some(desk) = self.desks.get_mut(key) {
-                    desk.ordinal = index + 1;
-                }
-            }
-        }
-    }
     pub(super) fn rooms(&self) -> Vec<Value> {
         let mut rooms: Vec<_> = self.rooms.iter().collect();
         rooms.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
@@ -356,7 +339,6 @@ impl Group {
                 self.show(snapshot);
             }
         }
-        self.number_desks();
         self.finish_messages();
         if include_messages
             && (self.handover.pending || self.handover.changed)
@@ -408,23 +390,6 @@ impl Group {
         }
     }
     pub(super) fn finish_messages(&mut self) {
-        let handles: BTreeMap<_, _> = self
-            .desks
-            .iter()
-            .map(|(key, desk)| (key.clone(), desk.handle()))
-            .collect();
-        let mut seat_handles = BTreeMap::new();
-        for (_, room_id, room) in &mut self.rooms {
-            for seat in room["seats"].as_array_mut().into_iter().flatten() {
-                // Each seat is its own desk; numbering already tells alike seats apart.
-                let handle = handles.get(text(seat, "desk")).cloned().unwrap_or_default();
-                seat_handles.insert(
-                    (room_id.clone(), text(seat, "seat").to_owned()),
-                    handle.clone(),
-                );
-                seat["handle"] = json!(handle);
-            }
-        }
         // The round's task comes first; a host remark posted after the round shares its number
         // and must not take over as the prompt the answers reply to.
         let mut prompts = BTreeMap::new();
@@ -442,7 +407,7 @@ impl Group {
             .iter_mut()
             .chain(self.typing.values_mut().map(|(_, m)| m))
         {
-            finish_message(msg, &handles, &seat_handles, &prompts);
+            finish_message(msg, &prompts);
         }
     }
     pub(super) fn omitted(&self, focus: Option<&str>, complete: bool) -> usize {
@@ -465,12 +430,7 @@ impl Group {
                 let mut value = thread.clone();
                 value["count"] = json!(0);
                 value["last"] = msg["time"].clone();
-                if thread["kind"] == "desk" {
-                    value["handle"] = self
-                        .desks
-                        .get(text(thread, "key"))
-                        .map_or(Value::Null, |d| json!(d.handle()));
-                } else {
+                if thread["kind"] != "desk" {
                     value["title"] = self
                         .rooms
                         .iter()
@@ -655,6 +615,7 @@ impl Group {
                 opt_text(task, "effort"),
                 desk_role(task),
             );
+            entry.identify(timestamp(raw_start).unwrap_or_default(), &task["identity"]);
             entry.seen(timestamp(raw_start).unwrap_or_default());
             entry.declare(
                 timestamp(raw_start).unwrap_or_default(),
@@ -743,77 +704,18 @@ impl Group {
     }
 }
 
-fn finish_message(
-    msg: &mut Value,
-    handles: &BTreeMap<String, String>,
-    seat_handles: &BTreeMap<(String, String), String>,
-    prompts: &BTreeMap<(String, String), Value>,
-) {
+fn finish_message(msg: &mut Value, prompts: &BTreeMap<(String, String), Value>) {
     let conversation = text(msg, "conversation").to_owned();
-    let key = text(msg, "desk").to_owned();
-    let seat = text(msg, "focus").rsplit(':').next().unwrap_or_default();
-    let who = if msg["speaker"]["role"] == "manager" {
-        "@boss".to_owned()
-    } else {
-        seat_handles
-            .get(&(conversation.clone(), seat.to_owned()))
-            .or_else(|| handles.get(&key))
-            .cloned()
-            .unwrap_or_default()
-    };
-    msg["speaker"]["handle"] = json!(who);
-    for target in msg["recipients"].as_array_mut().into_iter().flatten() {
-        target["handle"] = json!(
-            seat_handles
-                .get(&(conversation.clone(), text(target, "seat").to_owned()))
-                .or_else(|| handles.get(text(target, "key")))
-                .cloned()
-                .unwrap_or_default()
-        );
-    }
-    if let Some(called) = msg["answering"]
-        .as_array()
-        .filter(|_| msg["kind"] == "prompt")
-    {
-        // A round that called only some seats names them, those not started yet
-        // included; the rest still hear it.
-        msg["to"] = json!(
-            called
-                .iter()
-                .map(|seat| {
-                    let seat = seat.as_str().unwrap_or_default();
-                    json!({"key": seat_desk(&conversation, seat), "handle": seat_handles
-                        .get(&(conversation.clone(), seat.to_owned()))
-                        .cloned()
-                        .unwrap_or_default()})
-                })
-                .collect::<Vec<_>>()
-        );
-    } else if msg["kind"] == "instruction"
-        || (msg["kind"] == "prompt" && msg["thread"]["kind"] == "desk")
-    {
-        msg["to"] = json!(
-            array(msg, "recipients")
-                .map(|r| json!({"key": r["key"], "handle": r["handle"]}))
-                .collect::<Vec<_>>()
-        );
-    } else if msg["visibility"] == "public" && msg["thread"]["kind"] == "room" {
-        msg["to"] = json!([{"key": "@all", "handle": "@all"}]);
-    } else {
-        msg["to"] = json!([{"key": "@boss", "handle": "@boss"}]);
-    }
-    if let Some(answering) = msg.get_mut("answering").and_then(Value::as_array_mut) {
-        for id in answering {
-            *id = json!(
-                seat_handles
-                    .get(&(
-                        conversation.clone(),
-                        id.as_str().unwrap_or_default().to_owned()
-                    ))
-                    .cloned()
-                    .unwrap_or_default()
-            );
-        }
+    // A round that called some seats, an instruction and a private task keep their addressees.
+    let addressed = msg["answering"].is_array()
+        || msg["kind"] == "instruction"
+        || (msg["kind"] == "prompt" && msg["thread"]["kind"] == "desk");
+    if !addressed {
+        msg["to"] = if msg["visibility"] == "public" && msg["thread"]["kind"] == "room" {
+            json!([{"key": "@all", "handle": "@all"}])
+        } else {
+            json!([{"key": "@boss", "handle": "@boss"}])
+        };
     }
     if msg["speaker"]["role"] != "manager" || msg["kind"] == "instruction" {
         if msg["thread"]["kind"] == "room" {

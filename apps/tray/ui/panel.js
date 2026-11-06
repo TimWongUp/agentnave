@@ -5,7 +5,7 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, L, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliName, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliOf, fullHandle, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip,
 } = AN;
 
 const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
@@ -103,7 +103,7 @@ const state = {
 };
 
 // ---------------------------------------------------------------- what a desk is doing
-const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
+const deskChar = (d) => ART.character(d.provider, d.art_model || d.model);
 // A reviewed answer waits only briefly on the boss, so it reads as an answer given, not a state of its own.
 // A desk that just stopped stays a while, so how it ended can be read.
 const LINGER = 5 * 60e3;
@@ -148,10 +148,10 @@ function updateCell(rec, group, d) {
     rec.faceKey = faceKey;
     rec.face.replaceChildren(ART.head(deskChar(d), HEAD[s.mood] || "idle"));
   }
-  setText(rec.cli, cliName(d.provider));
+  setText(rec.cli, cliOf(d));
   setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
   setAttr(rec.el, "href", href(`/chat/${group}#desk:${encodeURIComponent(d.key)}`));
-  setAttr(rec.el, "title", `${d.handle || `${deskName(d)} · ${cliName(d.provider)}`}\n${s.word}${d.access === "read" ? L(" · 声明只读", " · Read-only") : d.access === "write" ? L(" · 声明可写", " · Writable") : ""}${d.private_allowed === false ? L(" · 仅开会", " · Meetings only") : ""}\n${L(`最近 ${fullTime(d.last_active)}`, `Last active ${fullTime(d.last_active)}`)}`);
+  setAttr(rec.el, "title", `${fullHandle(d)}\n${s.word}${d.access === "read" ? L(" · 声明只读", " · Read-only") : d.access === "write" ? L(" · 声明可写", " · Writable") : ""}${d.private_allowed === false ? L(" · 仅开会", " · Meetings only") : ""}\n${L(`最近 ${fullTime(d.last_active)}`, `Last active ${fullTime(d.last_active)}`)}`);
   setText(rec.name, deskName(d));
   setText(rec.role, d.role ? `${clip(d.role, 6)} · ` : "");
   setText(rec.word, s.word);

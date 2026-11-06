@@ -72,22 +72,21 @@ const isBoss = (m) => m.speaker?.role === "manager";
 function speakerDesk(m, ctx) {
   return m.desk && ctx.desks.get(m.desk);
 }
-function speakerName(m, ctx) {
+function speakerName(m) {
   const s = m.speaker || {};
   if (s.role === "system") return s.label || L("系统", "System");
   if (isBoss(m)) return "boss";
-  const d = speakerDesk(m, ctx);
-  if (d) return deskName({ ...d, effort: s.effort });
-  return s.model ? deskName(s) : [cliName(s.provider) || L("组员", "Member"), s.effort].filter(Boolean).join(" · ");
+  // A message signs with the name it was said under, not what its desk goes by now.
+  return deskName(s);
 }
 // The role leads the name and the CLI follows it, so several "默认模型" desks stay apart.
-function speakerRole(m, ctx) {
-  return isBoss(m) ? "" : speakerDesk(m, ctx)?.role || "";
+function speakerRole(m) {
+  return isBoss(m) ? "" : m.speaker?.identity?.role || "";
 }
-function speakerSub(m, ctx) {
+function speakerSub(m) {
   const s = m.speaker || {};
   if (s.role === "system" || isBoss(m)) return "";
-  return cliName(speakerDesk(m, ctx)?.provider || s.provider);
+  return cliOf(s);
 }
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
@@ -97,39 +96,42 @@ function speakerFace(m, ctx) {
   const d = speakerDesk(m, ctx);
   return ART.head(d ? deskChar(d) : ART.character(s.provider, s.model), "idle");
 }
-// Recipients as chips. New payloads carry `to: [{key, handle}]`; older ones only `recipients`.
+// Recipients as chips. New payloads carry `to: [{key, handle, identity}]`; older ones only `recipients`.
 function targets(m, ctx) {
   if (Array.isArray(m.to) && m.to.length && typeof m.to[0] === "object")
     return m.to.map((t) => {
       if (t.key === "@boss") return { kind: "boss" };
       if (t.key === "@all") return { kind: "all" };
       const d = ctx.desks.get(t.key);
-      return { kind: "desk", d, handle: t.handle };
+      return { kind: "desk", d, who: t };
     });
   const list = (m.recipients || []).map((r) => {
     const key = r.seat ? ctx.seatDesk.get(`${m.conversation}|${r.seat}`) : null;
     const d =
       (key && ctx.desks.get(key)) ||
       (m.thread?.kind === "desk" ? ctx.desks.get(m.desk) : null);
-    return { kind: "desk", d, handle: d ? null : AN.modelName(r.model) || r.label };
+    return { kind: "desk", d, who: r };
   });
   const room = m.thread?.kind === "room" && ctx.rooms.get(m.thread.id);
   if (room && list.length > 1 && list.length === room.seats.length)
     return [{ kind: "all" }];
   return list;
 }
+// Whom a chip names: as addressed by that message, else the desk as it is now.
+const targetWho = (t) => (t.who?.identity ? t.who : t.d) || {};
 function chip(t) {
   if (t.kind === "boss") return h("span.at.boss", {}, "@boss");
   if (t.kind === "all")
     return h("span.at.all", { title: L("会议室里的所有人", "Everyone in the meeting room") }, "@all");
-  const name = t.d ? deskName(t.d) : (t.handle || "").replace(/^@/, "");
+  const who = targetWho(t);
+  const role = who.identity?.role || who.role;
   return h(
     "span.at.who",
-    { title: t.d ? handleOf(t.d) : t.handle || "" },
+    { title: fullHandle(who) },
     "@",
     t.d ? ART.head(deskChar(t.d)) : null,
-    t.d?.role ? h("span.at-role", {}, t.d.role) : null,
-    name,
+    role ? h("span.at-role", {}, role) : null,
+    deskName(who),
   );
 }
 // Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
@@ -157,8 +159,7 @@ function verbOf(m, ctx) {
 }
 // Who answers this round, shown by face; the answers themselves follow right below.
 function answeringDesks(m, ctx) {
-  const desks = [...ctx.desks.values()];
-  return (m.answering || []).map((x) => desks.find((d) => d.handle === x)).filter(Boolean);
+  return (m.answering || []).map((key) => ctx.desks.get(key)).filter(Boolean);
 }
 function metaOf(m, ctx) {
   if (Array.isArray(m.answering) && m.answering.length)
@@ -214,16 +215,12 @@ function approvalInput(m) {
 }
 // One-line ticker / screen-reader sentence for a message.
 function eventText(m, ctx) {
-  const who = speakerName(m, ctx);
+  const who = speakerName(m);
   if (m.kind === "approval") return { who, text: who + L("：", ": ") + approvalText(m) };
   const room = m.thread?.kind === "room" ? ctx.rooms.get(m.thread.id) : null;
   const to = targets(m, ctx)
     .map((t) =>
-      t.kind === "desk"
-        ? t.d
-          ? deskName(t.d)
-          : (t.handle || "").replace(/^@/, "")
-        : t.kind,
+      t.kind === "desk" ? deskName(targetWho(t)) : t.kind,
     )
     .join(L("、", ", "));
   const text =
@@ -362,9 +359,9 @@ function updateMessage(rec, m, ctx, id) {
   const peer = state.peers?.has(id);
   setAttr(rec.el, "data-peer", peer ? m.desk : null);
   setFace(rec, m, ctx);
-  setText(rec.role, speakerRole(m, ctx));
-  setText(rec.name, speakerName(m, ctx));
-  setText(rec.who, speakerSub(m, ctx));
+  setText(rec.role, speakerRole(m));
+  setText(rec.name, speakerName(m));
+  setText(rec.who, speakerSub(m));
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
   if (m.kind === "notice" || m.kind === "approval") {
@@ -388,7 +385,7 @@ function updateMessage(rec, m, ctx, id) {
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
   setText(rec.lock, lock);
-  const toKey = JSON.stringify([ART.version(), ...to.map((t) => [t.kind, t.d?.key, t.d ? deskName(t.d) : t.handle])]);
+  const toKey = JSON.stringify([ART.version(), ...to.map((t) => [t.kind, t.d?.key, t.kind === "desk" && [deskName(targetWho(t)), fullHandle(targetWho(t))]])]);
   if (rec.toKey !== toKey) {
     rec.toKey = toKey;
     rec.to.replaceChildren(...to.map(chip));
@@ -397,8 +394,8 @@ function updateMessage(rec, m, ctx, id) {
   rec.meta.hidden = !meta;
   setClass(rec.meta, m.answering?.length ? "m-meta m-round" : "m-meta");
   setText(rec.metaText, meta);
-  setAttr(rec.meta, "title", m.answering?.length ? m.answering.map((x) => String(x).replace(/^@/, "")).join("\n") : null);
   const faces = answeringDesks(m, ctx);
+  setAttr(rec.meta, "title", faces.length ? faces.map(fullHandle).join("\n") : null);
   const facesKey = JSON.stringify([ART.version(), ...faces.map((d) => d.key)]);
   if (rec.facesKey !== facesKey) {
     rec.facesKey = facesKey;

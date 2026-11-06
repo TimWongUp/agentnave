@@ -9,6 +9,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from agentnave.naming import MemberIdentity
+
 type HostName = Literal[
     "codex",
     "claude",
@@ -148,3 +150,4 @@ class InvocationResult:
     reported_model: str | None = None
     # Problems in a run the CLI still reported as finished, such as denied tool calls.
     warnings: tuple[str, ...] = ()
+    identity: MemberIdentity | None = None

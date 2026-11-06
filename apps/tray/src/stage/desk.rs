@@ -16,8 +16,9 @@ pub(super) struct Desk {
     pub(super) effort: Option<String>,
     pub(super) role: Option<String>,
     pub(super) labelled: Option<i64>,
-    // Several desks with the same model, CLI and role are numbered by first appearance.
-    pub(super) ordinal: usize,
+    // The service's name for this desk now; null on a view it has not rebuilt yet.
+    pub(super) identity: Value,
+    pub(super) identified: Option<i64>,
     pub(super) first: Option<i64>,
     pub(super) last: Option<i64>,
     pub(super) latest: Option<(i64, String)>,
@@ -49,12 +50,12 @@ impl Desk {
         }
     }
 
-    pub(super) fn base(&self) -> (String, String, Option<String>) {
-        (
-            self.display_model(),
-            self.provider.clone(),
-            self.role.clone(),
-        )
+    /// A private desk goes by the name of its latest call.
+    pub(super) fn identify(&mut self, at: i64, identity: &Value) {
+        if self.identified.is_none_or(|old| at >= old) {
+            self.identified = Some(at);
+            self.identity = identity.clone();
+        }
     }
 
     pub(super) fn declare(&mut self, at: i64, access: Option<String>) {
@@ -106,8 +107,9 @@ impl Desk {
             .then_some(model.as_str())
     }
 
-    /// The model the CLI reported, else the requested one, else the CLI's own default.
-    pub(super) fn display_model(&self) -> String {
+    /// What the desk's figure is drawn from: the reported model, else the requested one, else
+    /// the CLI's own default. The default only dresses the figure, it never names the member.
+    pub(super) fn art_model(&self) -> String {
         if let Some(model) = self.reported_model() {
             model.to_owned()
         } else if !self.model.is_empty() {
@@ -115,35 +117,6 @@ impl Desk {
         } else {
             crate::detect::cached_native(&self.provider).unwrap_or_default()
         }
-    }
-
-    pub(super) fn model_source(&self) -> &'static str {
-        if self.reported_model().is_some() {
-            "native"
-        } else if !self.model.is_empty() {
-            "requested"
-        } else if crate::detect::cached_native(&self.provider).is_some() {
-            "cli_default"
-        } else {
-            "unknown"
-        }
-    }
-
-    pub(super) fn numbered(&self, name: String) -> String {
-        if self.ordinal == 0 {
-            name
-        } else {
-            format!("{name} #{}", self.ordinal)
-        }
-    }
-
-    pub(super) fn handle(&self) -> String {
-        self.numbered(handle(
-            &self.display_model(),
-            self.effort.as_deref(),
-            &self.provider,
-            self.role.as_deref(),
-        ))
     }
 
     pub(super) fn status(&self) -> &'static str {
@@ -186,10 +159,9 @@ impl Desk {
             "effort": self.effort,
             "role": self.role,
             "access": self.access.as_ref().map(|(_, access)| access),
-            "label": self.numbered(desk_label(&model_with_effort(&self.display_model(), self.effort.as_deref()), &self.provider, self.role.as_deref())),
-            "display_model": self.display_model(),
-            "model_source": self.model_source(),
-            "handle": self.handle(), "activities": self.activities.iter().rev().collect::<Vec<_>>(),
+            "identity": self.identity,
+            "art_model": self.art_model(),
+            "activities": self.activities.iter().rev().collect::<Vec<_>>(),
             "first_seen": iso(self.first.unwrap_or_default()),
             "last_active": iso(self.last.unwrap_or_default()),
             "status": status,
