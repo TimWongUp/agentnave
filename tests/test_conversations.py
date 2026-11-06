@@ -3759,6 +3759,7 @@ def test_partial_meeting_names_instructions_and_missing_seat(data_root: Path) ->
         id="m",
         title="Meeting",
         kind="show",
+        cwd=str(data_root),
         seats=[
             SeatRecord(id=id_, provider="claude", cwd="/tmp", provider_options={"model": "haiku"})
             for id_ in "ab"
@@ -3805,9 +3806,9 @@ def test_partial_meeting_names_instructions_and_missing_seat(data_root: Path) ->
     record.release()
     studio.scan()
     try:
-        group = studio._group("m")
+        group = studio._group("m")  # pyright: ignore[reportPrivateUsage]
         for groups in (studio, Groups(studio.manager)):
-            prompt = groups._prompt(group, SeatRun("a", None), len(group.entries))
+            prompt = groups._prompt(group, SeatRun("a", None), len(group.entries))  # pyright: ignore[reportPrivateUsage]
             assert "legacy" in prompt and "未记录模型" in prompt
     finally:
         for record in studio.records.values():
