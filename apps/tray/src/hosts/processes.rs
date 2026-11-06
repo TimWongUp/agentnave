@@ -6,6 +6,24 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+#[cfg(unix)]
+mod copies;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Copy {
+    pub kind: &'static str,
+    /// Unix milliseconds, at sysinfo's one-second resolution.
+    pub since: u64,
+    pub bundle: Option<String>,
+}
+impl Copy {
+    pub fn into_json(self) -> serde_json::Value {
+        let mut value = serde_json::json!({"kind":self.kind,"since":self.since});
+        if let Some(bundle) = self.bundle {
+            value["bundle"] = serde_json::json!(bundle);
+        }
+        value
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum State {
@@ -20,6 +38,8 @@ pub(super) struct Probe {
     observed_at: Option<SystemTime>,
     running: Option<HashMap<&'static str, u64>>,
     receipt_processes: Option<HashMap<u32, u64>>,
+    #[cfg(unix)]
+    copies: Option<copies::Snapshot>,
     #[cfg(test)]
     fixed: bool,
 }
@@ -63,10 +83,18 @@ impl Probe {
                 Some(observation) => {
                     self.running = observation.running;
                     self.receipt_processes = Some(observation.processes);
+                    #[cfg(unix)]
+                    {
+                        self.copies = Some(observation.copies);
+                    }
                 }
                 None => {
                     self.running = None;
                     self.receipt_processes = None;
+                    #[cfg(unix)]
+                    {
+                        self.copies = None;
+                    }
                 }
             }
             self.checked = Some(Instant::now());
@@ -118,6 +146,35 @@ impl Probe {
 
     pub fn invalidate(&mut self) {
         self.checked = None;
+    }
+
+    /// Classify only observed live relays; unknown or reused PIDs supply no copy evidence.
+    pub fn receipt_copy(&mut self, context: &Context, id: &str, pid: u32) -> Option<Copy> {
+        self.refresh(context);
+        #[cfg(unix)]
+        {
+            self.copies.as_ref()?.classify(id, pid, true)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (id, pid);
+            None
+        }
+    }
+
+    pub fn old_copies(&mut self, context: &Context, id: &str, before: u64) -> Vec<Copy> {
+        self.refresh(context);
+        #[cfg(unix)]
+        {
+            self.copies
+                .as_ref()
+                .map_or_else(Vec::new, |s| s.old_copies(id, before))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (id, before);
+            Vec::new()
+        }
     }
 }
 
@@ -251,6 +308,8 @@ fn dispatched(process: &Process, system: &System) -> bool {
 struct Observation {
     running: Option<HashMap<&'static str, u64>>,
     processes: HashMap<u32, u64>,
+    #[cfg(unix)]
+    copies: copies::Snapshot,
 }
 
 fn observe(context: &Context) -> Option<Observation> {
@@ -273,8 +332,11 @@ fn observe(context: &Context) -> Option<Observation> {
     {
         return None;
     }
+    let hosts = observe_hosts(context, &system);
     Some(Observation {
-        running: observe_hosts(context, &system),
+        running: hosts.as_ref().map(|hosts| hosts.running.clone()),
+        #[cfg(unix)]
+        copies: copies::Snapshot::new(&system, hosts.map(|hosts| hosts.pids).unwrap_or_default()),
         // Missing executable, arguments or user information never means a PID is dead.
         processes: system
             .processes()
@@ -284,7 +346,13 @@ fn observe(context: &Context) -> Option<Observation> {
     })
 }
 
-fn observe_hosts(context: &Context, system: &System) -> Option<HashMap<&'static str, u64>> {
+struct HostProcesses {
+    running: HashMap<&'static str, u64>,
+    #[cfg(unix)]
+    pids: HashMap<&'static str, Vec<u32>>,
+}
+
+fn host_targets(context: &Context) -> HashMap<String, &'static str> {
     // Resolve installed entry points so node/python CLIs with a generic script name also match.
     let mut targets: HashMap<String, &'static str> = HashMap::new();
     for id in IDS {
@@ -306,13 +374,49 @@ fn observe_hosts(context: &Context, system: &System) -> Option<HashMap<&'static 
             targets.insert(path_key(&script), id);
         }
     }
+    targets
+}
+
+fn process_identity(
+    process: &Process,
+    targets: &HashMap<String, &'static str>,
+) -> Option<&'static str> {
     let identify = |path: &Path| {
         targets
             .get(&path_key(path))
             .copied()
             .or_else(|| identity(&path.to_string_lossy()))
     };
+    process.exe().and_then(identify).or_else(|| {
+        // Only an executable or its script argument identifies a host; prompt text cannot.
+        process
+            .cmd()
+            .first()
+            .and_then(|p| identify(Path::new(p)))
+            .or_else(|| {
+                let exe = process.exe()?.file_stem()?.to_str()?.to_lowercase();
+                if !matches!(
+                    exe.as_str(),
+                    "node" | "bun" | "deno" | "python" | "python3" | "uv" | "uvx" | "npx"
+                ) && !exe.starts_with("python3.")
+                {
+                    return None;
+                }
+                process
+                    .cmd()
+                    .iter()
+                    .skip(1)
+                    .find(|p| !p.to_string_lossy().starts_with('-'))
+                    .and_then(|p| identify(Path::new(p)))
+            })
+    })
+}
+
+fn observe_hosts(context: &Context, system: &System) -> Option<HostProcesses> {
+    let targets = host_targets(context);
     let mut running = HashMap::new();
+    #[cfg(unix)]
+    let mut pids: HashMap<&'static str, Vec<u32>> = HashMap::new();
     let user = system
         .process(sysinfo::Pid::from_u32(std::process::id()))?
         .user_id()?;
@@ -320,39 +424,30 @@ fn observe_hosts(context: &Context, system: &System) -> Option<HashMap<&'static 
         if process.user_id() != Some(user) {
             continue;
         }
-        let host = process.exe().and_then(identify).or_else(|| {
-            // Only an executable or its script argument identifies a host; prompt text cannot.
-            process
-                .cmd()
-                .first()
-                .and_then(|p| identify(Path::new(p)))
-                .or_else(|| {
-                    let exe = process.exe()?.file_stem()?.to_str()?.to_lowercase();
-                    if !matches!(
-                        exe.as_str(),
-                        "node" | "bun" | "deno" | "python" | "python3" | "uv" | "uvx" | "npx"
-                    ) && !exe.starts_with("python3.")
-                    {
-                        return None;
-                    }
-                    process
-                        .cmd()
-                        .iter()
-                        .skip(1)
-                        .find(|p| !p.to_string_lossy().starts_with('-'))
-                        .and_then(|p| identify(Path::new(p)))
-                })
-        });
+        let host = process_identity(process, &targets);
         if let Some(id) = host
             && !dispatched(process, system)
         {
+            #[cfg(unix)]
+            {
+                if id == "codex"
+                    && copies::daemon_helper(process.cmd().iter().map(|a| a.to_string_lossy()))
+                {
+                    continue;
+                }
+                pids.entry(id).or_default().push(process.pid().as_u32());
+            }
             running
                 .entry(id)
                 .and_modify(|at: &mut u64| *at = (*at).min(process.start_time()))
                 .or_insert(process.start_time());
         }
     }
-    Some(running)
+    Some(HostProcesses {
+        running,
+        #[cfg(unix)]
+        pids,
+    })
 }
 
 #[cfg(test)]

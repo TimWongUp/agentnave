@@ -89,6 +89,18 @@ def fingerprint(site: Path) -> Fingerprint | None:
     return found or None
 
 
+def _dispatched(value: str | None) -> bool:
+    """Whether a dispatched provider started this relay, judged when it starts.
+
+    POSIX names the supervisor's session: a daemon the provider spawned leaves that session
+    and may later serve a boss, so the inherited value alone does not mark it. Windows keeps
+    the plain marker because its Job Object, not a session, bounds the tree.
+    """
+    if os.name == "nt":
+        return value == "1"
+    return bool(value) and value.isdigit() and int(value) == os.getsid(0)
+
+
 def _prune_connections(directory: Path) -> None:
     """Remove observations of relays that died without deleting their own file."""
     with contextlib.suppress(OSError):
@@ -246,6 +258,7 @@ class Relay:
         self.code = 0
         effective_env = env if env is not None else os.environ
         self.host = effective_env.get("AGENTNAVE_HOST")
+        self.dispatched = _dispatched(effective_env.get("AGENTNAVE_DISPATCHED"))
         self.connection_path = (
             Path(effective_env.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
             / "connections"
@@ -335,6 +348,8 @@ class Relay:
             }
             if ended_ms is not None:
                 payload["ended_ms"] = ended_ms
+            if self.dispatched:
+                payload["dispatched"] = True
         path = self.connection_path
         body = json.dumps(payload).encode()
         try:

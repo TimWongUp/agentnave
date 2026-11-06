@@ -28,10 +28,10 @@
 | 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 已接受 | — |
 | 0023 | [私聊续接改为显式开启](0023-explicit-desk-continuation.md) | 已被 ADR-0025 取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md) |
 | 0024 | [工具收敛为 8 个，审核改为公开／不公开](0024-consolidated-tools-and-private-review.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0057](0057-boss-answers-native-prompts.md) |
-| 0025 | [工位即原生线程，并发上限决定显示上限](0025-session-desks-and-running-limit.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0061](0061-service-owned-member-names.md) |
+| 0025 | [工位即原生线程，并发上限决定显示上限](0025-session-desks-and-running-limit.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0062](0062-service-owned-member-names.md) |
 | 0026 | [会话存储改为 SQLite](0026-sqlite-conversation-store.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0048](0048-sqlite-schema-evolution.md)、[ADR-0060](0060-tray-detects-orphaned-running-work.md) |
 | 0027 | [DeepSeek 官方路由自动恢复已存认证](0027-deepseek-official-route-stored-credentials.md) | 已接受 | — |
-| 0028 | [默认模型与档位跟随 CLI 自身设置](0028-follow-cli-default-model.md) | 部分取代 | [ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0061](0061-service-owned-member-names.md) |
+| 0028 | [默认模型与档位跟随 CLI 自身设置](0028-follow-cli-default-model.md) | 部分取代 | [ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0062](0062-service-owned-member-names.md) |
 | 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md) |
 | 0030 | [App「技能」页提供可选 Skill，评审门控为首个，评审工位在 App 设置](0030-optional-review-gate-skill.md) | 部分取代 | [ADR-0036](0036-app-owns-service-skills.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md) |
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
@@ -46,11 +46,11 @@
 | 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 已接受 | — |
 | 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | — |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
-| 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分取代 | [ADR-0061](0061-service-owned-member-names.md) |
+| 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分取代 | [ADR-0062](0062-service-owned-member-names.md) |
 | 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
 | 0045 | [去掉浏览器看板](0045-remove-browser-dashboard.md) | 已接受 | [ADR-0046](0046-service-history-retention.md) |
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 已接受 | — |
-| 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 已接受 | — |
+| 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 部分取代 | [ADR-0061](0061-fixed-service-launcher.md) |
 | 0048 | [SQLite schema 演进与迁移归属](0048-sqlite-schema-evolution.md) | 已接受 | — |
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
@@ -64,4 +64,5 @@
 | 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |
 | 0059 | [Claude 的两个权限档位互为退路](0059-claude-tier-fallback.md) | 已接受 | — |
 | 0060 | [托盘识别无人持有的运行记录](0060-tray-detects-orphaned-running-work.md) | 已接受 | — |
-| 0061 | [服务统一生成成员称呼](0061-service-owned-member-names.md) | 已接受 | — |
+| 0061 | [宿主配置指向固定启动器，升级不再改写宿主配置](0061-fixed-service-launcher.md) | 已接受 | — |
+| 0062 | [服务统一生成成员称呼](0062-service-owned-member-names.md) | 已接受 | — |

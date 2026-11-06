@@ -17,7 +17,7 @@ impl Hosts {
                     // Wrappers can hide an arbitrary old environment behind a command; don't guess.
                     if document.entry.as_ref().is_some_and(|entry| {
                         host.command(entry)
-                            .is_none_or(|command| !own_launcher(command))
+                            .is_none_or(|command| !self.own_launcher(command))
                     }) {
                         return None;
                     }

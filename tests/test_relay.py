@@ -250,10 +250,33 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
     host.thread.join(10)
 
 
-def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_path: Path) -> None:
+def _marker(kind: str) -> str:
+    """This session's marker, or another session's; os.getsid does not exist on Windows."""
+    if kind == "session":
+        return "1" if os.name == "nt" else str(os.getsid(0))
+    if kind == "other":
+        # A session number that cannot be ours; a fixed value may match (CI runs in session 1).
+        return "0" if os.name == "nt" else str(os.getsid(0) + 1)
+    return kind
+
+
+@pytest.mark.parametrize(
+    ("marker", "dispatched"),
+    [("", False), ("session", True), ("other", False)],
+    ids=["boss", "dispatched", "left-session"],
+)
+def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
+    tmp_path: Path, marker: str, dispatched: bool
+) -> None:
     data = tmp_path / "data"
     host = Host(
-        tmp_path, env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)}
+        tmp_path,
+        env={
+            **os.environ,
+            "AGENTNAVE_HOST": "codex",
+            "AGENTNAVE_DATA_DIR": str(data),
+            "AGENTNAVE_DISPATCHED": _marker(marker),
+        },
     )
 
     def observed(version: str) -> dict[str, Any]:
@@ -294,7 +317,9 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
             "runtime_version",
             "runtime_tools_hash",
             "host_tools_hash",
-        }
+        } | ({"dispatched"} if dispatched else set())
+        if dispatched:
+            assert initial["dispatched"] is True
         # Unchanged observations only refresh the modification time; removal rewrites it.
         path = host.relay.connection_path
         written = path.stat()
@@ -337,6 +362,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(tmp_p
         host.thread.join(10)
     (ended,) = data.glob("connections/*.json")
     assert json.loads(ended.read_bytes())["host_tools_hash"] == refreshed["host_tools_hash"]
+    assert json.loads(ended.read_bytes()).get("dispatched", False) is dispatched
 
 
 def test_empty_data_root_matches_service_default(
