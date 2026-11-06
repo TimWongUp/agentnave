@@ -358,6 +358,8 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
     async with Client(mcp) as client:
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
         assert "image_generation" not in _payload(listed["orchestration"])
+        catalog = str(await client.list_tools()) + str(client.instructions)
+        assert "image-generator" not in catalog and "image_generation" not in catalog
         missing = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
         )
@@ -367,6 +369,7 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
         path.write_text(json.dumps(document))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
         assert _payload(listed["orchestration"])["image_generation"] == seat
+        assert "image-generator" in str(await client.list_tools())
         started = await _start_and_wait(
             client, cwd=str(tmp_path), seat="image-generator", role="生成插图"
         )
@@ -421,6 +424,7 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
         path.write_text(json.dumps(document))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
         assert listed["orchestration"] == {"enabled": False}
+        assert "image-generator" not in str(await client.list_tools())
         disabled = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
         )

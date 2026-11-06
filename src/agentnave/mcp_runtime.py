@@ -45,6 +45,7 @@ from agentnave.members import (
     ProviderName,
     SettingsFileError,
     data_root,
+    role_seat,
 )
 from agentnave.models import (
     InvocationError,
@@ -219,14 +220,27 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
 
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
-        return [
-            # Published schemas say what call_tool enforces: nothing beyond the listed arguments.
-            tool.model_copy(
-                update={"input_schema": {**tool.input_schema, "additionalProperties": False}}
+        image_enabled = role_seat("image-generator", HOST) is not None
+        published: list[Any] = []
+        for tool in await super().list_tools():
+            if tool.name in _HIDDEN_TOOLS:
+                continue
+            schema = json.loads(json.dumps(tool.input_schema))
+            schema["additionalProperties"] = False
+            output = json.loads(json.dumps(tool.output_schema))
+            if not image_enabled:
+                role = schema.get("$defs", {}).get("OrchestrationRole", {})
+                if "enum" in role:
+                    role["enum"] = [value for value in role["enum"] if value != "image-generator"]
+                if output:
+                    status = output.get("$defs", {}).get("OrchestrationStatus", {})
+                    status.get("properties", {}).pop("image_generation", None)
+                    # A connected client can cache this schema before the user enables the seat.
+                    status["additionalProperties"] = True
+            published.append(
+                tool.model_copy(update={"input_schema": schema, "output_schema": output})
             )
-            for tool in await super().list_tools()
-            if tool.name not in _HIDDEN_TOOLS
-        ]
+        return published
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
@@ -276,7 +290,7 @@ mcp = _Server(
         "do not redispatch to fix metadata. "
         "access: read for exploration/planning/review, write for file changes; shown in App. "
         "read adds a prompt instruction, never native permissions. Explorer/review seats supply read, "
-        "Worker/image-generator seats write; omit access for them; contradictions reject. Never inherited on resume; "
+        "Worker seats write; omit access for them; contradictions reject. Never inherited on resume; "
         "without a seat declare each time or leave undeclared. "
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "

@@ -94,11 +94,19 @@ async function saveOrchestration() {
   if (failed.length) throw new Error(AN.L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));
 }
 
+function orchestrationPresetText(mode) {
+  const text = orchestration?.presets[mode];
+  const image = orchestration?.presets.image_generation;
+  if (!text || !image) return text;
+  const base = text.replace(image, "");
+  return orchestrationShown()?.image_generation ? base + image : base;
+}
+
 function viewMode(mode) {
   const editor = $("custom-text");
   // The editor starts from the mode the user leaves; what it shows is what gets written.
   if (mode === "custom" && !editor.value.trim()) {
-    editor.value = orchestration.presets[orchestrationView === "off" ? "split" : orchestrationView];
+    editor.value = orchestrationPresetText(orchestrationView === "off" ? "split" : orchestrationView);
   }
   orchestrationView = mode;
   renderOrchestration();
@@ -183,7 +191,7 @@ function renderOrchestration() {
   }
   $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
   renderBossChips();
-  const text = orchestration?.presets[preset];
+  const text = orchestrationPresetText(preset);
   $("orchestration-text").hidden = !text;
   $("orchestration-text").textContent = text || "";
   // An unread or broken file cannot take edits: nothing here could be saved or discarded.

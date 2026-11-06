@@ -18,10 +18,11 @@ const SHARED: &str = "## AgentNave 编排偏好
 - Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一；涉及界面（页面、样式、交互、看截图或设计稿）的实现改用 Worker 的界面两档。取 `list_members` 的 `orchestration`：`native` 工位交给宿主自带子代理并尽量用该模型，它不经过服务，prompt 要写明非交互，Explorer 还要写明只读；其余派发时 `seat` 用 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`、`worker-frontend-easy` 或 `worker-frontend-hard`，省略 `provider`、`access` 和模型，服务按 App 工位补齐；`role` 写具体职责，新任务必传 `cwd`。工位不可用时用 `list_members` 的 `replacement`，连同原来的 `seat` 或 `role` 一起传；没有工位时按任务组员选，都不可用时自己做。
 - 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；小事自己做。
 - 探索、规划派 Explorer，实现派 Worker。
-- 要生成图片且 `orchestration` 配了生图工位时派它，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务；未配置时不改派 Worker。
 - 同一组文件同一时间只有一个 Worker 在写；同一职责续接只传 `session_id`，其余由服务继承；换职责时传新的 `role` 或 `seat` 并给自足简报。
 - 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。
 - `succeeded` 不等于完成，boss 核对产物后验收；失败或取消时先核对现状，再决定续接、重派还是收尾。";
+
+const IMAGE_GENERATION: &str = "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。";
 
 const PARALLEL: &str = "
 - 计划确认后，互不依赖的写入步骤并行派给多个 Worker，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。
@@ -30,8 +31,8 @@ const PARALLEL: &str = "
 - 没有新证据或待解问题时，不再追加讨论、重试和验证。";
 
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
-pub fn presets() -> Value {
-    json!({"split": SHARED, "parallel": format!("{SHARED}{PARALLEL}")})
+pub fn presets(document: &Value) -> Value {
+    json!({"split": text_of(document, "split"), "parallel": text_of(document, "parallel"), "image_generation": IMAGE_GENERATION})
 }
 
 /// The mode of apps sharing a file: the first set among them, or the default that rows without
@@ -46,14 +47,21 @@ fn mode_of<'a>(document: &'a Value, group: &[&App]) -> &'a str {
 
 /// The text a mode puts in the rules files, if any.
 fn text_of(document: &Value, mode: &str) -> Option<String> {
-    match mode {
-        "split" => Some(SHARED.into()),
-        "parallel" => Some(format!("{SHARED}{PARALLEL}")),
-        "custom" => Some(document["custom"].as_str()?.trim())
-            .filter(|text| !text.is_empty())
-            .map(Into::into),
-        _ => None,
+    let mut text = match mode {
+        "split" => SHARED.to_owned(),
+        "parallel" => format!("{SHARED}{PARALLEL}"),
+        "custom" => document["custom"].as_str()?.trim().to_owned(),
+        _ => return None,
+    };
+    if text.is_empty() {
+        return None;
     }
+    // Strip our generated line if it was copied into a custom preset before being cleared.
+    text = text.replace(IMAGE_GENERATION, "");
+    if document["image_generation"].is_object() {
+        text.push_str(IMAGE_GENERATION);
+    }
+    Some(text)
 }
 
 /// Custom text goes into every boss app's rules each turn, so it stays short and cannot end the

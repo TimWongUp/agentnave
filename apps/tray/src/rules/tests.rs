@@ -343,3 +343,39 @@ fn a_held_sync_keeps_the_old_block_until_the_service_catches_up() {
     assert!(sync(&apps, &apps, h, &split, &[], &backup, false).is_empty());
     assert!(sync(&apps, &apps, h, &split, &[], &backup, true).is_empty());
 }
+
+#[test]
+fn image_rules_follow_the_optional_seat_and_clear_copied_custom_text() {
+    let mut document = json!({"preset": "split"});
+    for mode in ["split", "parallel"] {
+        assert!(
+            !text_of(&document, mode)
+                .unwrap()
+                .contains("image-generator")
+        );
+    }
+    document["image_generation"] = json!({"provider": "codex", "model": "chat"});
+    let generated = text_of(&document, "split").unwrap();
+    assert_eq!(generated.matches("image-generator").count(), 1);
+    document["custom"] = json!(generated);
+    assert_eq!(
+        text_of(&document, "custom")
+            .unwrap()
+            .matches("image-generator")
+            .count(),
+        1
+    );
+    document["image_generation"] = Value::Null;
+    assert!(
+        !text_of(&document, "custom")
+            .unwrap()
+            .contains("image-generator")
+    );
+    assert!(
+        !presets(&document)["split"]
+            .as_str()
+            .unwrap()
+            .contains("image-generator")
+    );
+    assert!(text_of(&document, "off").is_none());
+}

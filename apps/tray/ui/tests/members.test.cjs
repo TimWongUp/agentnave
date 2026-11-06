@@ -38,7 +38,7 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   const app = editor(async (url, options) => {
     const body = options?.body && JSON.parse(options.body);
     if (url === "/app/orchestration" && !body) {
-      return { ok: true, json: async () => ({ document: saved, error: null, bosses: [], presets: { split: "rule" }, files: [] }) };
+      return { ok: true, json: async () => ({ document: saved, error: null, bosses: [], presets: { split: "rule", image_generation: "\nimage-rule" }, files: [] }) };
     }
     if (url === "/app/orchestration") saved = body;
     else members = body;
@@ -70,10 +70,13 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   assert.equal(row().children[1].children[0].children[0], "未配置");
   assert.equal(row().children[2].attrs["aria-label"], "生图的对话模型");
 
+  assert.equal(app.run('orchestrationPresetText("split")'), "rule");
   pick("codex");
+  assert.equal(app.run('orchestrationPresetText("split")'), "rule\nimage-rule");
   assert.equal(JSON.stringify(app.run("orchestrationWanted().image_generation")), JSON.stringify(seat));
   pick("");
   assert.equal(app.run('"image_generation" in orchestrationWanted()'), false);
+  assert.equal(app.run('orchestrationPresetText("split")'), "rule");
   assert.equal(app.run("orchestrationChanged()"), false);
   pick("codex");
   app.run("discardAdvanced()");
