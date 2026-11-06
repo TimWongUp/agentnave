@@ -2,6 +2,7 @@ use super::*;
 use crate::data::Reader;
 use tempfile::TempDir;
 
+mod reload_guidance;
 mod versioned;
 
 fn fixture() -> (TempDir, Hosts) {
@@ -1125,8 +1126,18 @@ fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
         );
         let before = h.read().unwrap();
         let mut entry = before.entry.clone().unwrap();
-        let old = hosts.context.home.join("old-bin/agentnave-mcp");
+        let old = hosts
+            .context
+            .home
+            .join(".local/bin")
+            .join(if cfg!(windows) {
+                "agentnave-mcp.exe"
+            } else {
+                "agentnave-mcp"
+            });
         h.set_command(&mut entry, &old);
+        assert!(!hosts.own_launcher(h.command(&entry).unwrap()));
+        assert_eq!(hosts.command_state(&h, &entry), "missing");
         entry["args"] = json!(["--keep"]);
         entry["env"]["CUSTOM"] = json!("preserve");
         // A connection made before rows were named lacks the row; refreshing adds it back.

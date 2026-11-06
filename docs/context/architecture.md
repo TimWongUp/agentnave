@@ -16,7 +16,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 进程与模块
 
-- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）；macOS／Linux 的宿主配置指向 App 维护的固定启动器 `service/bin/agentnave-mcp`，切换版本只改它指向的版本，不改宿主配置（[ADR-0061](../adr/0061-fixed-service-launcher.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
 - 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
 - Claude 在 macOS／Linux 默认以交互模式运行：Provider 进程是服务自带的 helper，它在同一 supervisor 进程组里用伪终端驱动 `claude`，把 transcript 与 hooks 归一成事件；Windows 与受限工具路径用 `-p`。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)）。
@@ -94,7 +94,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）；语音 API 密钥、自定义口语摘要连接信息、摘要要求及语音人设为例外（[ADR-0044](../adr/0044-meeting-voice-cloud-and-key-input.md)）。
 - 模型与档位以各 CLI 自己给出的为准，App 只探测、不猜测（[ADR-0034](../adr/0034-models-and-efforts-from-each-cli.md)）。
 - 员工页的 CLI 更新只沿该 CLI 原来的安装方式执行，不提权、不替用户安装；没装的 CLI 只给出官方安装命令（[ADR-0055](../adr/0055-app-updates-member-clis.md)）。
-- 应用内更新只访问本仓库的 GitHub Release，用户确认后安装 App（[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）。App 每次启动都把服务对齐到配套版本：新版本装进独立目录，旧目录在不再使用并过宽限期后回收；连接的版本落后时，宿主卡片立即提示重连（[ADR-0047](../adr/0047-versioned-service-install.md)）。
+- 应用内更新只访问本仓库的 GitHub Release，用户确认后安装 App（[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）。App 每次启动都把服务对齐到配套版本：新版本装进独立目录，旧目录在不再使用并过宽限期后回收；连接的版本落后时，宿主卡片立即提示重连（[ADR-0047](../adr/0047-versioned-service-install.md)）。中继把每条连接写进数据根 `connections/` 的回执，由中继写、托盘读；AgentNave 派发的组员拉起的中继在回执里标明，托盘不把它算作 boss 的连接。
 - 办公室拥有主窗口的播放器与会话视图；从办公室进入设置时，只以同源内嵌页覆盖内容区，主页面和播放器不卸载。收起保留设置页及未保存编辑；内嵌页的站内导航交给办公室，外观与已保存语音设置在两页间同步。独立打开的设置页仍可单独使用，内嵌不扩大页面来源范围。
 
 ## 语音播报

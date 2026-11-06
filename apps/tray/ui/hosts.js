@@ -20,6 +20,7 @@ const S = {
   appVersion: "",
   busy: new Map(), // host id -> "connect" | "remove"
   confirm: null, // host id whose removal is being confirmed
+  copyConfirm: null, // {id, kind} of the background copy whose stop/restart is being confirmed
   adv: new Set(), // host ids whose 高级 panel is open
   localErr: new Map(), // host id -> message when a request itself failed
   newIds: new Set(),
@@ -144,7 +145,7 @@ function setData(data) {
 async function reload() {
   try {
     const next = await load("/app/hosts");
-    if (!S.busy.size && !S.confirm && !document.activeElement?.closest(".hc-adv") && JSON.stringify(next) !== JSON.stringify(S.data)) setData(next);
+    if (!S.busy.size && !S.confirm && !S.copyConfirm && !document.activeElement?.closest(".hc-adv") && JSON.stringify(next) !== JSON.stringify(S.data)) setData(next);
   } catch {
     /* keep what is shown */
   }
@@ -152,6 +153,7 @@ async function reload() {
 async function run(id, kind, request) {
   S.busy.set(id, kind);
   S.confirm = null;
+  S.copyConfirm = null;
   S.localErr.delete(id);
   renderAll();
   let result = null;
@@ -180,6 +182,14 @@ const connect = (host) =>
   });
 const removeEntry = (host) =>
   run(host.id, "remove", () => post("/app/hosts/remove", { id: host.id }));
+const reloadCopy = (host, kind) =>
+  run(host.id, `copy-${kind}`, () => post("/app/hosts/reload-copy", { id: host.id, kind })).then((r) => {
+    if (r && !r.ok) {
+      S.localErr.set(host.id, r.message);
+      renderAll();
+    }
+    return r;
+  });
 async function refreshAll() {
   S.refreshing = true;
   renderAll();
@@ -533,6 +543,7 @@ function actionButtons(host) {
       ? spinBtn(L("移除中…", "Removing…"))
       : button(label, ".danger", "remove", () => {
           S.confirm = id;
+          S.copyConfirm = null;
           S.focus = { id, act: "cancel" };
           renderAll();
         }, dis);
@@ -589,6 +600,10 @@ function buildCard(host) {
       S.confirm = null;
       S.focus = { id, act: "remove" };
       renderAll();
+    } else if (e.key === "Escape" && S.copyConfirm?.id === id) {
+      S.focus = { id, act: `copy-${S.copyConfirm.kind}` };
+      S.copyConfirm = null;
+      renderAll();
     }
   });
   // Only a host not yet connected can be untested: once its entry works it has been tried.
@@ -641,19 +656,9 @@ function buildCard(host) {
     main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
-    const [title, detail] = (RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config)(host.reload_hint || L("重启应用", "restart the app"));
-    // A host that never connected may be waiting for its own in-app trust prompt, which this App
-    // cannot click; saying so beats telling the user to restart it again.
-    const trust = host.reload.reason === "unverified" && !host.reload.connections
-      ? L("；若该宿主从未连接过 AgentNave，可能需要在它的应用内确认信任「agentnave」后才会启动服务", "; if this host has never connected to AgentNave, you may need to trust “agentnave” inside its app before the service starts")
-      : "";
-    const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
-    main.push(h("div.hc-reload.hc-note.info", {},
-      h("div", {}, h("strong", {}, title), h("p", {}, detail + trust)),
-      !auto && button(L("我已重新加载", "I’ve reloaded"), "", "confirm-reload", () =>
-        run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
-        Boolean(busy) || S.updating || host.status !== "connected"),
-    ));
+    main.push(reloadNote(host));
+    const pending = S.copyConfirm?.id === id && !busy && COPY_ACTIONS[`${host.boss}/${S.copyConfirm.kind}`];
+    if (pending) main.push(copyConfirmBlock(host, S.copyConfirm.kind, pending));
   }
   if (S.confirm === id && !busy) main.push(confirmBlock(host));
   // The 详情 button controls this wrapper, which every status renders (an orphan has no advanced part).
@@ -669,14 +674,99 @@ function buildCard(host) {
   return card;
 }
 
-// Why a reload is required, given how this host restarts; all but a config change clear themselves.
+// Why a reload is required; the per-copy instructions below the title say how to reopen.
+// All but a config change clear themselves.
 const RELOAD_REASONS = {
-  config: (hint) => [L("接入配置已更新", "Connection config updated"), L(`${hint}后生效，检测到新连接后自动消除提示。`, `Takes effect after you ${hint}; this notice clears automatically once a new connection is detected.`)],
-  host_running: (hint) => [L("接入配置已更新", "Connection config updated"), L(`检测到应用仍在运行，${hint}后生效。`, `App is still running; takes effect after you ${hint}.`)],
-  unverified: (hint) => [L("接入配置已更新", "Connection config updated"), L(`尚未确认应用已加载新配置；${hint}后再使用。`, `Not yet verified that the app loaded the new config; ${hint} before use.`)],
-  tools: (hint) => [L("有连接仍在用旧工具接口", "A connection is still using the old tool interface"), L(`重新连接 AgentNave MCP，或${hint}；完成后提示自动消除。`, `Reconnect AgentNave MCP, or ${hint}; this notice clears automatically once done.`)],
-  stale: (hint) => [L("需要重连", "Reconnect required"), L(`重新连接 AgentNave MCP，或${hint}，让新版服务生效。`, `Reconnect AgentNave MCP, or ${hint}, to load the new service.`)],
+  config: [L("接入配置已更新", "Connection config updated"), L("检测到新连接后自动消除提示。", "This notice clears automatically once a new connection is detected.")],
+  host_running: [L("接入配置已更新", "Connection config updated"), L("应用仍在运行旧配置。", "The app is still running with the old config.")],
+  unverified: [L("接入配置已更新", "Connection config updated"), L("尚未确认应用已加载新配置。", "Not yet verified that the app loaded the new config.")],
+  tools: [L("有连接仍在用旧工具接口", "A connection is still using the old tool interface"), L("在宿主里重新连接 AgentNave MCP 也可以；完成后提示自动消除。", "Reconnecting AgentNave MCP in the host also works; this notice clears automatically once done.")],
+  stale: [L("需要重连", "Reconnect required"), L("在宿主里重新连接 AgentNave MCP 也可以让新版服务生效。", "Reconnecting AgentNave MCP in the host also loads the new service.")],
 };
+const COPY_KIND = {
+  daemon: L("后台服务", "Background service"),
+  desktop: L("桌面端", "Desktop app"),
+  app: L("桌面端", "Desktop app"),
+  cli: L("终端会话", "Terminal session"),
+  ide: L("编辑器插件", "Editor extension"),
+  gateway: L("网关", "Gateway"),
+};
+// The copies the host's own CLI can stop or restart: [button, busy label, confirm title, consequence].
+const COPY_ACTIONS = {
+  "claude/daemon": [L("停止", "Stop"), L("停止中…", "Stopping…"), L("停止 Claude 后台服务？", "Stop the Claude background service?"), L("将结束 Claude 的全部后台会话。", "All Claude background sessions will end.")],
+  "codex/daemon": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Codex 后台服务？", "Restart the Codex background service?"), L("正在运行的后台任务和远程任务会中断。", "Running background and remote tasks will be interrupted.")],
+  "hermes/gateway": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Hermes 网关？", "Restart the Hermes gateway?"), L("消息平台上的对话会短暂中断，随后自动重连。", "Conversations on messaging platforms will briefly drop and then reconnect.")],
+};
+const bundleName = (path) => String(path || "").split("/").pop().replace(/\.app$/i, "");
+
+// One row per old copy still holding the previous config: what it is, since when, how to reopen it.
+function copyRow(host, copy) {
+  const id = host.id;
+  const busy = S.busy.get(id);
+  const action = COPY_ACTIONS[`${host.boss}/${copy.kind}`];
+  const act = `copy-${copy.kind}`;
+  const name = [COPY_KIND[copy.kind] || copy.kind, copy.bundle && bundleName(copy.bundle)].filter(Boolean).join(" · ");
+  const since = copy.since ? relTime(new Date(copy.since).toISOString()) : "";
+  let control = null;
+  if (action)
+    control = busy === act
+      ? spinBtn(action[1])
+      : button(action[0], "", act, () => {
+          S.copyConfirm = { id, kind: copy.kind };
+          S.confirm = null;
+          S.focus = { id, act: "copy-cancel" };
+          renderAll();
+        }, Boolean(busy) || S.updating || S.copyConfirm?.id === id);
+  return h("li.hc-copy", {},
+    h("div", {},
+      h("strong", {}, name),
+      since && h("span.hc-since", {}, L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`)),
+      host.reopen?.[copy.kind] && h("p", {}, host.reopen[copy.kind])),
+    h("div.hc-copy-act", {}, control));
+}
+
+function reloadNote(host) {
+  const id = host.id;
+  const busy = S.busy.get(id);
+  const [title, detail] = RELOAD_REASONS[host.reload.reason] || RELOAD_REASONS.config;
+  // A host that never connected may be waiting for its own in-app trust prompt, which this App
+  // cannot click; a host with a known trust step names it on its own line instead.
+  const trust = !host.trust && host.reload.reason === "unverified" && !host.reload.connections
+    ? L("若该宿主从未连接过 AgentNave，可能需要在它的应用内确认信任「agentnave」后才会启动服务。", "If this host has never connected to AgentNave, you may need to trust “agentnave” inside its app before the service starts.")
+    : "";
+  const auto = host.reload.reason in RELOAD_REASONS && host.reload.reason !== "config";
+  const copies = host.reload.copies || [];
+  const fallback = host.reopen?.[host.id === "claude-desktop" ? "desktop" : host.reopen?.app ? "app" : "cli"] || host.reload_hint;
+  return h("div.hc-reload.hc-note.info", {},
+    h("div.hc-reload-head", {},
+      h("div", {}, h("strong", {}, title), h("p", {}, detail + (trust ? ` ${trust}` : ""))),
+      !auto && button(L("我已重新加载", "I’ve reloaded"), "", "confirm-reload", () =>
+        run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
+        Boolean(busy) || S.updating || host.status !== "connected"),
+    ),
+    copies.length
+      ? h("ul.hc-copies", {}, copies.map((copy) => copyRow(host, copy)))
+      : fallback && h("p.hc-reopen", {}, fallback),
+    host.trust && h("p.hc-trust", {}, host.trust),
+  );
+}
+
+function copyConfirmBlock(host, kind, [label, , title, consequence]) {
+  const cancel = () => {
+    S.copyConfirm = null;
+    S.focus = { id: host.id, act: `copy-${kind}` };
+    renderAll();
+  };
+  return h(
+    "div.hc-confirm",
+    { role: "group", "aria-label": title },
+    h("div.msg", {}, h("strong", {}, title), consequence),
+    h("div.acts", {},
+      button(L("取消", "Cancel"), "", "copy-cancel", cancel),
+      button(L(`确认${label}`, `Confirm ${label.toLowerCase()}`), ".danger-solid", "copy-confirm", () => reloadCopy(host, kind)),
+    ),
+  );
+}
 
 function renderCards() {
   const box = $("host-cards");

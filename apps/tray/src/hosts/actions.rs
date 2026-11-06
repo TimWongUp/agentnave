@@ -10,6 +10,10 @@ impl Hosts {
             return self.set_root(id, payload);
         }
         let host = self.registry().into_iter().find(|h| h.id == id).unwrap();
+        #[cfg(unix)]
+        if operation == "reload-copy" {
+            return self.reload_copy(&host, payload);
+        }
         if operation == "skill" {
             return self.change_skill(id, &host, payload);
         }
@@ -380,6 +384,8 @@ impl Hosts {
             return Err("write_failed:宿主未安装".into());
         }
         let before = host.read().map_err(|e| format!("parse_failed:{e}"))?;
+        crate::update::ensure_active_launcher(&self.context.app)
+            .map_err(|error| format!("write_failed:{error}"))?;
         let path = self
             .launcher()
             .ok_or("write_failed:请先安装或更新本机服务")?;

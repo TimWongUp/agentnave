@@ -73,6 +73,7 @@ fn percent_encode(text: &str) -> String {
 fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
+        && !(cfg!(unix) && path == "/app/hosts/reload-copy")
         && !matches!(
             path,
             "/app/preferences"
@@ -902,6 +903,10 @@ mod tests {
             "/app/storage/preview?days=30"
         ));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
+        assert_eq!(
+            preview_refuses(true, "POST", "/app/hosts/reload-copy"),
+            !cfg!(unix)
+        );
     }
 
     #[test]

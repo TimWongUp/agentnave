@@ -9,6 +9,7 @@ const ENDED_SECONDS: u64 = 3600;
 #[derive(Default)]
 struct Receipts {
     live: Vec<Value>,
+    live_pids: Vec<Option<u32>>,
     lingering: bool,
     lingering_before_change: bool,
     ended: Vec<Value>,
@@ -87,7 +88,42 @@ impl Hosts {
         } else {
             self.idle_state(host, pending, changed)
         };
-        json!({"state":state,"reason":reason,"token":token,"connections":receipts.live.len(),"confirmed_at":confirmed["at"]})
+        let copies: Vec<_> = self
+            .reload_copies(host, reason, &receipts, &install, changed_at)
+            .into_iter()
+            .map(processes::Copy::into_json)
+            .collect();
+        json!({"state":state,"reason":reason,"token":token,"connections":receipts.live.len(),"confirmed_at":confirmed["at"],"copies":copies})
+    }
+    fn reload_copies(
+        &self,
+        host: &Host,
+        reason: &str,
+        receipts: &Receipts,
+        install: &Install,
+        changed_at: Option<u64>,
+    ) -> Vec<processes::Copy> {
+        let mut probe = self.processes.lock().unwrap_or_else(|p| p.into_inner());
+        if reason == "host_running" {
+            return probe.old_copies(&self.context, host.boss, changed_at.unwrap_or(0));
+        }
+        let mut copies: BTreeMap<&str, processes::Copy> = BTreeMap::new();
+        if matches!(reason, "stale" | "tools") {
+            for (receipt, pid) in receipts.live.iter().zip(&receipts.live_pids) {
+                if !stale(receipt, install) && !mismatched_tools(receipt) {
+                    continue;
+                }
+                if let Some(pid) = pid
+                    && let Some(copy) = probe.receipt_copy(&self.context, host.boss, *pid)
+                    && copies
+                        .get(copy.kind)
+                        .is_none_or(|old| copy.since < old.since)
+                {
+                    copies.insert(copy.kind, copy);
+                }
+            }
+        }
+        copies.into_values().collect()
     }
     /// Live receipts refresh every five seconds; a relay swapping to a new install may pause
     /// that for up to 105 seconds, so only a longer silence counts as no connection at all.
@@ -111,6 +147,7 @@ impl Hosts {
             {
                 continue;
             } else if age <= 20 {
+                receipts.live_pids.push(receipt_pid(&entry.path()));
                 receipts.live.push(value);
             } else if age <= LINGER_SECONDS {
                 receipts.lingering = true;
@@ -279,7 +316,8 @@ fn read_receipt(
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    (value["version"] == 1 && value["host"] == boss).then_some((age, modified, value))
+    (value["version"] == 1 && value["host"] == boss && value["dispatched"] != true)
+        .then_some((age, modified, value))
 }
 
 fn receipt_pid(path: &Path) -> Option<u32> {
@@ -308,18 +346,10 @@ fn live_state(
     reloaded: bool,
     base: (&'static str, &'static str),
 ) -> (&'static str, &'static str) {
-    if let Some(installed) = install.version.as_deref()
-        && connections
-            .iter()
-            .any(|c| c["runtime_version"].as_str() != Some(installed))
-    {
+    if connections.iter().any(|c| stale(c, install)) {
         return ("required", "stale");
     }
-    if connections.iter().any(|c| {
-        valid_hash(&c["runtime_tools_hash"])
-            && valid_hash(&c["host_tools_hash"])
-            && c["runtime_tools_hash"] != c["host_tools_hash"]
-    }) {
+    if connections.iter().any(mismatched_tools) {
         return ("required", "tools");
     }
     let delivered = connections.iter().all(|c| {
@@ -333,4 +363,17 @@ fn live_state(
     } else {
         ("current", "connection")
     }
+}
+
+fn stale(receipt: &Value, install: &Install) -> bool {
+    install
+        .version
+        .as_deref()
+        .is_some_and(|v| receipt["runtime_version"].as_str() != Some(v))
+}
+
+fn mismatched_tools(receipt: &Value) -> bool {
+    valid_hash(&receipt["runtime_tools_hash"])
+        && valid_hash(&receipt["host_tools_hash"])
+        && receipt["runtime_tools_hash"] != receipt["host_tools_hash"]
 }

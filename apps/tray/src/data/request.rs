@@ -349,16 +349,17 @@ impl Reader {
         body: &[u8],
     ) -> Response {
         let read = path == "/app/hosts";
-        let write = matches!(
-            path,
-            "/app/hosts/refresh"
-                | "/app/hosts/connect"
-                | "/app/hosts/remove"
-                | "/app/hosts/root"
-                | "/app/hosts/confirm-reload"
-                | "/app/hosts/skill"
-                | "/app/hosts/reveal-backups"
-        );
+        let write = (cfg!(unix) && path == "/app/hosts/reload-copy")
+            || matches!(
+                path,
+                "/app/hosts/refresh"
+                    | "/app/hosts/connect"
+                    | "/app/hosts/remove"
+                    | "/app/hosts/root"
+                    | "/app/hosts/confirm-reload"
+                    | "/app/hosts/skill"
+                    | "/app/hosts/reveal-backups"
+            );
         if !read && !write {
             return Response::error(404, "未知路由");
         }

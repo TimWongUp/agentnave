@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+mod launcher;
 
 #[allow(dead_code)]
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
@@ -194,7 +196,28 @@ pub(crate) fn outdated_note(installed: String) -> Value {
 
 /// The launcher the hosts' configs point at once a versioned install exists.
 pub(crate) fn active_launcher(app_data: &Path) -> Option<PathBuf> {
-    active_entry(app_data).map(|(_, bin)| bin)
+    let (_, bin) = active_entry(app_data)?;
+    #[cfg(unix)]
+    {
+        let fixed = app_data.join("service/bin/agentnave-mcp");
+        if crate::detect::executable(&fixed) {
+            return Some(fixed);
+        }
+    }
+    Some(bin)
+}
+
+/// Migrate an existing versioned install even when no service upgrade is needed.
+pub(crate) fn ensure_active_launcher(app_data: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    if !crate::detect::executable(&app_data.join("service/bin/agentnave-mcp"))
+        && let Some((_, bin)) = active_entry(app_data)
+    {
+        launcher::write(&app_data.join("service"), &bin)?;
+    }
+    #[cfg(not(unix))]
+    let _ = app_data;
+    Ok(())
 }
 
 /// The active version and its launcher, only when both the launcher and the tool environment
@@ -270,6 +293,17 @@ pub(crate) fn write_active_manifest(base: &Path, value: &Value) -> Result<(), St
     // the old file for a moment rejects the replace, which must not fail a finished install.
     let staging = base.join(format!("active.{}.tmp", std::process::id()));
     std::fs::write(&staging, value.to_string()).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    let previous_launcher = std::fs::read(base.join("bin/agentnave-mcp")).ok();
+    #[cfg(unix)]
+    if let Err(error) = value["bin"]
+        .as_str()
+        .ok_or_else(|| "active.json 缺少启动器路径".to_owned())
+        .and_then(|bin| launcher::write(base, Path::new(bin)))
+    {
+        let _ = std::fs::remove_file(&staging);
+        return Err(error);
+    }
     let target = base.join("active.json");
     let mut last = None;
     for attempt in 0..3 {
@@ -284,6 +318,18 @@ pub(crate) fn write_active_manifest(base: &Path, value: &Value) -> Result<(), St
         }
     }
     let _ = std::fs::remove_file(&staging);
+    #[cfg(unix)]
+    {
+        let rollback = match previous_launcher {
+            Some(bytes) => launcher::replace(base, &bytes),
+            None => std::fs::remove_file(base.join("bin/agentnave-mcp")).map_err(|e| e.to_string()),
+        };
+        if let Err(error) = rollback {
+            return Err(format!(
+                "无法写入 active.json，恢复固定启动器也失败：{error}"
+            ));
+        }
+    }
     Err(last.map_or_else(|| "无法写入 active.json".into(), |error| error.to_string()))
 }
 

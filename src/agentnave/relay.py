@@ -246,6 +246,7 @@ class Relay:
         self.code = 0
         effective_env = env if env is not None else os.environ
         self.host = effective_env.get("AGENTNAVE_HOST")
+        self.dispatched = effective_env.get("AGENTNAVE_DISPATCHED") == "1"
         self.connection_path = (
             Path(effective_env.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
             / "connections"
@@ -335,6 +336,8 @@ class Relay:
             }
             if ended_ms is not None:
                 payload["ended_ms"] = ended_ms
+            if self.dispatched:
+                payload["dispatched"] = True
         path = self.connection_path
         body = json.dumps(payload).encode()
         try:
