@@ -250,9 +250,19 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
     host.thread.join(10)
 
 
+def _marker(kind: str) -> str:
+    """This session's marker, or another session's; os.getsid does not exist on Windows."""
+    if kind == "session":
+        return "1" if os.name == "nt" else str(os.getsid(0))
+    if kind == "other":
+        # A session number that cannot be ours; a fixed value may match (CI runs in session 1).
+        return "0" if os.name == "nt" else str(os.getsid(0) + 1)
+    return kind
+
+
 @pytest.mark.parametrize(
     ("marker", "dispatched"),
-    [("", False), ("session", True), ("1", os.name == "nt")],
+    [("", False), ("session", True), ("other", False)],
     ids=["boss", "dispatched", "left-session"],
 )
 def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
@@ -265,10 +275,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
             **os.environ,
             "AGENTNAVE_HOST": "codex",
             "AGENTNAVE_DATA_DIR": str(data),
-            # POSIX names this session; os.getsid does not exist on Windows.
-            "AGENTNAVE_DISPATCHED": marker
-            if marker != "session"
-            else ("1" if os.name == "nt" else str(os.getsid(0))),
+            "AGENTNAVE_DISPATCHED": _marker(marker),
         },
     )
 

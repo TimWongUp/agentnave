@@ -47,7 +47,8 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _hold_sigterm)
     parent = os.getppid()
     # Name this session so a relay that a daemon carried out of it no longer reads as dispatched.
-    os.environ["AGENTNAVE_DISPATCHED"] = str(os.getsid(0))
+    if os.name != "nt":
+        os.environ["AGENTNAVE_DISPATCHED"] = str(os.getsid(0))
     try:
         provider = subprocess.Popen(provider_argv, preexec_fn=_restore_sigterm)
     except OSError as exc:
