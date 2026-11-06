@@ -175,7 +175,11 @@ if sys.platform != "win32":
         host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
         host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-        assert os.getpgid(host.pid()) != os.getpgrp()
+        try:
+            assert os.getpgid(host.pid()) != os.getpgrp()
+        finally:
+            host.writer.close()
+            host.thread.join(10)
 
 
 def test_relay_swaps_for_hosts_without_handshake_and_hands_over_listen_streams(
