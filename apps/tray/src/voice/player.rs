@@ -59,6 +59,7 @@ pub fn clear(app: &AppHandle) {
     tell_panel(app, &Value::Null);
 }
 
+// An office with its settings frame open still has the same top-level office URL.
 fn office_showing(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     app.get_webview_window(OFFICE).filter(|office| {
         office
@@ -98,8 +99,26 @@ fn command(app: &AppHandle, body: &[u8]) -> Response {
         return Response::error(400, "操作格式不对");
     };
     let kind = click["kind"].as_str().unwrap_or_default();
-    if !matches!(kind, "toggle" | "open" | "listen" | "unlisten") {
+    if !matches!(
+        kind,
+        "toggle"
+            | "previous"
+            | "next"
+            | "stop_all"
+            | "flip"
+            | "retry"
+            | "settings"
+            | "open"
+            | "locate"
+            | "listen"
+            | "unlisten"
+    ) {
         return Response::error(400, "未知的语音操作");
+    }
+    if kind == "settings" {
+        crate::hide_panel(app);
+        crate::open(app, OFFICE, "/settings/#voice-settings");
+        return Response::json(&json!({"ok": true}));
     }
     // Until the office has published, its page cannot take a click yet.
     let ready = PLAYER.lock().unwrap().shown.is_some();
@@ -112,7 +131,7 @@ fn command(app: &AppHandle, body: &[u8]) -> Response {
                 return Response::json(&json!({"ok": true, "opening": opening}));
             }
             // Stopping before the office opened just forgets the click.
-            "unlisten" => {
+            "unlisten" | "stop_all" => {
                 PLAYER.lock().unwrap().waiting = None;
                 return Response::json(&json!({"ok": true}));
             }
@@ -120,12 +139,12 @@ fn command(app: &AppHandle, body: &[u8]) -> Response {
         }
         return Response::error(404, "办公室没有打开");
     };
-    let _ = office.eval(event("agentnave:voice-command", &click));
     // Opening a conversation shows it in the office, which goes there in place and keeps playing.
-    if kind == "open" {
+    if matches!(kind, "open" | "locate") {
         crate::hide_panel(app);
         crate::restore(app);
     }
+    let _ = office.eval(event("agentnave:voice-command", &click));
     Response::json(&json!({"ok": true}))
 }
 

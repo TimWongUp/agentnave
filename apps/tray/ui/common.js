@@ -20,17 +20,44 @@
   // Bilingual text: the page's <html lang> carries the App's interface language. The App sets
   // it when serving the page, including the system language, before any text is built.
   const root = document.documentElement;
-  const L = (zh, en) => (root.lang.startsWith("en") ? en : zh);
-  if (root.lang.startsWith("en")) {
-    document.querySelectorAll("[data-en]").forEach((node) => {
-      if (node.tagName === "TITLE") document.title = node.dataset.en;
-      const text = [...node.childNodes].find((n) => n.nodeType === 3 && n.nodeValue.trim());
-      if (text) text.nodeValue = node.dataset.en;
-      else if (!node.children.length) node.textContent = node.dataset.en;
-    });
-    document.querySelectorAll("[data-en-title]").forEach((node) => { node.title = node.dataset.enTitle; });
-    document.querySelectorAll("[data-en-label]").forEach((node) => node.setAttribute("aria-label", node.dataset.enLabel));
+  const translations = new Map(), localizedTables = [];
+  const L = (zh, en) => {
+    if (typeof zh === "string" && typeof en === "string") translations.set(zh, en);
+    return root.lang.startsWith("en") ? en : zh;
+  };
+  const labels = [...document.querySelectorAll("[data-en]")].map(node => {
+    const text = [...(node.childNodes || [])].find(n => n.nodeType === 3 && n.nodeValue.trim());
+    return { node, text, zh: text?.nodeValue || node.textContent, en: node.dataset.en };
+  });
+  const attributes = ["title", "label"].flatMap(key => [...document.querySelectorAll(`[data-en-${key}]`)].map(node => ({
+    node, name: key === "label" ? "aria-label" : "title", zh: node.getAttribute(key === "label" ? "aria-label" : "title"), en: node.dataset[key === "label" ? "enLabel" : "enTitle"],
+  })));
+  function setLanguage(language) {
+    const english = String(language).startsWith("en");
+    const previous = root.lang.startsWith("en");
+    root.lang = language;
+    for (const label of labels) {
+      const text = english ? label.en : label.zh;
+      if (label.text) label.text.nodeValue = text;
+      else if (!label.node.children.length) label.node.textContent = text;
+      if (label.node.tagName === "TITLE") document.title = text;
+    }
+    for (const attr of attributes) attr.node.setAttribute(attr.name, english ? attr.en : attr.zh);
+    if (english !== previous) {
+      const lookup = english ? translations : new Map([...translations].map(([zh, en]) => [en, zh]));
+      for (const table of localizedTables) for (const entry of Object.values(table)) if (lookup.has(entry[0])) entry[0] = lookup.get(entry[0]);
+      for (const node of document.querySelectorAll("*")) {
+        // Conversation text and names belong to the workspace, not the interface language.
+        if (node.closest?.("#tl-inner, .zone, .floor-head, .voice-queue-line, .voice-album-title, .voice-album-who, .voice-queue-who, .voice-queue-album, .gi-label, .gi-prev, .dr-title, .dr-sub, textarea, input")) continue;
+        for (const text of node.childNodes || []) if (text.nodeType === 3 && lookup.has(text.nodeValue)) text.nodeValue = lookup.get(text.nodeValue);
+        for (const name of ["title", "aria-label", "placeholder"]) {
+          const value = node.getAttribute(name);
+          if (lookup.has(value)) node.setAttribute(name, lookup.get(value));
+        }
+      }
+    }
   }
+  setLanguage(root.lang);
 
   // The App serves its pages over agentnave: on macOS and Linux, and over http://agentnave.localhost
   // on Windows, whose WebView2 has no custom schemes. Both are the App; a browser preview is neither.
@@ -83,6 +110,7 @@
     interrupted: [L("已中断", "Interrupted"), "bad"], pending: [L("等待中", "Pending"), "idle"],
   };
   const GROUP = { running: [L("运行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], failed: [L("有失败", "Failed"), "bad"], idle: [L("空闲", "Idle"), "idle"] };
+  localizedTables.push(MEMBER, GROUP);
   const pick = (table, status) => table[status] || [status || "—", "idle"];
   const urgent = (status) => status === "running" || status === "review";
   // What a desk is doing, in one word and tone. A desk in a meeting and a desk chatting privately are
@@ -228,13 +256,13 @@
     (topBar.querySelector(".bar-end") || topBar).append(h("div.win-ctl", {}, minimize, maximize, close));
   }
 
-  document.querySelector("header.bar")?.append(h("div.bar-end", {}, themeSwitch()));
+  if (root.dataset.embedded !== "true") document.querySelector("header.bar")?.append(h("div.bar-end", {}, themeSwitch()));
   // The top bar is the window's title bar, but only when the page is the App's own (see inApp).
   // Each system keeps its own window buttons: macOS draws traffic lights at the left of the bar,
   // Windows has no title bar to put them in, so the bar carries Windows' caption buttons at the
   // right. Either way the bar drags the window and zooms it on double-click.
   const bar = document.querySelector("header.bar");
-  if (bar && inApp()) {
+  if (bar && inApp() && root.dataset.embedded !== "true") {
     const shell = shellOS();
     document.documentElement.classList.add("titlebar", `os-${shell}`);
     const blank = (e) => e.button === 0 && !e.target.closest("a, button, input, select, label, textarea");
@@ -412,5 +440,5 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 }

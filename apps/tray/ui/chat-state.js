@@ -135,6 +135,8 @@ const state = {
   seenIds: new Set(),
   unseen: 0,
   flashId: null,
+  locate: null,
+  locating: false,
   flashTimer: 0,
   ready: false,
   refreshing: false,
@@ -162,6 +164,8 @@ const keyFromHash = () => {
   }
 };
 function go(path, replace) {
+  if (path.startsWith("/settings/") && AN.navigate) return AN.navigate(path);
+  AN.officeSettings?.close();
   history[replace ? "replaceState" : "pushState"]({}, "", href(path));
   sync();
   refresh();

@@ -209,7 +209,7 @@ function createBoss() {
   rec.chats = h("div.boss-side");
   rec.meets = h("div.boss-side");
   el.boss.replaceChildren(
-    h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state),
+    h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, AN.voice?.workspaceListen),
     h(
       "div.boss-row",
       {},

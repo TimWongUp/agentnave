@@ -228,17 +228,24 @@ fn combined_tls_features_have_an_explicit_provider() {
 }
 
 #[test]
-fn automatic_playback_and_prompt_settings_preserve_old_documents() {
+fn listening_and_prompt_settings_preserve_old_documents() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = storage::read_settings(directory.path()).unwrap();
-    assert_eq!(settings["auto_read"], false);
+    assert!(settings.get("auto_read").is_none());
+    assert_eq!(settings["listen_minutes"], 60);
     assert_eq!(settings["continue_read"], false);
     // Every character starts with its own persona.
     for (family, persona) in storage::DEFAULT_PERSONAS {
         assert_eq!(settings["personas"][family], persona);
     }
     for (field, value) in [
-        ("auto_read", json!("yes")),
+        ("listen_minutes", json!(0)),
+        ("listen_minutes", json!(45)),
+        ("listen_minutes", json!(1440)),
+        ("listen_minutes", json!(-1)),
+        ("listen_minutes", json!(1.5)),
+        ("listen_minutes", json!("60")),
+        ("listen_minutes", json!(null)),
         ("continue_read", json!(1)),
         ("personas", json!({"unknown":"role"})),
         ("personas", json!({"gpt": "字".repeat(501)})),
@@ -248,13 +255,30 @@ fn automatic_playback_and_prompt_settings_preserve_old_documents() {
         invalid[field] = value;
         assert!(storage::validate(&invalid).is_err());
     }
+    for minutes in [30, 60, 120, 240, 480] {
+        settings["listen_minutes"] = json!(minutes);
+        storage::save_settings(directory.path(), &settings).unwrap();
+        assert_eq!(
+            storage::read_settings(directory.path()).unwrap()["listen_minutes"],
+            minutes
+        );
+    }
+    settings.as_object_mut().unwrap().remove("listen_minutes");
     settings["auto_read"] = json!(true);
+    std::fs::write(directory.path().join("voice.json"), settings.to_string()).unwrap();
+    settings = storage::read_settings(directory.path()).unwrap();
+    assert!(settings.get("auto_read").is_none());
+    assert_eq!(settings["listen_minutes"], 60);
     settings["continue_read"] = json!(true);
     settings["summary"]["prompt"] = json!("");
     settings["personas"] = json!({"boss":"先讲结论。","gpt":"语气简短。","claude":" "});
     storage::save_settings(directory.path(), &settings).unwrap();
     let saved = storage::read_settings(directory.path()).unwrap();
-    assert_eq!(saved["auto_read"], true);
+    assert!(saved.get("auto_read").is_none());
+    let persisted: Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("voice.json")).unwrap())
+            .unwrap();
+    assert!(persisted.get("auto_read").is_none());
     assert_eq!(saved["continue_read"], true);
     assert_eq!(saved["summary"]["prompt"], summary::DEFAULT_PROMPT);
     assert_eq!(saved["personas"]["boss"], "先讲结论。");

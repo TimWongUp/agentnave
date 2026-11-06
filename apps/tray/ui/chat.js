@@ -126,10 +126,13 @@ function inScope(m, ctx) {
   const d = state.drawer;
   if (d.kind === "all") return true;
   if (d.kind === "room") return m.conversation === d.id;
-  if (m.desk === d.key) return true;
-  if (Array.isArray(m.to) && m.to.some((t) => t?.key === d.key)) return true;
+  return inDesk(m, d.key, ctx);
+}
+function inDesk(m, key, ctx) {
+  if (m.desk === key) return true;
+  if (Array.isArray(m.to) && m.to.some((t) => t?.key === key)) return true;
   return (m.recipients || []).some(
-    (r) => r.seat && ctx.seatDesk.get(`${m.conversation}|${r.seat}`) === d.key,
+    (r) => r.seat && ctx.seatDesk.get(`${m.conversation}|${r.seat}`) === key,
   );
 }
 function scopeHead(c, ctx, shown) {
@@ -220,9 +223,10 @@ function renderConv(c, ctx) {
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
   const desk = state.drawer.kind === "desk" ? state.drawer.key : null;
-  // A chained read in a desk view follows what that view shows, from the complete history.
+  // Listening to a seat excludes the folded replies from its peers.
   AN.voice?.controls(true, state.drawer.kind === "room" ? { group: c.group, id: state.drawer.id } : null, ctx,
-    desk, desk ? chat => deskStream(chat.messages, contextOf(chat)).shown : null);
+    desk, desk ? chat => deskStream(chat.messages, contextOf(chat), desk).shown : null,
+    desk ? chat => { const next = contextOf(chat); return chat.messages.filter(m => inDesk(m, desk, next)); } : null);
   if (state.drawer.kind === "all") {
     renderDirectory(c, ctx);
     return;
@@ -238,7 +242,7 @@ function renderConv(c, ctx) {
     el.inner.replaceChildren();
     el.tl.scrollTop = 0;
   }
-  const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx) : null;
+  const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx, state.drawer.key) : null;
   state.peers = stream?.peers || new Set();
   const shown = threaded(stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx)));
   const head = scopeHead(c, ctx, shown);
@@ -374,6 +378,38 @@ function jumpToMessage(mid) {
   }
   if (target) flash(target);
 }
+// Scroll to the message playing, once its workspace and conversation are on screen.
+function playingMessage() {
+  const job = state.locate;
+  return job && job.group === state.chat?.group && state.chat.messages.find((m) => m.id === job.id);
+}
+function locatePlaying() {
+  if (!playingMessage()) return false;
+  state.focused = true; // this message, not the end of the conversation the address names
+  if (state.locating) return true;
+  state.locating = true;
+  // Two frames on: scrolling in the frame that drops the settings overlay leaves the list unpainted.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    state.locating = false;
+    const message = playingMessage();
+    state.locate = null;
+    if (!message) return;
+    openScope(tpScopeOf(message, state.ctx));
+    const target = state.nodes.get(message.id)?.el;
+    if (!target) return;
+    // At once: the poll that follows the window coming up would take a smooth scroll back to the end.
+    target.scrollIntoView({ block: "center" });
+    flash(target);
+  }));
+  return true;
+}
+addEventListener("agentnave:voice-locate", ({ detail }) => {
+  state.locate = detail;
+  if (locatePlaying()) return;
+  // Not loaded: another workspace, or too far back for the latest messages.
+  const key = detail.conversation ? `conv:${detail.conversation}` : detail.album?.link;
+  go(`/chat/${encodeURIComponent(detail.group)}${key ? `#${encodeURIComponent(key)}` : ""}`);
+});
 // Scroll to the latest stretch of one conversation (links to it use #conv:<id>).
 function focusConversation(id) {
   const target = [...el.inner.querySelectorAll("[data-conv]")]
@@ -473,12 +509,16 @@ function renderAll(c, newGroup = false) {
   renderOffice(c, ctx, n, newGroup);
   renderConv(c, ctx);
   renderTicker(c, ctx);
+  if (state.locate) locatePlaying();
 }
 // #desk:<key> opens a desk's conversation, #conv:<id> a room's transcript (or everything, for a task).
 function applyHash(ctx) {
   const key = state.hashKey;
+  // Loaded and not there: returning here later must not jump to it.
+  if (!key && !state.locating && state.locate?.group === state.chat?.group) state.locate = null;
   if (!key || state.focused) return;
   state.focused = true;
+  state.locate = null; // its conversation is loaded and it is not there
   if (key.startsWith("desk:")) {
     // A link made while a task had no native session yet names its earlier task key.
     const desk = ctx.aliases.get(key.slice(5)) ?? key.slice(5);
@@ -497,7 +537,6 @@ async function refresh() {
     return;
   }
   state.refreshing = true;
-  const voicePoll = AN.voice?.pollToken();
   try {
     let chats;
     try {
@@ -559,8 +598,8 @@ async function refresh() {
     }
     state.chat = chat;
     showBlank(null);
-    // Playback uses the same message text and identities as the conversation.
-    AN.voice?.ingest(chat, contextOf(chat), focus, voicePoll);
+    // Office polls also refresh voice settings.
+    AN.voice?.ingest(chat);
     renderAll(chat, newGroup);
     ingest(chat, state.ctx, newGroup);
     applyHash(state.ctx);

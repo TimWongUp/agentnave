@@ -146,6 +146,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/update-settings.js").to_vec(),
         ),
+        "settings-frame.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/settings-frame.js").to_vec(),
+        ),
         "settings.js" => Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec()),
         "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
         "hosts.js" => Response::ok("text/javascript; charset=utf-8", HOSTS_JS.to_vec()),
@@ -171,6 +175,10 @@ fn chat_asset(resource: &str) -> Response {
         "voice.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/voice.js").to_vec(),
+        ),
+        "office-settings.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/office-settings.js").to_vec(),
         ),
         "chat-state.js" => Response::ok(
             "text/javascript; charset=utf-8",

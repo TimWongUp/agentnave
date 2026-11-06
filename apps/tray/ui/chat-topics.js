@@ -8,8 +8,8 @@ function tpFirst(text) {
 }
 const tpRoundKey = (m) => `${m.conversation}|${m.round}`;
 // What a desk's stream lists: its own messages, plus the other seats' answers in its rounds.
-function deskStream(list, ctx) {
-  const own = new Set(list.filter((m) => inScope(m, ctx)).map((m) => m.id));
+function deskStream(list, ctx, key) {
+  const own = new Set(list.filter((m) => inDesk(m, key, ctx)).map((m) => m.id));
   const rounds = new Set(
     list.filter((m) => own.has(m.id) && m.thread?.kind === "room" && m.round > 0).map(tpRoundKey),
   );
