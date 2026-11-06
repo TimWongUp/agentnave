@@ -33,6 +33,64 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   return { run, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
 }
 
+test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
+  let saved = { version: 1, preset: "split" }, members;
+  const app = editor(async (url, options) => {
+    const body = options?.body && JSON.parse(options.body);
+    if (url === "/app/orchestration" && !body) {
+      return { ok: true, json: async () => ({ document: saved, error: null, bosses: [], presets: { split: "rule" }, files: [] }) };
+    }
+    if (url === "/app/orchestration") saved = body;
+    else members = body;
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
+  });
+  app.run(`
+    AN.L = (zh) => zh;
+    refreshDirty = () => {};
+    const nodes = new Map();
+    const node = (tag) => ({
+      tagName: tag, attrs: {}, children: [], dataset: {}, listeners: {}, classList: { toggle() {} },
+      setAttribute(key, value) { this.attrs[key] = value; }, removeAttribute(key) { delete this.attrs[key]; },
+      addEventListener(type, fn) { this.listeners[type] = fn; }, appendChild(child) { this.children.push(child); },
+      replaceChildren(...kids) { this.children = kids; }, querySelectorAll: () => [], querySelector: () => null,
+    });
+    document.createElement = node;
+    document.createTextNode = (text) => text;
+    document.getElementById = (id) => nodes.get(id) || nodes.set(id, node("div")).get(id);
+    currentDoc.modes.task.codex = { models: ["chat-model"], overrides: {}, default: "chat-model" };
+  `);
+  app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
+  await app.run("loadOrchestration()");
+  const row = () => app.run('$("orchestration-roles").children.at(-1)');
+  const pick = (value) => row().children[1].listeners.change({ target: { value } });
+  const seat = { provider: "codex", model: "chat-model" };
+
+  assert.equal(row().children[0].children[0].children[0], "生图（可选）");
+  assert.equal(row().children[0].children.length, 1);
+  assert.equal(row().children[1].children[0].children[0], "未配置");
+  assert.equal(row().children[2].attrs["aria-label"], "生图的对话模型");
+
+  pick("codex");
+  assert.equal(JSON.stringify(app.run("orchestrationWanted().image_generation")), JSON.stringify(seat));
+  pick("");
+  assert.equal(app.run('"image_generation" in orchestrationWanted()'), false);
+  assert.equal(app.run("orchestrationChanged()"), false);
+  pick("codex");
+  app.run("discardAdvanced()");
+  assert.equal(app.run("orchestrationChanged()"), false);
+
+  pick("codex");
+  await app.run("saveOrchestration()");
+  assert.equal(JSON.stringify(saved.image_generation), JSON.stringify(seat));
+  assert.ok(members.clis.codex.models["chat-model"]);
+  await app.run("loadOrchestration()");
+  assert.equal(row().children[2].children.find((option) => option.attrs.value === "chat-model").attrs.selected, "");
+
+  pick("");
+  await app.run("saveOrchestration()");
+  assert.equal(Object.hasOwn(saved, "image_generation"), false);
+});
+
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
   const app = editor();
   app.run('setProviderEnabled("codex", false); setProviderEnabled("codex", true)');

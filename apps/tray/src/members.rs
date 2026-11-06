@@ -290,8 +290,9 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "explorer": {"easy" | "hard":
-/// seat}, "worker": {...}, "worker_frontend": {...}}`. Interface Workers have a key of their own so
-/// servers that predate it ignore them rather than reject the file. The App writes the chosen
+/// seat}, "worker": {...}, "worker_frontend": {...}, "image_generation": seat}`. Interface Workers
+/// and the image seat have keys of their own so servers that predate them ignore them rather than
+/// reject the file. The App writes the chosen
 /// rules into the boss apps' global rules and
 /// `effective_apps`, every connected row's mode as its group applies it, for the server.
 pub fn validate_orchestration(document: &Value) -> Result<(), String> {
@@ -307,6 +308,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             "explorer",
             "worker",
             "worker_frontend",
+            "image_generation",
         ],
         ORCHESTRATION_FILE,
     )?;
@@ -345,6 +347,9 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             }
             validate_seat(seat, &format!("{role}.{difficulty}"))?;
         }
+    }
+    if let Some(seat) = top.get("image_generation") {
+        validate_seat(seat, "image_generation")?;
     }
     Ok(())
 }

@@ -4,9 +4,10 @@
 // one that fails stays unsaved for another try while the others land.
 
 // Orchestration lives in orchestration.json: the rules text each boss gets, by mode (`apps`, with
-// `preset` for rows without one, and bosses connected later), the user's own text, and the Explorer
-// and Worker seats boss reads from list_members. The App writes the modes into the connected boss
-// apps' global rules. The rules files are listed one row per file with every app that reads it.
+// `preset` for rows without one, and bosses connected later), the user's own text, and the Explorer,
+// Worker and image generation seats boss reads from list_members. The App writes the modes into the
+// connected boss apps' global rules. The rules files are listed one row per file with every app that
+// reads it.
 const ORCHESTRATION_EFFECTS = {
   off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
   split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration and planning to Explorer, and implementation to Worker, using their quota."),
@@ -20,7 +21,10 @@ const ORCHESTRATION_ROLES = [
   ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
   ["worker_frontend", "easy", AN.L("Worker · 界面 · 简单", "Worker · Interface · Easy"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
   ["worker_frontend", "hard", AN.L("Worker · 界面 · 困难", "Worker · Interface · Hard"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
+  // One seat with no difficulty, its model the one the CLI talks to, which calls the image service.
+  ["image_generation", null, AN.L("生图（可选）", "Image generation (optional)"), null, AN.L("未配置", "Not configured"), AN.L("生图的对话模型", "Chat model for image generation")],
 ];
+const orchestrationSeat = (doc, role, difficulty) => difficulty ? doc[role]?.[difficulty] : doc[role];
 const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
 let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
 let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
@@ -70,8 +74,8 @@ async function loadOrchestration() {
 async function saveOrchestration() {
   const wanted = orchestrationWanted();
   for (const [role, difficulty] of ORCHESTRATION_ROLES) {
-    const seat = wanted[role]?.[difficulty];
-    if (seat && !sameJson(seat, orchestration.document[role]?.[difficulty])) await listSeatModel(seat);
+    const seat = orchestrationSeat(wanted, role, difficulty);
+    if (seat && !sameJson(seat, orchestrationSeat(orchestration.document, role, difficulty))) await listSeatModel(seat);
   }
   const response = await fetch("/app/orchestration", {
     method: "POST",
@@ -156,11 +160,14 @@ function renderBossChips() {
 
 function setOrchestrationSeat(role, difficulty, seat) {
   const shown = orchestrationShown();
-  const seats = { ...(shown[role] || {}) };
-  if (seat) seats[difficulty] = seat;
-  else delete seats[difficulty];
-  orchestrationDraft = { ...shown, [role]: seats };
-  if (!Object.keys(seats).length) delete orchestrationDraft[role];
+  let value = seat;
+  if (difficulty) {
+    value = { ...(shown[role] || {}) };
+    if (seat) value[difficulty] = seat;
+    else delete value[difficulty];
+  }
+  orchestrationDraft = { ...shown, [role]: value };
+  if (!Object.keys(value || {}).length) delete orchestrationDraft[role];
   renderOrchestration();
   advancedEdited();
 }
@@ -186,14 +193,14 @@ function renderOrchestration() {
   roles.hidden = preset === "off" || !editable;
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
-    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
-      const seat = shown[role]?.[difficulty];
+    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint, unsetName, modelLabel]) => {
+      const seat = orchestrationSeat(shown, role, difficulty);
       // An unset interface seat runs the Worker seat of its difficulty, as the server fills it.
       const general = role === "worker_frontend" && shown.worker?.[difficulty] && ORCHESTRATION_ROLES.find(([r, d]) => r === "worker" && d === difficulty);
-      const unset = general ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : undefined;
+      const unset = general ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : unsetName;
       return el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset));
+        el("div", { className: "review-role" }, el("strong", {}, name), hint && el("small", {}, hint)),
+        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset, modelLabel));
     }));
     if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
@@ -304,7 +311,7 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
 }
 
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
+function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {
   const provider = seat?.provider || "";
   // Only CLIs 员工 lets work alone, or a connected boss's own CLI, which its built-in subagent
   // runs; a disabled one stays shown while picked, so it can be changed.
@@ -335,7 +342,7 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
     : [...(seat.effort ? [] : [["", AN.L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
   return [
     reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", unset], ...clis], pickCli),
-    reviewSelect(`${key}/model`, AN.L(`${name}的模型`, `Model for ${name}`), seat?.model || "",
+    reviewSelect(`${key}/model`, modelLabel, seat?.model || "",
       seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
     reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
   ];

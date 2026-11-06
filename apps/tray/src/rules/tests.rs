@@ -278,6 +278,21 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     assert!(valid(&document).is_ok());
     assert!(valid(&json!({"version": 1, "preset": "off", "apps": {"codex": "fast"}})).is_err());
     assert!(valid(&json!({"version": 1, "preset": "off", "apps": {"codex": "custom"}})).is_err());
+    let image = |seat| json!({"version": 1, "preset": "off", "image_generation": seat});
+    assert!(
+        valid(&image(
+            json!({"provider": "codex", "model": "m", "effort": "high"})
+        ))
+        .is_ok()
+    );
+    assert!(valid(&image(json!({"easy": {"provider": "codex", "model": "m"}}))).is_err());
+    assert!(valid(&image(json!({"provider": "codex", "model": " "}))).is_err());
+    assert!(
+        valid(&image(
+            json!({"provider": "codex", "model": "m", "effort": 1})
+        ))
+        .is_err()
+    );
 
     // Turning one boss off leaves the other's block alone.
     let document = json!({"preset": "off", "custom": "我的规则", "apps": {"codex": "custom"}});
