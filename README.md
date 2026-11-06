@@ -44,7 +44,7 @@
 
 ### 🧭 工位和评审
 
-在 App 里给 Explorer、Worker 工位选好模型，简单、困难和界面任务各有档位，boss 按任务难度派活。还可以加一道[合并前评审](skills/agentnave-review/SKILL.md)：按风险大小决定派谁来看，评审的员工只读不改，结论留作记录。
+在 App 里给 Explorer、Worker 工位选好模型，简单、困难和界面任务各有档位，boss 按任务难度派活。可选的生图工位只需选 CLI 和对话模型，由它调用自身的生图服务。还可以加一道[合并前评审](skills/agentnave-review/SKILL.md)：按风险大小决定派谁来看，评审的员工只读不改，结论留作记录。
 
 ### 🤝 换个聊天接着干
 
