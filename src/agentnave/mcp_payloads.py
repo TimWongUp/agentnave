@@ -7,6 +7,7 @@ from typing import Literal, NotRequired, TypedDict
 from pydantic import BaseModel
 
 from agentnave.members import MemberList, ProviderName
+from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import PromptPayload
 from agentnave.store import Unavailable
 
@@ -35,6 +36,7 @@ class ActivityPayload(TypedDict):
 
 
 class InvocationPayload(TypedDict):
+    identity: NotRequired[MemberIdentity]
     invocation_id: str
     status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
     reason: Literal["started", "wait_elapsed", "execution_blocked", "prompt_pending", "finished"]
@@ -89,6 +91,7 @@ class InvocationListPayload(TypedDict):
 
 
 class GroupSeatPayload(TypedDict):
+    identity: NotRequired[MemberIdentity]
     id: str
     provider: str
     cwd: str
@@ -100,6 +103,7 @@ class GroupSeatPayload(TypedDict):
 
 
 class SeatRunPayload(TypedDict):
+    identity: NotRequired[MemberIdentity]
     seat_id: str
     status: Literal[
         "pending",
@@ -124,6 +128,7 @@ class SeatRunPayload(TypedDict):
 
 
 class CommittedEntryPayload(TypedDict):
+    identity: NotRequired[MemberIdentity]
     message_id: str
     kind: Literal["task", "answer", "absent", "forward", "host"]
     round: int

@@ -29,10 +29,12 @@ const {
   poll,
   plain,
   art: ART,
-  cliName,
   hostTile,
   deskName,
   deskParts,
+  handleOf,
+  fullHandle,
+  cliOf,
   chatName,
   shownName,
   chatPlace,
@@ -64,15 +66,9 @@ const FOLD_MS = 500; // then the desks below push it shut
 const LEAVE_MS = WALK_MS + HOLD_MS + FOLD_MS;
 
 // Tags stay short; the full text is in the tooltip.
-const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
+const deskChar = (d) => ART.character(d.provider, d.art_model || d.model);
 // How a desk that requested no model got the name it shows.
-const MODEL_NOTE = {
-  cli_default: L("\n调用时没有指定模型，这里显示 CLI 自己设置的默认模型，以 CLI 回报为准", "\nNo model was specified for the call; showing the CLI's own default model as reported"),
-  unknown: L("\n调用时没有指定模型，CLI 也没有回报，用的是它自己的默认模型", "\nNo model was specified and the CLI did not report one; using its own default model"),
-};
-const handleOf = (d) =>
-  d.handle ||
-  `@${deskName(d)}·${cliName(d.provider)}${d.role ? `·${d.role}` : ""}`;
+const UNKNOWN_MODEL_NOTE = L("\n调用时没有指定模型，CLI 也没有回报，无法确认实际使用的模型", "\nNo model was specified and the CLI did not report one; the model used is unknown");
 
 const nearBottom = () =>
   el.tl.scrollHeight - el.tl.scrollTop - el.tl.clientHeight < NEAR_BOTTOM;

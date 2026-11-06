@@ -62,6 +62,7 @@ class FakeManager:
         status: InvocationStatus = InvocationStatus.SUCCEEDED,
         output: str | None = None,
         error: InvocationError | None = None,
+        reported_model: str | None = None,
     ) -> None:
         request = self.requests[invocation_id]
         # InvocationManager echoes the requested session on failed or cancelled runs.
@@ -80,6 +81,7 @@ class FakeManager:
                     session_id,
                     1,
                     error,
+                    reported_model=reported_model,
                 )
             )
 
@@ -91,6 +93,13 @@ def entries(prompt: str) -> list[dict[str, object]]:
     start = prompt.index("New entries (JSON data):\n") + len("New entries (JSON data):\n")
     end = prompt.find("\n\nPrivate instruction")
     return cast(list[dict[str, object]], json.loads(prompt[start : end if end >= 0 else None]))
+
+
+def identity(prompt: str) -> dict[str, object]:
+    line = next(
+        line for line in prompt.splitlines() if line.startswith("Your identity (JSON data): ")
+    )
+    return cast(dict[str, object], json.loads(line.removeprefix("Your identity (JSON data): ")))
 
 
 def open_group(tmp_path: Path, *seat_ids: str) -> tuple[Groups, FakeManager, str]:
@@ -122,6 +131,8 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
         manager.prompt(i).startswith("You are one seat in a manager-led meeting")
         for i in ("1", "2")
     )
+    assert identity(manager.prompt("1"))["key"] == f"seat:{group_id}:a"
+    assert identity(manager.prompt("2"))["key"] == f"seat:{group_id}:b"
     assert entries(manager.prompt("1")) == [{"round": 1, "kind": "task", "text": "Q1"}]
 
     manager.finish("1", output="A1")
@@ -146,8 +157,17 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
     b_request = manager.requests["3"]
     assert b_request.session_id == "session-2"
     assert not b_request.prompt.startswith("You are one seat in a manager-led meeting")
+    assert (
+        identity(b_request.prompt)["key"] == f"seat:{group_id}:b"
+    )  # resumed seat keeps its identity
     assert entries(b_request.prompt) == [
-        {"round": 1, "kind": "answer", "seat": "a", "text": "A1"},
+        {
+            "round": 1,
+            "kind": "answer",
+            "seat": "a",
+            "text": "A1",
+            "identity": first.runs[0].identity,
+        },
         {"round": 2, "kind": "task", "text": "Q2"},
     ]
     manager.finish("3", output="B2")
@@ -156,9 +176,21 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
             break
         await asyncio.sleep(0.01)
     assert entries(manager.prompt("4")) == [
-        {"round": 1, "kind": "answer", "seat": "b", "text": "B1"},
+        {
+            "round": 1,
+            "kind": "answer",
+            "seat": "b",
+            "text": "B1",
+            "identity": first.runs[1].identity,
+        },
         {"round": 2, "kind": "task", "text": "Q2"},
-        {"round": 2, "kind": "answer", "seat": "b", "text": "B2"},
+        {
+            "round": 2,
+            "kind": "answer",
+            "seat": "b",
+            "text": "B2",
+            "identity": second.runs[0].identity,
+        },
     ]
     manager.finish("4")
     await settle(groups, second.id)
@@ -225,18 +257,26 @@ async def test_failures_are_absent_and_only_proven_delivery_advances_sessions(
         if "4" in manager.requests:
             break
         await asyncio.sleep(0.01)
-    assert {"round": 2, "kind": "absent", "seat": "a", "reason": "failed"} in entries(
-        manager.prompt("4")
-    )
+    assert {
+        "round": 2,
+        "kind": "absent",
+        "seat": "a",
+        "reason": "failed",
+        "identity": second.runs[0].identity,
+    } in entries(manager.prompt("4"))
     manager.finish("4", InvocationStatus.FAILED, error=InvocationError("launch_error", "no binary"))
     await settle(groups, second.id)
 
     third = groups.run(group_id, ["a", "b"], "parallel", "Q3", {})
     a_request, b_request = manager.requests["5"], manager.requests["6"]
     assert a_request.session_id is None and a_request.prompt.startswith("You are one seat")
-    assert {"round": 1, "kind": "answer", "seat": "a", "text": "answer-1"} in entries(
-        a_request.prompt
-    )
+    assert {
+        "round": 1,
+        "kind": "answer",
+        "seat": "a",
+        "text": "answer-1",
+        "identity": first.runs[0].identity,
+    } in entries(a_request.prompt)
     assert b_request.session_id == "session-2"  # launch_error keeps the native session
     manager.finish("5")
     manager.finish("6")
@@ -282,6 +322,7 @@ async def test_retry_reuses_the_round_input_and_rejects_what_it_cannot_restart(
     assert retried.session_id is None and retried.prompt.endswith(
         "Private instruction for you only:\nnote"
     )
+    assert identity(retried.prompt)["key"] == f"seat:{group_id}:a"
     assert [item["kind"] for item in entries(retried.prompt.split("\n\nPrivate")[0])] == [
         "task",
         "answer",
@@ -343,9 +384,16 @@ async def test_single_seat_cancel_lets_serial_round_continue(tmp_path: Path) -> 
         if "2" in manager.requests:
             break
         await asyncio.sleep(0.01)
+    assert identity(manager.prompt("2"))["key"] == f"seat:{group_id}:b"
     manager.finish("2")
     await settle(groups, round_.id)
     assert [run.status for run in round_.runs] == ["cancelled", "succeeded"]
+
+    rebuilt = groups.run(group_id, ["a"], "serial", "Q2", {})
+    assert manager.requests["3"].session_id is None
+    assert identity(manager.prompt("3"))["key"] == f"seat:{group_id}:a"
+    manager.finish("3")
+    await settle(groups, rebuilt.id)
 
 
 @pytest.mark.asyncio
@@ -416,3 +464,80 @@ def test_group_cwd_is_checked_even_when_every_seat_overrides_it(tmp_path: Path, 
     groups = Groups(cast(InvocationManager, FakeManager()))
     with pytest.raises(ValueError, match="group cwd"):
         groups.open(Path(cwd), [GroupSeat(s, "claude", {}, tmp_path) for s in "ab"])
+
+
+def test_member_name_contract_fixture() -> None:
+    from typing import Any
+
+    from agentnave.naming import MemberName
+
+    fixture = cast(
+        dict[str, Any],
+        json.loads(
+            (Path(__file__).parent / "fixtures/member-names.json").read_text(encoding="utf-8")
+        ),
+    )
+    for case in fixture["cases"]:
+        members = [MemberName(**member) for member in case["members"]]
+        assert [member.identity(members) for member in members] == case["identities"], case["name"]
+    first, third = fixture["cases"][1]["identities"]
+    assert first["handle"] == "@vendor-a/gpt-6-high·Pi·审查 #1"
+    assert third["handle_short"] == "@gpt-6-high·Pi·审查 #3"
+
+
+@pytest.mark.asyncio
+async def test_meeting_names_keep_fixed_order_through_cancel_and_native_model(
+    tmp_path: Path,
+) -> None:
+    manager = FakeManager()
+    groups = Groups(cast(InvocationManager, manager))
+    group = groups.open(
+        tmp_path,
+        [
+            GroupSeat(id_, "claude", {"model": "route/model", "effort": effort}, tmp_path)
+            for id_, effort in (("a", "high"), ("b", "low"), ("c", "medium"))
+        ],
+    )
+    first = groups.run(group.id, ["c", "a"], "serial", "work", {})
+    c_name = identity(manager.prompt("1"))
+    assert c_name["ordinal"] == 3 and c_name["handle"] == "@route/model·Claude Code #3"
+    await groups.cancel(first.id)
+    second = groups.run(group.id, ["c", "a"], "serial", "again", {})
+    assert identity(manager.prompt("2")) == c_name
+    manager.finish("2", reported_model="native/model-suffix")
+    for _ in range(100):
+        if "3" in manager.requests:
+            break
+        await asyncio.sleep(0.01)
+    entry = next(
+        e for e in entries(manager.prompt("3")) if e.get("seat") == "c" and e["kind"] == "answer"
+    )
+    historical = cast(dict[str, object], entry["identity"])
+    assert historical["key"] == c_name["key"] and historical["ordinal"] == 3
+    assert historical["model"] == "native/model-suffix" and historical["model_source"] == "native"
+    manager.finish("3")
+    await settle(groups, second.id)
+
+
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [
+        ("route/glm-5.2", "GLM"),
+        ("kimi-k3", "Kimi"),
+        ("minimax-m3", "MiniMax"),
+        ("doubao-seed-2", "Doubao"),
+        ("seed-2", "Doubao"),
+        ("hunyuan-3", "Hunyuan"),
+        ("hy3-preview", "Hunyuan"),
+        ("o3", "GPT"),
+        ("o4-mini", "GPT"),
+        ("codex-mini", "GPT"),
+        ("chatgpt-latest", "GPT"),
+        ("muse-1", "Muse"),
+    ],
+)
+def test_spoken_model_families_match_app(model: str, family: str) -> None:
+    from agentnave.naming import MemberName
+
+    members = [MemberName(str(i), "pi", model, ordinal=i) for i in (1, 2)]
+    assert [m.identity(members)["spoken_name"] for m in members] == [f"{family} #1", f"{family} #2"]

@@ -1,0 +1,332 @@
+{
+  "cases": [
+    {
+      "name": "duplicate-no-role",
+      "members": [
+        {
+          "key": "seat:meeting:a",
+          "provider": "claude",
+          "requested": "claude-opus-5",
+          "reported": null,
+          "role": null,
+          "ordinal": 1
+        },
+        {
+          "key": "seat:meeting:c",
+          "provider": "claude",
+          "requested": "claude-opus-5",
+          "reported": null,
+          "role": null,
+          "ordinal": 3
+        }
+      ],
+      "identities": [
+        {
+          "key": "seat:meeting:a",
+          "provider": "claude",
+          "cli": "Claude Code",
+          "model": "claude-opus-5",
+          "model_short": "claude-opus-5",
+          "model_source": "requested",
+          "role": null,
+          "ordinal": 1,
+          "numbered": true,
+          "handle": "@claude-opus-5·Claude Code #1",
+          "handle_short": "@claude-opus-5·Claude Code #1",
+          "spoken_name": "Claude #1"
+        },
+        {
+          "key": "seat:meeting:c",
+          "provider": "claude",
+          "cli": "Claude Code",
+          "model": "claude-opus-5",
+          "model_short": "claude-opus-5",
+          "model_source": "requested",
+          "role": null,
+          "ordinal": 3,
+          "numbered": true,
+          "handle": "@claude-opus-5·Claude Code #3",
+          "handle_short": "@claude-opus-5·Claude Code #3",
+          "spoken_name": "Claude #3"
+        }
+      ]
+    },
+    {
+      "name": "short-path-collision",
+      "members": [
+        {
+          "key": "seat:meeting:a",
+          "provider": "pi",
+          "requested": "vendor-a/gpt-6-high",
+          "reported": "",
+          "role": "审查",
+          "ordinal": 1
+        },
+        {
+          "key": "seat:meeting:c",
+          "provider": "pi",
+          "requested": "vendor-b/gpt-6-high",
+          "reported": null,
+          "role": "审查",
+          "ordinal": 3
+        }
+      ],
+      "identities": [
+        {
+          "key": "seat:meeting:a",
+          "provider": "pi",
+          "cli": "Pi",
+          "model": "vendor-a/gpt-6-high",
+          "model_short": "gpt-6-high",
+          "model_source": "requested",
+          "role": "审查",
+          "ordinal": 1,
+          "numbered": true,
+          "handle": "@vendor-a/gpt-6-high·Pi·审查 #1",
+          "handle_short": "@gpt-6-high·Pi·审查 #1",
+          "spoken_name": "GPT #1"
+        },
+        {
+          "key": "seat:meeting:c",
+          "provider": "pi",
+          "cli": "Pi",
+          "model": "vendor-b/gpt-6-high",
+          "model_short": "gpt-6-high",
+          "model_source": "requested",
+          "role": "审查",
+          "ordinal": 3,
+          "numbered": true,
+          "handle": "@vendor-b/gpt-6-high·Pi·审查 #3",
+          "handle_short": "@gpt-6-high·Pi·审查 #3",
+          "spoken_name": "GPT #3"
+        }
+      ]
+    },
+    {
+      "name": "spoken-family-collision",
+      "members": [
+        {
+          "key": "one",
+          "provider": "codex",
+          "requested": "gpt-6",
+          "reported": null,
+          "role": "实现",
+          "ordinal": 2
+        },
+        {
+          "key": "two",
+          "provider": "pi",
+          "requested": "gpt-5.5",
+          "reported": null,
+          "role": "实现",
+          "ordinal": 4
+        }
+      ],
+      "identities": [
+        {
+          "key": "one",
+          "provider": "codex",
+          "cli": "Codex",
+          "model": "gpt-6",
+          "model_short": "gpt-6",
+          "model_source": "requested",
+          "role": "实现",
+          "ordinal": 2,
+          "numbered": false,
+          "handle": "@gpt-6·Codex·实现",
+          "handle_short": "@gpt-6·Codex·实现",
+          "spoken_name": "GPT #2"
+        },
+        {
+          "key": "two",
+          "provider": "pi",
+          "cli": "Pi",
+          "model": "gpt-5.5",
+          "model_short": "gpt-5.5",
+          "model_source": "requested",
+          "role": "实现",
+          "ordinal": 4,
+          "numbered": false,
+          "handle": "@gpt-5.5·Pi·实现",
+          "handle_short": "@gpt-5.5·Pi·实现",
+          "spoken_name": "GPT #4"
+        }
+      ]
+    },
+    {
+      "name": "model-sources",
+      "members": [
+        {
+          "key": "native",
+          "provider": "codex",
+          "requested": "requested/model",
+          "reported": "vendor/gpt-6-codex",
+          "role": null,
+          "ordinal": 1
+        },
+        {
+          "key": "requested",
+          "provider": "grok",
+          "requested": "grok-5",
+          "reported": null,
+          "role": null,
+          "ordinal": 2
+        },
+        {
+          "key": "unknown",
+          "provider": "retired-cli",
+          "requested": "",
+          "reported": null,
+          "role": null,
+          "ordinal": 3
+        }
+      ],
+      "identities": [
+        {
+          "key": "native",
+          "provider": "codex",
+          "cli": "Codex",
+          "model": "vendor/gpt-6-codex",
+          "model_short": "gpt-6-codex",
+          "model_source": "native",
+          "role": null,
+          "ordinal": 1,
+          "numbered": false,
+          "handle": "@vendor/gpt-6-codex·Codex",
+          "handle_short": "@gpt-6-codex·Codex",
+          "spoken_name": "GPT"
+        },
+        {
+          "key": "requested",
+          "provider": "grok",
+          "cli": "Grok",
+          "model": "grok-5",
+          "model_short": "grok-5",
+          "model_source": "requested",
+          "role": null,
+          "ordinal": 2,
+          "numbered": false,
+          "handle": "@grok-5·Grok",
+          "handle_short": "@grok-5·Grok",
+          "spoken_name": "Grok"
+        },
+        {
+          "key": "unknown",
+          "provider": "retired-cli",
+          "cli": "retired-cli",
+          "model": "",
+          "model_short": "未记录模型",
+          "model_source": "unknown",
+          "role": null,
+          "ordinal": 3,
+          "numbered": false,
+          "handle": "@未记录模型·retired-cli",
+          "handle_short": "@未记录模型·retired-cli",
+          "spoken_name": "未记录模型"
+        }
+      ]
+    },
+    {
+      "name": "duplicate-unknown",
+      "members": [
+        {
+          "key": "task:c:a",
+          "provider": "claude",
+          "requested": "",
+          "reported": null,
+          "role": null,
+          "ordinal": 1
+        },
+        {
+          "key": "task:c:b",
+          "provider": "claude",
+          "requested": "",
+          "reported": null,
+          "role": null,
+          "ordinal": 2
+        }
+      ],
+      "identities": [
+        {
+          "key": "task:c:a",
+          "provider": "claude",
+          "cli": "Claude Code",
+          "model": "",
+          "model_short": "未记录模型",
+          "model_source": "unknown",
+          "role": null,
+          "ordinal": 1,
+          "numbered": true,
+          "handle": "@未记录模型·Claude Code #1",
+          "handle_short": "@未记录模型·Claude Code #1",
+          "spoken_name": "未记录模型 #1"
+        },
+        {
+          "key": "task:c:b",
+          "provider": "claude",
+          "cli": "Claude Code",
+          "model": "",
+          "model_short": "未记录模型",
+          "model_source": "unknown",
+          "role": null,
+          "ordinal": 2,
+          "numbered": true,
+          "handle": "@未记录模型·Claude Code #2",
+          "handle_short": "@未记录模型·Claude Code #2",
+          "spoken_name": "未记录模型 #2"
+        }
+      ]
+    },
+    {
+      "name": "separate-roles-no-spoken-suffix",
+      "members": [
+        {
+          "key": "role-a",
+          "provider": "codex",
+          "requested": "gpt-6",
+          "reported": null,
+          "role": "实现",
+          "ordinal": 1
+        },
+        {
+          "key": "role-b",
+          "provider": "codex",
+          "requested": "gpt-6",
+          "reported": null,
+          "role": "审查",
+          "ordinal": 2
+        }
+      ],
+      "identities": [
+        {
+          "key": "role-a",
+          "provider": "codex",
+          "cli": "Codex",
+          "model": "gpt-6",
+          "model_short": "gpt-6",
+          "model_source": "requested",
+          "role": "实现",
+          "ordinal": 1,
+          "numbered": false,
+          "handle": "@gpt-6·Codex·实现",
+          "handle_short": "@gpt-6·Codex·实现",
+          "spoken_name": "GPT"
+        },
+        {
+          "key": "role-b",
+          "provider": "codex",
+          "cli": "Codex",
+          "model": "gpt-6",
+          "model_short": "gpt-6",
+          "model_source": "requested",
+          "role": "审查",
+          "ordinal": 2,
+          "numbered": false,
+          "handle": "@gpt-6·Codex·审查",
+          "handle_short": "@gpt-6·Codex·审查",
+          "spoken_name": "GPT"
+        }
+      ]
+    }
+  ]
+}

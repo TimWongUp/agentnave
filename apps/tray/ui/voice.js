@@ -195,20 +195,13 @@
       return [...prior, m];
     });
   }
-  // How a speaker is called out loud; GPT's family is labelled by its company elsewhere.
-  function spokenName(provider, model) {
-    const family = Avatars.family(provider, model);
-    return family === "gpt" ? "GPT" : Avatars.families?.[family]?.[0] || AN.cliName?.(provider) || "";
-  }
-  // How the summary model may call a desk: its spoken name and duty, and whether another seat of
-  // this meeting shares that name.
-  function person(d, ctx, m) {
-    // A desk on its CLI's default model knows the model only from what the CLI reported.
-    const familyOf = desk => Avatars.family(desk.provider, desk.display_model || desk.model);
-    const family = familyOf(d);
+  // How the summary model may call a member: the service's spoken name, numbered where alike
+  // members would collide, its duty, and whether another seat of this meeting shares that name.
+  function person(who, ctx, m) {
+    const id = who.identity, name = id?.spoken_name || "";
     const seats = m?.thread?.kind === "room" ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
-    const twin = Boolean(family) && seats.some(s => s.desk !== d.key && (t => t && familyOf(t) === family)(ctx.desks.get(s.desk)));
-    return { name: spokenName(d.provider, d.display_model || d.model), role: d.role || "", twin };
+    const twin = Boolean(name) && seats.some(s => s.desk !== id.key && s.identity?.spoken_name === name);
+    return { name, role: id?.role || "", twin };
   }
   // Whom a boss message is said to: its one employee in private, or the seats it names in a
   // meeting; nobody named means the whole meeting.
@@ -218,7 +211,7 @@
     const meeting = m.thread?.kind === "room" && m.kind !== "instruction";
     const seats = meeting ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
     const named = meeting ? (keys.length && keys.length < seats.length ? keys : []) : m.desk ? [m.desk] : keys.slice(0, 1);
-    return named.map(key => ctx.desks.get(key)).filter(Boolean).map(d => person(d, ctx, m));
+    return named.map(key => m.to?.find(t => t.key === key)).filter(Boolean).map(who => person(who, ctx, m));
   }
   // Whose words a boss forward relays, when the forwarded message is still in view.
   function source(m, ctx) {
@@ -226,8 +219,7 @@
     const original = id && ctx.c.messages?.find(o => o.message_id === id);
     if (!original) return null;
     if (original.speaker?.role === "manager") return { name: "boss", role: "" };
-    const d = original.desk && ctx.desks.get(original.desk);
-    return d ? person(d, ctx, original) : { name: spokenName(original.speaker?.provider, original.speaker?.model), role: "" };
+    return person(original.speaker || {}, ctx, original);
   }
   // Who takes part in an album, whichever of its messages asks: the bosses and members who spoke
   // in it, and the meeting's seats or the one desk. Kept per message list: a long history asks
@@ -239,12 +231,12 @@
     const known = casts.get(messages), key = room ? `room:${room}` : `desk:${desk}`;
     if (known.has(key)) return known.get(key);
     const own = messages.filter(m => room ? m.conversation === room : privateMessage(m, desk));
-    const member = d => ({ provider: d.provider, model: d.display_model || d.model });
+    const member = d => ({ provider: d.provider, model: d.art_model || d.model });
     const seated = (room ? (ctx.rooms?.get(room)?.seats || []).map(s => ctx.desks?.get(s.desk)) : [ctx.desks?.get(desk)]).filter(Boolean).map(member);
     const bosses = own.filter(m => m.speaker?.role === "manager").map(m => bossIdentity(m, ctx.c));
     const spoke = own.filter(m => m.speaker?.role === "member").map(m => {
       const d = ctx.desks?.get(m.desk);
-      return { provider: m.speaker.provider || d?.provider, model: m.speaker.model || d?.display_model || d?.model };
+      return { provider: m.speaker.provider || d?.provider, model: m.speaker.model || d?.art_model || d?.model };
     });
     const faces = new Set();
     const people = [...bosses.length ? bosses : [bossIdentity(null, ctx.c || {})], ...seated, ...spoke]
@@ -268,13 +260,13 @@
     const d = m.desk && ctx.desks.get(m.desk);
     const boss = m.speaker?.role === "manager";
     const { provider, model } = boss ? bossIdentity(m, ctx.c)
-      : { provider: m.speaker?.provider || d?.provider || ctx.c.host, model: m.speaker?.model || d?.display_model || d?.model || "" };
+      : { provider: m.speaker?.provider || d?.provider || ctx.c.host, model: m.speaker?.model || d?.art_model || d?.model || "" };
     const room = m.thread?.kind === "room" ? m.thread.id : null;
     return { id: m.id, group: ctx.c?.group ?? null, place: AN.chatName?.(ctx.c) || "", album: album(m, room, ctx), room, desk: m.desk,
       kind: m.kind, conversation: m.conversation, round: m.round,
       boss, family: Avatars.family(provider, model) || null,
-      provider, model, role: boss ? "" : d?.role || m.speaker?.desk_role || "", label: boss ? "boss" : d ? AN.deskName(d) : m.speaker?.label || provider,
-      name: boss ? "boss" : spokenName(provider, model), to: listeners(m, ctx, boss),
+      provider, model, role: boss ? "" : m.speaker?.identity?.role || "", label: boss ? "boss" : AN.deskName(m.speaker || {}),
+      name: boss ? "boss" : m.speaker?.identity?.spoken_name || "", to: listeners(m, ctx, boss),
       private: m.thread?.kind !== "room" || m.kind === "instruction" || m.kept_private === true,
       forward: boss && m.kind === "forward" ? source(m, ctx) : null,
       text: m.text, excerpt: (AN.plain?.(m.text) ?? m.text ?? "").replace(/\s+/g, " ").slice(0, EXCERPT_CHARS),
@@ -730,7 +722,7 @@
     const room = roomView && ctx?.rooms?.get(roomView.id);
     const desks = room ? room.seats.map(s => ctx.desks.get(s.desk)).filter(Boolean)
       : privateView ? [ctx?.desks.get(privateView)].filter(Boolean) : [];
-    for (const d of desks) people.push({ key: d.key, provider: d.provider, model: d.display_model || d.model, role: d.role, label: AN.deskName(d) });
+    for (const d of desks) people.push({ key: d.key, provider: d.provider, model: d.art_model || d.model, role: d.role, label: AN.deskName(d) });
     if (here && !here.boss && !people.some(p => p.key === here.desk))
       people.push({ key: here.desk || here.id, provider: here.provider, model: here.model, role: here.role, label: here.label });
     const keep = new Set();
@@ -769,7 +761,7 @@
     if (recent && (jobs.length || follow)) { clearTimeout(recentTimer); recent = null; }
     const view = (job, state) => ({
       id: job.id, group: job.group, place: job.place, album: job.album, conversation: job.conversation, provider: job.provider, model: job.model,
-      who: AN.modelName(job.model) || job.label,
+      who: (job.boss && AN.modelName(job.model)) || job.label,
       excerpt: job.excerpt, state,
     });
     return AN.voiceState({

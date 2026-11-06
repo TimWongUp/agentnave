@@ -10,7 +10,7 @@ struct Show<'a> {
     created: i64,
 }
 
-impl Show<'_> {
+impl<'a> Show<'a> {
     /// A private answer carries its finish time; older records only have the round's start. The
     /// answer was done before a later round began, so the later of the two counts as the desk's
     /// work, and the conversation's last update when no round followed.
@@ -40,7 +40,7 @@ impl Show<'_> {
                     let seat = self.seats.get(id)?;
                     Some(recipient(
                         &seat_desk(conversation, id),
-                        &identity_of(seat, id, &Value::Null),
+                        &identity_of(seat, id, r),
                     ))
                 })
                 .collect()
@@ -57,27 +57,53 @@ impl Show<'_> {
         }
     }
 
-    /// Who a task round asked, when that was not every seat.
+    /// The seats a task round called, when that was not every seat; those not started yet
+    /// included, the rest still hear it.
     fn answering(&self, entry: &Value) -> Option<Vec<Value>> {
-        let round = array(self.view, "rounds")
-            .find(|r| r["number"] == entry["round"])
-            .or_else(|| {
-                (self.view["round"]["number"] == entry["round"]).then_some(&self.view["round"])
-            })?;
+        let round = (self.view["round"]["number"] == entry["round"])
+            .then_some(&self.view["round"])
+            .or_else(|| array(self.view, "rounds").find(|r| r["number"] == entry["round"]))?;
+        let conversation = &self.item.id;
         let answering: Vec<_> = array(round, "seats")
-            .map(|r| json!(text(r, "seat_id")))
+            .filter_map(|r| {
+                let id = text(r, "seat_id");
+                let seat = self.seats.get(id)?;
+                Some(recipient(
+                    &seat_desk(conversation, id),
+                    &identity_of(seat, id, r),
+                ))
+            })
             .collect();
         (answering.len() < self.seats.len()).then_some(answering)
     }
+
+    /// What a seat goes by now: a running seat's tail may already name a newer model.
+    fn current(&self, id: &str, seat: &'a Value) -> &'a Value {
+        array(&self.view["round"], "seats")
+            .find(|run| text(run, "seat_id") == id)
+            .map(|run| &run["identity"])
+            .filter(|identity| identity.is_object())
+            .unwrap_or(&seat["identity"])
+    }
 }
 
-/// A seat's identity under its id, with the model `source` reported when it reported one.
-fn identity_of(seat: &Value, id: &str, source: &Value) -> Value {
+/// A seat's record under its id, with the model and name `source` reported when it did.
+pub(super) fn identity_of(seat: &Value, id: &str, source: &Value) -> Value {
     let mut identity = seat.clone();
     identity["seat"] = json!(id);
     if !text(source, "reported_model").is_empty() {
         identity["reported_model"] = source["reported_model"].clone();
     }
+    if source["identity"].is_object() {
+        identity["identity"] = source["identity"].clone();
+    }
+    identity
+}
+
+/// A stored entry's seat: it signs with the name it recorded, never the seat's current one.
+fn entry_identity(seat: &Value, id: &str, entry: &Value) -> Value {
+    let mut identity = identity_of(seat, id, entry);
+    identity["identity"] = entry["identity"].clone();
     identity
 }
 
@@ -146,6 +172,9 @@ impl Group {
                     false,
                 );
             }
+            if let Some(desk) = self.desks.get_mut(&seat_desk(&item.id, id)) {
+                desk.identity = show.current(id, seat).clone();
+            }
         }
         self.show_room(&show);
         self.show_approvals(snapshot);
@@ -161,7 +190,7 @@ impl Group {
         let kind = text(entry, "kind");
         let speaker = text(entry, "speaker");
         let seat = show.seats.get(speaker).copied();
-        let identity = seat.map_or(Value::Null, |seat| identity_of(seat, speaker, entry));
+        let identity = seat.map_or(Value::Null, |seat| entry_identity(seat, speaker, entry));
         let time = show.time(entry);
         let status = if kind == "absent" {
             absence_status(entry)
@@ -243,11 +272,6 @@ impl Group {
         if kind != "host" && entry["round"].as_u64().is_some_and(|r| r > 0) {
             msg["round"] = entry["round"].clone();
         }
-        if kind == "task"
-            && let Some(answering) = show.answering(entry)
-        {
-            msg["answering"] = json!(answering);
-        }
         let forward = if forwarded {
             opt_text(entry, "forward_id").map(|message_id| {
                 json!({"message_id": message_id, "source": text(entry, "forward_source")})
@@ -265,6 +289,12 @@ impl Group {
         );
         if manager {
             route_to(&mut msg, show.recipients(entry));
+            if kind == "task"
+                && let Some(called) = show.answering(entry)
+            {
+                msg["answering"] = json!(called.iter().map(|r| &r["key"]).collect::<Vec<_>>());
+                msg["to"] = json!(called.iter().map(addressee).collect::<Vec<_>>());
+            }
         } else {
             msg["status"] = json!(status);
             if has_seat {
@@ -289,7 +319,7 @@ impl Group {
             return;
         }
         let conversation = &show.item.id;
-        let identity = identity_of(seat, id, &Value::Null);
+        let identity = entry_identity(seat, id, entry);
         let mut msg = Self::message(
             format!("{conversation}:instruction:{}:{id}", entry["round"]),
             &show.time(entry),
@@ -319,7 +349,7 @@ impl Group {
         };
         let conversation = &show.item.id;
         let time = show.time(entry);
-        let identity = identity_of(seat, id, entry);
+        let identity = entry_identity(seat, id, entry);
         self.member(
             show.snapshot,
             (&seat_desk(conversation, id), &identity),
@@ -442,9 +472,10 @@ impl Group {
             .seats
             .values()
             .filter(|seat| !text(seat, "provider").is_empty())
-            .map(
-                |seat| json!({"seat": text(seat, "id"), "desk": seat_desk(&item.id, text(seat, "id"))}),
-            )
+            .map(|seat| {
+                let id = text(seat, "id");
+                json!({"seat": id, "desk": seat_desk(&item.id, id), "identity": show.current(id, seat)})
+            })
             .collect();
         self.rooms.push((
             show.created,

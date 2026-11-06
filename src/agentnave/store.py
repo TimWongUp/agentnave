@@ -247,7 +247,7 @@ class Record:
         record.lock = record._lock()
         try:
             record.rev = db.save(None, state, record._projection())
-        except OSError:
+        except BaseException:
             record.release()
             raise
         record.saved = state.model_copy(deep=True)
@@ -292,6 +292,8 @@ class Record:
         refresh and has since let go.
         """
         if self.lock is not None:
+            if self.view_rev != self.rev:
+                self._write_view()
             return True
         try:
             lock = self._lock()

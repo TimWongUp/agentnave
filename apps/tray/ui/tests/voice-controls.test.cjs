@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { identities } = require("./helpers/common.cjs");
 const { office, panel, settingsFrame, flush, message } = require("./helpers/voice.cjs");
 
 const open = app => {
@@ -346,7 +347,7 @@ test("the panel uses the office snapshot for backlog, controls and retry instead
 
 test("the panel folds eight visible running desks and still announces a seat that disappears on completion", async () => {
   const desks = Array.from({ length: 8 }, (_, n) => desk(`worker-${n}`, true));
-  desks.push(desk("seat", true, "seat"), desk("idle"));
+  desks.push({ ...desk("seat", true, "seat"), model: "gpt-x", identity: { ...identities.review, key: "seat" } }, desk("idle"));
   const app = await panel([manager("workspace", desks)]);
   const card = app.elements.get("groups").children[0];
   const cells = card.children.find(child => child.tag === "div.desks");
@@ -358,7 +359,10 @@ test("the panel folds eight visible running desks and still announces a seat tha
   assert.equal(cells.children.filter(child => child.hidden).length, 0);
   await app.feed([manager("workspace", desks.map(item => ({ ...item, activities: [], status: "succeeded" })))]);
   assert.equal(app.elements.get("groups").children.length, 0);
-  assert.match(app.elements.get("announce").textContent, /seat/);
+  assert.match(app.elements.get("announce").textContent, /gpt-x succeeded/,
+    "the completed seat is announced by its service identity even though it was never a visible cell");
+  assert.match(app.elements.get("announce").textContent, /未记录身份 succeeded/,
+    "old desks without identity remain unknown instead of being named from their key or raw model");
 });
 
 test("pausing synthesis keeps that clip selected for next, bubbles and settings changes", async () => {

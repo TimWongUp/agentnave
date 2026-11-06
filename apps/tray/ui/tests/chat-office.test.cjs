@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
+const { common, identities } = require("./helpers/common.cjs");
 
 function office(character = (_host, model) => model || "default") {
   const node = () => ({
@@ -126,9 +127,10 @@ function auditUI(english = false) {
     set innerHTML(_) { throw new Error("Audit data must never become HTML"); },
   });
   const context = vm.createContext({
-    AN: {}, state: { peers: new Set() }, h,
+    AN: common(english), state: { peers: new Set() }, h,
     L: (zh, en) => english ? en : zh,
     ART: { version: () => 1, character: () => "claude", head: () => h("img") },
+    deskChar: () => "claude",
     cliName: name => name,
     clock: time => `clock:${time}`, fullTime: time => `full:${time}`,
     setText: (element, text) => { element.textContent = text; },
@@ -149,6 +151,40 @@ function auditUI(english = false) {
     },
   };
 }
+
+test("old message signatures and recipients without identity stay unknown beside a renamed desk", () => {
+  const { context } = auditUI();
+  const ctx = { desks: new Map([["a", { key: "a", role: "当前职责", identity: identities.explorer }]]) };
+  const old = { desk: "a", speaker: { role: "member", provider: "claude", model: "old-model" }, to: [{ key: "a", role: "旧职责", model: "old-model" }] };
+  assert.equal(context.speakerName(old), "未记录身份");
+  assert.equal(context.speakerRole(old), "");
+  const [target] = context.targets(old, ctx);
+  const [legacy] = context.targets({ ...old, to: undefined, recipients: [{ focus: "a", role: "旧职责" }], thread: { kind: "desk", key: "a" } }, ctx);
+  for (const recipient of [target, legacy, { kind: "desk", who: old.to[0] }]) {
+    const chip = context.chip(recipient);
+    assert.equal(chip.children.at(-1), "未记录身份");
+    assert.equal(chip.attributes.title, "未记录身份，重连宿主后更新");
+    assert.equal(chip.children.some(child => child?.tag === "span.at-role"), false);
+  }
+});
+
+test("service identities preserve historical duties and duplicate ordinals in signatures and chips", () => {
+  const { context } = auditUI();
+  const identity = { ...identities.explorer, model: "route/claude-x", ordinal: 4, numbered: true,
+    handle: "@route/claude-x·Claude Code·探索派 #4", handle_short: "@claude-x·Claude Code·探索派 #4", spoken_name: "Claude #4" };
+  const who = { identity, role: "过时职责", model: "wrong-model" };
+  const m = { speaker: who, to: [{ key: "a", ...who }] };
+  const ctx = { desks: new Map([["a", { key: "a", identity: { ...identities.pragmatist, key: "a" } }]]) };
+  assert.equal(context.speakerName(m), "claude-x #4");
+  assert.equal(context.speakerRole(m), "探索派");
+  assert.equal(context.speakerSub(m), "Claude Code");
+  const chip = context.chip(context.targets(m, ctx)[0]);
+  assert.equal(chip.children.at(-1), "claude-x #4");
+  assert.equal(chip.children.find(child => child?.tag === "span.at-role").children[0], "探索派");
+  assert.equal(chip.attributes.title, identity.handle);
+  context.AN.setFullModelNames(true);
+  assert.equal(context.speakerName(m), "route/claude-x #4");
+});
 
 test("native prompt event rows state every outcome in both languages and update in place", () => {
   const cases = [
@@ -214,4 +250,18 @@ test("native prompt audit events do not count as task answers or meeting replies
   assert.equal(topics.length, 2);
   assert.equal(topics[0].replies.length, 0);
   assert.equal(topics[1].replies.length, 0);
+});
+
+
+test("unknown model handles localize without changing service role or duplicate suffix", () => {
+  const who = { identity: { model_source: "unknown", model_short: "未记录模型", numbered: true, ordinal: 2,
+    handle: "@未记录模型·Codex·评审 #2", handle_short: "@未记录模型·Codex·评审 #2" } };
+  for (const english of [false, true]) {
+    const names = common(english);
+    const expected = english ? "@Model not recorded·Codex·评审 #2" : who.identity.handle;
+    assert.equal(names.handleOf(who), expected);
+    assert.equal(names.fullHandle(who), expected);
+    names.setFullModelNames(true);
+    assert.equal(names.handleOf(who), expected);
+  }
 });

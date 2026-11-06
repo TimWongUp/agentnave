@@ -269,7 +269,7 @@ function sideItems(c, ctx) {
         scope: { kind: "desk", key: d.key },
         heads: [d],
         name: deskName(d),
-        sub: `${cliName(d.provider)} · ${s.word}`,
+        sub: `${cliOf(d)} · ${s.word}`,
         tone: running(d) ? "run" : s.mood === "failed" ? "bad" : "",
         time: relTime(d.last_active),
       };
@@ -392,7 +392,7 @@ function updateDesk(rec, d, ctx) {
   setText(rec.effort, effort);
   setAttr(rec.effort, "data-effort", effort || null);
   rec.effort.hidden = !effort;
-  setText(rec.cliText, cliName(d.provider));
+  setText(rec.cliText, cliOf(d));
   setText(rec.role, d.role || "");
   setAttr(rec.role, "title", d.role || null);
   setText(
@@ -404,12 +404,12 @@ function updateDesk(rec, d, ctx) {
   setAttr(
     rec.el,
     "title",
-    `${s.word}\n${handleOf(d)}\n${L(`首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}`, `First seen ${fullTime(d.first_seen)} · Last active ${fullTime(d.last_active)}`)}${MODEL_NOTE[d.model_source] || (!d.model && !d.display_model ? MODEL_NOTE.unknown : "")}`,
+    `${s.word}\n${fullHandle(d)}\n${L(`首次出现 ${fullTime(d.first_seen)} · 最近 ${fullTime(d.last_active)}`, `First seen ${fullTime(d.first_seen)} · Last active ${fullTime(d.last_active)}`)}${d.identity?.model_source === "unknown" ? UNKNOWN_MODEL_NOTE : ""}`,
   );
   setAttr(
     rec.el,
     "aria-label",
-    L(`${deskName(d)}，${cliName(d.provider)}${d.role ? `，${d.role}` : ""}，${s.word}，查看对话`, `${deskName(d)}, ${cliName(d.provider)}${d.role ? `, ${d.role}` : ""}, ${s.word}, view conversation`),
+    L(`${deskName(d)}，${cliOf(d)}${d.role ? `，${d.role}` : ""}，${s.word}，查看对话`, `${deskName(d)}, ${cliOf(d)}${d.role ? `, ${d.role}` : ""}, ${s.word}, view conversation`),
   );
 }
 
@@ -506,14 +506,14 @@ function updateRoom(rec, r, ctx) {
     setClass(s.el, `seat${absent ? " empty" : ""}`);
     dress(s, d ? deskChar(d) : "default", s.el, s.plate);
     setSay(s.say, m.say);
-    const name = d ? deskName(d) : seat.handle?.replace(/^@/, "") || seat.seat;
+    const name = d ? deskName(d) : seat.identity ? handleOf(seat).replace(/^@/, "") : seat.seat;
     // model name and role only; the CLI is in the tooltip
     const tag = d ? d.role || "" : absent ? L("缺席", "Absent") : "";
     setText(s.nm, name);
     setText(s.plate, tag);
     s.plate.hidden = !tag;
     setClass(s.plate, `plate tag${d ? " tag-role" : ""}`);
-    setAttr(s.el, "title", d ? handleOf(d) : seat.handle || L(`席位 ${seat.seat}`, `Seat ${seat.seat}`));
+    setAttr(s.el, "title", d || seat.identity ? fullHandle(d || seat) : L(`席位 ${seat.seat}`, `Seat ${seat.seat}`));
     nodes.push(s.el);
   }
   reconcile(rec.scene, nodes);
@@ -662,7 +662,7 @@ function foldRoom(node) {
 // Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
 function optimizedNode(opt, ctx) {
   const listed = opt.desks || [];
-  const key = JSON.stringify([state.optimizedOpen, opt.count, ART.version(), listed.map((d) => [d.key, d.label, d.status, d.last_active])]);
+  const key = JSON.stringify([state.optimizedOpen, opt.count, ART.version(), listed.map((d) => [d.key, handleOf(d), d.status, d.last_active])]);
   let node = state.optimizedEl;
   if (node && node.dataset.key === key) return node;
   const toggle = h(
@@ -683,9 +683,9 @@ function optimizedNode(opt, ctx) {
       const s = deskMood(d, ctx);
       const row = h(
         "button.td-row",
-        { type: "button", title: `${d.label}\n${s.word}` },
+        { type: "button", title: `${fullHandle(d)}\n${s.word}` },
         h("span.td-heads", {}, ART.head(deskChar(d))),
-        h("span.td-main", {}, h("span.td-name", {}, d.label), h("span.td-sub", {}, s.word)),
+        h("span.td-main", {}, h("span.td-name", {}, handleOf(d)), h("span.td-sub", {}, s.word)),
         h("span.td-time", {}, relTime(d.last_active)),
       );
       row.addEventListener("click", (e) => {

@@ -287,9 +287,8 @@ fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
     assert_eq!(unknown["host"], Value::Null);
     assert_eq!(unknown["label"], "未知 boss");
     assert_eq!(unknown["members"][0]["key"], "codex/");
-    assert_eq!(unknown["desks"][0]["label"], "CLI 默认模型 · Codex");
-    assert_eq!(unknown["desks"][0]["handle"], "@CLI 默认模型·Codex");
-    assert_eq!(unknown["desks"][0]["model_source"], "unknown");
+    // A view the service has not rebuilt stays unnamed; the App makes up no name for it.
+    assert_eq!(unknown["desks"][0]["identity"], Value::Null);
     assert_eq!(unknown["project"], Value::Null);
     assert_eq!(unknown["members"][0]["line"], "结果");
     assert_eq!(
@@ -591,7 +590,6 @@ fn show_chats_keep_private_history_after_new_rounds() {
     assert_eq!(messages[1]["text"], "本轮私信");
     assert_eq!(messages[0]["speaker"]["model"], "m-old");
     assert_eq!(messages[1]["speaker"]["model"], "m-native");
-    assert_eq!(messages[1]["speaker"]["model_source"], "native");
     assert_eq!(messages[1]["focus"], "seat:private-show:a");
     show["director"]["round"] = json!({"number": 3, "seats": []});
     save(dir.path(), &show);
@@ -1331,9 +1329,6 @@ fn desks_stay_persistent_ordered_and_split_by_identity() {
     );
     // Newest first; the checks below go from the oldest.
     let desks: Vec<_> = desks.iter().rev().collect();
-    assert_eq!(desks[0]["label"], "m · Codex · reviewer #1");
-    assert_eq!(desks[4]["label"], "m · Codex · reviewer #2");
-    assert_eq!(desks[4]["handle"], "@m·Codex·reviewer #2");
     assert_eq!(desks[0]["kind"], "task");
     assert_eq!(desks[0]["role"], "reviewer");
     assert_eq!(desks[2]["role"], "reviewer-b");
@@ -1355,7 +1350,114 @@ fn desks_stay_persistent_ordered_and_split_by_identity() {
     assert_eq!(desks[1]["aliases"], json!([]));
     assert_eq!(desks[3]["private_allowed"], false); // same as the workspace host's CLI
     assert_eq!(desks[3]["role"], Value::Null);
-    assert_eq!(desks[3]["label"], "m · Claude Code");
+}
+
+/// Rust passes identities through, so a test only needs what tells them apart.
+fn named(key: &str, handle: &str) -> Value {
+    json!({"key": key, "handle": handle})
+}
+
+#[test]
+fn a_private_desk_goes_by_its_latest_call_while_each_message_keeps_its_own_name() {
+    let dir = tempfile::tempdir().unwrap();
+    for (id, hour, handle) in [
+        ("a", "01", "@old·Codex·one #2"),
+        ("b", "02", "@new·Codex·two #2"),
+    ] {
+        let mut task = task_snapshot(id, "succeeded", &format!("2099-01-01T{hour}:00:00Z"));
+        task["director"]["tasks"][0]["thread"] = json!("same");
+        task["director"]["tasks"][0]["identity"] = named("thread:same", handle);
+        save(dir.path(), &task);
+    }
+    let reader = Reader::new(dir.path().to_path_buf());
+    let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert_eq!(chat["desks"][0]["identity"]["handle"], "@new·Codex·two #2");
+    let messages = chat["messages"].as_array().unwrap();
+    let first = |kind: &str| messages.iter().find(|m| m["kind"] == kind).unwrap();
+    assert_eq!(first("reply")["speaker"]["handle"], "@old·Codex·one #2");
+    assert_eq!(
+        first("reply")["speaker"]["identity"]["handle"],
+        "@old·Codex·one #2"
+    );
+    assert_eq!(first("prompt")["to"][0]["handle"], "@old·Codex·one #2");
+    assert_eq!(
+        first("prompt")["recipients"][0]["identity"]["handle"],
+        "@old·Codex·one #2"
+    );
+}
+
+#[test]
+fn a_seat_shows_its_current_name_and_each_entry_the_name_it_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut show = office_show("show", "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z");
+    show["director"]["seats"][0]["identity"] = named("seat:show:a", "@now #1");
+    show["director"]["messages"][0]["recipients"][0]["identity"] =
+        named("seat:show:a", "@asked #1");
+    show["director"]["messages"][1]["identity"] = named("seat:show:a", "@then #1");
+    show["director"]["messages"].as_array_mut().unwrap().push(
+        json!({"kind": "answer", "speaker": "a", "round": 1, "text": "unsigned",
+            "time": "2099-01-01T00:00:01Z"}),
+    );
+    show["director"]["private_messages"] = json!([{"seat_id": "a", "round": 1, "text": "aside",
+        "time": "2099-01-01T00:00:02Z", "identity": named("seat:show:a", "@aside #1")}]);
+    show["director"]["instructions"] = json!([{"seat_id": "a", "round": 1,
+        "text": "historical brief", "time": "2099-01-01T00:00:00Z",
+        "identity": named("seat:show:a", "@brief #1")}]);
+    show["director"]["round"]["seats"] = json!([{
+        "seat_id": "a", "status": "running", "identity": named("seat:show:a", "@pending #1")
+    }]);
+    show["director"]["rounds"] = json!([show["director"]["round"].clone()]);
+    save(root, &show);
+    // A running seat's tail may rename it before anything is saved.
+    write(
+        &root.join("live/1-tails.json"),
+        &json!({"version": 2, "conversations": {"show": {"tasks": {}, "seats": {"a": {
+            "output": "streamed", "reported_model": "native",
+            "identity": named("seat:show:a", "@live #1")}}}}}),
+    );
+    let reader = Reader::new(root.to_path_buf());
+    let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+    let desk = chat["desks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["key"] == "seat:show:a")
+        .unwrap();
+    assert_eq!(desk["identity"]["handle"], "@live #1");
+    assert_eq!(
+        chat["rooms"][0]["seats"][0]["identity"]["handle"],
+        "@live #1"
+    );
+    let said = |body: &str| {
+        chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == body)
+            .unwrap()["speaker"]
+            .clone()
+    };
+    let prompt = chat["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["kind"] == "prompt")
+        .unwrap();
+    assert_eq!(prompt["recipients"][0]["identity"]["handle"], "@asked #1");
+    assert_eq!(said("answer")["identity"]["handle"], "@then #1");
+    assert_eq!(said("aside")["identity"]["handle"], "@aside #1");
+    assert_eq!(said("streamed")["identity"]["handle"], "@live #1");
+    assert_eq!(prompt["to"][0]["identity"]["handle"], "@live #1");
+    let brief = chat["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["text"] == "historical brief")
+        .unwrap();
+    assert_eq!(brief["to"][0]["identity"]["handle"], "@brief #1");
+    // History never borrows the seat's current name.
+    assert_eq!(said("unsigned")["identity"], Value::Null);
 }
 
 #[test]
@@ -1381,8 +1483,8 @@ fn desks_report_meeting_and_rooms_in_creation_order() {
     assert_eq!(
         rooms[0]["seats"],
         json!([
-            {"seat": "a", "desk": "seat:older:a", "handle": "@m·Claude Code·reviewer #1"},
-            {"seat": "b", "desk": "seat:older:b", "handle": "@m·Codex #1"}
+            {"seat": "a", "desk": "seat:older:a", "identity": Value::Null},
+            {"seat": "b", "desk": "seat:older:b", "identity": Value::Null}
         ])
     );
     assert_eq!(rooms[1]["id"], "newer");
@@ -1569,14 +1671,6 @@ fn desk_effort_follows_latest_call_without_rewriting_message_efforts() {
         assert_eq!(chat["desks"].as_array().unwrap().len(), 1);
         assert_eq!(chat["desks"][0]["model"], "m");
         assert_eq!(chat["desks"][0]["effort"], json!(effort));
-        if let Some(effort) = effort {
-            assert!(
-                chat["desks"][0]["handle"]
-                    .as_str()
-                    .unwrap()
-                    .contains(&format!("m · {effort}"))
-            );
-        }
         let answers: Vec<_> = chat["messages"]
             .as_array()
             .unwrap()
@@ -1589,7 +1683,6 @@ fn desk_effort_follows_latest_call_without_rewriting_message_efforts() {
         }
         if answers.len() > 2 {
             assert!(answers[2]["speaker"]["effort"].is_null());
-            assert_eq!(chat["desks"][0]["handle"], "@m·Codex");
         }
     }
 }
@@ -1602,17 +1695,18 @@ fn office_messages_keep_identity_routes_and_review_id_when_published() {
     show["director"]["cwd"] = json!("/work/project-name");
     show["director"]["seats"][0]["model"] = json!("");
     show["director"]["seats"][0]["effort"] = json!("high");
-    show["director"]["seats"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"id": "c", "provider": "claude", "model": "", "role": "reviewer"}));
+    show["director"]["seats"][0]["identity"] = named("seat:show:a", "@a #1");
+    show["director"]["seats"].as_array_mut().unwrap().push(
+        json!({"id": "c", "provider": "claude", "model": "", "role": "reviewer",
+            "identity": named("seat:show:c", "@a #3")}),
+    );
     // The old recipient model is native and its role is absent. Identity comes from seats.
     show["director"]["messages"] = json!([{"kind": "task", "round": 1, "text": "body @boss @all is not routing", "time": "2099-01-01T00:00:00Z", "recipients": [{"seat": "a", "provider": "claude", "model": "native"}]}]);
     show["director"]["round"] = json!({"number": 1, "order": "serial", "status": "review", "seats": [
             {"seat_id": "a", "status": "succeeded", "review": "pending", "reported_model": "claude-opus-5-5", "output": "answer"},
             {"seat_id": "c", "status": "not_started"}]});
-    show["director"]["instructions"] =
-        json!([{"round": 1, "seat_id": "a", "text": "secret", "time": "2099-01-01T00:00:00Z"}]);
+    show["director"]["instructions"] = json!([{"round": 1, "seat_id": "a", "text": "secret", "time": "2099-01-01T00:00:00Z",
+            "identity": named("seat:show:a", "@a #1")}]);
     save(dir.path(), &show);
     let path = format!("/app/chats/{MANAGER}");
     let chat = state(&reader, &path);
@@ -1624,35 +1718,31 @@ fn office_messages_keep_identity_routes_and_review_id_when_published() {
     // A serial round names every seat it called, the one not started yet included.
     assert_eq!(prompt["to"][0]["key"], prompt["recipients"][0]["key"]);
     assert_eq!(prompt["to"].as_array().unwrap().len(), 2);
-    assert_eq!(
-        prompt["answering"],
-        json!([
-            "@claude-opus-5-5 · high·Claude Code·reviewer",
-            "@CLI 默认模型·Claude Code·reviewer"
-        ])
-    );
+    // Who answers is linked by desk key: a name can change or repeat.
+    assert_eq!(prompt["answering"], json!(["seat:show:a", "seat:show:c"]));
+    assert_eq!(prompt["to"][1]["identity"]["handle"], "@a #3");
     let instruction = messages
         .iter()
         .find(|m| m["kind"] == "instruction")
         .unwrap();
     assert_eq!(instruction["visibility"], "private");
     assert_eq!(instruction["to"][0]["key"], "seat:show:a");
-    assert_eq!(instruction["to"][0]["handle"], prompt["answering"][0]);
+    assert_eq!(instruction["to"][0]["handle"], "@a #1");
     assert_eq!(instruction["reply_to"], prompt["id"]);
     let answer = messages.iter().find(|m| m["status"] == "review").unwrap();
     assert_eq!(answer["text"], "answer");
     assert_eq!(answer["speaker"]["effort"], "high");
     assert_eq!(answer["to"], json!([{"key": "@boss", "handle": "@boss"}]));
     assert_eq!(answer["reply_to"], prompt["id"]);
-    assert_eq!(answer["speaker"]["handle"], prompt["answering"][0]);
+    assert_eq!(answer["speaker"]["handle"], "@a #1");
     let desk = chat["desks"]
         .as_array()
         .unwrap()
         .iter()
         .find(|d| d["key"] == "seat:show:a")
         .unwrap();
-    assert_eq!(desk["display_model"], "claude-opus-5-5");
-    assert_eq!(desk["model_source"], "native");
+    assert_eq!(desk["art_model"], "claude-opus-5-5");
+    assert_eq!(desk["identity"]["handle"], "@a #1");
     assert_eq!(desk["effort"], "high");
     assert_eq!(
         chat["rooms"][0]["round"],
@@ -1725,20 +1815,13 @@ fn office_counts_activities_and_threads_preserve_concurrent_calls() {
     }
     let private = desk("task:private:t-private");
     assert_eq!(private["activities"][0]["kind"], "private");
-    assert_eq!(private["model_source"], "native");
-    assert_eq!(private["display_model"], "native-model");
-    let mut labels: Vec<_> = desks.iter().filter_map(|d| d["label"].as_str()).collect();
-    labels.sort();
-    assert_eq!(
-        labels,
-        [
-            "m · Claude Code · reviewer #1",
-            "m · Claude Code · reviewer #2",
-            "m · Codex #1",
-            "m · Codex #2",
-            "native-model · Claude Code · reviewer"
-        ]
-    );
+    assert_eq!(private["art_model"], "native-model");
+    let mut arts: Vec<_> = desks
+        .iter()
+        .filter_map(|d| d["art_model"].as_str())
+        .collect();
+    arts.sort();
+    assert_eq!(arts, ["m", "m", "m", "m", "native-model"]);
     // Running and reviewed desks are drawn even past the limit; idle seats fold away.
     crate::settings::save(dir.path(), &json!({"version": 1, "max_running": 1})).unwrap();
     let limited = state(&reader, &format!("/app/chats/{MANAGER}"));

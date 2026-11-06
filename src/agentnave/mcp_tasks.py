@@ -40,7 +40,6 @@ from agentnave.mcp_runtime import (
     _short_title,
     _unknown_handle,
     _unreceived,
-    finished_payload,
     invocation_request_error,
     round_payload,
     started_payload,
@@ -225,6 +224,8 @@ async def start_agent(
         "access": started.access,
     }
     conversations = _conversations(ctx)
+    if identity := conversations.task_identity(started.invocation_id):
+        payload["identity"] = identity
     message = conversations.records[started.conversation_id].state.tasks[-1]
     warnings = model_warnings(conversations.host, message)
     add_write_warning(warnings, manager, request, started.invocation_id, access)
@@ -486,6 +487,7 @@ def _wait_payload(
                 # A round that ended right after seat_lost woke this wait is delivered in full.
                 deliver=not elapsed and (round_.finished or reason != "seat_lost"),
                 reviews=reviews,
+                identities=conversations.round_identities(round_),
                 entries=conversations.committed_entries(round_.group.id, round_.number),
             )
         )
@@ -524,7 +526,7 @@ async def cancel(
     if _known_invocation(manager, id):
         result = await manager.cancel(id)
         _conversations(ctx).delivered_tasks.add(id)
-        return {"invocation": finished_payload(id, result)}
+        return {"invocation": update_payload(_manager(ctx), _conversations(ctx), id, result)}
     conversations = _conversations(ctx)
     try:
         round_ = await conversations.cancel(id)
@@ -537,6 +539,7 @@ async def cancel(
             conversations.manager,
             "finished",
             reviews=_review_map(conversations, round_),
+            identities=conversations.round_identities(round_),
             entries=conversations.committed_entries(round_.group.id, round_.number),
         )
     }

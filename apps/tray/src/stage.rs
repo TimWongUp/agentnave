@@ -16,6 +16,7 @@ mod show;
 mod summary;
 
 use desk::Desk;
+use show::identity_of;
 use summary::line;
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -225,63 +226,6 @@ fn seat_desk(conversation: &str, seat: &str) -> String {
     format!("seat:{conversation}:{seat}")
 }
 
-fn cli_label(provider: &str) -> &str {
-    match provider {
-        "codex" | "claude" | "codebuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "zcode" => {
-            label(Some(provider))
-        }
-        other => other,
-    }
-}
-
-fn desk_label(model: &str, provider: &str, role: Option<&str>) -> String {
-    let mut parts = vec![
-        if model.is_empty() {
-            "CLI 默认模型".to_owned()
-        } else {
-            model.to_owned()
-        },
-        cli_label(provider).to_owned(),
-    ];
-    if let Some(role) = role {
-        parts.push(role.to_owned());
-    }
-    parts.join(" · ")
-}
-
-fn model_with_effort(model: &str, effort: Option<&str>) -> String {
-    match effort.filter(|effort| !effort.is_empty()) {
-        Some(effort) if model.is_empty() => format!("CLI 默认模型 · {effort}"),
-        Some(effort) => format!("{model} · {effort}"),
-        None => model.to_owned(),
-    }
-}
-
-fn handle(model: &str, effort: Option<&str>, provider: &str, role: Option<&str>) -> String {
-    let chars: Vec<_> = model.chars().collect();
-    let model = if chars.len() > 20 {
-        format!(
-            "{}…{}",
-            chars[..10].iter().collect::<String>(),
-            chars[chars.len() - 9..].iter().collect::<String>()
-        )
-    } else if model.is_empty() {
-        "CLI 默认模型".to_owned()
-    } else {
-        model.to_owned()
-    };
-    let mut value = format!(
-        "@{}·{}",
-        model_with_effort(&model, effort),
-        cli_label(provider)
-    );
-    if let Some(role) = role {
-        value.push('·');
-        value.push_str(role);
-    }
-    value
-}
-
 /// The core `Host.provider` mapping: which CLI a host is excluded from in private tasks.
 fn host_provider(host: Option<&str>) -> Option<&str> {
     match host {
@@ -338,16 +282,10 @@ fn model(identity: &Value) -> &str {
 
 fn member_speaker(identity: &Value) -> Value {
     let provider = text(identity, "provider");
-    let model = model(identity);
-    let mut who = speaker("member", provider, model, label(Some(provider)));
+    let mut who = speaker("member", provider, model(identity), label(Some(provider)));
     who["effort"] = identity["effort"].clone();
-    who["model_source"] = json!(if !text(identity, "reported_model").is_empty() {
-        "native"
-    } else if !model.is_empty() {
-        "requested"
-    } else {
-        "unknown"
-    });
+    who["identity"] = identity["identity"].clone();
+    who["handle"] = identity["identity"]["handle"].clone();
     who
 }
 
@@ -376,6 +314,7 @@ fn manager_speaker(identity: &Value, opened_by: Option<&str>, name: &str) -> Val
     } else {
         "native"
     });
+    who["handle"] = json!("@boss");
     who
 }
 
@@ -383,7 +322,15 @@ fn recipient(desk: &str, identity: &Value) -> Value {
     let provider = text(identity, "provider");
     let model = text(identity, "model");
     json!({"key": desk, "provider": provider, "model": model,
-        "label": label(Some(provider)), "seat": text(identity, "seat")})
+        "label": label(Some(provider)), "seat": text(identity, "seat"),
+        "effort": identity["effort"], "identity": identity["identity"],
+        "handle": identity["identity"]["handle"]})
+}
+
+/// A `to` chip: whom a message addresses, as the service named them for that message.
+fn addressee(recipient: &Value) -> Value {
+    json!({"key": recipient["key"], "handle": recipient["handle"],
+        "effort": recipient["effort"], "identity": recipient["identity"]})
 }
 
 /// The desk a committed entry belongs to: the speaking seat, or a single task recipient.
@@ -415,12 +362,7 @@ fn route_to(message: &mut Value, mut recipients: Vec<Value>) {
             target["focus"] = json!(format!("seat:{conversation}:{}", text(target, "seat")));
         }
     }
-    message["to"] = json!(
-        recipients
-            .iter()
-            .map(|r| json!({"key": r["key"], "handle": r["handle"]}))
-            .collect::<Vec<_>>()
-    );
+    message["to"] = json!(recipients.iter().map(addressee).collect::<Vec<_>>());
     message["recipients"] = json!(recipients);
 }
 

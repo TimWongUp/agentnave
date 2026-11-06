@@ -36,6 +36,7 @@ from agentnave.mcp_runtime import (
     _unreceived,
     round_payload,
 )
+from agentnave.member_names import seat_identity
 from agentnave.members import (
     CapacityError,
     MemberFileError,
@@ -63,6 +64,7 @@ def _add_started(
         deliver=False,
         include_running_output=False,
         reviews=_review_map(conversations, round_),
+        identities=conversations.round_identities(round_),
         entries=conversations.committed_entries(round_.group.id, round_.number),
     )
     message = next(
@@ -141,6 +143,7 @@ def _open_show(
     return state.id, [
         {
             "id": seat.id,
+            "identity": seat_identity(state, seat.id, current=True),
             "provider": seat.provider,
             "cwd": seat.cwd,
             "model": str(seat.provider_options["model"])

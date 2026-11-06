@@ -405,17 +405,29 @@
     try { localStorage.setItem(MODEL_NAMES_KEY, full ? "full" : "short"); } catch { /* storage may be unavailable */ }
   };
   const modelName = (model) => (model && !fullModelNames() ? model.split("/").pop() || model : model);
+  // Member names come from the service, as `identity` on a desk, seat, speaker or addressee; a view
+  // it has not rebuilt yet has none and reads as unknown. These only pick from what it produced.
   // Antigravity has no effort option: each model it lists ends in its level, as in gemini-4-argon-high.
   // Other CLIs' names keep their ending, since a -max there is part of the model's name.
-  const deskParts = (d) => {
-    const name = modelName(d.display_model || d.model) || L("CLI 默认模型", "CLI default model");
-    const level = d.provider === "antigravity" ? name.match(/-(low|medium|high)$/) : null;
-    return { name: level ? name.slice(0, level.index) : name, effort: d.effort || level?.[1] || "" };
+  const deskParts = (who) => {
+    const id = who.identity;
+    if (!id) return { name: L("未记录身份", "Identity not recorded"), effort: who.effort || "" };
+    const name = id.model_source === "unknown"
+      ? L("未记录模型", "Model not recorded")
+      : (fullModelNames() && id.model) || id.model_short;
+    const level = id.provider === "antigravity" ? name.match(/-(low|medium|high)$/) : null;
+    const bare = level ? name.slice(0, level.index) : name;
+    return { name: id.numbered ? `${bare} #${id.ordinal}` : bare, effort: who.effort || level?.[1] || "" };
   };
-  const deskName = (d) => {
-    const { name, effort } = deskParts(d);
+  const deskName = (who) => {
+    const { name, effort } = deskParts(who);
     return effort ? `${name} · ${effort}` : name;
   };
+  const localizedHandle = (identity, handle) => identity?.model_source === "unknown"
+    ? handle?.replace(/^@未记录模型(?=·|$)/, `@${L("未记录模型", "Model not recorded")}`) : handle;
+  const handleOf = (who) => localizedHandle(who.identity, fullModelNames() ? who.identity?.handle : who.identity?.handle_short) || deskName(who);
+  const fullHandle = (who) => localizedHandle(who.identity, who.identity?.handle) || L("未记录身份，重连宿主后更新", "Identity not recorded; reconnect the host to update");
+  const cliOf = (who) => who.identity?.cli || cliName(who.provider);
   // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
   const chatName = (g) => g.title || g.project || g.label;
   // The title a reader sees: a workspace waiting for a new boss says so until one takes it over.
@@ -440,5 +452,5 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 }
