@@ -168,6 +168,20 @@ def test_relay_swaps_only_when_idle_and_not_blocked_by_open_group(tmp_path: Path
     assert host.code == [0]
 
 
+if sys.platform != "win32":
+
+    def test_suspending_the_host_group_leaves_the_server_running(tmp_path: Path) -> None:
+        host = Host(tmp_path)
+        host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+        try:
+            assert os.getpgid(host.pid()) != os.getpgrp()
+        finally:
+            host.writer.close()
+            host.thread.join(10)
+
+
 def test_relay_swaps_for_hosts_without_handshake_and_hands_over_listen_streams(
     tmp_path: Path,
 ) -> None:
@@ -430,6 +444,9 @@ Record.save = save
 mcp_server.main()
 """
     data = tmp_path / "data"
+    # The real server process does not see the suite's print-only Claude fixture.
+    data.mkdir()
+    (data / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
     host = Host(
         tmp_path,
         env={

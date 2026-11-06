@@ -277,6 +277,8 @@ test("instruction model fallback uses its own round's boss and the message list 
   const end = source.indexOf("function renderConv(", start);
   const threaded = vm.runInNewContext(`${source.slice(start, end)}; threaded`, { AN: { voice: app.voice }, isBoss: m => m.speaker?.role === "manager" });
   assert.deepEqual(Array.from(threaded([topic, instruction, answer, other, next]), m => m.id), ["topic", "instruction", "answer", "other-room", "next"]);
+  const audit = { ...answer, id: "audit", kind: "approval" };
+  assert.deepEqual(Array.from(threaded([topic, instruction, audit, answer, other, next]), m => m.id), ["topic", "audit", "instruction", "answer", "other-room", "next"]);
 });
 
 test("live private briefings wait for their own completed answers across polls", async () => {

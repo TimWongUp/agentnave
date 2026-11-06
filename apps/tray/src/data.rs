@@ -271,7 +271,7 @@ impl Reader {
                     saved.map(|saved| {
                         database.as_ref().ok().and_then(Option::as_ref).map_or_else(
                             || saved.clone(),
-                            |connection| orphaned::view(self, connection, &id, &saved),
+                            |connection| orphaned::view(self, connection, &id, rev, &saved),
                         )
                     }),
                     None,

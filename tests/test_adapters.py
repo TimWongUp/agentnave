@@ -428,11 +428,19 @@ def test_provider_environment_keeps_manager_chat_identity_private(
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "private-manager-chat")
     monkeypatch.setenv("AGENTNAVE_HOST_APP", "codex@private-account")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "boss-claude-chat")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "boss-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "user-key")
     provider_keys = set(provider_environment(("claude",)))
     assert (
-        not {"AGENTNAVE_HOST_SESSION_ID", "AGENTNAVE_HOST_APP", "CLAUDE_CODE_SESSION_ID"}
+        not {
+            "AGENTNAVE_HOST_SESSION_ID",
+            "AGENTNAVE_HOST_APP",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        }
         & provider_keys
     )
+    assert "ANTHROPIC_API_KEY" in provider_keys
     assert os.environ["AGENTNAVE_HOST_SESSION_ID"] == "private-manager-chat"
 
 

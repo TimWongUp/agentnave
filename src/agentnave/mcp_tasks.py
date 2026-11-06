@@ -59,6 +59,7 @@ from agentnave.models import (
     InvocationResult,
     ProviderOption,
 )
+from agentnave.native_prompts import NativePrompt
 from agentnave.task_start import (
     StartArguments,
     add_write_warning,
@@ -153,7 +154,7 @@ async def start_agent(
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
     """Start a private CLI task; invocation_id goes to wait, not session_id.
-    No deadline or messages to active tasks; cancel to stop. Reply settings are requested,
+    No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
     not effective; unreceived flags undelivered ends/blockers/reviews for wait.
     """
     manager = _manager(ctx)
@@ -257,13 +258,18 @@ async def _ready_handles(
     invocation_ids: list[str],
     round_ids: list[str],
     timeout_seconds: float,
-) -> tuple[dict[str, InvocationResult | InvocationError], dict[str, tuple[Round, str | None]]]:
+) -> tuple[
+    dict[str, InvocationResult | InvocationError | NativePrompt],
+    dict[str, tuple[Round, str | None]],
+]:
     """Wait until any handle is ready, then collect every handle ready at that moment."""
 
     def ready(found: tuple[Round, str | None]) -> bool:
         return found[0].finished or found[1] is not None
 
-    invocations: asyncio.Task[dict[str, InvocationResult | InvocationError]] | None = None
+    invocations: (
+        asyncio.Task[dict[str, InvocationResult | InvocationError | NativePrompt]] | None
+    ) = None
     if invocation_ids:
         invocations = asyncio.create_task(manager.wait_for_any(invocation_ids, timeout_seconds))
     rounds = {
@@ -279,7 +285,7 @@ async def _ready_handles(
             task.cancel()
         await asyncio.gather(*waiters, return_exceptions=True)
     # A finished waiter already consumed what it reports; poll only the ones cut short.
-    ready_invocations: dict[str, InvocationResult | InvocationError] = {}
+    ready_invocations: dict[str, InvocationResult | InvocationError | NativePrompt] = {}
     if invocations is not None:
         ready_invocations = (
             await manager.wait_for_any(invocation_ids, 0)
@@ -299,13 +305,15 @@ async def wait(
         list[str] | None,
         Field(
             description=(
-                "Distinct invocation_ids/round_ids; omit for this server inbox of unreceived tasks and rounds."
+                "Distinct invocation_ids/round_ids; omit for this boss chat's inbox (requires explicit or host-injected chat identity)."
             ),
         ),
     ] = None,
     include_output: Annotated[
         bool,
-        Field(description="false omits reply bodies and tails, including answers under review."),
+        Field(
+            description="false omits bodies and tails but still receives ready results, including answers under review."
+        ),
     ] = True,
     wait_seconds: Annotated[
         Literal[0, 240] | None,
@@ -319,28 +327,30 @@ async def wait(
         str | None,
         Field(
             description=(
-                "Inbox chat filter when ids is omitted; ignored with ids; identity rules in MCP instructions."
+                "Boss chat identity for the inbox; required unless host-injected. Ignored with ids; see MCP identity instructions."
             ),
         ),
     ] = None,
     *,
     ctx: Context[Runtime],
 ) -> WaitPayload:
-    """Return when any handle is ready; reason=ready contains all ready now in updates (tasks)
-    and rounds, not necessarily all finished.
+    """Receive all handles ready now in updates (tasks) and rounds; return when any is ready.
 
-    Ready: terminal; execution_blocked (still running; once/category); review_needed
-    (pending_review needs decide_answers); seat_lost (failed/blocked seat while peers run;
-    once/seat, answers withheld; retry via run_round.retry_seats).
-    pending_ids lists unreceived ends for the given ids or inbox; all_finished means none
-    remain. Handle blockers/reviews, then wait on pending_ids until all_finished; drop
-    delivered handles. Ends are never pushed: wait after dispatch or independent work;
-    collect every terminal result before ending your turn.
-    wait_elapsed gives status/activity; wait again normally. Only wait_seconds=0 adds running
-    tails (up to 1000 characters) and age, subject to include_output. Round answers arrive
-    once; output_returned means reread with read_conversation. Unknown/expired/duplicate ids
-    reject the whole call. Inbox ends arrive once; reviews stay ready until decided;
-    nothing_pending means an empty inbox.
+    Inbox: omit ids, pass this chat's manager_session_id, repeat the same call.
+    Selected ids: continue with pending_ids; retaining finished ids rereads their results.
+    all_finished means no unreceived ends remain in that scope, not that all succeeded.
+
+    ready: handle each item's reason first. prompt_pending requires answer_prompt, once per
+    prompt, still running. execution_blocked is still running, once per category.
+    review_needed requires decide_answers before waiting again. seat_lost reports a failed/blocked
+    seat while peers run, once per seat, answers withheld; retry via run_round.retry_seats.
+    wait_elapsed: status/activity only; wait again. nothing_pending: the inbox is empty.
+
+    wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
+    running tails (up to 1000 characters) and age, subject to include_output.
+    Inbox ends and round answers arrive once; output_returned means use read_conversation.
+    Unknown/expired/duplicate ids reject the whole call. Ends are never pushed: wait after
+    dispatch or independent work; receive every terminal result before ending your turn.
     """
     manager = _manager(ctx)
     conversations = _conversations(ctx)
@@ -422,7 +432,7 @@ async def wait(
 class _WaitResults:
     invocation_ids: list[str]
     round_ids: list[str]
-    invocations: dict[str, InvocationResult | InvocationError]
+    invocations: dict[str, InvocationResult | InvocationError | NativePrompt]
     rounds: dict[str, tuple[Round, str | None]]
 
 

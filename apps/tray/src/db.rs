@@ -9,7 +9,7 @@ use rusqlite::{Connection, OpenFlags};
 const NAME: &str = "agentnave.db";
 /// The schema version this tray understands; servers record theirs in `user_version`.
 const SCHEMA_VERSION: i64 = 2;
-const BUSY: Duration = Duration::from_secs(5);
+pub(crate) const BUSY: Duration = Duration::from_secs(5);
 
 pub fn path(root: &Path) -> PathBuf {
     root.join(NAME)

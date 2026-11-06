@@ -10,7 +10,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
 
-from agentnave import mcp_server
+from agentnave import mcp_server, members
 from agentnave.adapters import base
 
 
@@ -21,8 +21,14 @@ def no_common_provider_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def claude_over_print(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fake Claude CLIs here speak --print; a test of the interactive default restores it.
+    monkeypatch.setattr(members, "read_claude_interactive", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def manager_chat(monkeypatch: pytest.MonkeyPatch) -> None:
-    # start_agent and run_round need a boss chat identity; tests run as one injected chat.
+    # Dispatch and inbox receiving need a boss chat identity; tests run as one injected chat.
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
     # Running the suite inside Claude Code must not hand tests that chat's native identity.
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)

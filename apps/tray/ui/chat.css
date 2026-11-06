@@ -551,6 +551,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .note time { margin-left: auto; font-size: 11px; color: var(--faint); }
 .note-detail { flex-basis: 100%; color: var(--faint); overflow-wrap: anywhere; }
 .note-detail:empty { display: none; }
+.note[data-kind="approval"] .note-detail { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .ro { flex: none; display: flex; align-items: center; justify-content: center; box-sizing: border-box; height: var(--foot-h); padding: 0 14px; text-align: center; font-size: 11px; color: var(--faint); border-top: 1px solid var(--line); background: var(--solid); }
 .jump { position: absolute; right: 18px; bottom: 46px; z-index: 4; padding: 7px 14px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 650; box-shadow: 0 6px 18px #0005; cursor: pointer; }

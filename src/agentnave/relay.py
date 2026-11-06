@@ -115,8 +115,14 @@ class _Child:
         self.retiring = retiring
         # Listen streams handed over in a swap: the host must not see their extra ack or end.
         self.muted: set[str] = set()
+        # Its own session: suspending the host stops the host's process group, this relay with
+        # it, and work already started must go on; the server ends when its stdin closes.
         self.process = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            env=env,
+            start_new_session=True,
         )
         self.outbox: queue.Queue[bytes | None] = queue.Queue()
         threading.Thread(target=self._write, daemon=True).start()

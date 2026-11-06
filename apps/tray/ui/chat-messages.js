@@ -167,9 +167,55 @@ function metaOf(m, ctx) {
     return L("boss 公开后，会议室里的其他人才看得到", "Visible to others in the room once boss publishes it");
   return "";
 }
+// Native prompt fields are subagent data: format their words without interpreting markup.
+function approvalText(m) {
+  const p = m.approval || {}, a = p.answer || {};
+  const question = p.kind === "question";
+  const tool = p.tool_name || L("工具", "tool");
+  if (p.tool_name === "ExitPlanMode") return planText(p, a);
+  let text;
+  if (a.actor === "service_cancel")
+    text = question ? L("取消时自动拒绝了提问", "Automatically denied the question on cancellation")
+      : L(`取消时自动拒绝了 ${tool}`, `Automatically denied ${tool} on cancellation`);
+  else if (a.actor === "boss") {
+    if (question) {
+      const answers = Object.entries(a.answers || {}).map(([q, answer]) => `${q} → ${answer}`).join(L("；", "; "));
+      text = L("boss 回答了提问", "boss answered the question") + (answers ? L(`：${answers}`, `: ${answers}`) : "");
+    } else if (a.decision === "allow") text = L(`boss 允许了 ${tool}`, `boss allowed ${tool}`);
+    else text = L(`boss 拒绝了 ${tool}`, `boss denied ${tool}`) + (a.message ? L(`：${a.message}`, `: ${a.message}`) : "");
+  } else if (p.status === "closed")
+    text = question ? L("提问已结束，未回答", "Question closed without an answer")
+      : L(`${tool} 的请求已结束，未回答`, `${tool} request closed without an answer`);
+  else text = question ? L("等 boss 回答提问", "Waiting for boss to answer the question")
+    : L(`等 boss 决定：${tool}`, `Waiting for boss to decide: ${tool}`);
+  if (p.status === "closed" && a.actor) text += L("（答复未送达）", " (answer not delivered)");
+  return text;
+}
+// Approving a plan is what the user sees in Claude Code, not a tool name.
+function planText(p, a) {
+  let text;
+  if (a.actor === "service_cancel") text = L("取消时自动退回了计划", "Automatically sent the plan back on cancellation");
+  else if (a.actor === "boss")
+    text = a.decision === "allow" ? L("boss 批准了计划", "boss approved the plan")
+      : L("boss 退回了计划", "boss sent the plan back") + (a.message ? L(`：${a.message}`, `: ${a.message}`) : "");
+  else if (p.status === "closed") text = L("计划确认已结束，未回答", "Plan approval closed without an answer");
+  else text = L("等 boss 批准计划", "Waiting for boss to approve the plan");
+  if (p.status === "closed" && a.actor) text += L("（答复未送达）", " (answer not delivered)");
+  return text;
+}
+function approvalInput(m) {
+  let input = m.approval?.tool_input || "";
+  try {
+    const data = JSON.parse(input);
+    input = data?.file_path || data?.path || data?.command || data?.plan || input;
+  } catch { /* A non-JSON input is still plain text. */ }
+  const chars = Array.from(String(input).replace(/\s+/gu, " ").trim());
+  return chars.length > 80 ? chars.slice(0, 79).join("") + "…" : chars.join("");
+}
 // One-line ticker / screen-reader sentence for a message.
 function eventText(m, ctx) {
   const who = speakerName(m, ctx);
+  if (m.kind === "approval") return { who, text: who + L("：", ": ") + approvalText(m) };
   const room = m.thread?.kind === "room" ? ctx.rooms.get(m.thread.id) : null;
   const to = targets(m, ctx)
     .map((t) =>
@@ -209,7 +255,7 @@ function createMessage(m) {
   rec.role = h("span.m-role");
   rec.name = h("b.m-name");
   rec.who = h("span.m-who");
-  if (m.kind === "notice") {
+  if (m.kind === "notice" || m.kind === "approval") {
     rec.text_ = h("span.note-text");
     rec.detail = h("small.note-detail");
     rec.el = h(
@@ -321,11 +367,12 @@ function updateMessage(rec, m, ctx, id) {
   setText(rec.who, speakerSub(m, ctx));
   setText(rec.time, m.kind === "typing" ? "" : clock(m.time));
   setAttr(rec.time, "title", m.kind === "typing" ? null : fullTime(m.time));
-  if (m.kind === "notice") {
-    const [, tone] = pick(AN.MEMBER, m.status);
+  if (m.kind === "notice" || m.kind === "approval") {
+    const approval = m.kind === "approval";
+    const tone = approval ? "idle" : pick(AN.MEMBER, m.status)[1];
     setClass(rec.el, `note tone-${tone}${flashing}`);
-    setText(rec.text_, m.text);
-    setText(rec.detail, m.detail || "");
+    setText(rec.text_, approval ? approvalText(m) : m.text);
+    setText(rec.detail, approval ? approvalInput(m) : m.detail || "");
     return;
   }
   AN.voice?.decorate(rec, m, ctx);

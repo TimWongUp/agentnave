@@ -12,20 +12,24 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree 或 TUI；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree 或面向人的 TUI；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
 
 ## 进程与模块
 
 - `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+- 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
-- 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。运行记录失去活跃运行证据时，可在服务使用的同一会话锁下确认无人持有，重读视图并仅在展示中标记中断，不回写历史；不能确认时保留服务状态（[ADR-0058](../adr/0058-tray-detects-orphaned-running-work.md)）。
+- Claude 在 macOS／Linux 默认以交互模式运行：Provider 进程是服务自带的 helper，它在同一 supervisor 进程组里用伪终端驱动 `claude`，把 transcript 与 hooks 归一成事件；Windows 与受限工具路径用 `-p`。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)）。
+- 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。运行记录失去活跃运行证据时，可在服务使用的同一会话锁下确认无人持有，重读视图并仅在展示中标记中断，不回写历史；不能确认时保留服务状态（[ADR-0060](../adr/0060-tray-detects-orphaned-running-work.md)）。
 
 ## MCP 合同
 
-- 9 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
+- 10 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)、[ADR-0057](../adr/0057-boss-answers-native-prompts.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
 - 可由 Manager 修正的请求错误走 Tool error 并给出重试指引；Provider 执行终态走结构化 Invocation Result，业务失败也尽量保全输出与原生 `session_id`。
 - 每次派发的 prompt 都附加单向编排指令：完成任务后回报 Manager，不再调用 AgentNave，需要决定时写进最终回答；声明 `read` 时再加只读说明（[ADR-0043](../adr/0043-service-prompt-instructions.md)）。服务不检测嵌套、不据此禁用工具；这依赖模型遵守，不是安全边界（[ADR-0031](../adr/0031-prompt-only-orchestration.md)）。
 - Invocation 只在进程内存中，终态保留七天；`wait` 返回就绪子集（[ADR-0007](../adr/0007-wait-any-ready-subset.md)）。没有总运行时限，停止靠显式 `cancel`；服务只在两种故障下主动终止进程树：保留的 stdout、stderr 超限（不静默截断为成功），或 Provider 持续重试满五分钟仍无输出（[ADR-0049](../adr/0049-service-initiated-termination.md)）。
+- 声明支持原生弹框的 Adapter 可保持运行中 stdin 通道，只传回 CLI 自己发起的弹框答复；核心不识别 Provider 协议，决策归当前拥有工作区的 boss。待答弹框唤醒任务、会议与收件箱等待，等待期间不计持续重试，取消先拒绝再终止（[ADR-0057](../adr/0057-boss-answers-native-prompts.md)）。
+- 服务把弹框与答复审计写入任务或席位已有的 JSON 记录，属于服务与托盘共用的历史合同，不引入新表结构；工具输入在交给 boss 和保存前打码。
 - 同一 Provider 的同一原生 session 不得同时续接：数据根下的原生会话锁让共用数据根的各服务互斥。
 - 同时运行的 CLI 进程数（私聊加席位）受 App 设置的上限约束，只在接纳时检查（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)）。
 - 转发只注入本工作区已完成的消息，并声明为数据；历史只保存 boss 原文。
@@ -35,17 +39,20 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - Adapter 只加协议必需参数。其余参数只能来自调用方显式值、用户在 App 中设定的默认值、`role`／`seat` 指明的评审、Explorer／Worker 工位，或续接原生会话时本 boss 的最近一次任务；服务在回执 `defaults_applied` 注明继承与推断来源（[ADR-0038](../adr/0038-role-applies-app-seat.md)）。仍无档位时，服务按 App 探测到的 CLI 自身默认档位兜底（[ADR-0042](../adr/0042-pass-cli-default-effort.md)）。唯一例外是 DeepSeek 官方路由恢复已存认证（[ADR-0027](../adr/0027-deepseek-official-route-stored-credentials.md)）。
 - 显式值优先；超出 App 允许范围时拒绝，不替换为别的模型或档位。默认值在服务入口统一套用，不下沉到 Adapter（[ADR-0013](../adr/0013-members-defaults-and-host-identity.md)、[ADR-0021](../adr/0021-keep-default-models-when-unrestricted.md)、[ADR-0028](../adr/0028-follow-cli-default-model.md)）。
 - 私聊可由工位确定 CLI；需要它确定 CLI 时必须读到可用工位，宿主原生工位由宿主自带子代理执行。新任务的执行目录由调用方明确提供，续接只继承本 boss 的任务元数据并保持原生会话的 Provider 身份。工位决定访问等级，与之矛盾的声明被拒绝；访问等级仍是声明，不改变原生权限。
-- 权限类参数只来自按 CLI 的权限档位（缺省「自动」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加；档位与 App 默认值在续接时同样套用并在回执注明。调用方给出该 CLI 任一权限键时整档不套用；受限工具运行不套用档位；只按 `cli-defaults.json` 回退时不继承权限等执行控制（[ADR-0028](../adr/0028-follow-cli-default-model.md)、[ADR-0032](../adr/0032-cli-permission-tiers.md)）。
+- 权限类参数只来自按 CLI 的权限档位（缺省「自动」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加；档位与 App 默认值在续接时同样套用并在回执注明。调用方给出该 CLI 任一权限键时整档不套用；受限工具运行不套用档位；只按 `cli-defaults.json` 回退时不继承权限等执行控制（[ADR-0028](../adr/0028-follow-cli-default-model.md)、[ADR-0032](../adr/0032-cli-permission-tiers.md)）。Claude 两档所选的模式不可用时，改用另一档的模式重跑一次，两种都不可用时任务受阻（[ADR-0059](../adr/0059-claude-tier-fallback.md)）。
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
+- Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN`，Claude 子代理一律用 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据（[ADR-0058](../adr/0058-claude-stored-login.md)）。
 
 ## Provider Adapter
 
-- 每个 Adapter 负责一个 CLI 的命令准备、选项校验、原生事件解析与终态归一化。Provider 专属知识留在 Adapter 内：流事件里的模型、运行后从 CLI 自身文件回读模型、隔离席位目录的准备，都通过 `ProviderAdapter` 的钩子提供；是否支持受限工具运行、受限时额外允许的选项和选项说明也由各 Adapter 声明。核心与历史层不按 Provider 名分支。
+- 每个 Adapter 负责一个 CLI 的命令准备、选项校验、原生事件解析与终态归一化。Provider 专属知识留在 Adapter 内：流事件里的模型、运行后从 CLI 自身文件回读模型、隔离席位目录的准备，都通过 `ProviderAdapter` 的钩子提供；是否支持受限工具运行、受限时额外允许的选项和选项说明也由各 Adapter 声明。Adapter 可在准备的命令中声明需排除的继承环境变量，进程层在启动子进程时应用，不改服务自身环境。核心与历史层不按 Provider 名分支。
 - 可执行文件在每次准备命令时解析，加装或卸载 CLI 下次调用即生效；Adapter 不负责安装、升级或版本比较。
 - 任务原文只存于会话历史，不写服务日志；stderr 只在失败结果中以有界详情返回。
 
 ## 进程所有权与安全边界
 
+- 启动组员前，服务从子进程环境移除父宿主内部 HTTP 服务的监听地址，避免组员复用父进程已占用的端口；不改服务自身环境或组员的原生配置目录。
+- WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
 - macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。
@@ -68,7 +75,7 @@ App 设置文件按写入方和损坏时的影响范围分开：
 | `members.json` | App；不装 App 时由用户手写 | 每次派发现读；损坏时返回 App 修复错误 |
 | `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告，需要工位确定 CLI 时拒绝调用 |
 | `permissions.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
-| `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数 |
+| `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude 时读取交互模式开关，缺省打开 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |
 
 App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样例由两侧测试共同断言接受或拒绝，保证 App 能保存的服务就能读取。
@@ -76,7 +83,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 ## 身份与工作区
 
 - 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，否则 macOS／Linux 沿祖先进程只读匹配，Windows 只读环境变量。宿主身份决定单任务排除的同类 Provider，不约束会议席位。
-- `start_agent`、`run_round` 要求 boss 聊天身份 `manager_session_id`；磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0017](../adr/0017-manager-chat-session-identity.md)、[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
+- 派发与按聊天收件均要求可确定的 boss 聊天身份；收件箱不在身份未知时回退为全服务收件（[ADR-0007](../adr/0007-wait-any-ready-subset.md)、[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - 工作区可交给另一个 boss 聊天接手；交接不转移运行中的调用，老 boss 之后的写入被拒绝；没有会话的聊天交出时，`workspaces` 行自带名字和目录，由它承载只有 boss 的工作区（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - boss 与组员的模型优先取原生会话记录中的回报值，其次取调用声明；不从 CLI 全局默认值推测。
 

@@ -1,4 +1,4 @@
-//! Read-only recovery of work whose conversation no longer has a writer (ADR-0058).
+//! Read-only recovery of work whose conversation no longer has a writer (ADR-0060).
 use super::*;
 
 const ERROR: &str = "owner_exited; previous invocation cannot resume";
@@ -70,18 +70,35 @@ pub(super) fn view(
     reader: &Reader,
     connection: &rusqlite::Connection,
     id: &str,
+    rev: i64,
     saved: &Arc<Value>,
 ) -> Arc<Value> {
     if !unfinished(saved) {
         return saved.clone();
     }
+    let Some(lock) = probe(&reader.root, id) else {
+        return saved.clone();
+    };
+    // Already projected at this revision: give the lock straight back, a writer may be asking.
+    let projected = reader
+        .orphaned
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(id)
+        .filter(|(cached, _)| *cached == rev)
+        .map(|(_, value)| value.clone());
+    if let Some(value) = projected {
+        drop(lock);
+        return if reader.live().contains_key(id) {
+            saved.clone()
+        } else {
+            value
+        };
+    }
     // A busy database is insufficient evidence; never wait with the conversation locked.
     if connection.busy_timeout(Duration::ZERO).is_err() {
         return saved.clone();
     }
-    let Some(lock) = probe(&reader.root, id) else {
-        return saved.clone();
-    };
     // One row under the writer's lock; parsing and projection must not delay its next acquire.
     let latest = connection.query_row(
         "SELECT rev, body FROM views WHERE conversation_id = ?1",
@@ -89,6 +106,10 @@ pub(super) fn view(
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     );
     drop(lock);
+    // The scan goes on with this connection, and its other reads may wait.
+    if connection.busy_timeout(crate::db::BUSY).is_err() {
+        return saved.clone();
+    }
     let Ok((rev, body)) = latest else {
         return saved.clone();
     };
@@ -142,6 +163,8 @@ fn recover(view: &mut Value) {
         .filter(|entry| entry["round"] == director["round"]["number"] && entry["kind"] == "answer")
         .filter_map(|entry| entry["speaker"].as_str().map(str::to_owned))
         .collect();
+    let mut kept = Vec::new();
+    let number = director["round"]["number"].clone();
     if let Some(round) = director["round"].as_object_mut() {
         let stopped = matches!(
             round.get("status").and_then(Value::as_str),
@@ -160,6 +183,16 @@ fn recover(view: &mut Value) {
                     && (seat["review"].is_null() || (stopped && seat["review"] == "pending"))
                 {
                     seat["review"] = json!(if stopped { "private" } else { "pending" });
+                    if stopped && !seat["output"].is_null() {
+                        kept.push(json!({
+                            "round": number,
+                            "seat_id": seat["seat_id"],
+                            "text": seat["output"],
+                            "reported_model": seat["reported_model"],
+                            "time": seat["finished"],
+                            "message_id": null,
+                        }));
+                    }
                 }
             }
         }
@@ -169,6 +202,9 @@ fn recover(view: &mut Value) {
         {
             round.insert("status".into(), json!("interrupted"));
         }
+    }
+    if let Some(messages) = director["private_messages"].as_array_mut() {
+        messages.append(&mut kept);
     }
     let pending = director["round"]["seats"]
         .as_array()

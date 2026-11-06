@@ -243,6 +243,38 @@ fn orphaned_meeting_preserves_completed_failed_and_review_answers() {
         "interrupted"
     );
     assert_eq!(snapshots[0].view["director"]["status"], "interrupted");
+
+    // A stopped round keeps its undecided answers private, and they stay on show as private.
+    show["director"]["review"] = json!(true);
+    show["director"]["private_messages"] = json!([]);
+    show["director"]["round"] = json!({"number": 1, "status": "cancelled", "seats": [
+        {"seat_id": "a", "status": "succeeded", "output": "kept answer", "finished": at},
+        {"seat_id": "c", "status": "running", "output": null}]});
+    save(root, &show);
+    let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert!(
+        chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "kept answer")
+    );
+}
+
+#[test]
+fn orphaned_probe_leaves_the_connection_waiting_for_the_rest_of_the_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let saved = Arc::new(task_snapshot("task", "running", &now()));
+    save(root, &saved);
+    drop(lock(root, "task"));
+    let reader = Reader::new(root.to_path_buf());
+    let connection = crate::db::read(root).unwrap().unwrap();
+    orphaned::view(&reader, &connection, "task", 1, &saved);
+    let wait: i64 = connection
+        .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(wait, 5000);
 }
 
 #[test]

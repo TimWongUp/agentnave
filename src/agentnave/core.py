@@ -31,6 +31,7 @@ from agentnave.models import (
     InvocationStatus,
     ProviderActivity,
 )
+from agentnave.native_prompts import NativePrompt, PromptChannel
 from agentnave.processes import (
     ProviderCompletion,
     SupervisedProcess,
@@ -97,6 +98,7 @@ class _InvocationRecord:
     # Whether a caller has received the final result; lets the relay restart only when no
     # unread result would be lost.
     result_read: bool = False
+    prompts: PromptChannel = field(default_factory=PromptChannel)
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -104,6 +106,11 @@ class _InvocationRecord:
             return
         self.last_event_at = time.monotonic()
         self.reported_model = adapter.event_model(event) or self.reported_model
+        if self.prompts.encode is not None:
+            prompt = adapter.prompt_event(event)
+            if prompt is not None and self.prompts.receive(prompt):
+                self.retry_since = self.retry_at = None
+                self.attention_event.set()
         activity = adapter.activity(event)
         if activity is not None:
             code = activity.blocking_error
@@ -151,11 +158,15 @@ class _InvocationRecord:
                 self.retry_since = None
                 self.retry_at = None
 
-    def take_update(self) -> InvocationResult | InvocationError | None:
+    def take_update(self) -> InvocationResult | InvocationError | NativePrompt | None:
         """Return the final result, else consume the oldest unread blocker."""
         if self.task is not None and self.task.done():
             return self.task.result()
+        prompt = self.prompts.take()
+        if prompt is not None:
+            return prompt
         if not self.pending_attention:
+            self.attention_event.clear()
             return None
         attention = self.pending_attention.popleft()
         if not self.pending_attention:
@@ -184,6 +195,9 @@ async def _stall_guard(record: _InvocationRecord, interval: float = 15.0) -> Non
     """Complete once the provider has been retrying without output for too long."""
     while True:
         await asyncio.sleep(interval)
+        if record.prompts.pending():
+            record.retry_since = record.retry_at = None
+            continue
         since, last = record.retry_since, record.retry_at
         if since is None or last is None:
             continue
@@ -285,7 +299,9 @@ def _start_run_io(
             diagnostics=stderr_diagnostics,
         )
     )
-    stdin_task = asyncio.create_task(_write_stdin(process.stdin, prepared.stdin))
+    stdin_task = asyncio.create_task(
+        _write_stdin(process.stdin, prepared.stdin, keep_open=prepared.keep_stdin_open)
+    )
     completion_task = supervised.completion
     cancel_task = asyncio.create_task(record.cancel_event.wait())
     exceeded_task = asyncio.create_task(output_exceeded.wait())
@@ -384,6 +400,7 @@ class InvocationManager:
         self._records: dict[str, _InvocationRecord] = {}
         self._closed = False
         self.on_forget: Callable[[str], None] | None = None
+        self.on_prompt_change: Callable[[str], None] | None = None
         # Lock directory shared by every server on one data root; None claims in-process only.
         self.session_locks: Path | None = None
 
@@ -412,6 +429,9 @@ class InvocationManager:
             prepared = prepared if prepared is not None else self.prepare(request)
             invocation_id = str(uuid.uuid4())
             record = _InvocationRecord(request)
+            if prepared.keep_stdin_open:
+                record.prompts.encode = adapter.encode_prompt_answer
+                record.prompts.changed = lambda: self._prompts_changed(invocation_id)
             self._records[invocation_id] = record
             record.task = asyncio.create_task(self._execute(record, adapter, prepared))
         except BaseException:
@@ -482,13 +502,13 @@ class InvocationManager:
 
     async def wait_for_update(
         self, invocation_id: str, timeout_seconds: float
-    ) -> InvocationResult | InvocationError | None:
+    ) -> InvocationResult | InvocationError | NativePrompt | None:
         updates = await self.wait_for_any((invocation_id,), timeout_seconds)
         return updates.get(invocation_id)
 
     async def wait_for_any(
         self, invocation_ids: Sequence[str], timeout_seconds: float
-    ) -> dict[str, InvocationResult | InvocationError]:
+    ) -> dict[str, InvocationResult | InvocationError | NativePrompt]:
         """Return every listed invocation that has finished or has an unread blocker.
 
         Each scan runs without awaiting, so only blockers placed in the result are consumed.
@@ -507,7 +527,7 @@ class InvocationManager:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
         while True:
-            updates: dict[str, InvocationResult | InvocationError] = {}
+            updates: dict[str, InvocationResult | InvocationError | NativePrompt] = {}
             for invocation_id, record in records.items():
                 update = record.take_update()
                 if update is not None:
@@ -609,9 +629,44 @@ class InvocationManager:
         record = self._records.get(invocation_id)
         return record.reported_model if record is not None else None
 
+    def _prompts_changed(self, invocation_id: str) -> None:
+        if self.on_prompt_change is not None:
+            self.on_prompt_change(invocation_id)
+
+    def pending_prompts(self, invocation_id: str) -> list[NativePrompt]:
+        return self._record(invocation_id).prompts.pending()
+
+    def prompt_history(self, invocation_id: str) -> list[dict[str, object]]:
+        return [
+            {"invocation_id": invocation_id, **prompt.history()}
+            for prompt in self._record(invocation_id).prompts.prompts.values()
+        ]
+
+    async def answer_prompt(
+        self,
+        invocation_id: str,
+        prompt_id: str,
+        decision: str | None = None,
+        reason: str | None = None,
+        answers: dict[str, str] | None = None,
+    ) -> NativePrompt:
+        record = self._record(invocation_id)
+        if record.task is None or record.task.done() or record.phase == InvocationPhase.STOPPING:
+            raise ValueError("invocation has ended or is stopping; its prompts are closed")
+        return await record.prompts.answer(prompt_id, decision, reason, answers)
+
     async def cancel(self, invocation_id: str) -> InvocationResult:
         record = self._record(invocation_id)
         record.phase = InvocationPhase.STOPPING
+        for prompt in record.prompts.pending():
+            try:
+                await record.prompts.answer(
+                    prompt.prompt_id, "deny", "Invocation cancelled", None, cancel=True
+                )
+            except (OSError, ValueError):
+                logging.getLogger(__name__).exception(
+                    "Could not deliver native prompt cancellation"
+                )
         record.cancel_event.set()
         result = await self.wait(invocation_id)
         if result is None:
@@ -682,9 +737,13 @@ class InvocationManager:
         supervised = None
         tasks: list[asyncio.Task[object]] = []
         try:
-            supervised = await spawn_process(prepared.argv, prepared.cwd)
+            supervised = await spawn_process(
+                prepared.argv, prepared.cwd, unset_env=prepared.unset_env
+            )
             process = supervised.process
             record.process = process
+            if prepared.keep_stdin_open:
+                record.prompts.writer = process.stdin
             record.phase = InvocationPhase.RUNNING
             if process.stdout is None or process.stderr is None or process.stdin is None:
                 raise RuntimeError("provider subprocess pipes were not created")
@@ -701,19 +760,7 @@ class InvocationManager:
             record.phase = InvocationPhase.STOPPING
             await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
             stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
-            # The provider may exit before the readers notice the limit while draining.
-            if terminal is None and (
-                stdout.exceeded
-                or stderr.exceeded
-                or io.stdout_diagnostics.exceeded_reason is not None
-                or io.stderr_diagnostics.exceeded_reason is not None
-            ):
-                terminal = InvocationStatus.FAILED
-                error = _OUTPUT_LIMIT_ERROR
-            if error is _OUTPUT_LIMIT_ERROR:
-                error = _output_limit_error(
-                    stdout, stderr, io.stdout_diagnostics, io.stderr_diagnostics
-                )
+            terminal, error = _drained_limit(terminal, error, stdout, stderr, io)
             parse_returncode = provider_returncode
             if parse_returncode is None:
                 parse_returncode = process.returncode if process.returncode is not None else 1
@@ -773,6 +820,27 @@ class InvocationManager:
             finally:
                 record.process = None
                 record.tool_names.clear()
+                record.prompts.close()
+
+
+def _drained_limit(
+    terminal: InvocationStatus | None,
+    error: InvocationError | None,
+    stdout: _CapturedStream,
+    stderr: _CapturedStream,
+    io: _RunIO,
+) -> tuple[InvocationStatus | None, InvocationError | None]:
+    # The provider may exit before the readers notice the limit while draining.
+    if terminal is None and (
+        stdout.exceeded
+        or stderr.exceeded
+        or io.stdout_diagnostics.exceeded_reason is not None
+        or io.stderr_diagnostics.exceeded_reason is not None
+    ):
+        terminal, error = InvocationStatus.FAILED, _OUTPUT_LIMIT_ERROR
+    if error is _OUTPUT_LIMIT_ERROR:
+        error = _output_limit_error(stdout, stderr, io.stdout_diagnostics, io.stderr_diagnostics)
+    return terminal, error
 
 
 async def _read_limited(
@@ -888,7 +956,9 @@ async def _read_filtered(
     return _CapturedStream(bytes(data), exceeded)
 
 
-async def _write_stdin(writer: asyncio.StreamWriter, data: bytes | None) -> None:
+async def _write_stdin(
+    writer: asyncio.StreamWriter, data: bytes | None, *, keep_open: bool = False
+) -> None:
     try:
         if data is not None:
             writer.write(data)
@@ -896,9 +966,10 @@ async def _write_stdin(writer: asyncio.StreamWriter, data: bytes | None) -> None
     except (BrokenPipeError, ConnectionResetError):
         pass
     finally:
-        writer.close()
-        with suppress(BrokenPipeError, ConnectionResetError):
-            await writer.wait_closed()
+        if not keep_open:
+            writer.close()
+            with suppress(BrokenPipeError, ConnectionResetError):
+                await writer.wait_closed()
 
 
 async def _finish_streams(

@@ -117,3 +117,101 @@ test("the same character stays off the wall across model variants and reappears 
   assert.equal(app.rec.portrait.hidden, false);
   assert.equal(app.rec.portrait.children[0].name, "claude");
 });
+
+
+function auditUI(english = false) {
+  const h = (tag, attributes = {}, ...children) => ({
+    tag, attributes, children, dataset: {}, textContent: "",
+    replaceChildren(...items) { this.children = items; },
+    set innerHTML(_) { throw new Error("Audit data must never become HTML"); },
+  });
+  const context = vm.createContext({
+    AN: {}, state: { peers: new Set() }, h,
+    L: (zh, en) => english ? en : zh,
+    ART: { version: () => 1, character: () => "claude", head: () => h("img") },
+    cliName: name => name,
+    clock: time => `clock:${time}`, fullTime: time => `full:${time}`,
+    setText: (element, text) => { element.textContent = text; },
+    setAttr: (element, key, value) => { element.attributes[key] = value; },
+    setClass: (element, value) => { element.className = value; },
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-messages.js`, "utf8"), context);
+  context.renderMarkdown = () => { throw new Error("Audit data must never become Markdown"); };
+  vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
+  const ctx = { c: {}, desks: new Map(), rooms: new Map() };
+  return {
+    context,
+    show(approval, existing) {
+      const m = { id: "audit", kind: "approval", approval, time: "2026-11-05T00:00:00Z", speaker: { role: "member", provider: "claude" } };
+      const rec = existing || context.createMessage(m);
+      context.updateMessage(rec, m, ctx, m.id);
+      return { rec, event: context.eventText(m, ctx) };
+    },
+  };
+}
+
+test("native prompt event rows state every outcome in both languages and update in place", () => {
+  const cases = [
+    [{ kind: "permission", tool_name: "Write", status: "pending" }, "等 boss 决定：Write", "Waiting for boss to decide: Write"],
+    [{ kind: "question", status: "pending" }, "等 boss 回答提问", "Waiting for boss to answer the question"],
+    [{ kind: "permission", tool_name: "Write", status: "answered", answer: { actor: "boss", decision: "allow" } }, "boss 允许了 Write", "boss allowed Write"],
+    [{ kind: "permission", tool_name: "Bash", status: "answered", answer: { actor: "boss", decision: "deny", message: "outside scope" } }, "boss 拒绝了 Bash：outside scope", "boss denied Bash: outside scope"],
+    [{ kind: "question", status: "answered", answer: { actor: "boss", answers: { "Where?": "Here", "Continue?": "Yes" } } }, "boss 回答了提问：Where? → Here；Continue? → Yes", "boss answered the question: Where? → Here; Continue? → Yes"],
+    [{ kind: "permission", tool_name: "Write", status: "answered", answer: { actor: "service_cancel", decision: "deny" } }, "取消时自动拒绝了 Write", "Automatically denied Write on cancellation"],
+    [{ kind: "question", status: "answered", answer: { actor: "service_cancel", decision: "deny" } }, "取消时自动拒绝了提问", "Automatically denied the question on cancellation"],
+    [{ kind: "permission", tool_name: "Write", status: "closed", answer: { actor: "service_cancel", decision: "deny" } }, "取消时自动拒绝了 Write（答复未送达）", "Automatically denied Write on cancellation (answer not delivered)"],
+    [{ kind: "permission", tool_name: "Write", status: "closed" }, "Write 的请求已结束，未回答", "Write request closed without an answer"],
+    [{ kind: "question", status: "closed" }, "提问已结束，未回答", "Question closed without an answer"],
+    [{ kind: "permission", tool_name: "Write", status: "closed", answer: { actor: "boss", decision: "allow" } }, "boss 允许了 Write（答复未送达）", "boss allowed Write (answer not delivered)"],
+    [{ kind: "permission", tool_name: "ExitPlanMode", status: "pending" }, "等 boss 批准计划", "Waiting for boss to approve the plan"],
+    [{ kind: "permission", tool_name: "ExitPlanMode", status: "answered", answer: { actor: "boss", decision: "allow" } }, "boss 批准了计划", "boss approved the plan"],
+    [{ kind: "permission", tool_name: "ExitPlanMode", status: "answered", answer: { actor: "boss", decision: "deny", message: "add tests" } }, "boss 退回了计划：add tests", "boss sent the plan back: add tests"],
+    [{ kind: "permission", tool_name: "ExitPlanMode", status: "closed" }, "计划确认已结束，未回答", "Plan approval closed without an answer"],
+  ];
+  for (const english of [false, true]) {
+    const app = auditUI(english);
+    let rec;
+    for (const [data, zh, en] of cases) {
+      const result = app.show(data, rec);
+      if (rec) assert.equal(result.rec.el, rec.el);
+      rec = result.rec;
+      assert.equal(rec.text_.textContent, english ? en : zh);
+      assert.ok(result.event.text.endsWith(english ? en : zh));
+      assert.equal(rec.time.textContent, "clock:2026-11-05T00:00:00Z");
+      assert.equal(rec.time.attributes.title, "full:2026-11-05T00:00:00Z");
+      assert.equal(rec.el.tag, "div.note");
+      assert.equal(rec.md, undefined);
+    }
+  }
+});
+
+test("native prompt inputs and answers stay literal, with a single line Unicode-safe input excerpt", () => {
+  const app = auditUI();
+  const literal = "<img src=x onerror=alert(1)> **bold** `code`";
+  const data = { kind: "question", status: "answered", answer: { actor: "boss", answers: { [literal]: literal } }, tool_input: JSON.stringify({ command: literal }) };
+  const { rec, event } = app.show(data);
+  assert.equal(rec.detail.textContent, literal);
+  assert.equal(rec.text_.textContent, `boss 回答了提问：${literal} → ${literal}`);
+  assert.ok(event.text.endsWith(rec.text_.textContent));
+  assert.equal(rec.text_.children.length, 0);
+  assert.equal(rec.detail.children.length, 0);
+  const update = input => app.show({ ...data, tool_input: input }, rec).rec.detail.textContent;
+  assert.equal(update(JSON.stringify({ file_path: "/tmp/a", command: "ignored" })), "/tmp/a");
+  assert.equal(update(JSON.stringify({ path: "/tmp/b" })), "/tmp/b");
+  assert.equal(update(JSON.stringify({ plan: "Write a.txt\nthen test", planFilePath: "/p.md" })), "Write a.txt then test");
+  assert.equal(update("not JSON\n  still text"), "not JSON still text");
+  assert.equal(update("😀".repeat(81)), "😀".repeat(79) + "…");
+  assert.equal(update(""), "");
+});
+
+test("native prompt audit events do not count as task answers or meeting replies", () => {
+  const app = auditUI();
+  const task = { id: "task", kind: "prompt", time: "one", speaker: { role: "manager" } };
+  const approval = { id: "audit", kind: "approval", reply_to: "task", time: "two", speaker: { role: "member" } };
+  const room = { ...task, id: "room", conversation: "meeting", round: 1, thread: { kind: "room" } };
+  const roomApproval = { ...approval, conversation: "meeting", round: 1, thread: { kind: "room" } };
+  const topics = app.context.tpTopics([task, approval, room, roomApproval]);
+  assert.equal(topics.length, 2);
+  assert.equal(topics[0].replies.length, 0);
+  assert.equal(topics[1].replies.length, 0);
+});

@@ -12,7 +12,7 @@
 - 浏览器后备与共享看板前端的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
 - 更新是唯一出站请求、完全不监听端口的条款由 [ADR-0044](0044-meeting-voice-cloud-and-key-input.md) 修订：增加云端语音、摘要请求与本机登录回调。
 - live v1 运行快照的兼容读取由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代
-- 孤儿运行记录的展示由 [ADR-0058](0058-tray-detects-orphaned-running-work.md) 修订：托盘可在同一会话锁下确认无人持有，重读视图并只在展示中标记中断，不回写历史。
+- 孤儿运行记录的展示由 [ADR-0060](0060-tray-detects-orphaned-running-work.md) 修订：托盘可在同一会话锁下确认无人持有，重读视图并只在展示中标记中断，不回写历史。
 
 ## 背景
 

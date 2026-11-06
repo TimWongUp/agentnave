@@ -521,6 +521,7 @@ impl Group {
                 message_id: message_id.as_deref(),
             };
             self.observe_task_desk(item, task, &task_id, raw_start, &message);
+            self.task_approvals(item, task, &id, &desk, &time);
             if self.include_messages
                 && let Some(prompt) = task["prompt"].as_str()
             {
@@ -820,7 +821,7 @@ fn finish_message(
                 .get(&(conversation, msg["round"].to_string()))
                 .cloned()
                 .unwrap_or(Value::Null);
-        } else if msg["kind"] != "typing"
+        } else if !matches!(text(msg, "kind"), "typing" | "approval")
             && let Some((prefix, _)) = text(msg, "id").rsplit_once(':')
         {
             msg["reply_to"] = json!(format!("{prefix}:prompt"));
