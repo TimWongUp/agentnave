@@ -89,7 +89,8 @@ impl Hosts {
             self.idle_state(host, pending, changed)
         };
         let copies: Vec<_> = self
-            .reload_copies(host, reason, &receipts, &install, changed_at)
+            // The last recorded change, as idle_state judges an old process by it too.
+            .reload_copies(host, reason, &receipts, &install, changed["at_ms"].as_u64())
             .into_iter()
             .map(processes::Copy::into_json)
             .collect();
@@ -108,9 +109,16 @@ impl Hosts {
             return probe.old_copies(&self.context, host.boss, changed_at.unwrap_or(0));
         }
         let mut copies: BTreeMap<&str, processes::Copy> = BTreeMap::new();
-        if matches!(reason, "stale" | "tools") {
+        if matches!(reason, "stale" | "tools" | "config") {
             for (receipt, pid) in receipts.live.iter().zip(&receipts.live_pids) {
-                if !stale(receipt, install) && !mismatched_tools(receipt) {
+                // A connection that started before the config change still runs the old entry.
+                let old_config = reason == "config"
+                    && changed_at.is_some_and(|at| {
+                        receipt["started_ms"]
+                            .as_u64()
+                            .is_some_and(|start| start <= at)
+                    });
+                if !old_config && !stale(receipt, install) && !mismatched_tools(receipt) {
                     continue;
                 }
                 if let Some(pid) = pid

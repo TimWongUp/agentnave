@@ -207,12 +207,11 @@ pub(crate) fn active_launcher(app_data: &Path) -> Option<PathBuf> {
     Some(bin)
 }
 
-/// Migrate an existing versioned install even when no service upgrade is needed.
+/// Keep the fixed launcher on the active version: a missing script, a failed rollback or an
+/// older app that only rewrote the manifest all leave it behind. Unchanged bytes are not rewritten.
 pub(crate) fn ensure_active_launcher(app_data: &Path) -> Result<(), String> {
     #[cfg(unix)]
-    if !crate::detect::executable(&app_data.join("service/bin/agentnave-mcp"))
-        && let Some((_, bin)) = active_entry(app_data)
-    {
+    if let Some((_, bin)) = active_entry(app_data) {
         launcher::write(&app_data.join("service"), &bin)?;
     }
     #[cfg(not(unix))]

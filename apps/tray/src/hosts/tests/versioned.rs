@@ -73,9 +73,20 @@ fn existing_versioned_launchers_follow_active_manifest_across_host_formats() {
             assert_eq!(fs::read(path).unwrap(), before);
         }
         assert!(
-            fs::read_to_string(expected)
+            fs::read_to_string(&expected)
                 .unwrap()
                 .contains("0.59.0/bin/agentnave-mcp")
+        );
+        // An older app that only rewrites the manifest must not leave the script behind.
+        save(
+            &hosts.context.app.join("service/active.json"),
+            &json!({"version":"0.58.0","bin":new}).to_string(),
+        );
+        hosts.refresh_probed();
+        assert!(
+            fs::read_to_string(&expected)
+                .unwrap()
+                .contains("0.58.0/bin/agentnave-mcp")
         );
     }
 }

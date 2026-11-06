@@ -57,7 +57,8 @@ impl Snapshot {
 
     pub fn classify(&self, host: &str, pid: u32, relay: bool) -> Option<Copy> {
         let mut pid = if relay {
-            self.nodes.get(&pid)?.parent?
+            // An orphaned relay belongs to no host copy; launchd or init is not a terminal session.
+            self.nodes.get(&pid)?.parent.filter(|parent| *parent > 1)?
         } else {
             pid
         };

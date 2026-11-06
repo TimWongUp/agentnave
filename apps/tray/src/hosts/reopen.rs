@@ -33,20 +33,49 @@ pub(super) fn instructions(host: &Host) -> Value {
     }
 }
 
+/// Arguments, the result message, and the variable naming the host's configuration root.
+type CopyAction = (&'static [&'static str], &'static str, &'static str);
+
+/// The copies the host's own CLI can stop or restart.
+/// The snapshot lists the same kinds, so the page never offers one the action refuses.
+fn copy_action(boss: &str, kind: &str) -> Option<CopyAction> {
+    match (boss, kind) {
+        ("claude", "daemon") => Some((
+            &["daemon", "stop", "--any"],
+            "已停止 Claude 后台服务",
+            "CLAUDE_CONFIG_DIR",
+        )),
+        ("codex", "daemon") => Some((
+            &["app-server", "daemon", "restart"],
+            "已重启 Codex 后台服务",
+            "CODEX_HOME",
+        )),
+        ("hermes", "gateway") => {
+            Some((&["gateway", "restart"], "已重启 Hermes 网关", "HERMES_HOME"))
+        }
+        _ => None,
+    }
+}
+
+/// The copy kinds this build can act on for one host; Windows has no copy actions.
+pub(super) fn copy_actions(host: &Host) -> Value {
+    let kinds: Vec<&str> = ["daemon", "gateway"]
+        .into_iter()
+        .filter(|kind| cfg!(unix) && copy_action(host.boss, kind).is_some())
+        .collect();
+    json!(kinds)
+}
+
 #[cfg(unix)]
 impl Hosts {
     pub(super) fn reload_copy(&mut self, host: &Host, payload: &Value) -> Result<Value, String> {
         let kind = payload["kind"].as_str().ok_or("缺少 kind")?;
-        let (args, message): (&[&str], &str) = match (host.boss, kind) {
-            ("claude", "daemon") => (&["daemon", "stop", "--any"], "已停止 Claude 后台服务"),
-            ("codex", "daemon") => (
-                &["app-server", "daemon", "restart"],
-                "已重启 Codex 后台服务",
-            ),
-            ("hermes", "gateway") => (&["gateway", "restart"], "已重启 Hermes 网关"),
-            _ => return Err("此宿主副本不支持一键重开，请按说明操作".into()),
-        };
-        let result = self.run_copy_action(host.binary, args);
+        let (args, message, root_var) =
+            copy_action(host.boss, kind).ok_or("此宿主副本不支持一键重开，请按说明操作")?;
+        // A root the user or shell chose (a split card included) must reach the CLI, or it acts on
+        // the default service; a default root stays unset, as the host itself runs.
+        let root = (host.root.source != "default").then_some((root_var, host.root.path.as_path()));
+        let result = self.run_copy_action(host.binary, args, root);
         let ok = result.is_ok();
         let message = result.err().unwrap_or_else(|| message.into());
         self.processes
@@ -57,15 +86,27 @@ impl Hosts {
         Ok(json!({"ok":ok,"message":message,"host":self.state(host)}))
     }
 
-    fn run_copy_action(&self, binary: &str, args: &[&str]) -> Result<(), String> {
+    fn run_copy_action(
+        &self,
+        binary: &str,
+        args: &[&str],
+        root: Option<(&str, &Path)>,
+    ) -> Result<(), String> {
         use crate::process::OutputError;
         let path = self.context.find(binary).ok_or("未找到此宿主的 CLI")?;
-        let mut command = std::process::Command::new(path);
+        let mut command = std::process::Command::new(&path);
         command
             .args(args)
             .envs(&self.context.env)
             .current_dir(&self.context.home)
             .stdin(std::process::Stdio::null());
+        // An app started by the Finder has a bare PATH; `#!/usr/bin/env node` CLIs need theirs.
+        if let Some(search) = crate::detect::search_path(&path) {
+            command.env("PATH", search);
+        }
+        if let Some((name, root)) = root {
+            command.env(name, root);
+        }
         let output = crate::process::output(command, std::time::Duration::from_secs(30)).map_err(
             |error| match error {
                 OutputError::Timeout => "操作超时，请在宿主中检查后台服务状态".to_owned(),

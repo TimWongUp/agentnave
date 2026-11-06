@@ -250,9 +250,13 @@ def test_relay_retries_a_failed_start_and_keeps_the_session(tmp_path: Path) -> N
     host.thread.join(10)
 
 
-@pytest.mark.parametrize("dispatched", [False, True])
+@pytest.mark.parametrize(
+    ("marker", "dispatched"),
+    [("", False), (str(os.getsid(0)), True), ("1", False)],
+    ids=["boss", "dispatched", "left-session"],
+)
 def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
-    tmp_path: Path, dispatched: bool
+    tmp_path: Path, marker: str, dispatched: bool
 ) -> None:
     data = tmp_path / "data"
     host = Host(
@@ -261,7 +265,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
             **os.environ,
             "AGENTNAVE_HOST": "codex",
             "AGENTNAVE_DATA_DIR": str(data),
-            "AGENTNAVE_DISPATCHED": "1" if dispatched else "",
+            "AGENTNAVE_DISPATCHED": marker,
         },
     )
 

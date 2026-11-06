@@ -47,14 +47,14 @@ fn native_copy_actions_use_resolved_fake_clis_and_preserve_host_files() {
     let (_temp, mut hosts) = fixture();
     let capture = hosts.context.home.join("args");
     for (id, kind, args) in [
-        ("claude", "daemon", "daemon\nstop\n--any\n"),
-        ("codex", "daemon", "app-server\ndaemon\nrestart\n"),
-        ("hermes", "gateway", "gateway\nrestart\n"),
+        ("claude", "daemon", "daemon\nstop\n--any\n\n"),
+        ("codex", "daemon", "app-server\ndaemon\nrestart\n\n"),
+        ("hermes", "gateway", "gateway\nrestart\n\n"),
     ] {
         let h = host(&hosts, id);
         executable_file(
             &hosts.context.search[0].join(h.binary),
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/args\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" \"${CODEX_HOME-}${CLAUDE_CONFIG_DIR-}${HERMES_HOME-}\" > \"$HOME/args\"\n",
         );
         save(&h.config, &seed(&h));
         let before = fs::read(&h.config).unwrap();
@@ -62,10 +62,28 @@ fn native_copy_actions_use_resolved_fake_clis_and_preserve_host_files() {
             .action("reload-copy", &json!({"id":id,"kind":kind}))
             .unwrap();
         assert_eq!(result["ok"], true, "{result}");
+        assert_eq!(result["host"]["copy_actions"], json!([kind]));
         assert_eq!(fs::read_to_string(&capture).unwrap(), args);
         assert_eq!(fs::read(&h.config).unwrap(), before);
         assert!(!hosts.context.app.join("hosts.json").exists());
     }
+    // A root the shell chose reaches the CLI; the default one above stayed unset.
+    executable_file(
+        &hosts.context.search[0].join("codex"),
+        "#!/bin/sh\nprintf '%s' \"$CODEX_HOME\" > \"$HOME/args\"\n",
+    );
+    let shell_root = hosts.context.home.join("codex-root");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CODEX_HOME".into(),
+        shell_root.display().to_string(),
+    )])));
+    hosts
+        .action("reload-copy", &json!({"id":"codex","kind":"daemon"}))
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&capture).unwrap(),
+        shell_root.display().to_string()
+    );
     assert!(
         hosts
             .action("reload-copy", &json!({"id":"codex","kind":"cli"}))

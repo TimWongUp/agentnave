@@ -111,8 +111,17 @@ fn snapshot_walks_parents_and_reports_each_kind_once_at_its_earliest_start() {
         &["Codex"],
     );
     let new = node(9000, "/usr/bin/codex", &["codex"]);
+    let mut orphan = node(6100, "/service/1/bin/agentnave-mcp", &["agentnave-mcp"]);
+    orphan.parent = Some(1);
     let snapshot = Snapshot {
-        nodes: HashMap::from([(1, relay), (2, child), (3, daemon), (4, app), (5, new)]),
+        nodes: HashMap::from([
+            (1, relay),
+            (2, child),
+            (3, daemon),
+            (4, app),
+            (5, new),
+            (6, orphan),
+        ]),
         hosts: HashMap::from([("codex", vec![2, 3, 4, 5])]),
     };
     assert_eq!(snapshot.classify("codex", 1, true).unwrap().since, 1000);
@@ -122,4 +131,8 @@ fn snapshot_walks_parents_and_reports_each_kind_once_at_its_earliest_start() {
         [("app", 3000), ("daemon", 1000)]
     );
     assert!(snapshot.classify("codex", 99, true).is_none());
+    assert!(
+        snapshot.classify("codex", 6, true).is_none(),
+        "adopted by init"
+    );
 }

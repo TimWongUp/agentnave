@@ -135,6 +135,12 @@ function markSeen(ids) {
 // ---------------------------------------------------------------- data
 function setData(data) {
   S.data = data;
+  // A confirmation for a copy that has since gone never renders, and would hold every refresh.
+  const pending = S.copyConfirm;
+  const host = pending && data.hosts.find((x) => x.id === pending.id);
+  if (pending && !(host && ["required", "unverified"].includes(host.reload?.state)
+    && (host.reload.copies || []).some((copy) => copy.kind === pending.kind) && copyAction(host, pending.kind)))
+    S.copyConfirm = null;
   S.newIds = new Set(
     data.hosts
       .filter((x) => x.status === "available" && !S.seen.has(`${x.id}@${x.first_seen || ""}`))
@@ -657,7 +663,7 @@ function buildCard(host) {
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
     main.push(reloadNote(host));
-    const pending = S.copyConfirm?.id === id && !busy && COPY_ACTIONS[`${host.boss}/${S.copyConfirm.kind}`];
+    const pending = S.copyConfirm?.id === id && !busy && copyAction(host, S.copyConfirm.kind);
     if (pending) main.push(copyConfirmBlock(host, S.copyConfirm.kind, pending));
   }
   if (S.confirm === id && !busy) main.push(confirmBlock(host));
@@ -691,19 +697,22 @@ const COPY_KIND = {
   ide: L("编辑器插件", "Editor extension"),
   gateway: L("网关", "Gateway"),
 };
-// The copies the host's own CLI can stop or restart: [button, busy label, confirm title, consequence].
+// Labels for the copies the host's own CLI can stop or restart: [button, busy label, confirm
+// title, consequence]. The snapshot's copy_actions decides which ones the host offers.
 const COPY_ACTIONS = {
   "claude/daemon": [L("停止", "Stop"), L("停止中…", "Stopping…"), L("停止 Claude 后台服务？", "Stop the Claude background service?"), L("将结束 Claude 的全部后台会话。", "All Claude background sessions will end.")],
   "codex/daemon": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Codex 后台服务？", "Restart the Codex background service?"), L("正在运行的后台任务和远程任务会中断。", "Running background and remote tasks will be interrupted.")],
   "hermes/gateway": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Hermes 网关？", "Restart the Hermes gateway?"), L("消息平台上的对话会短暂中断，随后自动重连。", "Conversations on messaging platforms will briefly drop and then reconnect.")],
 };
+const copyAction = (host, kind) =>
+  (host.copy_actions || []).includes(kind) && COPY_ACTIONS[`${host.boss}/${kind}`];
 const bundleName = (path) => String(path || "").split("/").pop().replace(/\.app$/i, "");
 
 // One row per old copy still holding the previous config: what it is, since when, how to reopen it.
 function copyRow(host, copy) {
   const id = host.id;
   const busy = S.busy.get(id);
-  const action = COPY_ACTIONS[`${host.boss}/${copy.kind}`];
+  const action = copyAction(host, copy.kind);
   const act = `copy-${copy.kind}`;
   const name = [COPY_KIND[copy.kind] || copy.kind, copy.bundle && bundleName(copy.bundle)].filter(Boolean).join(" · ");
   const since = copy.since ? relTime(new Date(copy.since).toISOString()) : "";

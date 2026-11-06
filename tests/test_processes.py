@@ -39,7 +39,8 @@ async def test_provider_does_not_inherit_host_listener(
         "SERVER__PORT": None,
         "SERVER__HOST": None,
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
-        "AGENTNAVE_DISPATCHED": "1",
+        # POSIX names the supervisor's own session, which the provider tree shares.
+        "AGENTNAVE_DISPATCHED": "1" if os.name == "nt" else str(supervised.process.pid),
     }
     assert {name: os.environ[name] for name in inherited} == inherited
 
