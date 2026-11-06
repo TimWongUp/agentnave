@@ -77,7 +77,7 @@ function speakerName(m) {
   if (s.role === "system") return s.label || L("系统", "System");
   if (isBoss(m)) return "boss";
   // A message signs with the name it was said under, not what its desk goes by now.
-  return deskName(s);
+  return AN.deskName(s);
 }
 // The role leads the name and the CLI follows it, so several "默认模型" desks stay apart.
 function speakerRole(m) {
@@ -86,7 +86,7 @@ function speakerRole(m) {
 function speakerSub(m) {
   const s = m.speaker || {};
   if (s.role === "system" || isBoss(m)) return "";
-  return cliOf(s);
+  return AN.cliOf(s);
 }
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
@@ -117,21 +117,21 @@ function targets(m, ctx) {
     return [{ kind: "all" }];
   return list;
 }
-// Whom a chip names: as addressed by that message, else the desk as it is now.
-const targetWho = (t) => (t.who?.identity ? t.who : t.d) || {};
+// A historical recipient only carries the identity recorded on that message.
+const targetWho = (t) => t.who || {};
 function chip(t) {
   if (t.kind === "boss") return h("span.at.boss", {}, "@boss");
   if (t.kind === "all")
     return h("span.at.all", { title: L("会议室里的所有人", "Everyone in the meeting room") }, "@all");
   const who = targetWho(t);
-  const role = who.identity?.role || who.role;
+  const role = who.identity?.role;
   return h(
     "span.at.who",
-    { title: fullHandle(who) },
+    { title: AN.fullHandle(who) },
     "@",
     t.d ? ART.head(deskChar(t.d)) : null,
     role ? h("span.at-role", {}, role) : null,
-    deskName(who),
+    AN.deskName(who),
   );
 }
 // Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
@@ -220,7 +220,7 @@ function eventText(m, ctx) {
   const room = m.thread?.kind === "room" ? ctx.rooms.get(m.thread.id) : null;
   const to = targets(m, ctx)
     .map((t) =>
-      t.kind === "desk" ? deskName(targetWho(t)) : t.kind,
+      t.kind === "desk" ? AN.deskName(targetWho(t)) : t.kind,
     )
     .join(L("、", ", "));
   const text =
@@ -385,7 +385,7 @@ function updateMessage(rec, m, ctx, id) {
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);
   setText(rec.lock, lock);
-  const toKey = JSON.stringify([ART.version(), ...to.map((t) => [t.kind, t.d?.key, t.kind === "desk" && [deskName(targetWho(t)), fullHandle(targetWho(t))]])]);
+  const toKey = JSON.stringify([ART.version(), ...to.map((t) => [t.kind, t.d?.key, t.kind === "desk" && [AN.deskName(targetWho(t)), AN.fullHandle(targetWho(t))]])]);
   if (rec.toKey !== toKey) {
     rec.toKey = toKey;
     rec.to.replaceChildren(...to.map(chip));
@@ -395,7 +395,7 @@ function updateMessage(rec, m, ctx, id) {
   setClass(rec.meta, m.answering?.length ? "m-meta m-round" : "m-meta");
   setText(rec.metaText, meta);
   const faces = answeringDesks(m, ctx);
-  setAttr(rec.meta, "title", faces.length ? faces.map(fullHandle).join("\n") : null);
+  setAttr(rec.meta, "title", faces.length ? faces.map(AN.fullHandle).join("\n") : null);
   const facesKey = JSON.stringify([ART.version(), ...faces.map((d) => d.key)]);
   if (rec.facesKey !== facesKey) {
     rec.facesKey = facesKey;

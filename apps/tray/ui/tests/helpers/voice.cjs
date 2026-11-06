@@ -1,5 +1,6 @@
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
+const { common } = require("./common.cjs");
 
 function dom() {
   const nodes = [];
@@ -61,7 +62,7 @@ async function office(listening = true, synthesize = async () => ({}), loadRoom 
     removeAttribute() {}
     load() {}
   }
-  const AN = { h, L: zh => zh, href: path => path, updateFlow: () => navigations.push("check-update"), deskName: d => d.model || d.key, modelName: model => model,
+  const AN = { ...common(), h, L: zh => zh, href: path => path, updateFlow: () => navigations.push("check-update"),
     art: { character: (provider, model) => model || provider || "default", head: name => h("span.head", { name }) },
     reconcile: (root, items) => { root.children = items; },
   };
@@ -130,9 +131,9 @@ async function office(listening = true, synthesize = async () => ({}), loadRoom 
     },
     room(messages, id = "room", desks = null) {
       const members = messages.filter(m => m.speaker?.role === "member" && m.conversation === id && m.kind === "reply");
-      ctx.desks = new Map(desks ? desks.map(d => [d.key, d]) : members.map(m => [m.desk, { key: m.desk, provider: m.speaker.provider, model: m.speaker.model || m.desk }]));
+      ctx.desks = new Map(desks ? desks.map(d => [d.key, d]) : members.map(m => [m.desk, { key: m.desk, provider: m.speaker.provider, model: m.speaker.model || m.desk, identity: m.speaker.identity }]));
       ctx.c.messages = messages;
-      ctx.rooms.set(id, { id, seats: [...ctx.desks.values()].map(d => ({ desk: d.key })) });
+      ctx.rooms.set(id, { id, seats: [...ctx.desks.values()].map(d => ({ desk: d.key, identity: d.identity })) });
       rooms.set(`/app/chats/workspace/focus/${id}`, { group: "workspace", host: "codex", desks: [...ctx.desks.values()], rooms: [...ctx.rooms.values()], messages });
       AN.voice.controls(true, { group: "workspace", id }, ctx);
       return starter(messages.filter(m => m.conversation === id));
@@ -151,14 +152,14 @@ async function panel(managers = [], commandReply = async () => ({ ok: true, json
   let timer = 0, now = 0;
   const data = { managers, counts: { running: 0 }, empty: null };
   const config = { enabled: true, engine: "elevenlabs", keys: { elevenlabs: true } };
-  const AN = { h, $: id => document.getElementById(id), L: zh => zh, href: path => path,
+  const AN = { ...common(), h, $: id => document.getElementById(id), L: zh => zh, href: path => path,
     art: { character: (_provider, model) => model || "default", head: name => h("span.head", { name }) },
     themeSwitch: () => h("span.theme"), load: async path => path === "/app/voice" ? config : path === "/app/voice/player" ? null : path === "/app/stage" ? data : {},
     setText: (el, text) => { el.textContent = text; }, setAttr: (el, key, value) => el.setAttribute(key, value), setClass: (el, value) => { el.className = value; },
     reconcile: (el, children) => { el.children = children; }, stickyOrder: (_old, items) => items.sort((a, b) => a.rank - b.rank).map(item => item.id),
     activities: d => d.activities || [], dozing: d => d.sleep === true, ongoing: value => value, urgent: value => ["running", "review"].includes(value),
     pick: (_table, value) => [value, value === "running" ? "run" : "idle"], colorClass: () => "c0", relTime: () => "刚刚", fullTime: value => value,
-    MEMBER: {}, GROUP: {}, hostTile: () => h("span.host-tile"), cliName: value => value, deskName: d => d.key, chatName: m => m.group,
+    MEMBER: {}, GROUP: {}, hostTile: () => h("span.host-tile"), cliName: value => value, chatName: m => m.group,
     shownName: m => m.group, chatPlace: () => "project", clip: value => value, at: Date.parse, poll: fn => { queueMicrotask(fn); return fn; } };
   const context = vm.createContext({ AN, document, URLSearchParams, location: { search: "" }, Date,
     addEventListener: (name, fn) => { events[name] = fn; },

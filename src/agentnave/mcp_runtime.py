@@ -350,8 +350,6 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
         "reason": "finished",
         "elapsed_ms": result.duration_ms,
     }
-    if result.identity is not None:
-        payload["identity"] = result.identity
     if result.output:
         payload["output"] = result.output
     if result.session_id:

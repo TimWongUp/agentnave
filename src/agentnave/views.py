@@ -45,16 +45,22 @@ def _show(state: Conversation) -> dict[str, object]:
             if kind == "host"
             else []
         )
-        return [
-            {
-                "seat": seat_id,
-                "provider": seats[seat_id].provider,
-                "model": reported or seats[seat_id].provider_options.get("model", ""),
-                "identity": seat_identity(state, seat_id, reported=reported, number=number),
-            }
-            for seat_id, reported in targets
-            if seat_id in seats
-        ]
+        recipients: list[dict[str, object]] = []
+        for seat_id, reported in targets:
+            if seat_id not in seats:
+                continue
+            identity = seat_identity(
+                state, seat_id, reported=reported, number=number, current=kind == "host"
+            )
+            recipients.append(
+                {
+                    "seat": seat_id,
+                    "provider": seats[seat_id].provider,
+                    "model": identity["model"],
+                    "identity": identity,
+                }
+            )
+        return recipients
 
     return {
         "view": "director",
@@ -204,6 +210,7 @@ def _director(state: Conversation, peers: list[MemberName] | None = None) -> dic
             "round": round_.number,
             "seat_id": seat.seat_id,
             "text": seat.instruction,
+            "identity": seat_identity(state, seat.seat_id, number=round_.number, current=True),
             "time": round_times.get(round_.number, state.created),
             **_compact(
                 {
@@ -327,6 +334,9 @@ def _timeline_messages(
                         "kind": "instruction",
                         "to": seat.seat_id,
                         "text": seat.instruction,
+                        "identity": seat_identity(
+                            state, seat.seat_id, number=round_.number, current=True
+                        ),
                     }
                 )
             if seat.review == "pending" or (include_private and seat.review == "private"):

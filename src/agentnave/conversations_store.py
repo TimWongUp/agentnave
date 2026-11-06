@@ -30,10 +30,11 @@ from agentnave.host import (
     detect_host,
     host_session_id,
 )
-from agentnave.member_names import meeting_members, private_members, seat_identity, task_identity
+from agentnave.member_names import meeting_members, seat_identity, task_identity
 from agentnave.models import InvocationResult
-from agentnave.naming import MemberIdentity, MemberName
+from agentnave.naming import MemberIdentity
 from agentnave.native_sessions import boss_key, session_file, session_model
+from agentnave.private_naming import naming_peers, naming_scope, private_states
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -163,14 +164,6 @@ def _project(record: Record) -> bytes:
     return _json(views.snapshot(record.state, naming_peers(record)))
 
 
-def naming_peers(record: Record, state: Conversation | None = None) -> list[MemberName] | None:
-    state = state if state is not None else record.state
-    if state.kind != "task":
-        return None
-    states = record.db.private_conversations(state.manager_session)
-    return private_members([s for s in states if s.id != state.id] + [state])
-
-
 def _json(data: object) -> bytes:
     return json.dumps(data, ensure_ascii=False).encode()
 
@@ -217,6 +210,7 @@ class ConversationStore(Groups):
 
     # Conversations
 
+    @naming_scope()
     def scan(self) -> dict[str, bool]:
         """Load every saved conversation and report which ones this server may write."""
         found = self.db.revisions()
@@ -273,6 +267,7 @@ class ConversationStore(Groups):
         finally:
             self._release_idle(record)
 
+    @naming_scope()
     def _persist(self, record: Record) -> None:
         self._unsaved.add(record.state.id)
         record.save()
@@ -285,14 +280,14 @@ class ConversationStore(Groups):
 
     def _refresh_private_views(self, changed: Record) -> None:
         """Never wait on another conversation while holding ours: probes are nonblocking."""
-        for state in self.db.private_conversations(changed.state.manager_session):
+        for state in list(private_states(changed).states.values()):
             if state.id == changed.state.id:
                 continue
-            peer = self.records.get(state.id)
-            if peer is None:
-                peer = Record.read(self.db, self.locks, state.id)
-            peer.view_rev = None
             try:
+                peer = self.records.get(state.id)
+                if peer is None:
+                    peer = Record.read(self.db, self.locks, state.id)
+                peer.view_rev = None
                 peer.refresh()
             except (OSError, ValueError):
                 logging.getLogger(__name__).warning(
@@ -329,11 +324,21 @@ class ConversationStore(Groups):
     def _member_identity(
         self, group: Group, seat_id: str, reported: str | None = None, number: int | None = None
     ) -> MemberIdentity:
-        peers = meeting_members(self.records[group.id].state, number)
+        state = self.records[group.id].state
+        peers = meeting_members(state, number)
         if group.active is not None and group.active.number == number:
-            results = {
-                r.seat_id: r.result.reported_model if r.result else None for r in group.active.runs
-            }
+            saved = _find(state, group.active.id)
+            saved_reports = {s.seat_id: s.reported_model for s in saved.seats} if saved else {}
+            results: dict[str, str | None] = {}
+            for run in group.active.runs:
+                model = None
+                if run.result is not None:
+                    model = run.result.reported_model
+                elif run.invocation_id is not None:
+                    model = self.manager.reported_model(run.invocation_id) or saved_reports.get(
+                        run.seat_id
+                    )
+                results[run.seat_id] = model
             peers = [
                 replace(p, reported=results[p.key.rsplit(":", 1)[-1]])
                 if p.key.rsplit(":", 1)[-1] in results
@@ -341,7 +346,7 @@ class ConversationStore(Groups):
                 for p in peers
             ]
         member = next(p for p in peers if p.key == f"seat:{group.id}:{seat_id}")
-        return replace(member, reported=reported).identity(peers)
+        return replace(member, reported=reported or member.reported).identity(peers)
 
     def round_identities(self, round_: Round) -> dict[str, MemberIdentity]:
         record = self.records.get(round_.group.id)
@@ -693,6 +698,10 @@ class ConversationStore(Groups):
                 seat.status = run.status
                 if run.result is not None:
                     seat.reported_model = run.result.reported_model or seat.reported_model
+                elif run.invocation_id is not None:
+                    seat.reported_model = (
+                        self.manager.reported_model(run.invocation_id) or seat.reported_model
+                    )
                 elif run.invocation_id is None and run.status in ("pending", "running"):
                     seat.reported_model = None  # a retry has no native model fact yet
                 seat.output = run.result.output if run.result is not None else None
@@ -711,8 +720,8 @@ class ConversationStore(Groups):
                 run.identity = seat_identity(
                     state,
                     run.seat_id,
-                    reported=run.result.reported_model if run.result else None,
                     number=round_.number,
+                    current=True,
                 )
         self._ensure_live_writer(record)
         self._release_idle(record)
@@ -793,13 +802,19 @@ class ConversationStore(Groups):
             t.reported_model for t in record.state.tasks
         ]
         if after != before:
-            self._persist(record)
+            try:
+                self._persist(record)
+            except OSError as exc:
+                # save() rolled the record back. Keep the stream alive and retry the model
+                # readback on the next heartbeat instead of deleting all active tails.
+                print(f"agentnave: could not save live models: {exc}", file=sys.stderr)
         return tails
 
     def _ensure_live_writer(self, record: Record) -> None:
         if self.live_writer is None and self._running(record):
             self.live_writer = asyncio.create_task(self._write_live())
 
+    @naming_scope()
     def _live_tails(self, record: Record) -> dict[str, object]:
         """What running work adds to the saved views: reply tails, reported models, what each
         CLI is doing now and when its reply last grew."""
@@ -815,8 +830,9 @@ class ConversationStore(Groups):
                 if run.status == "running" and run.invocation_id is not None
             }
 
+        peers = naming_peers(record)
         identities = (
-            {task.id: task_identity(state, task, naming_peers(record)) for task in state.tasks}
+            {task.id: task_identity(state, task, peers) for task in state.tasks}
             if state.kind == "task"
             else {
                 seat.seat_id: seat_identity(
@@ -862,19 +878,20 @@ class ConversationStore(Groups):
         try:
             self._prune_live()
             while running := [r for r in self.records.values() if self._running(r)]:
-                body = _json(
-                    {
-                        "version": 2,
-                        "pid": os.getpid(),
-                        "host": self.host.name,
-                        "host_source": self.host.source,
-                        "connection_id": self.connection_id,
-                        "manager_started_at": self.manager_started_at,
-                        "conversations": {
-                            record.state.id: self._live_tails(record) for record in running
-                        },
-                    }
-                )
+                with naming_scope():
+                    body = _json(
+                        {
+                            "version": 2,
+                            "pid": os.getpid(),
+                            "host": self.host.name,
+                            "host_source": self.host.source,
+                            "connection_id": self.connection_id,
+                            "manager_started_at": self.manager_started_at,
+                            "conversations": {
+                                record.state.id: self._live_tails(record) for record in running
+                            },
+                        }
+                    )
                 try:
                     if body == written:
                         os.utime(self.live_path)

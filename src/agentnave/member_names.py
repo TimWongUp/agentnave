@@ -21,9 +21,13 @@ def private_members(states: Iterable[Conversation]) -> list[MemberName]:
     ordered = sorted(threads.items(), key=lambda pair: min((t.time, t.id) for _, t in pair[1]))
     members: list[MemberName] = []
     for ordinal, (key, records) in enumerate(ordered, 1):
-        _, task = max(records, key=lambda pair: (pair[1].time, pair[1].id))
-        members.append(
-            MemberName(key, task.provider, task.model, task.reported_model, task.role, ordinal)
+        # Historical names remain peers after a thread changes model or role. The stable
+        # key excludes all names of this same thread from self-collision checks.
+        members.extend(
+            dict.fromkeys(
+                MemberName(key, task.provider, task.model, task.reported_model, task.role, ordinal)
+                for _, task in records
+            )
         )
     return members
 
@@ -41,7 +45,10 @@ def task_identity(
 
 def meeting_members(state: Conversation, number: int | None = None) -> list[MemberName]:
     reported: dict[str, str | None] = {}
-    rounds = state.rounds if number is None else [r for r in state.rounds if r.number == number]
+    rounds = sorted(
+        (r for r in state.rounds if number is None or r.number <= number),
+        key=lambda r: r.number,
+    )
     for round_ in rounds:
         for run in round_.seats:
             # An unreported new run uses this run's request, never an older native model.
@@ -68,7 +75,8 @@ def seat_identity(
     current: bool = False,
 ) -> MemberIdentity:
     peers = meeting_members(state, number)
-    member = next(p for p in peers if p.key == f"seat:{state.id}:{seat_id}")
+    key = f"seat:{state.id}:{seat_id}"
+    member = next((p for p in peers if p.key == key), MemberName(key, ""))
     if not current:
         member = MemberName(
             member.key, member.provider, member.requested, reported, member.role, member.ordinal

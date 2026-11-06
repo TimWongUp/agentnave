@@ -60,11 +60,9 @@ impl<'a> Show<'a> {
     /// The seats a task round called, when that was not every seat; those not started yet
     /// included, the rest still hear it.
     fn answering(&self, entry: &Value) -> Option<Vec<Value>> {
-        let round = array(self.view, "rounds")
-            .find(|r| r["number"] == entry["round"])
-            .or_else(|| {
-                (self.view["round"]["number"] == entry["round"]).then_some(&self.view["round"])
-            })?;
+        let round = (self.view["round"]["number"] == entry["round"])
+            .then_some(&self.view["round"])
+            .or_else(|| array(self.view, "rounds").find(|r| r["number"] == entry["round"]))?;
         let conversation = &self.item.id;
         let answering: Vec<_> = array(round, "seats")
             .filter_map(|r| {
@@ -321,7 +319,7 @@ impl Group {
             return;
         }
         let conversation = &show.item.id;
-        let identity = identity_of(seat, id, &Value::Null);
+        let identity = entry_identity(seat, id, entry);
         let mut msg = Self::message(
             format!("{conversation}:instruction:{}:{id}", entry["round"]),
             &show.time(entry),

@@ -211,6 +211,8 @@ class Database:
 
     def private_conversations(self, workspace: str | None) -> list[Conversation]:
         """Saved private naming scope, derived from existing task facts."""
+        if workspace is None:
+            return []  # Unknown bosses do not share a workspace.
         connection = self._read()
         if connection is None:
             return []
@@ -223,7 +225,7 @@ class Database:
             raise OSError(str(exc)) from exc
         states: list[Conversation] = []
         for (id_,) in ids:
-            with suppress(FileNotFoundError):
+            with suppress(OSError, ValueError):
                 states.append(self.load(id_)[0])
         return states
 

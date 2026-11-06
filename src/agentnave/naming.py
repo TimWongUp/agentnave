@@ -35,15 +35,18 @@ _CLI = {
 }
 UNKNOWN_MODEL = "未记录模型"
 _FAMILY = {
-    "opus": "Claude",
-    "sonnet": "Claude",
-    "haiku": "Claude",
+    "claude": "Claude",
     "gpt": "GPT",
     "gemini": "Gemini",
     "grok": "Grok",
     "deepseek": "DeepSeek",
-    "claude": "Claude",
+    "glm": "GLM",
     "qwen": "Qwen",
+    "kimi": "Kimi",
+    "minimax": "MiniMax",
+    "hunyuan": "Hunyuan",
+    "doubao": "Doubao",
+    "muse": "Muse",
 }
 
 
@@ -113,6 +116,16 @@ class MemberName:
 
     def _spoken(self) -> str:
         model = (self.reported or self.requested or "").rsplit("/", 1)[-1]
-        match = re.search(r"opus|sonnet|haiku|gpt|gemini|grok|deepseek|claude|qwen", model, re.I)
-        family = _FAMILY[match.group(0).lower()] if match else model or UNKNOWN_MODEL
-        return family
+        name = model.lower()
+        for key, family in _FAMILY.items():
+            if key in name:
+                return family
+        if re.match(r"^(o[134](?:-|$)|chatgpt|codex)", name):
+            return "GPT"
+        if re.match(r"^(opus|sonnet|haiku)(?:-|$)", name):
+            return "Claude"
+        if re.match(r"^hy\d", name):
+            return "Hunyuan"
+        if re.match(r"^seed(?:-|$)", name):
+            return "Doubao"
+        return model or UNKNOWN_MODEL

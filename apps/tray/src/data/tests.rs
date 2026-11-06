@@ -1401,6 +1401,13 @@ fn a_seat_shows_its_current_name_and_each_entry_the_name_it_recorded() {
     );
     show["director"]["private_messages"] = json!([{"seat_id": "a", "round": 1, "text": "aside",
         "time": "2099-01-01T00:00:02Z", "identity": named("seat:show:a", "@aside #1")}]);
+    show["director"]["instructions"] = json!([{"seat_id": "a", "round": 1,
+        "text": "historical brief", "time": "2099-01-01T00:00:00Z",
+        "identity": named("seat:show:a", "@brief #1")}]);
+    show["director"]["round"]["seats"] = json!([{
+        "seat_id": "a", "status": "running", "identity": named("seat:show:a", "@pending #1")
+    }]);
+    show["director"]["rounds"] = json!([show["director"]["round"].clone()]);
     save(root, &show);
     // A running seat's tail may rename it before anything is saved.
     write(
@@ -1441,6 +1448,14 @@ fn a_seat_shows_its_current_name_and_each_entry_the_name_it_recorded() {
     assert_eq!(said("answer")["identity"]["handle"], "@then #1");
     assert_eq!(said("aside")["identity"]["handle"], "@aside #1");
     assert_eq!(said("streamed")["identity"]["handle"], "@live #1");
+    assert_eq!(prompt["to"][0]["identity"]["handle"], "@live #1");
+    let brief = chat["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["text"] == "historical brief")
+        .unwrap();
+    assert_eq!(brief["to"][0]["identity"]["handle"], "@brief #1");
     // History never borrows the seat's current name.
     assert_eq!(said("unsigned")["identity"], Value::Null);
 }
@@ -1690,8 +1705,8 @@ fn office_messages_keep_identity_routes_and_review_id_when_published() {
     show["director"]["round"] = json!({"number": 1, "order": "serial", "status": "review", "seats": [
             {"seat_id": "a", "status": "succeeded", "review": "pending", "reported_model": "claude-opus-5-5", "output": "answer"},
             {"seat_id": "c", "status": "not_started"}]});
-    show["director"]["instructions"] =
-        json!([{"round": 1, "seat_id": "a", "text": "secret", "time": "2099-01-01T00:00:00Z"}]);
+    show["director"]["instructions"] = json!([{"round": 1, "seat_id": "a", "text": "secret", "time": "2099-01-01T00:00:00Z",
+            "identity": named("seat:show:a", "@a #1")}]);
     save(dir.path(), &show);
     let path = format!("/app/chats/{MANAGER}");
     let chat = state(&reader, &path);

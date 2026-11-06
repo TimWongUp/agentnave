@@ -517,3 +517,27 @@ async def test_meeting_names_keep_fixed_order_through_cancel_and_native_model(
     assert historical["model"] == "native/model-suffix" and historical["model_source"] == "native"
     manager.finish("3")
     await settle(groups, second.id)
+
+
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [
+        ("route/glm-5.2", "GLM"),
+        ("kimi-k3", "Kimi"),
+        ("minimax-m3", "MiniMax"),
+        ("doubao-seed-2", "Doubao"),
+        ("seed-2", "Doubao"),
+        ("hunyuan-3", "Hunyuan"),
+        ("hy3-preview", "Hunyuan"),
+        ("o3", "GPT"),
+        ("o4-mini", "GPT"),
+        ("codex-mini", "GPT"),
+        ("chatgpt-latest", "GPT"),
+        ("muse-1", "Muse"),
+    ],
+)
+def test_spoken_model_families_match_app(model: str, family: str) -> None:
+    from agentnave.naming import MemberName
+
+    members = [MemberName(str(i), "pi", model, ordinal=i) for i in (1, 2)]
+    assert [m.identity(members)["spoken_name"] for m in members] == [f"{family} #1", f"{family} #2"]

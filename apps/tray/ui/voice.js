@@ -211,7 +211,7 @@
     const meeting = m.thread?.kind === "room" && m.kind !== "instruction";
     const seats = meeting ? ctx.rooms?.get(m.thread.id)?.seats || [] : [];
     const named = meeting ? (keys.length && keys.length < seats.length ? keys : []) : m.desk ? [m.desk] : keys.slice(0, 1);
-    return named.map(key => m.to?.find(t => t.key === key && t.identity) || ctx.desks.get(key)).filter(Boolean).map(who => person(who, ctx, m));
+    return named.map(key => m.to?.find(t => t.key === key)).filter(Boolean).map(who => person(who, ctx, m));
   }
   // Whose words a boss forward relays, when the forwarded message is still in view.
   function source(m, ctx) {

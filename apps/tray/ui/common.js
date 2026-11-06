@@ -412,7 +412,9 @@
   const deskParts = (who) => {
     const id = who.identity;
     if (!id) return { name: L("未记录身份", "Identity not recorded"), effort: who.effort || "" };
-    const name = (fullModelNames() && id.model) || id.model_short;
+    const name = id.model_source === "unknown"
+      ? L("未记录模型", "Model not recorded")
+      : (fullModelNames() && id.model) || id.model_short;
     const level = id.provider === "antigravity" ? name.match(/-(low|medium|high)$/) : null;
     const bare = level ? name.slice(0, level.index) : name;
     return { name: id.numbered ? `${bare} #${id.ordinal}` : bare, effort: who.effort || level?.[1] || "" };

@@ -247,7 +247,7 @@ class Record:
         record.lock = record._lock()
         try:
             record.rev = db.save(None, state, record._projection())
-        except OSError:
+        except BaseException:
             record.release()
             raise
         record.saved = state.model_copy(deep=True)

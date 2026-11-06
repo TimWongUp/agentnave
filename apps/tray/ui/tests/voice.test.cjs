@@ -4,6 +4,7 @@ const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
 const { office, flush, message } = require("./helpers/voice.cjs");
+const { identities } = require("./helpers/common.cjs");
 
 test("changing settings after repeated failures restores playback and resets the failure count", async () => {
   let broken = true;
@@ -611,8 +612,8 @@ test("the album playing heads the playlist and its title opens the conversation"
 
 test("a private album is titled by the role and its model line goes to the message playing", async () => {
   const app = await office(false);
-  const said = message("said", "2026-11-01T00:00:01Z", { desk: "desk" });
-  app.private({ key: "desk", provider: "codex", model: "gpt-x", role: "评审" }, [said]);
+  const said = message("said", "2026-11-01T00:00:01Z", { desk: "desk", speaker: { role: "member", provider: "codex", model: "gpt-x", identity: identities.review } });
+  app.private({ key: "desk", provider: "codex", model: "gpt-x", role: "评审", identity: identities.review }, [said]);
   await app.feed([said]);
   const rec = { bub: { prepend() {} } };
   app.voice.decorate(rec, said, app.ctx);
@@ -641,6 +642,40 @@ test("a click from the panel waits for the office to be shown before it touches 
   assert.equal(app.navigations.length, 0);
   shown();
   assert.deepEqual([...app.navigations], ["/chat/workspace#conv%3Aroom"]);
+});
+
+test("an old spoken message without identity stays unnamed beside a desk's current identity", async () => {
+  const app = await office(false);
+  const old = message("old", "2026-11-01T00:00:01Z", {
+    desk: "desk", speaker: { role: "member", provider: "claude", model: "claude-old" },
+  });
+  const start = app.private({ key: "desk", provider: "codex", model: "gpt-x", role: "评审", identity: identities.review }, [old]);
+  await start.listeners.click();
+  const request = app.requests[0], job = app.published.at(-1).jobs[0];
+  assert.equal(job.who, "未记录身份");
+  assert.deepEqual([request.scene.name, request.scene.role], ["", ""]);
+  assert.equal(request.family, "claude", "the old message retains its recorded voice family");
+});
+
+test("speech preserves service duplicate ordinals and duties for speakers and addressees", async () => {
+  const app = await office(false);
+  const identity = { ...identities.explorer, ordinal: 4, numbered: true,
+    handle: "@claude-x·Claude Code·探索派 #4", handle_short: "@claude-x·Claude Code·探索派 #4", spoken_name: "Claude #4" };
+  const peer = { ...identity, key: "b", ordinal: 1,
+    handle: "@claude-x·Claude Code·探索派 #1", handle_short: "@claude-x·Claude Code·探索派 #1", spoken_name: "Claude #1" };
+  const desks = [{ key: "a", provider: "claude", model: "claude-x", identity },
+    { key: "b", provider: "claude", model: "claude-x", identity: peer }];
+  const messages = [
+    message("brief", "2026-11-01T00:00:01Z", { conversation: "room", round: 1, thread: { kind: "room", id: "room" },
+      kind: "instruction", desk: "a", to: [{ key: "a", identity }], speaker: { role: "manager", provider: "codex" } }),
+    message("answer", "2026-11-01T00:00:02Z", { conversation: "room", round: 1, thread: { kind: "room", id: "room" },
+      desk: "a", speaker: { role: "member", provider: "claude", model: "claude-x", identity } }),
+  ];
+  await app.room(messages, "room", desks).listeners.click();
+  assert.deepEqual(app.requests[0].scene.to, [{ name: "Claude #4", role: "探索派", twin: false }]);
+  await app.end();
+  assert.deepEqual([app.requests[1].scene.name, app.requests[1].scene.role], ["Claude #4", "探索派"]);
+  assert.equal(app.requests[1].family, "claude");
 });
 
 test("the drawer shows only a speaker of the view it is on", async () => {
@@ -711,22 +746,25 @@ test("after a handover the channel keeps the boss who spoke until the new boss s
 test("speech says who is talking, to whom, and names the one employee a boss message is for", async () => {
   const app = await office(false);
   const desks = [
-    { key: "a", provider: "claude", model: "claude-x", role: "探索派" },
-    { key: "b", provider: "claude", model: "claude-y", role: "实用派" },
-    { key: "c", provider: "codex", model: "gpt-z", role: "" },
+    { key: "a", provider: "claude", model: "claude-x", role: "探索派", identity: identities.explorer },
+    { key: "b", provider: "claude", model: "claude-y", role: "实用派", identity: identities.pragmatist },
+    { key: "c", provider: "codex", model: "gpt-z", role: "", identity: identities.coder },
   ];
   const room = { kind: "room", id: "room" };
   const list = [
-    message("topic", "2026-11-01T00:00:01Z", { conversation: "room", round: 1, thread: room, kind: "prompt", desk: null, to: desks.map(d => ({ key: d.key })), speaker: { role: "manager" } }),
-    message("brief", "2026-11-01T00:00:02Z", { conversation: "room", round: 1, thread: room, kind: "instruction", desk: "a", to: [{ key: "a" }], speaker: { role: "manager" } }),
-    message("answer", "2026-11-01T00:00:03Z", { conversation: "room", round: 1, thread: room, desk: "a", message_id: "m-answer", speaker: { role: "member", provider: "claude", model: "claude-x" } }),
-    message("task", "2026-11-01T00:00:04Z", { conversation: "t", thread: { kind: "desk", key: "c" }, kind: "prompt", desk: "c", to: [{ key: "c" }], speaker: { role: "manager" } }),
-    message("ask", "2026-11-01T00:00:05Z", { conversation: "room", round: 2, thread: room, kind: "prompt", desk: null, to: [{ key: "a" }, { key: "c" }], speaker: { role: "manager" } }),
+    message("topic", "2026-11-01T00:00:01Z", { conversation: "room", round: 1, thread: room, kind: "prompt", desk: null, to: desks.map(d => ({ key: d.key, identity: d.identity })), speaker: { role: "manager" } }),
+    message("brief", "2026-11-01T00:00:02Z", { conversation: "room", round: 1, thread: room, kind: "instruction", desk: "a", to: [{ key: "a", identity: identities.explorer }], speaker: { role: "manager" } }),
+    message("answer", "2026-11-01T00:00:03Z", { conversation: "room", round: 1, thread: room, desk: "a", message_id: "m-answer", speaker: { role: "member", provider: "claude", model: "claude-x", identity: identities.explorer } }),
+    message("task", "2026-11-01T00:00:04Z", { conversation: "t", thread: { kind: "desk", key: "c" }, kind: "prompt", desk: "c", to: [{ key: "c", identity: identities.coder }], speaker: { role: "manager" } }),
+    message("ask", "2026-11-01T00:00:05Z", { conversation: "room", round: 2, thread: room, kind: "prompt", desk: null, to: [{ key: "a", identity: identities.explorer }, { key: "c", identity: identities.coder }], speaker: { role: "manager" } }),
     message("relay", "2026-11-01T00:00:06Z", { conversation: "room", round: 2, thread: room, kind: "forward", desk: null, forward: { message_id: "m-answer" }, speaker: { role: "manager" } }),
+    message("old-brief", "2026-11-01T00:00:07Z", { conversation: "room", round: 2, thread: room, kind: "instruction", desk: "a", to: [{ key: "a", role: "旧职责", model: "claude-old" }], speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
+    message("old-task", "2026-11-01T00:00:08Z", { conversation: "t", thread: { kind: "desk", key: "a" }, kind: "prompt", desk: "a", to: [{ key: "a" }], speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
+    message("legacy-brief", "2026-11-01T00:00:09Z", { conversation: "room", round: 2, thread: room, kind: "instruction", desk: "a", speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
   ];
   app.ctx.c.messages = list;
   app.ctx.desks = new Map(desks.map(d => [d.key, d]));
-  app.ctx.rooms.set("room", { seats: desks.map(d => ({ desk: d.key })) });
+  app.ctx.rooms.set("room", { seats: desks.map(d => ({ desk: d.key, identity: d.identity })) });
   const said = text => {
     const rec = { bub: { prepend() {} } };
     app.voice.decorate(rec, list.find(m => m.id === text), app.ctx);
@@ -737,14 +775,23 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
     "a message to every seat names nobody");
   const brief = await said("brief");
   assert.equal(brief.private, true);
-  assert.deepEqual(brief.to.map(p => [p.role, p.twin]), [["探索派", true]], "the model learns a same-family seat is here");
+  assert.deepEqual(brief.to, [{ name: "Claude", role: "探索派", twin: true }], "the model learns the service's spoken name, duty and same-family seat");
   const answer = await said("answer");
   assert.deepEqual([answer.room, answer.private, answer.to], [true, false, []]);
+  assert.deepEqual([answer.name, answer.role], ["Claude", "探索派"]);
+  assert.equal(app.requests.at(-1).family, "claude", "service names do not change the model-family voice");
   const task = await said("task");
   assert.deepEqual([task.private, task.to], [true, [{ name: "GPT", role: "", twin: false }]]);
   const ask = await said("ask");
   assert.deepEqual([ask.private, ask.to.map(p => p.role)], [false, ["探索派", ""]], "a meeting question to some seats names them");
-  assert.deepEqual((await said("relay")).forward, { name: "", role: "探索派", twin: true }, "a forward says whose words it relays");
+  assert.deepEqual((await said("relay")).forward, { name: "Claude", role: "探索派", twin: true }, "a forward says whose words it relays");
+  for (const id of ["old-brief", "old-task", "legacy-brief"]) {
+    const old = await said(id);
+    assert.equal(old.private, true);
+    assert.deepEqual(old.to, id === "legacy-brief" ? [] : [{ name: "", role: "", twin: false }],
+      "missing historical identity never borrows a name, model or duty from the current desk or raw recipient");
+    assert.equal(app.requests.at(-1).family, "gpt", "a boss keeps its own voice when the recipient is unknown");
+  }
   const fromStart = app.requests.length;
   const playAll = app.room(list.filter(m => m.conversation === "room"), "room", desks);
   await playAll.listeners.click();
