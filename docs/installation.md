@@ -583,9 +583,10 @@ tool appears only after that reconnect; on Hermes, also add it to the saved per-
 a task waiting on a native prompt stays stopped.
 
 On macOS and Linux, Claude subagents now run interactively by default. Their sessions appear in
-Claude Code's `/resume` list, task text enters `~/.claude/history.jsonl`, and directory trust and a
-confirmed API key are recorded permanently in the user's Claude Code config. Turn it off with
-「交互模式」 on the Claude card under Employees, or pass `interactive=false` where there is no App.
+Claude Code's `/resume` list, task text enters `~/.claude/history.jsonl`, and directory trust and
+the last 20 characters of a confirmed API key are recorded permanently in the user's Claude Code
+config. Turn it off with "Run interactively" on the Claude card under Employees, or pass
+`interactive=false` where there is no App.
 
 Claude subagents now use the login Claude Code stored itself: the service no longer passes
 `CLAUDE_CODE_OAUTH_TOKEN` to them, so a setup that relied on that variable alone has to log in to
