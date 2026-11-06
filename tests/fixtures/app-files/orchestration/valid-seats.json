@@ -19,5 +19,10 @@
       "provider": "antigravity",
       "model": "gemini-4-argon-medium"
     }
+  },
+  "image_generation": {
+    "provider": "codex",
+    "model": "gpt-6.1-sol",
+    "effort": "medium"
   }
 }

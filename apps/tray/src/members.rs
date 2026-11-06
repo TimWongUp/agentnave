@@ -348,7 +348,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             validate_seat(seat, &format!("{role}.{difficulty}"))?;
         }
     }
-    if let Some(seat) = top.get("image_generation") {
+    if let Some(seat) = top.get("image_generation").filter(|seat| !seat.is_null()) {
         validate_seat(seat, "image_generation")?;
     }
     Ok(())

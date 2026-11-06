@@ -10,5 +10,6 @@
     "grok": "split",
     "codex": "off",
     "codex@.codex-work": "parallel"
-  }
+  },
+  "image_generation": null
 }
