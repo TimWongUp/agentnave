@@ -34,6 +34,7 @@ from agentnave.store import (
     RoundRecord,
     SeatRecord,
     SeatRunRecord,
+    SessionRecord,
     TaskRecord,
 )
 
@@ -3760,6 +3761,7 @@ def test_partial_meeting_names_instructions_and_missing_seat(data_root: Path) ->
         title="Meeting",
         kind="show",
         cwd=str(data_root),
+        sessions={"a": SessionRecord()},
         seats=[
             SeatRecord(id=id_, provider="claude", cwd="/tmp", provider_options={"model": "haiku"})
             for id_ in "ab"
