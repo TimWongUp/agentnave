@@ -198,10 +198,11 @@ function renderOrchestration() {
   const editable = orchestration && !orchestration.error;
   $("orchestration-custom").hidden = preset !== "custom" || !editable;
   const roles = $("orchestration-roles");
-  roles.hidden = preset === "off" || !editable;
+  roles.hidden = !editable;
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
-    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint, unsetName, modelLabel]) => {
+    const visibleRoles = preset === "off" ? ORCHESTRATION_ROLES.filter(([role]) => role === "image_generation") : ORCHESTRATION_ROLES;
+    roles.replaceChildren(...visibleRoles.map(([role, difficulty, name, hint, unsetName, modelLabel]) => {
       const seat = orchestrationSeat(shown, role, difficulty);
       // An unset interface seat runs the Worker seat of its difficulty, as the server fills it.
       const general = role === "worker_frontend" && shown.worker?.[difficulty] && ORCHESTRATION_ROLES.find(([r, d]) => r === "worker" && d === difficulty);

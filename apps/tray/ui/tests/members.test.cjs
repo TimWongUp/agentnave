@@ -69,6 +69,11 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   assert.equal(row().children[0].children.length, 1);
   assert.equal(row().children[1].children[0].children[0], "未配置");
   assert.equal(row().children[2].attrs["aria-label"], "生图的对话模型");
+  app.run('viewMode("off")');
+  assert.equal(app.run('$("orchestration-roles").hidden'), false);
+  assert.equal(app.run('$("orchestration-roles").children.length'), 1);
+  assert.equal(row().children[0].children[0].children[0], "生图（可选）");
+  app.run('viewMode("split")');
 
   assert.equal(app.run('orchestrationPresetText("split")'), "rule");
   pick("codex");
