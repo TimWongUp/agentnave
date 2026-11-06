@@ -392,8 +392,8 @@ function locatePlaying() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     state.locating = false;
     const message = playingMessage();
-    if (!message) return;
     state.locate = null;
+    if (!message) return;
     openScope(tpScopeOf(message, state.ctx));
     const target = state.nodes.get(message.id)?.el;
     if (!target) return;
@@ -514,6 +514,8 @@ function renderAll(c, newGroup = false) {
 // #desk:<key> opens a desk's conversation, #conv:<id> a room's transcript (or everything, for a task).
 function applyHash(ctx) {
   const key = state.hashKey;
+  // Loaded and not there: returning here later must not jump to it.
+  if (!key && !state.locating && state.locate?.group === state.chat?.group) state.locate = null;
   if (!key || state.focused) return;
   state.focused = true;
   state.locate = null; // its conversation is loaded and it is not there

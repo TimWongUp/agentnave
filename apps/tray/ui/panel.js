@@ -382,7 +382,7 @@ document.addEventListener("keydown", (e) => {
 
 // ---------------------------------------------------------------- refresh
 // Running work and active listening keep an office expanded.
-const busy = m => running(m) > 0 || (m.rooms || []).some(r => r.status === "running") || (m.desks || []).some(lingering);
+const busy = m => running(m) > 0 || (m.rooms || []).some(r => urgent(r.status)) || (m.desks || []).some(lingering);
 function render(data) {
   state.lastData = data;
   renderState(data);

@@ -276,6 +276,42 @@ test("a listening batch opens when listening gets its turn after a manual clip",
   assert.deepEqual(app.playbacks.map(sound => sound.text), ["manual", "a1", "a2", "a3", "b1", "a4"]);
 });
 
+test("widening a listened workspace's read scope reads what comes next, not what it passed over", async () => {
+  const app = await office(true, undefined, undefined, "members");
+  const boss = (id, second) => message(id, `2026-11-01T00:00:0${second}Z`, { kind: "prompt", speaker: { role: "manager" } });
+  const list = [boss("old", 1)];
+  await app.feed(list);
+  await app.scope("all");
+  await app.tick();
+  assert.equal(app.requests.length, 0);
+  list.push(boss("new", 2));
+  await app.feed(list);
+  assert.deepEqual(app.requests.map(request => request.text), ["new"]);
+});
+
+test("a manual read starts at once from a pause or a backlog", async () => {
+  const paused = await office(true);
+  await paused.settings({ continue_read: false });
+  await paused.feed([message("first", "2026-11-01T00:00:01Z")]);
+  await paused.command("toggle");
+  const rec = { bub: { prepend() {} } };
+  paused.voice.decorate(rec, message("manual", "2026-11-01T00:00:02Z"), paused.ctx);
+  rec.read.listeners.click(); await flush();
+  assert.equal(paused.playbacks.at(-1).text, "manual");
+  assert.equal(paused.published.at(-1).paused, false);
+
+  const held = await office(true);
+  await held.settings({ continue_read: false });
+  await held.feed([message("first", "2026-11-01T00:00:01Z"), message("second", "2026-11-01T00:00:02Z")]);
+  await held.tick(300000);
+  assert.equal(held.published.at(-1).backlog, true);
+  const manual = { bub: { prepend() {} } };
+  held.voice.decorate(manual, message("manual", "2026-11-01T00:00:03Z"), held.ctx);
+  manual.read.listeners.click(); await flush();
+  assert.equal(held.playbacks.at(-1).text, "manual");
+  assert.equal(held.published.at(-1).backlog, false);
+});
+
 test("backlog before the first audio cancels synthesis and keeps the pending message resumable", async () => {
   const signals = [], releases = [];
   const app = await office(true, (body, signal) => {

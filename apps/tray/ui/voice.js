@@ -531,16 +531,18 @@
   }
   // Hands each message to `take` once, when it first becomes readable in scope: a briefing only
   // with its answer. `seen` remembers what was readable already.
-  function readable(messages, seen, take, scoped = scopedMessage) {
+  function readable(messages, seen, take, column) {
     const answers = new Map(messages.filter(m => m.kind === "reply" && eligible(m)).map(m =>
       [answerKey(m), { message: m, seen: seen.get(m.id) === true }]));
     for (const m of messages) {
       const briefing = m.kind === "instruction" && answerKey(m);
       const answer = briefing ? answers.get(briefing) : null;
-      const can = eligible(m) && scoped(m) && (!briefing || Boolean(answer && scoped(answer.message)));
+      const settled = eligible(m) && (!briefing || Boolean(answer));
+      const can = settled && scopedMessage(m) && (!briefing || scopedMessage(answer.message));
       const was = seen.get(m.id) === true;
-      if (can && scoped(m) && !was && !answer?.seen) take(m);
-      seen.set(m.id, was || can);
+      if (can && !was && !answer?.seen) take(m);
+      // A column has all its history to read; a workspace, whatever the scope, what comes next.
+      seen.set(m.id, was || (column ? can : settled));
     }
   }
   const contextOf = chat => ({ c: chat, desks: new Map([...(chat.desks || []), ...(chat.optimized?.desks || [])].map(d => [d.key, d])),
@@ -566,6 +568,7 @@
     // Asking to listen is asking to speak again after playback stopped on errors.
     halted = false; failures = 0;
     unlisten(false);
+    if (!current && !queue.length) started = [];
     const session = follow = { group: target.group, room: target.room || null, desk: target.desk || null, shown: target.desk ? target.shown : null, title: "", expires_at: Date.now() + (config.listen_minutes ?? 60) * 60000, seen: new Map(), controller: new AbortController(), timer: null, expiryTimer: null, backlogTimer: null, overloaded: false };
     batch = null; lastAlbum = null;
     session.expiryTimer = setTimeout(expire, session.expires_at - Date.now());
@@ -589,7 +592,7 @@
       if (known) { known.followed = true; return; }
       Object.assign(job, { followed: true, waited: initial ? null : 0, waitSince: initial || paused ? null : Date.now() });
       queue.push(job);
-    });
+    }, session.room || session.desk);
     checkBacklog();
   }
   async function heed(session) {
@@ -653,7 +656,8 @@
   }
   // Reads the clicked message at once, then, with chaining on, the rest of its conversation after it.
   async function readFrom(m, chosen) {
-    if (playlistScope) dropPlaylist();
+    if (paused || follow?.overloaded) unpause();
+    dropPlaylist();
     playNow(chosen);
     const picked = picks, listening = follow;
     const listened = new Set([current, ...queue].filter(job => job?.followed).map(job => job.id));

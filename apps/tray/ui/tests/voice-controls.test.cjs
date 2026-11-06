@@ -39,6 +39,25 @@ test("previous goes back one message and what it interrupted comes back after it
   assert.equal(interrupted.paused, false, "the interrupted message carries on where it was");
 });
 
+test("a new read replaces what previous set aside when chaining is off", async () => {
+  const app = await office(false);
+  await app.settings({ continue_read: false });
+  const [m1, m2, m3] = roomMessages();
+  const read = async item => {
+    const rec = { bub: { prepend() {} } };
+    app.voice.decorate(rec, item, app.ctx);
+    rec.read.listeners.click(); await flush();
+  };
+  await read(m1); await app.end();
+  await read(m2);
+  await app.command("previous");
+  assert.equal(app.playbacks.at(-1).text, "m1");
+  await read(m3);
+  await app.end();
+  assert.equal(app.playbacks.at(-1).text, "m3");
+  assert.equal(app.published.at(-1).jobs.length, 0, "m2 does not carry on after it");
+});
+
 test("the chain button in the top bar menu switches continued reading", async () => {
   const app = await office();
   await app.feed(roomMessages());
@@ -204,6 +223,19 @@ test("after a stop the player keeps what played for a minute and can play it aga
   assert.equal(app.published.at(-1).jobs[0].id, "said");
 });
 
+test("stopping a listen that said nothing does not bring back an earlier message", async () => {
+  const app = await office(false);
+  const said = message("said", "2026-11-01T00:00:01Z");
+  await app.feed([said]);
+  const rec = { bub: { prepend() {} } };
+  app.voice.decorate(rec, said, app.ctx);
+  rec.read.listeners.click(); await flush();
+  await app.end();
+  await app.command("listen", { group: "workspace" });
+  await app.command("unlisten");
+  assert.equal(app.published.at(-1).recent, null);
+});
+
 test("listen buttons remain pure listening controls", async () => {
   const app = await office(false);
   await app.command("listen", { group: "workspace" });
@@ -235,6 +267,13 @@ test("the panel folds every idle office and displays only running non-seat desks
   assert.equal(cells.children[0].attributes.href, "/chat/busy#desk:running");
   assert.equal(card.children.find(child => child.tag === "button.fold").hidden, true, "folding counts filtered desks");
   assert.equal(card.children[0].children.length, 1, "workspace cards have no listening button");
+  assert.equal(app.elements.get("quiet").children.length, 0);
+});
+
+test("a meeting waiting for the boss's review keeps its office expanded", async () => {
+  const app = await panel([manager("workspace", [], [room("waiting", "review")])]);
+  app.show(app.snapshot({}));
+  assert.equal(app.elements.get("groups").children.length, 1);
   assert.equal(app.elements.get("quiet").children.length, 0);
 });
 
