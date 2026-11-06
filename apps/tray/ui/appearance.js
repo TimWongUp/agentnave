@@ -81,5 +81,6 @@ window.ANAppearance = (() => {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
   addEventListener("DOMContentLoaded", refresh);
   applyTheme();
-  return { applyTheme, applyPreferences, themeSwitch, reducedMotion };
+  return { applyTheme, applyPreferences, themeSwitch, reducedMotion,
+    preferences: () => ({ theme, motion: root.dataset.motion }) };
 })();

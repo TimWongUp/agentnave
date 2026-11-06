@@ -14,10 +14,6 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* top bar */
 .banner { flex: none; padding: 6px 18px; text-align: center; font-size: 12px; color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); }
-.voice-banner { position: relative; z-index: 31; }
-.voice-banner:not([hidden]) { display: flex; align-items: center; justify-content: center; gap: 12px; }
-#voice-banner-text { min-width: 0; overflow-wrap: anywhere; }
-#voice-banner-close { flex: none; padding: 2px 8px; font-size: 12px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 5px; cursor: pointer; }
 
 .app { flex: 1; min-height: 0; display: grid; grid-template-columns: 320px minmax(0, 1fr); }
 
@@ -572,7 +568,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
   .side-head, .gl-sec, .gi-body, .split { display: none; }
   .gi { justify-content: center; padding: 9px 0; }
-  .conv { position: fixed; z-index: 30; top: calc(48px + var(--voice-banner-h, 0px)); right: 0; bottom: 0; width: min(400px, 92vw); box-shadow: 0 22px 60px #0009; animation: slide-in 0.25s ease-out; }
+  .conv { position: fixed; z-index: 30; top: 48px; right: 0; bottom: 0; width: min(400px, 92vw); box-shadow: 0 22px 60px #0009; animation: slide-in 0.25s ease-out; }
   .dr-close { display: grid; place-items: center; }
 }
 @keyframes slide-in { from { transform: translateX(40px); opacity: 0; } }
@@ -640,6 +636,7 @@ dialog.act::backdrop { background: #0006; }
 /* One flat playback bar under the conversation header: who is here, who is speaking, what to do. */
 .voice-channel { flex: none; container-type: inline-size; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 46px; padding: 7px 12px 7px 16px; border-bottom: 1px solid var(--line); }
 .voice-channel[hidden] { display: none; }
+.voice-channel > .listen-here { margin-left: auto; }
 .voice-roster { flex: none; display: flex; align-items: center; gap: 8px; }
 .voice-person, .voice-more { --ring: var(--solid); flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
 /* the boss wears a small crown: centred on the head, turned, then pushed out until its base rests on the rim */
@@ -651,7 +648,6 @@ dialog.act::backdrop { background: #0006; }
 .voice-channel[data-live="true"] .voice-person:not([data-speaking="true"]), .voice-channel[data-live="true"] .voice-more { opacity: .4; }
 .voice-person[data-speaking="true"] { position: relative; z-index: 1; transform: scale(1.1); box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--run); }
 .voice-person[data-preparing="true"] { position: relative; z-index: 1; box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--line); }
-.voice-channel > .voice-toggle { margin-left: auto; }
 .voice-read { display: flex; align-items: center; gap: 5px; width: 62px; height: 20px; margin: -1px 0 5px -2px; padding: 0 2px; border: 0; background: none; font-size: 11.5px; color: var(--muted); cursor: pointer; }
 .voice-read[hidden] { display: none; }
 .voice-read:not(:disabled):hover { color: var(--ink); }
@@ -726,3 +722,6 @@ dialog.act::backdrop { background: #0006; }
 .tp-im .voice-read { color: inherit; opacity: .7; }
 .tp-im .voice-read:not(:disabled):hover, .tp-im .voice-read[aria-pressed="true"] { opacity: 1; }
 
+
+.office-settings { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
+.office-settings[hidden] { display: none; }

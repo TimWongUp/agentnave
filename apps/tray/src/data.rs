@@ -27,7 +27,7 @@ const LIVE_TAILS: u64 = 2;
 const ROUTE_REUSE: Duration = Duration::from_secs(30);
 include!(concat!(env!("OUT_DIR"), "/office_art.rs"));
 
-pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src blob:; base-uri 'none'; frame-ancestors 'none'";
+pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src blob:; base-uri 'none'; frame-src 'self'; frame-ancestors 'self'";
 
 /// Same rule as the Studio MCP server: `AGENTNAVE_DATA_DIR`, else `~/.agentnave`.
 pub fn data_root() -> PathBuf {

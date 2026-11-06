@@ -12,7 +12,7 @@ pub(super) fn hash(text: &str) -> String {
 fn defaults() -> Value {
     json!({
         "enabled":false,
-        "auto_read":false,
+        "listen_minutes":60,
         "continue_read":false,
         "read_scope":"all",
         "code":"skip",
@@ -72,9 +72,13 @@ pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
 }
 pub(super) fn validate(value: &Value) -> Result<Value, String> {
     let enabled = value["enabled"].as_bool().ok_or("enabled 必须为布尔值")?;
-    let auto_read = value.get("auto_read").map_or(Ok(false), |value| {
-        value.as_bool().ok_or("自动朗读开关必须为布尔值")
-    })?;
+    let listen_minutes = match value.get("listen_minutes") {
+        None => 60,
+        Some(value) => value
+            .as_u64()
+            .filter(|minutes| [30, 60, 120, 240, 480].contains(minutes))
+            .ok_or("收听时长必须为 30 分钟或 1、2、4、8 小时")?,
+    };
     let continue_read = value.get("continue_read").map_or(Ok(false), |value| {
         value.as_bool().ok_or("点读后连播开关必须为布尔值")
     })?;
@@ -123,7 +127,7 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
     let personas = persona_settings(value.get("personas"))?;
     Ok(json!({
         "enabled":enabled,
-        "auto_read":auto_read,
+        "listen_minutes":listen_minutes,
         "continue_read":continue_read,
         "read_scope":read_scope,
         "code":code,

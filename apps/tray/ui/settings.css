@@ -383,3 +383,7 @@
   .cli-install-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .cli-install-command { grid-template-columns: 70px minmax(0, 1fr) 64px; }
 }
+
+:root[data-embedded="true"] { scrollbar-gutter: auto; }
+:root[data-embedded="true"] .bar { display: none; }
+:root[data-embedded="true"] .subnav { top: 0; }

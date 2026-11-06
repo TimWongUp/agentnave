@@ -236,4 +236,18 @@ test("settings.html scripts load in declared order and language switch respects 
   assert.equal(posts.filter(p => p.path === "/app/preferences").length, 1);
   assert.deepEqual(posts.find(p => p.path === "/app/preferences").body, { general: { language: "en" } });
   assert.equal(reloaded, 1);
+  const translated = makeNode("span");
+  translated.childNodes = [{ nodeType: 3, nodeValue: context.AN.L("继续", "Resume") }];
+  const message = makeNode("p");
+  message.childNodes = [{ nodeType: 3, nodeValue: "继续" }];
+  message.closest = () => true;
+  document.querySelectorAll = selector => selector === "*" ? [translated, message] : [];
+  context.AN.setLanguage("en");
+  assert.equal(translated.childNodes[0].nodeValue, "Resume");
+  assert.equal(message.childNodes[0].nodeValue, "继续", "language changes never translate conversation text");
+  assert.equal(context.AN.MEMBER.running[0], "Running");
+  context.AN.setLanguage("zh-CN");
+  assert.equal(translated.childNodes[0].nodeValue, "继续");
+  assert.equal(reloaded, 1, "the mounted office can change language without another document reload");
+
 });
