@@ -8,6 +8,7 @@ impl Hosts {
         self.refresh_probed()
     }
     pub(crate) fn refresh_probed(&mut self) -> Value {
+        let launcher_error = crate::update::ensure_active_launcher(&self.context.app).err();
         self.codex_homes = self.other_codex_homes();
         self.remember_reloads();
         let mut settings = self.settings.clone();
@@ -25,6 +26,14 @@ impl Hosts {
                 || (self.shell.as_ref().is_some_and(Result::is_err)
                     && !self.manual_roots.contains(host.id))
             {
+                continue;
+            }
+            if let Some(error) = &launcher_error {
+                self.record(
+                    host.id,
+                    Err(format!("write_failed:无法准备固定启动器：{error}")),
+                    "",
+                );
                 continue;
             }
             // Preflight every user layer before changing any of them. Project layers stay read-only.
@@ -110,14 +119,12 @@ impl Hosts {
                         return Ok(());
                     };
                     set_host_env(desired, host, "takeover_failed")?;
-                    // A missing launcher is repointed, and so is an older version of our
-                    // own: after a versioned install the old directory still exists, so
-                    // "present" alone would leave every host on the previous service.
+                    // Repair missing commands, or migrate our existing launchers once.
                     if let Some(path) = self.launcher()
                         && let Some(command) = layer.command(desired)
                         && entry_kind(command) == "agentnave"
                         && (self.command_state(&layer, desired) == "missing"
-                            || (own_launcher(command) && !same_path(command, &path)))
+                            || (self.own_launcher(command) && !same_path(command, &path)))
                     {
                         layer.set_command(desired, &path);
                     }

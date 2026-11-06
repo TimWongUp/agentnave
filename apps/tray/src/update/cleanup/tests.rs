@@ -51,6 +51,7 @@ fn keeps_active_rollback_configs_legacy_and_locked_environments() {
         dir.path(),
         Some(vec![
             r#"command="C:\\data\\service\\0.51.0\\bin\\agentnave-mcp.exe""#.into(),
+            r#"command="/data/service/bin/agentnave-mcp""#.into(),
         ]),
     );
     assert!(!unreferenced.exists());

@@ -50,7 +50,7 @@
 | 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
 | 0045 | [去掉浏览器看板](0045-remove-browser-dashboard.md) | 已接受 | [ADR-0046](0046-service-history-retention.md) |
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 已接受 | — |
-| 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 已接受 | — |
+| 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 部分取代 | [ADR-0061](0061-fixed-service-launcher.md) |
 | 0048 | [SQLite schema 演进与迁移归属](0048-sqlite-schema-evolution.md) | 已接受 | — |
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
@@ -64,3 +64,4 @@
 | 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |
 | 0059 | [Claude 的两个权限档位互为退路](0059-claude-tier-fallback.md) | 已接受 | — |
 | 0060 | [托盘识别无人持有的运行记录](0060-tray-detects-orphaned-running-work.md) | 已接受 | — |
+| 0061 | [宿主配置指向固定启动器，升级不再改写宿主配置](0061-fixed-service-launcher.md) | 已接受 | — |

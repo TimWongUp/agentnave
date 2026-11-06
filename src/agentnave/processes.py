@@ -91,6 +91,8 @@ def provider_environment(
     env.pop("SERVER__HOST", None)
     for name in (*NATIVE_SESSION_ENV.values(), *WITHHELD_CREDENTIALS, *unset_env):
         env.pop(name, None)
+    # A provider may load global MCP entries too; those relays are not boss connections.
+    env["AGENTNAVE_DISPATCHED"] = "1"
     if os.name == "nt":
         env.update(_system_proxy(env))
         return env

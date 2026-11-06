@@ -8,6 +8,7 @@ mod processes;
 mod refresh;
 mod registry;
 mod reload;
+mod reopen;
 mod retention;
 mod roots;
 mod skill;
@@ -337,8 +338,7 @@ impl Hosts {
         })
     }
     fn launcher(&self) -> Option<PathBuf> {
-        // A versioned install names its own launcher; the shared uv tool directory is the
-        // legacy layout, kept for installs that predate it.
+        // POSIX hosts use the fixed exec script; Windows keeps the versioned executable.
         if let Some(path) = crate::update::active_launcher(&self.context.app) {
             return Some(path);
         }
@@ -352,6 +352,30 @@ impl Hosts {
         #[cfg(not(windows))]
         let candidate = tools.join("agentnave/bin").join(name);
         executable(&candidate).then_some(candidate)
+    }
+    fn own_launcher(&self, command: &str) -> bool {
+        let path = PathBuf::from(command.replace('\\', "/"));
+        let name = if cfg!(windows) {
+            "agentnave-mcp.exe"
+        } else {
+            "agentnave-mcp"
+        };
+        let service = self.context.app.join("service");
+        if same_path(command, &service.join("bin").join(name)) {
+            return true;
+        }
+        if let Some(version) = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            && same_path(command, &service.join(version).join("bin").join(name))
+        {
+            return true;
+        }
+        self.tool_dirs().is_some_and(|dirs| {
+            let bin = if cfg!(windows) { "Scripts" } else { "bin" };
+            same_path(command, &dirs.tools.join("agentnave").join(bin).join(name))
+        })
     }
     /// Reuse the last probe, including a failed probe's explicit/default fallback. Before the
     /// first probe there is no confirmed snapshot: installation must not guess another root.
@@ -502,12 +526,6 @@ fn zcode_fallback(home: &Path, before: &Document) -> Option<PathBuf> {
 }
 /// Compare two launcher paths the way the platform does: Windows paths differ in case and
 /// separator spelling but name the same file, so a case-only mismatch must not read as "stale".
-/// A command that names one of this app's launchers, whatever version directory it lives in.
-fn own_launcher(command: &str) -> bool {
-    let value = command.replace('\\', "/");
-    value.contains("/agentnave-mcp")
-        && (value.contains("/service/") || value.contains("/tools/agentnave/"))
-}
 fn same_path(left: &str, right: &Path) -> bool {
     let normalize = |value: &str| {
         let value = value.replace('\\', "/");

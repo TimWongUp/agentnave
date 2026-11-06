@@ -6,6 +6,8 @@
 mod locate;
 mod probe;
 pub(crate) mod update;
+#[cfg(unix)] // Only the Unix copy actions run a host CLI outside detection.
+pub(crate) use probe::search_path;
 use probe::*;
 
 #[cfg(windows)]

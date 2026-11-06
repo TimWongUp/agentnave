@@ -4,7 +4,7 @@ use crate::process::kill_group;
 /// PATH for a probe: the CLI's own directory, then the inherited PATH, then the common
 /// directories, so `#!/usr/bin/env node` launchers work from an app started by the Finder
 /// without overriding the toolchain the inherited PATH selects.
-pub(super) fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
+pub(crate) fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs: Vec<PathBuf> = executable
         .parent()

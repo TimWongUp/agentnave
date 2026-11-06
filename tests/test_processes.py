@@ -25,7 +25,7 @@ async def test_provider_does_not_inherit_host_listener(
         monkeypatch.setenv(name, value)
     script = (
         "import json,os; print(json.dumps({name: os.environ.get(name) "
-        f"for name in {tuple(inherited)!r}}}))"
+        f"for name in {(*inherited, 'AGENTNAVE_DISPATCHED')!r}}}))"
     )
     supervised = await processes.spawn_process((sys.executable, "-c", script), tmp_path)
     try:
@@ -39,6 +39,8 @@ async def test_provider_does_not_inherit_host_listener(
         "SERVER__PORT": None,
         "SERVER__HOST": None,
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
+        # POSIX names the supervisor's own session, which the provider tree shares.
+        "AGENTNAVE_DISPATCHED": "1" if os.name == "nt" else str(supervised.process.pid),
     }
     assert {name: os.environ[name] for name in inherited} == inherited
 

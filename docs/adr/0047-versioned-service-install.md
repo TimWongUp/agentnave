@@ -1,8 +1,9 @@
 # ADR-0047：App 按版本安装服务并在启动时跟进
 
-- 状态：已接受
+- 状态：部分取代
 - 日期：2026-11-03
 - 修订 [ADR-0010](0010-launcher-relay-swaps-upgraded-server.md)：App 安装的新版本在宿主重连后生效，空闲热切换只适用于原地重装。
+- 「生效时机」中宿主配置随版本改写的做法在 macOS／Linux 上由 [ADR-0061](0061-fixed-service-launcher.md) 修订：宿主配置指向固定启动器。
 - 修订 [ADR-0014](0014-tray-members-and-one-click-update.md)：更新服务不再需要用户点击，App 每次启动都跟进配套版本。
 
 服务是宿主启动的独立产物，App 每次启动时都把它对齐到配套版本，不等用户点击更新。每个版本单独装进 App 数据目录下的 `service/<版本>/`，装完后由 `service/active.json` 指向它，宿主下次启动服务时改用新版本。正在运行的服务一直使用自己的目录：Windows 不允许删除正在运行的文件，POSIX 则会在进程运行中把文件删掉，所以不能原地覆盖。
