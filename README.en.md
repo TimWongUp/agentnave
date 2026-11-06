@@ -104,6 +104,7 @@ configuration and native sessions stay with that CLI.
 | `read_conversation` | Read one conversation back as the App shows it                                            |
 | `list_members`      | Read the teammate defaults set in the App, and one CLI's options                          |
 | `handover`          | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
+| `answer_prompt`     | Answer a running CLI's permission, question or plan prompt for the user                   |
 
 Omitted model, effort and options use the teammate defaults set in the App; a run still without an effort gets the
 CLI's own configured one. Both are listed in `defaults_applied`; explicit parameters win. The [agentnave-manager Skill](skills/agentnave-manager/SKILL.md) covers CLI choice and options, the
@@ -123,8 +124,9 @@ whom to ask and whether to double-check stay with the boss, who already has the 
 | Normalized terminal results                | Retries, permissions and worktrees         |
 | Saved parallel and serial meeting rounds   | Who answers, in what order, and acceptance |
 
-A dispatched CLI has no one to click "approve", so by default AgentNave runs it with its own automatic approval
-reviewer, or without approvals where it has none. The App can switch a CLI to full access. AgentNave has no
+By default AgentNave runs a dispatched CLI with its own automatic approval
+reviewer, or without approvals where it has none. When Claude runs interactively, the boss answers the prompts
+that still need one. The App can switch a CLI to full access. AgentNave has no
 human-facing CLI: `agentnave-mcp` is only the STDIO entry point an MCP host starts.
 
 <details>

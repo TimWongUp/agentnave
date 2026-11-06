@@ -258,7 +258,7 @@ codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMc
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the sixteen tools and the `codex` exclusion.
+Start a new session and confirm the ten tools and the `codex` exclusion.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
@@ -317,7 +317,7 @@ hermes mcp test agentnave
 ```
 
 Hermes 0.21.0 writes `mcp_servers` in `~/.hermes/config.yaml`. Its `add` flow connects and discovers
-tools, then asks whether to enable them. Complete that choice for all AgentNave tools (sixteen); a
+tools, then asks whether to enable them. Complete that choice for all AgentNave tools (ten); a
 successful connection alone does not prove tools are enabled. On upgrade, recheck any saved
 per-tool selection so it includes newly added tools. In noninteractive
 installation, handle the documented prompt explicitly and verify the saved enabled-tool
@@ -579,7 +579,13 @@ transaction or automatic host configuration update.
 
 Update the App; it installs the paired service by version at startup, and each host uses it only
 after its MCP connection reconnects, so reconnect every host after updating. The `answer_prompt`
-tool appears only after that reconnect.
+tool appears only after that reconnect; on Hermes, also add it to the saved per-tool selection, or
+a task waiting on a native prompt stays stopped.
+
+On macOS and Linux, Claude subagents now run interactively by default. Their sessions appear in
+Claude Code's `/resume` list, task text enters `~/.claude/history.jsonl`, and directory trust and a
+confirmed API key are recorded permanently in the user's Claude Code config. Turn it off with
+「交互模式」 on the Claude card under Employees, or pass `interactive=false` where there is no App.
 
 Claude subagents now use the login Claude Code stored itself: the service no longer passes
 `CLAUDE_CODE_OAUTH_TOKEN` to them, so a setup that relied on that variable alone has to log in to
