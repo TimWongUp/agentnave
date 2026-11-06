@@ -473,7 +473,9 @@ def test_member_name_contract_fixture() -> None:
 
     fixture = cast(
         dict[str, Any],
-        json.loads((Path(__file__).parent / "fixtures/member-names.json").read_text()),
+        json.loads(
+            (Path(__file__).parent / "fixtures/member-names.json").read_text(encoding="utf-8")
+        ),
     )
     for case in fixture["cases"]:
         members = [MemberName(**member) for member in case["members"]]
