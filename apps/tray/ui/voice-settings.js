@@ -8,6 +8,7 @@
   function normalizeConfig(raw) {
     if (!raw) return raw;
     return {
+      listen_minutes: 60,
       read_scope: "all",
       code: "skip",
       cache_limit_mb: 200,
@@ -36,6 +37,7 @@
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || L("无法保存语音设置", "Failed to save voice settings"));
+    if (payload !== undefined) window.AgentNaveSettingsFrame?.changed();
     return data;
   }
   function stop() {
@@ -385,16 +387,16 @@
     if (!config) return;
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.enabled, disabled: busy, "aria-label": L("语音播报", "Voice playback") });
     enabled.addEventListener("change", () => save({ enabled: enabled.checked }));
-    const automatic = h("input.switch-input", { type: "checkbox", checked: config.auto_read, disabled: busy, "aria-label": L("自动读当前工作区", "Auto-read open workspace") });
-    automatic.addEventListener("change", () => save({ auto_read: automatic.checked }));
     const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": L("点读后连播", "Continue reading after click") });
     chained.addEventListener("change", () => save({ continue_read: chained.checked }));
     const scopeLabel = L("朗读哪些消息", "Messages to read");
     const codeLabel = L("代码和路径", "Code and paths");
     const parts = [
       row(L("语音播报", "Voice playback"), enabled),
-      row(L("自动读当前工作区", "Auto-read open workspace"), automatic),
       row(L("点读后连播", "Continue reading after click"), chained),
+      row(L("收听时长", "Listening duration"), segments(L("收听时长", "Listening duration"), "listen_minutes", [
+        [30, L("30 分钟", "30 min")], [60, L("1 小时", "1 hour")], [120, L("2 小时", "2 hours")], [240, L("4 小时", "4 hours")], [480, L("8 小时", "8 hours")],
+      ])),
       row(scopeLabel, segments(scopeLabel, "read_scope", [
         ["all", L("全部", "All")],
         ["members", L("只读员工的回答", "Employee replies only")],
@@ -437,6 +439,7 @@
     if (field) field.addEventListener("blur", render, { once: true });
     else render();
   }
+  addEventListener("agentnave:settings-hidden", stop);
   addEventListener("hashchange", () => { if (location.hash !== "#voice") stop(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); });
   addEventListener("pagehide", stop);

@@ -1,5 +1,5 @@
 "use strict";
-const OLD_TABS = { "#updates": "about", "#skills": "advanced", "#orchestration": "advanced" }; // Preserve old links.
+const OLD_TABS = { "#voice-settings": "voice", "#updates": "about", "#skills": "advanced", "#orchestration": "advanced" }; // Preserve old links.
 const tabFromHash = () => OLD_TABS[location.hash] || (["general", "members", "avatars", "voice", "advanced", "storage", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
 window.addEventListener("hashchange", () => setTab(tabFromHash()));
 setTab(tabFromHash());
@@ -40,7 +40,7 @@ function renderLeaveConfirm() {
         dirty = false;
         discardAdvanced();
         if (typeof target === "function") target();
-        else location.href = target;
+        else if (!window.AgentNaveSettingsFrame?.navigate(target)) location.href = target;
       } }, L("放弃修改并离开", "Discard and leave"))));
   stay.focus({ preventScroll: true });
 }

@@ -3,150 +3,42 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
-const flush = () => new Promise(resolve => setImmediate(resolve));
-const message = (id, time, extra = {}) => ({
-  id, time, text: id, kind: "reply", status: "succeeded", desk: id,
-  speaker: { role: "member", provider: "codex" }, thread: { kind: "desk" }, visibility: "private", ...extra,
-});
+const { office, flush, message } = require("./helpers/voice.cjs");
 
-async function office(auto_read = true, synthesize = async () => ({}), loadRoom = async data => ({ ok: true, json: async () => structuredClone(data) }), read_scope = "all", transport = async () => null) {
-  let config = { enabled: true, auto_read, continue_read: true, read_scope, engine: "elevenlabs", keys: { elevenlabs: true }, summary: { enabled: true } };
-  const requests = [], sounds = [], nodes = [], navigations = [], published = [];
-  const windowListeners = {}, intervals = [];
-  const rooms = new Map();
-  function h(tag, attributes = {}, ...children) {
-    const node = { tag, attributes: { ...attributes }, dataset: {}, children, textContent: children.filter(c => typeof c === "string").join(""), listeners: {},
-      setAttribute(key, value) { this.attributes[key] = value; }, before() {},
-      append(...items) { this.children.push(...items); },
-      replaceChildren(...items) { this.children = items; }, remove() { this.removed = true; },
-      addEventListener(name, fn) { this.listeners[name] = fn; } };
-    nodes.push(node);
-    return node;
-  }
-  const elements = new Map();
-  const document = { hidden: false, documentElement: { style: { setProperty() {} } }, getElementById: id => {
-    if (!elements.has(id)) elements.set(id, Object.assign(h("div"), { id, hidden: true, getBoundingClientRect: () => ({ height: 32 }) }));
-    return elements.get(id);
-  }, listeners: {}, addEventListener(name, fn) { this.listeners[name] = fn; } };
-  class Audio {
-    constructor(src) { this.text = decodeURIComponent(src.slice(5)); this.currentTime = 0; this.paused = true; this.plays = 0; sounds.push(this); }
-    play() { this.paused = false; this.plays++; return Promise.resolve(); }
-    pause() { this.paused = true; }
-    removeAttribute() {}
-    load() {}
-  }
-  const AN = { h, deskName: d => d.model || d.key,
-    art: { character: (provider, model) => model || provider || "default", head: name => h("span.head", { name }) },
-    reconcile: (root, items) => { root.children = items; },
-  };
-  const context = vm.createContext({
-    AN, document, Audio, AbortController, Map, Event, queueMicrotask, go: path => navigations.push(path),
-    ResizeObserver: class { observe() {} },
-    setTimeout: fn => intervals.push(fn), clearTimeout: id => { intervals[id - 1] = null; },
-    Avatars: { family: (provider, model) => model?.includes("claude") ? "claude" : provider === "codex" ? "gpt" : provider || null },
-    Date: class extends Date { static now() { return 0; } },
-    window: { dispatchEvent() {}, addEventListener(name, fn) { windowListeners[name] = fn; } },
-    URL: { createObjectURL: blob => `blob:${encodeURIComponent(blob.text)}`, revokeObjectURL() {} },
-    async fetch(path, options) {
-      const response = await transport(path, options);
-      if (response) return response;
-      if (rooms.has(path)) return loadRoom(rooms.get(path));
-      if (path === "/app/voice/speak") {
-        requests.push(JSON.parse(options.body));
-        return { ok: true, status: 200, headers: { get: () => null }, blob: async () => { await synthesize(JSON.parse(options.body), options.signal); return { text: JSON.parse(options.body).text }; } };
-      }
-      if (path === "/app/voice/player") { published.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ ok: true }) }; }
-      if (options?.method === "POST") config = JSON.parse(options.body);
-      return { ok: true, json: async () => structuredClone(config) };
-    },
-  });
-  for (const file of ["voice-menu.js", "voice.js"]) vm.runInContext(readFileSync(`${__dirname}/../${file}`, "utf8"), context);
-  await flush();
-  const ctx = { c: { group: "workspace", host: "codex", messages: [], threads: [] }, desks: new Map(), rooms: new Map() };
-  const readable = m => m.text && ["member", "manager"].includes(m.speaker?.role) && ["prompt", "instruction", "forward", "reply"].includes(m.kind)
-    && !["running", "pending", "not_started", "review"].includes(m.status);
-  // Clicking the first message of a conversation with chaining on reads it to the end.
-  const starter = messages => ({ hidden: !messages.some(readable), listeners: { async click() {
-    const first = messages.filter(readable).sort((x, y) => Date.parse(x.time) - Date.parse(y.time))[0];
-    if (!first) return;
-    const rec = { bub: { prepend() {} } };
-    AN.voice.decorate(rec, first, ctx);
-    rec.read.listeners.click();
-    await flush();
-  } } });
-  const feed = async messages => { ctx.c.messages = messages; AN.voice.ingest({ group: "workspace", messages }, ctx); await flush(); };
-  await feed([]);
-  AN.voice.controls(true, null, ctx);
-  return {
-    voice: AN.voice, requests, sounds, ctx, feed, nodes, navigations, published, rooms,
-    async tick() { const due = intervals.splice(0); intervals.push(...due.map(() => null)); for (const fn of due) fn?.(); await flush(); await flush(); },
-    // A click in the menu bar panel's copy of the top bar control.
-    async command(kind, value) { windowListeners["agentnave:voice-command"]({ detail: { kind, value } }); await flush(); },
-    async settings(patch) { Object.assign(config, patch); await feed(ctx.c.messages); },
-    async scope(value) { config.read_scope = value; await feed(ctx.c.messages); await flush(); },
-    stop() { nodes.find(n => n.tag === "button.voice-cover-play").listeners.click(); },
-    // A desk view, showing what chat.js's desk stream would: here, the desk's own messages.
-    private(desk, messages = [], shown = chat => chat.messages.filter(m => m.desk === desk.key)) {
-      ctx.desks = new Map([[desk.key, desk]]);
-      rooms.set("/app/chats/workspace/history", { ...ctx.c, messages, desks: [desk] });
-      AN.voice.controls(true, null, ctx, desk.key, shown);
-      return starter(messages);
-    },
-    room(messages, id = "room", desks = null) {
-      const members = messages.filter(m => m.speaker?.role === "member" && m.conversation === id && m.kind === "reply");
-      ctx.desks = new Map(desks ? desks.map(d => [d.key, d]) : members.map(m => [m.desk, { key: m.desk, provider: m.speaker.provider, model: m.speaker.model || m.desk }]));
-      ctx.c.messages = messages;
-      ctx.rooms.set(id, { id, seats: [...ctx.desks.values()].map(d => ({ desk: d.key })) });
-      rooms.set(`/app/chats/workspace/focus/${id}`, { group: "workspace", host: "codex", desks: [...ctx.desks.values()], rooms: [...ctx.rooms.values()], messages });
-      AN.voice.controls(true, { group: "workspace", id }, ctx);
-      return starter(messages.filter(m => m.conversation === id));
-    },
-    async end() { sounds.at(-1).onended(); await flush(); },
-    async hide() { document.hidden = true; document.listeners.visibilitychange(); await flush(); },
-    async automatic() { await nodes.find(n => n.tag === "button.voice-toggle").listeners.click(); await flush(); },
-  };
-}
-
-test("changing settings after repeated voice failures restores playback and resets the failure count", async () => {
+test("changing settings after repeated failures restores playback and resets the failure count", async () => {
   let broken = true;
   const app = await office(true, async () => { if (broken) throw new Error("synthesis failed"); });
-  const banner = app.nodes.find(n => n.id === "voice-banner");
-  const messages = [];
+  const list = [];
   for (let n = 1; n <= 3; n++) {
-    messages.push(message(`fail-${n}`, `2026-11-01T00:00:0${n}Z`));
-    await app.feed(messages);
+    list.push(message(`fail-${n}`, `2026-11-01T00:00:0${n}Z`)); await app.feed(list);
   }
-  const text = app.nodes.find(n => n.id === "voice-banner-text");
-  assert.match(text.textContent, /已停止/);
+  assert.equal(app.published.at(-1).status, "播放已停下：synthesis failed");
+  assert.equal(app.published.at(-1).bar_label, "出错");
+  list.length = 0;
   await app.settings({ summary: { enabled: false } });
-  assert.equal(banner.hidden, true);
-  messages.push(message("retry-failure", "2026-11-01T00:00:04Z"));
-  await app.feed(messages);
-  assert.equal(text.textContent, "synthesis failed", "settings also reset the consecutive failure count");
+  assert.equal(app.published.at(-1).error, null);
+  await app.command("listen", { group: "workspace" });
+  list.push(message("retry-failure", "2026-11-01T00:00:04Z")); await app.feed(list);
+  assert.equal(app.published.at(-1).status, "本条朗读失败，已跳过");
   broken = false;
-  messages.push(message("recovered", "2026-11-01T00:00:05Z"));
-  await app.feed(messages);
-  assert.equal(app.sounds.at(-1)?.text, "recovered", "settings changes release the halted player");
+  list.push(message("recovered", "2026-11-01T00:00:05Z")); await app.feed(list);
+  assert.equal(app.sounds.at(-1).text, "recovered");
+  assert.equal(app.published.at(-1).status, "正在播放", "the next effective state replaces a skipped-message error");
   await app.end();
-  assert.equal(banner.hidden, true, "successful playback clears a playback failure");
+  assert.equal(app.published.at(-1).error, null);
 });
 
 test("a 204 skip neither clears playback errors nor resets consecutive failures", async () => {
   const app = await office(true, async () => { throw new Error("synthesis failed"); }, undefined, "all",
     async (path, options) => path === "/app/voice/speak" && JSON.parse(options.body).text === "skip" ? { status: 204 } : null);
-  const banner = app.nodes.find(n => n.id === "voice-banner");
-  const messages = [message("fail-1", "2026-11-01T00:00:01Z")];
-  await app.feed(messages);
-  const text = app.nodes.find(n => n.id === "voice-banner-text");
-  messages.push(message("skip", "2026-11-01T00:00:02Z"));
-  await app.feed(messages);
-  assert.equal(banner.hidden, false, "skipping synthesis is not playback recovery");
+  const list = [message("fail-1", "2026-11-01T00:00:01Z")]; await app.feed(list);
+  list.push(message("skip", "2026-11-01T00:00:02Z")); await app.feed(list);
+  assert.equal(app.published.at(-1).status, "本条朗读失败，已跳过");
   assert.equal(app.sounds.length, 0);
   for (let n = 2; n <= 3; n++) {
-    messages.push(message(`fail-${n}`, `2026-11-01T00:00:0${n + 1}Z`));
-    await app.feed(messages);
+    list.push(message(`fail-${n}`, `2026-11-01T00:00:0${n + 1}Z`)); await app.feed(list);
   }
-  assert.match(text.textContent, /已停止/, "a skipped message does not break the failure streak");
+  assert.equal(app.published.at(-1).status, "播放已停下：synthesis failed");
 });
 
 test("a notice belongs to its playing job and clears only after a later job plays successfully", async () => {
@@ -154,15 +46,11 @@ test("a notice belongs to its playing job and clears only after a later job play
     if (path !== "/app/voice/speak" || JSON.parse(options.body).text !== "notice") return null;
     return { ok: true, status: 200, headers: { get: () => encodeURIComponent("fallback notice") }, blob: async () => ({ text: "notice" }) };
   });
-  const banner = app.nodes.find(n => n.id === "voice-banner");
   await app.feed(["first", "notice", "last"].map((id, n) => message(id, `2026-11-01T00:00:0${n + 1}Z`)));
-  assert.equal(banner.hidden, true, "prefetching a later notice does not show it during the earlier job");
-  await app.end();
-  assert.equal(banner.hidden, false);
-  await app.end();
-  assert.equal(banner.hidden, false, "the job carrying the notice does not clear its own notice");
-  await app.end();
-  assert.equal(banner.hidden, true);
+  assert.equal(app.published.at(-1).error, null);
+  await app.end(); assert.equal(app.published.at(-1).status, "fallback notice");
+  await app.end(); assert.equal(app.published.at(-1).status, "fallback notice");
+  await app.end(); assert.equal(app.published.at(-1).error, null);
 });
 
 test("finishing a playing message does not clear a full-conversation read failure", async () => {
@@ -170,15 +58,12 @@ test("finishing a playing message does not clear a full-conversation read failur
   const app = await office(false, undefined, async data => ({ ok: !broken, json: async () => structuredClone(data) }));
   const button = app.room([message("chosen", "2026-11-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" } })]);
   await button.listeners.click();
-  const banner = app.nodes.find(n => n.id === "voice-banner");
-  assert.equal(banner.hidden, false);
-  await app.end();
-  assert.equal(banner.hidden, false);
-  await app.feed(app.ctx.c.messages);
-  assert.equal(banner.hidden, false, "a settings reload cannot clear a conversation-read error");
+  assert.equal(app.published.at(-1).bar_label, "出错");
+  await app.end(); await app.feed(app.ctx.c.messages);
+  assert.equal(app.published.at(-1).error_source, "read");
   broken = false;
-  await button.listeners.click();
-  assert.equal(banner.hidden, true, "successfully loading the conversation on retry clears its read error");
+  await app.command("retry");
+  assert.equal(app.published.at(-1).error, null);
 });
 
 test("settings-load errors survive playback and clear on an unchanged successful reload", async () => {
@@ -186,31 +71,25 @@ test("settings-load errors survive playback and clear on an unchanged successful
   const app = await office(true, undefined, undefined, "all", async path =>
     path === "/app/voice" && broken ? { ok: false, json: async () => ({ error: "load failed" }) } : null);
   await app.feed([message("playing", "2026-11-01T00:00:01Z")]);
-  broken = true;
-  await app.feed(app.ctx.c.messages);
-  const banner = app.nodes.find(n => n.id === "voice-banner");
-  assert.equal(banner.hidden, false);
-  await app.end();
-  assert.equal(banner.hidden, false, "playback recovery does not recover settings loading");
-  broken = false;
-  await app.feed(app.ctx.c.messages);
-  assert.equal(banner.hidden, true);
+  broken = true; await app.feed(app.ctx.c.messages); await app.end();
+  assert.equal(app.published.at(-1).error_source, "load");
+  assert.equal(app.published.at(-1).primary.command, "settings");
+  broken = false; await app.feed(app.ctx.c.messages);
+  assert.equal(app.published.at(-1).error, null);
 });
 
 test("settings loading recovers after initial failures without requiring a configuration change", async () => {
   let broken = true;
   const app = await office(true, undefined, undefined, "all", async path =>
     path === "/app/voice" && broken ? { ok: false, json: async () => ({ error: "load failed" }) } : null);
-  const banner = app.nodes.find(n => n.id === "voice-banner");
-  assert.equal(banner.hidden, false);
-  broken = false;
-  await app.feed([]);
-  assert.equal(banner.hidden, true);
+  assert.equal(app.published.at(-1).bar_label, "出错");
+  broken = false; await app.feed([]);
+  assert.equal(app.published.at(-1).error, null);
 });
 
 test("private instructions use the boss identity and precede each employee's answer in the same round", async () => {
-  for (const automatic of [false, true]) {
-    const app = await office(automatic);
+  for (const listening of [false, true]) {
+    const app = await office(listening);
     const roomMessage = (id, second, extra = {}) => message(id, `2026-11-01T00:00:${String(second).padStart(2, "0")}Z`, {
       conversation: "room", thread: { kind: "room", id: "room" }, round: 1, ...extra,
     });
@@ -225,7 +104,7 @@ test("private instructions use the boss identity and precede each employee's ans
       roomMessage("topic-2", 4, { round: 2, kind: "prompt", speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
       { ...instruction("a", 2), time: "2026-11-01T00:00:04Z" }, answer("a", 5, 2)];
     const button = app.room(messages);
-    if (automatic) await app.feed(messages);
+    if (listening) await app.feed(messages);
     else { await button.listeners.click(); await flush(); }
     for (let index = 0; index < messages.length; index++) await app.end();
     assert.deepEqual(app.requests.map(r => r.text), ["topic", "instruction-b-1", "answer-b-1", "instruction-a-1", "answer-a-1", "topic-2", "instruction-a-2", "answer-a-2"]);
@@ -304,7 +183,7 @@ test("live private briefings wait for their own completed answers across polls",
   assert.equal(app.requests.length, 4);
 });
 
-test("returning to the directory keeps playing, keeps the channel and reads the whole workspace", async () => {
+test("returning to the directory keeps playing and hides the whole voice channel", async () => {
   const app = await office();
   app.room([]);
   const roomReply = message("meeting-answer", "2026-11-01T00:00:01Z", {
@@ -323,7 +202,7 @@ test("returning to the directory keeps playing, keeps the channel and reads the 
   renderConv(app.ctx.c, app.ctx);
   assert.equal(directory, true);
   assert.equal(clip.paused, false);
-  assert.equal(app.nodes.find(n => n.id === "voice-actions").hidden, false);
+  assert.equal(app.nodes.find(n => n.id === "voice-actions").hidden, true);
   await app.feed([roomReply, message("private-answer", "2026-11-01T00:00:02Z")]);
   await app.end();
   assert.deepEqual(app.requests.map(r => r.text), ["meeting-answer", "private-answer"]);
@@ -363,7 +242,7 @@ test("existing boss messages and employee answers use their displayed text in ti
   const notice = message("notice", "2026-11-01T00:00:00Z", { kind: "notice", speaker: { role: "system" } });
   const messages = [later, typing, forward, instruction, earlier, topic, pending, notice];
   await app.feed(messages);
-  assert.deepEqual(app.requests.map(r => r.text), [earlier.text, "topic", "instruction"], "the next two are prepared ahead");
+  assert.deepEqual(app.requests.map(r => r.text), [earlier.text, "topic"], "only the next clip is prepared ahead");
   assert.equal(app.requests[0].boss, true);
   for (let index = 0; index < 5; index++) await app.end();
   assert.deepEqual(app.requests.map(r => r.text), [earlier.text, "topic", "instruction", "member", "forward"]);
@@ -383,7 +262,7 @@ test("resuming a paused meeting goes back two seconds and keeps the remaining qu
   clip.currentTime = 7.5;
   app.stop();
   assert.equal(clip.paused, true);
-  assert.equal(app.nodes.find(n => n.tag === "button.voice-cover-play").attributes["aria-label"], "继续");
+  assert.equal(app.nodes.find(n => n.tag === "button.voice-primary").attributes["aria-label"], "继续");
   const requests = app.requests.length;
   app.stop();
   await flush();
@@ -416,8 +295,9 @@ test("pausing during synthesis does not start audio until resumed", async () => 
   assert.equal(app.sounds.length, 0);
   app.stop();
   await flush();
+  complete({}); await flush();
   assert.equal(app.sounds.length, 1);
-  assert.equal(app.requests.length, 1);
+  assert.equal(app.requests.length, 2, "cancelled synthesis is retried only after resume");
   await app.end();
 });
 
@@ -433,7 +313,81 @@ test("private channel shows boss and the selected employee role before playback"
   assert.match(roster.children[1].attributes["aria-label"], /实现/);
 });
 
-test("automatic playback follows every meeting and switching meetings keeps its queue", async () => {
+test("the boss box listens to the workspace and the column button to what the column shows", async () => {
+  const app = await office(false);
+  const messages = [message("latest", "2026-11-01T00:00:01Z", { conversation: "room" })];
+  await app.feed(messages);
+  const [workspace, column] = app.nodes.filter(n => n.tag === "button.listen-here");
+  assert.equal(app.voice.workspaceListen, workspace);
+  let stopped = false;
+  await workspace.listeners.click({ stopPropagation() { stopped = true; } }); await flush();
+  assert.ok(stopped, "a click here does not also open the boss's conversation");
+  assert.equal(workspace.attributes["aria-pressed"], "true");
+  assert.deepEqual([app.published.at(-1).follow.group, app.published.at(-1).follow.room], ["workspace", null]);
+  assert.equal(column.hidden, true, "the whole workspace's column leaves listening to the boss box");
+  await workspace.listeners.click(); await flush();
+  assert.equal(app.published.at(-1).follow, null);
+  app.room(messages);
+  assert.equal(column.hidden, false);
+  await column.listeners.click(); await flush();
+  assert.equal(app.published.at(-1).follow.room, "room");
+  assert.equal(workspace.attributes["aria-pressed"], "false");
+  assert.equal(column.attributes["aria-pressed"], "true");
+});
+
+test("listening to a private chat reads its column and nothing else in the workspace", async () => {
+  const app = await office(false);
+  const own = message("own", "2026-11-01T00:00:01Z", { desk: "desk" });
+  const messages = [own];
+  app.private({ key: "desk", provider: "codex", model: "desk" }, messages);
+  await app.feed(messages);
+  await app.nodes.filter(n => n.tag === "button.listen-here")[1].listeners.click(); await flush();
+  assert.equal(app.published.at(-1).follow.desk, "desk");
+  assert.equal(app.published.at(-1).follow.room, null);
+  await app.end();
+  messages.push(message("other", "2026-11-01T00:00:02Z", { desk: "other" }));
+  messages.push(message("next", "2026-11-01T00:00:03Z", { desk: "desk" }));
+  await app.feed(messages);
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["own", "next"]);
+});
+
+test("an album's cover is everyone in that meeting or private chat, whichever message started it", async () => {
+  const boss = (id, time, extra) => message(id, time, { kind: "instruction", desk: undefined, speaker: { role: "manager", provider: "claude", model: "boss" }, ...extra });
+  const seats = ["s1", "s2", "s3", "s4", "s5"].map(key => ({ key, provider: "codex", model: key }));
+  const thread = { kind: "room", id: "room" };
+  const meeting = [boss("ask", "2026-11-01T00:00:01Z", { conversation: "room", thread }),
+    message("answer", "2026-11-01T00:00:02Z", { desk: "s1", conversation: "room", thread })];
+  const coverOf = async id => {
+    const app = await office(false);
+    app.room(meeting, "room", seats);
+    await app.feed(meeting);
+    const rec = { bub: { prepend() {} } };
+    app.voice.decorate(rec, meeting.find(m => m.id === id), app.ctx);
+    rec.read.listeners.click(); await flush();
+    const job = app.published.at(-1).jobs[0];
+    return [job.album.link, job.album.cover.map(p => p.model)];
+  };
+  assert.deepEqual(await coverOf("ask"), await coverOf("answer"));
+  assert.deepEqual(await coverOf("ask"), ["conv:room", ["boss", "s1", "s2", "s3", "s4", "s5"]]);
+
+  const app = await office(false);
+  const chat = [boss("task-1", "2026-11-01T00:00:01Z", { conversation: "t1", thread: { kind: "desk", key: "s1" }, to: [{ key: "s1" }] }),
+    message("task-2", "2026-11-01T00:00:02Z", { desk: "s1", conversation: "t2", thread: { kind: "desk", key: "s1" } })];
+  app.private(seats[0], chat);
+  await app.feed(chat);
+  const albums = [];
+  for (const m of chat) {
+    const rec = { bub: { prepend() {} } };
+    app.voice.decorate(rec, m, app.ctx);
+    rec.read.listeners.click(); await flush();
+    albums.push(app.published.at(-1).jobs[0].album);
+  }
+  assert.deepEqual(albums[0], albums[1], "every task with one desk is the same private chat");
+  assert.equal(albums[0].link, "desk:s1");
+  assert.deepEqual(albums[0].cover.map(p => p.model), ["boss", "s1"]);
+});
+
+test("workspace listening follows every meeting and switching meetings keeps its queue", async () => {
   const app = await office();
   const meeting = (id, room, second) => message(id, `2026-11-01T00:00:0${second}Z`, {
     conversation: room, thread: { kind: "room", id: room }, round: 1,
@@ -442,7 +396,7 @@ test("automatic playback follows every meeting and switching meetings keeps its 
   await app.feed([]);
   const a1 = meeting("a1", "a", 1), b1 = meeting("b1", "b", 2), a2 = meeting("a2", "a", 3);
   await app.feed([b1, a2, a1]);
-  assert.deepEqual(app.requests.map(r => r.text), ["a1", "b1", "a2"]);
+  assert.deepEqual(app.requests.map(r => r.text), ["a1", "a2"], "the same album plays its waiting batch first");
   app.room([], "b");
   assert.equal(app.sounds[0].paused, false);
   await app.end(); await app.end(); await app.end();
@@ -461,25 +415,22 @@ test("meeting audio is prepared ahead, plays in message order and stops scheduli
   }));
   await app.room(messages).listeners.click();
   await flush();
-  assert.equal(app.requests.length, 3, "prepare current audio plus two ahead before the first clip finishes");
-  pending.get("m3")({}); pending.get("m2")({});
-  await flush();
-  assert.equal(app.sounds.length, 0, "later audio must wait for the first message");
-  pending.get("m1")({});
-  await flush();
+  assert.equal(app.requests.length, 1, "no lookahead before the first clip starts");
+  pending.get("m1")({}); await flush();
   assert.equal(app.sounds.length, 1);
+  assert.deepEqual(app.requests.map(r => r.text), ["m1", "m2"]);
+  pending.get("m2")({}); await flush();
   await app.end();
   assert.equal(app.sounds.length, 2);
-  assert.equal(app.requests.length, 4, "refill the two-message lookahead while the next clip plays");
+  assert.equal(app.requests.length, 3, "refill one clip of lookahead after the next clip starts");
   app.voice.stop();
-  assert.equal(signals.get("m4").aborted, true);
-  pending.get("m4")({});
-  await flush();
-  assert.equal(app.requests.length, 4, "stopping must never start m5");
+  assert.equal(signals.get("m3").aborted, true);
+  pending.get("m3")({}); await flush();
+  assert.equal(app.requests.length, 3, "stopping must never start m4");
   assert.equal(app.sounds.length, 2, "late synthesis results must not start playback");
 });
 
-test("room playback reads the complete meeting in time order with automatic reading off and can stop", async () => {
+test("room playback reads the complete meeting in time order with listening off and can stop", async () => {
   const app = await office(false);
   const roomMessage = (id, second, extra = {}) => message(id, `2026-11-01T00:00:0${second}Z`, {
     conversation: "room", thread: { kind: "room", id: "room" }, ...extra,
@@ -504,29 +455,7 @@ test("room playback reads the complete meeting in time order with automatic read
   assert.deepEqual(app.requests.slice(3).map(r => r.text), ["question", "answer", "summary"]);
 });
 
-test("automatic switch stops new automatic reads while final answers remain manually readable", async () => {
-  const app = await office(false);
-  const final = message("private-final", "2026-11-01T00:00:01Z");
-  await app.feed([final]);
-  assert.equal(app.requests.length, 0);
-  const rec = { bub: { prepend() {} } };
-  app.voice.decorate(rec, final, app.ctx);
-  assert.equal(rec.read.hidden, false);
-  assert.equal(rec.read.disabled, false);
-  rec.read.listeners.click();
-  await flush();
-  assert.equal(app.requests[0].text, "private-final");
-  await app.end();
-  await app.automatic();
-  await app.feed([final]);
-  assert.equal(app.requests.length, 1, "enabling automatic playback must not replay old answers");
-  await app.feed([final, message("next-final", "2026-11-01T00:00:02Z")]);
-  assert.equal(app.requests[1].text, "next-final");
-  await app.end();
-  assert.equal(app.requests.length, 2);
-});
-
-test("reading one message by hand keeps what automatic playback queued, the cut clip included", async () => {
+test("reading one message by hand keeps what listening queued, the cut clip included", async () => {
   const app = await office();
   const first = message("first", "2026-11-01T00:00:01Z"), second = message("second", "2026-11-01T00:00:02Z");
   const third = message("third", "2026-11-01T00:00:03Z");
@@ -539,11 +468,12 @@ test("reading one message by hand keeps what automatic playback queued, the cut 
   assert.equal(app.sounds.length, 2);
   await app.end();
   await app.end();
-  assert.deepEqual(app.sounds.map(s => s.text), ["first", "third", "first", "second"], "the cut auto read starts over after the chosen one");
-  assert.deepEqual(app.requests.map(r => r.text), ["first", "second", "third", "first"], "a clip prepared ahead is reused");
+  assert.deepEqual(app.playbacks.map(s => s.text), ["first", "third", "first", "second"], "the cut followed clip resumes after the chosen one");
+  assert.equal(app.sounds[0].plays, 2, "the same audio is reused");
+  assert.deepEqual(app.requests.map(r => r.text), ["first", "second", "third"], "both current and prefetched audio are reused");
 });
 
-test("opening another meeting keeps a chained read and what auto read queued meanwhile", async () => {
+test("opening another meeting keeps a chained read and what listening queued meanwhile", async () => {
   const app = await office();
   const old = message("old", "2025-01-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" } });
   const button = app.room([old]);
@@ -568,34 +498,6 @@ test("hiding the window or opening another workspace keeps the queue playing", a
   assert.deepEqual(app.sounds.map(s => s.text), ["first", "second"]);
 });
 
-test("two bosses never take turns: one workspace's queue plays out before the other's", async () => {
-  const app = await office();
-  await app.feed(["a1", "a2", "a3"].map((id, n) => message(id, `2026-11-01T00:00:0${2 * n + 1}Z`)));
-  const other = messages => app.voice.ingest({ group: "other", messages }, { ...app.ctx, c: { ...app.ctx.c, group: "other", messages } });
-  other([]);
-  await flush();
-  other(["b1", "b2"].map((id, n) => message(id, `2026-11-01T00:00:0${2 * n + 2}Z`)));
-  await flush();
-  for (let n = 0; n < 4; n++) await app.end();
-  assert.deepEqual(app.sounds.map(s => s.text), ["a1", "a2", "a3", "b1", "b2"]);
-});
-
-test("the drawer's auto read reads only the list it shows; the top bar's reads the whole workspace", async () => {
-  const app = await office(false);
-  const meeting = (id, n) => message(id, `2026-11-01T00:00:0${n}Z`, { conversation: "room", thread: { kind: "room", id: "room" } });
-  app.room([meeting("old", 1)]);
-  await app.feed([meeting("old", 1)]);
-  const list = app.nodes.filter(n => n.tag === "button.voice-toggle")[2];
-  list.listeners.click();
-  assert.equal(list.attributes["aria-pressed"], "true");
-  await app.feed([meeting("old", 1), message("elsewhere", "2026-11-01T00:00:02Z"), meeting("fresh", 3)]);
-  assert.deepEqual(app.requests.map(r => r.text), ["fresh"]);
-  assert.equal(app.nodes.find(n => n.tag === "div.bar-voice-wrap").dataset.state, "speaking", "the top bar button shows playback");
-  await app.automatic();
-  assert.equal(list.attributes["aria-pressed"], "true");
-  assert.equal(list.disabled, true, "the whole workspace already covers this list");
-});
-
 test("the top bar lists what plays and what comes next, and a row plays at a click", async () => {
   const app = await office();
   await app.feed(["first", "second", "third"].map((id, n) => message(id, `2026-11-01T00:00:0${n + 1}Z`)));
@@ -607,7 +509,7 @@ test("the top bar lists what plays and what comes next, and a row plays at a cli
   await flush();
   await app.end();
   await app.end();
-  assert.deepEqual(app.sounds.map(s => s.text), ["first", "third", "first", "second"]);
+  assert.deepEqual(app.playbacks.map(s => s.text), ["first", "third", "first", "second"]);
 });
 
 test("the menu bar panel sees what the top bar shows and its clicks drive the office", async () => {
@@ -627,45 +529,44 @@ test("the menu bar panel sees what the top bar shows and its clicks drive the of
   assert.equal(app.published.at(-1).state, "speaking");
 });
 
-test("listening to a meeting from the panel plays its latest message, then what it says next", async () => {
+test("listening to a meeting from the panel starts at the beginning, then follows new messages", async () => {
   const app = await office(false);
   const say = n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`, { conversation: "room", thread: { kind: "room", id: "room" } });
   const other = message("x1", "2026-11-01T00:00:05Z", { conversation: "elsewhere" });
   app.rooms.set("/app/chats/elsewhere/focus/room", { group: "elsewhere", host: "codex", desks: [], rooms: [], messages: [say(1), say(2), other] });
   await app.command("listen", { group: "elsewhere", room: "room" });
   await flush();
-  assert.deepEqual(app.sounds.map(sound => sound.text), ["m2"], "only the latest message plays at once");
-  assert.deepEqual(app.published.at(-1).follow, { group: "elsewhere", room: "room", title: "elsewhere" });
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["m1"], "the first message plays at once");
+  assert.deepEqual(app.published.at(-1).follow, { group: "elsewhere", room: "room", desk: null, title: "elsewhere", expires_at: 3602000 });
   app.rooms.get("/app/chats/elsewhere/focus/room").messages.push(say(3), message("x2", "2026-11-01T00:00:06Z", { conversation: "elsewhere" }));
   await app.tick();
-  await app.end();
-  assert.deepEqual(app.sounds.map(sound => sound.text), ["m2", "m3"], "a new message of the meeting follows; another conversation does not");
+  await app.end(); await app.end();
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["m1", "m2", "m3"], "a new message of the meeting follows; another conversation does not");
   await app.command("unlisten");
   assert.equal(app.published.at(-1).follow, null);
 });
 
-test("turning auto read off keeps what listening queued; stopping listening drops only that", async () => {
+test("stopping listening drops its queued messages", async () => {
   const app = await office(true);
   const say = n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`, { conversation: "room", thread: { kind: "room", id: "room" } });
   app.rooms.set("/app/chats/elsewhere/focus/room", { group: "elsewhere", host: "codex", desks: [], rooms: [], messages: [say(1)] });
   await app.command("listen", { group: "elsewhere", room: "room" });
   app.rooms.get("/app/chats/elsewhere/focus/room").messages.push(say(2));
   await app.tick();
-  app.nodes.filter(n => n.tag === "button.voice-toggle")[0].listeners.click();
-  await flush();
   assert.deepEqual(app.published.at(-1).follow?.room, "room");
   await app.end();
-  assert.deepEqual(app.sounds.map(sound => sound.text), ["m1", "m2"], "the listened meeting goes on after auto read is off");
+  assert.deepEqual(app.sounds.map(sound => sound.text), ["m1", "m2"], "the listened meeting reads its new messages");
   await app.command("unlisten");
   assert.equal(app.published.at(-1).follow, null);
   assert.equal(app.published.at(-1).state, "idle");
+  assert.equal(app.published.at(-1).recent?.id, "m2", "the player keeps the message that was playing");
 });
 
-test("listening to an automatically playing or queued message never reads its id twice", async () => {
+test("listening to an already playing or queued message never reads its id twice", async () => {
   for (const queued of [false, true]) {
-    const app = await office();
-    const messages = [1, 2].slice(0, queued ? 2 : 1).map(n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`));
-    await app.feed(messages);
+    const app = await office(false);
+    const messages = [1, 2].slice(0, queued ? 2 : 1).map(n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`, { conversation: "room", thread: { kind: "room", id: "room" } }));
+    await app.room(messages).listeners.click();
     app.rooms.set("/app/chats/workspace", { ...app.ctx.c, messages });
     await app.command("listen", { group: "workspace" });
     for (let n = 0; n < 4 && app.published.at(-1).state !== "idle"; n++) await app.end();
@@ -676,7 +577,7 @@ test("listening to an automatically playing or queued message never reads its id
   }
 });
 
-test("a clicked meeting chain stays ahead of automatic messages across conversations and workspaces", async () => {
+test("a clicked meeting chain stays ahead of followed messages while the office changes workspaces", async () => {
   const app = await office();
   const meeting = n => message(`meeting-${n}`, `2026-11-01T00:00:0${n + 3}Z`, {
     conversation: "room", thread: { kind: "room", id: "room" },
@@ -690,49 +591,9 @@ test("a clicked meeting chain stays ahead of automatic messages across conversat
   await app.room(messages).listeners.click();
   await app.feed([...messages, message("new-interloper", "2026-11-01T00:00:03Z")]);
   for (let n = 0; n < 3; n++) await app.end();
-  assert.deepEqual(app.sounds.slice(1, 4).map(sound => sound.text), ["meeting-1", "meeting-2", "meeting-3"]);
-  await app.end(); await app.end();
-  assert.deepEqual(app.sounds.slice(4).map(sound => sound.text), ["interloper", "new-interloper", "old-workspace"]);
-});
-
-test("stopping listening restores unread briefings and replies suppressed in the office", async () => {
-  const app = await office();
-  const messages = [message("playing", "2026-11-01T00:00:01Z")];
-  app.rooms.set("/app/chats/workspace", { ...app.ctx.c, messages });
-  await app.command("listen", { group: "workspace" });
-  messages.push(
-    message("briefing", "2026-11-01T00:00:02Z", { conversation: "task", round: 1, desk: "worker", kind: "instruction", speaker: { role: "manager" } }),
-    message("answer", "2026-11-01T00:00:03Z", { conversation: "task", round: 1, desk: "worker" }),
-  );
-  await app.tick();
-  await app.feed(messages);
-  await app.command("unlisten");
-  await app.feed(messages);
+  assert.deepEqual(app.playbacks.slice(1, 4).map(sound => sound.text), ["meeting-1", "meeting-2", "meeting-3"]);
   await app.end();
-  assert.deepEqual(app.sounds.map(sound => sound.text), ["playing", "briefing", "answer"]);
-});
-
-test("canceling a latest reply queued by listening also releases its omitted briefing", async () => {
-  let release;
-  const pending = new Promise(resolve => { release = resolve; });
-  const app = await office(true, undefined, async data => { await pending; return { ok: true, json: async () => structuredClone(data) }; });
-  const messages = [
-    message("briefing", "2026-11-01T00:00:01Z", { conversation: "task", round: 1, desk: "worker", kind: "instruction", speaker: { role: "manager" } }),
-    message("answer", "2026-11-01T00:00:02Z", { conversation: "task", round: 1, desk: "worker" }),
-  ];
-  app.rooms.set("/app/chats/workspace", { ...app.ctx.c, messages });
-  await app.command("listen", { group: "workspace" });
-  const rec = { bub: { prepend() {} } };
-  app.voice.decorate(rec, message("chosen", "2026-11-01T00:00:03Z"), app.ctx);
-  rec.read.listeners.click();
-  await flush();
-  release(); await flush(); await flush();
-  await app.feed(messages);
-  assert.deepEqual(app.sounds.map(sound => sound.text), ["chosen"]);
-  await app.command("unlisten");
-  await app.feed(messages);
-  await app.end(); await app.end();
-  assert.deepEqual(app.sounds.map(sound => sound.text), ["chosen", "briefing", "answer"]);
+  assert.deepEqual(app.playbacks.slice(4).map(sound => sound.text), ["interloper", "new-interloper"]);
 });
 
 test("the album playing heads the playlist and its title opens the conversation", async () => {
@@ -743,8 +604,42 @@ test("the album playing heads the playlist and its title opens the conversation"
   app.nodes.find(n => n.tag === "button.bar-voice").listeners.click();
   const title = app.nodes.find(n => n.tag === "button.voice-album-title");
   assert.equal(title.textContent, "发布前评审");
-  assert.equal(app.nodes.find(n => n.tag === "div.voice-cover").dataset.playing, "true");
+  assert.equal(app.nodes.some(n => n.tag === "button.voice-cover-play"), false);
   title.listeners.click();
+  assert.deepEqual([...app.navigations], ["/chat/workspace#conv%3Aroom"]);
+});
+
+test("a private album is titled by the role and its model line goes to the message playing", async () => {
+  const app = await office(false);
+  const said = message("said", "2026-11-01T00:00:01Z", { desk: "desk" });
+  app.private({ key: "desk", provider: "codex", model: "gpt-x", role: "评审" }, [said]);
+  await app.feed([said]);
+  const rec = { bub: { prepend() {} } };
+  app.voice.decorate(rec, said, app.ctx);
+  rec.read.listeners.click(); await flush();
+  app.voice.decorate(rec, said, app.ctx);
+  assert.equal(rec.read.dataset.sounding, "true");
+  assert.equal(app.published.at(-1).jobs[0].album.title, "评审");
+  const bar = app.nodes.find(n => n.tag === "button.bar-voice");
+  bar.listeners.click();
+  assert.equal(app.nodes.find(n => n.tag === "button.voice-album-who").textContent, "gpt-x");
+  app.nodes.find(n => n.tag === "button.voice-album-who").listeners.click();
+  assert.equal(app.located[0].id, "said");
+  assert.equal(app.navigations.length, 0, "the office decides how to reach it, so the conversation's end does not win");
+});
+
+test("a click from the panel waits for the office to be shown before it touches the list", async () => {
+  const app = await office(false);
+  const shown = () => { app.document.hidden = false; app.document.listeners.visibilitychange(); };
+  app.document.hidden = true;
+  await app.command("locate", { id: "said" });
+  assert.equal(app.located.length, 0);
+  shown();
+  assert.equal(app.located[0]?.id, "said");
+  app.document.hidden = true;
+  await app.command("open", { group: "workspace", album: { link: "conv:room" } });
+  assert.equal(app.navigations.length, 0);
+  shown();
   assert.deepEqual([...app.navigations], ["/chat/workspace#conv%3Aroom"]);
 });
 
@@ -764,9 +659,8 @@ test("with chaining off a clicked message is read alone", async () => {
     conversation: "room", thread: { kind: "room", id: "room" },
   }));
   const start = app.room(messages);
-  const chain = app.nodes.filter(n => n.tag === "button.voice-toggle")[1];
-  await chain.listeners.click(); await flush();
-  assert.equal(chain.attributes["aria-pressed"], "false");
+  await app.settings({ continue_read: false });
+  assert.equal(app.nodes.some(n => n.tag === "button.voice-toggle"), false);
   await start.listeners.click();
   await app.end();
   assert.deepEqual(app.requests.map(r => r.text), ["c1"]);
@@ -860,7 +754,7 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
 });
 
 
-test("automatic reads respect all, members, boss and meetings scopes", async () => {
+test("followed reads respect all, members, boss and meetings scopes", async () => {
   const messages = [
     message("private-boss", "2026-11-01T00:00:01Z", { kind: "prompt", speaker: { role: "manager" } }),
     message("private-member", "2026-11-01T00:00:02Z"),
@@ -907,7 +801,7 @@ test("a manually selected message is always spoken and only its chain uses the r
 });
 
 
-test("changing scope filters queued automatic reads while a manual clip stays selected", async () => {
+test("changing scope filters queued followed reads while a manual clip stays selected", async () => {
   const app = await office();
   const room = { kind: "room", id: "room" };
   const messages = [
@@ -934,10 +828,10 @@ test("boss-only playback omits private instructions whose paired reply is outsid
     message("answer", "2026-11-01T00:00:03Z", { conversation: "room", round: 1, thread: room, desk: "a" }),
     message("summary", "2026-11-01T00:00:04Z", { conversation: "room", round: 1, thread: room, kind: "prompt", speaker: { role: "manager" } }),
   ];
-  for (const automatic of [false, true]) {
-    const app = await office(automatic, undefined, undefined, "boss");
+  for (const listening of [false, true]) {
+    const app = await office(listening, undefined, undefined, "boss");
     const button = app.room(messages);
-    if (automatic) await app.feed(messages);
+    if (listening) await app.feed(messages);
     else await button.listeners.click();
     await app.end();
     await app.end();
@@ -946,7 +840,7 @@ test("boss-only playback omits private instructions whose paired reply is outsid
   }
 });
 
-test("changing scope interrupts an excluded automatic clip and plays the eligible queued reply", async () => {
+test("changing scope interrupts an excluded followed clip and plays the eligible queued reply", async () => {
   const app = await office();
   const messages = [
     message("current-boss", "2026-11-01T00:00:01Z", { kind: "prompt", speaker: { role: "manager" } }),
@@ -957,9 +851,108 @@ test("changing scope interrupts an excluded automatic clip and plays the eligibl
   assert.equal(app.sounds[0].text, "current-boss");
   assert.equal(app.sounds[0].paused, false);
   await app.scope("members");
-  assert.equal(app.sounds[0].paused, true, "an automatically selected out-of-scope clip stops immediately");
+  assert.equal(app.sounds[0].paused, true, "an followed out-of-scope clip stops immediately");
   assert.deepEqual(app.sounds.map(s => s.text), ["current-boss", "member"]);
   assert.equal(app.sounds[1].paused, false);
   await app.end();
   assert.deepEqual(app.sounds.map(s => s.text), ["current-boss", "member"], "the excluded prefetched boss clip is never played");
+});
+
+
+test("expiry finishes the speaking clip, aborts lookahead and never queues later messages", async () => {
+  const signals = new Map();
+  const app = await office(true, async (body, signal) => { signals.set(body.text, signal); });
+  const messages = [1, 2, 3, 4, 5].map(n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`));
+  await app.feed(messages);
+  const clip = app.sounds[0];
+  assert.deepEqual(app.requests.map(r => r.text), ["m1", "m2"]);
+  await app.tick(8 * 3600000);
+  assert.equal(app.published.at(-1).follow, null);
+  assert.equal(clip.paused, false, "expiry must let the speaking clip finish");
+  assert.equal(signals.get("m1").aborted, false);
+  assert.equal(signals.get("m2").aborted, true);
+  assert.equal(signals.has("m3"), false);
+  assert.equal(app.published.at(-1).status, "收听已结束");
+  await app.end();
+  const late = message("late", "2026-11-02T00:00:01Z");
+  await app.feed([...messages, late]);
+  await app.tick();
+  assert.deepEqual(app.sounds.map(s => s.text), ["m1"]);
+  assert.equal(app.requests.length, 2, "expiry never starts unprepared or newly arrived messages");
+  const rec = { bub: { prepend() {} } };
+  app.voice.decorate(rec, late, app.ctx);
+  rec.read.listeners.click(); await flush();
+  assert.equal(app.sounds.at(-1).text, "late", "manual reading still works after expiry");
+  await app.end();
+});
+
+test("waking past expiry cannot synthesize the next clip before the timer runs", async () => {
+  const app = await office();
+  await app.feed([1, 2, 3, 4].map(n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`)));
+  app.advance(8 * 3600000);
+  await app.end();
+  assert.equal(app.requests.length, 2);
+  assert.deepEqual(app.sounds.map(s => s.text), ["m1"]);
+  assert.equal(app.published.at(-1).follow, null);
+});
+
+test("expiry cancels a pending listen response and an unfinished synthesis result", async () => {
+  for (const waitingFor of ["conversation", "audio"]) {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const app = await office(false,
+      async () => { if (waitingFor === "audio") await pending; },
+      async data => { if (waitingFor === "conversation") await pending; return { ok: true, json: async () => structuredClone(data) }; });
+    await app.feed([message("latest", "2026-11-01T00:00:01Z")]);
+    app.room([message("latest", "2026-11-01T00:00:01Z", { conversation: "room", thread: { kind: "room", id: "room" } })]);
+    await app.command("listen", { group: "workspace", room: "room" });
+    app.advance(8 * 3600000);
+    release(); await flush(); await flush();
+    assert.equal(app.published.at(-1).follow, null);
+    assert.equal(app.sounds.length, 0, waitingFor);
+    assert.equal(app.requests.length, waitingFor === "conversation" ? 0 : 1);
+    await app.tick();
+    assert.equal(app.sounds.length, 0, "late results cannot restart playback");
+  }
+});
+
+test("expiry preserves the speaking manual clip but withdraws its followed chain", async () => {
+  for (const asleep of [false, true]) {
+    const app = await office();
+    const messages = [1, 2, 3, 4].map(n => message(`m${n}`, `2026-11-01T00:00:0${n}Z`, {
+      conversation: "room", thread: { kind: "room", id: "room" },
+    }));
+    await app.feed(messages);
+    app.room(messages);
+    const rec = { bub: { prepend() {} } };
+    app.voice.decorate(rec, messages[1], app.ctx);
+    if (asleep) app.advance(8 * 3600000);
+    rec.read.listeners.click(); await flush(); await flush();
+    const manual = app.sounds.at(-1);
+    await app.tick(8 * 3600000);
+    assert.equal(manual.paused, false);
+    await app.end(); await app.end(); await app.end();
+    assert.deepEqual(app.sounds.map(s => s.text), asleep ? ["m1", "m2", "m3", "m4"] : ["m1", "m2"]);
+    assert.equal(app.published.at(-1).state, "idle");
+  }
+});
+
+test("listening captures its deadline, renews on another click and does not survive a new player", async () => {
+  const app = await office(false);
+  await app.feed([message("latest", "2026-11-01T00:00:01Z")]);
+  assert.equal(app.requests.length, 0, "enabling voice alone never plays messages");
+  await app.command("listen", { group: "workspace" });
+  const first = app.published.at(-1).follow.expires_at;
+  assert.equal(app.nodes.filter(n => n.tag === "button.voice-toggle").length, 0, "chaining is configured only in settings");
+  await app.settings({ listen_minutes: 30 });
+  assert.equal(app.published.at(-1).follow.expires_at, first, "a settings change leaves this session's deadline alone");
+  await app.command("listen", { group: "workspace" });
+  const renewed = app.published.at(-1).follow.expires_at;
+  assert.ok(renewed < first, "the next listen uses the new duration");
+  await app.tick(1000);
+  app.rooms.set("/app/chats/elsewhere", { ...app.ctx.c, group: "elsewhere", messages: [] });
+  await app.command("listen", { group: "elsewhere" });
+  assert.equal(app.published.at(-1).follow.expires_at, renewed + 1000);
+  const restarted = await office(false);
+  assert.equal(restarted.published.at(-1).follow, null);
 });

@@ -1,7 +1,6 @@
 "use strict";
 // Menu bar panel: one card per boss (the host CLI session), headed by the boss with its office below.
-// Offices with work going on or a failure are cards; the rest fold into one line each at the end, and
-// when nothing is going on the most recent office still shows as a card.
+// Offices with running work or active listening are cards; the rest fold into one line each.
 // Every node is created once and then patched in place (keyed by group id / desk key / room id).
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
@@ -16,82 +15,79 @@ if (new URLSearchParams(location.search).has("glass")) document.body.classList.a
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
 
 // ---------------------------------------------------------------- voice
-// The office alone plays, so every click here goes back to it. First in the panel, only while
-// something plays: the album playing. On each workspace and meeting: listen to it, which plays its
-// latest message and then whatever it says next.
-let voiceNow = null, voiceConfig = null;
-// A listen click on its way: the office is opening, or waits until the user leaves the page shown.
-let voiceAsked = null;
-// Without the office open, whether voice can speak comes from its settings; listening opens it.
+// The office owns player decisions; the panel only owns a request waiting for that office.
+let voiceNow = null, voiceConfig = null, voiceAsked = null, voiceIssue = null;
 const voiceReady = () => voiceNow ? voiceNow.enabled && voiceNow.ready
   : Boolean(voiceConfig?.enabled && voiceConfig.keys?.[voiceConfig.engine]);
 function voiceCommand(kind, value) {
-  fetch("/app/voice/player/command", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
+  if (kind === "retry" && voiceIssue) { ask(voiceIssue.target); return Promise.resolve(); }
+  if (["unlisten", "stop_all"].includes(kind)) { voiceAsked = null; voiceIssue = null; redrawListen(); }
+  return fetch("/app/voice/player/command", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
     body: JSON.stringify({ kind, value }) }).catch(() => {});
 }
-const listening = target => {
-  const follow = voiceNow?.follow;
-  return Boolean(follow && follow.group === target.group && (follow.room || null) === (target.room || null));
-};
+const listening = target => Boolean(voiceNow?.follow && !voiceNow.follow.desk
+  && voiceNow.follow.group === target.group && (voiceNow.follow.room || null) === (target.room || null));
 const asked = target => Boolean(voiceAsked && voiceAsked.target.group === target.group && voiceAsked.target.room === (target.room || null));
+function failListen(request) {
+  if (voiceAsked !== request) return;
+  void voiceCommand("unlisten");
+  voiceIssue = { target: request.target, message: L("无法开始收听", "Unable to start listening") }; redrawListen();
+}
 function ask(target) {
+  voiceIssue = null;
   const request = voiceAsked = { target: { group: target.group, room: target.room || null }, deferred: false };
   redrawListen();
   fetch("/app/voice/player/command", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "listen", value: request.target }) })
-    .then(response => response.json()).then(reply => { if (voiceAsked === request && reply.opening === false) { request.deferred = true; redrawListen(); } })
-    .catch(() => { if (voiceAsked === request) { voiceAsked = null; redrawListen(); } });
-  // An office that never opens does not leave the button waiting.
-  setTimeout(() => { if (voiceAsked === request && !request.deferred) { voiceAsked = null; redrawListen(); } }, 20000);
+    .then(async response => { if (!response.ok) throw new Error(); return response.json(); })
+    .then(reply => { if (voiceAsked === request && reply.opening === false) { request.deferred = true; redrawListen(); } })
+    .catch(() => failListen(request));
+  setTimeout(() => { if (voiceAsked === request && !request.deferred) failListen(request); }, 20000);
 }
 function listenButton() {
   const button = h("button.voice-listen", { type: "button", hidden: true });
   button.addEventListener("click", () => {
-    const target = button.target;
-    if (!target) return;
-    if (asked(target)) { voiceAsked = null; voiceCommand("unlisten"); redrawListen(); }
-    else if (listening(target)) voiceCommand("unlisten");
-    else ask(target);
+    if (button.disabled || !button.target) return;
+    if (asked(button.target) || listening(button.target)) voiceCommand("unlisten");
+    else ask(button.target);
   });
   return button;
 }
 function redrawListen() {
   for (const button of document.querySelectorAll("button.voice-listen")) if (button.target) drawListen(button);
+  drawVoice();
+  if (state.lastData) render(state.lastData);
 }
 function drawListen(button, target = button.target) {
   button.target = target;
-  button.hidden = !voiceReady();
+  button.hidden = !(voiceNow ? voiceNow.enabled : voiceConfig?.enabled);
+  button.disabled = !voiceReady() && !asked(target) && !listening(target);
   const on = listening(target), waiting = !on && asked(target);
-  setText(button, on ? "■" : waiting ? "…" : "▶");
-  const label = on ? L("停止收听", "Stop listening")
-    : waiting ? voiceAsked.deferred ? L("回到办公室后开始收听", "Starts when you go back to the office") : L("正在打开办公室…", "Opening the office…")
-    : target.room ? L("收听这场会议", "Listen to this meeting") : L("收听这个工作区", "Listen to this workspace");
+  setText(button, waiting ? L("取消收听", "Cancel listening") : on ? L("停止收听", "Stop listening") : L("收听", "Listen"));
   button.dataset.waiting = String(waiting);
-  setAttr(button, "title", label);
-  setAttr(button, "aria-label", label);
   button.dataset.on = String(on);
+  setAttr(button, "aria-pressed", String(on));
 }
-{
-  const follow = AN.voiceFollow(voiceCommand), album = AN.voiceAlbum(voiceCommand);
-  const failure = h("p.voice-error", { role: "status", hidden: true });
-  const now = h("div.voice-now", { hidden: true }, follow.el, album.el, failure);
-  $("scroll").prepend(now);
-  const show = snap => {
-    voiceNow = snap;
-    if (voiceAsked && snap?.follow && listening(voiceAsked.target)) voiceAsked = null;
-    now.hidden = !(snap?.enabled && (snap.playing || snap.follow || snap.error));
-    failure.hidden = !snap?.error;
-    setText(failure, snap?.error || "");
-    follow.draw(snap);
-    album.draw(snap?.playing ? snap : null);
-    redrawListen();
-  };
-  const settings = () => load("/app/voice").then(config => { voiceConfig = config; show(voiceNow); }, () => {});
-  addEventListener("agentnave:voice-player", ({ detail }) => show(detail));
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) void settings(); });
-  load("/app/voice/player").then(show, () => {});
-  void settings();
+const voicePlayer = AN.voicePlayer(voiceCommand), voiceCard = h("div.voice-now", { hidden: true }, voicePlayer.el);
+$("scroll").prepend(voiceCard);
+function drawVoice() {
+  let snap = voiceNow || AN.voiceState({ enabled: Boolean(voiceConfig?.enabled), ready: voiceReady(), jobs: [], state: "idle", can_stop: false });
+  if (voiceAsked || voiceIssue) snap = { ...snap,
+    status: voiceIssue?.message || (voiceAsked.deferred ? L("等待返回办公室", "Waiting to return to the office") : L("正在打开办公室…", "Opening the office…")),
+    primary: voiceIssue ? { icon: "retry", label: L("重试", "Retry"), command: "retry", disabled: false } : { label: L("暂停", "Pause"), command: "toggle", disabled: true }, can_next: false, can_stop: true };
+  voiceCard.hidden = !(voiceAsked || voiceIssue || snap.enabled && (snap.playing || snap.jobs?.length || snap.recent || snap.follow || snap.paused || snap.backlog || snap.error || !snap.ready));
+  voicePlayer.draw(snap);
 }
+function showVoice(snap) {
+  voiceNow = snap;
+  if (voiceAsked && listening(voiceAsked.target) || voiceIssue && listening(voiceIssue.target)) { voiceAsked = null; voiceIssue = null; }
+  redrawListen();
+}
+const voiceSettings = () => load("/app/voice").then(config => { voiceConfig = config; redrawListen(); }, () => {});
+addEventListener("agentnave:voice-player", ({ detail }) => showVoice(detail));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) void voiceSettings(); });
+load("/app/voice/player").then(showVoice, () => {});
+void voiceSettings();
 
 const stage = $("stage");
 const state = {
@@ -103,11 +99,15 @@ const state = {
   ready: false,
   appStatus: null,
   calm: "",
+  lastData: null,
 };
 
 // ---------------------------------------------------------------- what a desk is doing
 const deskChar = (d) => ART.character(d.provider, d.display_model || d.model);
 // A reviewed answer waits only briefly on the boss, so it reads as an answer given, not a state of its own.
+// A desk that just stopped stays a while, so how it ended can be read.
+const LINGER = 5 * 60e3;
+const lingering = (d) => d.kind !== "seat" && Date.now() - AN.at(d.last_active) < LINGER;
 function brief(d) {
   const acts = activities(d);
   const run = acts.filter((a) => a.status === "running");
@@ -117,6 +117,7 @@ function brief(d) {
   if (acts.some((a) => a.kind === "meeting")) return { mood: "meeting", word: L("在会议室", "In meeting") };
   if (d.status === "failed") return { mood: "failed", word: L("上次失败", "Last failed") };
   if (d.status === "pending") return { mood: "idle", word: L("等待中", "Pending") };
+  if (lingering(d)) return { mood: "idle", word: L("已完成", "Finished") };
   return dozing(d) ? { mood: "sleep", word: L("休息中", "Resting") } : { mood: "idle", word: L("空闲", "Idle") };
 }
 const HEAD = { working: "working", sleep: "sleep" };
@@ -190,8 +191,7 @@ function createBlock(m) {
   };
   rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile, rec.presence), h("span.who", {}, rec.project, rec.meta), h("span.when", {}, rec.bs, rec.time));
   rec.fold = h("button.fold", { type: "button" }, h("i.chev"), rec.foldText);
-  rec.listen = listenButton();
-  rec.el = h("section.blk", {}, h("div.boss-row", {}, rec.boss, rec.listen), rec.cells, rec.fold, rec.rooms);
+  rec.el = h("section.blk", {}, h("div.boss-row", {}, rec.boss), rec.cells, rec.fold, rec.rooms);
   rec.fold.addEventListener("click", () => {
     if (state.expanded.has(rec.id)) state.expanded.delete(rec.id);
     else state.expanded.add(rec.id);
@@ -220,7 +220,6 @@ function updateBlock(rec, m) {
   setClass(rec.presence, m.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", m.live ? L("有任务在运行", "Tasks running") : L("没有运行中的任务", "No running tasks"));
   setAttr(rec.boss, "href", href(`/chat/${m.group}`));
-  drawListen(rec.listen, { group: m.group, room: null });
   setAttr(rec.boss, "title", `${L(`${m.label} 里的 boss`, `boss in ${m.label}`)}${m.project ? ` · ${m.project}` : ""}`);
   setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${desks.length} desks, ${rooms.length} meeting rooms, open office`));
   setText(rec.project, name);
@@ -230,39 +229,33 @@ function updateBlock(rec, m) {
   setText(rec.time, relTime(m.updated));
   setAttr(rec.time, "title", fullTime(m.updated));
 
-  // busy desks first, then idle ones; resting desks are only counted. Folded beyond SHOWN when
-  // there are FOLD_AT or more, and the busy ones lead so the fold never hides what is going on.
   const byKey = new Map(desks.map((d) => [d.key, d]));
   const awake = desks.filter((d) => brief(d).mood !== "sleep");
-  const busy = (d) => ["working", "meeting"].includes(brief(d).mood);
-  const ordered = [...awake.filter(busy), ...awake.filter((d) => !busy(d))];
-  for (const key of rec.cellRecs.keys()) if (!ordered.some((d) => d.key === key)) rec.cellRecs.delete(key);
-  const folded = awake.length >= FOLD_AT && !state.expanded.has(m.group);
-  let hiddenCount = 0, hiddenBusy = 0;
+  const working = d => brief(d).mood === "working";
+  const shownDesks = desks.filter(d => d.kind !== "seat" && (working(d) || lingering(d)));
+  const ordered = [...shownDesks.filter(working), ...shownDesks.filter(d => !working(d))];
+  for (const key of rec.cellRecs.keys()) if (!ordered.some(d => d.key === key)) rec.cellRecs.delete(key);
+  const folded = ordered.length >= FOLD_AT && !state.expanded.has(m.group);
+  let hiddenCount = 0;
   reconcile(rec.cells, ordered.map((d, i) => {
     let cell = rec.cellRecs.get(d.key);
     if (!cell) rec.cellRecs.set(d.key, (cell = createCell()));
-    const s = updateCell(cell, m.group, d);
+    updateCell(cell, m.group, d);
     cell.el.hidden = folded && i >= SHOWN;
-    if (cell.el.hidden) {
-      hiddenCount++;
-      if (s.mood === "working") hiddenBusy++;
-    }
-    announce(m, d, s);
+    if (cell.el.hidden) hiddenCount++;
     return cell.el;
   }));
-  // a desk that falls asleep right after its run still gets its finish read out
-  for (const d of desks) if (!awake.includes(d)) announce(m, d, brief(d));
+  for (const d of desks) announce(m, d, brief(d));
   const optimized = m.optimized?.count || 0;
   const resting = desks.length - awake.length;
   const meta = [name === m.label ? "" : chatPlace(m), L(`${desks.length} 工位`, `${desks.length} desks`), resting && L(`${resting} 个休息中`, `${resting} resting`), optimized && L(`已优化 ${optimized}`, `${optimized} folded`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
   setText(rec.meta, meta);
   rec.cells.hidden = !ordered.length;
-  rec.fold.hidden = awake.length < FOLD_AT;
+  rec.fold.hidden = ordered.length < FOLD_AT;
   if (!rec.fold.hidden) {
-    setText(rec.foldText, folded ? L(`另外 ${hiddenCount} 个工位${hiddenBusy ? ` · ${hiddenBusy} 个在忙` : ""}`, `${hiddenCount} more desks${hiddenBusy ? ` · ${hiddenBusy} busy` : ""}`) : L("收起", "Collapse"));
+    setText(rec.foldText, folded ? L(`另外 ${hiddenCount} 个工位`, `${hiddenCount} more desks`) : L("收起", "Collapse"));
     setAttr(rec.fold, "aria-expanded", folded ? "false" : "true");
-    setClass(rec.fold, folded && hiddenBusy ? "fold busy" : "fold");
+    setClass(rec.fold, folded && hiddenCount ? "fold busy" : "fold");
   }
   const roomById = new Map(rooms.map((r) => [r.id, r]));
   // a seat's desk may be folded into "已优化"; the payload still lists it for the seat
@@ -270,7 +263,7 @@ function updateBlock(rec, m) {
   for (const id of rec.roomRecs.keys()) if (!roomById.has(id)) rec.roomRecs.delete(id);
   // rooms in session, plus the most recently finished one; older ones are in the office
   const ended = rooms.filter((r) => !urgent(r.status)).sort((a, b) => AN.at(b.last_active) - AN.at(a.last_active));
-  const shown = [...rooms.filter((r) => urgent(r.status)), ...ended.slice(0, 1)];
+  const shown = rooms.filter(r => urgent(r.status) || r === ended[0] || listening({ group: m.group, room: r.id }) || asked({ group: m.group, room: r.id }));
   reconcile(rec.rooms, shown.map((r) => {
     let row = rec.roomRecs.get(r.id);
     if (!row) rec.roomRecs.set(r.id, (row = createRoom()));
@@ -388,13 +381,12 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------- refresh
-// A boss with work going on gets a card; the rest fold to the end. With none of those,
-// the most recent office (the service lists them most relevant first) stays a card.
-const busy = (m) => urgent(m.status) || m.live;
+// Running work and active listening keep an office expanded.
+const busy = m => running(m) > 0 || (m.rooms || []).some(r => urgent(r.status)) || (m.desks || []).some(lingering);
 function render(data) {
+  state.lastData = data;
   renderState(data);
-  const lead = data.managers.some(busy) ? null : data.managers[0]?.group;
-  const active = (m) => busy(m) || m.group === lead;
+  const active = m => busy(m) || voiceNow?.follow?.group === m.group || voiceAsked?.target.group === m.group;
   if (!data.managers.length) {
     showBody(data.empty === "no_data" ? "no_data" : "quiet");
     state.blocks.clear();
@@ -405,7 +397,7 @@ function render(data) {
     return;
   }
   showBody("stage");
-  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: urgent(m.status) ? 0 : active(m) ? 1 : 2 })));
+  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: active(m) ? 0 : 1 })));
   const byGroup = new Map(data.managers.map((m) => [m.group, m]));
   for (const map of [state.blocks, state.quiet]) for (const id of map.keys()) if (!byGroup.has(id)) map.delete(id);
   const full = [], folded = [];
@@ -424,6 +416,7 @@ function render(data) {
       let rec = state.quiet.get(id);
       if (!rec) state.quiet.set(id, (rec = createQuiet()));
       updateQuiet(rec, m);
+      for (const d of m.desks || []) announce(m, d, brief(d));
       folded.push(rec.el);
     }
   }

@@ -11,6 +11,7 @@ mod detect;
 mod hosts;
 mod manage;
 mod members;
+mod navigation;
 mod preferences;
 mod process;
 mod proxy;
@@ -490,7 +491,7 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         return;
     }
     if let Some(window) = app.get_webview_window(label) {
-        if !in_place(&window, &target) {
+        if !navigation::in_place(&window, &target) {
             let _ = window.navigate(target);
         }
         let _ = window.unminimize();
@@ -501,30 +502,8 @@ fn open(app: &AppHandle, label: &str, path: &str) {
     build_main(app, label, target, true);
 }
 
-/// An office already showing goes to another office route in place, so what it plays goes on;
-/// the update check opens its dialog there.
-fn in_place(window: &WebviewWindow, target: &Url) -> bool {
-    let showing = window
-        .url()
-        .is_ok_and(|current| ours(&current) && current.path().starts_with("/chat/"));
-    if !showing || !target.path().starts_with("/chat/") {
-        return false;
-    }
-    // The bare office address only brings the window forward, on whatever it shows.
-    if target.path() == "/chat/" && target.query().is_none() && target.fragment().is_none() {
-        return true;
-    }
-    let path = serde_json::Value::from(destination(target));
-    let script = if target.query().is_some_and(|q| q.contains("check-update")) {
-        format!("if (AN.updateFlow) AN.updateFlow(); else location.assign({path});")
-    } else {
-        format!("if (typeof go === 'function') go({path}); else location.assign({path});")
-    };
-    window.eval(script).is_ok()
-}
-
 /// Opens the office for listening without bringing it forward: a hidden window on another page
-/// goes back to the office, and without a window one is created hidden. Settings and management
+/// goes back to the office, and without a window one is created hidden. Standalone settings and management
 /// pages stay, even hidden, to preserve unsaved edits. Returns whether it is opening.
 pub(crate) fn open_office_hidden(app: &AppHandle) -> bool {
     let target = url("/chat/");
@@ -586,7 +565,7 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
     let builder = builder.decorations(false);
     let built = builder
         .on_navigation(allowed)
-        // Whatever the office's voice player showed goes with the page; a new office republishes.
+        // A main-document navigation clears the player; a settings iframe keeps that document.
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started && window.label() == TRAY {
                 voice::player::clear(window.app_handle());

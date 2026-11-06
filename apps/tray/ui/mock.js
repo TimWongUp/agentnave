@@ -678,7 +678,7 @@ All checks passed!
         first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
         status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
         private_allowed: d.sp.provider !== hostCli,
-        kind: "task", room: null,
+        kind: d.threads ? "task" : "seat", room: d.threads ? null : d.meeting?.room || null,
         private: { tasks: d.threads, running: d.running },
         meeting: d.meeting ? { room: d.meeting.room, seat: d.meeting.seat, status: d.meeting.status } : { room: null, seat: null, status: null },
       }));
@@ -771,13 +771,14 @@ All checks passed!
 
   // Keep every prototype navigation on the static preview entry.
   function href(path) {
-    const match = /^\/(chat|settings|panel)\/?([^/?#]*)(#.*)?$/.exec(path);
+    const match = /^\/(chat|settings|panel)\/?([^/?#]*)(\?[^#]*)?(#.*)?$/.exec(path);
     if (!match) return path;
     const params = new URLSearchParams(location.search);
     params.set("page", match[1]);
     params.delete("group");
+    for (const [key, value] of new URLSearchParams(match[3] || "")) params.set(key, value);
     if (match[1] === "chat" && match[2]) params.set("group", decodeURIComponent(match[2]));
-    return `preview.html?${params}${match[3] || ""}`;
+    return `preview.html?${params}${match[4] || ""}`;
   }
 
   // Host fixtures stay behind the existing explicit mock switch.
@@ -838,10 +839,10 @@ All checks passed!
     error: null,
   });
   let mockRetentionDays = null;
-  let mockVoiceCacheBytes = 14820352;
+  let mockVoiceCacheBytes = 14820352, mockPlayer = null;
   const mockVoice = {
     enabled: true,
-    auto_read: true,
+    listen_minutes: 60,
     continue_read: true,
     read_scope: "all",
     code: "skip",
@@ -882,6 +883,7 @@ All checks passed!
       const days = Number(storagePreview[1]);
       return { workspaces: days <= 30 ? 3 : days <= 90 ? 1 : 0 };
     }
+    if (path === "/app/voice/player") return structuredClone(mockPlayer);
     if (path === "/app/voice") return structuredClone(mockVoice);
     if (path === "/app/voice/cache") return { bytes: mockVoiceCacheBytes };
     if (path.startsWith("/app/voice/models/")) return [{ id: mockVoice.model, name: mockVoice.model }];
@@ -892,6 +894,8 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
+    if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
+    if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
     if (path === "/app/members") { mockMembersData.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
     if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }

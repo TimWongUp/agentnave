@@ -208,7 +208,9 @@
         [[L("稍后", "Later"), close], [L("升级", "Upgrade"), () => apply(status.version, true), true]]);
     show(L("已是最新版本", "Up to date"), [h("p.upd-p", {}, L(`App 与本机服务都是 v${status.version}。`, `Both app and local service are on v${status.version}.`))], [[L("好", "OK"), close, true]]);
   }
-  AN.updateFlow = run;
+  AN.updateFlow = () => {
+    if (!window.AgentNaveSettingsFrame?.navigate("/chat/?check-update")) return run();
+  };
   // The menu's "检查更新" and the panel open the main window with ?check-update.
   addEventListener("DOMContentLoaded", () => {
     const url = new URL(location.href);
