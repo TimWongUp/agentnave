@@ -20,6 +20,7 @@ from agentnave.members import (
     ProviderName,
     ReviewFile,
     ReviewSeat,
+    ReviewSeatStatus,
     SettingsFileError,
     apply_member,
     list_members,
@@ -56,6 +57,7 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
         "preset": "off",
         "explorer": {"easy": seat},
         "worker": {"hard": seat},
+        "image_generation": seat,
     }
 
     def check(host: Host, enabled: bool) -> None:
@@ -64,9 +66,11 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
         assert status.enabled is enabled
         assert bool(status.explorer) is enabled
         assert bool(status.worker) is enabled
+        assert (status.image_generation is not None) is enabled
         assert (role_seat("explorer-easy", host) is not None) is enabled
         assert (role_seat("worker-hard", host) is not None) is enabled
         assert (role_seat("worker-frontend-hard", host) is not None) is enabled
+        assert (role_seat("image-generator", host) is not None) is enabled
 
     codex, claude = Host("codex", "env"), Host("claude", "env")
     check(codex, False)
@@ -117,6 +121,16 @@ def test_interface_seat_falls_back_to_the_worker_seat_of_its_difficulty(
     assert cast(ReviewSeat, role_seat("worker-frontend-hard", host)).model == "general"
     assert cast(ReviewSeat, role_seat("worker-frontend-easy", host)).model == "interface"
     assert role_seat("worker-easy", host) is None
+    assert status.image_generation is None
+    assert role_seat("image-generator", host) is None
+    with pytest.raises(MemberFileError, match="not configured"):
+        role_seat("image-generator", host, required=True)
+    with pytest.raises(ValidationError):
+        OrchestrationFile.model_validate({**document, "image_generation": {"hard": general}})
+    with pytest.raises(ValidationError):
+        OrchestrationFile.model_validate(
+            {**document, "image_generation": {"provider": "codex", "model": " "}}
+        )
 
 
 @pytest.mark.parametrize(
@@ -593,6 +607,7 @@ def test_missing_clis_mark_members_and_seats_without_replacing_native_seats(
                 "explorer": {"easy": unlisted, "hard": native},
                 "worker": {"hard": shared},
                 "worker_frontend": {"easy": shared},
+                "image_generation": shared,
             }
         )
     )
@@ -607,6 +622,7 @@ def test_missing_clis_mark_members_and_seats_without_replacing_native_seats(
         result.orchestration.explorer["easy"],
         result.orchestration.worker["hard"],
         result.orchestration.worker_frontend["easy"],
+        cast(ReviewSeatStatus, result.orchestration.image_generation),
     ]
     for seat in unavailable:
         assert seat.available is False and seat.reason == "CLI is not installed"
@@ -621,6 +637,8 @@ def test_missing_clis_mark_members_and_seats_without_replacing_native_seats(
     refreshed = list_members(frozenset(), Host())
     assert all(member.error is None for member in refreshed.members)
     assert all(seat.available is None for seat in refreshed.review.values())
+    assert refreshed.orchestration.image_generation is not None
+    assert refreshed.orchestration.image_generation.available is None
     assert calls == dict.fromkeys(providers, 1)
 
 

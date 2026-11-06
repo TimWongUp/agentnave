@@ -340,6 +340,109 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
 
 
 @pytest.mark.asyncio
+async def test_image_generator_seat_defaults_access_resume_and_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "orchestration.json"
+    seat = {"provider": "claude", "model": "chosen", "effort": "high"}
+    document: dict[str, object] = {
+        "version": 1,
+        "preset": "split",
+        "worker": {"easy": seat, "hard": seat},
+    }
+    path.write_text(json.dumps(document))
+    async with Client(mcp) as client:
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert "image_generation" not in _payload(listed["orchestration"])
+        missing = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
+        )
+        assert missing.is_error and "not configured" in str(missing.content)
+
+        document["image_generation"] = seat
+        path.write_text(json.dumps(document))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert _payload(listed["orchestration"])["image_generation"] == seat
+        started = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", role="生成插图"
+        )
+        assert started["provider"] == "claude" and started["model"] == "chosen"
+        assert started["effort"] == "high" and started["access"] == "write"
+        assert started["defaults_applied"] == [
+            "image-generator seat",
+            "model",
+            "effort",
+            "permission_mode",
+            "permission_fallback",
+            "provider (image-generator seat)",
+            "access (image-generator seat)",
+        ]
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert resumed["conversation_id"] == started["conversation_id"]
+        assert resumed["model"] == "chosen" and resumed["access"] == "write"
+        assert "seat (session_id history)" in cast(list[str], resumed["defaults_applied"])
+        explicit = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="image-generator",
+            provider="claude",
+            provider_options={"model": "explicit", "effort": "medium"},
+            access="write",
+        )
+        assert explicit["model"] == "explicit" and explicit["effort"] == "medium"
+        assert explicit["defaults_applied"] == ["permission_mode", "permission_fallback"]
+        other_model = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="image-generator",
+            provider_options={"model": "explicit"},
+        )
+        assert other_model["model"] == "explicit" and "effort" not in other_model
+        contradiction = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator", "access": "read"},
+        )
+        assert contradiction.is_error and "declares access=write" in str(contradiction.content)
+
+        document["image_generation"] = {"provider": "codex", "model": "other-cli"}
+        path.write_text(json.dumps(document))
+        replacement = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", provider="claude"
+        )
+        assert "model" not in replacement and replacement["access"] == "write"
+        assert "image-generator seat" not in cast(list[str], replacement["defaults_applied"])
+
+        document["image_generation"] = seat
+        document["preset"] = "off"
+        path.write_text(json.dumps(document))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert listed["orchestration"] == {"enabled": False}
+        disabled = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
+        )
+        assert disabled.is_error and "not enabled" in str(disabled.content)
+        bypass = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", provider="claude"
+        )
+        assert "model" not in bypass and "effort" not in bypass
+
+        document["preset"] = "split"
+        path.write_text(json.dumps(document))
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert _payload(listed["orchestration"])["image_generation"] == {**seat, "native": True}
+        native = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
+        )
+        assert native.is_error and "built-in subagent" in str(native.content)
+
+
+@pytest.mark.asyncio
 async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

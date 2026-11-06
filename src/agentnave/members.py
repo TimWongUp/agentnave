@@ -34,7 +34,7 @@ type ReviewRole = Literal[
 ]
 type Difficulty = Literal["easy", "hard"]
 type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
-# Task roles naming an Explorer or Worker seat in orchestration.json.
+# Task seats from orchestration.json.
 type OrchestrationRole = Literal[
     "explorer-easy",
     "explorer-hard",
@@ -42,6 +42,7 @@ type OrchestrationRole = Literal[
     "worker-hard",
     "worker-frontend-easy",
     "worker-frontend-hard",
+    "image-generator",
 ]
 
 
@@ -182,7 +183,7 @@ class ModeCLI(StrictModel):
 
 
 class ReviewSeat(StrictModel):
-    """The CLI and model the user picked in the App for one agentnave-review role."""
+    """The CLI and conversational model the user picked in the App for one seat."""
 
     provider: ProviderName
     model: str = Field(pattern=r"\S")
@@ -197,7 +198,7 @@ class ReviewFile(StrictModel):
 
 
 class OrchestrationFile(BaseModel):
-    """App-owned rule modes and saved Explorer/Worker seats; only enabled hosts use seats."""
+    """App-owned rule modes and saved task seats; only enabled hosts use seats."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -209,6 +210,7 @@ class OrchestrationFile(BaseModel):
     worker: dict[Difficulty, ReviewSeat] = {}
     # A key of its own, which servers that predate it ignore instead of rejecting the file.
     worker_frontend: dict[Difficulty, ReviewSeat] = {}
+    image_generation: ReviewSeat | None = None
 
     def interface_workers(self) -> dict[Difficulty, ReviewSeat]:
         """The interface Worker seats, an unset one filled from the Worker seat of its difficulty."""
@@ -577,8 +579,8 @@ def add_cli_effort(
 
 
 def role_seat(role: str | None, host: Host, *, required: bool = False) -> ReviewSeat | None:
-    """The App seat a task role names: an agentnave-review role from review.json, or an
-    Explorer/Worker seat from orchestration.json. A missing or broken file names none;
+    """The App seat a task role names: an agentnave-review role from review.json, or a
+    task seat from orchestration.json. A missing or broken file names none;
     list_members reports it. Provider inference requires a usable seat instead."""
     role = (role or "").strip()
     seat = None
@@ -587,7 +589,6 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
             review = _read_app_file("review.json", ReviewFile, MemberFileError)
             seat = review.seats.get(cast(ReviewRole, role)) if review else None
         elif role in get_args(OrchestrationRole.__value__):
-            kind, _, key = role.rpartition("-")
             roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
             if required and roles is not None and not roles.enabled(host):
                 raise MemberFileError(
@@ -596,7 +597,10 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
                 )
             if not roles or not roles.enabled(host):
                 seat = None
+            elif role == "image-generator":
+                seat = roles.image_generation
             else:
+                kind, _, key = role.rpartition("-")
                 seats = {
                     "explorer": roles.explorer,
                     "worker": roles.worker,
@@ -684,6 +688,7 @@ class OrchestrationStatus(StrictModel):
     explorer: dict[Difficulty, ReviewSeatStatus] = {}
     worker: dict[Difficulty, ReviewSeatStatus] = {}
     worker_frontend: dict[Difficulty, ReviewSeatStatus] = {}
+    image_generation: ReviewSeatStatus | None = None
 
 
 class MemberList(StrictModel):
@@ -848,6 +853,13 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 worker_frontend=_review_status(
                     roles.interface_workers(), modes["task"], excluded, host, installed
                 ),
+                image_generation=_review_status(
+                    {"image-generator": roles.image_generation} if roles.image_generation else {},
+                    modes["task"],
+                    excluded,
+                    host,
+                    installed,
+                ).get("image-generator"),
             )
     except MemberFileError as exc:
         orchestration_error = str(exc)

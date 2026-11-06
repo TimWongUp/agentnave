@@ -276,7 +276,7 @@ mcp = _Server(
         "do not redispatch to fix metadata. "
         "access: read for exploration/planning/review, write for file changes; shown in App. "
         "read adds a prompt instruction, never native permissions. Explorer/review seats supply read, "
-        "Worker seats write; omit access for them; contradictions reject. Never inherited on resume; "
+        "Worker/image-generator seats write; omit access for them; contradictions reject. Never inherited on resume; "
         "without a seat declare each time or leave undeclared. "
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "

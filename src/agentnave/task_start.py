@@ -71,16 +71,16 @@ def latest_session_task(
 
 
 def review_role(role: str | None) -> str:
-    """Only review role labels select a seat; Explorer/Worker names require seat."""
+    """Only review role labels select a seat; orchestration names require seat."""
     name = (role or "").strip()
     return name if name in get_args(ReviewRole.__value__) else ""
 
 
 def role_access(role: str | None) -> Literal["read", "write"] | None:
-    """The access a known duty carries: Explorers and reviewers read, Workers write."""
+    """Explorers and reviewers read; Workers and the image generator write."""
     name = (role or "").strip()
     if name in get_args(OrchestrationRole.__value__):
-        return "write" if name.startswith("worker-") else "read"
+        return "write" if name.startswith("worker-") or name == "image-generator" else "read"
     return "read" if name in get_args(ReviewRole.__value__) else None
 
 
