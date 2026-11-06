@@ -14,32 +14,54 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-9cc9ff" alt="macOS, Linux and Windows">
 </p>
 
-**AgentNave is a local MCP server.** The Agent you already use (Claude Code, Codex, …) becomes the boss and
-hands work to the other CLIs installed on your machine: one at a time, or several together, answering side by
-side in parallel or taking turns in serial rounds. A tray "office" App shows who is working at their desk, who
-has gone to the meeting room, and what everyone said.
+**AgentNave is a local MCP server.** The Agent you already use (Claude Code, Codex, …) becomes the boss and hands work to the other CLIs installed on your machine. The tray App is a small office: you can see who is working, who is in a meeting and what everyone said, and you can listen in too.
 
 ## 🎬 Live demo
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss sends seven CLI teammates to the meeting room for two parallel rounds, then the boss sums up" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss sends seven CLI employees to the meeting room for two parallel rounds, then the boss sums up" width="100%"></p>
 
-## ✨ What it does
+## ✨ Highlights
 
-- 🧑‍💼 **Send one teammate a task**: `start_agent` hands a task to one CLI; the result goes back only to the boss
-- 👯 **Call a meeting**: `run_round` brings 2–7 teammates into the meeting room. By default it runs two parallel rounds: everyone proposes on their own, then revises after reading all the answers, and the boss sums up. Ask for a final serial round when you want them to close it out in turn, each speaker seeing the earlier answers
-- 🔍 **Review before sharing**: with review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer
-- 🏢 **A cozy tray office**: desks, the meeting room and every conversation at a glance, with one-click cleanup of old workspaces
-- 🧠 **Native sessions stay native**: each CLI keeps its own login, configuration and native session; its `session_id` is kept so you can continue later
-- 🤝 **Hand over to another chat**: tell the boss to hand this chat over, then say take over in a new chat; if quota ran out before a note could be written, the new boss can take over that host's session
+### 🧑‍💼 One boss, a whole office of CLIs
 
-## 👀 Who can be the boss, who can be a teammate
+12 hosts can be the boss and 8 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login, configuration and native session, and the `session_id` it leaves lets you continue later.
+
+### 👯 Private tasks and meetings
+
+`start_agent` hands a task to one employee; the result goes back only to the boss. `run_round` brings 2–7 employees into a meeting: by default two parallel rounds, where everyone proposes on their own, then revises after reading all the answers, and the boss sums up. Add a serial round to finish in turns. With review on, the boss decides for each answer whether it is published or kept private; other seats never see a private answer.
+
+### 🏢 An office you can see
+
+Desks, the meeting room and every conversation at a glance, and the menu bar shows who is working at any time. Characters follow the model family, or upload your own set. If a host exits abnormally, lost tasks show as interrupted instead of running forever.
+
+### 🎧 An office you can hear
+
+Click Listen and the App reads a meeting, a private chat or a whole workspace aloud, for 1 hour by default, then stops on its own. Each meeting or private chat is an album, and clicking the speaker jumps to the message being read. Voice uses your own ElevenLabs or MiniMax key, and message text is sent to the cloud engine you choose.
+
+### 🙋 The boss answers prompts
+
+On macOS and Linux, Claude runs interactively by default, which saves subscription quota. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. Other CLIs use their own automatic approval by default, and the App can switch any of them to full access.
+
+### 🧭 Seats and review
+
+Pick models for the Explorer and Worker seats in the App, with tiers for easy, hard and interface work, and the boss dispatches by difficulty. The optional [agentnave-review](skills/agentnave-review/SKILL.md) Skill is a risk-graded review gate staffed by read-only CLI seats, and its conclusions are kept as a record.
+
+### 🤝 Continue in another chat
+
+Tell the boss to hand this chat over, then say take over in a new chat. If quota ran out before a note could be written, the new boss can take over that host's session.
+
+### 🧹 The App handles the chores
+
+Connecting a host installs the Skills, and an employee has to be confirmed before it can be dispatched. CLIs with a new version update in one click, and missing ones come with the official install command. The App and the local service update inside the App, old workspaces clear in one click, and history cleans up after the number of days you set.
+
+## 👀 Who can be the boss, who can be an employee
 
 | Role                                                | Supported                                                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot (Linux only) |
-| **Teammate** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
+| **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
 
-The boss side is wider: any of these hosts can be the boss, desktop apps included, while teammates are only the CLIs listed. A host never sends a single `start_agent` task to its own CLI, though its CLI can still take a seat in a meeting.
+A host never sends a single `start_agent` task to its own CLI, though its CLI can take a seat in a meeting.
 
 Grok Bot connects only through an MCP stdio connector on Linux; integration through the macOS / Windows App is not provided. It is not a valid `AGENTNAVE_HOST` value and connects as an unknown host (`host_source: "unknown"`), so AgentNave cannot automatically read back its boss model or session file. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
@@ -50,29 +72,26 @@ Grok Bot connects only through an MCP stdio connector on Linux; integration thro
 </p>
 
 Characters follow the **model family**, not the CLI: run GPT through Codex CLI and the little dragon girl shows up. A model
-without a character of its own is covered by the Newcomer. To use your own characters, upload a set on the App's 头像 (Avatars) page.
+without a character of its own is covered by the Newcomer. To use your own characters, upload a set on the App's Appearance page.
 
 ## 🚀 Quick start
 
 You need [`uv`](https://docs.astral.sh/uv/), Git and at least one CLI that is already signed in. AgentNave does not
 install or sign in to CLIs for you.
 
-### Option 1: the tray App (macOS, recommended)
+### Option 1: the tray App (macOS and Windows, recommended)
 
-1. Download `AgentNave_<version>_universal.dmg` from [Releases](https://github.com/TimWongUp/agentnave/releases/latest)
-   and drag it into Applications.
-2. Open the App, connect a host on the host connections page, enable other CLIs under **Employees** as needed,
-   then dispatch a task from the host. The App installs the local service automatically. Connecting a host also installs
-   the companion `agentnave-manager` and `agentnave-handover` Skills.
+1. Download the installer from [Releases](https://github.com/TimWongUp/agentnave/releases/latest): on macOS, `AgentNave_<version>_universal.dmg`, dragged into Applications; on Windows, `AgentNave_<version>_x64-setup.exe`.
+2. Open the App, connect a host on the boss page in Settings, and confirm other CLIs under **Employees** as needed. The App installs the local service and the companion Skills.
 3. Back in your host, try:
 
    ```text
-   Use agentnave to have two teammates each answer: what does this repository do?
+   Use agentnave to have two employees each answer: what does this repository do?
    ```
 
 The App's interface is available in English and Chinese; choose it under Settings → General.
 
-### Option 2: manual install (Windows / Linux, or without the App)
+### Option 2: manual install (Linux, or without the App)
 
 The paired release is **`v1.2.0`**; install both the runtime and the Skill from that tag:
 
@@ -84,9 +103,7 @@ Then follow the [installation guide](docs/installation.md) to register the MCP s
 [agentnave-manager](skills/agentnave-manager/SKILL.md) and [agentnave-handover](skills/agentnave-handover/SKILL.md) Skills and verify both. The guide is written for Agents, so you
 can hand it straight to yours and let it check and install. **Headless Linux (no App)**: bots such as Grok Bot that run on Linux
 and connect only as an MCP connector follow the [Linux after-install guide](docs/linux-after-install.md) (in Chinese) to walk
-the user through setup; config file details are in the [headless Linux host guide](docs/linux-headless.md) (in Chinese). The optional
-[agentnave-review Skill](skills/agentnave-review/SKILL.md) adds a risk-graded review gate for PRs and merges, staffed by
-read-only reviewer CLIs that AgentNave dispatches.
+the user through setup; config file details are in the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
 Task and meeting history lives in `~/.agentnave/` (or the directory set by `AGENTNAVE_DATA_DIR`). Each CLI's login,
 configuration and native sessions stay with that CLI.
@@ -102,11 +119,11 @@ configuration and native sessions stay with that CLI.
 | `decide_answers`    | With review on, publish each answer or keep it private                                    |
 | `list`              | List current handles and saved conversations                                              |
 | `read_conversation` | Read one conversation back as the App shows it                                            |
-| `list_members`      | Read the teammate defaults set in the App, and one CLI's options                          |
+| `list_members`      | Read the employee defaults set in the App, and one CLI's options                          |
 | `handover`          | Hand this chat's whole workspace to another boss chat, or list and take over waiting ones |
 | `answer_prompt`     | Answer a running CLI's permission, question or plan prompt for the user                   |
 
-Omitted model, effort and options use the teammate defaults set in the App; a run still without an effort gets the
+Omitted model, effort and options use the employee defaults set in the App; a run still without an effort gets the
 CLI's own configured one. Both are listed in `defaults_applied`; explicit parameters win. The [agentnave-manager Skill](skills/agentnave-manager/SKILL.md) covers CLI choice and options, the
 [conversation guide](docs/studio.md) (in Chinese) covers review, host remarks and isolated seats, and
 [architecture](docs/context/architecture.md) lists the stable contracts and output limits.
