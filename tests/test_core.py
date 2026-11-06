@@ -1361,9 +1361,12 @@ async def test_pending_prompt_resets_retry_stall_clock() -> None:
         retry_at=time.monotonic(),
         prompts=channel,
     )
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(_stall_guard(cast(Any, record), interval=0.001), timeout=0.03)
-    assert record.retry_since is None and record.retry_at is None
+    guard = asyncio.create_task(_stall_guard(cast(Any, record), interval=0.001))
+    async with asyncio.timeout(5):
+        while record.retry_since is not None:
+            await asyncio.sleep(0.001)
+    assert not guard.done() and record.retry_at is None
+    guard.cancel()
 
 
 def test_closed_prompt_is_never_reported_again() -> None:
