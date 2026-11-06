@@ -46,7 +46,7 @@
 | 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 已接受 | — |
 | 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | — |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
-| 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 已接受 | — |
+| 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分修订 | [ADR-0061](0061-service-owned-member-names.md) |
 | 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
 | 0045 | [去掉浏览器看板](0045-remove-browser-dashboard.md) | 已接受 | [ADR-0046](0046-service-history-retention.md) |
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 已接受 | — |
@@ -64,3 +64,4 @@
 | 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |
 | 0059 | [Claude 的两个权限档位互为退路](0059-claude-tier-fallback.md) | 已接受 | — |
 | 0060 | [托盘识别无人持有的运行记录](0060-tray-detects-orphaned-running-work.md) | 已接受 | — |
+| 0061 | [服务统一生成成员称呼](0061-service-owned-member-names.md) | 已接受 | — |

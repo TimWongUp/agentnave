@@ -122,6 +122,8 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
         manager.prompt(i).startswith("You are one seat in a manager-led meeting")
         for i in ("1", "2")
     )
+    assert 'Your seat ID is "a".' in manager.prompt("1")
+    assert 'Your seat ID is "b".' in manager.prompt("2")
     assert entries(manager.prompt("1")) == [{"round": 1, "kind": "task", "text": "Q1"}]
 
     manager.finish("1", output="A1")
@@ -146,6 +148,7 @@ async def test_parallel_round_isolates_seats_until_all_end_then_serial_round_cha
     b_request = manager.requests["3"]
     assert b_request.session_id == "session-2"
     assert not b_request.prompt.startswith("You are one seat in a manager-led meeting")
+    assert 'Your seat ID is "b".' in b_request.prompt  # resumed seat keeps its identity
     assert entries(b_request.prompt) == [
         {"round": 1, "kind": "answer", "seat": "a", "text": "A1"},
         {"round": 2, "kind": "task", "text": "Q2"},
@@ -282,6 +285,7 @@ async def test_retry_reuses_the_round_input_and_rejects_what_it_cannot_restart(
     assert retried.session_id is None and retried.prompt.endswith(
         "Private instruction for you only:\nnote"
     )
+    assert 'Your seat ID is "a".' in retried.prompt
     assert [item["kind"] for item in entries(retried.prompt.split("\n\nPrivate")[0])] == [
         "task",
         "answer",
@@ -343,9 +347,16 @@ async def test_single_seat_cancel_lets_serial_round_continue(tmp_path: Path) -> 
         if "2" in manager.requests:
             break
         await asyncio.sleep(0.01)
+    assert 'Your seat ID is "b".' in manager.prompt("2")
     manager.finish("2")
     await settle(groups, round_.id)
     assert [run.status for run in round_.runs] == ["cancelled", "succeeded"]
+
+    rebuilt = groups.run(group_id, ["a"], "serial", "Q2", {})
+    assert manager.requests["3"].session_id is None
+    assert 'Your seat ID is "a".' in manager.prompt("3")
+    manager.finish("3")
+    await settle(groups, rebuilt.id)
 
 
 @pytest.mark.asyncio

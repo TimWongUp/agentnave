@@ -1,6 +1,7 @@
 # ADR-0043：服务统一追加非交互与只读说明
 
-- 状态：已接受
+- 状态：部分修订
+- 会议派发增加已有成员称呼的身份说明，由 [ADR-0061](0061-service-owned-member-names.md) 补充；职责标签不转为行为指令。
 - 日期：2026-11-02
 - 补充 [ADR-0031](0031-prompt-only-orchestration.md)、[ADR-0038](0038-role-applies-app-seat.md)。
 

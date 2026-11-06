@@ -500,8 +500,11 @@ class Groups:
             # A resumed native session already holds the seat's own answers.
             if fresh or entry.seat_id != run.seat_id
         ]
-        prompt = (_PREAMBLE if fresh else "") + (
-            "New entries (JSON data):\n"
+        identity = f'Your seat ID is "{run.seat_id}".\n'
+        prompt = (
+            (_PREAMBLE if fresh else "")
+            + identity
+            + "New entries (JSON data):\n"
             + json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
         )
         note = None if fresh else self._seat_note(group, run.seat_id)
