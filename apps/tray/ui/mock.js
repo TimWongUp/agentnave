@@ -176,7 +176,7 @@
   const HOSTS = {
     claude: "Claude Code",
     "claude-desktop": "Claude 桌面",
-    "codex-desktop": "Codex 桌面",
+    "codex-desktop": "ChatGPT（Codex）",
     codex: "Codex",
     codebuddy: "CodeBuddy",
     grok: "Grok",

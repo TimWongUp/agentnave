@@ -218,7 +218,7 @@
   .member-title { margin-left: 0; }
   .member-end > .segment-control, .member-row > :nth-child(3), .member-row > .member-list { grid-column: auto; }
   .member-row > .member-list { width: calc(100% - 34px); }
-  .member-switch, .member-error { padding-left: 0; }
+  .member-switch, .member-error, .cli-installations { padding-left: 0; }
   .member-interactive { grid-column: auto; }
   .member-picker { margin-left: 0; }
   .member-card > .disable-confirm { margin: 0 -14px; }
@@ -380,9 +380,14 @@
 .cli-update { max-width: 100%; padding: 3px 8px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .member-title > .cli-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cli-version { white-space: nowrap; flex: none; }
+.cli-installations { display: grid; grid-template-columns: minmax(0, max-content) max-content max-content minmax(0, 132px); grid-auto-rows: var(--control-height); align-items: center; gap: 0 12px; justify-content: start; padding-left: 30px; font-size: 12.5px; }
+.cli-installation { display: contents; }
+.cli-installation-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
 .cli-update-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 32px; font-size: 12.5px; }
 .cli-update-summary > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .cli-update-summary > button { flex: none; font-size: 12px; padding: 4px 10px; }
+.cli-installation .cli-update-slot { height: auto; }
+.cli-installation .cli-update { height: var(--control-height); }
 .cli-update-error { height: 32px; line-height: 16px; overflow: auto; white-space: pre-wrap; }
 .cli-install-row { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .cli-install-name { font-weight: 550; color: var(--ink); }
