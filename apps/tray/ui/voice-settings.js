@@ -207,7 +207,7 @@
   }
   function promptEditor(key, label, value, limit, persist, reset = false) {
     const input = h("textarea", { rows: limit > 500 ? "4" : "2", maxlength: String(limit), disabled: busy,
-      "aria-label": label, placeholder: limit > 500 ? L("摘要要求", "Summary instructions") : L("例如：你是一位冷静可靠、偶尔幽默的同伴，说话直接，关心对方。", "e.g. You are a calm, reliable companion with occasional humor who speaks directly and cares about others.") });
+      "aria-label": label, placeholder: limit > 500 ? L("摘要要求", "Summary instructions") : key === "persona-boss" ? L("例如：带队时交代清楚对象和要求，保留原有角色的性格与口吻。", "e.g. Give clear assignments while keeping the character's personality and voice.") : L("例如：你是一位冷静可靠、偶尔幽默的同伴，说话直接，关心对方。", "e.g. You are a calm, reliable companion with occasional humor who speaks directly and cares about others.") });
     input.value = drafts.prompts.get(key) ?? value;
     const dirty = () => input.value !== value;
     const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? L("保存", "Save") : L("已保存", "Saved"));
@@ -373,7 +373,7 @@
   function familySettings() {
     const table = h("div.voice-families", {}, h("div.voice-character", {},
       h("div.voice-family", {}, h("span"), h("span", {}, "boss")), persona("boss", "boss ")));
-    Object.entries(Avatars.families).forEach(([family, [label]], index) => {
+    [...Object.entries(Avatars.families), ["default", [L("新同事", "Newcomer")]]].forEach(([family, [label]], index) => {
       const button = h("button.voice-preview", { type: "button", disabled: busy || !config.enabled || !voices.length, "aria-label": L(`试听${label}音色`, `Preview ${label} voice`) }, L("试听", "Preview"));
       button.addEventListener("click", () => preview(family, button));
       const select = picker(L(`${label}音色`, `${label} voice`), voices, config.voices[family] || voices[index % voices.length]?.id,

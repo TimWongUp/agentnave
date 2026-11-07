@@ -288,14 +288,26 @@ fn listening_and_prompt_settings_preserve_old_documents() {
         storage::DEFAULT_PERSONAS[1].1,
         "a blank persona is reset"
     );
+    let mut legacy = saved.clone();
+    legacy["summary"]["prompt"] = json!(summary::LEGACY_DEFAULT_PROMPTS[0]);
+    legacy["personas"]["claude"] = json!(storage::LEGACY_DEFAULT_PERSONAS[1].1);
+    std::fs::write(directory.path().join("voice.json"), legacy.to_string()).unwrap();
+    let migrated = storage::read_settings(directory.path()).unwrap();
+    assert_eq!(migrated["summary"]["prompt"], summary::DEFAULT_PROMPT);
+    assert_eq!(
+        migrated["personas"]["claude"],
+        storage::DEFAULT_PERSONAS[1].1
+    );
     // A summary platform no longer offered opens as the default instead of failing.
     let mut retired = saved.clone();
     retired["summary"]["provider"] = json!("groq");
     std::fs::write(directory.path().join("voice.json"), retired.to_string()).unwrap();
     let reopened = storage::read_settings(directory.path()).unwrap();
     assert_eq!(reopened["summary"]["provider"], "magpie");
-    {
-        let custom = "  请保留我的问题和约束。\n";
+    for custom in [
+        "  请保留我的问题和约束。\n",
+        "把原话缩短成适合直接说出的口语，保留提问、任务要求或回答各自的意图和语气。优先使用 2 到 3 句短句、80 到 120 个中文字符；短消息可以更短，不为凑字数扩写。不写成列表，不朗读代码、路径或链接。",
+    ] {
         settings["summary"]["prompt"] = json!(custom);
         std::fs::write(directory.path().join("voice.json"), settings.to_string()).unwrap();
         assert_eq!(

@@ -259,9 +259,11 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         return Err("语音播报尚未开启".into());
     }
     let family = match payload.get("family") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) if crate::characters::FAMILIES.contains(&s.as_str()) => {
-            Some(s.as_str())
+        None | Some(Value::Null) => "default",
+        Some(Value::String(s))
+            if s == "default" || crate::characters::FAMILIES.contains(&s.as_str()) =>
+        {
+            s.as_str()
         }
         _ => return Err("未知模型家族".into()),
     };
@@ -286,8 +288,7 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         Some(full_text) => {
             let summary_key = summary::key_of(&keys, &settings["summary"]);
             let mut options = settings["summary"].clone();
-            let character = if boss { "boss" } else { family.unwrap_or("") };
-            options["persona"] = settings["personas"][character].clone();
+            options["persona"] = json!(persona_for(&settings, family, boss));
             options["identity"] = json!(scene.identity());
             options["code"] = settings["code"].clone();
             // A failed summary still speaks: the opening, as without summaries.
@@ -320,6 +321,26 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
     }
     storage::cache(root, &cache_key, &audio, "mp3")?;
     Ok(Response::ok("audio/mpeg", audio).with_notice(notice))
+}
+
+fn persona_for(settings: &Value, family: &str, boss: bool) -> String {
+    let character = settings["personas"][family]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let boss_role = boss
+        .then(|| settings["personas"]["boss"].as_str())
+        .flatten()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    match (character, boss_role) {
+        (Some(character), Some(role)) => format!(
+            "{character}\n作为 boss 时的角色设定补充（只补充当前作为 boss 的定位，不覆盖上面的角色人设与口吻）：{role}"
+        ),
+        (Some(character), None) => character.to_string(),
+        (None, Some(role)) => role.to_string(),
+        (None, None) => String::new(),
+    }
 }
 
 fn audio_key(settings: &Value, engine: &str, voice: &str, text: &str) -> String {
@@ -368,14 +389,14 @@ fn no_audio() -> Response {
 
 fn select_voice(
     payload: &Value,
-    family: Option<&str>,
+    family: &str,
     settings: &Value,
     keys: &Value,
     engine: &str,
 ) -> Result<String, String> {
     let selected = payload
         .get("voice")
-        .or_else(|| family.and_then(|f| settings["voices"].get(f)));
+        .or_else(|| settings["voices"].get(family));
     if let Some(value) = selected {
         return value
             .as_str()
@@ -384,12 +405,9 @@ fn select_voice(
             .ok_or("音色 ID 无效".into());
     }
     let voices = catalog(settings, keys, engine, "voices")?;
-    let index = family
-        .and_then(|f| {
-            crate::characters::FAMILIES
-                .iter()
-                .position(|item| *item == f)
-        })
-        .unwrap_or(0);
+    let index = crate::characters::FAMILIES
+        .iter()
+        .position(|item| *item == family)
+        .unwrap_or(crate::characters::FAMILIES.len());
     Ok(voices[index % voices.len()].id.clone())
 }

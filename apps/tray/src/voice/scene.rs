@@ -85,19 +85,13 @@ impl Scene {
     /// Who the speaker is and who hears it, so the model speaks as itself, to its listeners.
     pub(super) fn identity(&self) -> String {
         let who = if self.boss {
-            "你是这个工作区的 boss：给员工派任务、主持会议、做决定。".to_string()
+            "你是这个工作区的 boss。".to_string()
         } else if self.me.name.is_empty() {
-            "你是这个工作区的一名员工：接 boss 交代的事，向 boss 汇报。".to_string()
+            "你是这个工作区的一名员工。".to_string()
         } else if self.me.role.is_empty() {
-            format!(
-                "你是员工 {}：接 boss 交代的事，向 boss 汇报。",
-                self.me.name
-            )
+            format!("你是员工 {}。", self.me.name)
         } else {
-            format!(
-                "你是员工 {}，职责是「{}」：接 boss 交代的事，向 boss 汇报。",
-                self.me.name, self.me.role
-            )
+            format!("你是员工 {}，职责是「{}」。", self.me.name, self.me.role)
         };
         let hearing = match (self.boss, self.room, self.private, self.to.is_empty()) {
             (true, _, true, false) => {

@@ -110,7 +110,7 @@ async function office(listening = true, synthesize = async () => ({}), loadRoom 
   AN.voice.controls(true, null, ctx);
   if (listening) await command("listen", { group: "workspace" });
   return {
-    AN, document, voice: AN.voice, requests, sounds, playbacks, ctx, feed, nodes, navigations, published, located, rooms, navLinks,
+    AN, document, avatars: context.Avatars, voice: AN.voice, requests, sounds, playbacks, ctx, feed, nodes, navigations, published, located, rooms, navLinks,
     clickLink(link) { document.listeners.click({ button: 0, target: { closest: () => link }, preventDefault() {} }); },
     tick, advance(ms) { now += ms; },
     // A click in the menu bar panel's copy of the top bar control.
