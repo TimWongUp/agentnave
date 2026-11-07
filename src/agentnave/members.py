@@ -515,13 +515,11 @@ def validate_task_seat(name: str, host: Host) -> None:
     definition = seat_role(name)
     assert definition is not None
     roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
-    if roles is None:
-        enabled = definition.legacy_enabled
-    else:
-        enabled = roles.enabled(host) and roles.group_enabled(definition.group)
+    enabled = roles is not None and roles.enabled(host) and roles.group_enabled(definition.group)
     if not enabled:
         raise MemberFileError(
-            f"{name} seat is not enabled in orchestration.json; enable it in the App"
+            f"{name} seat is not enabled in orchestration.json; choose a visible seat or set a new role "
+            "to continue without the inherited seat. Enable this seat in the App only if intended."
         )
 
 

@@ -244,13 +244,19 @@ def _filter_role_schema(schema: Any, groups: frozenset[str], image_enabled: bool
     schema = cast(dict[str, Any], schema)
     values: Any = schema.get("enum")
     if isinstance(values, list):
-        schema["enum"] = [
+        filtered = [
             value
             for value in cast(list[Any], values)
             if not isinstance(value, str)
             or ((definition := seat_role(value)) is None or definition.group in groups)
             and (value != "image-generator" or image_enabled)
         ]
+        if filtered:
+            schema["enum"] = filtered
+        else:
+            # JSON Schema forbids an empty enum. Keep an unreachable definition valid.
+            schema.pop("enum")
+            schema["not"] = {}
     if schema.get("title") == "OrchestrationStatus":
         properties = schema.get("properties", {})
         for role in role_catalog():
@@ -276,6 +282,8 @@ class _Server(MCPServer[Runtime]):
             schema["additionalProperties"] = False
             output = json.loads(json.dumps(tool.output_schema))
             _filter_role_schema(schema, groups, image_enabled)
+            if not groups and not image_enabled:
+                schema.get("properties", {}).pop("seat", None)
             if output:
                 _filter_role_schema(output, groups, image_enabled)
             published.append(

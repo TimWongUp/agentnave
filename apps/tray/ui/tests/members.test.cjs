@@ -133,6 +133,24 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
   return { app, state, groups, group, toggle };
 }
 
+test("custom editor tracks generated role and image lines without changing user text", async () => {
+  const { app, state, toggle } = rolesEditor({ version: 1, preset: "custom", enabled_roles: [], custom: "worker_writing\n用户正文" });
+  await app.run("loadOrchestration()");
+  assert.equal(app.run('$("custom-text").value'), "用户正文");
+  assert.equal(app.run("orchestrationChanged()"), false);
+  toggle("写作", true);
+  assert.equal(app.run('$("custom-text").value'), "用户正文\nworker_writing");
+  toggle("写作", false);
+  assert.equal(app.run('$("custom-text").value'), "用户正文");
+  assert.equal(app.run("orchestrationChanged()"), false);
+  app.run('setOrchestrationSeat("image_generation", null, {provider:"codex",model:"chat-model"})');
+  assert.equal(app.run('$("custom-text").value'), "用户正文\nimage");
+  await app.run("saveOrchestration()");
+  assert.equal(state.saved.custom, "用户正文\nimage");
+  await app.run("loadOrchestration()");
+  assert.equal(app.run("orchestrationChanged()"), false);
+});
+
 test("role switches default like old files, round-trip through save, and keep bindings when off", async () => {
   const binding = { provider: "codex", model: "chat-model" };
   const { app, state, groups, group, toggle } = rolesEditor({ version: 1, preset: "split", worker_writing: { easy: binding } });

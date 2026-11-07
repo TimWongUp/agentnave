@@ -41,9 +41,23 @@ function liveSeats(doc) {
 }
 function orchestrationWanted() {
   const wanted = orchestrationShown();
-  return usesCustom(wanted) || customTouched ? { ...wanted, custom: $("custom-text").value } : wanted;
+  if (usesCustom(wanted) || customTouched) return { ...wanted, custom: $("custom-text").value };
+  return typeof wanted.custom === "string" ? { ...wanted, custom: customRoleText(wanted.custom, wanted) } : wanted;
 }
-const orchestrationChanged = () => Boolean(orchestration) && !orchestration.error && !sameJson(orchestrationWanted(), orchestration.document);
+function customRoleText(text, doc) {
+  const presets = orchestration?.presets || {};
+  const sections = presets.role_sections || {};
+  const generated = new Set([...Object.values(sections), presets.image_generation || ""].flatMap((section) => section.split("\n").filter(Boolean)));
+  const base = text.split("\n").filter((line) => !generated.has(line.replace(/\r$/, ""))).join("\n").trimEnd();
+  const enabled = enabledGroups(doc);
+  return [base, ...roleCatalog().filter((role) => enabled.includes(role.group)).map((role) => sections[role.group] || ""), doc.image_generation ? presets.image_generation || "" : ""].join("");
+}
+const orchestrationChanged = () => {
+  if (!orchestration || orchestration.error) return false;
+  const saved = orchestration.document;
+  const baseline = typeof saved.custom === "string" ? { ...saved, custom: customRoleText(saved.custom, saved) } : saved;
+  return !sameJson(orchestrationWanted(), baseline);
+};
 // Bosses sharing a rules file have one mode: the first set among them, else the default.
 const bossMode = (doc, boss) => boss.keys.map((key) => doc.apps?.[key]).find(Boolean) ?? doc.preset;
 // The mode the page opens on: one the saved document uses, else the default.
@@ -64,7 +78,8 @@ async function loadOrchestration() {
     if (!keep) {
       orchestrationDraft = null;
       customTouched = false;
-      $("custom-text").value = orchestration.document.custom ?? "";
+      $("custom-text").value = typeof orchestration.document.custom === "string"
+        ? customRoleText(orchestration.document.custom, orchestration.document) : "";
       orchestrationView = savedView();
     }
   } catch (error) {
@@ -253,6 +268,10 @@ function roleGroup(entry, doc) {
 }
 
 function renderOrchestration() {
+  const editor = $("custom-text");
+  if (orchestration && !orchestration.error && editor.value?.trim()) {
+    editor.value = customRoleText(editor.value, orchestrationShown());
+  }
   renderTaskScope();
   const shown = orchestrationShown();
   const preset = orchestrationView;

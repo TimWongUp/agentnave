@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "preset": "split",
+  "enabled_roles": ["worker_code", "explorer_web"],
+  "worker_code": {"hard": {"provider": "codex", "model": "gpt-6.1-sol"}},
+  "explorer_web": {"easy": {"provider": "claude", "model": "haiku"}},
+  "worker_writing": {"easy": {"provider": "claude", "model": "haiku"}}
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from jsonschema import Draft202012Validator
 from mcp import Client, StdioServerParameters
 from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent
@@ -174,6 +175,13 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
         resumed = await _start_and_wait(client, session_id="session-e2e", role="普通续接")
         assert "access" not in resumed
     assert json.loads(path.read_text()) == document
+    path.unlink()
+    async with Client(mcp) as client:
+        rejected = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "cwd": str(tmp_path), "provider": "claude", "seat": "worker-easy"},
+        )
+        assert rejected.is_error and "not enabled" in str(rejected.content)
 
 
 @pytest.mark.asyncio
@@ -203,12 +211,20 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
             tools = await client.list_tools(cache_mode="refresh")
             schemas = json.dumps([tool.model_dump(by_alias=True) for tool in tools.tools])
             start = next(tool for tool in tools.tools if tool.name == "start_agent")
-            assert set(start.input_schema["$defs"]["OrchestrationRole"]["enum"]) == {
+            seats = {
                 f"{role.seat_prefix}-{difficulty}"
                 for role in catalog
                 if role.group in expected
                 for difficulty in ("easy", "hard")
             }
+            if seats:
+                assert set(start.input_schema["$defs"]["OrchestrationRole"]["enum"]) == seats
+            else:
+                assert "seat" not in start.input_schema["properties"]
+            for tool in tools.tools:
+                Draft202012Validator.check_schema(tool.input_schema)
+                if tool.output_schema is not None:
+                    Draft202012Validator.check_schema(tool.output_schema)
             listed = _payload((await client.call_tool("list_members", {})).structured_content)
             status = _payload(listed["orchestration"])
             for role in catalog:
@@ -440,7 +456,7 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
             ({}, "Pass provider"),
             ({"role": "ordinary duty"}, "Pass provider"),
             ({"role": "correctness-reviewer"}, "not configured"),
-            ({"seat": "worker-easy"}, "not configured"),
+            ({"seat": "worker-easy"}, "not enabled"),
         ):
             result = await client.call_tool(
                 "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
