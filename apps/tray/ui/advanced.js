@@ -352,10 +352,12 @@ const seatModels = (provider) => listedPool(provider) ? [...listedPool(provider)
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
 function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {
   const provider = seat?.provider || "";
-  // Only CLIs 员工 lets work alone, or a connected boss's own CLI, which its built-in subagent
-  // runs; a disabled one stays shown while picked, so it can be changed.
+  // Orchestrated bosses use confirmed CLI configurations, not the hidden solo-task switches.
   const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
-  const usable = (p) => (known(p) && slot("task", p).enabled) || bossClis.includes(p);
+  const doc = orchestrationShown();
+  const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => mode && mode !== "off");
+  const confirmed = (p) => Object.hasOwn(currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => Object.hasOwn(currentDoc.modes?.[scene] || {}, p));
+  const usable = (p) => (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
   const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
     : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
   const clis = PROVIDERS.filter((p) => usable(p) || p === provider)

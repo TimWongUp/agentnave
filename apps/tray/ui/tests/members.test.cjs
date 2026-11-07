@@ -97,6 +97,9 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   pick("");
   await app.run("saveOrchestration()");
   assert.equal(Object.hasOwn(saved, "image_generation"), false);
+  app.run('delete currentDoc.modes.task.codex; renderOrchestration()');
+  assert.ok(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled),
+    "orchestration can use a confirmed CLI even when solo tasks are off");
 });
 
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
