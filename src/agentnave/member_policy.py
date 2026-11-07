@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 
 def cli_confirmed(document: MemberFile, provider: ProviderName) -> bool:
     # App removal clears both explicit scene entries but keeps historical model settings.
-    return not all(mode in document.modes for mode in ("task", "discussion")) or any(
-        provider in selection for selection in document.modes.values()
-    )
+    if all(mode in document.modes for mode in ("task", "discussion")):
+        return any(provider in selection for selection in document.modes.values())
+    return "task" not in document.modes or provider in document.modes["task"]
 
 
 def has_cli_pool(cli: CLIConfig | None) -> bool:
@@ -63,6 +63,8 @@ def select_model(
         )
     cli = document.clis.get(provider)
     selection = document.modes.get(mode, {}).get(provider)
+    if not scenario and selection is None:
+        selection = document.modes.get("discussion", {}).get(provider)
     result = dict(options)
     applied: list[str] = []
     if scenario and not seat_selected:
@@ -75,15 +77,13 @@ def select_model(
             result["model"] = default
             applied.append("model")
     pool = model_pool(cli, selection)
+    pool_hint = f"; allowed models: {', '.join(pool)}" if scenario and pool else ""
     if "model" not in result and pool:
-        raise ValueError(
-            f"Model is required in {mode}.{provider}; allowed models: {', '.join(pool)}"
-        )
+        raise ValueError(f"Model is required in {mode}.{provider}{pool_hint}")
     if "model" in result:
         check_cli_model(cli, provider, result["model"])
         if not has_cli_pool(cli) and "model" not in seat and pool and result["model"] not in pool:
             raise ValueError(
-                f"Model {result['model']!r} is not allowed in {mode}.{provider}; "
-                f"allowed models: {', '.join(pool)}"
+                f"Model {result['model']!r} is not allowed in {mode}.{provider}{pool_hint}"
             )
     return result, applied

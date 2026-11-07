@@ -356,8 +356,12 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), mod
   const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
   const doc = orchestrationShown();
   const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => mode && mode !== "off");
-  const confirmed = (p) => SCENE_IDS.some((scene) => Object.hasOwn(currentDoc.modes?.[scene] || {}, p)) ||
-    (!SCENE_IDS.every(isRestricted) && Object.hasOwn(currentDoc.clis || {}, p));
+  const inScene = (p, scene) => Object.hasOwn(currentDoc.modes?.[scene] || {}, p);
+  const confirmed = (p) => {
+    if (SCENE_IDS.every(isRestricted)) return SCENE_IDS.some((scene) => inScene(p, scene));
+    if (isRestricted("task")) return inScene(p, "task");
+    return Object.hasOwn(currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => inScene(p, scene));
+  };
   const usable = (p) => (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
   const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
     : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");

@@ -248,3 +248,12 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
         ]["model"]
         == "old"
     )
+    with pytest.raises(ValueError, match="disabled in the App"):
+        apply_task_defaults("grok", None, {"model": "new"}, [], frozenset(), Host("claude", "env"))
+    legacy["modes"] = {"task": {}, "discussion": {"pi": {"models": ["old"]}}}
+    (tmp_path / "members.json").write_text(json.dumps(legacy))
+    with pytest.raises(ValueError, match="not allowed"):
+        apply_task_defaults("pi", None, {"model": "new"}, [], frozenset(), Host("claude", "env"))
+    with pytest.raises(ValueError, match="Model is required") as missing:
+        apply_task_defaults("pi", None, {}, [], frozenset(), Host("claude", "env"))
+    assert "old" not in str(missing.value)

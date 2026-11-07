@@ -550,10 +550,7 @@ def test_unavailable_seat_offers_a_replacement_the_boss_can_use(
     assert seats["simplicity-reviewer"].replacement is None
     # A CLI disabled for private tasks runs for no seat, though seats may pick unlisted models.
     disabled = seats["performance-reviewer"]
-    assert (
-        disabled.available is False
-        and disabled.reason == "CLI is disabled for private tasks in the App"
-    )
+    assert disabled.available is False and disabled.reason == "CLI is disabled in the App"
     assert disabled.replacement is not None and disabled.replacement.provider == "pi"
     document = read_members()
     assert document is not None

@@ -1659,9 +1659,19 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         ]
         assert seated["access"] == "read"
         # An Explorer/Worker name in role is only a label, even with a configured seat.
-        labelled = await start({}, role="worker-easy")
-        assert labelled["defaults_applied"] == ["permission_mode", "permission_fallback"]
-        assert "model" not in labelled and "access" not in labelled
+        missing_model = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "ok",
+                "cwd": str(tmp_path),
+                "role": "worker-easy",
+            },
+        )
+        assert missing_model.is_error and "Model is required" in str(missing_model.content)
+        labelled = await start({"model": "chosen"}, role="worker-easy")
+        assert labelled["defaults_applied"] == ["effort", "permission_mode", "permission_fallback"]
+        assert labelled["model"] == "chosen" and "access" not in labelled
         label_only = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "role": "worker-easy"}
         )
@@ -1676,7 +1686,8 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "access (worker-easy seat)",
         ]
         assert worker["access"] == "write"
-        assert (await start({}, seat="explorer-easy"))["defaults_applied"] == [
+        assert (await start({"model": "chosen"}, seat="explorer-easy"))["defaults_applied"] == [
+            "effort",
             "permission_mode",
             "permission_fallback",
             "access (explorer-easy seat)",

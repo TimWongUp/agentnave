@@ -743,7 +743,10 @@ def _member_modes(
                     continue
                 selection = providers.get(provider) if providers is not None else None
                 cli = document.clis.get(provider)
-                pool = model_pool(cli, document.modes.get(mode, {}).get(provider))
+                pool_selection = document.modes.get(mode, {}).get(provider)
+                if cli_only and pool_selection is None:
+                    pool_selection = document.modes.get("discussion", {}).get(provider)
+                pool = model_pool(cli, pool_selection)
                 models = pool or (cli.models if cli else {})
                 for model in dict.fromkeys(models):
                     config = document.effective(mode, provider, model, scenario=not cli_only)
@@ -952,7 +955,7 @@ def _review_status[Role: str](
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):
-            reason = "CLI is disabled for private tasks in the App"
+            reason = "CLI is disabled in the App"
         elif not installed(seat.provider):
             reason = "CLI is not installed"
         elif member is not None and member.error is not None:
