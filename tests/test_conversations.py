@@ -427,6 +427,10 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
             "run_round", {"group_id": show["group_id"], "title": "again", "prompt": "x"}
         )
         assert rejected.is_error and "only open a new meeting" in str(rejected.content)
+        rejected = await client.call_tool(
+            "run_round", {"group_id": show["group_id"], "prompt": "remark", "wait": True}
+        )
+        assert rejected.is_error and "wait needs seats" in str(rejected.content)
         sleeping = await _call(
             client,
             "start_agent",
@@ -436,15 +440,21 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
                 "cwd": str(tmp_path),
             },
         )
-        round_ = await _run(
-            client, {"group_id": show["group_id"], "seats": ["a"], "prompt": "quick"}
+        started = await _call(
+            client, "run_round", {"group_id": show["group_id"], "seats": ["a"], "prompt": "quick"}
         )
+        round_ = _data(started["round"])
         ready = await _call(
             client, "wait", {"ids": [sleeping["invocation_id"], round_["round_id"]]}
         )
         assert ready["reason"] == "ready" and ready["updates"] == []
         assert ready["pending_ids"] == [sleeping["invocation_id"]]
         assert ready["all_finished"] is False
+        # Ends are not pushed, so every reply that leaves work pending points at wait.
+        assert (
+            sleeping["next"] == mcp_runtime.WAIT_NEXT and started["next"] == mcp_runtime.WAIT_NEXT
+        )
+        assert ready["next"] == mcp_runtime.WAIT_AGAIN
         (finished,) = cast(list[dict[str, object]], ready["rounds"])
         assert finished["round_id"] == round_["round_id"] and finished["status"] == "finished"
         # The inbox skips the round already delivered and keeps the running task.
@@ -468,10 +478,38 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
         theirs = next(item for item in both if item["reason"] == "ready")
         updates = cast(list[dict[str, object]], theirs["updates"])
         assert [update["invocation_id"] for update in updates] == [other["invocation_id"]]
+        waited = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "hi",
+                "cwd": str(tmp_path),
+                "manager_session_id": "c",
+                "wait": True,
+            },
+        )
+        received = cast(dict[str, object], waited["wait"])
+        assert received["all_finished"] is True and "next" not in waited
+        updates = cast(list[dict[str, object]], received["updates"])
+        assert [update["status"] for update in updates] == ["succeeded"]
+        assert (await _call(client, "wait", {"manager_session_id": "c"}))[
+            "reason"
+        ] == "nothing_pending"
+        # Same chat still has sleeping pending, so wait=True still steers back to wait.
+        still_pending = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path), "wait": True},
+        )
+        assert (
+            cast(dict[str, object], still_pending["wait"])["all_finished"] is True
+            and still_pending["next"] == mcp_runtime.WAIT_AGAIN
+        )
         cancelled = await _cancel(client, sleeping["invocation_id"])
         assert cancelled["status"] == "cancelled"
         empty = await _call(client, "wait", {})
-        assert empty["reason"] == "nothing_pending"
+        assert empty["reason"] == "nothing_pending" and "next" not in empty
         assert empty["pending_ids"] == [] and empty["all_finished"] is True
 
 

@@ -24,6 +24,7 @@ from agentnave.mcp_payloads import (
     ShowRunPayload,
 )
 from agentnave.mcp_runtime import (
+    DISPATCH_WAIT,
     GroupSeatSpec,
     ManagerModel,
     ManagerSessionId,
@@ -33,9 +34,9 @@ from agentnave.mcp_runtime import (
     _rejected,
     _review_map,
     _short_title,
-    _unreceived,
     round_payload,
 )
+from agentnave.mcp_tasks import waited_dispatch
 from agentnave.member_names import seat_identity
 from agentnave.members import (
     CapacityError,
@@ -55,7 +56,6 @@ def _add_started(
     payload: ShowRunPayload,
     conversations: Conversations,
     round_: Round,
-    manager_session_id: str | None,
 ) -> None:
     payload["round"] = round_payload(
         round_,
@@ -75,9 +75,6 @@ def _add_started(
     warnings = model_warnings(conversations.host, message)
     if warnings:
         payload["warnings"] = warnings
-    unreceived = _unreceived(conversations, manager_session_id)
-    if unreceived:
-        payload["unreceived"] = unreceived
 
 
 def _retry_seats(
@@ -85,7 +82,7 @@ def _retry_seats(
     group_id: str,
     seat_ids: list[str],
     manager_session_id: str | None,
-) -> ShowRunPayload:
+) -> tuple[ShowRunPayload, str]:
     try:
         round_ = conversations.retry(group_id, seat_ids, manager_session_id=manager_session_id)
     except KeyError as exc:
@@ -95,8 +92,8 @@ def _retry_seats(
             raise ToolError(str(exc)) from exc
         raise _rejected(exc) from exc
     payload: ShowRunPayload = {"group_id": group_id}
-    _add_started(payload, conversations, round_, manager_session_id)
-    return payload
+    _add_started(payload, conversations, round_)
+    return payload, round_.id
 
 
 def _open_show(
@@ -246,6 +243,7 @@ async def run_round(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
+    wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
     *,
     ctx: Context[Runtime],
 ) -> ShowRunPayload:
@@ -261,7 +259,8 @@ async def run_round(
         extras = (prompt, seats, instructions, forward, title, members, cwd, review, isolated)
         if group_id is None or any(extras):
             raise ToolError("retry_seats takes only group_id. Correct the arguments and retry.")
-        return _retry_seats(conversations, group_id, retry_seats, manager_session_id)
+        payload, round_id = _retry_seats(conversations, group_id, retry_seats, manager_session_id)
+        return await waited_dispatch(payload, round_id, wait, manager_session_id, ctx)
     new = group_id is None
     if new:
         if not title or not title.strip() or not members:
@@ -278,6 +277,8 @@ async def run_round(
         )
     if not seats and forward:
         raise ToolError("forward needs seats to answer this round. Correct and retry.")
+    if not seats and wait:
+        raise ToolError("wait needs seats to run a round. Correct the arguments and retry.")
     if prompt is None and (seats or not new):
         raise ToolError("prompt is required unless only opening a new meeting. Correct and retry.")
     opened: list[GroupSeatPayload] | None = None
@@ -337,8 +338,8 @@ async def run_round(
         if isinstance(exc, (SettingsFileError, CapacityError)):
             raise ToolError(str(exc)) from exc
         raise _rejected(exc) from exc
-    _add_started(payload, conversations, round_, manager_session_id)
-    return payload
+    _add_started(payload, conversations, round_)
+    return await waited_dispatch(payload, round_.id, wait, manager_session_id, ctx)
 
 
 class ReviewReceipt(TypedDict):
