@@ -100,6 +100,9 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   app.run('delete currentDoc.modes.task.codex; renderOrchestration()');
   assert.ok(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled),
     "orchestration can use a confirmed CLI even when solo tasks are off");
+  app.run('delete currentDoc.modes.discussion.codex; renderOrchestration()');
+  assert.equal(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled), false,
+    "removing both scenes disables the CLI despite its historical model settings");
 });
 
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
@@ -386,7 +389,7 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "task", true), "codex/task/model"))')).slice(1), ["a"]);
   assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "discussion", true), "codex/discussion/model"))')).slice(1), ["a"]);
 
-  // The default and the seat outside the pool stay as saved, shown as conflicts, and block saving.
+  // The default and the seat outside the pool stay as saved and are shown as conflicts.
   assert.equal(app.doc().modes.discussion.codex.default, "b");
   assert.equal(app.run('findKey(slotRows("codex", "discussion", true), "codex/discussion/model").children.flat().find((o) => o.attrs.value === "b").attrs.disabled'), true);
   assert.equal(app.run('seatOptions({ provider: "codex", model: "b" }).find((o) => o.attrs.value === "b").attrs.disabled'), true);
@@ -395,20 +398,28 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   await app.run("saveMembers()");
   assert.deepEqual(posts, []);
   app.run('changeSlot("codex", "discussion", { model: "a" })');
-  assert.match(app.run("memberSaveErrors()[0].message"), /安全评审 用的 b/);
+  assert.match(app.run("seatConflictText(seatConflicts()[0])"), /安全评审 用的 b/);
+  assert.equal(app.run("memberSaveErrors().length"), 0);
   await app.run("saveMembers()");
-  assert.deepEqual(posts, []);
+  assert.deepEqual(posts, ["/app/members"], "the pool can be saved before rebinding a conflicting seat");
 
   // A role cannot widen the pool: the saved list refuses the seat before anything is written.
   app.run('reviewSeats = {}; markSaved()');
   assert.equal(app.run("memberSaveErrors().length"), 0);
   await assert.rejects(app.run('listSeatModel({ provider: "codex", model: "b" })'), /不在 Codex CLI 的可用模型里/);
-  assert.deepEqual(posts, []);
+  assert.deepEqual(posts, ["/app/members"]);
 
   // Any model again lets a model the CLI lists later through, without a list to keep up.
   app.run('poolPick("codex/pool/all", true); detected.codex.models.push({ id: "next" })');
   assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
   assert.ok(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'));
+  app.run(`
+    currentDoc.clis.codex.allowed_models = ["a"];
+    orchestration = { document: { version: 1, preset: "off", image_generation: { provider: "codex", model: "b" } } };
+  `);
+  assert.equal(app.run("seatConflicts().length"), 0, "inactive image bindings do not block model-pool edits");
+  app.run('orchestration.document.preset = "split"');
+  assert.equal(app.run("seatConflicts().length"), 1, "enabling orchestration restores the binding conflict");
 });
 
 test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {

@@ -15,7 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import restricted_options
 from agentnave.host import Host, HostName, HostSource
-from agentnave.member_policy import check_cli_model, has_cli_pool, model_pool, select_model
+from agentnave.member_policy import (
+    check_cli_model,
+    cli_confirmed,
+    has_cli_pool,
+    model_pool,
+    select_model,
+)
 from agentnave.models import InvocationRequest, ProviderOption
 
 type ProviderName = Literal[
@@ -274,10 +280,8 @@ class MemberFile(StrictModel):
                 for model in [*selection.models, *selection.overrides]:
                     if model not in models:
                         raise ValueError(f"{mode}.{provider}: unknown model {model!r}")
-                if (
-                    not has_cli_pool(cli)
-                    and "default" in selection.model_fields_set
-                    and selection.default not in (selection.models or models)
+                if "default" in selection.model_fields_set and selection.default not in (
+                    models if has_cli_pool(cli) else selection.models or models
                 ):
                     raise ValueError(f"{mode}.{provider}: default must be an allowed model")
                 for model in models:
@@ -731,10 +735,15 @@ def _member_modes(
         items: list[MemberStatus] = []
         if document is not None:
             providers = document.modes.get(mode) if not cli_only else None
-            for provider in providers if providers is not None else document.clis:
+            candidates = list(document.clis)
+            for entries in document.modes.values():
+                candidates.extend(p for p in entries if p not in candidates)
+            for provider in providers if providers is not None else candidates:
+                if cli_only and not cli_confirmed(document, provider):
+                    continue
                 selection = providers.get(provider) if providers is not None else None
                 cli = document.clis.get(provider)
-                pool = model_pool(cli, selection)
+                pool = model_pool(cli, document.modes.get(mode, {}).get(provider))
                 models = pool or (cli.models if cli else {})
                 for model in dict.fromkeys(models):
                     config = document.effective(mode, provider, model, scenario=not cli_only)
@@ -779,7 +788,7 @@ def _member_modes(
                             error=error,
                         )
                     )
-                if pool is None and (selection is not None or has_cli_pool(cli)):
+                if pool is None and (selection is not None or has_cli_pool(cli) or cli_only):
                     items.append(
                         MemberStatus(
                             provider=provider,

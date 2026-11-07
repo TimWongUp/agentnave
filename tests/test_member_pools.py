@@ -100,7 +100,10 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
                     },
                 }
             },
-            "discussion": {"pi": {"models": ["shared"], "default": "shared"}},
+            "discussion": {
+                "pi": {"models": ["shared"], "default": "shared"},
+                "grok": {"models": ["seat-only"]},
+            },
         },
     }
     path = tmp_path / "members.json"
@@ -124,7 +127,7 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
     assert default.model == "shared" and default.default == ["discussion"]
     # Shared model records may be shown for discussion, but task overrides stay hidden.
     assert "hidden-task" not in listed.model_dump_json()
-    assert all(member.provider == "pi" for member in listed.members)
+    assert {member.provider for member in listed.members} == {"pi", "grok"}
 
     # A disabled task CLI still serves the configured seat and explicit plain dispatch.
     options, _ = apply_task_defaults(
@@ -140,6 +143,17 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
         apply_task_defaults(
             "grok", "worker-easy", {"model": "seat-only"}, ["model"], frozenset({"grok"}), host
         )
+
+    # Removing the employee from both scenes keeps its model settings, but disables service use.
+    removed = json.loads(path.read_text())
+    del removed["modes"]["discussion"]["grok"]
+    path.write_text(json.dumps(removed))
+    unavailable = list_members(frozenset(), host).orchestration.worker["easy"]
+    assert unavailable.available is False
+    assert unavailable.replacement is None or unavailable.replacement.provider != "grok"
+    with pytest.raises(ValueError, match="disabled in the App"):
+        apply_task_defaults("grok", None, {"model": "seat-only"}, [], frozenset(), host)
+    path.write_text(json.dumps(document))
 
     # Turning orchestration off restores the ordinary candidates and scenario override.
     roles["preset"] = "off"
@@ -218,3 +232,19 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
             assert result.is_error and "not allowed in CLI" in str(result.content)
     assert json.loads((tmp_path / "orchestration.json").read_text()) == roles
     assert read_members() is not None
+
+    # Without a new CLI pool, hiding task defaults does not remove legacy model boundaries.
+    legacy: dict[str, Any] = {
+        "version": 1,
+        "clis": {"pi": {"models": {"old": {}, "new": {}}}},
+        "modes": {"task": {"pi": {"models": ["old"], "default": "old"}}},
+    }
+    (tmp_path / "members.json").write_text(json.dumps(legacy))
+    with pytest.raises(ValueError, match="not allowed"):
+        apply_task_defaults("pi", None, {"model": "new"}, [], frozenset(), Host("claude", "env"))
+    assert (
+        apply_task_defaults("pi", None, {"model": "old"}, [], frozenset(), Host("claude", "env"))[
+            0
+        ]["model"]
+        == "old"
+    )

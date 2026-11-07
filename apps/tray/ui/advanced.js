@@ -278,18 +278,18 @@ let seatsDraft = null; // Review seats as picked; `reviewSeats` holds what is sa
 const seatsShown = () => seatsDraft || reviewSeats;
 const seatsChanged = () => !sameJson(seatsShown(), reviewSeats);
 
-// Every seat in use with the model its CLI's pool left out. Explorer and Worker seats wait unused
+// Every seat in use with the model its CLI's pool left out. Orchestration seats wait unused
 // while no boss runs orchestration.
 function seatConflicts() {
   const review = REVIEW_ROLES.map(([role, name]) => ({ section: "review", name: AN.L(`${name}评审`, `${name} review`), seat: seatsShown()[role] }));
   const doc = orchestrationShown();
   const live = Boolean(doc) && (doc.preset !== "off" || Object.values(doc.apps || {}).some((mode) => mode !== "off"));
-  const roles = !doc ? [] : ORCHESTRATION_ROLES.filter(([role]) => live || role === "image_generation")
+  const roles = !live ? [] : ORCHESTRATION_ROLES
     .map(([role, difficulty, name]) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
   return [...review, ...roles].filter(({ seat }) => seat && outOfPool(seat.provider, seat.model));
 }
 const seatConflictText = ({ name, seat }) => AN.L(`${name} 用的 ${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${name} uses ${seat.model}, which is not in the available models of ${PROVIDER_NAMES[seat.provider]}`);
-const memberSaveErrors = () => [...configurationErrors(), ...seatConflicts().map((conflict) => ({ message: seatConflictText(conflict) }))];
+const memberSaveErrors = () => configurationErrors();
 
 // A picked model missing from that CLI's configured models is added to the last saved
 // members.json, where the server looks for it; unsaved 员工 edits stay unsaved. A CLI with a pool
@@ -356,7 +356,8 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), mod
   const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
   const doc = orchestrationShown();
   const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => mode && mode !== "off");
-  const confirmed = (p) => Object.hasOwn(currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => Object.hasOwn(currentDoc.modes?.[scene] || {}, p));
+  const confirmed = (p) => SCENE_IDS.some((scene) => Object.hasOwn(currentDoc.modes?.[scene] || {}, p)) ||
+    (!SCENE_IDS.every(isRestricted) && Object.hasOwn(currentDoc.clis || {}, p));
   const usable = (p) => (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
   const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
     : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");

@@ -11,6 +11,13 @@ if TYPE_CHECKING:
     from agentnave.members import CLIConfig, MemberFile, Mode, ModeCLI, ProviderName
 
 
+def cli_confirmed(document: MemberFile, provider: ProviderName) -> bool:
+    # App removal clears both explicit scene entries but keeps historical model settings.
+    return not all(mode in document.modes for mode in ("task", "discussion")) or any(
+        provider in selection for selection in document.modes.values()
+    )
+
+
 def has_cli_pool(cli: CLIConfig | None) -> bool:
     # Explicit null is the user's new unrestricted pool; omission alone is legacy.
     return cli is not None and "allowed_models" in cli.model_fields_set
@@ -41,6 +48,8 @@ def select_model(
     scenario: bool,
     seat_selected: bool,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
+    if not scenario and not cli_confirmed(document, provider):
+        raise ValueError(f"Provider {provider!r} is disabled in the App")
     allowed = document.modes.get(mode) if scenario else None
     if allowed is not None and provider not in allowed:
         members = [
@@ -53,7 +62,7 @@ def select_model(
             + (", ".join(members) or "none")
         )
     cli = document.clis.get(provider)
-    selection = allowed.get(provider) if allowed is not None else None
+    selection = document.modes.get(mode, {}).get(provider)
     result = dict(options)
     applied: list[str] = []
     if scenario and not seat_selected:

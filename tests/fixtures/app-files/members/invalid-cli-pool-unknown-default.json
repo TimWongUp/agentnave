@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "clis": {
+    "pi": {
+      "models": {"known": {}},
+      "allowed_models": null
+    }
+  },
+  "modes": {
+    "task": {"pi": {"models": [], "default": "unknown"}}
+  }
+}
