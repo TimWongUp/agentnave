@@ -863,7 +863,7 @@ All checks passed!
       open_on_start: true,
       tray_click: "panel",
       tray_count: true,
-      tray_font: "futura",
+      tray_font: "baskerville",
       keep_awake: false,
     },
     alerts: {

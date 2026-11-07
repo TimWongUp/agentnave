@@ -35,8 +35,8 @@ const DRIP: [&[u8]; 18] = [
 ];
 /// Font choices and the macOS fonts they draw with; the first is the fallback.
 const FONTS: [(&str, &str); 4] = [
-    ("futura", "Futura-Medium"),
     ("baskerville", "Baskerville-SemiBoldItalic"),
+    ("futura", "Futura-Medium"),
     ("typewriter", "AmericanTypewriter-Semibold"),
     ("marker", "MarkerFelt-Wide"),
 ];
