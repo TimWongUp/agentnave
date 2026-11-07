@@ -340,10 +340,11 @@ async def wait(
         ),
     ] = True,
     wait_seconds: Annotated[
-        Literal[0, 240] | None,
+        Literal[0, 600] | None,
         Field(
             description=(
-                "Omit to wait up to 240s; 0 checks progress immediately and includes running tails; ready results are still received; neither value stops work."
+                "Omit to wait up to 600s; 600 explicitly selects the same window. "
+                "0 checks progress immediately and includes running tails; ready results are still received; no value stops work."
             ),
         ),
     ] = None,
@@ -355,12 +356,22 @@ async def wait(
             ),
         ),
     ] = None,
+    seq: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description=(
+                "Optional call sequence: start at 1 and increment on each wait so legitimate repeated waits have distinct arguments. "
+                "Echoed in the reply; no deduplication, replay or ordering enforcement."
+            ),
+        ),
+    ] = None,
     *,
     ctx: Context[Runtime],
 ) -> WaitPayload:
     """Receive all handles ready now in updates (tasks) and rounds; return when any is ready.
 
-    Inbox: omit ids, pass this chat's manager_session_id, repeat the same call.
+    Inbox: omit ids, pass this chat's manager_session_id; increment seq for each call.
     Selected ids: continue with pending_ids; retaining finished ids rereads their results.
     all_finished means no unreceived ends remain in that scope, not that all succeeded.
 
@@ -376,6 +387,21 @@ async def wait(
     Unknown/expired/duplicate ids reject the whole call. Ends are never pushed: wait after
     dispatch or independent work; receive every terminal result before ending your turn.
     """
+    payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
+    if seq is not None:
+        payload["seq"] = seq
+        if next_step := payload.get("next"):
+            payload["next"] = next_step + f" Next wait: seq={seq + 1}."
+    return payload
+
+
+async def _receive(
+    ids: list[str] | None,
+    include_output: bool,
+    wait_seconds: Literal[0, 600] | None,
+    manager_session_id: str | None,
+    ctx: Context[Runtime],
+) -> WaitPayload:
     manager = _manager(ctx)
     conversations = _conversations(ctx)
     invocation_ids: list[str] = []
@@ -407,7 +433,8 @@ async def wait(
             except KeyError as exc:
                 raise _unknown_handle(handle) from exc
             round_ids.append(handle)
-    deadline = time.monotonic() + (runtime.WAIT_SECONDS if wait_seconds is None else wait_seconds)
+    window = runtime.WAIT_SECONDS if wait_seconds is None else wait_seconds
+    deadline = time.monotonic() + window
     while True:
         ready_invocations, ready_rounds = await _ready_handles(
             manager,
@@ -469,7 +496,7 @@ def _wait_payload(
     results: _WaitResults,
     ids: list[str] | None,
     include_output: bool,
-    wait_seconds: Literal[0, 240] | None,
+    wait_seconds: Literal[0, 600] | None,
     manager_session_id: str | None,
 ) -> WaitPayload:
     invocation_ids, round_ids = results.invocation_ids, results.round_ids

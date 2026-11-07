@@ -3,6 +3,7 @@ use crate::data::Reader;
 use tempfile::TempDir;
 
 mod reload_guidance;
+mod timeouts;
 mod versioned;
 
 fn fixture() -> (TempDir, Hosts) {
@@ -504,7 +505,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
             // dsh would otherwise cut `wait` off after 60 s.
             assert_eq!(
                 h.read().unwrap().entry.unwrap()["toolCallTimeoutMs"],
-                310_000
+                720_000
             );
         }
         assert_eq!(
