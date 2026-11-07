@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-11-04
+- CLI 模型边界与编排优先级由 [ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 修订。
 - 修订 [ADR-0038](0038-role-applies-app-seat.md) 中「工位不受单独干活的 CLI 名单约束」的条款；模型名单与档位范围仍不约束工位。
 - 「CLI 默认装了就能用」由 [ADR-0054](0054-members-need-confirmation.md) 修订：有 App 时 CLI 要在员工里确认，只有没有 App 的宿主仍装了就能用。
 
