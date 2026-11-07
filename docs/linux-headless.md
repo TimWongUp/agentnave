@@ -203,10 +203,10 @@ done
 ```
 start_agent(prompt="回复：好了", seat="explorer-easy", role="自检",
             cwd="/workspace", manager_session_id="<固定 UUID>")
-wait(ids=["<invocation_id>"], wait_seconds=240, include_output=true)
+wait(ids=["<invocation_id>"], wait_seconds=600, include_output=true)
 ```
 
-`wait_seconds` 只能取 0 或 240。一直等到 `status` 是 `succeeded`、`failed` 或 `cancelled`，并且 `all_finished: true`。
+`wait_seconds` 只能取 0 或 600。一直等到 `status` 是 `succeeded`、`failed` 或 `cancelled`，并且 `all_finished: true`。
 
 ### 5.3 连接器坏了时：独立 stdio 客户端
 
@@ -248,7 +248,7 @@ async def main():
                         "wait",
                         {
                             "ids": [st["invocation_id"]],
-                            "wait_seconds": 240,
+                            "wait_seconds": 600,
                             "include_output": True,
                         },
                     )
