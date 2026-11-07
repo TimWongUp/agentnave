@@ -51,7 +51,7 @@ function cliInstallations(provider) {
 }
 
 function cliInstallationName({ id, label }) {
-  if (id === "standalone") return L(label, "Standalone CLI");
+  if (id === "standalone") return L("独立 CLI", "Standalone CLI");
   const app = ["ChatGPT", "Codex"].find((name) => label.includes(name));
   return app ? L(label, `${app} built-in CLI`) : label;
 }
