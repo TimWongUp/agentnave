@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "clis": {
+    "claude": {
+      "models": {
+        "sonnet": {},
+        "haiku": {}
+      },
+      "allowed_models": [
+        "sonnet",
+        "sonnet"
+      ]
+    }
+  },
+  "modes": {
+    "task": {
+      "claude": {
+        "models": [
+          "haiku"
+        ],
+        "default": "haiku"
+      }
+    },
+    "discussion": {
+      "claude": {
+        "models": [
+          "haiku"
+        ],
+        "default": "haiku"
+      }
+    }
+  }
+}
