@@ -383,6 +383,40 @@ fn a_missing_document_stays_missing_and_confirms_no_cli() {
 /// The samples the server checks too (tests/test_members.py): what the App saves, the server
 /// reads, and a file the App refuses the server refuses as well.
 #[test]
+fn orchestration_role_switches_keep_every_group_and_refuse_bad_lists() {
+    let seat = json!({"provider": "codex", "model": "m"});
+    let mut document = json!({"version": 1, "preset": "split", "enabled_roles": []});
+    for group in crate::orchestration_roles::groups() {
+        document[group] = json!({"easy": seat, "hard": seat});
+    }
+    assert_eq!(validate_orchestration(&document), Ok(()));
+
+    let enabled = crate::orchestration_roles::enabled_groups;
+    let legacy = ["explorer", "worker", "worker_frontend"];
+    assert_eq!(enabled(&json!({})).unwrap(), legacy);
+    assert_eq!(enabled(&json!({"enabled_roles": null})).unwrap(), legacy);
+    assert!(enabled(&document).unwrap().is_empty());
+    assert_eq!(
+        enabled(&json!({"enabled_roles": ["worker_data", "explorer"]})).unwrap(),
+        ["explorer", "worker_data"]
+    );
+
+    for bad in [
+        json!("explorer"),
+        json!(["unknown"]),
+        json!(["image_generation"]),
+        json!(["worker", "worker"]),
+        json!([1]),
+    ] {
+        document["enabled_roles"] = bad;
+        assert!(validate_orchestration(&document).is_err());
+    }
+    document["enabled_roles"] = json!(null);
+    document["worker_data"] = json!({"medium": seat});
+    assert!(validate_orchestration(&document).is_err());
+}
+
+#[test]
 fn app_file_samples_agree_with_the_server() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/app-files");
     let mut checked = 0;

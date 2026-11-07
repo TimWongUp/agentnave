@@ -4,35 +4,41 @@
 // one that fails stays unsaved for another try while the others land.
 
 // Orchestration lives in orchestration.json: the rules text each boss gets, by mode (`apps`, with
-// `preset` for rows without one, and bosses connected later), the user's own text, and the Explorer,
-// Worker and image generation seats boss reads from list_members. The App writes the modes into the
-// connected boss apps' global rules. The rules files are listed one row per file with every app that
-// reads it.
+// `preset` for rows without one, and bosses connected later), the user's own text, which catalog
+// roles are on, and the role and image generation seats boss reads from list_members. The App writes
+// the modes into the connected boss apps' global rules. The rules files are listed one row per file
+// with every app that reads it.
 const ORCHESTRATION_EFFECTS = {
   off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
-  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration and planning to Explorer, and implementation to Worker, using their quota."),
-  parallel: AN.L("在分工协作之外，互不依赖的步骤会同时派给多个 Worker，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to multiple Workers in parallel, using more quota."),
+  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划和实现派给已开启的角色，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration, planning and implementation to the roles turned on, using their quota."),
+  parallel: AN.L("在分工协作之外，互不依赖的步骤会同时派给多个执行角色，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to several execution roles in parallel, using more quota."),
   custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
 };
-const ORCHESTRATION_ROLES = [
-  ["explorer", "easy", AN.L("Explorer · 简单", "Explorer · Easy"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
-  ["explorer", "hard", AN.L("Explorer · 困难", "Explorer · Hard"), AN.L("只读：探索、规划、评审", "Read-only: explore, plan, review")],
-  ["worker", "easy", AN.L("Worker · 简单", "Worker · Easy"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
-  ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
-  ["worker_frontend", "easy", AN.L("Worker · 界面 · 简单", "Worker · Interface · Easy"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
-  ["worker_frontend", "hard", AN.L("Worker · 界面 · 困难", "Worker · Interface · Hard"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
-  // One seat with no difficulty, its model the one the CLI talks to, which calls the image service.
-  ["image_generation", null, AN.L("生图（可选）", "Image generation (optional)"), null, AN.L("未配置", "Not configured"), AN.L("生图的对话模型", "Chat model for image generation")],
-];
+const DIFFICULTIES = [["easy", AN.L("简单", "Easy")], ["hard", AN.L("困难", "Hard")]];
+const ROLE_ACCESS = { read: AN.L("只读", "Read-only"), write: AN.L("可写", "Writable") };
+const SEAT_UNSET = AN.L("未配置", "Not configured");
+// One seat with no difficulty and no switch, its model the one the CLI talks to, which calls the image service.
+const IMAGE_SEAT = { role: "image_generation", difficulty: null, name: AN.L("生图（可选）", "Image generation (optional)") };
 const orchestrationSeat = (doc, role, difficulty) => difficulty ? doc[role]?.[difficulty] : doc[role];
 const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
-let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
+let orchestration = null; // { document, error, presets, roles, files, bosses } from GET /app/orchestration: what is saved.
 let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
 let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
 let ruleOpenError = null; // { path, message }: why a rules file did not open, shown on its row.
 let customTouched = false; // Typed into the editor, so its text is saved even with no boss on it yet.
 const orchestrationShown = () => orchestrationDraft || orchestration?.document;
 const usesCustom = (doc) => doc?.preset === "custom" || Object.values(doc?.apps || {}).includes("custom");
+// The fixed catalog, or nothing from a page that was not given one: its roles are then left as saved.
+const roleCatalog = () => orchestration?.roles || [];
+const roleName = (role) => AN.L(role.name_zh, role.name_en);
+// A document without the list keeps the groups from before the switches.
+const enabledGroups = (doc) => doc?.enabled_roles ?? roleCatalog().filter((role) => role.legacy_enabled).map((role) => role.group);
+// Every seat a document offers: both difficulties of each role turned on, and the image seat.
+function liveSeats(doc) {
+  const enabled = enabledGroups(doc);
+  return [...roleCatalog().filter((role) => enabled.includes(role.group)).flatMap((role) => DIFFICULTIES
+    .map(([difficulty, level]) => ({ role: role.group, difficulty, name: `${roleName(role)} · ${level}` }))), IMAGE_SEAT];
+}
 function orchestrationWanted() {
   const wanted = orchestrationShown();
   return usesCustom(wanted) || customTouched ? { ...wanted, custom: $("custom-text").value } : wanted;
@@ -75,9 +81,12 @@ async function loadOrchestration() {
 
 async function saveOrchestration() {
   const wanted = orchestrationWanted();
-  for (const [role, difficulty] of ORCHESTRATION_ROLES) {
+  const saved = orchestration.document;
+  const wasLive = liveSeats(saved).map(({ role, difficulty }) => `${role}/${difficulty}`);
+  // Only seats in use reach the member file; one kept behind a switch waits until it is turned on.
+  for (const { role, difficulty } of liveSeats(wanted)) {
     const seat = orchestrationSeat(wanted, role, difficulty);
-    if (seat && !sameJson(seat, orchestrationSeat(orchestration.document, role, difficulty))) await listSeatModel(seat);
+    if (seat && (!wasLive.includes(`${role}/${difficulty}`) || !sameJson(seat, orchestrationSeat(saved, role, difficulty)))) await listSeatModel(seat);
   }
   const response = await fetch("/app/orchestration", {
     method: "POST",
@@ -96,12 +105,18 @@ async function saveOrchestration() {
   if (failed.length) throw new Error(AN.L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));
 }
 
+// The rules as the draft would write them: the mode's text, then the lines of the roles turned on
+// in catalog order, then the image line.
 function orchestrationPresetText(mode) {
-  const text = orchestration?.presets[mode];
-  const image = orchestration?.presets.image_generation;
-  if (!text || !image) return text;
-  const base = text.replace(image, "");
-  return orchestrationShown()?.image_generation ? base + image : base;
+  const presets = orchestration?.presets;
+  const text = presets?.[mode];
+  if (!text) return text;
+  const image = presets.image_generation || "";
+  const shown = orchestrationShown();
+  const enabled = enabledGroups(shown);
+  const sections = roleCatalog().filter((role) => enabled.includes(role.group))
+    .map((role) => presets.role_sections?.[role.group] || "");
+  return [presets.role_base?.[mode] ?? text.replace(image, ""), ...sections, shown?.image_generation ? image : ""].join("");
 }
 
 function viewMode(mode) {
@@ -182,6 +197,22 @@ function setOrchestrationSeat(role, difficulty, seat) {
   advancedEdited();
 }
 
+// The list keeps its saved form when the switches come back to what is saved, so nothing is unsaved.
+function setRoleEnabled(group, on) {
+  const shown = orchestrationShown();
+  const saved = orchestration.document;
+  const enabled = new Set(enabledGroups(shown));
+  if (on) enabled.add(group);
+  else enabled.delete(group);
+  const next = { ...shown, enabled_roles: roleCatalog().map((role) => role.group).filter((key) => enabled.has(key)) };
+  const same = enabled.size === enabledGroups(saved).length && enabledGroups(saved).every((key) => enabled.has(key));
+  if (same && Object.hasOwn(saved, "enabled_roles")) next.enabled_roles = saved.enabled_roles;
+  else if (same) delete next.enabled_roles;
+  orchestrationDraft = next;
+  renderOrchestration();
+  advancedEdited();
+}
+
 // Bosses on a saved mode dispatch through the seats, each boss by its own row.
 function renderTaskScope() {
   const on = orchestration && !orchestration.error
@@ -189,6 +220,36 @@ function renderTaskScope() {
   const names = on.flatMap((boss) => boss.labels).join(AN.L("、", ", "));
   $("task-scope").hidden = !on.length;
   $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“高级”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Advanced; solo tasks are offered only to bosses without orchestration.`) : "";
+}
+
+// An unset interface seat runs the general execution seat of its difficulty, as the server fills it,
+// only while both roles are on. No other role borrows a seat.
+function inheritedSeatName(group, difficulty, doc) {
+  if (group !== "worker_frontend" || !doc.worker?.[difficulty]) return null;
+  return liveSeats(doc).find((seat) => seat.role === "worker" && seat.difficulty === difficulty)?.name;
+}
+
+// A role's switch, and its two seats while on; turned off, they stay saved out of sight.
+function roleGroup(entry, doc) {
+  const { group, access } = entry;
+  const name = roleName(entry);
+  const on = enabledGroups(doc).includes(group);
+  const seats = !on ? [] : DIFFICULTIES.map(([difficulty, level]) => {
+    const general = inheritedSeatName(group, difficulty, doc);
+    const unset = general ? AN.L(`沿用 ${general}`, `Same as ${general}`) : SEAT_UNSET;
+    return el("div", { className: "review-row" },
+      el("div", { className: "review-role" }, level),
+      ...seatSelects(`${group}/${difficulty}`, `${name} · ${level}`, orchestrationSeat(doc, group, difficulty),
+        (next) => setOrchestrationSeat(group, difficulty, next), unset));
+  });
+  return el("div", { className: "orchestration-group" },
+    el("label", { className: "orchestration-switch" },
+      el("input", {
+        type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/enabled` }, checked: on,
+        onChange: (e) => setRoleEnabled(group, e.target.checked),
+      }),
+      el("strong", {}, name), el("small", {}, ROLE_ACCESS[access])),
+    ...seats);
 }
 
 function renderOrchestration() {
@@ -213,16 +274,11 @@ function renderOrchestration() {
   roles.hidden = !editable;
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
-    const visibleRoles = preset === "off" ? ORCHESTRATION_ROLES.filter(([role]) => role === "image_generation") : ORCHESTRATION_ROLES;
-    roles.replaceChildren(...visibleRoles.map(([role, difficulty, name, hint, unsetName, modelLabel]) => {
-      const seat = orchestrationSeat(shown, role, difficulty);
-      // An unset interface seat runs the Worker seat of its difficulty, as the server fills it.
-      const general = role === "worker_frontend" && shown.worker?.[difficulty] && ORCHESTRATION_ROLES.find(([r, d]) => r === "worker" && d === difficulty);
-      const unset = general ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : unsetName;
-      return el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name), hint && el("small", {}, hint)),
-        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset, modelLabel));
-    }));
+    const { role, difficulty, name } = IMAGE_SEAT;
+    roles.replaceChildren(...(preset === "off" ? [] : roleCatalog().map((entry) => roleGroup(entry, shown))),
+      el("div", { className: "review-row" },
+        el("div", { className: "review-role" }, el("strong", {}, name)),
+        ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation"))));
     if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
   renderRuleFiles();
@@ -284,8 +340,8 @@ function seatConflicts() {
   const review = REVIEW_ROLES.map(([role, name]) => ({ section: "review", name: AN.L(`${name}评审`, `${name} review`), seat: seatsShown()[role] }));
   const doc = orchestrationShown();
   const live = Boolean(doc) && (doc.preset !== "off" || Object.values(doc.apps || {}).some((mode) => mode !== "off"));
-  const roles = !live ? [] : ORCHESTRATION_ROLES
-    .map(([role, difficulty, name]) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
+  const roles = !live ? [] : liveSeats(doc)
+    .map(({ role, difficulty, name }) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
   return [...review, ...roles].filter(({ seat }) => seat && outOfPool(seat.provider, seat.model));
 }
 const seatConflictText = ({ name, seat }) => AN.L(`${name} 用的 ${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${name} uses ${seat.model}, which is not in the available models of ${PROVIDER_NAMES[seat.provider]}`);

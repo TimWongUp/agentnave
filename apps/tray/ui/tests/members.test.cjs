@@ -33,17 +33,9 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   return { run, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
 }
 
-test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
-  let saved = { version: 1, preset: "split" }, members;
-  const app = editor(async (url, options) => {
-    const body = options?.body && JSON.parse(options.body);
-    if (url === "/app/orchestration" && !body) {
-      return { ok: true, json: async () => ({ document: saved, error: null, bosses: [], presets: { split: "rule", image_generation: "\nimage-rule" }, files: [] }) };
-    }
-    if (url === "/app/orchestration") saved = body;
-    else members = body;
-    return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
-  });
+// The settings page's orchestration half, with a DOM just deep enough to read rendered rows.
+function advancedEditor(fetch) {
+  const app = editor(fetch);
   app.run(`
     AN.L = (zh) => zh;
     refreshDirty = () => {};
@@ -60,6 +52,20 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
     currentDoc.modes.task.codex = { models: ["chat-model"], overrides: {}, default: "chat-model" };
   `);
   app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
+  return app;
+}
+
+test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
+  let saved = { version: 1, preset: "split" }, members;
+  const app = advancedEditor(async (url, options) => {
+    const body = options?.body && JSON.parse(options.body);
+    if (url === "/app/orchestration" && !body) {
+      return { ok: true, json: async () => ({ document: saved, error: null, bosses: [], presets: { split: "rule", image_generation: "\nimage-rule" }, files: [] }) };
+    }
+    if (url === "/app/orchestration") saved = body;
+    else members = body;
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
+  });
   await app.run("loadOrchestration()");
   const row = () => app.run('$("orchestration-roles").children.at(-1)');
   const pick = (value) => row().children[1].listeners.change({ target: { value } });
@@ -103,6 +109,99 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   app.run('delete currentDoc.modes.discussion.codex; renderOrchestration()');
   assert.equal(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled), false,
     "removing both scenes disables the CLI despite its historical model settings");
+});
+
+function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"))) {
+  const state = { saved: document, members: null };
+  const presets = {
+    split: "whole", parallel: "whole+", image_generation: "\nimage",
+    role_base: { split: "base", parallel: "base+" },
+    role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
+  };
+  const app = advancedEditor(async (url, options) => {
+    const body = options?.body && JSON.parse(options.body);
+    if (url === "/app/orchestration" && !body) {
+      return { ok: true, json: async () => ({ document: state.saved, error: null, bosses: [], presets, roles, files: [] }) };
+    }
+    if (url === "/app/orchestration") state.saved = body;
+    else state.members = body;
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
+  });
+  const groups = () => app.run('$("orchestration-roles").children').filter((box) => box.className !== "review-row");
+  const group = (name) => groups().find((box) => box.children[0].children[1].children[0] === name);
+  const toggle = (name, checked) => group(name).children[0].children[0].listeners.change({ target: { checked } });
+  return { app, state, groups, group, toggle };
+}
+
+test("role switches default like old files, round-trip through save, and keep bindings when off", async () => {
+  const binding = { provider: "codex", model: "chat-model" };
+  const { app, state, groups, group, toggle } = rolesEditor({ version: 1, preset: "split", worker_writing: { easy: binding } });
+  await app.run("loadOrchestration()");
+
+  assert.equal(groups().length, 9);
+  assert.equal(group("通用探索").children.length, 3);
+  assert.equal(group("写作").children.length, 1, "a new role starts off with its seats out of sight");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nexplorer\nworker\nworker_frontend");
+
+  toggle("写作", true);
+  assert.equal(group("写作").children.length, 3, "turning a role on only shows its seats");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nexplorer\nworker\nworker_frontend\nworker_writing");
+  assert.equal(app.run("orchestrationChanged()"), true);
+  toggle("写作", false);
+  assert.equal(app.run("orchestrationChanged()"), false, "back to what is saved leaves nothing unsaved");
+  assert.equal(app.run('"enabled_roles" in orchestrationWanted()'), false);
+
+  for (const name of ["通用探索", "通用执行", "界面实现"]) toggle(name, false);
+  assert.equal(app.run('orchestrationPresetText("split")'), "base");
+  await app.run("saveOrchestration()");
+  assert.deepEqual(state.saved.enabled_roles, []);
+  assert.deepEqual(state.saved.worker_writing, { easy: binding }, "turning off keeps the binding");
+  assert.equal(state.members, null, "a binding behind a switch stays out of the member file");
+
+  await app.run("loadOrchestration()");
+  assert.equal(group("通用探索").children.length, 1);
+  toggle("写作", true);
+  await app.run("saveOrchestration()");
+  assert.ok(state.members.clis.codex.models["chat-model"], "turning a role on lists the binding it brings back");
+  assert.deepEqual(state.saved.enabled_roles, ["worker_writing"]);
+});
+
+test("a global off shows only the image seat, and no catalog means no role is guessed", async () => {
+  const off = rolesEditor({ version: 1, preset: "off" });
+  await off.app.run("loadOrchestration()");
+  assert.equal(off.app.run('$("orchestration-roles").children.length'), 1);
+  off.app.run('viewMode("split")');
+  assert.equal(off.groups().length, 9);
+
+  const older = rolesEditor({ version: 1, preset: "split", enabled_roles: ["worker"] }, null);
+  await older.app.run("loadOrchestration()");
+  assert.equal(older.app.run('$("orchestration-roles").children.length'), 1);
+  assert.equal(older.app.run("orchestrationChanged()"), false);
+});
+
+test("only roles turned on conflict with the pool, and only the interface role borrows a seat", async () => {
+  const outside = { provider: "codex", model: "gone" };
+  const worker = { provider: "codex", model: "chat-model" };
+  const { app, group, toggle } = rolesEditor({
+    version: 1, preset: "split", enabled_roles: ["worker", "worker_frontend", "worker_code"],
+    worker: { easy: worker }, explorer_web: { hard: outside },
+  });
+  await app.run("loadOrchestration()");
+  app.run('currentDoc.clis.codex = { allowed_models: ["chat-model"], models: {} }');
+
+  const unset = (row) => row.children[1].children[0].children[0];
+  assert.equal(unset(group("界面实现").children[1]), "沿用 通用执行 · 简单");
+  assert.equal(unset(group("界面实现").children[2]), "未配置");
+  assert.equal(unset(group("代码实现").children[1]), "未配置", "other roles never borrow");
+  toggle("通用执行", false);
+  assert.equal(unset(group("界面实现").children[1]), "未配置", "with general execution off nothing is borrowed");
+
+  assert.equal(app.run("seatConflicts().length"), 0, "a role turned off keeps a stale binding quietly");
+  toggle("网页知识检索", true);
+  assert.equal(app.run("seatConflicts().length"), 1);
+  assert.match(app.run("seatConflictText(seatConflicts()[0])"), /网页知识检索 · 困难 用的 gone/);
+  assert.ok(app.run("blockedSeat()"), "and blocks saving until rebound, without repairing it");
+  assert.deepEqual(JSON.parse(app.run("JSON.stringify(orchestrationWanted().explorer_web)")), { hard: outside });
 });
 
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {

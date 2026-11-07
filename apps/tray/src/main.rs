@@ -12,6 +12,7 @@ mod hosts;
 mod manage;
 mod members;
 mod navigation;
+mod orchestration_roles;
 mod preferences;
 mod process;
 mod proxy;

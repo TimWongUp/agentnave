@@ -295,29 +295,26 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
 }
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
-/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "explorer": {"easy" | "hard":
-/// seat}, "worker": {...}, "worker_frontend": {...}, "image_generation": seat}`. Interface Workers
-/// and the image seat have keys of their own so servers that predate them ignore them rather than
-/// reject the file. The App writes the chosen
+/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "enabled_roles": [group],
+/// group: {"easy" | "hard": seat}, "image_generation": seat}`, with one group per catalog entry.
+/// A turned-off group keeps its seats. Interface Workers and the image seat have keys of their own
+/// so servers that predate them ignore them rather than reject the file. The App writes the chosen
 /// rules into the boss apps' global rules and
 /// `effective_apps`, every connected row's mode as its group applies it, for the server.
 pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     let top = object(document, ORCHESTRATION_FILE)?;
-    only(
-        top,
-        &[
-            "version",
-            "preset",
-            "custom",
-            "apps",
-            "effective_apps",
-            "explorer",
-            "worker",
-            "worker_frontend",
-            "image_generation",
-        ],
-        ORCHESTRATION_FILE,
-    )?;
+    let groups = crate::orchestration_roles::groups();
+    let mut fields = vec![
+        "version",
+        "preset",
+        "custom",
+        "apps",
+        "effective_apps",
+        "enabled_roles",
+        "image_generation",
+    ];
+    fields.extend(&groups);
+    only(top, &fields, ORCHESTRATION_FILE)?;
     if document["version"].as_u64() != Some(1) {
         return Err(format!("{ORCHESTRATION_FILE} 的 version 必须为 1"));
     }
@@ -345,7 +342,8 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     {
         return Err("自定义编排不能为空".into());
     }
-    for role in ["explorer", "worker", "worker_frontend"] {
+    crate::orchestration_roles::enabled_groups(document)?;
+    for role in groups {
         let Some(seats) = top.get(role) else { continue };
         for (difficulty, seat) in object(seats, role)? {
             if !matches!(difficulty.as_str(), "easy" | "hard") {
