@@ -186,6 +186,18 @@ test("service identities preserve historical duties and duplicate ordinals in si
   assert.equal(context.speakerName(m), "route/claude-x #4");
 });
 
+test("forward sources localize only their final timestamp and preserve the year of older sources", () => {
+  const { context } = auditUI();
+  Object.assign(context, { dayLabel: context.AN.dayLabel, clock: context.AN.clock, fullTime: context.AN.fullTime });
+  const now = new Date().toISOString();
+  const title = "https://logs/2026-11-07T03:51:27Z · 主持人";
+  assert.equal(context.localizeSourceTime(`${title} · ${now}`), `${title} · ${context.AN.dayLabel(now)} ${context.AN.clock(now)}`);
+  const invalid = `${title} · 2024-13-45T99:99:99Z`;
+  assert.equal(context.localizeSourceTime(invalid), invalid);
+  const previousYear = `${new Date().getFullYear() - 1}-01-02T03:04:05Z`;
+  assert.equal(context.localizeSourceTime(`${title} · ${previousYear}`), `${title} · ${context.AN.fullTime(previousYear)}`);
+});
+
 test("native prompt event rows state every outcome in both languages and update in place", () => {
   const cases = [
     [{ kind: "permission", tool_name: "Write", status: "pending" }, "等 boss 决定：Write", "Waiting for boss to decide: Write"],

@@ -349,9 +349,15 @@ function typingStatus(m) {
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   return [doing, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
 }
-const ISO_STAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
-function localizeStamps(text) {
-  return text.replace(ISO_STAMP, (iso) => `${dayLabel(iso)} ${clock(iso)}`);
+const SOURCE_STAMP = / · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))$/;
+function localizeSourceTime(text) {
+  return text.replace(SOURCE_STAMP, (suffix, iso) => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return suffix;
+    const shown = date.getFullYear() === new Date().getFullYear()
+      ? `${dayLabel(iso)} ${clock(iso)}` : fullTime(iso);
+    return ` · ${shown}`;
+  });
 }
 function updateMessage(rec, m, ctx, id) {
   rec.id = id;
@@ -411,7 +417,7 @@ function updateMessage(rec, m, ctx, id) {
     rec.fwd.hidden = !f;
     if (f) {
       rec.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
-      const source = f.source && localizeStamps(f.source);
+      const source = f.source && localizeSourceTime(f.source);
       setText(rec.fwd, L(`↪ 转发自 ${source || "其他消息"}`, `↪ Forwarded from ${source || "another message"}`));
       setClass(rec.fwd, rec.fwdId ? "fwd" : "fwd dead");
       setAttr(rec.fwd, "aria-disabled", rec.fwdId ? null : "true");
