@@ -3,13 +3,13 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
-function app(fetch) {
+function app(fetch, AN = {}) {
   const controls = new Map();
   const control = (id) => {
     if (!controls.has(id)) controls.set(id, { options: [], dataset: {}, classList: { toggle() {}, contains() { return false; } } });
     return controls.get(id);
   };
-  const context = vm.createContext({ AN: {}, fetch,
+  const context = vm.createContext({ AN, fetch,
     document: { getElementById: control },
     window: { addEventListener() {} },
   });
@@ -136,7 +136,7 @@ test("Codex lists both installations and updates only the standalone one by targ
   });
   ui.run(`cliUpdates = { clis: { codex: { update: false, version: '0.167.0-alpha.3.2', installations: [
     { id: 'desktop', label: 'ChatGPT 内置 CLI', path: '/app/codex', version: '0.167.0-alpha.3.2', active: true, update: false },
-    { id: 'standalone', label: '独立安装', path: '/bin/codex', version: '0.166.0', active: false, update: true, latest: '0.167.0', command: 'npm i' },
+    { id: 'standalone', label: 'Codex CLI', path: '/bin/codex', version: '0.166.0', active: false, update: true, latest: '0.167.0', command: 'npm i' },
   ] } } }`);
   const [desktop, standalone] = ui.json("renderCliInstallations('codex').children[0]");
   const text = (row) => JSON.stringify(row);
@@ -147,11 +147,61 @@ test("Codex lists both installations and updates only the standalone one by targ
   assert.match(text(standalone), /0\.166\.0/);
   assert.doesNotMatch(text(standalone), /当前使用/);
   assert.match(text(standalone), /更新到 0\.167\.0/);
-  assert.equal(ui.json("renderCliUpdate('codex').children[0]"), null);
+  assert.match(text(standalone), /通过 npm i 更新到 0\.167\.0/);
+  assert.equal(ui.json("renderCliUpdate('codex')"), null);
   assert.equal(ui.json("renderCliVersion('codex', { installed: true, version: '1' })"), null);
   assert.deepEqual(ui.json("updatableClis()"), [{ provider: "codex", target: "standalone" }]);
   await ui.run("updateSingleCli('codex', 'standalone')");
   assert.deepEqual(bodies, [{ provider: "codex", target: "standalone" }]);
+});
+
+test("a lone standalone installation keeps the single version and default update", async () => {
+  const bodies = [];
+  const ui = app(async (url, options) => {
+    if (url === "/settings/members") return { ok: true, json: async () => members };
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ clis: {} }) };
+  });
+  ui.run(`cliUpdates = { clis: { codex: { update: true, latest: '2.0.0', version: '1.0.0', command: 'npm i', installations: [
+    { id: 'standalone', label: 'Codex CLI', version: '1.0.0', active: true, update: true, latest: '2.0.0', command: 'npm i' },
+  ] } } }`);
+  assert.equal(ui.json("renderCliInstallations('codex')"), null);
+  assert.equal(ui.json("renderCliVersion('codex', { installed: true })").children[0], "1.0.0");
+  assert.equal(ui.json("renderCliUpdate('codex').children[0]").children[0], "更新到 2.0.0");
+  assert.deepEqual(ui.json("updatableClis()"), [{ provider: "codex" }]);
+  await ui.run("updateSingleCli('codex')");
+  assert.deepEqual(bodies, [{ provider: "codex" }]);
+});
+
+test("a later response cannot restore the standalone version it read before that update", async () => {
+  const finish = {};
+  const ui = app((url, options) => url === "/settings/members"
+    ? Promise.resolve({ ok: true, json: async () => members })
+    : new Promise(resolve => { finish[JSON.parse(options.body).provider] = resolve; }));
+  const codex = (version, update) => ({ update: false, installations: [
+    { id: "desktop", label: "ChatGPT 内置 CLI", version: "3.0.0", active: true, update: false },
+    { id: "standalone", label: "Codex CLI", version, active: false, update, latest: "2.0.0", command: "npm i" },
+  ] });
+  ui.run(`cliUpdates = { clis: ${JSON.stringify({ codex: codex("1.0.0", true), claude: { update: true, latest: "2.0.0" } })} }`);
+  const all = ui.run("updateAllClis()");
+  finish.codex({ ok: true, json: async () => ({ clis: { codex: codex("2.0.0", false) } }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  finish.claude({ ok: true, json: async () => ({ clis: { codex: codex("1.0.0", true), claude: { update: false } } }) });
+  await all;
+  assert.equal(ui.run("cliUpdates.clis.codex.installations[1].version"), "2.0.0");
+  assert.equal(ui.json("updatableClis()").length, 0);
+});
+
+test("English labels name each installation by its id and app", () => {
+  const ui = app(async () => { throw new Error("unexpected request"); }, { L: (_zh, en) => en });
+  const row = (install) => JSON.stringify(ui.json(`renderCliInstallation('codex', ${JSON.stringify(install)})`));
+  const active = row({ id: "desktop", label: "ChatGPT 内置 CLI", active: true });
+  assert.match(active, /ChatGPT built-in CLI/);
+  assert.match(active, /In use/);
+  assert.match(active, /Updates with the desktop app/);
+  assert.match(row({ id: "desktop", label: "Codex 内置 CLI" }), /Codex built-in CLI/);
+  assert.match(row({ id: "standalone", label: "Codex CLI" }), /Standalone CLI/);
+  assert.doesNotMatch(active, /内置/);
 });
 
 test("without installations a card keeps its single version and has no source rows", () => {

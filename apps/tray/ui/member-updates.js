@@ -44,8 +44,16 @@ function cliKey(provider, target) {
   return target ? `${provider}/${target}` : provider;
 }
 
+// A lone standalone installation is an ordinary CLI: its card needs no source rows.
 function cliInstallations(provider) {
-  return cliUpdates.clis?.[provider]?.installations || [];
+  const installations = cliUpdates.clis?.[provider]?.installations || [];
+  return installations.length === 1 && installations[0].id === "standalone" ? [] : installations;
+}
+
+function cliInstallationName({ id, label }) {
+  if (id === "standalone") return L(label, "Standalone CLI");
+  const app = ["ChatGPT", "Codex"].find((name) => label.includes(name));
+  return app ? L(label, `${app} built-in CLI`) : label;
 }
 
 function renderCliUpdateButton(provider, target, status) {
@@ -54,14 +62,14 @@ function renderCliUpdateButton(provider, target, status) {
   return status?.update || running ? el("button", {
     type: "button", className: "cli-update", disabled: running,
     dataset: { focusKey: `${key}/update` },
-    title: L(`通过 ${status?.command} 更新`, `Update via ${status?.command}`),
+    title: L(`通过 ${status?.command} 更新到 ${status?.latest}`, `Update to ${status?.latest} via ${status?.command}`),
     onClick: () => updateSingleCli(provider, target),
   }, running ? L("更新中…", "Updating…") : L(`更新到 ${status.latest}`, `Update to ${status.latest}`)) : null;
 }
 
 function renderCliUpdate(provider) {
-  return el("span", { className: "cli-update-slot" },
-    cliInstallations(provider).length ? null : renderCliUpdateButton(provider, undefined, cliUpdates.clis?.[provider]));
+  if (cliInstallations(provider).length) return null;
+  return el("span", { className: "cli-update-slot" }, renderCliUpdateButton(provider, undefined, cliUpdates.clis?.[provider]));
 }
 
 // The check's version moves as soon as an update lands; detection catches up when all have finished.
@@ -75,9 +83,10 @@ function renderCliInstallation(provider, install) {
   const standalone = install.id === "standalone";
   const note = standalone ? "" : L("随桌面应用更新", "Updates with the desktop app");
   return el("div", { className: "cli-installation", title: [note, install.path].filter(Boolean).join("\n") },
-    el("span", { className: "cli-installation-name" }, install.label),
+    el("span", { className: "cli-installation-name" }, cliInstallationName(install)),
     el("span", { className: "cli-version" }, install.version || ""),
-    install.active ? el("span", { className: "badge badge-accent" }, L("当前使用", "In use")) : el("span"),
+    el("span", { className: "cli-installation-active" },
+      install.active ? el("span", { className: "badge badge-accent" }, L("当前使用", "In use")) : null),
     el("span", { className: "cli-update-slot" }, standalone ? renderCliUpdateButton(provider, install.id, install) : null));
 }
 
