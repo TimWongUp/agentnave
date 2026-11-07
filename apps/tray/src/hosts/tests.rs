@@ -2204,3 +2204,18 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
         json!({"claude": "split", "grok": "split"})
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn codex_host_label_tracks_the_bundled_cli_without_changing_identity() {
+    let (_temp, hosts) = fixture();
+    executable_file(&hosts.context.search[0].join("codex"), "fake");
+    assert_eq!(host(&hosts, "codex").label, "Codex CLI");
+    let desktop =
+        hosts.context.applications[0].join("ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
+    executable_file(&desktop, "fake");
+    let codex = host(&hosts, "codex");
+    assert_eq!(codex.id, "codex");
+    assert_eq!(codex.boss, "codex");
+    assert_eq!(codex.label, "ChatGPT（Codex）");
+}

@@ -11,7 +11,10 @@ pub(super) fn package(provider: &str) -> Option<&'static str> {
     }
 }
 
-fn desktop(provider: &str, path: &Path) -> bool {
+pub(super) fn desktop(provider: &str, path: &Path) -> bool {
+    if provider == "codex" && super::super::locate::codex_desktop_app(path).is_some() {
+        return true;
+    }
     if path
         .to_string_lossy()
         .replace('\\', "/")
@@ -130,6 +133,7 @@ pub(super) fn classify(provider: &str, real: &Path, windows: bool) -> Option<Pla
             command: format!("{provider} update"),
             via: "native",
             channel,
+            environment: locks::Environment::Native(real.to_owned()),
         });
     }
     brew(provider, real).or_else(|| {
@@ -179,11 +183,13 @@ fn brew(provider: &str, real: &Path) -> Option<Plan> {
                 cask,
             }
         };
+        let environment = locks::Environment::Brew(program.canonicalize().ok()?);
         return Some(Plan {
             program,
             command: format!("brew {}", args.join(" ")),
             args,
             via: "homebrew",
+            environment,
             channel,
         });
     }
@@ -263,6 +269,7 @@ pub(super) fn npm(
             ],
             command: format!("{npm} install -g --prefix <prefix> {package}"),
             via: "npm",
+            environment: locks::Environment::Npm(prefix.canonicalize().ok()?),
             channel: Channel::Npm(package.trim_end_matches("@latest").into()),
         });
     }

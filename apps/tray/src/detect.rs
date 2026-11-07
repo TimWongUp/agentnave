@@ -13,7 +13,7 @@ use probe::*;
 #[cfg(windows)]
 pub(crate) use locate::uninstall_icon;
 use locate::*;
-pub(crate) use locate::{executable, locate};
+pub(crate) use locate::{codex_desktop_app, executable, locate};
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};

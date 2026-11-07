@@ -16,7 +16,17 @@ impl Hosts {
             ),
             (
                 "codex",
-                "Codex",
+                match self
+                    .context
+                    .find("codex")
+                    .or_else(|| crate::detect::locate("codex"))
+                    .as_deref()
+                    .and_then(crate::detect::codex_desktop_app)
+                {
+                    Some("ChatGPT") => "ChatGPT（Codex）",
+                    Some(_) => "Codex",
+                    None => "Codex CLI",
+                },
                 "codex",
                 Some("CODEX_HOME"),
                 h.join(".codex"),
