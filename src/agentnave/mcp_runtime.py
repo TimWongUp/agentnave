@@ -117,7 +117,7 @@ def _read_excluded_providers() -> frozenset[str]:
     return excluded if host_provider is None else excluded | {host_provider}
 
 
-WAIT_SECONDS = 240
+WAIT_SECONDS = 600
 
 # Ends are never pushed (ADR-0007), so receipts say what to call before the turn ends (ADR-0064).
 WAIT_NEXT = (
@@ -126,7 +126,7 @@ WAIT_NEXT = (
 )
 WAIT_AGAIN = (
     "Still pending: handle any prompt_pending or review_needed first, then call wait again "
-    "before ending your turn."
+    "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
 
 EXCLUDED_PROVIDERS = _read_excluded_providers()
@@ -144,7 +144,7 @@ PROVIDER_SELECTION = (
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (
-    "true waits up to 240s like wait(ids=[this handle]) and returns it in wait; only for a single "
+    f"true waits up to {WAIT_SECONDS}s like wait(ids=[this handle]) and returns it in wait; only for a single "
     "dispatch whose result this turn needs, not parallel dispatches."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {

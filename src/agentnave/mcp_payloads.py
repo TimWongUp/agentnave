@@ -157,6 +157,7 @@ class WaitPayload(TypedDict):
     updates: list[InvocationPayload]
     rounds: list[RoundPayload]
     next: NotRequired[str]
+    seq: NotRequired[int]
 
 
 class CancelPayload(TypedDict):

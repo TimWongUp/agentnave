@@ -119,6 +119,8 @@ impl Hosts {
                         return Ok(());
                     };
                     set_host_env(desired, host, "takeover_failed")?;
+                    timeouts::ensure(desired, host)
+                        .map_err(|error| format!("takeover_failed:{error}"))?;
                     // Repair missing commands, or migrate our existing launchers once.
                     if let Some(path) = self.launcher()
                         && let Some(command) = layer.command(desired)
