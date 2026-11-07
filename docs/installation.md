@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.2.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v1.3.0` contains the runtime source, `agentnave-manager` Skill and all eight
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.2.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.3.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -575,26 +575,25 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.2.0
+### Upgrading to v1.3.0
 
-Update the App; it installs the paired service by version at startup, and each host uses it only
-after its MCP connection reconnects, so reconnect every host after updating. The `answer_prompt`
-tool appears only after that reconnect; on Hermes, also add it to the saved per-tool selection, or
-a task waiting on a native prompt stays stopped.
+Update the App; it installs the paired service at startup. On macOS and Linux, the App updates host
+MCP configurations once to point at the fixed launcher `~/.agentnave/service/bin/agentnave-mcp` so
+later service upgrades no longer rewrite host config files (hosts such as WorkBuddy will not ask to
+trust the workspace again on subsequent upgrades). Reconnect or reopen any host copy listed on the
+boss card in Settings so it picks up the new launcher and runtime; background services (Claude
+background service, Codex background service, Hermes gateway) can be stopped or restarted directly
+from the card.
 
-On macOS and Linux, Claude subagents now run interactively by default. Their sessions appear in
-Claude Code's `/resume` list, task text enters `~/.claude/history.jsonl`, and directory trust and
-the last 20 characters of a confirmed API key are recorded permanently in the user's Claude Code
-config. Turn it off with "Run interactively" on the Claude card under Employees, or pass
-`interactive=false` where there is no App.
+Available models are now configured per CLI under `clis[provider].allowed_models` in `members.json`
+and shared across private tasks, meetings and orchestration seats; existing scene-level model lists
+continue to work until edited in the App. Orchestration seats no longer require enabling the CLI for
+ad-hoc private tasks, and an optional `image-generator` seat can be configured under Advanced.
+`start_agent` and `run_round` accept an optional `wait=true` parameter and include `next` in
+receipts while work remains pending.
 
-Claude subagents now use the login Claude Code stored itself: the service no longer passes
-`CLAUDE_CODE_OAUTH_TOKEN` to them, so a setup that relied on that variable alone has to log in to
-Claude Code first. The App's automatic voice readout is gone; start listening when you want to hear
-a workspace, a meeting or a private chat.
-
-See [v1.2.0 release notes](releases/v1.2.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.1.0.md).
+See [v1.3.0 release notes](releases/v1.3.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.2.0.md).
 
 ## Uninstall
 
