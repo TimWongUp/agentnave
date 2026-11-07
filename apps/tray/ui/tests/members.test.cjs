@@ -33,6 +33,78 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   return { run, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
 }
 
+test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
+  let saved = { version: 1, preset: "split" }, members;
+  const app = editor(async (url, options) => {
+    const body = options?.body && JSON.parse(options.body);
+    if (url === "/app/orchestration" && !body) {
+      return { ok: true, json: async () => ({ document: saved, error: null, bosses: [], presets: { split: "rule", image_generation: "\nimage-rule" }, files: [] }) };
+    }
+    if (url === "/app/orchestration") saved = body;
+    else members = body;
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
+  });
+  app.run(`
+    AN.L = (zh) => zh;
+    refreshDirty = () => {};
+    const nodes = new Map();
+    const node = (tag) => ({
+      tagName: tag, attrs: {}, children: [], dataset: {}, listeners: {}, classList: { toggle() {} },
+      setAttribute(key, value) { this.attrs[key] = value; }, removeAttribute(key) { delete this.attrs[key]; },
+      addEventListener(type, fn) { this.listeners[type] = fn; }, appendChild(child) { this.children.push(child); },
+      replaceChildren(...kids) { this.children = kids; }, querySelectorAll: () => [], querySelector: () => null,
+    });
+    document.createElement = node;
+    document.createTextNode = (text) => text;
+    document.getElementById = (id) => nodes.get(id) || nodes.set(id, node("div")).get(id);
+    currentDoc.modes.task.codex = { models: ["chat-model"], overrides: {}, default: "chat-model" };
+  `);
+  app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
+  await app.run("loadOrchestration()");
+  const row = () => app.run('$("orchestration-roles").children.at(-1)');
+  const pick = (value) => row().children[1].listeners.change({ target: { value } });
+  const seat = { provider: "codex", model: "chat-model" };
+
+  assert.equal(row().children[0].children[0].children[0], "生图（可选）");
+  assert.equal(row().children[0].children.length, 1);
+  assert.equal(row().children[1].children[0].children[0], "未配置");
+  assert.equal(row().children[2].attrs["aria-label"], "生图的对话模型");
+  app.run('viewMode("off")');
+  assert.equal(app.run('$("orchestration-roles").hidden'), false);
+  assert.equal(app.run('$("orchestration-roles").children.length'), 1);
+  assert.equal(row().children[0].children[0].children[0], "生图（可选）");
+  app.run('viewMode("split")');
+
+  assert.equal(app.run('orchestrationPresetText("split")'), "rule");
+  pick("codex");
+  assert.equal(app.run('orchestrationPresetText("split")'), "rule\nimage-rule");
+  assert.equal(JSON.stringify(app.run("orchestrationWanted().image_generation")), JSON.stringify(seat));
+  pick("");
+  assert.equal(app.run('"image_generation" in orchestrationWanted()'), false);
+  assert.equal(app.run('orchestrationPresetText("split")'), "rule");
+  assert.equal(app.run("orchestrationChanged()"), false);
+  pick("codex");
+  app.run("discardAdvanced()");
+  assert.equal(app.run("orchestrationChanged()"), false);
+
+  pick("codex");
+  await app.run("saveOrchestration()");
+  assert.equal(JSON.stringify(saved.image_generation), JSON.stringify(seat));
+  assert.ok(members.clis.codex.models["chat-model"]);
+  await app.run("loadOrchestration()");
+  assert.equal(row().children[2].children.find((option) => option.attrs.value === "chat-model").attrs.selected, "");
+
+  pick("");
+  await app.run("saveOrchestration()");
+  assert.equal(Object.hasOwn(saved, "image_generation"), false);
+  app.run('delete currentDoc.modes.task.codex; renderOrchestration()');
+  assert.ok(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled),
+    "orchestration can use a confirmed CLI even when solo tasks are off");
+  app.run('delete currentDoc.modes.discussion.codex; renderOrchestration()');
+  assert.equal(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled), false,
+    "removing both scenes disables the CLI despite its historical model settings");
+});
+
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
   const app = editor();
   app.run('setProviderEnabled("codex", false); setProviderEnabled("codex", true)');
@@ -267,8 +339,10 @@ test("a failed settings read cannot make a limit save reset other runtime settin
   assert.deepEqual(sent, { version: 1, max_running: 3 });
 });
 
-test("unchecking all models keeps the full model list and default so items can be unchecked and default changed", () => {
-  const app = runtimeEditor();
+function poolEditor(fetch) {
+  const app = runtimeEditor(fetch);
+  app.run("AN.L = (zh) => zh");
+  app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
   app.run(`
     function findKey(nodes, key) {
       for (const node of nodes || []) {
@@ -279,37 +353,103 @@ test("unchecking all models keeps the full model list and default so items can b
       }
       return null;
     }
-    detected.codex = {
-      installed: true,
-      native: { model: "gpt-5-mini" },
-      models: [{ id: "gpt-5" }, { id: "gpt-5-mini" }],
+    const offered = (rows, key) => findKey(rows, key).children.flat()
+      .filter((option) => !option.attrs.disabled).map((option) => option.attrs.value);
+    const seatOptions = (seat) => seatSelects("seat", "工位", seat, () => {})[1].children.flat();
+    const poolPick = (key, checked) => {
+      pickerOpen = "codex/pool";
+      findKey(poolRows("codex"), key).attrs.onChange({ target: { checked } });
     };
-    currentDoc.clis.codex = { models: { "o4-mini": {} } };
-    pickerOpen = "codex/task";
-    findKey(slotRows("codex", "task", true), "codex/task/all").attrs.onChange({ target: { checked: false } });
+    detected.codex = { installed: true, native: { model: "a" }, models: [{ id: "a" }, { id: "b" }] };
+    currentDoc.clis.codex = { models: { old: {} } };
+    markSaved();
   `);
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex"))')), {
-    enabled: true,
-    model: "gpt-5-mini",
-    allowed: ["gpt-5", "gpt-5-mini", "o4-mini"],
-    effort: "",
+  return app;
+}
+
+test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out model through", async () => {
+  const posts = [];
+  const app = poolEditor(async (url, options) => {
+    posts.push(url);
+    return { ok: true, json: async () => ({ saved: true, document: JSON.parse(options.body) }) };
   });
-  assert.equal(app.run('slot("discussion", "codex").allowed'), null);
-
-  app.run('findKey(slotRows("codex", "task", true), "codex/task/allow/o4-mini").attrs.onChange({ target: { checked: false } })');
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["gpt-5", "gpt-5-mini"]);
-  assert.equal(app.run('slot("task", "codex").model'), "gpt-5-mini");
-
-  app.run('findKey(slotRows("codex", "task", true), "codex/task/model").attrs.onChange({ target: { value: "gpt-5" } })');
-  assert.equal(app.run('slot("task", "codex").model'), "gpt-5");
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["gpt-5", "gpt-5-mini"]);
-
   app.run(`
-    detected.claude = { installed: true, models: [] };
-    currentDoc.modes.task.claude = { models: [], overrides: {}, default: "claude-sonnet-4-5" };
-    pickerOpen = "claude/task";
-    findKey(slotRows("claude", "task", true), "claude/task/all").attrs.onChange({ target: { checked: false } });
+    currentDoc.clis.codex.models.b = {};
+    currentDoc.modes.discussion.codex.default = "b";
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
+    markSaved();
+    poolPick("codex/pool/all", false);
+    poolPick("codex/pool/allow/old", false);
+    poolPick("codex/pool/allow/b", false);
   `);
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "claude").allowed)')), ["claude-sonnet-4-5"]);
-  assert.equal(app.run('slot("task", "claude").model'), "claude-sonnet-4-5");
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
+  assert.deepEqual(app.doc().modes.task.codex.models, []);
+  assert.equal(app.doc().modes.task.codex.default, "a");
+
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "task", true), "codex/task/model"))')).slice(1), ["a"]);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "discussion", true), "codex/discussion/model"))')).slice(1), ["a"]);
+
+  // The default and the seat outside the pool stay as saved and are shown as conflicts.
+  assert.equal(app.doc().modes.discussion.codex.default, "b");
+  assert.equal(app.run('findKey(slotRows("codex", "discussion", true), "codex/discussion/model").children.flat().find((o) => o.attrs.value === "b").attrs.disabled'), true);
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "b" }).find((o) => o.attrs.value === "b").attrs.disabled'), true);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(seatOptions({ provider: "codex", model: "a" }).map((o) => o.attrs.value))')), ["a"]);
+  assert.equal(app.run('poolConflicts("codex").length'), 2);
+  await app.run("saveMembers()");
+  assert.deepEqual(posts, []);
+  app.run('changeSlot("codex", "discussion", { model: "a" })');
+  assert.match(app.run("seatConflictText(seatConflicts()[0])"), /安全评审 用的 b/);
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+  await app.run("saveMembers()");
+  assert.deepEqual(posts, ["/app/members"], "the pool can be saved before rebinding a conflicting seat");
+
+  // A role cannot widen the pool: the saved list refuses the seat before anything is written.
+  app.run('reviewSeats = {}; markSaved()');
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+  await assert.rejects(app.run('listSeatModel({ provider: "codex", model: "b" })'), /不在 Codex CLI 的可用模型里/);
+  assert.deepEqual(posts, ["/app/members"]);
+
+  // Any model again lets a model the CLI lists later through, without a list to keep up.
+  app.run('poolPick("codex/pool/all", true); detected.codex.models.push({ id: "next" })');
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
+  assert.ok(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'));
+  app.run(`
+    currentDoc.clis.codex.allowed_models = ["a"];
+    orchestration = { document: { version: 1, preset: "off", image_generation: { provider: "codex", model: "b" } } };
+  `);
+  assert.equal(app.run("seatConflicts().length"), 0, "inactive image bindings do not block model-pool edits");
+  app.run('orchestration.document.preset = "split"');
+  assert.equal(app.run("seatConflicts().length"), 1, "enabling orchestration restores the binding conflict");
+});
+
+test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.clis.codex.models = { a: {}, b: {} };
+    currentDoc.modes.task.codex = { models: ["a"], overrides: {}, default: "a" };
+    currentDoc.modes.discussion.codex = { models: ["a", "b"], overrides: {}, default: "b" };
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
+    markSaved();
+  `);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["a"]);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(shownPool("codex"))')), ["a", "b"]);
+  assert.equal(app.run('poolSummary("codex", ["a", "b"], shownPool("codex"))'), "单独干活 1 个、开会 2 个");
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+
+  app.run('detected.codex.models.push({ id: "c" }); poolPick("codex/pool/allow/c", true)');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b", "c"]);
+  assert.deepEqual(app.doc().modes.task.codex, { models: [], overrides: {}, default: "a" });
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "task", true), "codex/task/model"))')).slice(1), ["a", "b", "c"]);
+  assert.ok(app.doc().clis.codex.models.c);
+});
+
+test("each boss is named by its own saved orchestration mode", () => {
+  const app = poolEditor();
+  app.run(`orchestration = { error: null, files: [], document: { version: 1, preset: "off", apps: { codex: "split" } }, bosses: [
+    { keys: ["codex"], labels: ["Codex CLI"] }, { keys: ["grok"], labels: ["Grok CLI"] },
+  ] }; renderTaskScope();`);
+  assert.equal(app.run('$("task-scope").hidden'), false);
+  assert.match(app.run('$("task-scope").textContent'), /^Codex CLI 已启用编排.*单独干活只提供给未启用编排的 boss/);
+  app.run('orchestration.document.apps = {}; renderTaskScope()');
+  assert.equal(app.run('$("task-scope").hidden'), true);
 });

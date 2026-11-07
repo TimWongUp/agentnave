@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-30
+- CLI 模型边界与编排优先级由 [ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 修订。
 - 扩展 [ADR-0013](0013-members-defaults-and-host-identity.md) 的默认值套用，补充 [ADR-0030](0030-optional-review-gate-skill.md) 与 [ADR-0037](0037-app-writes-orchestration-rules.md)：评审工位与 Explorer／Worker 工位原本只由 `list_members` 回报。
 - 非交互与只读派发说明由 [ADR-0043](0043-service-prompt-instructions.md) 补充
 - “role 兼当编排工位名的旧写法保留”由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代：Explorer／Worker 只用 `seat`，评审角色名仍可用 `role`。

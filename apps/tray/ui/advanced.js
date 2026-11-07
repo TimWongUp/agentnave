@@ -4,9 +4,10 @@
 // one that fails stays unsaved for another try while the others land.
 
 // Orchestration lives in orchestration.json: the rules text each boss gets, by mode (`apps`, with
-// `preset` for rows without one, and bosses connected later), the user's own text, and the Explorer
-// and Worker seats boss reads from list_members. The App writes the modes into the connected boss
-// apps' global rules. The rules files are listed one row per file with every app that reads it.
+// `preset` for rows without one, and bosses connected later), the user's own text, and the Explorer,
+// Worker and image generation seats boss reads from list_members. The App writes the modes into the
+// connected boss apps' global rules. The rules files are listed one row per file with every app that
+// reads it.
 const ORCHESTRATION_EFFECTS = {
   off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
   split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划交给 Explorer，实现交给 Worker，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration and planning to Explorer, and implementation to Worker, using their quota."),
@@ -20,7 +21,10 @@ const ORCHESTRATION_ROLES = [
   ["worker", "hard", AN.L("Worker · 困难", "Worker · Hard"), AN.L("可写：界面以外的实现", "Writable: implementation other than interfaces")],
   ["worker_frontend", "easy", AN.L("Worker · 界面 · 简单", "Worker · Interface · Easy"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
   ["worker_frontend", "hard", AN.L("Worker · 界面 · 困难", "Worker · Interface · Hard"), AN.L("可写：页面、样式、交互、看图", "Writable: pages, styles, interactions, images")],
+  // One seat with no difficulty, its model the one the CLI talks to, which calls the image service.
+  ["image_generation", null, AN.L("生图（可选）", "Image generation (optional)"), null, AN.L("未配置", "Not configured"), AN.L("生图的对话模型", "Chat model for image generation")],
 ];
+const orchestrationSeat = (doc, role, difficulty) => difficulty ? doc[role]?.[difficulty] : doc[role];
 const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
 let orchestration = null; // { document, error, presets, files, bosses } from GET /app/orchestration: what is saved.
 let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
@@ -65,13 +69,15 @@ async function loadOrchestration() {
   // Review seats list the connected bosses' CLIs too.
   renderReviewSeats();
   renderAdvancedBar();
+  // Cards name the seats their pool left out.
+  renderCards();
 }
 
 async function saveOrchestration() {
   const wanted = orchestrationWanted();
   for (const [role, difficulty] of ORCHESTRATION_ROLES) {
-    const seat = wanted[role]?.[difficulty];
-    if (seat && !sameJson(seat, orchestration.document[role]?.[difficulty])) await listSeatModel(seat);
+    const seat = orchestrationSeat(wanted, role, difficulty);
+    if (seat && !sameJson(seat, orchestrationSeat(orchestration.document, role, difficulty))) await listSeatModel(seat);
   }
   const response = await fetch("/app/orchestration", {
     method: "POST",
@@ -90,11 +96,19 @@ async function saveOrchestration() {
   if (failed.length) throw new Error(AN.L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));
 }
 
+function orchestrationPresetText(mode) {
+  const text = orchestration?.presets[mode];
+  const image = orchestration?.presets.image_generation;
+  if (!text || !image) return text;
+  const base = text.replace(image, "");
+  return orchestrationShown()?.image_generation ? base + image : base;
+}
+
 function viewMode(mode) {
   const editor = $("custom-text");
   // The editor starts from the mode the user leaves; what it shows is what gets written.
   if (mode === "custom" && !editor.value.trim()) {
-    editor.value = orchestration.presets[orchestrationView === "off" ? "split" : orchestrationView];
+    editor.value = orchestrationPresetText(orchestrationView === "off" ? "split" : orchestrationView);
   }
   orchestrationView = mode;
   renderOrchestration();
@@ -156,16 +170,29 @@ function renderBossChips() {
 
 function setOrchestrationSeat(role, difficulty, seat) {
   const shown = orchestrationShown();
-  const seats = { ...(shown[role] || {}) };
-  if (seat) seats[difficulty] = seat;
-  else delete seats[difficulty];
-  orchestrationDraft = { ...shown, [role]: seats };
-  if (!Object.keys(seats).length) delete orchestrationDraft[role];
+  let value = seat;
+  if (difficulty) {
+    value = { ...(shown[role] || {}) };
+    if (seat) value[difficulty] = seat;
+    else delete value[difficulty];
+  }
+  orchestrationDraft = { ...shown, [role]: value };
+  if (!Object.keys(value || {}).length) delete orchestrationDraft[role];
   renderOrchestration();
   advancedEdited();
 }
 
+// Bosses on a saved mode dispatch through the seats, each boss by its own row.
+function renderTaskScope() {
+  const on = orchestration && !orchestration.error
+    ? orchestration.bosses.filter((boss) => bossMode(orchestration.document, boss) !== "off") : [];
+  const names = on.flatMap((boss) => boss.labels).join(AN.L("、", ", "));
+  $("task-scope").hidden = !on.length;
+  $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“高级”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Advanced; solo tasks are offered only to bosses without orchestration.`) : "";
+}
+
 function renderOrchestration() {
+  renderTaskScope();
   const shown = orchestrationShown();
   const preset = orchestrationView;
   for (const button of $("orchestration-presets").querySelectorAll("button")) {
@@ -176,24 +203,25 @@ function renderOrchestration() {
   }
   $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
   renderBossChips();
-  const text = orchestration?.presets[preset];
+  const text = orchestrationPresetText(preset);
   $("orchestration-text").hidden = !text;
   $("orchestration-text").textContent = text || "";
   // An unread or broken file cannot take edits: nothing here could be saved or discarded.
   const editable = orchestration && !orchestration.error;
   $("orchestration-custom").hidden = preset !== "custom" || !editable;
   const roles = $("orchestration-roles");
-  roles.hidden = preset === "off" || !editable;
+  roles.hidden = !editable;
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
-    roles.replaceChildren(...ORCHESTRATION_ROLES.map(([role, difficulty, name, hint]) => {
-      const seat = shown[role]?.[difficulty];
+    const visibleRoles = preset === "off" ? ORCHESTRATION_ROLES.filter(([role]) => role === "image_generation") : ORCHESTRATION_ROLES;
+    roles.replaceChildren(...visibleRoles.map(([role, difficulty, name, hint, unsetName, modelLabel]) => {
+      const seat = orchestrationSeat(shown, role, difficulty);
       // An unset interface seat runs the Worker seat of its difficulty, as the server fills it.
       const general = role === "worker_frontend" && shown.worker?.[difficulty] && ORCHESTRATION_ROLES.find(([r, d]) => r === "worker" && d === difficulty);
-      const unset = general ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : undefined;
+      const unset = general ? AN.L(`沿用 ${general[2]}`, `Same as ${general[2]}`) : unsetName;
       return el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset));
+        el("div", { className: "review-role" }, el("strong", {}, name), hint && el("small", {}, hint)),
+        ...seatSelects(`${role}/${difficulty}`, name, seat, (next) => setOrchestrationSeat(role, difficulty, next), unset, modelLabel));
     }));
     if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
@@ -250,8 +278,22 @@ let seatsDraft = null; // Review seats as picked; `reviewSeats` holds what is sa
 const seatsShown = () => seatsDraft || reviewSeats;
 const seatsChanged = () => !sameJson(seatsShown(), reviewSeats);
 
+// Every seat in use with the model its CLI's pool left out. Orchestration seats wait unused
+// while no boss runs orchestration.
+function seatConflicts() {
+  const review = REVIEW_ROLES.map(([role, name]) => ({ section: "review", name: AN.L(`${name}评审`, `${name} review`), seat: seatsShown()[role] }));
+  const doc = orchestrationShown();
+  const live = Boolean(doc) && (doc.preset !== "off" || Object.values(doc.apps || {}).some((mode) => mode !== "off"));
+  const roles = !live ? [] : ORCHESTRATION_ROLES
+    .map(([role, difficulty, name]) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
+  return [...review, ...roles].filter(({ seat }) => seat && outOfPool(seat.provider, seat.model));
+}
+const seatConflictText = ({ name, seat }) => AN.L(`${name} 用的 ${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${name} uses ${seat.model}, which is not in the available models of ${PROVIDER_NAMES[seat.provider]}`);
+const memberSaveErrors = () => configurationErrors();
+
 // A picked model missing from that CLI's configured models is added to the last saved
-// members.json, where the server looks for it; unsaved 员工 edits stay unsaved.
+// members.json, where the server looks for it; unsaved 员工 edits stay unsaved. A CLI with a pool
+// already configures all it may run, so a model it left out is refused instead.
 async function listSeatModel(seat) {
   const add = (doc) => {
     doc.clis ||= {};
@@ -263,6 +305,8 @@ async function listSeatModel(seat) {
   // Until 员工 is read there is nothing to add to: an empty document would replace the file.
   if (!savedSnapshot && !documentError) throw new Error(AN.L("员工配置还在读取，请稍后再保存", "Employee settings are still loading; please save in a moment"));
   const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
+  const pool = saved.clis?.[seat.provider]?.allowed_models;
+  if (pool && !pool.includes(seat.model)) throw new Error(AN.L(`${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${seat.model} is not in the available models of ${PROVIDER_NAMES[seat.provider]}`));
   if (Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model)) return;
   if (documentError) throw new Error(AN.L("配置文件有错误，请先在“员工”里修复", "Configuration file has errors; fix them in “Employees” first"));
   await apiPostMembers(add(saved));
@@ -303,19 +347,29 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
   }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
 }
 
+const seatModels = (provider) => listedPool(provider) ? [...listedPool(provider)] : getAllModelIds(provider);
+
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
+function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {
   const provider = seat?.provider || "";
-  // Only CLIs 员工 lets work alone, or a connected boss's own CLI, which its built-in subagent
-  // runs; a disabled one stays shown while picked, so it can be changed.
+  // Orchestrated bosses use confirmed CLI configurations, not the hidden solo-task switches.
   const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
-  const usable = (p) => (known(p) && slot("task", p).enabled) || bossClis.includes(p);
+  const doc = orchestrationShown();
+  const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => mode && mode !== "off");
+  const inScene = (p, scene) => Object.hasOwn(currentDoc.modes?.[scene] || {}, p);
+  const confirmed = (p) => {
+    if (SCENE_IDS.every(isRestricted)) return SCENE_IDS.some((scene) => inScene(p, scene));
+    if (isRestricted("task")) return inScene(p, "task");
+    return Object.hasOwn(currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => inScene(p, scene));
+  };
+  const usable = (p) => (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
   const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
-    : getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
+    : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
   const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
     .map((p) => [p, PROVIDER_NAMES[p] + note(p), Boolean(note(p)) && p !== provider]);
-  const models = provider ? getAllModelIds(provider) : [];
-  if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
+  const models = provider ? seatModels(provider) : [];
+  const excluded = seat?.model && outOfPool(provider, seat.model);
+  if (seat?.model && !excluded && !models.includes(seat.model)) models.unshift(seat.model);
   const levels = seat?.model ? effortLevels(provider, seat.model) : [];
   if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
   // A seat saves the level it runs at, as a member does.
@@ -325,7 +379,7 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
   };
   const pickCli = (next) => {
     if (!next) return onSet(null);
-    const ids = getAllModelIds(next);
+    const ids = seatModels(next);
     const preferred = slot("task", next).model || nativeDefault(next).model;
     onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0]));
   };
@@ -335,8 +389,8 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto")) {
     : [...(seat.effort ? [] : [["", AN.L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
   return [
     reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", unset], ...clis], pickCli),
-    reviewSelect(`${key}/model`, AN.L(`${name}的模型`, `Model for ${name}`), seat?.model || "",
-      seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
+    reviewSelect(`${key}/model`, modelLabel, seat?.model || "",
+      seat ? [...(excluded ? [[seat.model, AN.L(`${seat.model}（不在可用模型里）`, `${seat.model} (not available)`), true]] : []), ...models.map((m) => [m, m])] : [["", "—"]], pickModel, !seat),
     reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
   ];
 }
@@ -367,17 +421,20 @@ function advancedChanges() {
 }
 
 const customEmpty = () => usesCustom(orchestrationShown()) && !$("custom-text").value.trim();
+// A changed section cannot save while one of its seats is outside its CLI's pool.
+const blockedSeat = () => seatConflicts().find(({ section }) => (section === "review" ? seatsChanged() : orchestrationChanged()));
 
 function renderAdvancedBar() {
   const changes = advancedChanges();
-  const invalid = orchestrationChanged() && customEmpty();
+  const blocked = blockedSeat();
+  const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked);
   $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
   $("advanced-badge").hidden = !changes.length;
   $("advanced-save").disabled = busy || !changes.length || invalid;
   $("advanced-discard").disabled = busy || !changes.length;
   const feedback = $("advanced-feedback");
   if (invalid) {
-    feedback.textContent = AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
+    feedback.textContent = blocked ? seatConflictText(blocked) : AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
     feedback.className = "save-feedback error";
     feedback.dataset.validation = "true";
   } else if (feedback.dataset.validation === "true") {
@@ -409,7 +466,7 @@ function discardAdvanced() {
 }
 
 async function saveAdvanced() {
-  if (busy || !advancedChanges().length || (orchestrationChanged() && customEmpty())) return;
+  if (busy || !advancedChanges().length || (orchestrationChanged() && customEmpty()) || blockedSeat()) return;
   busy = true;
   $("pane-advanced").inert = true;
   updateControls();

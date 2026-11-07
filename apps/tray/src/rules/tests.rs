@@ -278,6 +278,21 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     assert!(valid(&document).is_ok());
     assert!(valid(&json!({"version": 1, "preset": "off", "apps": {"codex": "fast"}})).is_err());
     assert!(valid(&json!({"version": 1, "preset": "off", "apps": {"codex": "custom"}})).is_err());
+    let image = |seat| json!({"version": 1, "preset": "off", "image_generation": seat});
+    assert!(
+        valid(&image(
+            json!({"provider": "codex", "model": "m", "effort": "high"})
+        ))
+        .is_ok()
+    );
+    assert!(valid(&image(json!({"easy": {"provider": "codex", "model": "m"}}))).is_err());
+    assert!(valid(&image(json!({"provider": "codex", "model": " "}))).is_err());
+    assert!(
+        valid(&image(
+            json!({"provider": "codex", "model": "m", "effort": 1})
+        ))
+        .is_err()
+    );
 
     // Turning one boss off leaves the other's block alone.
     let document = json!({"preset": "off", "custom": "我的规则", "apps": {"codex": "custom"}});
@@ -327,4 +342,88 @@ fn a_held_sync_keeps_the_old_block_until_the_service_catches_up() {
     // Once the service caught up the block goes in, and holding again reports nothing.
     assert!(sync(&apps, &apps, h, &split, &[], &backup, false).is_empty());
     assert!(sync(&apps, &apps, h, &split, &[], &backup, true).is_empty());
+}
+
+#[test]
+fn image_rules_follow_the_optional_seat_and_clear_copied_custom_text() {
+    let mut document = json!({"preset": "split"});
+    for mode in ["split", "parallel"] {
+        assert!(
+            !text_of(&document, mode)
+                .unwrap()
+                .contains("image-generator")
+        );
+    }
+    document["image_generation"] = json!({"provider": "codex", "model": "chat"});
+    let generated = text_of(&document, "split").unwrap();
+    assert_eq!(generated.matches("image-generator").count(), 1);
+    document["custom"] = json!(generated);
+    assert_eq!(
+        text_of(&document, "custom")
+            .unwrap()
+            .matches("image-generator")
+            .count(),
+        1
+    );
+    document["image_generation"] = Value::Null;
+    assert!(
+        !text_of(&document, "custom")
+            .unwrap()
+            .contains("image-generator")
+    );
+    assert!(
+        !presets(&document)["split"]
+            .as_str()
+            .unwrap()
+            .contains("image-generator")
+    );
+    assert!(text_of(&document, "off").is_none());
+}
+
+#[test]
+fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path();
+    let app = |id, root: &str| App {
+        key: id,
+        id,
+        label: id,
+        root: h.join(root),
+    };
+    let apps = [
+        app("codex", ".codex"),
+        app("claude", ".claude"),
+        app("grok", ".grok"),
+        app("workbuddy", ".workbuddy"),
+    ];
+    let mut document =
+        json!({"preset": "split", "image_generation": {"provider": "codex", "model": "chat"}});
+    let rows = wanted(&apps, h, &document);
+    for (path, text) in &rows {
+        assert_eq!(
+            text.contains("image-generator"),
+            !path.starts_with(h.join(".codex"))
+        );
+    }
+    document["image_generation"]["provider"] = json!("claude");
+    let rows = wanted(&apps, h, &document);
+    assert!(
+        rows.iter()
+            .find(|(p, _)| p.starts_with(h.join(".claude")))
+            .is_some_and(|(_, text)| !text.contains("image-generator"))
+    );
+    assert!(
+        rows.iter()
+            .find(|(p, _)| p.starts_with(h.join(".codex")))
+            .unwrap()
+            .1
+            .contains("image-generator")
+    );
+    document["image_generation"]["provider"] = json!("codebuddy");
+    assert!(
+        wanted(&apps, h, &document)
+            .iter()
+            .find(|(p, _)| p.starts_with(h.join(".workbuddy")))
+            .is_some_and(|(_, text)| !text.contains("image-generator"))
+    );
 }

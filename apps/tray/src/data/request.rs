@@ -198,7 +198,7 @@ impl Reader {
         };
         let rules = self.rule_files();
         Response::json(&json!({"document": document, "error": error,
-            "presets": crate::rules::presets(), "files": rules["files"], "bosses": rules["bosses"]}))
+            "presets": crate::rules::presets(&document), "files": rules["files"], "bosses": rules["bosses"]}))
     }
     pub(super) fn save_orchestration(&self, payload: &Value) -> Response {
         // The modes each row runs on are worked out here, never taken from the page.

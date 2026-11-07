@@ -164,7 +164,13 @@ pub fn validate(document: &Value) -> Result<(), String> {
                 let default = default
                     .as_str()
                     .ok_or_else(|| format!("{what}.default 必须为字符串"))?;
-                if !known.contains_key(default) || !(listed.is_empty() || listed.contains(&default))
+                // A CLI's own list replaces the scene's. A default outside it stays readable: the
+                // App reports it and the server refuses to run it.
+                let pooled = clis
+                    .get(provider)
+                    .is_some_and(|cli| cli.get("allowed_models").is_some());
+                if !known.contains_key(default)
+                    || !(pooled || listed.is_empty() || listed.contains(&default))
                 {
                     return Err(format!("{what} 的默认模型 {default} 不在允许的模型中"));
                 }
@@ -290,8 +296,9 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "explorer": {"easy" | "hard":
-/// seat}, "worker": {...}, "worker_frontend": {...}}`. Interface Workers have a key of their own so
-/// servers that predate it ignore them rather than reject the file. The App writes the chosen
+/// seat}, "worker": {...}, "worker_frontend": {...}, "image_generation": seat}`. Interface Workers
+/// and the image seat have keys of their own so servers that predate them ignore them rather than
+/// reject the file. The App writes the chosen
 /// rules into the boss apps' global rules and
 /// `effective_apps`, every connected row's mode as its group applies it, for the server.
 pub fn validate_orchestration(document: &Value) -> Result<(), String> {
@@ -307,6 +314,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             "explorer",
             "worker",
             "worker_frontend",
+            "image_generation",
         ],
         ORCHESTRATION_FILE,
     )?;
@@ -345,6 +353,9 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             }
             validate_seat(seat, &format!("{role}.{difficulty}"))?;
         }
+    }
+    if let Some(seat) = top.get("image_generation").filter(|seat| !seat.is_null()) {
+        validate_seat(seat, "image_generation")?;
     }
     Ok(())
 }
@@ -612,7 +623,11 @@ fn validate_clis(clis: &Map<String, Value>) -> Result<(), String> {
             return Err(format!("不支持的 CLI：{provider}"));
         }
         let fields = object(cli, &format!("clis.{provider}"))?;
-        only(fields, &["models"], &format!("clis.{provider}"))?;
+        only(
+            fields,
+            &["models", "allowed_models"],
+            &format!("clis.{provider}"),
+        )?;
         let models = fields
             .get("models")
             .ok_or_else(|| format!("clis.{provider} 缺少 models"))?;
@@ -623,6 +638,30 @@ fn validate_clis(clis: &Map<String, Value>) -> Result<(), String> {
             let what = format!("{provider} / {model}");
             settings(shared, &what)?;
             effort_allowed(shared, None, &what)?;
+        }
+        if let Some(pool) = fields.get("allowed_models").filter(|pool| !pool.is_null()) {
+            validate_pool(pool, object(models, "models")?, provider)?;
+        }
+    }
+    Ok(())
+}
+
+/// The models a CLI may run, for every scene and seat; absent or null means any.
+fn validate_pool(pool: &Value, models: &Map<String, Value>, provider: &str) -> Result<(), String> {
+    let what = format!("clis.{provider}.allowed_models");
+    let pool = pool
+        .as_array()
+        .filter(|pool| !pool.is_empty())
+        .ok_or_else(|| format!("{what} 必须为非空数组"))?;
+    for (index, model) in pool.iter().enumerate() {
+        let name = model
+            .as_str()
+            .ok_or_else(|| format!("{what} 只能含字符串"))?;
+        if !models.contains_key(name) {
+            return Err(format!("{what} 引用了未配置的模型 {name}"));
+        }
+        if pool[..index].contains(model) {
+            return Err(format!("{what} 重复列出模型 {name}"));
         }
     }
     Ok(())

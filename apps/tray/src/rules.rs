@@ -22,6 +22,8 @@ const SHARED: &str = "## AgentNave 编排偏好
 - 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。
 - `succeeded` 不等于完成，boss 核对产物后验收；失败或取消时先核对现状，再决定续接、重派还是收尾。";
 
+const IMAGE_GENERATION: &str = "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。";
+
 const PARALLEL: &str = "
 - 计划确认后，互不依赖的写入步骤并行派给多个 Worker，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。
 - 有实质取舍或分歧时进会议室出决定，会上不改代码。
@@ -29,8 +31,8 @@ const PARALLEL: &str = "
 - 没有新证据或待解问题时，不再追加讨论、重试和验证。";
 
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
-pub fn presets() -> Value {
-    json!({"split": SHARED, "parallel": format!("{SHARED}{PARALLEL}")})
+pub fn presets(document: &Value) -> Value {
+    json!({"split": text_of(document, "split"), "parallel": text_of(document, "parallel"), "image_generation": IMAGE_GENERATION})
 }
 
 /// The mode of apps sharing a file: the first set among them, or the default that rows without
@@ -45,14 +47,21 @@ fn mode_of<'a>(document: &'a Value, group: &[&App]) -> &'a str {
 
 /// The text a mode puts in the rules files, if any.
 fn text_of(document: &Value, mode: &str) -> Option<String> {
-    match mode {
-        "split" => Some(SHARED.into()),
-        "parallel" => Some(format!("{SHARED}{PARALLEL}")),
-        "custom" => Some(document["custom"].as_str()?.trim())
-            .filter(|text| !text.is_empty())
-            .map(Into::into),
-        _ => None,
+    let mut text = match mode {
+        "split" => SHARED.to_owned(),
+        "parallel" => format!("{SHARED}{PARALLEL}"),
+        "custom" => document["custom"].as_str()?.trim().to_owned(),
+        _ => return None,
+    };
+    if text.is_empty() {
+        return None;
     }
+    // Strip our generated line if it was copied into a custom preset before being cleared.
+    text = text.replace(IMAGE_GENERATION, "");
+    if document["image_generation"].is_object() {
+        text.push_str(IMAGE_GENERATION);
+    }
+    Some(text)
 }
 
 /// Custom text goes into every boss app's rules each turn, so it stays short and cannot end the
@@ -266,12 +275,24 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
 fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
-        if let Some(text) = text_of(document, mode_of(document, &group)) {
-            wanted.extend(
-                targets(&group, home)
-                    .into_iter()
-                    .map(|path| (path, text.clone())),
-            );
+        for path in targets(&group, home) {
+            let mut scoped = document.clone();
+            let provider = document["image_generation"]["provider"].as_str();
+            // A shared rules file cannot give one of its readers a rule it must not see.
+            let own_reader = group.iter().any(|app| {
+                let cli = if app.id == "workbuddy" {
+                    "codebuddy"
+                } else {
+                    app.id
+                };
+                provider == Some(cli) && would_read(app, home).contains(&path)
+            });
+            if own_reader {
+                scoped["image_generation"] = Value::Null;
+            }
+            if let Some(text) = text_of(&scoped, mode_of(document, &group)) {
+                wanted.push((path, text));
+            }
         }
     }
     wanted

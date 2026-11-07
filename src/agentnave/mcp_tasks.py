@@ -135,7 +135,7 @@ async def start_agent(
         OrchestrationRole | None,
         Field(
             description=(
-                "App Explorer/Worker seat (worker-frontend-* for interface work): selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; also pass role as the desk label."
+                "App task seat (worker-frontend-* for interface work): selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; also pass role as the desk label."
             )
         ),
     ] = None,
@@ -184,7 +184,7 @@ async def start_agent(
             role_seat(seat_name, runtime.HOST), provider, provider_options or {}
         )
         options, defaults_applied = apply_task_defaults(
-            provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS
+            provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS, runtime.HOST
         )
         request = InvocationRequest(
             provider=provider,

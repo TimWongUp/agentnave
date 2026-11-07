@@ -12,6 +12,7 @@ from agentnave.members import (
     ProviderName,
     ReviewRole,
     apply_member,
+    orchestration_enabled,
     read_members,
     read_permissions,
     role_seat,
@@ -71,16 +72,16 @@ def latest_session_task(
 
 
 def review_role(role: str | None) -> str:
-    """Only review role labels select a seat; Explorer/Worker names require seat."""
+    """Only review role labels select a seat; orchestration names require seat."""
     name = (role or "").strip()
     return name if name in get_args(ReviewRole.__value__) else ""
 
 
 def role_access(role: str | None) -> Literal["read", "write"] | None:
-    """The access a known duty carries: Explorers and reviewers read, Workers write."""
+    """Explorers and reviewers read; Workers and the image generator write."""
     name = (role or "").strip()
     if name in get_args(OrchestrationRole.__value__):
-        return "write" if name.startswith("worker-") else "read"
+        return "write" if name.startswith("worker-") or name == "image-generator" else "read"
     return "read" if name in get_args(ReviewRole.__value__) else None
 
 
@@ -169,7 +170,9 @@ def apply_task_defaults(
     options: dict[str, ProviderOption],
     seat_applied: list[str],
     excluded: frozenset[str],
+    host: Host,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
+    selected = role_seat(seat_name, host)
     options, applied = apply_member(
         read_members(),
         "task",
@@ -178,6 +181,8 @@ def apply_task_defaults(
         excluded,
         permissions=read_permissions(),
         seat=frozenset(seat_applied),
+        scenario=not orchestration_enabled(host),
+        seat_selected=selected is not None and selected.provider == provider,
     )
     if seat_applied:
         applied = [f"{(seat_name or '').strip()} seat", *seat_applied, *applied]

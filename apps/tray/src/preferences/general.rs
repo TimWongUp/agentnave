@@ -27,7 +27,7 @@ pub fn effective(document: &Value, autostart: bool) -> Value {
     let mut result = json!({
         "language": "system", "theme": "system", "motion": "system", "scale": 100,
         "autostart": autostart, "open_on_start": true, "tray_click": "panel",
-        "tray_count": true, "tray_font": "futura", "keep_awake": false,
+        "tray_count": true, "tray_font": "baskerville", "keep_awake": false,
     });
     if let Some(saved) = document["general"].as_object() {
         for (field, value) in saved {

@@ -43,6 +43,8 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
 - Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN`，Claude 子代理一律用 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据（[ADR-0058](../adr/0058-claude-stored-login.md)）。
 
+生图工位沿用普通 CLI 调用边界：App 选择对话 CLI 与模型，Provider CLI 拥有其生图工具、服务访问和产物生成；AgentNave 不维护生图模型目录或直接调用生图接口。同类 CLI 的宿主不接收生图工位；生图规则也不写进它会读取的规则文件，共享文件按所有读取方约束。
+
 ## Provider Adapter
 
 - 每个 Adapter 负责一个 CLI 的命令准备、选项校验、原生事件解析与终态归一化。Provider 专属知识留在 Adapter 内：流事件里的模型、运行后从 CLI 自身文件回读模型、隔离席位目录的准备，都通过 `ProviderAdapter` 的钩子提供；是否支持受限工具运行、受限时额外允许的选项和选项说明也由各 Adapter 声明。Adapter 可在准备的命令中声明需排除的继承环境变量，进程层在启动子进程时应用，不改服务自身环境。核心与历史层不按 Provider 名分支。
@@ -105,3 +107,5 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 口语摘要通过 ChatGPT 订阅登录、各平台 API Key、Magpie 本机网关或用户配置的 OpenAI 兼容接口生成。ChatGPT 登录与令牌由托盘 Rust 端拥有，直接请求 OpenAI API；各平台分别保存 API 密钥。Magpie 拥有供应商认证和模型路由，托盘只读其本机端口配置、核验网关身份并获取模型目录，不修改 Magpie 配置，也不把摘要模型接入为 Provider CLI。语音关闭时不联网读取摘要模型目录；启用语音和摘要后，长发言先发送给摘要模型，合成引擎只收到短口语；摘要失败时停止该条播报并报错。
 - 语音直接复用右侧消息列表中已有的 boss 发言与员工回答正文，按消息时间共用摘要与播放队列。自动播报只来自用户主动开启的限时收听，页面拥有当前收听状态，重启不恢复；收听到期不打断正在播的消息，撤下后续收听内容并停止后续收听合成，手动点读与连播独立保留；模型 prompt 定义消息缩写规则，按小人家族及 boss 保存的人设定义性格、措辞与口吻，输出保留发言者本人的第一人称视角；两者仅供语音使用，不修改 CLI 任务或 Provider 参数。
 - 托盘 App 独占写入数据根的 `voice.json`、`voice-keys.json`（含摘要平台密钥与 ChatGPT 登录令牌）和 `voice-cache/`；服务不读取这些文件。预览版的语音设置、密钥和缓存写入其独立的应用数据目录，不写正式版数据根。
+
+CLI 级可用模型名单是任务、编排工位及会议共同的模型边界；当前宿主启用编排时不披露普通任务目录或套用其场景默认值，既有普通任务配置保留供关闭编排后恢复（[ADR-0063](../adr/0063-cli-model-pool-and-orchestration-precedence.md)）。

@@ -110,13 +110,14 @@ fn effective_fills_defaults_and_uses_the_os_autostart_value() {
         json!({
             "language": "system", "theme": "system", "motion": "system", "scale": 100,
             "autostart": true, "open_on_start": true, "tray_click": "panel",
-            "tray_count": true, "tray_font": "futura", "keep_awake": false,
+            "tray_count": true, "tray_font": "baskerville", "keep_awake": false,
         })
     );
     let effective = general::effective(
         &json!({"general": {
             "autostart": true, "scale": 115, "theme": "light", "motion": "full",
-            "open_on_start": false, "tray_click": "office", "tray_count": false, "keep_awake": true,
+            "open_on_start": false, "tray_click": "office", "tray_count": false,
+            "tray_font": "futura", "keep_awake": true,
             "future": 1
         }}),
         false,
@@ -126,6 +127,7 @@ fn effective_fills_defaults_and_uses_the_os_autostart_value() {
     assert_eq!(effective["motion"], "full");
     assert_eq!(effective["tray_click"], "office");
     assert_eq!(effective["tray_count"], false);
+    assert_eq!(effective["tray_font"], "futura");
     assert!(effective.get("future").is_none());
     assert_eq!(
         general::effective(

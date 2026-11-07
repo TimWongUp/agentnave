@@ -435,7 +435,7 @@ function configurationErrors() {
         if (!Object.hasOwn(models, model)) add(provider, model, scope, L("模型尚未配置", "Model is not configured"));
       }
       if (Object.hasOwn(selection, "default") &&
-          (!Object.hasOwn(models, selection.default) || (selection.models.length && !selection.models.includes(selection.default)))) {
+          (!Object.hasOwn(models, selection.default) || (!hasPool(provider) && selection.models.length && !selection.models.includes(selection.default)))) {
         add(provider, selection.default, scope, L("默认模型不在允许范围内", "Default model is not in the allowed list"));
       }
       for (const [model, override] of Object.entries(selection.overrides || {})) {
@@ -458,6 +458,12 @@ function configurationErrors() {
       if (current.model && !current.effort && effortLevels(provider, current.model).length > 1) {
         add(provider, current.model, SCENES[scene], L("要选一个思考档位", "Choose an effort level"));
       }
+      if (current.enabled && listedPool(provider) && !current.model) {
+        add(provider, L("默认模型", "default model"), SCENES[scene], L("要选一个默认模型", "Choose a default model"));
+      }
+      if (current.enabled && current.model && outOfPool(provider, current.model)) {
+        add(provider, current.model, SCENES[scene], L("不在可用模型里", "Not in the available models"));
+      }
     }
   }
   return errors;
@@ -471,7 +477,7 @@ function updateControls() {
   renderAdvancedBar();
 
   const emptyRestricted = emptyScene();
-  const errors = configurationErrors();
+  const errors = memberSaveErrors();
   const canSave = !busy && dirty && !documentError && !emptyRestricted && errors.length === 0;
 
   $("save-btn").disabled = !canSave;
@@ -611,6 +617,7 @@ function setTab(tab) {
   if (tab === "voice") window.AgentNaveVoiceSettings?.load();
   if (tab === "about") loadStatus().then(checkIfStale);
   if (tab === "members") {
+    loadOrchestration();
     loadLimit();
     window.AgentNaveAlertsSettings?.load();
   }

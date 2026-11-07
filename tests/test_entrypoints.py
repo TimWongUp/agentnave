@@ -340,6 +340,114 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
 
 
 @pytest.mark.asyncio
+async def test_image_generator_seat_defaults_access_resume_and_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "orchestration.json"
+    seat = {"provider": "claude", "model": "chosen", "effort": "high"}
+    document: dict[str, object] = {
+        "version": 1,
+        "preset": "split",
+        "worker": {"easy": seat, "hard": seat},
+    }
+    path.write_text(json.dumps(document))
+    async with Client(mcp) as client:
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert "image_generation" not in _payload(listed["orchestration"])
+        catalog = str(await client.list_tools()) + str(client.instructions)
+        assert "image-generator" not in catalog and "image_generation" not in catalog
+        missing = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
+        )
+        assert missing.is_error and "not configured" in str(missing.content)
+
+        document["image_generation"] = seat
+        path.write_text(json.dumps(document))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert _payload(listed["orchestration"])["image_generation"] == seat
+        assert "image-generator" in str(await client.list_tools())
+        started = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", role="生成插图"
+        )
+        assert started["provider"] == "claude" and started["model"] == "chosen"
+        assert started["effort"] == "high" and started["access"] == "write"
+        assert started["defaults_applied"] == [
+            "image-generator seat",
+            "model",
+            "effort",
+            "permission_mode",
+            "permission_fallback",
+            "provider (image-generator seat)",
+            "access (image-generator seat)",
+        ]
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert resumed["conversation_id"] == started["conversation_id"]
+        assert resumed["model"] == "chosen" and resumed["access"] == "write"
+        assert "seat (session_id history)" in cast(list[str], resumed["defaults_applied"])
+        explicit = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="image-generator",
+            provider="claude",
+            provider_options={"model": "explicit", "effort": "medium"},
+            access="write",
+        )
+        assert explicit["model"] == "explicit" and explicit["effort"] == "medium"
+        assert explicit["defaults_applied"] == ["permission_mode", "permission_fallback"]
+        other_model = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="image-generator",
+            provider_options={"model": "explicit"},
+        )
+        assert other_model["model"] == "explicit" and "effort" not in other_model
+        contradiction = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator", "access": "read"},
+        )
+        assert contradiction.is_error and "declares access=write" in str(contradiction.content)
+
+        document["image_generation"] = {"provider": "codex", "model": "other-cli"}
+        path.write_text(json.dumps(document))
+        replacement = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", provider="claude"
+        )
+        assert "model" not in replacement and replacement["access"] == "write"
+        assert "image-generator seat" not in cast(list[str], replacement["defaults_applied"])
+
+        document["image_generation"] = seat
+        document["preset"] = "off"
+        path.write_text(json.dumps(document))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert listed["orchestration"] == {"enabled": False}
+        assert "image-generator" not in str(await client.list_tools())
+        disabled = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
+        )
+        assert disabled.is_error and "not enabled" in str(disabled.content)
+        bypass = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", provider="claude"
+        )
+        assert "model" not in bypass and "effort" not in bypass
+
+        document["preset"] = "split"
+        path.write_text(json.dumps(document))
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert "image_generation" not in _payload(listed["orchestration"])
+        assert "image-generator" not in str(await client.list_tools())
+        native = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator"}
+        )
+        assert native.is_error and "not configured" in str(native.content)
+
+
+@pytest.mark.asyncio
 async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1319,12 +1427,12 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         assert "available" not in review["performance-reviewer"]
         assert "alternatives" not in review["performance-reviewer"]
         payload = _payload(listed.structured_content)
-        assert "modes" not in payload and "restricted" not in payload
+        assert "modes" not in payload and payload["restricted"] == ["task"]
         items = cast(list[dict[str, object]], payload["members"])
         valid = [item for item in items if item["model"] == "chosen"]
         assert len(valid) == 6
         assert all("valid" not in item and "error" not in item for item in valid)
-        assert valid[0]["modes"] == ["discussion"] and "modes" not in valid[1]
+        assert all(item["modes"] == ["discussion"] for item in valid)
         invalid = [item for item in items if str(item["model"]).startswith("bad-")]
         assert len(invalid) == 3 and all("valid" not in item and item["error"] for item in invalid)
         assert [(item["provider"], item["default"]) for item in items if "default" in item] == [
@@ -1353,7 +1461,7 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
         fresh = _payload((await client.call_tool("list_members", {})).structured_content)
         assert fresh["configured"] is True
-        assert fresh["members"] == [] and fresh["restricted"] == ["discussion"]
+        assert fresh["members"] == [] and fresh["restricted"] == ["task", "discussion"]
         # The App file currently accepts an empty model key; its reply must still validate.
         path.write_text(
             json.dumps({"version": 1, "clis": {"claude": {"models": {"": {}}}}, "modes": {}})
@@ -1544,7 +1652,6 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "correctness-reviewer seat",
             "model",
             "effort",
-            "agent",
             "permission_mode",
             "permission_fallback",
             "access (correctness-reviewer seat)",
@@ -1552,8 +1659,19 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         ]
         assert seated["access"] == "read"
         # An Explorer/Worker name in role is only a label, even with a configured seat.
-        labelled = await start({}, role="worker-easy")
-        assert labelled["defaults_applied"] == applied and "access" not in labelled
+        missing_model = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "ok",
+                "cwd": str(tmp_path),
+                "role": "worker-easy",
+            },
+        )
+        assert missing_model.is_error and "Model is required" in str(missing_model.content)
+        labelled = await start({"model": "chosen"}, role="worker-easy")
+        assert labelled["defaults_applied"] == ["effort", "permission_mode", "permission_fallback"]
+        assert labelled["model"] == "chosen" and "access" not in labelled
         label_only = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "role": "worker-easy"}
         )
@@ -1563,14 +1681,15 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert worker["defaults_applied"] == [
             "worker-easy seat",
             "model",
-            "agent",
             "permission_mode",
             "permission_fallback",
             "access (worker-easy seat)",
         ]
         assert worker["access"] == "write"
-        assert (await start({}, seat="explorer-easy"))["defaults_applied"] == [
-            *applied,
+        assert (await start({"model": "chosen"}, seat="explorer-easy"))["defaults_applied"] == [
+            "effort",
+            "permission_mode",
+            "permission_fallback",
             "access (explorer-easy seat)",
             "read-only instruction (access=read)",
         ]

@@ -15,6 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import restricted_options
 from agentnave.host import Host, HostName, HostSource
+from agentnave.member_policy import (
+    check_cli_model,
+    cli_confirmed,
+    has_cli_pool,
+    model_pool,
+    select_model,
+)
 from agentnave.models import InvocationRequest, ProviderOption
 
 type ProviderName = Literal[
@@ -34,7 +41,7 @@ type ReviewRole = Literal[
 ]
 type Difficulty = Literal["easy", "hard"]
 type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
-# Task roles naming an Explorer or Worker seat in orchestration.json.
+# Task seats from orchestration.json.
 type OrchestrationRole = Literal[
     "explorer-easy",
     "explorer-hard",
@@ -42,6 +49,7 @@ type OrchestrationRole = Literal[
     "worker-hard",
     "worker-frontend-easy",
     "worker-frontend-hard",
+    "image-generator",
 ]
 
 
@@ -173,6 +181,16 @@ class MemberConfig(StrictModel):
 
 class CLIConfig(StrictModel):
     models: dict[str, MemberConfig]
+    allowed_models: list[str] | None = None
+
+    @model_validator(mode="after")
+    def model_pool(self) -> CLIConfig:
+        if self.allowed_models is not None:
+            if not self.allowed_models or len(set(self.allowed_models)) != len(self.allowed_models):
+                raise ValueError("allowed_models must be nonempty and unique")
+            if any(model not in self.models for model in self.allowed_models):
+                raise ValueError("allowed_models must reference known CLI models")
+        return self
 
 
 class ModeCLI(StrictModel):
@@ -182,7 +200,7 @@ class ModeCLI(StrictModel):
 
 
 class ReviewSeat(StrictModel):
-    """The CLI and model the user picked in the App for one agentnave-review role."""
+    """The CLI and conversational model the user picked in the App for one seat."""
 
     provider: ProviderName
     model: str = Field(pattern=r"\S")
@@ -197,7 +215,7 @@ class ReviewFile(StrictModel):
 
 
 class OrchestrationFile(BaseModel):
-    """App-owned rule modes and saved Explorer/Worker seats; only enabled hosts use seats."""
+    """App-owned rule modes and saved task seats; only enabled hosts use seats."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -209,6 +227,12 @@ class OrchestrationFile(BaseModel):
     worker: dict[Difficulty, ReviewSeat] = {}
     # A key of its own, which servers that predate it ignore instead of rejecting the file.
     worker_frontend: dict[Difficulty, ReviewSeat] = {}
+    image_generation: ReviewSeat | None = None
+
+    def image_seat(self, host: Host) -> ReviewSeat | None:
+        """The optional image CLI is only advertised to a different provider's host."""
+        seat = self.image_generation
+        return seat if seat is not None and seat.provider != host.provider else None
 
     def interface_workers(self) -> dict[Difficulty, ReviewSeat]:
         """The interface Worker seats, an unset one filled from the Worker seat of its difficulty."""
@@ -232,10 +256,12 @@ class MemberFile(StrictModel):
     # Default models for unrestricted modes, kept when the user turns the allow-list off.
     defaults: dict[Mode, dict[ProviderName, str]] = {}
 
-    def effective(self, mode: Mode, provider: ProviderName, model: str) -> MemberConfig:
+    def effective(
+        self, mode: Mode, provider: ProviderName, model: str, *, scenario: bool = True
+    ) -> MemberConfig:
         cli = self.clis.get(provider)
         shared = cli.models.get(model, MemberConfig()) if cli else MemberConfig()
-        selection = self.modes.get(mode, {}).get(provider)
+        selection = self.modes.get(mode, {}).get(provider) if scenario else None
         override = selection.overrides.get(model) if selection else None
         return MemberConfig.model_validate(
             shared.model_dump(exclude_unset=True)
@@ -255,7 +281,7 @@ class MemberFile(StrictModel):
                     if model not in models:
                         raise ValueError(f"{mode}.{provider}: unknown model {model!r}")
                 if "default" in selection.model_fields_set and selection.default not in (
-                    selection.models or models
+                    models if has_cli_pool(cli) else selection.models or models
                 ):
                     raise ValueError(f"{mode}.{provider}: default must be an allowed model")
                 for model in models:
@@ -278,51 +304,22 @@ class MemberFile(StrictModel):
         *,
         restricted: bool = False,
         seat: frozenset[str] = frozenset(),
+        scenario: bool = True,
+        seat_selected: bool = False,
     ) -> tuple[dict[str, ProviderOption], list[str]]:
-        """Fill the mode's defaults; `seat` names the keys an App seat set, which the mode's
-        model lists do not restrict (ADR-0038). A CLI the mode leaves out runs for no seat."""
-        allowed = self.modes.get(mode)
-        if allowed is not None and provider not in allowed:
-            members = [
-                f"{cli}/{model}"
-                for cli, config in allowed.items()
-                for model in (config.models or ["*"])
-            ]
-            raise ValueError(
-                f"Provider {provider!r} is not allowed in {mode}; allowed members: "
-                + (", ".join(members) or "none")
-            )
+        """Apply shared CLI boundaries, then the visible scenario's defaults."""
         check_excluded(mode, provider, excluded)
-        result = dict(options)
-        applied: list[str] = []
-        selection = allowed.get(provider) if allowed is not None else None
-        if "model" not in result and selection and "default" in selection.model_fields_set:
-            result["model"] = selection.default
-            applied.append("model")
-        if "model" not in result and allowed is None and provider in self.defaults.get(mode, {}):
-            result["model"] = self.defaults[mode][provider]
-            applied.append("model")
-        if "model" not in result and selection and selection.models:
-            raise ValueError(
-                f"Model is required in {mode}.{provider}; "
-                f"allowed models: {', '.join(selection.models)}"
-            )
-        if (
-            "model" in result
-            and "model" not in seat
-            and selection
-            and selection.models
-            and result["model"] not in selection.models
-        ):
-            raise ValueError(
-                f"Model {result['model']!r} is not allowed in {mode}.{provider}; "
-                f"allowed models: {', '.join(selection.models)}"
-            )
+        result, applied = select_model(
+            self, mode, provider, options, seat, scenario=scenario, seat_selected=seat_selected
+        )
         # Without a model the CLI runs its own default; the settings saved for that model
         # still apply, and the model is left for the CLI to choose (ADR-0028).
         model = result.get("model")
         config = self.effective(
-            mode, provider, str(model) if model is not None else cli_default_model(provider) or ""
+            mode,
+            provider,
+            str(model) if model is not None else cli_default_model(provider) or "",
+            scenario=scenario and not seat_selected,
         )
         if "effort" not in result and "effort" in config.model_fields_set:
             result["effort"] = config.effort
@@ -520,6 +517,14 @@ def read_members() -> MemberFile | None:
     return _read_app_file("members.json", MemberFile, MemberFileError)
 
 
+def orchestration_enabled(host: Host) -> bool:
+    try:
+        roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    except MemberFileError:
+        return False  # list_members reports a broken file; never invent an enabled mode.
+    return roles is not None and roles.enabled(host)
+
+
 def apply_member(
     document: MemberFile | None,
     mode: Mode,
@@ -530,10 +535,19 @@ def apply_member(
     restricted: bool = False,
     permissions: PermissionFile | None = None,
     seat: frozenset[str] = frozenset(),
+    scenario: bool = True,
+    seat_selected: bool = False,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
     if document is not None:
         result, applied = document.apply(
-            mode, provider, options, excluded, restricted=restricted, seat=seat
+            mode,
+            provider,
+            options,
+            excluded,
+            restricted=restricted,
+            seat=seat,
+            scenario=scenario,
+            seat_selected=seat_selected,
         )
     else:
         check_excluded(mode, provider, excluded)
@@ -550,7 +564,9 @@ def apply_member(
             result["interactive"] = True
             applied.append("interactive")
     if "effort" not in result:
-        add_cli_effort(document, mode, provider, result, applied)
+        add_cli_effort(
+            document, mode, provider, result, applied, scenario=scenario and not seat_selected
+        )
     return result, applied
 
 
@@ -560,6 +576,8 @@ def add_cli_effort(
     provider: ProviderName,
     result: dict[str, ProviderOption],
     applied: list[str],
+    *,
+    scenario: bool = True,
 ) -> None:
     """Pass the level the CLI would pick by itself, so every run names and records one
     (ADR-0042). A level the App does not allow for the model is left to the CLI."""
@@ -569,7 +587,7 @@ def add_cli_effort(
         return
     if document is not None:
         key = str(model) if model is not None else cli_default_model(provider) or ""
-        allowed = document.effective(mode, provider, key).efforts
+        allowed = document.effective(mode, provider, key, scenario=scenario).efforts
         if allowed and effort not in allowed:
             return
     result["effort"] = effort
@@ -577,8 +595,8 @@ def add_cli_effort(
 
 
 def role_seat(role: str | None, host: Host, *, required: bool = False) -> ReviewSeat | None:
-    """The App seat a task role names: an agentnave-review role from review.json, or an
-    Explorer/Worker seat from orchestration.json. A missing or broken file names none;
+    """The App seat a task role names: an agentnave-review role from review.json, or a
+    task seat from orchestration.json. A missing or broken file names none;
     list_members reports it. Provider inference requires a usable seat instead."""
     role = (role or "").strip()
     seat = None
@@ -587,7 +605,6 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
             review = _read_app_file("review.json", ReviewFile, MemberFileError)
             seat = review.seats.get(cast(ReviewRole, role)) if review else None
         elif role in get_args(OrchestrationRole.__value__):
-            kind, _, key = role.rpartition("-")
             roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
             if required and roles is not None and not roles.enabled(host):
                 raise MemberFileError(
@@ -596,7 +613,10 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
                 )
             if not roles or not roles.enabled(host):
                 seat = None
+            elif role == "image-generator":
+                seat = roles.image_seat(host)
             else:
+                kind, _, key = role.rpartition("-")
                 seats = {
                     "explorer": roles.explorer,
                     "worker": roles.worker,
@@ -684,6 +704,7 @@ class OrchestrationStatus(StrictModel):
     explorer: dict[Difficulty, ReviewSeatStatus] = {}
     worker: dict[Difficulty, ReviewSeatStatus] = {}
     worker_frontend: dict[Difficulty, ReviewSeatStatus] = {}
+    image_generation: ReviewSeatStatus | None = None
 
 
 class MemberList(StrictModel):
@@ -706,22 +727,29 @@ def _member_modes(
     document: MemberFile | None,
     excluded: frozenset[str],
     installed: Callable[[str], bool],
+    *,
+    cli_only: bool = False,
 ) -> dict[Mode, ModeStatus]:
     modes: dict[Mode, ModeStatus] = {}
     for mode in ("task", "discussion"):
         items: list[MemberStatus] = []
         if document is not None:
-            providers = document.modes.get(mode)
-            for provider in providers if providers is not None else document.clis:
+            providers = document.modes.get(mode) if not cli_only else None
+            candidates = list(document.clis)
+            for entries in document.modes.values():
+                candidates.extend(p for p in entries if p not in candidates)
+            for provider in providers if providers is not None else candidates:
+                if cli_only and not cli_confirmed(document, provider):
+                    continue
                 selection = providers.get(provider) if providers is not None else None
                 cli = document.clis.get(provider)
-                models = (
-                    selection.models
-                    if selection and selection.models
-                    else (cli.models if cli else {})
-                )
+                pool_selection = document.modes.get(mode, {}).get(provider)
+                if cli_only and pool_selection is None:
+                    pool_selection = document.modes.get("discussion", {}).get(provider)
+                pool = model_pool(cli, pool_selection)
+                models = pool or (cli.models if cli else {})
                 for model in dict.fromkeys(models):
-                    config = document.effective(mode, provider, model)
+                    config = document.effective(mode, provider, model, scenario=not cli_only)
                     effort = config.effort if "effort" in config.model_fields_set else None
                     options = dict(config.options)
                     options["model"] = model
@@ -751,7 +779,8 @@ def _member_modes(
                                 and selection.default == model
                             )
                             or (
-                                providers is None
+                                not cli_only
+                                and providers is None
                                 and document.defaults.get(mode, {}).get(provider) == model
                             ),
                             efforts=config.efforts,
@@ -762,7 +791,7 @@ def _member_modes(
                             error=error,
                         )
                     )
-                if selection is not None and not selection.models:
+                if pool is None and (selection is not None or has_cli_pool(cli) or cli_only):
                     items.append(
                         MemberStatus(
                             provider=provider,
@@ -777,7 +806,7 @@ def _member_modes(
                         )
                     )
         modes[mode] = ModeStatus(
-            restricted=document is not None and mode in document.modes, members=items
+            restricted=document is not None and (cli_only or mode in document.modes), members=items
         )
     return modes
 
@@ -825,32 +854,46 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         return get_adapter(provider).is_installed()
 
     document = read_members()
+    roles = None
+    orchestration_error = None
+    try:
+        roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    except MemberFileError as exc:
+        orchestration_error = str(exc)
+    enabled = roles is not None and roles.enabled(host)
     modes = _member_modes(document, excluded, installed)
-    # Review seats are not checked against clis: a removed model is reported here, and the
-    # review Skill picks a replacement at dispatch time. A broken review.json leaves members alone.
+    task_mode = (
+        _member_modes(document, excluded, installed, cli_only=True)["task"]
+        if enabled
+        else modes["task"]
+    )
     review: dict[ReviewRole, ReviewSeatStatus] = {}
     review_error = None
     try:
         if saved_review := _read_app_file("review.json", ReviewFile, MemberFileError):
-            review = _review_status(saved_review.seats, modes["task"], excluded, host, installed)
+            review = _review_status(
+                saved_review.seats, task_mode, excluded, host, installed, document
+            )
     except MemberFileError as exc:
         review_error = str(exc)
     orchestration = OrchestrationStatus()
-    orchestration_error = None
-    try:
-        if (
-            roles := _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
-        ) and roles.enabled(host):
-            orchestration = OrchestrationStatus(
-                enabled=True,
-                explorer=_review_status(roles.explorer, modes["task"], excluded, host, installed),
-                worker=_review_status(roles.worker, modes["task"], excluded, host, installed),
-                worker_frontend=_review_status(
-                    roles.interface_workers(), modes["task"], excluded, host, installed
-                ),
-            )
-    except MemberFileError as exc:
-        orchestration_error = str(exc)
+    if roles is not None and enabled:
+        orchestration = OrchestrationStatus(
+            enabled=True,
+            explorer=_review_status(roles.explorer, task_mode, excluded, host, installed, document),
+            worker=_review_status(roles.worker, task_mode, excluded, host, installed, document),
+            worker_frontend=_review_status(
+                roles.interface_workers(), task_mode, excluded, host, installed, document
+            ),
+            image_generation=_review_status(
+                {"image-generator": image} if (image := roles.image_seat(host)) else {},
+                task_mode,
+                excluded,
+                host,
+                installed,
+                document,
+            ).get("image-generator"),
+        )
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error = None
     try:
@@ -864,6 +907,8 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 # A CLI whose auto is full access runs full whatever is saved.
                 tiers = PERMISSION_TIERS[provider]
                 permissions[provider] = "full" if tiers["auto"] == tiers["full"] else tier
+    if enabled:
+        modes["task"] = ModeStatus(restricted=True, members=[])
     return MemberList(
         configured=document is not None,
         host=host.name,
@@ -885,6 +930,7 @@ def _review_status[Role: str](
     excluded: frozenset[str],
     host: Host,
     installed: Callable[[str], bool],
+    document: MemberFile | None,
 ) -> dict[Role, ReviewSeatStatus]:
     task = mode.members
     seats: dict[Role, ReviewSeatStatus] = {}
@@ -895,14 +941,21 @@ def _review_status[Role: str](
         )
         # The host's own CLI is never dispatched through AgentNave; its built-in subagent does it.
         native = seat.provider == host.provider
-        # The seat is the user's own pick for the role: the task model lists do not restrict it,
-        # but a CLI disabled for private tasks runs for no seat (ADR-0053).
-        if native:
+        pool_error = None
+        try:
+            check_cli_model(
+                document.clis.get(seat.provider) if document else None, seat.provider, seat.model
+            )
+        except ValueError as exc:
+            pool_error = str(exc)
+        if pool_error is not None:
+            reason = pool_error
+        elif native:
             reason = None
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):
-            reason = "CLI is disabled for private tasks in the App"
+            reason = "CLI is disabled in the App"
         elif not installed(seat.provider):
             reason = "CLI is not installed"
         elif member is not None and member.error is not None:

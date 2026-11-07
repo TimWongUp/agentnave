@@ -1,6 +1,12 @@
 "use strict";
 const isRestricted = (scene) => Object.hasOwn(currentDoc.modes || {}, scene);
 
+// The CLI's one model list, shared by its scenes and seats. Once present it replaces the scene
+// lists of older files; null means any model, now or later.
+const hasPool = (provider) => Object.hasOwn(currentDoc.clis?.[provider] || {}, "allowed_models");
+const listedPool = (provider) => currentDoc.clis?.[provider]?.allowed_models || null;
+const outOfPool = (provider, model) => Boolean(listedPool(provider)) && !listedPool(provider).includes(model);
+
 // A model the App starts configuring keeps the CLI's own default effort until one is chosen (ADR-0028).
 function ensureCliModel(provider, modelId) {
   if (!currentDoc.clis) currentDoc.clis = {};
@@ -86,9 +92,17 @@ function slot(scene, provider) {
   const enabled = isRestricted(scene) ? Boolean(selection)
     : Boolean(detected[provider]?.installed || currentDoc.defaults?.[scene]?.[provider]);
   const model = (selection ? selection.default : currentDoc.defaults?.[scene]?.[provider]) || "";
-  const allowed = selection?.models?.length ? [...selection.models] : null;
+  const pool = hasPool(provider) ? listedPool(provider) : selection?.models;
+  const allowed = pool?.length ? [...pool] : null;
   const effort = enabled ? sceneEffort(scene, provider, model || nativeDefault(provider).model) : "";
   return { enabled, model: enabled ? model : "", allowed, effort };
+}
+
+// The pool as the card shows it: an older file's scene lists together, unless a scene is open.
+function shownPool(provider) {
+  if (hasPool(provider)) return listedPool(provider);
+  const lists = SCENE_IDS.map((s) => slot(s, provider)).filter((s) => s.enabled).map((s) => s.allowed);
+  return lists.length && lists.every(Boolean) ? [...new Set(lists.flat())] : null;
 }
 
 // Scenes that show the same model and effort, followed or chosen, need only one row.
@@ -143,10 +157,36 @@ function writeSlot(scene, provider, next) {
   const model = next.model || (next.allowed ? (next.allowed.includes(native) ? native : next.allowed[0]) : "");
   const selection = restrict(scene);
   const conf = (selection[provider] ||= { models: [], overrides: {} });
-  conf.models = next.allowed ? [...new Set([...next.allowed, model])] : [];
+  conf.models = next.allowed && !hasPool(provider) ? [...new Set([...next.allowed, model])] : [];
   if (model) conf.default = model;
   else delete conf.default;
   for (const m of [model, ...(next.allowed || [])]) if (m) ensureCliModel(provider, m);
+}
+
+// A scene that follows the CLI names the CLI's model once a pool has it, as a model list needs a
+// default. Any other default stays as it is, reported until the user changes it.
+function pinFollowed(provider, conf) {
+  const native = nativeDefault(provider).model;
+  if (conf.default || !listedPool(provider)?.includes(native)) return;
+  conf.default = native;
+  const shared = currentDoc.clis[provider].models[native];
+  const effort = savedEffort(provider, native, "");
+  if (effort && !shared.effort) shared.effort = effort;
+}
+
+// Editing the pool takes over from the scene lists, so they cannot narrow it a second time.
+function writePool(provider, allowed) {
+  for (const m of allowed || []) ensureCliModel(provider, m);
+  const cli = ((currentDoc.clis ||= {})[provider] ||= { models: {} });
+  if (allowed) cli.allowed_models = [...allowed];
+  else delete cli.allowed_models;
+  for (const scene of SCENE_IDS) {
+    const conf = restrict(scene)[provider];
+    if (!conf) continue;
+    conf.models = [];
+    pinFollowed(provider, conf);
+  }
+  edited();
 }
 
 // One model's effort in both scenes: shared when they agree, else a scene override. An override
@@ -221,7 +261,7 @@ function setProviderEnabled(provider, enabled, confirmed = false) {
   pendingDisable = null;
   for (const scene of SCENE_IDS) {
     if (!enabled) delete restrict(scene)[provider];
-    else restrict(scene)[provider] ||= { models: [], overrides: {} };
+    else pinFollowed(provider, restrict(scene)[provider] ||= { models: [], overrides: {} });
   }
   edited();
 }
@@ -247,4 +287,4 @@ function setSplit(provider, split) {
   edited();
 }
 
-let pickerOpen = null; // "provider/scene" whose model list is open
+let pickerOpen = null; // "provider/pool" whose model list is open

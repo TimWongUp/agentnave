@@ -44,7 +44,7 @@ On macOS and Linux, Claude runs interactively by default, which saves subscripti
 
 ### 🧭 Seats and review
 
-Pick models for the Explorer and Worker seats in the App, with tiers for easy, hard and interface work, and the boss dispatches by difficulty. You can also add a [review before merging](skills/agentnave-review/SKILL.md): how much review a change gets depends on its risk, reviewers read but never edit, and their conclusions are kept as a record.
+Pick models for the Explorer and Worker seats in the App, with tiers for easy, hard and interface work, and the boss dispatches by difficulty. An optional image generation seat selects a CLI and its conversation model, which calls its own image service. You can also add a [review before merging](skills/agentnave-review/SKILL.md): how much review a change gets depends on its risk, reviewers read but never edit, and their conclusions are kept as a record.
 
 ### 🤝 Continue in another chat
 
