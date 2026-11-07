@@ -87,7 +87,7 @@ function poolRows(provider) {
       title: L("单独干活、开会和工位都从这里选", "Solo tasks, meetings and seats pick from these"),
       "aria-expanded": String(open),
       onClick: () => { pickerOpen = open ? null : key; renderCards(); },
-    }, textNode(poolSummary(provider, all, pool)), el("span", { className: "member-muted" }, open ? " ▴" : " ▾")))];
+    }, el("span", {}, poolSummary(provider, all, pool)), el("span", { className: "member-muted" }, open ? "▴" : "▾")))];
   if (open) {
     const toggle = (m, on) => {
       const list = pool || [];
