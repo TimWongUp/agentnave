@@ -264,7 +264,7 @@
     const room = m.thread?.kind === "room" ? m.thread.id : null;
     return { id: m.id, group: ctx.c?.group ?? null, place: AN.chatName?.(ctx.c) || "", album: album(m, room, ctx), room, desk: m.desk,
       kind: m.kind, conversation: m.conversation, round: m.round,
-      boss, family: Avatars.family(provider, model) || null,
+      boss, family: Avatars.family(provider, model) || (provider === "deepseek" ? "deepseek" : null),
       provider, model, role: boss ? "" : m.speaker?.identity?.role || "", label: boss ? "boss" : AN.deskName(m.speaker || {}),
       name: boss ? "boss" : m.speaker?.identity?.spoken_name || "", to: listeners(m, ctx, boss),
       private: m.thread?.kind !== "room" || m.kind === "instruction" || m.kept_private === true,
