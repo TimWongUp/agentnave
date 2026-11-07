@@ -333,8 +333,10 @@ test("a failed settings read cannot make a limit save reset other runtime settin
   assert.deepEqual(sent, { version: 1, max_running: 3 });
 });
 
-test("unchecking all models keeps the full model list and default so items can be unchecked and default changed", () => {
-  const app = runtimeEditor();
+function poolEditor(fetch) {
+  const app = runtimeEditor(fetch);
+  app.run("AN.L = (zh) => zh");
+  app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
   app.run(`
     function findKey(nodes, key) {
       for (const node of nodes || []) {
@@ -345,37 +347,95 @@ test("unchecking all models keeps the full model list and default so items can b
       }
       return null;
     }
-    detected.codex = {
-      installed: true,
-      native: { model: "gpt-5-mini" },
-      models: [{ id: "gpt-5" }, { id: "gpt-5-mini" }],
+    const offered = (rows, key) => findKey(rows, key).children.flat()
+      .filter((option) => !option.attrs.disabled).map((option) => option.attrs.value);
+    const seatOptions = (seat) => seatSelects("seat", "工位", seat, () => {})[1].children.flat();
+    const poolPick = (key, checked) => {
+      pickerOpen = "codex/pool";
+      findKey(poolRows("codex"), key).attrs.onChange({ target: { checked } });
     };
-    currentDoc.clis.codex = { models: { "o4-mini": {} } };
-    pickerOpen = "codex/task";
-    findKey(slotRows("codex", "task", true), "codex/task/all").attrs.onChange({ target: { checked: false } });
+    detected.codex = { installed: true, native: { model: "a" }, models: [{ id: "a" }, { id: "b" }] };
+    currentDoc.clis.codex = { models: { old: {} } };
+    markSaved();
   `);
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex"))')), {
-    enabled: true,
-    model: "gpt-5-mini",
-    allowed: ["gpt-5", "gpt-5-mini", "o4-mini"],
-    effort: "",
+  return app;
+}
+
+test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out model through", async () => {
+  const posts = [];
+  const app = poolEditor(async (url, options) => {
+    posts.push(url);
+    return { ok: true, json: async () => ({ saved: true, document: JSON.parse(options.body) }) };
   });
-  assert.equal(app.run('slot("discussion", "codex").allowed'), null);
-
-  app.run('findKey(slotRows("codex", "task", true), "codex/task/allow/o4-mini").attrs.onChange({ target: { checked: false } })');
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["gpt-5", "gpt-5-mini"]);
-  assert.equal(app.run('slot("task", "codex").model'), "gpt-5-mini");
-
-  app.run('findKey(slotRows("codex", "task", true), "codex/task/model").attrs.onChange({ target: { value: "gpt-5" } })');
-  assert.equal(app.run('slot("task", "codex").model'), "gpt-5");
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["gpt-5", "gpt-5-mini"]);
-
   app.run(`
-    detected.claude = { installed: true, models: [] };
-    currentDoc.modes.task.claude = { models: [], overrides: {}, default: "claude-sonnet-4-5" };
-    pickerOpen = "claude/task";
-    findKey(slotRows("claude", "task", true), "claude/task/all").attrs.onChange({ target: { checked: false } });
+    currentDoc.clis.codex.models.b = {};
+    currentDoc.modes.discussion.codex.default = "b";
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
+    markSaved();
+    poolPick("codex/pool/all", false);
+    poolPick("codex/pool/allow/old", false);
+    poolPick("codex/pool/allow/b", false);
   `);
-  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "claude").allowed)')), ["claude-sonnet-4-5"]);
-  assert.equal(app.run('slot("task", "claude").model'), "claude-sonnet-4-5");
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
+  assert.deepEqual(app.doc().modes.task.codex.models, []);
+  assert.equal(app.doc().modes.task.codex.default, "a");
+
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "task", true), "codex/task/model"))')).slice(1), ["a"]);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "discussion", true), "codex/discussion/model"))')).slice(1), ["a"]);
+
+  // The default and the seat outside the pool stay as saved, shown as conflicts, and block saving.
+  assert.equal(app.doc().modes.discussion.codex.default, "b");
+  assert.equal(app.run('findKey(slotRows("codex", "discussion", true), "codex/discussion/model").children.flat().find((o) => o.attrs.value === "b").attrs.disabled'), true);
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "b" }).find((o) => o.attrs.value === "b").attrs.disabled'), true);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(seatOptions({ provider: "codex", model: "a" }).map((o) => o.attrs.value))')), ["a"]);
+  assert.equal(app.run('poolConflicts("codex").length'), 2);
+  await app.run("saveMembers()");
+  assert.deepEqual(posts, []);
+  app.run('changeSlot("codex", "discussion", { model: "a" })');
+  assert.match(app.run("memberSaveErrors()[0].message"), /安全评审 用的 b/);
+  await app.run("saveMembers()");
+  assert.deepEqual(posts, []);
+
+  // A role cannot widen the pool: the saved list refuses the seat before anything is written.
+  app.run('reviewSeats = {}; markSaved()');
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+  await assert.rejects(app.run('listSeatModel({ provider: "codex", model: "b" })'), /不在 Codex CLI 的可用模型里/);
+  assert.deepEqual(posts, []);
+
+  // Any model again lets a model the CLI lists later through, without a list to keep up.
+  app.run('poolPick("codex/pool/all", true); detected.codex.models.push({ id: "next" })');
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
+  assert.ok(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'));
+});
+
+test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.clis.codex.models = { a: {}, b: {} };
+    currentDoc.modes.task.codex = { models: ["a"], overrides: {}, default: "a" };
+    currentDoc.modes.discussion.codex = { models: ["a", "b"], overrides: {}, default: "b" };
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
+    markSaved();
+  `);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(slot("task", "codex").allowed)')), ["a"]);
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(shownPool("codex"))')), ["a", "b"]);
+  assert.equal(app.run('poolSummary("codex", ["a", "b"], shownPool("codex"))'), "单独干活 1 个、开会 2 个");
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+
+  app.run('detected.codex.models.push({ id: "c" }); poolPick("codex/pool/allow/c", true)');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b", "c"]);
+  assert.deepEqual(app.doc().modes.task.codex, { models: [], overrides: {}, default: "a" });
+  assert.deepEqual(JSON.parse(app.run('JSON.stringify(offered(slotRows("codex", "task", true), "codex/task/model"))')).slice(1), ["a", "b", "c"]);
+  assert.ok(app.doc().clis.codex.models.c);
+});
+
+test("each boss is named by its own saved orchestration mode", () => {
+  const app = poolEditor();
+  app.run(`orchestration = { error: null, files: [], document: { version: 1, preset: "off", apps: { codex: "split" } }, bosses: [
+    { keys: ["codex"], labels: ["Codex CLI"] }, { keys: ["grok"], labels: ["Grok CLI"] },
+  ] }; renderTaskScope();`);
+  assert.equal(app.run('$("task-scope").hidden'), false);
+  assert.match(app.run('$("task-scope").textContent'), /^Codex CLI 已启用编排.*单独干活只提供给未启用编排的 boss/);
+  app.run('orchestration.document.apps = {}; renderTaskScope()');
+  assert.equal(app.run('$("task-scope").hidden'), true);
 });

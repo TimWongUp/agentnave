@@ -164,7 +164,13 @@ pub fn validate(document: &Value) -> Result<(), String> {
                 let default = default
                     .as_str()
                     .ok_or_else(|| format!("{what}.default 必须为字符串"))?;
-                if !known.contains_key(default) || !(listed.is_empty() || listed.contains(&default))
+                // A CLI's own list replaces the scene's. A default outside it stays readable: the
+                // App reports it and the server refuses to run it.
+                let pooled = clis
+                    .get(provider)
+                    .is_some_and(|cli| cli.get("allowed_models").is_some());
+                if !known.contains_key(default)
+                    || !(pooled || listed.is_empty() || listed.contains(&default))
                 {
                     return Err(format!("{what} 的默认模型 {default} 不在允许的模型中"));
                 }
@@ -617,7 +623,11 @@ fn validate_clis(clis: &Map<String, Value>) -> Result<(), String> {
             return Err(format!("不支持的 CLI：{provider}"));
         }
         let fields = object(cli, &format!("clis.{provider}"))?;
-        only(fields, &["models"], &format!("clis.{provider}"))?;
+        only(
+            fields,
+            &["models", "allowed_models"],
+            &format!("clis.{provider}"),
+        )?;
         let models = fields
             .get("models")
             .ok_or_else(|| format!("clis.{provider} 缺少 models"))?;
@@ -628,6 +638,30 @@ fn validate_clis(clis: &Map<String, Value>) -> Result<(), String> {
             let what = format!("{provider} / {model}");
             settings(shared, &what)?;
             effort_allowed(shared, None, &what)?;
+        }
+        if let Some(pool) = fields.get("allowed_models").filter(|pool| !pool.is_null()) {
+            validate_pool(pool, object(models, "models")?, provider)?;
+        }
+    }
+    Ok(())
+}
+
+/// The models a CLI may run, for every scene and seat; absent or null means any.
+fn validate_pool(pool: &Value, models: &Map<String, Value>, provider: &str) -> Result<(), String> {
+    let what = format!("clis.{provider}.allowed_models");
+    let pool = pool
+        .as_array()
+        .filter(|pool| !pool.is_empty())
+        .ok_or_else(|| format!("{what} 必须为非空数组"))?;
+    for (index, model) in pool.iter().enumerate() {
+        let name = model
+            .as_str()
+            .ok_or_else(|| format!("{what} 只能含字符串"))?;
+        if !models.contains_key(name) {
+            return Err(format!("{what} 引用了未配置的模型 {name}"));
+        }
+        if pool[..index].contains(model) {
+            return Err(format!("{what} 重复列出模型 {name}"));
         }
     }
     Ok(())

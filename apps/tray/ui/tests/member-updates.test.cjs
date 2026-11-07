@@ -137,7 +137,7 @@ test("updating disables refresh controls and skips both manual and focus detecti
     function renderLeaveConfirm() {}
     function renderAdvancedBar() {}
     emptyScene = () => null;
-    configurationErrors = () => [];
+    function memberSaveErrors() { return []; }
     countPermissionOptions = () => 0;
     document.visibilityState = 'visible';
     cliUpdating = 'codex';

@@ -5,6 +5,7 @@ function slotRows(provider, scene, split) {
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
   if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : L(`${SCENES.task}、${SCENES.discussion}`, `${SCENES.task}, ${SCENES.discussion}`));
   const pick = (change) => changeSlot(provider, scene, change);
   // Turning a CLI off for both scenes asks first when it drops settings.
@@ -18,16 +19,16 @@ function slotRows(provider, scene, split) {
         "aria-label": L("默认模型", "Default model"),
         onChange: (e) => pick({ enabled: true, model: e.target.value, effort: savedEffort(provider, e.target.value || native.model, "") }),
       }, el("option", { value: OFF, selected: true }, L("不用", "Off")),
-      ...(native.model ? [] : [el("option", { value: "" }, L("CLI 自己决定", "Follow CLI"))]),
-      ...all.map((m) => el("option", { value: m }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m))), el("span", { className: "member-reset-slot" })))];
+      ...(native.model || current.allowed ? [] : [el("option", { value: "" }, L("CLI 自己决定", "Follow CLI"))]),
+      ...offered.map((m) => el("option", { value: m }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m))), el("span", { className: "member-reset-slot" })))];
   }
 
-  const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const model = current.model || (current.allowed ? "" : native.model) || "";
   const options = [
     el("option", { value: OFF }, L("不用", "Off")),
     ...(current.allowed && !model ? [el("option", { value: "", selected: true, disabled: true }, L("选一个默认模型", "Choose default model"))]
       : native.model ? [] : [el("option", { value: "", selected: !model }, L("CLI 自己决定", "Follow CLI"))]),
+    ...(model && !offered.includes(model) ? [el("option", { value: model, selected: true, disabled: true }, L(`${model}（不在可用模型里）`, `${model} (not available)`))] : []),
     ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m)),
   ];
   const modelLine = el("div", { className: "member-line" },
@@ -42,7 +43,7 @@ function slotRows(provider, scene, split) {
         pick({ model: value, effort: savedEffort(provider, id, sceneEffort(scene || "task", provider, id)) });
       },
     }, ...options),
-    current.model && native.model && current.model !== native.model
+    current.model && offered.includes(native.model) && current.model !== native.model
       ? el("button", {
         type: "button",
         className: "member-reset",
@@ -53,56 +54,78 @@ function slotRows(provider, scene, split) {
       }, "↺")
       : el("span", { className: "member-reset-slot" }));
 
-  const effortLine = slotEffortLine({ provider, scene, current, model, key, pick });
-
-  return slotAllowedRows({ provider, current, native, all, offered, model, key, pick, label, modelLine, effortLine });
+  return [el("div", { className: "member-row" }, label, modelLine, slotEffortLine({ provider, scene, current, model, key, pick }))];
 }
 
-function slotAllowedRows({ provider, current, native, all, offered, model, key, pick, label, modelLine, effortLine }) {
-  const open = pickerOpen === key;
-  const summary = current.allowed
-    ? L(`${offered.length} 个：${offered.slice(0, 3).join("、")}${offered.length > 3 ? " 等" : ""}`, `${offered.length}: ${offered.slice(0, 3).join(", ")}${offered.length > 3 ? ", etc." : ""}`)
-    : L(`全部 ${all.length} 个`, `All ${all.length}`);
-  const listButton = el("button", {
-    type: "button",
-    className: "member-list",
-    dataset: { focusKey: `${key}/list` },
-    title: L("boss 可以选用的模型", "Models the boss may choose from"),
-    "aria-expanded": String(open),
-    onClick: () => { pickerOpen = open ? null : key; renderCards(); },
-  }, el("span", { className: "member-muted" }, L("可选 ", "Allowed: ")), textNode(summary), el("span", { className: "member-muted" }, open ? " ▴" : " ▾"));
+// What the pool row reads: scenes of an older file can still hold lists of their own.
+function poolSummary(provider, all, pool) {
+  const count = (list) => (list ? L(`${list.length} 个`, `${list.length}`) : L(`全部 ${all.length} 个`, `All ${all.length}`));
+  const scenes = SCENE_IDS.filter((s) => slot(s, provider).enabled);
+  const lists = scenes.map((s) => slot(s, provider).allowed);
+  if (!hasPool(provider) && lists.length > 1 && !sameJson(lists[0], lists[1])) {
+    return scenes.map((s, i) => `${SCENES[s]} ${count(lists[i])}`).join(L("、", ", "));
+  }
+  if (!pool) return count(null);
+  const names = pool.slice(0, 3).join(L("、", ", "));
+  return L(`${pool.length} 个：${names}${pool.length > 3 ? " 等" : ""}`, `${pool.length}: ${names}${pool.length > 3 ? ", etc." : ""}`);
+}
 
-  const rows = [el("div", { className: "member-row" }, label, modelLine, listButton, effortLine)];
+// One list per CLI; every scene and seat of the CLI picks its model from it.
+function poolRows(provider) {
+  const key = `${provider}/pool`;
+  const native = nativeDefault(provider);
+  const all = getAllModelIds(provider);
+  if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  const pool = shownPool(provider);
+  const open = pickerOpen === key;
+  const rows = [el("div", { className: "member-row" },
+    el("span", { className: "member-scene" }, L("可用模型", "Available models")),
+    el("button", {
+      type: "button",
+      className: "member-list",
+      dataset: { focusKey: `${key}/list` },
+      title: L("单独干活、开会和工位都从这里选", "Solo tasks, meetings and seats pick from these"),
+      "aria-expanded": String(open),
+      onClick: () => { pickerOpen = open ? null : key; renderCards(); },
+    }, textNode(poolSummary(provider, all, pool)), el("span", { className: "member-muted" }, open ? " ▴" : " ▾")))];
   if (open) {
     const toggle = (m, on) => {
-      const list = current.allowed || [];
+      const list = pool || [];
       const allowed = on ? [...list, m] : list.filter((x) => x !== m);
-      if (allowed.length) pick({ allowed });
+      if (allowed.length) writePool(provider, allowed);
       else renderCards();
     };
+    const defaults = SCENE_IDS.map((s) => slot(s, provider).model);
     rows.push(el("div", { className: "member-picker" },
       el("label", { className: "member-option member-option-all" },
         el("input", {
           type: "checkbox",
           dataset: { focusKey: `${key}/all` },
-          checked: !current.allowed,
+          checked: !pool,
           disabled: !all.length,
-          onChange: (e) => pick(e.target.checked
-            ? { allowed: null, model: current.model === native.model ? "" : current.model }
-            : { allowed: all.length ? [...all] : model ? [model] : [] }),
+          onChange: (e) => writePool(provider, e.target.checked ? null : [...all]),
         }), textNode(L("全部模型（以后新出的也算）", "All models (including future releases)"))),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
           type: "checkbox",
           dataset: { focusKey: `${key}/allow/${m}` },
-          checked: !current.allowed || current.allowed.includes(m),
-          disabled: !current.allowed || m === model,
+          checked: !pool || pool.includes(m),
+          disabled: !pool,
           onChange: (e) => toggle(m, e.target.checked),
         }),
         el("span", { className: "member-option-id" }, m),
-        m === model ? el("span", { className: "badge badge-muted" }, L("默认", "Default")) : null))));
+        defaults.includes(m) ? el("span", { className: "badge badge-muted" }, L("默认", "Default")) : null))));
   }
   return rows;
+}
+
+// Bindings the pool no longer has stay as saved, each named on its CLI's card until changed.
+function poolConflicts(provider) {
+  const scenes = SCENE_IDS.map((s) => [SCENES[s], slot(s, provider)])
+    .filter(([, current]) => current.enabled && current.model && outOfPool(provider, current.model))
+    .map(([name, current]) => L(`${name}的默认模型 ${current.model} 不在可用模型里`, `${name} default model ${current.model} is not in the available models`));
+  const seats = seatConflicts().filter(({ seat }) => seat.provider === provider).map(seatConflictText);
+  return [...scenes, ...seats].map((text) => el("p", { className: "member-error" }, text));
 }
 
 function renderMembership(provider, enabled) {
@@ -176,13 +199,13 @@ function renderCards() {
     const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
     if (pendingDisable === provider) {
       card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
-        el("p", {}, L(`移除会清除 ${name} 的默认模型和可选模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default and allowed models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
+        el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
         el("div", { className: "btn-group" },
           el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { pendingDisable = null; renderCards(); } }, L("保留", "Keep")),
           el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
-    for (const row of rows) card.appendChild(row);
+    for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
     const runtime = renderClaudeInteractive(provider);
     if (runtime) card.appendChild(runtime);
     if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
@@ -213,7 +236,7 @@ function renderCards() {
 // Save members.json with race version checking
 async function saveMembers() {
   if (busy || !dirty || documentError || emptyScene()) return;
-  const errors = configurationErrors();
+  const errors = memberSaveErrors();
   if (errors.length) {
     showNotice(errors[0].message, true);
     updateControls();

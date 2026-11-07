@@ -69,6 +69,8 @@ async function loadOrchestration() {
   // Review seats list the connected bosses' CLIs too.
   renderReviewSeats();
   renderAdvancedBar();
+  // Cards name the seats their pool left out.
+  renderCards();
 }
 
 async function saveOrchestration() {
@@ -180,7 +182,17 @@ function setOrchestrationSeat(role, difficulty, seat) {
   advancedEdited();
 }
 
+// Bosses on a saved mode dispatch through the seats, each boss by its own row.
+function renderTaskScope() {
+  const on = orchestration && !orchestration.error
+    ? orchestration.bosses.filter((boss) => bossMode(orchestration.document, boss) !== "off") : [];
+  const names = on.flatMap((boss) => boss.labels).join(AN.L("、", ", "));
+  $("task-scope").hidden = !on.length;
+  $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“高级”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Advanced; solo tasks are offered only to bosses without orchestration.`) : "";
+}
+
 function renderOrchestration() {
+  renderTaskScope();
   const shown = orchestrationShown();
   const preset = orchestrationView;
   for (const button of $("orchestration-presets").querySelectorAll("button")) {
@@ -266,8 +278,22 @@ let seatsDraft = null; // Review seats as picked; `reviewSeats` holds what is sa
 const seatsShown = () => seatsDraft || reviewSeats;
 const seatsChanged = () => !sameJson(seatsShown(), reviewSeats);
 
+// Every seat in use with the model its CLI's pool left out. Explorer and Worker seats wait unused
+// while no boss runs orchestration.
+function seatConflicts() {
+  const review = REVIEW_ROLES.map(([role, name]) => ({ section: "review", name: AN.L(`${name}评审`, `${name} review`), seat: seatsShown()[role] }));
+  const doc = orchestrationShown();
+  const live = Boolean(doc) && (doc.preset !== "off" || Object.values(doc.apps || {}).some((mode) => mode !== "off"));
+  const roles = !doc ? [] : ORCHESTRATION_ROLES.filter(([role]) => live || role === "image_generation")
+    .map(([role, difficulty, name]) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
+  return [...review, ...roles].filter(({ seat }) => seat && outOfPool(seat.provider, seat.model));
+}
+const seatConflictText = ({ name, seat }) => AN.L(`${name} 用的 ${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${name} uses ${seat.model}, which is not in the available models of ${PROVIDER_NAMES[seat.provider]}`);
+const memberSaveErrors = () => [...configurationErrors(), ...seatConflicts().map((conflict) => ({ message: seatConflictText(conflict) }))];
+
 // A picked model missing from that CLI's configured models is added to the last saved
-// members.json, where the server looks for it; unsaved 员工 edits stay unsaved.
+// members.json, where the server looks for it; unsaved 员工 edits stay unsaved. A CLI with a pool
+// already configures all it may run, so a model it left out is refused instead.
 async function listSeatModel(seat) {
   const add = (doc) => {
     doc.clis ||= {};
@@ -279,6 +305,8 @@ async function listSeatModel(seat) {
   // Until 员工 is read there is nothing to add to: an empty document would replace the file.
   if (!savedSnapshot && !documentError) throw new Error(AN.L("员工配置还在读取，请稍后再保存", "Employee settings are still loading; please save in a moment"));
   const saved = JSON.parse(savedSnapshot || JSON.stringify({ version: 1, clis: {}, modes: {} }));
+  const pool = saved.clis?.[seat.provider]?.allowed_models;
+  if (pool && !pool.includes(seat.model)) throw new Error(AN.L(`${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${seat.model} is not in the available models of ${PROVIDER_NAMES[seat.provider]}`));
   if (Object.hasOwn(saved.clis?.[seat.provider]?.models || {}, seat.model)) return;
   if (documentError) throw new Error(AN.L("配置文件有错误，请先在“员工”里修复", "Configuration file has errors; fix them in “Employees” first"));
   await apiPostMembers(add(saved));
@@ -319,6 +347,8 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
   }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
 }
 
+const seatModels = (provider) => listedPool(provider) ? [...listedPool(provider)] : getAllModelIds(provider);
+
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
 function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {
   const provider = seat?.provider || "";
@@ -327,11 +357,12 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), mod
   const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
   const usable = (p) => (known(p) && slot("task", p).enabled) || bossClis.includes(p);
   const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
-    : getAllModelIds(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
+    : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
   const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
     .map((p) => [p, PROVIDER_NAMES[p] + note(p), Boolean(note(p)) && p !== provider]);
-  const models = provider ? getAllModelIds(provider) : [];
-  if (seat?.model && !models.includes(seat.model)) models.unshift(seat.model);
+  const models = provider ? seatModels(provider) : [];
+  const excluded = seat?.model && outOfPool(provider, seat.model);
+  if (seat?.model && !excluded && !models.includes(seat.model)) models.unshift(seat.model);
   const levels = seat?.model ? effortLevels(provider, seat.model) : [];
   if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
   // A seat saves the level it runs at, as a member does.
@@ -341,7 +372,7 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), mod
   };
   const pickCli = (next) => {
     if (!next) return onSet(null);
-    const ids = getAllModelIds(next);
+    const ids = seatModels(next);
     const preferred = slot("task", next).model || nativeDefault(next).model;
     onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0]));
   };
@@ -352,7 +383,7 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), mod
   return [
     reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", unset], ...clis], pickCli),
     reviewSelect(`${key}/model`, modelLabel, seat?.model || "",
-      seat ? models.map((m) => [m, m]) : [["", "—"]], pickModel, !seat),
+      seat ? [...(excluded ? [[seat.model, AN.L(`${seat.model}（不在可用模型里）`, `${seat.model} (not available)`), true]] : []), ...models.map((m) => [m, m])] : [["", "—"]], pickModel, !seat),
     reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
   ];
 }
@@ -383,17 +414,20 @@ function advancedChanges() {
 }
 
 const customEmpty = () => usesCustom(orchestrationShown()) && !$("custom-text").value.trim();
+// A changed section cannot save while one of its seats is outside its CLI's pool.
+const blockedSeat = () => seatConflicts().find(({ section }) => (section === "review" ? seatsChanged() : orchestrationChanged()));
 
 function renderAdvancedBar() {
   const changes = advancedChanges();
-  const invalid = orchestrationChanged() && customEmpty();
+  const blocked = blockedSeat();
+  const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked);
   $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
   $("advanced-badge").hidden = !changes.length;
   $("advanced-save").disabled = busy || !changes.length || invalid;
   $("advanced-discard").disabled = busy || !changes.length;
   const feedback = $("advanced-feedback");
   if (invalid) {
-    feedback.textContent = AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
+    feedback.textContent = blocked ? seatConflictText(blocked) : AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
     feedback.className = "save-feedback error";
     feedback.dataset.validation = "true";
   } else if (feedback.dataset.validation === "true") {
@@ -425,7 +459,7 @@ function discardAdvanced() {
 }
 
 async function saveAdvanced() {
-  if (busy || !advancedChanges().length || (orchestrationChanged() && customEmpty())) return;
+  if (busy || !advancedChanges().length || (orchestrationChanged() && customEmpty()) || blockedSeat()) return;
   busy = true;
   $("pane-advanced").inert = true;
   updateControls();

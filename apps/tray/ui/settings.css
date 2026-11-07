@@ -176,6 +176,9 @@
 .member-end > .segment-control, .member-row .member-efforts { display: flex; min-width: 0; }
 .member-end > .segment-control > .segment-btn, .member-efforts > .segment-btn { flex: 1 1 0; min-width: 0; padding-left: 2px; padding-right: 2px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-hidden { visibility: hidden; }
+.member-row > :nth-child(3) { grid-column: 3 / -1; }
+.member-row > .member-list { grid-column: 2 / -1; }
+.member-scope { margin: 0 0 10px; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
 .member-tail { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .member-tail > :first-child { flex: 1; }
@@ -203,13 +206,12 @@
   .member-card { --member-cols: 96px minmax(0, 1fr) minmax(0, 1fr); }
   .member-title { grid-column: 1 / -1; }
   .member-end > .segment-control { grid-column: 2; }
-  .member-row > :nth-child(4) { grid-column: 2 / -1; }
 }
 @media (max-width: 700px) {
   .member-card { --member-cols: minmax(0, 1fr); padding: 12px 14px; }
   .member-head, .member-row { padding-left: 0; gap: 8px; }
   .member-title { margin-left: 0; }
-  .member-end > .segment-control, .member-row > :nth-child(4) { grid-column: auto; }
+  .member-end > .segment-control, .member-row > :nth-child(3), .member-row > .member-list { grid-column: auto; }
   .member-row > .member-list { width: calc(100% - 34px); }
   .member-switch, .member-error { padding-left: 0; }
   .member-interactive { grid-column: auto; }

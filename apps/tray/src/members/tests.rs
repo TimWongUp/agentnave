@@ -229,6 +229,29 @@ fn accepts_the_contract_example_and_rejects_structural_or_reference_errors() {
 }
 
 #[test]
+fn a_cli_pool_is_checked_and_replaces_the_scene_list_for_defaults() {
+    let mut pooled = document();
+    pooled["clis"]["codex"]["allowed_models"] = json!(["gpt-6.1-sol"]);
+    validate(&pooled).unwrap();
+    pooled["clis"]["codex"]["allowed_models"] = Value::Null;
+    validate(&pooled).unwrap();
+    for pool in [
+        json!([]),
+        json!("gpt-6.1-sol"),
+        json!([1]),
+        json!(["missing"]),
+        json!(["gpt-6.1-sol", "gpt-6.1-sol"]),
+    ] {
+        pooled["clis"]["codex"]["allowed_models"] = pool.clone();
+        assert!(validate(&pooled).is_err(), "{pool}");
+    }
+    // A default outside the pool or an older scene list stays readable for the App to report.
+    pooled["clis"]["codex"]["allowed_models"] = json!(["gpt-6.1-sol"]);
+    pooled["modes"]["task"]["codex"]["default"] = json!("gpt-6-luna");
+    validate(&pooled).unwrap();
+}
+
+#[test]
 fn saves_atomically_through_the_post_route_only() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("data");
