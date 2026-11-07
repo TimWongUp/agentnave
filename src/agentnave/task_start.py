@@ -12,6 +12,7 @@ from agentnave.members import (
     ProviderName,
     ReviewRole,
     apply_member,
+    orchestration_enabled,
     read_members,
     read_permissions,
     role_seat,
@@ -169,7 +170,9 @@ def apply_task_defaults(
     options: dict[str, ProviderOption],
     seat_applied: list[str],
     excluded: frozenset[str],
+    host: Host,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
+    selected = role_seat(seat_name, host)
     options, applied = apply_member(
         read_members(),
         "task",
@@ -178,6 +181,8 @@ def apply_task_defaults(
         excluded,
         permissions=read_permissions(),
         seat=frozenset(seat_applied),
+        scenario=not orchestration_enabled(host),
+        seat_selected=selected is not None and selected.provider == provider,
     )
     if seat_applied:
         applied = [f"{(seat_name or '').strip()} seat", *seat_applied, *applied]

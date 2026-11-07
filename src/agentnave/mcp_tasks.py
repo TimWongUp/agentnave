@@ -184,7 +184,7 @@ async def start_agent(
             role_seat(seat_name, runtime.HOST), provider, provider_options or {}
         )
         options, defaults_applied = apply_task_defaults(
-            provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS
+            provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS, runtime.HOST
         )
         request = InvocationRequest(
             provider=provider,

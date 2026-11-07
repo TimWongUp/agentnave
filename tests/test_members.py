@@ -621,7 +621,7 @@ def test_missing_clis_mark_members_and_seats_without_replacing_native_seats(
     )
     result = list_members(frozenset({"claude"}), Host("claude"))
     assert calls == dict.fromkeys(providers, 1)
-    assert any(m.model == "*" for m in result.members)
+    assert all(m.modes == ["discussion"] for m in result.members)
     for member in result.members:
         assert member.error == ("CLI is not installed" if member.provider in missing else None)
     unavailable = [
@@ -634,7 +634,11 @@ def test_missing_clis_mark_members_and_seats_without_replacing_native_seats(
     ]
     for seat in unavailable:
         assert seat.available is False and seat.reason == "CLI is not installed"
-        assert seat.replacement is not None and seat.replacement.provider == "codebuddy"
+        # Hidden task defaults cannot be offered as a fallback for a missing CLI.
+        if seat.model == "shared":
+            assert seat.replacement is not None and seat.replacement.provider == "codebuddy"
+        else:
+            assert seat.replacement is None
         assert not missing.intersection(seat.alternatives)
     for seat in (result.review["simplicity-reviewer"], result.orchestration.explorer["hard"]):
         assert seat.native is True and seat.available is None and seat.reason is None

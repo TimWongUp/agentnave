@@ -1427,12 +1427,12 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         assert "available" not in review["performance-reviewer"]
         assert "alternatives" not in review["performance-reviewer"]
         payload = _payload(listed.structured_content)
-        assert "modes" not in payload and "restricted" not in payload
+        assert "modes" not in payload and payload["restricted"] == ["task"]
         items = cast(list[dict[str, object]], payload["members"])
         valid = [item for item in items if item["model"] == "chosen"]
         assert len(valid) == 6
         assert all("valid" not in item and "error" not in item for item in valid)
-        assert valid[0]["modes"] == ["discussion"] and "modes" not in valid[1]
+        assert all(item["modes"] == ["discussion"] for item in valid)
         invalid = [item for item in items if str(item["model"]).startswith("bad-")]
         assert len(invalid) == 3 and all("valid" not in item and item["error"] for item in invalid)
         assert [(item["provider"], item["default"]) for item in items if "default" in item] == [
@@ -1461,7 +1461,7 @@ async def test_members_read_missing_and_fresh_files_without_preparing_commands(
         path.write_text('{"version": 1, "clis": {}, "modes": {"discussion": {}}}', encoding="utf-8")
         fresh = _payload((await client.call_tool("list_members", {})).structured_content)
         assert fresh["configured"] is True
-        assert fresh["members"] == [] and fresh["restricted"] == ["discussion"]
+        assert fresh["members"] == [] and fresh["restricted"] == ["task", "discussion"]
         # The App file currently accepts an empty model key; its reply must still validate.
         path.write_text(
             json.dumps({"version": 1, "clis": {"claude": {"models": {"": {}}}}, "modes": {}})
@@ -1652,7 +1652,6 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "correctness-reviewer seat",
             "model",
             "effort",
-            "agent",
             "permission_mode",
             "permission_fallback",
             "access (correctness-reviewer seat)",
@@ -1661,7 +1660,8 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert seated["access"] == "read"
         # An Explorer/Worker name in role is only a label, even with a configured seat.
         labelled = await start({}, role="worker-easy")
-        assert labelled["defaults_applied"] == applied and "access" not in labelled
+        assert labelled["defaults_applied"] == ["permission_mode", "permission_fallback"]
+        assert "model" not in labelled and "access" not in labelled
         label_only = await client.call_tool(
             "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "role": "worker-easy"}
         )
@@ -1671,14 +1671,14 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         assert worker["defaults_applied"] == [
             "worker-easy seat",
             "model",
-            "agent",
             "permission_mode",
             "permission_fallback",
             "access (worker-easy seat)",
         ]
         assert worker["access"] == "write"
         assert (await start({}, seat="explorer-easy"))["defaults_applied"] == [
-            *applied,
+            "permission_mode",
+            "permission_fallback",
             "access (explorer-easy seat)",
             "read-only instruction (access=read)",
         ]
