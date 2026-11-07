@@ -363,7 +363,11 @@ fn role_switches_remove_generated_seats_without_losing_bindings_or_custom_text()
     assert!(custom.contains("用户自写要求：保留引用来源。"));
     assert_eq!(document["worker_writing"]["easy"]["model"], "haiku");
     document["image_generation"] = json!({"provider":"codex","model":"chat"});
-    assert!(text_of(&document, "custom").unwrap().contains("image-generator"));
+    assert!(
+        text_of(&document, "custom")
+            .unwrap()
+            .contains("image-generator")
+    );
 }
 
 #[test]

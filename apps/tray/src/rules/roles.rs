@@ -11,10 +11,17 @@ pub(super) fn sections() -> Value {
             let group = role["group"].as_str().expect("role group");
             let prefix = role["seat_prefix"].as_str().expect("seat prefix");
             let name = role["name_zh"].as_str().expect("role name");
-            let access = if role["access"] == "read" { "只读" } else { "可写" };
-            sections.insert(group.into(), json!(format!(
-                "\n- {name}（{access}）：简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。"
-            )));
+            let access = if role["access"] == "read" {
+                "只读"
+            } else {
+                "可写"
+            };
+            sections.insert(
+                group.into(),
+                json!(format!(
+                    "\n- {name}（{access}）：简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。"
+                )),
+            );
         }
     }
     Value::Object(sections)
@@ -22,7 +29,9 @@ pub(super) fn sections() -> Value {
 
 pub(super) fn apply(document: &Value, mut text: String) -> String {
     // These exact sentences belonged to our older generated preset, including copies in Custom.
-    text = text.replace(LEGACY_DISPATCH, "").replace(LEGACY_ASSIGNMENT, "");
+    text = text
+        .replace(LEGACY_DISPATCH, "")
+        .replace(LEGACY_ASSIGNMENT, "");
     let sections = sections();
     let sections = sections.as_object().expect("role sections");
     for section in sections.values().filter_map(Value::as_str) {
