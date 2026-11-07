@@ -578,19 +578,20 @@ transaction or automatic host configuration update.
 ### Upgrading to v1.3.0
 
 Update the App; it installs the paired service at startup. On macOS and Linux, the App updates host
-MCP configurations once to point at the fixed launcher `~/.agentnave/service/bin/agentnave-mcp` so
-later service upgrades no longer rewrite host config files (hosts such as WorkBuddy will not ask to
-trust the workspace again on subsequent upgrades). Reconnect or reopen any host copy listed on the
-boss card in Settings so it picks up the new launcher and runtime; background services (Claude
-background service, Codex background service, Hermes gateway) can be stopped or restarted directly
-from the card.
+MCP configurations once to point at the fixed launcher `service/bin/agentnave-mcp` under the App
+data directory so later service upgrades no longer rewrite host config files (hosts such as
+WorkBuddy will not ask to trust the workspace again on subsequent upgrades). Reconnect or reopen any
+host copy listed on the boss card in Settings so it picks up the new launcher and runtime; on macOS,
+background services (Claude background service, Codex background service, Hermes gateway) can be
+stopped or restarted directly from the card.
 
 Available models are now configured per CLI under `clis[provider].allowed_models` in `members.json`
 and shared across private tasks, meetings and orchestration seats; existing scene-level model lists
-continue to work until edited in the App. Orchestration seats no longer require enabling the CLI for
-ad-hoc private tasks, and an optional `image-generator` seat can be configured under Advanced.
-`start_agent` and `run_round` accept an optional `wait=true` parameter and include `next` in
-receipts while work remains pending.
+continue to work until edited in the App. Confirmed CLIs (enabled for at least private tasks or
+meetings) can serve orchestration seats whenever the seat model is in their pool, without requiring
+the private-task toggle itself, and an optional `image-generator` seat can be configured under
+Advanced. `start_agent` and `run_round` accept an optional `wait=true` parameter and include `next`
+in receipts while work remains pending.
 
 See [v1.3.0 release notes](releases/v1.3.0.md). Earlier upgrade instructions remain in
 [the release archive](releases/v1.2.0.md).
