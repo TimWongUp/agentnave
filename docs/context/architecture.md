@@ -109,3 +109,5 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 托盘 App 独占写入数据根的 `voice.json`、`voice-keys.json`（含摘要平台密钥与 ChatGPT 登录令牌）和 `voice-cache/`；服务不读取这些文件。预览版的语音设置、密钥和缓存写入其独立的应用数据目录，不写正式版数据根。
 
 CLI 级可用模型名单是任务、编排工位及会议共同的模型边界；当前宿主启用编排时不披露普通任务目录或套用其场景默认值，既有普通任务配置保留供关闭编排后恢复（[ADR-0063](../adr/0063-cli-model-pool-and-orchestration-precedence.md)）。
+
+专项与通用角色目录由产品共享定义，App 保存角色开关与每档绑定，服务按当前宿主编排档位公布可用角色并校验派发。停用角色不进入目录、schema 与生成规则，绑定和历史仍保留；同难度专项优先与通用兜底由 Manager 显式选择，服务不自动调度或换模型（[ADR-0065](../adr/0065-predefined-specialist-roles.md)）。

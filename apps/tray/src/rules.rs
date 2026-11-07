@@ -2,6 +2,8 @@
 //! orchestration preset in one marked block of them; everything outside the block stays the user's.
 //! One file often serves several apps (Grok also reads Claude's, dsh the shared `~/.agents`), so
 //! the list is by file, each naming every app that reads it.
+mod roles;
+
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,9 +17,9 @@ const SHARED: &str = "## AgentNave 编排偏好
 
 - 仅在作为主对话 boss 时适用；被 AgentNave 派发时只完成任务、回报，不再派发。与本文件其他规则冲突时，以其他规则为准。
 - 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数；派发前按 agentnave-manager 调用。
-- Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一；涉及界面（页面、样式、交互、看截图或设计稿）的实现改用 Worker 的界面两档。取 `list_members` 的 `orchestration`：`native` 工位交给宿主自带子代理并尽量用该模型，它不经过服务，prompt 要写明非交互，Explorer 还要写明只读；其余派发时 `seat` 用 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`、`worker-frontend-easy` 或 `worker-frontend-hard`，省略 `provider`、`access` 和模型，服务按 App 工位补齐；`role` 写具体职责，新任务必传 `cwd`。工位不可用时用 `list_members` 的 `replacement`，连同原来的 `seat` 或 `role` 一起传；没有工位时按任务组员选，都不可用时自己做。
+- 按任务类型和难度选择 `list_members` 的 `orchestration` 中可见工位；同难度专项优先，专项未设或不可用时，明确选择同难度的通用工位，通用也不可用时由 boss 自己完成或报告能力不足。`native` 工位交给宿主自带子代理并尽量使用所选模型，prompt 写明非交互，只读工位还写明只读；其余使用下列可见 `seat`，省略 `provider`、`access` 和模型，服务按 App 绑定补齐；`role` 写具体职责，新任务必传 `cwd`。只使用已公开的工位与替换参数，不跨难度、不静默换模型，不恢复隐藏的普通任务池。
 - 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；小事自己做。
-- 探索、规划派 Explorer，实现派 Worker。
+- 角色开关与绑定分别保存，只派发当前可见工位，具体工具能力以对应 CLI 的原生工具为准。
 - 同一组文件同一时间只有一个 Worker 在写；同一职责续接只传 `session_id`，其余由服务继承；换职责时传新的 `role` 或 `seat` 并给自足简报。
 - 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。
 - 结果不会主动推送：派发后结束本轮前用 `wait` 收齐全部终态；任务在跑时要先问用户，也先 `wait` 或 `cancel`。
@@ -26,14 +28,16 @@ const SHARED: &str = "## AgentNave 编排偏好
 const IMAGE_GENERATION: &str = "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。";
 
 const PARALLEL: &str = "
-- 计划确认后，互不依赖的写入步骤并行派给多个 Worker，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。
+- 计划确认后，互不依赖的写入步骤并行派给多个可写工位，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。
 - 有实质取舍或分歧时进会议室出决定，会上不改代码。
 - 不为每次实现另派复核；高风险改动由 boss 针对具体的出错方式追加验证。
 - 没有新证据或待解问题时，不再追加讨论、重试和验证。";
 
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
 pub fn presets(document: &Value) -> Value {
-    json!({"split": text_of(document, "split"), "parallel": text_of(document, "parallel"), "image_generation": IMAGE_GENERATION})
+    json!({"split": text_of(document, "split"), "parallel": text_of(document, "parallel"),
+        "image_generation": IMAGE_GENERATION, "role_sections": roles::sections(),
+        "role_base": {"split": SHARED, "parallel": format!("{SHARED}{PARALLEL}")}})
 }
 
 /// The mode of apps sharing a file: the first set among them, or the default that rows without
@@ -58,7 +62,7 @@ fn text_of(document: &Value, mode: &str) -> Option<String> {
         return None;
     }
     // Strip our generated line if it was copied into a custom preset before being cleared.
-    text = text.replace(IMAGE_GENERATION, "");
+    text = roles::apply(document, text.replace(IMAGE_GENERATION, ""));
     if document["image_generation"].is_object() {
         text.push_str(IMAGE_GENERATION);
     }

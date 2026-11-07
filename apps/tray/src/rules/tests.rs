@@ -345,6 +345,28 @@ fn a_held_sync_keeps_the_old_block_until_the_service_catches_up() {
 }
 
 #[test]
+fn role_switches_remove_generated_seats_without_losing_bindings_or_custom_text() {
+    let mut document = json!({"preset":"split", "enabled_roles":["worker_writing"],
+        "worker_writing":{"easy":{"provider":"claude","model":"haiku"}},
+        "worker":{"hard":{"provider":"codex","model":"gpt"}}});
+    let generated = text_of(&document, "split").unwrap();
+    assert!(generated.contains("worker-writing-easy"));
+    assert!(generated.contains("worker-writing-hard"));
+    assert!(!generated.contains("`worker-hard`"));
+    assert!(!generated.contains("worker-frontend"));
+    assert!(!generated.contains("explorer-web"));
+    assert!(generated.contains("同难度专项优先"));
+    document["custom"] = json!(format!("{generated}\n用户自写要求：保留引用来源。"));
+    document["enabled_roles"] = json!([]);
+    let custom = text_of(&document, "custom").unwrap();
+    assert!(!custom.contains("worker-writing"));
+    assert!(custom.contains("用户自写要求：保留引用来源。"));
+    assert_eq!(document["worker_writing"]["easy"]["model"], "haiku");
+    document["image_generation"] = json!({"provider":"codex","model":"chat"});
+    assert!(text_of(&document, "custom").unwrap().contains("image-generator"));
+}
+
+#[test]
 fn image_rules_follow_the_optional_seat_and_clear_copied_custom_text() {
     let mut document = json!({"preset": "split"});
     for mode in ["split", "parallel"] {
