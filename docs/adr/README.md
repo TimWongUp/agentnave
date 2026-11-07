@@ -55,7 +55,7 @@
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | — |
-| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 已接受 | — |
+| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md) |
 | 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) |
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
@@ -68,4 +68,5 @@
 | 0062 | [服务统一生成成员称呼](0062-service-owned-member-names.md) | 已接受 | — |
 | 0063 | [CLI 共用模型池，编排替代普通任务目录](0063-cli-model-pool-and-orchestration-precedence.md) | 已接受 | 修订 ADR-0038、ADR-0053 |
 | 0064 | [派发回执引导收取，可选派发后先等](0064-dispatch-receipts-steer-to-wait.md) | 已接受 | 修订 ADR-0007 |
+| 0065 | [预置专项角色、独立开关与同难度兜底](0065-predefined-specialist-roles.md) | 已接受 | 扩展 ADR-0037、ADR-0038、ADR-0052 |
 | 0066 | [统一十分钟等待窗口，用序号区分连续等待](0066-unified-wait-window-and-call-sequence.md) | 已接受 | 修订 ADR-0007、ADR-0015 |

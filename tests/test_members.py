@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 from pydantic import ValidationError
@@ -31,6 +31,13 @@ from agentnave.members import (
     role_seat,
 )
 from agentnave.models import ProviderOption
+from agentnave.orchestration_roles import (
+    OrchestrationGroup,
+    OrchestrationRole,
+    OrchestrationStatus,
+    role_catalog,
+)
+from agentnave.task_start import role_access
 
 APP_FILES = Path(__file__).parent / "fixtures" / "app-files"
 APP_MODELS: dict[str, type[MemberFile | ReviewFile | OrchestrationFile | PermissionFile]] = {
@@ -44,6 +51,85 @@ APP_MODELS: dict[str, type[MemberFile | ReviewFile | OrchestrationFile | Permiss
 def _installed_cli(_adapter: AdapterHooks) -> bool:
     # Configuration tests do not depend on the machine's installed CLIs.
     return True
+
+
+def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
+    catalog = role_catalog()
+    assert len(catalog) == 9
+    assert {role.group for role in catalog} == set(get_args(OrchestrationGroup.__value__))
+    assert {
+        f"{role.seat_prefix}-{difficulty}" for role in catalog for difficulty in ("easy", "hard")
+    } | {"image-generator"} == set(get_args(OrchestrationRole.__value__))
+    bindings = {
+        difficulty: {"provider": "claude", "model": difficulty} for difficulty in ("easy", "hard")
+    }
+    document = OrchestrationFile.model_validate(
+        {
+            "version": 1,
+            "enabled_roles": [role.group for role in catalog],
+            **{role.group: bindings for role in catalog},
+        }
+    )
+    for role in catalog:
+        assert role.group in OrchestrationStatus.model_fields
+        assert set(document.group_seats(role.group)) == {"easy", "hard"}
+        for difficulty in ("easy", "hard"):
+            assert document.group_seats(role.group)[difficulty].model == difficulty
+            assert role_access(f"{role.seat_prefix}-{difficulty}") == role.access
+
+
+@pytest.mark.parametrize("switches", [{}, {"enabled_roles": None}, {"enabled_roles": []}])
+def test_role_switch_defaults_hide_fields_and_preserve_bindings(
+    switches: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    binding = {"provider": "claude", "model": "saved"}
+    raw = {
+        "version": 1,
+        "preset": "split",
+        **{role.group: {"easy": binding} for role in role_catalog()},
+        **switches,
+    }
+    path = tmp_path / "orchestration.json"
+    path.write_text(json.dumps(raw))
+    expected: set[str] = (
+        {"explorer", "worker", "worker_frontend"}
+        if switches.get("enabled_roles") is None
+        else set()
+    )
+    host = Host("codex", "env")
+    status = list_members(frozenset(), host).orchestration.model_dump()
+    assert {role.group for role in role_catalog() if role.group in status} == expected
+    saved = OrchestrationFile.model_validate(raw).model_dump()
+    for role in role_catalog():
+        assert saved[role.group] == {"easy": {**binding, "effort": ""}}
+        assert (role_seat(f"{role.seat_prefix}-easy", host) is not None) is (role.group in expected)
+    assert json.loads(path.read_text()) == raw
+
+
+@pytest.mark.parametrize("enabled", [["unknown"], ["worker", "worker"]])
+def test_role_switches_reject_unknown_and_duplicate_groups(enabled: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        OrchestrationFile.model_validate({"version": 1, "enabled_roles": enabled})
+
+
+def test_frontend_inheritance_requires_both_groups_and_never_crosses_difficulty() -> None:
+    document = OrchestrationFile.model_validate(
+        {"version": 1, "worker": {"hard": {"provider": "claude", "model": "general"}}}
+    )
+    assert set(document.interface_workers()) == {"hard"}
+    document.enabled_roles = [role.group for role in role_catalog()]
+    for role in role_catalog():
+        if role.group not in ("worker", "worker_frontend"):
+            assert document.group_seats(role.group) == {}
+    document.enabled_roles = ["worker_frontend"]
+    assert document.interface_workers() == {}
+    document.worker_frontend = {"easy": ReviewSeat(provider="claude", model="interface")}
+    assert set(document.interface_workers()) == {"easy"}
+    document.enabled_roles = ["worker"]
+    assert document.interface_workers() == {}
+    assert document.worker_frontend["easy"].model == "interface"
 
 
 def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(

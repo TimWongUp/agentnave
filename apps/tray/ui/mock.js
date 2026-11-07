@@ -149,6 +149,17 @@
       { keys: ["codex"], labels: ["Codex"], mark: "codex" },
     ],
     presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则" },
+    roles: [
+      ["explorer", "通用探索", "General exploration", "read", true],
+      ["worker", "通用执行", "General execution", "write", true],
+      ["worker_code", "代码实现", "Code implementation", "write", false],
+      ["worker_frontend", "界面实现", "Interface implementation", "write", true],
+      ["worker_writing", "写作", "Writing", "write", false],
+      ["explorer_web", "网页知识检索", "Web and knowledge research", "read", false],
+      ["explorer_social", "社交调研", "Social research", "read", false],
+      ["worker_data", "数据分析", "Data analysis", "write", false],
+      ["worker_documents", "文档制作", "Document production", "write", false],
+    ].map(([group, name_zh, name_en, access, legacy_enabled]) => ({ group, name_zh, name_en, access, legacy_enabled })),
     files: [
       { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
       { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },

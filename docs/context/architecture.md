@@ -75,7 +75,7 @@ App 设置文件按写入方和损坏时的影响范围分开：
 | 文件 | 写入方 | 服务的读法 |
 | --- | --- | --- |
 | `members.json` | App；不装 App 时由用户手写 | 每次派发现读；损坏时返回 App 修复错误 |
-| `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告，需要工位确定 CLI 时拒绝调用 |
+| `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告；普通工位调用一律拒绝，包括显式提供 Provider 的调用，评审工位仍按其配置校验 |
 | `permissions.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
 | `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude 时读取交互模式开关，缺省打开 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |
@@ -109,3 +109,5 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 托盘 App 独占写入数据根的 `voice.json`、`voice-keys.json`（含摘要平台密钥与 ChatGPT 登录令牌）和 `voice-cache/`；服务不读取这些文件。预览版的语音设置、密钥和缓存写入其独立的应用数据目录，不写正式版数据根。
 
 CLI 级可用模型名单是任务、编排工位及会议共同的模型边界；当前宿主启用编排时不披露普通任务目录或套用其场景默认值，既有普通任务配置保留供关闭编排后恢复（[ADR-0063](../adr/0063-cli-model-pool-and-orchestration-precedence.md)）。
+
+专项与通用角色目录由产品共享定义，App 保存角色开关与每档绑定，服务按当前宿主编排档位公布可用角色并校验派发。停用角色不进入目录、schema 与生成规则，绑定和历史仍保留；同难度专项优先与通用兜底由 Manager 显式选择，服务不自动调度或换模型（[ADR-0065](../adr/0065-predefined-specialist-roles.md)）。

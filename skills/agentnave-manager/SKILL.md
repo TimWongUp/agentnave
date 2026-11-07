@@ -38,7 +38,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 工位、续接与转发
 
-每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是显示给用户看的职责，不影响身份，写这位员工这次具体做什么，如「接手方视角」。用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 传 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`、`worker-frontend-easy`、`worker-frontend-hard` 或 `image-generator`，可省略 `provider`，由服务按 App 工位选 CLI；工位缺失、未启用、文件损坏或属于宿主自带子代理时会报错。最终 `provider` 是工位的 CLI 时，服务套用工位的模型和档位，显式传的 `model`、`effort` 优先。继承与推断的参数来源都列在回执 `defaults_applied` 中。
+每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是显示给用户看的职责，不影响身份，写这位员工这次具体做什么，如「接手方视角」。用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 选择 `list_members` 公布的通用、专项工位或生图工位，可省略 `provider`，由服务按 App 工位选 CLI；工位缺失、未启用、文件损坏或属于宿主自带子代理时会报错。最终 `provider` 是工位的 CLI 时，服务套用工位的模型和档位，显式传的 `model`、`effort` 优先。继承与推断的参数来源都列在回执 `defaults_applied` 中。
 
 - 续接：`start_agent` 默认开新线程。接着同一线程干活时，传上次结果返回的 `session_id`，省略的 `provider`、`cwd`、`role`、`seat` 继承本 boss 历史中该原生会话最近一次任务，显式值优先；`access` 不继承，只换 `role` 不传 `seat` 时也不再沿用旧工位；不能换 provider。找不到历史或跨 provider 重名时补传 `provider` 和 `cwd`，其他 boss 的历史不提供默认值，`manager_session_id` 仍按上节传入。不能拿 `invocation_id` 当会话 ID；上下文里找不到时，用 `read_conversation` 读回任务的 `session_id`。任务已换阶段、旧细节不再需要时，写简报开新线程或新会议，暂停较久后尤其如此，因为缓存过期后续接要整段重建；仍需原始证据时继续续接。
 - 同时运行上限：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝。等部分任务结束后再派，或减少并联席位；串联轮只占一个名额，但到最后一席启动前（包括等待审核时）一直占着。
@@ -48,7 +48,9 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## 选择调用方式
 
-选谁执行：用户点名优先，否则 boss 按 `list_members` 自定。用户在 App 设了 Explorer（只读：探索、规划、评审）或 Worker（可写：实现）时，`orchestration` 给出各自简单、困难两档，按任务难度选一档；Worker 另有界面两档（`worker_frontend`），实现涉及界面时改用它，没设时服务沿用 Worker 同档。派发时 `seat` 写成对应的 `explorer-easy`、`worker-frontend-hard` 等，可省略 `provider`、`access` 和模型；`seat` 不显示，`role` 仍照常写具体职责。
+选谁执行：用户点名优先，否则从 `list_members.orchestration` 当前可见工位中，先按任务难度选简单或困难档，再选任务对应的专项；专项不可用时明确选同难度的通用探索／执行。通用也不可用时由 boss 自己完成或说明缺少能力，启用编排时不回用隐藏的普通任务池。不跨难度、不静默换模型，关闭的角色不因兜底重新出现。派发的 `seat` 使用可见分组的前缀加 `-easy` 或 `-hard`，可省略 `provider`、`access` 和模型；`role` 仍写具体职责。工位绑定的角色与 CLI 原生工具能力分别判断，保存绑定不代表 CLI 具备相应搜索或制作工具。
+
+产品提供通用探索、通用执行，以及代码实现、界面实现、写作、网页知识检索、社交调研、数据分析、文档制作；工具 schema 给出当前启用的 seat 名称，使用前读取当前目录。既有界面组缺档时，仅在界面和通用执行都启用时沿用 Worker 同档；其他专项未绑定时不继承通用身份。
 
 仅当 `list_members` 返回 `orchestration.image_generation` 时，生图任务使用这个可选工位，以 `seat="image-generator"` 派发，不分简单、困难档；未配置时不沿用 Worker。工位选择的是与 CLI 对话的模型，实际生图由它调用自身可用的服务，派发时写清图像需求与产物路径，不传生图模型或接口参数。CLI 是否具备生图能力由其原生工具与配置决定，保存工位不代表能力验证；同类宿主不会收到这个生图工位；其自身生图能力由宿主原有规则处理。
 

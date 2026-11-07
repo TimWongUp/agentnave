@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from jsonschema import Draft202012Validator
 from mcp import Client, StdioServerParameters
 from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent
@@ -17,6 +18,7 @@ from agentnave import __version__, mcp_runtime, mcp_server
 from agentnave.adapters.base import AdapterHooks
 from agentnave.mcp_projection import without_empty_fields
 from agentnave.mcp_server import mcp
+from agentnave.orchestration_roles import role_catalog
 from agentnave.processes import spawn_process, terminate_process_tree
 
 EXPECTED_TOOLS = [
@@ -112,6 +114,148 @@ async def _start_and_wait(client: Client, **arguments: object) -> dict[str, obje
     finished = _first(await client.call_tool("wait", {"ids": [payload["invocation_id"]]}))
     assert finished["status"] == "succeeded", finished
     return payload
+
+
+@pytest.mark.asyncio
+async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    catalog = role_catalog()
+    document = {
+        "version": 1,
+        "preset": "split",
+        "enabled_roles": [role.group for role in catalog],
+        **{
+            role.group: {
+                difficulty: {"provider": "claude", "model": f"{role.group}-{difficulty}"}
+                for difficulty in ("easy", "hard")
+            }
+            for role in catalog
+        },
+    }
+    path = tmp_path / "orchestration.json"
+    path.write_text(json.dumps(document))
+    async with Client(mcp) as client:
+        for role in catalog:
+            for difficulty in ("easy", "hard"):
+                result = await _start_and_wait(
+                    client, cwd=str(tmp_path), seat=f"{role.seat_prefix}-{difficulty}"
+                )
+                assert result["provider"] == "claude"
+                assert result["model"] == f"{role.group}-{difficulty}"
+                assert result["access"] == role.access
+                assert {"permission_mode", "permission_fallback"} <= set(
+                    cast(list[str], result["defaults_applied"])
+                )
+                assert (
+                    "read-only instruction (access=read)"
+                    in cast(list[str], result["defaults_applied"])
+                ) is (role.access == "read")
+        document["enabled_roles"] = []
+        path.write_text(json.dumps(document))
+        for role in catalog:
+            for arguments in (
+                {"seat": f"{role.seat_prefix}-hard"},
+                {"seat": f"{role.seat_prefix}-hard", "provider": "claude"},
+            ):
+                rejected = await client.call_tool(
+                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
+                )
+                assert rejected.is_error and "not enabled" in str(rejected.content)
+        for arguments in ({}, {"provider": "claude", "cwd": str(tmp_path)}):
+            rejected = await client.call_tool(
+                "start_agent", {"prompt": "ok", "session_id": "session-e2e", **arguments}
+            )
+            assert rejected.is_error and "worker-documents-hard seat is not enabled" in str(
+                rejected.content
+            )
+        # Existing history stays readable and a new duty keeps the existing inheritance rule.
+        resumed = await _start_and_wait(client, session_id="session-e2e", role="普通续接")
+        assert "access" not in resumed
+    assert json.loads(path.read_text()) == document
+    path.unlink()
+    async with Client(mcp) as client:
+        rejected = await client.call_tool(
+            "start_agent",
+            {"prompt": "ok", "cwd": str(tmp_path), "provider": "claude", "seat": "worker-easy"},
+        )
+        assert rejected.is_error and "not enabled" in str(rejected.content)
+
+
+@pytest.mark.asyncio
+async def test_role_switches_filter_complete_published_schemas_and_member_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "orchestration.json"
+    catalog = role_catalog()
+    document = {
+        "version": 1,
+        "preset": "split",
+        **{role.group: {"easy": {"provider": "claude", "model": "saved"}} for role in catalog},
+    }
+    async with Client(mcp) as client:
+        for enabled in (
+            None,
+            [],
+            ["worker_code", "explorer_web"],
+            [role.group for role in catalog],
+            [],
+        ):
+            path.write_text(json.dumps({**document, "enabled_roles": enabled}))
+            expected = (
+                set(enabled) if enabled is not None else {"explorer", "worker", "worker_frontend"}
+            )
+            tools = await client.list_tools(cache_mode="refresh")
+            schemas = json.dumps([tool.model_dump(by_alias=True) for tool in tools.tools])
+            start = next(tool for tool in tools.tools if tool.name == "start_agent")
+            seats = {
+                f"{role.seat_prefix}-{difficulty}"
+                for role in catalog
+                if role.group in expected
+                for difficulty in ("easy", "hard")
+            }
+            if seats:
+                assert set(start.input_schema["$defs"]["OrchestrationRole"]["enum"]) == seats
+            else:
+                assert "seat" not in start.input_schema["properties"]
+            for tool in tools.tools:
+                Draft202012Validator.check_schema(tool.input_schema)
+                if tool.output_schema is not None:
+                    Draft202012Validator.check_schema(tool.output_schema)
+            listed = _payload((await client.call_tool("list_members", {})).structured_content)
+            status = _payload(listed["orchestration"])
+            for role in catalog:
+                assert (role.group in status) is (role.group in expected)
+                # Inspect all definitions, including serialization-mode model names.
+                assert (f'"{role.group}"' in schemas) is (role.group in expected)
+                for difficulty in ("easy", "hard"):
+                    assert (f'"{role.seat_prefix}-{difficulty}"' in schemas) is (
+                        role.group in expected
+                    )
+            assert '"image-generator"' not in schemas
+            assert '"image_generation"' not in schemas
+
+
+def test_role_schema_filter_handles_serialization_definition_names() -> None:
+    from agentnave.orchestration_roles import OrchestrationStatus
+
+    # Pydantic can qualify model names and distinguish validation/serialization definitions.
+    schema = {
+        "$defs": {
+            f"agentnave__orchestration_roles__OrchestrationStatus-{mode}": OrchestrationStatus.model_json_schema(
+                mode=mode
+            )
+            for mode in ("validation", "serialization")
+        }
+    }
+    mcp_runtime._filter_role_schema(schema, frozenset({"worker_code"}), False)  # pyright: ignore[reportPrivateUsage]
+    serialized = json.dumps(schema)
+    for role in role_catalog():
+        assert (f'"{role.group}"' in serialized) is (role.group == "worker_code")
+    assert '"image_generation"' not in serialized
 
 
 @pytest.mark.asyncio
@@ -312,7 +456,7 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
             ({}, "Pass provider"),
             ({"role": "ordinary duty"}, "Pass provider"),
             ({"role": "correctness-reviewer"}, "not configured"),
-            ({"seat": "worker-easy"}, "not configured"),
+            ({"seat": "worker-easy"}, "not enabled"),
         ):
             result = await client.call_tool(
                 "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
@@ -352,6 +496,7 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
     document: dict[str, object] = {
         "version": 1,
         "preset": "split",
+        "enabled_roles": [],
         "worker": {"easy": seat, "hard": seat},
     }
     path.write_text(json.dumps(document))
@@ -369,6 +514,8 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
         path.write_text(json.dumps(document))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
         assert _payload(listed["orchestration"])["image_generation"] == seat
+        assert "worker" not in _payload(listed["orchestration"])
+        assert "worker-easy" not in str(await client.list_tools())
         assert "image-generator" in str(await client.list_tools())
         started = await _start_and_wait(
             client, cwd=str(tmp_path), seat="image-generator", role="生成插图"
@@ -1783,15 +1930,12 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         )
         disabled = _payload((await client.call_tool("list_members", {})).structured_content)
         assert disabled["orchestration"] == {"enabled": False}
-        assert (await start({}, seat="worker-easy"))["defaults_applied"] == [
-            *applied,
-            "access (worker-easy seat)",
-        ]
-        assert (await start({}, seat="explorer-hard"))["defaults_applied"] == [
-            *applied,
-            "access (explorer-hard seat)",
-            "read-only instruction (access=read)",
-        ]
+        for name in ("worker-easy", "explorer-hard"):
+            rejected = await client.call_tool(
+                "start_agent",
+                {"prompt": "ok", "cwd": str(tmp_path), "provider": "claude", "seat": name},
+            )
+            assert rejected.is_error and "not enabled" in str(rejected.content)
         (tmp_path / "review.json").write_text(
             json.dumps(
                 {"version": 1, "seats": {"correctness-reviewer": {**seat, "provider": "codex"}}}

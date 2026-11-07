@@ -50,6 +50,7 @@ from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
+from agentnave.orchestration_roles import OrchestrationRole
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -556,7 +557,7 @@ class Conversations(ConversationStore):
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         role: str | None = None,
-        seat: str | None = None,
+        seat: OrchestrationRole | None = None,
         forward: list[str] | None = None,
         access: str | None = None,
     ) -> TaskStart:

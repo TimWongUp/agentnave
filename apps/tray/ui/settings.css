@@ -244,10 +244,15 @@
 .review-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 180px) minmax(0, 260px) minmax(0, 112px); gap: 10px; align-items: center; }
 .review-role { display: flex; flex-direction: column; gap: 2px; }
 .review-role small { color: var(--muted); font-size: 11px; }
-.review-row select { min-width: 0; }
+.review-row select { min-width: 0; text-overflow: ellipsis; }
+.orchestration-group { display: grid; gap: 8px; }
+.orchestration-switch { display: flex; align-items: center; gap: 10px; min-height: var(--control-height); cursor: pointer; }
+.orchestration-switch small { color: var(--muted); font-size: 11px; }
+.orchestration-group .review-role { padding-left: 44px; font-size: 12.5px; }
 @media (max-width: 700px) {
   .review-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px); }
   .review-role { grid-column: 1 / -1; }
+  .orchestration-group .review-role { padding-left: 0; }
 }
 .skill-rows { display: grid; gap: 10px; max-width: 1100px; }
 .skill-row { border: 1px solid var(--line); border-radius: 12px; background: var(--panel, var(--bg)); }

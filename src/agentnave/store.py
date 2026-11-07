@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from agentnave.host import HostName, HostSource, RetiredHostName
 from agentnave.locks import lock_file
 from agentnave.models import ProviderOption, RoundOrder
+from agentnave.orchestration_roles import OrchestrationRole
 
 if TYPE_CHECKING:
     from agentnave.db import Database
@@ -124,7 +125,7 @@ class TaskRecord(BaseModel):
     manager_model: str | None = None
     manager_reported_model: str | None = None
     role: str | None = None
-    seat: str | None = None
+    seat: OrchestrationRole | None = None
     access: Literal["read", "write"] | None = None  # declared, never enforced
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
