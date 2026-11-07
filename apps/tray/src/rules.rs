@@ -20,7 +20,7 @@ const SHARED: &str = "## AgentNave 编排偏好
 - 探索、规划派 Explorer，实现派 Worker。
 - 同一组文件同一时间只有一个 Worker 在写；同一职责续接只传 `session_id`，其余由服务继承；换职责时传新的 `role` 或 `seat` 并给自足简报。
 - 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。
-- 结果不会主动推送：派发后结束本轮前用 `wait` 收齐全部终态；任务在跑时要先问用户，也先 `wait` 或 `cancel`。
+- 结果不会主动推送：派发后结束本轮前用 `wait` 收齐全部终态；每次最多等十分钟，常规省略 `wait_seconds`，`seq` 从 1 开始逐次递增以区分连续等待；任务在跑时要先问用户，也先 `wait` 或 `cancel`。
 - `succeeded` 不等于完成，boss 核对产物后验收；失败或取消时先核对现状，再决定续接、重派还是收尾。";
 
 const IMAGE_GENERATION: &str = "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。";

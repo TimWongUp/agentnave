@@ -16,6 +16,7 @@ mod snapshot;
 mod split;
 #[cfg(test)]
 mod tests;
+mod timeouts;
 mod transaction;
 
 use crate::detect::executable;

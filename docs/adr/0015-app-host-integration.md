@@ -5,6 +5,7 @@
 - 外部 Skill 不覆盖与所有权校验由 [ADR-0036](0036-app-owns-service-skills.md) 修订
 - 配置根目录手填入口由 [ADR-0029](0029-settings-without-free-text.md) 取代
 - 宿主接入行按实际配置目录划分的规则由 [ADR-0040](0040-boss-app-from-session-records.md) 补充
+- 已有 AgentNave 条目的工具超时下限由 [ADR-0066](0066-unified-wait-window-and-call-sequence.md) 补充。
 
 App 优先的接入需要同时维护 MCP 与配套 Skill。已有手写条目包含用户选择的环境、启停与工具过滤，整体重建会丢失这些选择；已有 Skill 常由跨宿主部署管理器维护。用户级接入由托盘后端管理，核心与工作室服务不增加宿主写入能力，手动接入方式继续可用。
 

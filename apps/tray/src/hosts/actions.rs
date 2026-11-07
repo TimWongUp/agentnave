@@ -106,6 +106,8 @@ impl Hosts {
                         *latest = Some(json!({}));
                     }
                     patch(latest.as_mut().unwrap(), before.entry.as_ref(), desired);
+                    timeouts::ensure(latest.as_mut().unwrap(), host)
+                        .map_err(|error| format!("write_failed:{error}"))?;
                 } else {
                     *latest = None;
                 }
@@ -405,11 +407,9 @@ impl Hosts {
                         ));
                     }
                     desired = Some(if id == "deepseek" {
-                        // dsh cuts a tool call off at 60 s; `wait` blocks for up to 300 s.
-                        json!({"serverName":"agentnave","transport":"stdio","command":path,"env":host_env(host),"toolCallTimeoutMs":310_000})
+                        json!({"serverName":"agentnave","transport":"stdio","command":path,"env":host_env(host)})
                     } else if id == "zcode" {
-                        // ZCode stops a tool call after 30 s by default; `wait` blocks up to 300 s.
-                        json!({"type":"stdio","command":path,"args":[],"env":host_env(host),"timeoutMs":310000})
+                        json!({"type":"stdio","command":path,"args":[],"env":host_env(host)})
                     } else if id == "hermes" {
                         json!({"command":path,"args":[],"env":host_env(host),"enabled":true})
                     } else {

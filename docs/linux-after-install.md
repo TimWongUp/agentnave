@@ -238,7 +238,7 @@ for s in agentnave-manager $EXTRA; do   # 第 6 步选了装时 EXTRA=agentnave-
    start_agent(prompt="回复：好了", seat="explorer-easy",   # 没开编排时改用 provider="<第 3 步选的第一个 CLI>"
                role="自检", cwd="/tmp",
                manager_session_id="<固定 UUID>")
-   wait(ids=["<invocation_id>"], wait_seconds=240, include_output=true)
+   wait(ids=["<invocation_id>"], wait_seconds=600, include_output=true)
    ```
    期望：`succeeded`，输出“好了”（本机实测由 Pi 执行，大约 5 秒）。返回 `Boss model unknown` 警告是正常的（§8.4），不要因此重复调用。
 

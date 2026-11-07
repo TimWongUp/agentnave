@@ -9,6 +9,7 @@
 - 服务主动终止情形与终态句柄保留七天的边界由 [ADR-0049](0049-service-initiated-termination.md) 补充
 - 由 [ADR-0057](0057-boss-answers-native-prompts.md) 补充：待答弹框是新的就绪原因，收件箱同样返回。
 - 由 [ADR-0064](0064-dispatch-receipts-steer-to-wait.md) 修订：派发与等待回执在仍有待收结果时带 `next` 引导，派发调用可选顺带等一次。
+- 由 [ADR-0066](0066-unified-wait-window-and-call-sequence.md) 修订：所有宿主统一等待十分钟，移除旧的 240 秒档位；连续等待可用 `seq` 区分。
 
 ## 背景
 
