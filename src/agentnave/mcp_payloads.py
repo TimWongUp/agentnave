@@ -70,6 +70,8 @@ class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: NotRequired[str | None]  # the declared tier; recorded only, never enforced
     unreceived: NotRequired[list[UnreceivedPayload]]
+    next: NotRequired[str]  # what to call before ending the turn while ends wait (ADR-0064)
+    wait: NotRequired[WaitPayload]  # the wait this dispatch ran when asked to
 
 
 class InvocationListItem(TypedDict):
@@ -154,6 +156,7 @@ class WaitPayload(TypedDict):
     all_finished: bool
     updates: list[InvocationPayload]
     rounds: list[RoundPayload]
+    next: NotRequired[str]
 
 
 class CancelPayload(TypedDict):
@@ -168,6 +171,8 @@ class ShowRunPayload(TypedDict):
     round: NotRequired[RoundPayload]
     unreceived: NotRequired[list[UnreceivedPayload]]
     warnings: NotRequired[list[str]]
+    next: NotRequired[str]
+    wait: NotRequired[WaitPayload]
 
 
 class ConversationSummary(TypedDict):

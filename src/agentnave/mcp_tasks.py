@@ -26,11 +26,13 @@ from agentnave.mcp_payloads import (
     InvocationListPayload,
     InvocationPayload,
     RoundPayload,
+    ShowRunPayload,
     TaskStartPayload,
     WaitPayload,
 )
 from agentnave.mcp_runtime import (
     ACCESS,
+    DISPATCH_WAIT,
     ManagerModel,
     ManagerSessionId,
     Runtime,
@@ -149,6 +151,7 @@ async def start_agent(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
+    wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
@@ -234,6 +237,24 @@ async def start_agent(
     unreceived = _unreceived(_conversations(ctx), manager_session_id)
     if unreceived:
         payload["unreceived"] = unreceived
+    return await waited_dispatch(payload, started.invocation_id, wait, manager_session_id, ctx)
+
+
+async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
+    payload: P,
+    handle: str,
+    wait_now: bool,
+    manager_session_id: str | None,
+    ctx: Context[Runtime],
+) -> P:
+    """Point a dispatch at wait, or run that wait now when asked (ADR-0064)."""
+    if not wait_now:
+        payload["next"] = runtime.WAIT_NEXT
+        return payload
+    waited = await receive(ids=[handle], manager_session_id=manager_session_id, ctx=ctx)
+    payload["wait"] = waited
+    if not waited["all_finished"]:
+        payload["next"] = runtime.WAIT_AGAIN
     return payload
 
 
@@ -429,6 +450,9 @@ async def wait(
     )
 
 
+receive = wait
+
+
 @dataclass
 class _WaitResults:
     invocation_ids: list[str]
@@ -501,13 +525,16 @@ def _wait_payload(
     else:
         delivered = conversations.delivered_tasks | conversations.delivered_rounds
         pending_ids = [handle for handle in ids if handle not in delivered]
-    return {
+    payload: WaitPayload = {
         "reason": "wait_elapsed" if elapsed else "ready",
         "pending_ids": pending_ids,
         "all_finished": not pending_ids,
         "updates": updates,
         "rounds": rounds,
     }
+    if pending_ids:
+        payload["next"] = runtime.WAIT_AGAIN
+    return payload
 
 
 async def cancel(

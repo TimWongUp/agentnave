@@ -117,6 +117,13 @@ def _read_excluded_providers() -> frozenset[str]:
 
 WAIT_SECONDS = 240
 
+# Ends are never pushed (ADR-0007), so receipts say what to call before the turn ends (ADR-0064).
+WAIT_NEXT = (
+    "Ends are not pushed: before ending your turn, call wait (omit ids, same "
+    "manager_session_id) until all_finished."
+)
+WAIT_AGAIN = "Still pending: call wait again before ending your turn."
+
 EXCLUDED_PROVIDERS = _read_excluded_providers()
 PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
@@ -131,6 +138,10 @@ PROVIDER_SELECTION = (
     + ". start_agent rejects excluded providers; meetings follow discussion member limits without host exclusions."
 )
 ACCESS = "Declared read/write access; see MCP instructions."
+DISPATCH_WAIT = (
+    "true waits up to 240s like wait(ids=[this handle]) and returns it in wait; only for a single "
+    "dispatch whose result this turn needs, not parallel dispatches."
+)
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
     provider: get_adapter(provider).options_description
     for provider in get_args(ProviderName.__value__)
@@ -657,10 +668,13 @@ __all__ = [
     "TITLE_WIDTH",
     "_TITLE_WIDE_RANGES",
     "HOST",
+    "WAIT_AGAIN",
+    "WAIT_NEXT",
     "WAIT_SECONDS",
     "EXCLUDED_PROVIDERS",
     "PROVIDER_SELECTION",
     "ACCESS",
+    "DISPATCH_WAIT",
     "_HIDDEN_TOOLS",
     "_CHAT_TOOLS",
     "mcp",

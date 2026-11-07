@@ -24,6 +24,7 @@ from agentnave.mcp_payloads import (
     ShowRunPayload,
 )
 from agentnave.mcp_runtime import (
+    DISPATCH_WAIT,
     GroupSeatSpec,
     ManagerModel,
     ManagerSessionId,
@@ -36,6 +37,7 @@ from agentnave.mcp_runtime import (
     _unreceived,
     round_payload,
 )
+from agentnave.mcp_tasks import waited_dispatch
 from agentnave.member_names import seat_identity
 from agentnave.members import (
     CapacityError,
@@ -246,6 +248,7 @@ async def run_round(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
+    wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
     *,
     ctx: Context[Runtime],
 ) -> ShowRunPayload:
@@ -261,7 +264,8 @@ async def run_round(
         extras = (prompt, seats, instructions, forward, title, members, cwd, review, isolated)
         if group_id is None or any(extras):
             raise ToolError("retry_seats takes only group_id. Correct the arguments and retry.")
-        return _retry_seats(conversations, group_id, retry_seats, manager_session_id)
+        payload = _retry_seats(conversations, group_id, retry_seats, manager_session_id)
+        return await _started(payload, wait, manager_session_id, ctx)
     new = group_id is None
     if new:
         if not title or not title.strip() or not members:
@@ -338,7 +342,16 @@ async def run_round(
             raise ToolError(str(exc)) from exc
         raise _rejected(exc) from exc
     _add_started(payload, conversations, round_, manager_session_id)
-    return payload
+    return await _started(payload, wait, manager_session_id, ctx)
+
+
+async def _started(
+    payload: ShowRunPayload, wait_now: bool, manager_session_id: str | None, ctx: Context[Runtime]
+) -> ShowRunPayload:
+    started = payload.get("round")
+    if started is None:
+        return payload
+    return await waited_dispatch(payload, started["round_id"], wait_now, manager_session_id, ctx)
 
 
 class ReviewReceipt(TypedDict):

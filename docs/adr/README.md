@@ -67,3 +67,4 @@
 | 0061 | [宿主配置指向固定启动器，升级不再改写宿主配置](0061-fixed-service-launcher.md) | 已接受 | — |
 | 0062 | [服务统一生成成员称呼](0062-service-owned-member-names.md) | 已接受 | — |
 | 0063 | [CLI 共用模型池，编排替代普通任务目录](0063-cli-model-pool-and-orchestration-precedence.md) | 已接受 | 修订 ADR-0038、ADR-0053 |
+| 0064 | [派发回执引导收取，可选派发后先等](0064-dispatch-receipts-steer-to-wait.md) | 已接受 | 修订 ADR-0007 |
