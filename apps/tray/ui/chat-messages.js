@@ -349,6 +349,10 @@ function typingStatus(m) {
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   return [doing, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
 }
+const ISO_STAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
+function localizeStamps(text) {
+  return text.replace(ISO_STAMP, (iso) => `${dayLabel(iso)} ${clock(iso)}`);
+}
 function updateMessage(rec, m, ctx, id) {
   rec.id = id;
   const flashing = state.flashId === id ? " flash" : "";
@@ -407,7 +411,8 @@ function updateMessage(rec, m, ctx, id) {
     rec.fwd.hidden = !f;
     if (f) {
       rec.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
-      setText(rec.fwd, L(`↪ 转发自 ${f.source || "其他消息"}`, `↪ Forwarded from ${f.source || "another message"}`));
+      const source = f.source && localizeStamps(f.source);
+      setText(rec.fwd, L(`↪ 转发自 ${source || "其他消息"}`, `↪ Forwarded from ${source || "another message"}`));
       setClass(rec.fwd, rec.fwdId ? "fwd" : "fwd dead");
       setAttr(rec.fwd, "aria-disabled", rec.fwdId ? null : "true");
       setAttr(
