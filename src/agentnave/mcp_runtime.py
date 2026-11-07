@@ -122,7 +122,10 @@ WAIT_NEXT = (
     "Ends are not pushed: before ending your turn, call wait (omit ids, same "
     "manager_session_id) until all_finished."
 )
-WAIT_AGAIN = "Still pending: call wait again before ending your turn."
+WAIT_AGAIN = (
+    "Still pending: handle any prompt_pending or review_needed first, then call wait again "
+    "before ending your turn."
+)
 
 EXCLUDED_PROVIDERS = _read_excluded_providers()
 PROVIDER_SELECTION = (

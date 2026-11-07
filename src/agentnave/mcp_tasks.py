@@ -234,9 +234,6 @@ async def start_agent(
     add_write_warning(warnings, manager, request, started.invocation_id, access)
     if warnings:
         payload["warnings"] = warnings
-    unreceived = _unreceived(_conversations(ctx), manager_session_id)
-    if unreceived:
-        payload["unreceived"] = unreceived
     return await waited_dispatch(payload, started.invocation_id, wait, manager_session_id, ctx)
 
 
@@ -248,12 +245,17 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
     ctx: Context[Runtime],
 ) -> P:
     """Point a dispatch at wait, or run that wait now when asked (ADR-0064)."""
+    conversations = _conversations(ctx)
     if not wait_now:
+        if unreceived := _unreceived(conversations, manager_session_id):
+            payload["unreceived"] = unreceived
         payload["next"] = runtime.WAIT_NEXT
         return payload
     waited = await receive(ids=[handle], manager_session_id=manager_session_id, ctx=ctx)
     payload["wait"] = waited
-    if not waited["all_finished"]:
+    if unreceived := _unreceived(conversations, manager_session_id):
+        payload["unreceived"] = unreceived
+    if not waited["all_finished"] or any(conversations.inbox(manager_session_id)):
         payload["next"] = runtime.WAIT_AGAIN
     return payload
 

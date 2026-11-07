@@ -427,6 +427,10 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
             "run_round", {"group_id": show["group_id"], "title": "again", "prompt": "x"}
         )
         assert rejected.is_error and "only open a new meeting" in str(rejected.content)
+        rejected = await client.call_tool(
+            "run_round", {"group_id": show["group_id"], "prompt": "remark", "wait": True}
+        )
+        assert rejected.is_error and "wait needs seats" in str(rejected.content)
         sleeping = await _call(
             client,
             "start_agent",
@@ -492,6 +496,16 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
         assert (await _call(client, "wait", {"manager_session_id": "c"}))[
             "reason"
         ] == "nothing_pending"
+        # Same chat still has sleeping pending, so wait=True still steers back to wait.
+        still_pending = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path), "wait": True},
+        )
+        assert (
+            cast(dict[str, object], still_pending["wait"])["all_finished"] is True
+            and still_pending["next"] == mcp_runtime.WAIT_AGAIN
+        )
         cancelled = await _cancel(client, sleeping["invocation_id"])
         assert cancelled["status"] == "cancelled"
         empty = await _call(client, "wait", {})
