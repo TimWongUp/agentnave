@@ -75,7 +75,7 @@ App 设置文件按写入方和损坏时的影响范围分开：
 | 文件 | 写入方 | 服务的读法 |
 | --- | --- | --- |
 | `members.json` | App；不装 App 时由用户手写 | 每次派发现读；损坏时返回 App 修复错误 |
-| `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告，需要工位确定 CLI 时拒绝调用 |
+| `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告；普通工位调用一律拒绝，包括显式提供 Provider 的调用，评审工位仍按其配置校验 |
 | `permissions.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
 | `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude 时读取交互模式开关，缺省打开 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |

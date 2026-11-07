@@ -50,6 +50,7 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
             })
         })
         .collect();
+    text.truncate(text.trim_end().len());
     // Use catalogue order rather than JSON map sorting for a stable, readable directory.
     let enabled = crate::orchestration_roles::enabled_groups(document).unwrap_or_default();
     if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
@@ -82,4 +83,6 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
         .to_owned();
     let first = apply(&document, format!("{section}\n用户正文"));
     assert_eq!(first, "用户正文");
+    let last = apply(&document, format!("用户正文\n{section}"));
+    assert_eq!(last, "用户正文");
 }
