@@ -29,10 +29,11 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
         text = text.replace(section, "");
     }
     // Use catalogue order rather than JSON map sorting for a stable, readable directory.
+    let enabled = crate::orchestration_roles::enabled_groups(document).unwrap_or_default();
     if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
         for role in catalog {
             let group = role["group"].as_str().expect("role group");
-            if crate::orchestration_roles::enabled(document, group) {
+            if enabled.contains(&group) {
                 text.push_str(sections[group].as_str().expect("role section"));
             }
         }
