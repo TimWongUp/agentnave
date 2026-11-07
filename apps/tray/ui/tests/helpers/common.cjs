@@ -15,7 +15,7 @@ function common(english = false) {
     setInterval() {},
   });
   vm.runInContext(readFileSync(`${__dirname}/../../common.js`, "utf8"), context);
-  return Object.fromEntries(["deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames"]
+  return Object.fromEntries(["deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
     .map(key => [key, context.window.AN[key]]));
 }
 
