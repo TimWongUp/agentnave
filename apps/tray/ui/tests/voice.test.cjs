@@ -6,6 +6,22 @@ const vm = require("node:vm");
 const { office, flush, message } = require("./helpers/voice.cjs");
 const { identities } = require("./helpers/common.cjs");
 
+test("an unknown DeepSeek speaker keeps the character's family voice as member or boss", async () => {
+  const app = await office(true);
+  app.avatars.family = () => null;
+  app.ctx.c.host = "deepseek";
+  const messages = [];
+  for (const role of ["member", "manager"]) {
+    messages.push(message(role, `2026-11-01T00:00:0${messages.length + 1}Z`, {
+      speaker: { role, provider: "deepseek", model: "unknown" },
+    }));
+    await app.feed(messages);
+    assert.equal(app.requests.at(-1).family, "deepseek");
+    assert.equal(app.requests.at(-1).boss, role === "manager");
+    await app.end();
+  }
+});
+
 test("changing settings after repeated failures restores playback and resets the failure count", async () => {
   let broken = true;
   const app = await office(true, async () => { if (broken) throw new Error("synthesis failed"); });

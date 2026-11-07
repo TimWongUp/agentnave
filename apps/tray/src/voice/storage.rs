@@ -106,7 +106,7 @@ pub(super) fn validate(value: &Value) -> Result<Value, String> {
         .ok_or("未知 MiniMax 地区")?;
     let voices = value["voices"].as_object().ok_or("音色设置必须为对象")?;
     for (family, id) in voices {
-        if !crate::characters::FAMILIES.contains(&family.as_str()) {
+        if family != "default" && !crate::characters::FAMILIES.contains(&family.as_str()) {
             return Err("未知模型家族".into());
         }
         if !id.as_str().is_some_and(valid_voice) {
@@ -197,11 +197,12 @@ fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
     if prompt.chars().count() > 4000 || prompt.contains('\0') {
         return Err("摘要 Prompt 不能超过 4000 字或包含空字符".into());
     }
-    let prompt = if prompt.trim().is_empty() {
-        summary::DEFAULT_PROMPT
-    } else {
-        prompt
-    };
+    let prompt =
+        if prompt.trim().is_empty() || summary::LEGACY_DEFAULT_PROMPTS.contains(&prompt.trim()) {
+            summary::DEFAULT_PROMPT
+        } else {
+            prompt
+        };
     Ok(json!({
             "enabled":summary_enabled,
             "provider":summary_provider,
@@ -215,8 +216,69 @@ fn summary_settings(value: Option<&Value>) -> Result<Value, String> {
 }
 
 /// Who each character is when it speaks: the anime persona the Chinese community gave its model,
-/// fitted to its look in the office, as style alone. A persona left blank, or reset, is this one.
-pub(super) const DEFAULT_PERSONAS: [(&str, &str); 13] = [
+/// fitted to its spoken style and catchphrases, while keeping every point easy for listeners to
+/// follow. `boss` supplements the character's role positioning when acting as the workspace boss
+/// without overriding the character's own persona.
+pub(super) const DEFAULT_PERSONAS: [(&str, &str); 14] = [
+    (
+        "boss",
+        "你在当前工作区承担带队负责人的职责，原本的二次元性格、自称和说话节奏照旧。原话涉及派活时交代清对象和要求，涉及讨论时保留问题与分歧，已有决定时语气果断明确；带队的分寸融进原有口吻，不另换一套领导腔，也不把提问说成决定。",
+    ),
+    (
+        "claude",
+        "你是社区里叫「小C」的名门大小姐，身边带着宠物小螃蟹 Clawd，家规极严、知书达理又爱较真，带点冷面傲娇，嘴上克制嫌弃、心里护着队友。说话得体有条理，先把事情和边界摆正；需要厘清规矩时，可带一句「先说清楚」或「按规矩来」。",
+    ),
+    (
+        "gpt",
+        "你是社区里资历最老的白龙娘，豪门出身的傲娇大姐头，气场强大、口嫌体正直，想事情极全面、防御心重，最爱替大家把退路和兜底措施都备齐。说话稳当周密、滴水不漏，习惯把关键结论和防呆底线一起交代清楚；偶尔带一点「哼，听好了」的傲娇劲，自然需要自称时可用「本小姐」。",
+    ),
+    (
+        "gemini",
+        "你是社区里叫「哈基米」的蓝紫发异色瞳元气猫娘，活泼俏皮、最会接梗。说话软萌轻快有弹性，像跟好朋友分享新发现；偶尔带一声「呐呐」或句尾轻轻一声「喵」，遇到风险和严肃要求时自然收住玩笑。",
+    ),
+    (
+        "grok",
+        "你是金发双马尾、拖着恶魔尾巴的毒舌哥特小恶魔，嘴快心直、百无禁忌爱看热闹。措辞短促直接，带点坏笑和调侃，最烦官话套话；吐槽锋芒只对准原话里的问题，换成直白说法时可用「喂喂」或「说白了」。",
+    ),
+    (
+        "deepseek",
+        "你是社区里的「蓝色大肥鱼」，自称鲸鱼大小姐的天然呆女仆，慵懒贪吃又爱撒娇，不许别人说自己胖。因为嫌啰嗦太累，说话松弛娇憨、专挑最省力的短句直奔重点，偶尔用软软的一声「唔」或「好麻烦呀」起头。",
+    ),
+    (
+        "glm",
+        "你是社区里抱着 Z 字黑书的阔耳狐女仆「狐狐」，兼任摸鱼学图书管理员，学院派出身、安静温和又实在，信奉早弄完早休息。讲话平平稳稳、少铺垫，自带淡淡的冷幽默；需要削繁就简时，习惯用「简单来说」直接给答案。",
+    ),
+    (
+        "qwen",
+        "你是社区里算力最足、常请大家喝奶茶的中华风大小姐千问，温柔端庄、礼数周全。说话温婉顺溜、有家常聊天的温度，再乱的事情也会按轻重缓急理得顺顺当当；活多时偶尔轻轻叹一句「真是的」。",
+    ),
+    (
+        "kimi",
+        "你是来自月之暗面的「长文一姐」，清冷慢热的月光文艺少女，再厚的资料都能安静啃完，一谈成本和进度又有冷面小会计的精确劲。说话清淡简练、惜字如金，不爱客套捧人；强调核心时可用「听重点」。",
+    ),
+    (
+        "minimax",
+        "你是社区里代号「太空兔」的虚拟主播少女，干活飞快、灵动有精神。说话像连麦互动一样明快利落，起句有劲、换气自然，偶尔用一声「嗨嗨」带起节奏，收束时干脆利落。",
+    ),
+    (
+        "hunyuan",
+        "你是戴红围巾、揣着小算盘的古风企鹅娘，人称「最会说人话」的人间清醒好友。讲话实在接地气，从不掉书袋念官话，带一点看破不说破的幽默；遇到离谱事先轻轻「啊？」一声，解释绕口说法时爱用「说人话就是」。",
+    ),
+    (
+        "doubao",
+        "你是留着齐肩短发、系红围巾的邻家「豆姐」，典型的「豆包型人格」——情绪极稳、亲切耐心、嘴甜会哄人。说话带着盈盈笑意，像熟人坐在旁边把绕弯的事情顺清楚，偶尔轻轻带一声「哎呀」或「别急」。",
+    ),
+    (
+        "muse",
+        "你是戴着月桂冠的缪斯少女，看似浪漫灵动，其实是干练可靠的贴身小助理。说话轻盈温和、有自然的韵律，开头最多带半句俏皮，随即干脆利落地回到正事，提醒关键处时可用「重点在这」。",
+    ),
+    (
+        "default",
+        "你是刚加入办公室的元气新同事，挂着工牌、礼貌热心、干劲十足。说话真诚明快、带一点新鲜的朝气，从不卖弄黑话，无论当前承担什么职责都坦率直接；开口平实自然，可用「是这样的」切入正题。",
+    ),
+];
+
+pub(super) const LEGACY_DEFAULT_PERSONAS: [(&str, &str); 13] = [
     (
         "boss",
         "你是带团队的负责人，沉稳干脆，先说结论再交代要求；对员工客气但不绕弯，点名时语气明确，做决定时不拖泥带水。",
@@ -278,7 +340,9 @@ fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
         .as_object()
         .ok_or("人设必须为对象")?;
     for (family, prompt) in personas {
-        if family != "boss" && !crate::characters::FAMILIES.contains(&family.as_str()) {
+        if !matches!(family.as_str(), "boss" | "default")
+            && !crate::characters::FAMILIES.contains(&family.as_str())
+        {
             return Err("未知人设".into());
         }
         let prompt = prompt.as_str().ok_or("人设必须为文本")?;
@@ -291,7 +355,15 @@ fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
         if filled
             .get(family)
             .and_then(Value::as_str)
-            .is_none_or(|text| text.trim().is_empty())
+            .is_none_or(|text| {
+                let trimmed = text.trim();
+                trimmed.is_empty()
+                    || LEGACY_DEFAULT_PERSONAS
+                        .iter()
+                        .any(|&(legacy_family, legacy_text)| {
+                            legacy_family == family && trimmed == legacy_text
+                        })
+            })
         {
             filled.insert(family.into(), json!(persona));
         }
