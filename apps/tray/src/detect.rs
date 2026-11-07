@@ -15,11 +15,12 @@ pub(crate) use locate::uninstall_icon;
 use locate::*;
 pub(crate) use locate::{codex_desktop_app, executable, locate};
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 use std::sync::mpsc;
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -76,15 +77,89 @@ const CLAUDE_ALIASES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
 /// dsh has no listing command; its bundled official models, shipped default first.
 const DEEPSEEK_CATALOG: [&str; 2] = ["deepseek-flash", "deepseek-v4-pro"];
 
-static CACHE: Mutex<Option<Value>> = Mutex::new(None);
+static CACHE: LazyLock<Mutex<DetectionCache>> = LazyLock::new(|| Mutex::new(Default::default()));
+
+#[derive(Default)]
+struct DetectionCache {
+    all: Option<Value>,
+    revision: u64,
+    // At most one successful write per provider, including during the first full probe.
+    versions: BTreeMap<String, VersionWrite>,
+}
+
+struct VersionWrite {
+    revision: u64,
+    path: PathBuf,
+    version: String,
+}
+
+impl VersionWrite {
+    fn apply(&self, provider: &str, all: &mut Value) {
+        if all[provider]["path"]
+            .as_str()
+            .is_some_and(|active| same_path(&self.path, Path::new(active)))
+        {
+            all[provider]["version"] = json!(self.version);
+        }
+    }
+}
+
+impl DetectionCache {
+    fn remember(&mut self, provider: &str, path: &Path, version: &str) {
+        self.revision += 1;
+        let write = VersionWrite {
+            revision: self.revision,
+            path: path.to_owned(),
+            version: version.to_owned(),
+        };
+        if let Some(all) = &mut self.all {
+            write.apply(provider, all);
+        }
+        self.versions.insert(provider.to_owned(), write);
+    }
+
+    fn finish(&mut self, started: u64, mut all: Value) -> Value {
+        for (provider, write) in &self.versions {
+            if write.revision > started {
+                write.apply(provider, &mut all);
+            }
+        }
+        self.all = Some(all.clone());
+        all
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    a == b
+        || a.canonicalize()
+            .ok()
+            .zip(b.canonicalize().ok())
+            .is_some_and(|(a, b)| a == b)
+}
 
 /// Probe results for all providers, kept until `refresh` asks for a new probe. Probes run
-/// outside the lock, so concurrent first reads may probe twice; the last result wins.
+/// outside the lock; successful updates made during a probe keep their verified versions.
+/// A later probe can still observe external version changes.
 pub fn detected(refresh: bool) -> Value {
-    let cache = || CACHE.lock().unwrap_or_else(|poison| poison.into_inner());
-    if !refresh && let Some(cached) = cache().clone() {
-        return cached;
-    }
+    detected_with(refresh, &CACHE, probe, |all| {
+        publish_native(&crate::data::data_root(), all);
+    })
+}
+
+fn detected_with(
+    refresh: bool,
+    cache: &Mutex<DetectionCache>,
+    probe: impl Fn(&str) -> Value + Sync,
+    publish: impl Fn(&Value),
+) -> Value {
+    let cache = || cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    let started = {
+        let cache = cache();
+        if !refresh && let Some(cached) = &cache.all {
+            return cached.clone();
+        }
+        cache.revision
+    };
     let results: Vec<(&str, Value)> = thread::scope(|scope| {
         let probes: Vec<_> = PROVIDERS
             .iter()
@@ -102,9 +177,8 @@ pub fn detected(refresh: bool) -> Value {
     for (provider, result) in results {
         all.insert(provider.to_owned(), result);
     }
-    let all = Value::Object(all);
-    publish_native(&crate::data::data_root(), &all);
-    *cache() = Some(all.clone());
+    let all = cache().finish(started, Value::Object(all));
+    publish(&all);
     all
 }
 
@@ -164,7 +238,7 @@ fn publish_native(root: &Path, all: &Value) {
 /// that requested no model by it until the CLI reports the model it used.
 pub fn cached_native(provider: &str) -> Option<String> {
     let cache = CACHE.lock().unwrap_or_else(|poison| poison.into_inner());
-    cache.as_ref()?[provider]["native"]["model"]
+    cache.all.as_ref()?[provider]["native"]["model"]
         .as_str()
         .map(str::to_owned)
 }

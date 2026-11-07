@@ -2219,3 +2219,20 @@ fn codex_host_label_tracks_the_bundled_cli_without_changing_identity() {
     assert_eq!(codex.boss, "codex");
     assert_eq!(codex.label, "ChatGPT（Codex）");
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn codex_host_execution_keeps_codex_app_ahead_of_chatgpt() {
+    let (_temp, hosts) = fixture();
+    let codex = hosts.context.applications[0].join("Codex.app/Contents/Resources/codex");
+    let chatgpt =
+        hosts.context.applications[0].join("ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
+    executable_file(&codex, "fake");
+    executable_file(&chatgpt, "fake");
+    executable_file(&hosts.context.search[0].join("codex"), "fake");
+    assert_eq!(hosts.context.find("codex"), Some(codex.clone()));
+    assert_eq!(host(&hosts, "codex").label, "Codex");
+    fs::remove_file(codex).unwrap();
+    assert_eq!(hosts.context.find("codex"), Some(chatgpt));
+    assert_eq!(host(&hosts, "codex").label, "ChatGPT（Codex）");
+}

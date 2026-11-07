@@ -544,12 +544,17 @@ fn codex_sources_have_separate_versions_and_verify_the_original_path() {
         1
     );
     let locks = locks::Updates::default();
+    let cache = Mutex::new(crate::detect::DetectionCache {
+        all: Some(json!({"codex": info})),
+        ..Default::default()
+    });
     assert!(
         update_at(
             "codex",
             &desktop,
             false,
             &locks,
+            &cache,
             |_| Some("10.0.0".into()),
             Duration::from_secs(5)
         )
@@ -561,12 +566,14 @@ fn codex_sources_have_separate_versions_and_verify_the_original_path() {
             &standalone,
             false,
             &locks,
+            &cache,
             |_| Some("2.0.0".into()),
             Duration::from_secs(5)
         )
         .unwrap(),
         "2.0.0"
     );
+    assert_eq!(cache.lock().unwrap().all.as_ref().unwrap()["codex"], info);
     let after = codex::state(&info, &sources, &|_| Some("2.0.0".into()));
     assert_eq!(after["installations"][1]["version"], "2.0.0");
     assert_eq!(after["installations"][1]["update"], false);
@@ -582,6 +589,7 @@ fn codex_sources_have_separate_versions_and_verify_the_original_path() {
             &standalone,
             false,
             &locks,
+            &cache,
             |_| Some("3.0.0".into()),
             Duration::from_secs(5)
         )

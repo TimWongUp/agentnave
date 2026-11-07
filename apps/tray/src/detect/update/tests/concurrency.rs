@@ -1,4 +1,5 @@
 use super::*;
+use crate::detect::{DetectionCache, detected_with};
 
 #[test]
 fn independent_updates_run_together_and_duplicate_provider_is_refused() {
@@ -27,6 +28,13 @@ echo 2.0.0 > "$0.version"
         .unwrap();
     }
     let locks = locks::Updates::default();
+    let cache = Mutex::new(DetectionCache {
+        all: Some(json!({
+            "codex": {"path": a, "version": "1.0.0"},
+            "grok": {"path": b, "version": "1.0.0"},
+        })),
+        ..Default::default()
+    });
     std::thread::scope(|scope| {
         let first = scope.spawn(|| {
             update_at(
@@ -34,6 +42,7 @@ echo 2.0.0 > "$0.version"
                 &a,
                 false,
                 &locks,
+                &cache,
                 |_| Some("2.0.0".into()),
                 Duration::from_secs(20),
             )
@@ -52,6 +61,7 @@ echo 2.0.0 > "$0.version"
                 &a,
                 false,
                 &locks,
+                &cache,
                 |_| panic!("duplicate must not query"),
                 Duration::from_secs(20)
             )
@@ -64,6 +74,7 @@ echo 2.0.0 > "$0.version"
                 &b,
                 false,
                 &locks,
+                &cache,
                 |_| Some("2.0.0".into()),
                 Duration::from_secs(20),
             )
@@ -71,6 +82,9 @@ echo 2.0.0 > "$0.version"
         assert_eq!(first.join().unwrap().unwrap(), "2.0.0");
         assert_eq!(second.join().unwrap().unwrap(), "2.0.0");
     });
+    let all = detected_with(false, &cache, |_| panic!("must use cache"), |_| {});
+    assert_eq!(all["codex"]["version"], "2.0.0");
+    assert_eq!(all["grok"]["version"], "2.0.0");
 }
 
 #[test]
@@ -120,6 +134,7 @@ rmdir "$prefix/busy"
         paths.push((provider, path));
     }
     let locks = locks::Updates::default();
+    let cache = Mutex::new(DetectionCache::default());
     let barrier = std::sync::Barrier::new(2);
     std::thread::scope(|scope| {
         let jobs: Vec<_> = paths
@@ -127,6 +142,7 @@ rmdir "$prefix/busy"
             .map(|(provider, path)| {
                 let barrier = &barrier;
                 let locks = &locks;
+                let cache = &cache;
                 scope.spawn(move || {
                     barrier.wait();
                     update_at(
@@ -134,6 +150,7 @@ rmdir "$prefix/busy"
                         path,
                         false,
                         locks,
+                        cache,
                         |_| Some("2.0.0".into()),
                         Duration::from_secs(20),
                     )
@@ -164,4 +181,97 @@ fn environment_keys_follow_npm_prefix_and_brew_not_package() {
     );
     let guard = locks::Updates::default();
     assert!(guard.claim(true, "codex").is_err());
+}
+
+#[test]
+fn late_full_probe_cannot_undo_a_verified_update() {
+    // Cover both a forced refresh and the first, still-unpublished detection.
+    for seeded in [true, false] {
+        let temp = TempDir::new().unwrap();
+        let path = file(temp.path(), ".grok/bin/grok");
+        fs::write(path.with_extension("version"), "1.0.0\n").unwrap();
+        fs::write(
+            &path,
+            r#"#!/bin/sh
+if [ "$1" = update ]; then echo 2.0.0 > "$0.version"; else cat "$0.version"; fi
+"#,
+        )
+        .unwrap();
+        let info = || {
+            json!({"installed": true, "path": path,
+            "version": read_version(&path), "models": [], "error": null})
+        };
+        let cache = Mutex::new(DetectionCache {
+            all: seeded.then(|| json!({"grok": info()})),
+            ..Default::default()
+        });
+        let locks = locks::Updates::default();
+        let (taken, captured) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let blocked = Mutex::new(blocked);
+        std::thread::scope(|scope| {
+            let refresh = scope.spawn(|| {
+                detected_with(
+                    seeded,
+                    &cache,
+                    |provider| match provider {
+                        "grok" => {
+                            let old = info();
+                            taken.send(()).unwrap();
+                            old
+                        }
+                        "claude" => {
+                            blocked
+                                .lock()
+                                .unwrap()
+                                .recv_timeout(Duration::from_secs(10))
+                                .unwrap();
+                            json!({"installed": false})
+                        }
+                        _ => json!({"installed": false}),
+                    },
+                    |_| {},
+                )
+            });
+            captured.recv_timeout(Duration::from_secs(10)).unwrap();
+            let updated = update_at(
+                "grok",
+                &path,
+                false,
+                &locks,
+                &cache,
+                |_| Some("2.0.0".into()),
+                Duration::from_secs(5),
+            );
+            // Always release the other probe before asserting, even if update fails.
+            release.send(()).unwrap();
+            assert_eq!(updated.unwrap(), "2.0.0");
+            let result = refresh.join().unwrap();
+            assert_eq!(result["grok"]["version"], "2.0.0");
+            assert_eq!(
+                detected_with(
+                    false,
+                    &cache,
+                    |_| panic!("cached reads must not probe"),
+                    |_| {}
+                )["grok"]["version"],
+                "2.0.0"
+            );
+        });
+        // A later refresh must observe an external downgrade, not pin the verified update.
+        fs::write(path.with_extension("version"), "0.9.0\n").unwrap();
+        let refreshed = detected_with(
+            true,
+            &cache,
+            |provider| {
+                if provider == "grok" {
+                    info()
+                } else {
+                    json!({"installed": false})
+                }
+            },
+            |_| {},
+        );
+        assert_eq!(refreshed["grok"]["version"], "0.9.0");
+    }
 }

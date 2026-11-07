@@ -199,8 +199,8 @@ impl Context {
                 .iter()
                 .flat_map(|base| {
                     [
-                        base.join("ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
                         base.join("Codex.app/Contents/Resources/codex"),
+                        base.join("ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
                     ]
                 })
                 .collect::<Vec<_>>()

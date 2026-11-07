@@ -6,6 +6,7 @@ mod locks;
 #[cfg(test)]
 mod tests;
 
+use super::same_path;
 use latest::{Channel, cached, newer};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -115,6 +116,7 @@ pub(crate) fn update(provider: &str, target: Option<&str>) -> Result<Value, Stri
         &path,
         crate::PREVIEW,
         &UPDATING,
+        &super::CACHE,
         cached,
         UPDATE_TIMEOUT,
     )?;
@@ -127,19 +129,12 @@ fn read_version(path: &Path) -> Option<String> {
         .and_then(|out| super::version_of(&out))
 }
 
-fn same_path(a: &Path, b: &Path) -> bool {
-    a == b
-        || a.canonicalize()
-            .ok()
-            .zip(b.canonicalize().ok())
-            .is_some_and(|(a, b)| a == b)
-}
-
 fn update_at(
     provider: &str,
     path: &Path,
     preview: bool,
     locks: &locks::Updates,
+    cache: &Mutex<super::DetectionCache>,
     query: impl Fn(&Channel) -> Option<String>,
     timeout: Duration,
 ) -> Result<String, String> {
@@ -161,15 +156,11 @@ fn update_at(
     if provider == "codex" {
         codex::remember(path, Some(after.clone()));
     }
-    // Patch only the active installation's version; no model probes or full-cache refresh.
-    let mut cache = super::CACHE.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(all) = cache.as_mut()
-        && all[provider]["path"]
-            .as_str()
-            .is_some_and(|active| same_path(path, Path::new(active)))
-    {
-        all[provider]["version"] = json!(after);
-    }
+    // Also protect in-flight full probes; never wait for model probes or update other paths.
+    cache
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remember(provider, path, &after);
     Ok(after)
 }
 
