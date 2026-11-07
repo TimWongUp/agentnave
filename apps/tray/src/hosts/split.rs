@@ -130,11 +130,15 @@ pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -
             "mcpServers",
         ));
     }
+    let codex_label = hosts
+        .iter()
+        .find(|host| host.id == "codex")
+        .map_or("Codex CLI", |host| host.label);
     for dir in codex_homes {
         let folder = dir.strip_prefix(home).unwrap_or(dir).display().to_string();
         rows.push((
             interned(format!("codex@{folder}")),
-            interned(format!("Codex（{folder}）")),
+            interned(format!("{codex_label}（{folder}）")),
             "codex",
             None,
             dir.clone(),

@@ -126,7 +126,12 @@ impl Reader {
             else {
                 return Response::error(400, "需要有效的 CLI 名称");
             };
-            match crate::detect::update::update(provider) {
+            let target =
+                match crate::detect::update::validate_target(provider, payload.get("target")) {
+                    Ok(target) => target,
+                    Err(error) => return Response::error(400, &error),
+                };
+            match crate::detect::update::update(provider, target) {
                 Ok(state) => Response::json(&state),
                 Err(error) => Response::error(400, &error),
             }

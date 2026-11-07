@@ -57,3 +57,29 @@ fn cli_updates_routes_require_get_or_authorized_post() {
     );
     assert_eq!(reader.respond("/settings/member-updates.js").status, 200);
 }
+
+#[test]
+fn cli_update_target_rejects_desktop_unknown_and_other_providers() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = Reader::new(dir.path().to_owned());
+    for body in [
+        json!({"provider":"codex", "target":"desktop"}),
+        json!({"provider":"codex", "target":"/tmp/codex"}),
+        json!({"provider":"codex", "target":false}),
+        json!({"provider":"codex", "target":null}),
+        json!({"provider":"claude", "target":"standalone"}),
+    ] {
+        let response = reader.request(
+            "POST",
+            "/app/cli-updates/update",
+            Some("1"),
+            &serde_json::to_vec(&body).unwrap(),
+        );
+        assert_eq!(response.status, 400);
+        let result: Value = serde_json::from_slice(&response.body).unwrap();
+        assert!(
+            result["error"].as_str().unwrap().contains("target"),
+            "{result}"
+        );
+    }
+}

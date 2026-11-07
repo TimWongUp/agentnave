@@ -380,9 +380,20 @@
 .cli-update { max-width: 100%; padding: 3px 8px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .member-title > .cli-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cli-version { white-space: nowrap; flex: none; }
+.cli-installations { padding-left: 30px; font-size: 12.5px; }
+.cli-installation { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: var(--control-height); }
+.cli-installation-name { flex: none; min-width: 132px; white-space: nowrap; color: var(--muted); }
+.cli-installation-active { flex: none; min-width: 60px; }
 .cli-update-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 32px; font-size: 12.5px; }
 .cli-update-summary > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .cli-update-summary > button { flex: none; font-size: 12px; padding: 4px 10px; }
+.cli-installation .cli-version { min-width: 132px; }
+.cli-installation .cli-update-slot { flex: none; height: auto; }
+.cli-installation .cli-update { min-height: var(--control-height); max-width: none; overflow: visible; }
+@media (max-width: 700px) {
+  .cli-installations { display: grid; gap: 8px; padding-left: 0; }
+  .cli-installation-active:empty { display: none; }
+}
 .cli-update-error { height: 32px; line-height: 16px; overflow: auto; white-space: pre-wrap; }
 .cli-install-row { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .cli-install-name { font-weight: 550; color: var(--ink); }

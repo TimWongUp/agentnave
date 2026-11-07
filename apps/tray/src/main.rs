@@ -870,6 +870,7 @@ mod tests {
             ("POST", "/app/characters/gpt"),
             ("POST", "/app/service/install"),
             ("POST", "/app/update/apply"),
+            ("POST", "/app/cli-updates/update"),
             ("DELETE", "/app/chats/x"),
         ] {
             assert!(preview_refuses(true, method, path), "{method} {path}");

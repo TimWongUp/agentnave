@@ -182,7 +182,7 @@ function renderCards() {
       el("div", { className: "member-title" },
         el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
         el("span", { className: "cli-name", title: name }, name),
-        info.installed && info.version ? el("span", { className: "cli-version" }, info.version) : null,
+        renderCliVersion(provider, info),
         renderCliUpdate(provider),
         info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed"))),
       el("div", { className: "member-end" },
@@ -196,7 +196,7 @@ function renderCards() {
             onClick: () => value !== split && setSplit(provider, value),
           }, text))),
         el("div", { className: "member-tail" }, renderPermission(provider) || el("span"), renderMembership(provider, enabled))));
-    const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head);
+    const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head, renderCliInstallations(provider));
     if (pendingDisable === provider) {
       card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
         el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
@@ -288,7 +288,7 @@ function renderErrorBanner() {
 // Re-probe the CLIs. A quiet probe runs when Settings opens or regains focus and only speaks
 // up when the lists changed.
 async function refreshDetection(quiet = false) {
-  if (busy || probing || cliUpdating || cliBatch) return;
+  if (busy || probing || cliBusy()) return;
   probing = true;
   probedAt = Date.now();
   const before = savedSnapshot;
@@ -329,7 +329,7 @@ async function refreshDetection(quiet = false) {
 }
 
 function probeWhenStale() {
-  if (!cliUpdating && !cliBatch && document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
+  if (!cliBusy() && document.visibilityState === "visible" && Date.now() - probedAt > 30_000) refreshDetection(true);
 }
 
 // Load initial members data

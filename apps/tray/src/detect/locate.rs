@@ -67,6 +67,52 @@ pub(super) fn find(name: &str) -> Option<PathBuf> {
     search_path(&names)
 }
 
+/// The same bundled priority as `find`; standalone discovery must not use `find("codex")`.
+pub(super) fn codex_desktop() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    return DESKTOP_CODEX
+        .iter()
+        .filter_map(|entry| expand(entry))
+        .find(|p| executable(p));
+    #[cfg(windows)]
+    return codex_bundled();
+    #[cfg(not(any(target_os = "macos", windows)))]
+    None
+}
+
+pub(crate) fn codex_desktop_app(path: &Path) -> Option<&'static str> {
+    let real = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    for path in [path, real.as_path()] {
+        let text = path.to_string_lossy().replace('\\', "/").to_lowercase();
+        if text.contains("chatgpt.app/contents/") || text.contains("/openai/chatgpt/bin/") {
+            return Some("ChatGPT");
+        }
+        if text.contains(".app/contents/")
+            || text.contains("/.codex/plugins/.plugin-appserver/")
+            || text.contains("/openai/codex/bin/")
+        {
+            return Some("Codex");
+        }
+    }
+    None
+}
+
+pub(super) fn standalone_codex() -> Option<PathBuf> {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    standalone_codex_in(std::env::split_paths(&inherited).chain(common_dirs()))
+}
+
+pub(super) fn standalone_codex_in(dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["codex.exe", "codex.cmd", "codex.bat"]
+    } else {
+        &["codex"]
+    };
+    dirs.into_iter()
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|path| executable(path) && codex_desktop_app(path).is_none())
+}
+
 pub(super) fn find_on_path(name: &str) -> Option<PathBuf> {
     search_path(&[name.to_owned()])
 }

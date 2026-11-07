@@ -304,12 +304,19 @@ fn channel_cache_success_failure_and_expiry() {
 
 #[test]
 fn preview_mutex_and_post_update_verification() {
-    let lock = Mutex::new(());
-    assert!(claim(true, &lock).unwrap_err().contains("预览版"));
-    let guard = claim(false, &lock).unwrap();
-    assert!(claim(false, &lock).unwrap_err().contains("已有 CLI"));
+    let locks = locks::Updates::default();
+    assert!(locks.claim(true, "codex").err().unwrap().contains("预览版"));
+    let guard = locks.claim(false, "codex").unwrap();
+    assert!(
+        locks
+            .claim(false, "codex")
+            .err()
+            .unwrap()
+            .contains("已有 CLI")
+    );
+    assert!(locks.claim(false, "claude").is_ok());
     drop(guard);
-    assert!(claim(false, &lock).is_ok());
+    assert!(locks.claim(false, "codex").is_ok());
     assert!(
         verify("codex update", "1.0.0", Some("1.0.0"), "2.0.0")
             .unwrap_err()
@@ -364,6 +371,7 @@ fn fake_update_receives_arguments_environment_and_empty_stdin() {
         command: "fake update".into(),
         via: "native",
         channel: Channel::Grok("stable".into()),
+        environment: locks::Environment::Native(program.clone()),
     };
     assert_eq!(
         execute(&plan, Duration::from_secs(5)).unwrap_err(),
@@ -477,4 +485,156 @@ fn snapshot_checks_multiple_channels_in_parallel() {
     });
     assert_eq!(state["clis"]["codex"]["update"], true);
     assert_eq!(state["clis"]["claude"]["update"], true);
+}
+
+#[test]
+fn snapshot_codex_exposes_active_installation() {
+    let temp = TempDir::new().unwrap();
+    let path = file(temp.path(), ".codex/packages/standalone/1/codex");
+    let all = json!({"codex": {"installed": true, "path": path, "version": "1.0.0"}});
+    let state = snapshot(&all, |_| Some("2.0.0".into()));
+    let installations = state["clis"]["codex"]["installations"]
+        .as_array()
+        .expect("Codex installations");
+    let standalone = installations
+        .iter()
+        .find(|item| item["id"] == "standalone")
+        .unwrap();
+    assert_eq!(standalone["path"], all["codex"]["path"]);
+    assert_eq!(standalone["version"], "1.0.0");
+    assert_eq!(standalone["active"], true);
+    assert_eq!(standalone["update"], true);
+}
+
+#[cfg(unix)]
+mod concurrency;
+
+#[cfg(unix)]
+#[test]
+fn codex_sources_have_separate_versions_and_verify_the_original_path() {
+    let temp = TempDir::new().unwrap();
+    let desktop = file(
+        temp.path(),
+        "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    );
+    fs::write(&desktop, "#!/bin/sh\necho 'codex-cli 9.0.0'\n").unwrap();
+    let standalone = file(temp.path(), ".codex/packages/standalone/1/codex");
+    fs::write(&standalone, "#!/bin/sh\nif [ \"$1\" = update ]; then echo 2.0.0 > \"$0.version\"; else echo read >> \"$0.calls\"; printf 'codex-cli '; cat \"$0.version\"; fi\n").unwrap();
+    fs::write(standalone.with_extension("version"), "1.0.0\n").unwrap();
+    let info = json!({"installed": true, "path": desktop, "version": "9.0.0"});
+    let sources = [Some(desktop.clone()), Some(standalone.clone())];
+    let state = codex::state(&info, &sources, &|_| Some("2.0.0".into()));
+    assert_eq!(state["version"], "9.0.0");
+    assert_eq!(state["update"], false);
+    let installations = &state["installations"];
+    assert_eq!(installations[0]["label"], "ChatGPT 内置 CLI");
+    assert_eq!(installations[0]["version"], "9.0.0");
+    assert_eq!(installations[0]["active"], true);
+    assert_eq!(installations[0]["update"], false);
+    assert_eq!(installations[1]["version"], "1.0.0");
+    assert_eq!(installations[1]["active"], false);
+    assert_eq!(installations[1]["update"], true);
+    let again = codex::state(&info, &sources, &|_| Some("2.0.0".into()));
+    assert_eq!(again, state);
+    assert_eq!(
+        fs::read_to_string(standalone.with_extension("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    let locks = locks::Updates::default();
+    let cache = Mutex::new(crate::detect::DetectionCache {
+        all: Some(json!({"codex": info})),
+        ..Default::default()
+    });
+    assert!(
+        update_at(
+            "codex",
+            &desktop,
+            false,
+            &locks,
+            &cache,
+            |_| Some("10.0.0".into()),
+            Duration::from_secs(5)
+        )
+        .is_err()
+    );
+    assert_eq!(
+        update_at(
+            "codex",
+            &standalone,
+            false,
+            &locks,
+            &cache,
+            |_| Some("2.0.0".into()),
+            Duration::from_secs(5)
+        )
+        .unwrap(),
+        "2.0.0"
+    );
+    assert_eq!(cache.lock().unwrap().all.as_ref().unwrap()["codex"], info);
+    let after = codex::state(&info, &sources, &|_| Some("2.0.0".into()));
+    assert_eq!(after["installations"][1]["version"], "2.0.0");
+    assert_eq!(after["installations"][1]["update"], false);
+    // A successful command with no version change cannot be validated using the desktop's 9.0.0.
+    fs::write(
+        &standalone,
+        "#!/bin/sh\n[ \"$1\" = update ] || echo 'codex-cli 2.0.0'\nexit 0\n",
+    )
+    .unwrap();
+    assert!(
+        update_at(
+            "codex",
+            &standalone,
+            false,
+            &locks,
+            &cache,
+            |_| Some("3.0.0".into()),
+            Duration::from_secs(5)
+        )
+        .unwrap_err()
+        .contains("仍是旧版本")
+    );
+}
+
+#[test]
+fn standalone_discovery_skips_bundled_paths_and_their_aliases() {
+    let temp = TempDir::new().unwrap();
+    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let desktop = file(
+        temp.path(),
+        &format!("Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/{name}"),
+    );
+    let old_copy = file(temp.path(), &format!("OpenAI/Codex/bin/hash/{name}"));
+    let standalone = file(temp.path(), &format!("node/bin/{name}"));
+    let mut dirs = vec![
+        desktop.parent().unwrap().to_owned(),
+        old_copy.parent().unwrap().to_owned(),
+    ];
+    #[cfg(unix)]
+    {
+        let alias = temp.path().join("alias");
+        fs::create_dir_all(&alias).unwrap();
+        std::os::unix::fs::symlink(&desktop, alias.join(name)).unwrap();
+        dirs.push(alias);
+    }
+    dirs.push(standalone.parent().unwrap().to_owned());
+    assert_eq!(
+        super::super::locate::standalone_codex_in(dirs),
+        Some(standalone)
+    );
+    let legacy = file(
+        temp.path(),
+        "Applications/Codex.app/Contents/Resources/codex",
+    );
+    let info = json!({"path":legacy,"version":"0.1.0"});
+    let state = codex::state(&info, &[Some(legacy), None], &|_| None);
+    assert_eq!(state["installations"][0]["label"], "Codex 内置 CLI");
+    assert_eq!(state["installations"][0]["update"], false);
+    assert_eq!(
+        validate_target("codex", Some(&json!("standalone"))).unwrap(),
+        Some("standalone")
+    );
+    assert_eq!(validate_target("codex", None).unwrap(), None);
 }

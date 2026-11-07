@@ -1,17 +1,20 @@
 //! CLI maintenance belongs to the App and follows the detected installation (ADR-0055).
+mod codex;
 mod install;
 mod latest;
+mod locks;
 #[cfg(test)]
 mod tests;
 
+use super::same_path;
 use latest::{Channel, cached, newer};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-static UPDATING: Mutex<()> = Mutex::new(());
+static UPDATING: LazyLock<locks::Updates> = LazyLock::new(locks::Updates::default);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug)]
@@ -21,6 +24,7 @@ struct Plan {
     command: String,
     via: &'static str,
     channel: Channel,
+    environment: locks::Environment,
 }
 
 pub(crate) fn state() -> Value {
@@ -40,7 +44,13 @@ fn snapshot(all: &Value, query: impl Fn(&Channel) -> Option<String> + Sync) -> V
                 let query = &query;
                 (
                     provider,
-                    scope.spawn(move || cli_state(provider, &all[provider], query)),
+                    scope.spawn(move || {
+                        if provider == "codex" {
+                            codex::state(&all[provider], &codex::paths(&all[provider]), query)
+                        } else {
+                            cli_state(provider, &all[provider], query)
+                        }
+                    }),
                 )
             })
             .collect();
@@ -73,37 +83,85 @@ fn cli_state(provider: &str, info: &Value, query: impl Fn(&Channel) -> Option<St
         "via": plan.as_ref().map(|p| p.via), "command": plan.as_ref().map(|p| &p.command)})
 }
 
-fn claim(preview: bool, lock: &Mutex<()>) -> Result<MutexGuard<'_, ()>, String> {
-    if preview {
-        return Err("预览版不执行 CLI 更新".into());
+/// Only a Codex standalone installation can be selected; paths never come from a request.
+pub(crate) fn validate_target(
+    provider: &str,
+    target: Option<&Value>,
+) -> Result<Option<&'static str>, String> {
+    match target {
+        None => Ok(None),
+        Some(Value::String(target)) if provider == "codex" && target == "standalone" => {
+            Ok(Some("standalone"))
+        }
+        _ => Err("target 仅支持 Codex 的 standalone；桌面内置 CLI 请更新所属桌面应用".into()),
     }
-    lock.try_lock()
-        .map_err(|_| "已有 CLI 正在更新，请稍后重试".into())
 }
 
-pub(crate) fn update(provider: &str) -> Result<Value, String> {
-    let _guard = claim(crate::PREVIEW, &UPDATING)?;
-    let before = super::detected(false);
-    let info = &before[provider];
-    let plan = info["path"]
-        .as_str()
-        .filter(|_| info["installed"] == true)
-        .and_then(|p| install::identify(provider, Path::new(p)))
-        .ok_or("无法安全更新此 CLI")?;
-    let latest = cached(&plan.channel).ok_or("无法查询最新版本")?;
-    let current = info["version"].as_str().ok_or("无法读取当前版本")?;
-    if !newer(&latest, current) {
+pub(crate) fn update(provider: &str, target: Option<&str>) -> Result<Value, String> {
+    if crate::PREVIEW {
+        return Err("预览版不执行 CLI 更新".into());
+    }
+    let path = match (provider, target) {
+        ("codex", Some("standalone")) => super::locate::standalone_codex(),
+        (_, None) => super::locate::find(match provider {
+            "deepseek" => "dsh",
+            "antigravity" => "agy",
+            other => other,
+        }),
+        _ => return Err("target 仅支持 Codex 的 standalone".into()),
+    }
+    .ok_or("未找到此 CLI 安装来源")?;
+    update_at(
+        provider,
+        &path,
+        crate::PREVIEW,
+        &UPDATING,
+        &super::CACHE,
+        cached,
+        UPDATE_TIMEOUT,
+    )?;
+    Ok(state())
+}
+
+fn read_version(path: &Path) -> Option<String> {
+    super::run(path, &["--version"])
+        .ok()
+        .and_then(|out| super::version_of(&out))
+}
+
+fn update_at(
+    provider: &str,
+    path: &Path,
+    preview: bool,
+    locks: &locks::Updates,
+    cache: &Mutex<super::DetectionCache>,
+    query: impl Fn(&Channel) -> Option<String>,
+    timeout: Duration,
+) -> Result<String, String> {
+    let mut claim = locks.claim(preview, provider)?;
+    let plan = install::identify(provider, path)
+        .ok_or("无法安全更新此 CLI；桌面内置 CLI 请更新所属桌面应用")?;
+    claim.environment(&plan.environment);
+    // Read and verify this installation directly. A parallel global detection refresh may
+    // contain another installation or an old version and must never decide update success.
+    let current = read_version(path).ok_or("无法读取当前版本")?;
+    let latest = query(&plan.channel).ok_or("无法查询最新版本")?;
+    if !newer(&latest, &current) {
         return Err("没有可用的新版".into());
     }
-    execute(&plan, UPDATE_TIMEOUT)?;
-    let after = super::detected(true);
-    verify(
-        &plan.command,
-        current,
-        after[provider]["version"].as_str(),
-        &latest,
-    )?;
-    Ok(snapshot(&after, cached))
+    execute(&plan, timeout)?;
+    let after = read_version(path);
+    verify(&plan.command, &current, after.as_deref(), &latest)?;
+    let after = after.expect("verified version");
+    if provider == "codex" {
+        codex::remember(path, Some(after.clone()));
+    }
+    // Also protect in-flight full probes; never wait for model probes or update other paths.
+    cache
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remember(provider, path, &after);
+    Ok(after)
 }
 
 fn verify(command: &str, before: &str, after: Option<&str>, latest: &str) -> Result<(), String> {
