@@ -356,10 +356,15 @@ fn role_switches_remove_generated_seats_without_losing_bindings_or_custom_text()
     assert!(!generated.contains("worker-frontend"));
     assert!(!generated.contains("explorer-web"));
     assert!(generated.contains("同难度专项优先"));
-    document["custom"] = json!(format!("{generated}\n用户自写要求：保留引用来源。"));
+    document["custom"] = json!(format!(
+        "{generated}\n- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。\n用户自写要求：保留引用来源。"
+    ));
     document["enabled_roles"] = json!([]);
     let custom = text_of(&document, "custom").unwrap();
     assert!(!custom.contains("worker-writing"));
+    assert!(!custom.contains("Explorer"));
+    assert!(!custom.contains("Worker"));
+    assert!(custom.contains("不可用时由 boss 自行评审"));
     assert!(custom.contains("用户自写要求：保留引用来源。"));
     assert_eq!(document["worker_writing"]["easy"]["model"], "haiku");
     document["image_generation"] = json!({"provider":"codex","model":"chat"});
