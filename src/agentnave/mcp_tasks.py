@@ -137,7 +137,7 @@ async def start_agent(
         OrchestrationRole | None,
         Field(
             description=(
-                "App task seat (worker-frontend-* for interface work): selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Not shown; also pass role as the desk label."
+                "App task seat from the visible list_members catalog: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
             )
         ),
     ] = None,

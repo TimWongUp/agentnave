@@ -46,6 +46,7 @@ from agentnave.members import (
     SettingsFileError,
     data_root,
     role_seat,
+    visible_role_groups,
 )
 from agentnave.models import (
     InvocationError,
@@ -55,6 +56,7 @@ from agentnave.models import (
 )
 from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import NativePrompt
+from agentnave.orchestration_roles import role_catalog, seat_role
 from agentnave.retention import Retention
 from agentnave.store import Review
 
@@ -232,9 +234,40 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
         raise ToolError(" ".join(problems) + f" {unchanged} Correct and retry.")
 
 
+def _filter_role_schema(schema: Any, groups: frozenset[str], image_enabled: bool) -> None:
+    """Publish only visible ordinary seats wherever the wire contract references them."""
+    if not isinstance(schema, dict):
+        if isinstance(schema, list):
+            for item in cast(list[Any], schema):
+                _filter_role_schema(item, groups, image_enabled)
+        return
+    schema = cast(dict[str, Any], schema)
+    values: Any = schema.get("enum")
+    if isinstance(values, list):
+        schema["enum"] = [
+            value
+            for value in cast(list[Any], values)
+            if not isinstance(value, str)
+            or ((definition := seat_role(value)) is None or definition.group in groups)
+            and (value != "image-generator" or image_enabled)
+        ]
+    if schema.get("title") == "OrchestrationStatus":
+        properties = schema.get("properties", {})
+        for role in role_catalog():
+            if role.group not in groups:
+                properties.pop(role.group, None)
+        if not image_enabled:
+            properties.pop("image_generation", None)
+        # Clients may have cached this schema before switches changed.
+        schema["additionalProperties"] = True
+    for value in schema.values():
+        _filter_role_schema(value, groups, image_enabled)
+
+
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         image_enabled = role_seat("image-generator", HOST) is not None
+        groups = visible_role_groups(HOST)
         published: list[Any] = []
         for tool in await super().list_tools():
             if tool.name in _HIDDEN_TOOLS:
@@ -242,15 +275,9 @@ class _Server(MCPServer[Runtime]):
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
             output = json.loads(json.dumps(tool.output_schema))
-            if not image_enabled:
-                role = schema.get("$defs", {}).get("OrchestrationRole", {})
-                if "enum" in role:
-                    role["enum"] = [value for value in role["enum"] if value != "image-generator"]
-                if output:
-                    status = output.get("$defs", {}).get("OrchestrationStatus", {})
-                    status.get("properties", {}).pop("image_generation", None)
-                    # A connected client can cache this schema before the user enables the seat.
-                    status["additionalProperties"] = True
+            _filter_role_schema(schema, groups, image_enabled)
+            if output:
+                _filter_role_schema(output, groups, image_enabled)
             published.append(
                 tool.model_copy(update={"input_schema": schema, "output_schema": output})
             )
@@ -303,8 +330,8 @@ mcp = _Server(
         "or a subagent model. Message metadata only; no provider setting changes. Wait for started work; "
         "do not redispatch to fix metadata. "
         "access: read for exploration/planning/review, write for file changes; shown in App. "
-        "read adds a prompt instruction, never native permissions. Explorer/review seats supply read, "
-        "Worker seats write; omit access for them; contradictions reject. Never inherited on resume; "
+        "read adds a prompt instruction, never native permissions. Catalog seats supply their declared access; review seats supply read. "
+        "Omit access for seats; contradictions reject. Never inherited on resume; "
         "without a seat declare each time or leave undeclared. "
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "

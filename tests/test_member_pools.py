@@ -111,7 +111,9 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
     roles: dict[str, Any] = {
         "version": 1,
         "preset": "split",
+        "enabled_roles": ["explorer", "worker", "worker_code"],
         "worker": {"easy": {"provider": "grok", "model": "seat-only"}},
+        "worker_code": {"hard": {"provider": "pi", "model": "shared"}},
         "explorer": {"easy": {"provider": "pi", "model": "shared"}},
     }
     role_path = tmp_path / "orchestration.json"
@@ -121,6 +123,10 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
     )
     listed = list_members(frozenset(), host)
     assert listed.orchestration.worker["easy"].available is None
+    assert listed.orchestration.worker_code["hard"].available is None
+    assert not listed.orchestration.worker_code.get("easy")
+    native = list_members(frozenset({"pi"}), Host("pi", "env")).orchestration.worker_code["hard"]
+    assert native.native and native.available is None and native.replacement is None
     assert listed.review["correctness-reviewer"].available is None
     assert all(member.modes == ["discussion"] for member in listed.members)
     default = next(member for member in listed.members if member.default)
@@ -199,20 +205,42 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
         )
     )
     binding = {"provider": "pi", "model": "old"}
-    roles = {"version": 1, "preset": "split", "worker": {"easy": binding}}
+    roles = {
+        "version": 1,
+        "preset": "split",
+        "enabled_roles": ["worker", "worker_code"],
+        "worker": {"easy": binding},
+        "worker_code": {"hard": binding},
+        "image_generation": binding,
+    }
     (tmp_path / "orchestration.json").write_text(json.dumps(roles))
     (tmp_path / "review.json").write_text(
         json.dumps({"version": 1, "seats": {"correctness-reviewer": binding}})
     )
     listed = list_members(frozenset(), Host("claude", "env"))
-    for status in (listed.orchestration.worker["easy"], listed.review["correctness-reviewer"]):
+    assert listed.orchestration.image_generation is not None
+    for status in (
+        listed.orchestration.worker["easy"],
+        listed.orchestration.worker_code["hard"],
+        listed.orchestration.image_generation,
+        listed.review["correctness-reviewer"],
+    ):
         assert status.model == "old" and status.available is False
         assert status.reason is not None and "not allowed in CLI" in status.reason
     # An invalid native binding also reports the CLI boundary.
     native = list_members(frozenset({"pi"}), Host("pi", "env")).review["correctness-reviewer"]
     assert native.native and native.available is False
+    native_specialist = list_members(frozenset({"pi"}), Host("pi", "env")).orchestration
+    assert native_specialist.worker_code["hard"].native
+    assert native_specialist.worker_code["hard"].available is False
+    assert native_specialist.image_generation is None
     async with Client(mcp) as client:
-        for selector in ({"seat": "worker-easy"}, {"role": "correctness-reviewer"}):
+        for selector in (
+            {"seat": "worker-easy"},
+            {"seat": "worker-code-hard"},
+            {"seat": "image-generator"},
+            {"role": "correctness-reviewer"},
+        ):
             result = await client.call_tool(
                 "start_agent", {"prompt": "test", "cwd": str(tmp_path), **selector}
             )

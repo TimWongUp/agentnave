@@ -16,8 +16,10 @@ from agentnave.members import (
     read_members,
     read_permissions,
     role_seat,
+    validate_task_seat,
 )
 from agentnave.models import InvocationRequest, ProviderOption
+from agentnave.orchestration_roles import seat_role
 from agentnave.store import Record, TaskRecord
 
 if TYPE_CHECKING:
@@ -80,8 +82,10 @@ def review_role(role: str | None) -> str:
 def role_access(role: str | None) -> Literal["read", "write"] | None:
     """Explorers and reviewers read; Workers and the image generator write."""
     name = (role or "").strip()
-    if name in get_args(OrchestrationRole.__value__):
-        return "write" if name.startswith("worker-") or name == "image-generator" else "read"
+    if definition := seat_role(name):
+        return definition.access
+    if name == "image-generator":
+        return "write"
     return "read" if name in get_args(ReviewRole.__value__) else None
 
 
@@ -103,9 +107,7 @@ class StartArguments:
         self.role = self._inherited(self.role, task.role, "role")
         # A new role is a new duty: the old seat would otherwise outrank it. Blank only clears the label.
         if self.seat is not None or role in ("", task.role):
-            self.seat = self._inherited(
-                self.seat, cast(OrchestrationRole | None, task.seat), "seat"
-            )
+            self.seat = self._inherited(self.seat, task.seat, "seat")
 
     def _inherited[T](self, explicit: T | None, saved: T | None, key: str) -> T | None:
         if explicit is not None or saved is None:
@@ -114,6 +116,8 @@ class StartArguments:
         return saved
 
     def resolve_seat(self, host: Host) -> None:
+        if self.seat is not None:
+            validate_task_seat(self.seat, host)
         name = self.seat or review_role(self.role)
         if self.provider is None:
             if not name:

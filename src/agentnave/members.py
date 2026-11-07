@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import Literal, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import restricted_options
@@ -23,10 +23,37 @@ from agentnave.member_policy import (
     select_model,
 )
 from agentnave.models import InvocationRequest, ProviderOption
+from agentnave.orchestration_roles import (
+    Difficulty as Difficulty,
+)
+from agentnave.orchestration_roles import (
+    OrchestrationFile as OrchestrationFile,
+)
+from agentnave.orchestration_roles import (
+    OrchestrationGroup,
+    StrictModel,
+    role_catalog,
+    seat_role,
+)
+from agentnave.orchestration_roles import (
+    OrchestrationRole as OrchestrationRole,
+)
+from agentnave.orchestration_roles import (
+    OrchestrationStatus as OrchestrationStatus,
+)
+from agentnave.orchestration_roles import (
+    ProviderName as ProviderName,
+)
+from agentnave.orchestration_roles import (
+    ReviewSeat as ReviewSeat,
+)
+from agentnave.orchestration_roles import (
+    ReviewSeatStatus as ReviewSeatStatus,
+)
+from agentnave.orchestration_roles import (
+    SeatReplacement as SeatReplacement,
+)
 
-type ProviderName = Literal[
-    "antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi", "zcode"
-]
 type Mode = Literal["task", "discussion"]
 type ReviewRole = Literal[
     "correctness-reviewer",
@@ -38,18 +65,6 @@ type ReviewRole = Literal[
     "simplicity-reviewer",
     "specialist-reviewer",
     "adversarial-verifier",
-]
-type Difficulty = Literal["easy", "hard"]
-type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
-# Task seats from orchestration.json.
-type OrchestrationRole = Literal[
-    "explorer-easy",
-    "explorer-hard",
-    "worker-easy",
-    "worker-hard",
-    "worker-frontend-easy",
-    "worker-frontend-hard",
-    "image-generator",
 ]
 
 
@@ -158,10 +173,6 @@ def validate_provider_options(request: InvocationRequest) -> None:
         raise AdapterOptionsError(str(exc)) from exc
 
 
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-
-
 class MemberConfig(StrictModel):
     efforts: list[str] = Field(default_factory=list)
     effort: str = ""
@@ -199,54 +210,11 @@ class ModeCLI(StrictModel):
     overrides: dict[str, MemberConfig] = Field(default_factory=dict)
 
 
-class ReviewSeat(StrictModel):
-    """The CLI and conversational model the user picked in the App for one seat."""
-
-    provider: ProviderName
-    model: str = Field(pattern=r"\S")
-    effort: str = ""
-
-
 class ReviewFile(StrictModel):
     """review.json, apart from members.json so older servers keep reading their members."""
 
     version: int = Field(ge=1, le=1)
     seats: dict[ReviewRole, ReviewSeat] = {}
-
-
-class OrchestrationFile(BaseModel):
-    """App-owned rule modes and saved task seats; only enabled hosts use seats."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    version: int = Field(ge=1, le=1)
-    preset: OrchestrationPreset = "off"
-    apps: dict[str, OrchestrationPreset] = {}
-    effective_apps: dict[str, OrchestrationPreset] | None = None
-    explorer: dict[Difficulty, ReviewSeat] = {}
-    worker: dict[Difficulty, ReviewSeat] = {}
-    # A key of its own, which servers that predate it ignore instead of rejecting the file.
-    worker_frontend: dict[Difficulty, ReviewSeat] = {}
-    image_generation: ReviewSeat | None = None
-
-    def image_seat(self, host: Host) -> ReviewSeat | None:
-        """The optional image CLI is only advertised to a different provider's host."""
-        seat = self.image_generation
-        return seat if seat is not None and seat.provider != host.provider else None
-
-    def interface_workers(self) -> dict[Difficulty, ReviewSeat]:
-        """The interface Worker seats, an unset one filled from the Worker seat of its difficulty."""
-        return {**self.worker, **self.worker_frontend}
-
-    def enabled(self, host: Host) -> bool:
-        key = host.app_id or host.name or ""
-        if self.effective_apps is not None:
-            # Old connections cannot prove which row started them, including rows whose
-            # config repair failed. Reconnect rather than borrow the default row's mode.
-            if host.app_id is None:
-                return False
-            return self.effective_apps.get(key, "off") != "off"
-        return self.apps.get(key, self.preset) != "off"
 
 
 class MemberFile(StrictModel):
@@ -525,6 +493,38 @@ def orchestration_enabled(host: Host) -> bool:
     return roles is not None and roles.enabled(host)
 
 
+def visible_role_groups(host: Host) -> frozenset[OrchestrationGroup]:
+    try:
+        roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    except MemberFileError:
+        return frozenset()
+    if roles is None or not roles.enabled(host):
+        return frozenset()
+    return frozenset(role.group for role in role_catalog() if roles.group_enabled(role.group))
+
+
+def validate_task_seat(name: str, host: Host) -> None:
+    """Recheck new dispatches after history inheritance, including explicit replacements.
+
+    Image replacement behavior is independent of ordinary role switches.
+    """
+    if name not in get_args(OrchestrationRole.__value__):
+        raise MemberFileError(f"Unknown task seat: {name}")
+    if name == "image-generator":
+        return
+    definition = seat_role(name)
+    assert definition is not None
+    roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    if roles is None:
+        enabled = definition.legacy_enabled
+    else:
+        enabled = roles.enabled(host) and roles.group_enabled(definition.group)
+    if not enabled:
+        raise MemberFileError(
+            f"{name} seat is not enabled in orchestration.json; enable it in the App"
+        )
+
+
 def apply_member(
     document: MemberFile | None,
     mode: Mode,
@@ -611,18 +611,25 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
                     f"{role} seat is not enabled for this host in orchestration.json; "
                     "enable it in the App or pass provider explicitly"
                 )
+            if (
+                required
+                and roles is not None
+                and (definition := seat_role(role)) is not None
+                and not roles.group_enabled(definition.group)
+            ):
+                raise MemberFileError(
+                    f"{role} seat is not enabled in orchestration.json; enable it in the App"
+                )
             if not roles or not roles.enabled(host):
                 seat = None
             elif role == "image-generator":
                 seat = roles.image_seat(host)
             else:
-                kind, _, key = role.rpartition("-")
-                seats = {
-                    "explorer": roles.explorer,
-                    "worker": roles.worker,
-                    "worker-frontend": roles.interface_workers(),
-                }[kind]
-                seat = seats.get(cast(Difficulty, key))
+                definition = seat_role(role)
+                assert definition is not None
+                seat = roles.group_seats(definition.group).get(
+                    cast(Difficulty, role.rsplit("-", 1)[1])
+                )
     except MemberFileError:
         if required:
             raise
@@ -677,34 +684,6 @@ class ListedMember(MemberDetails):
 class ModeStatus(StrictModel):
     restricted: bool
     members: list[MemberStatus]
-
-
-class SeatReplacement(StrictModel):
-    provider: ProviderName
-    provider_options: dict[str, ProviderOption] = Field(default_factory=dict[str, ProviderOption])
-    reason: str
-
-
-class ReviewSeatStatus(StrictModel):
-    provider: ProviderName
-    model: str
-    effort: str | None = None
-    available: Literal[False] | None = None
-    reason: str | None = None
-    # The host's own CLI: dispatch to the host's built-in subagent, with this model if it can.
-    native: Literal[True] | None = None
-    # Other permitted task CLIs listing the same model ID.
-    alternatives: list[ProviderName] = Field(default_factory=list[ProviderName])
-    # A ready start_agent choice for an unavailable seat; the boss decides whether to use it.
-    replacement: SeatReplacement | None = None
-
-
-class OrchestrationStatus(StrictModel):
-    enabled: bool = False
-    explorer: dict[Difficulty, ReviewSeatStatus] = {}
-    worker: dict[Difficulty, ReviewSeatStatus] = {}
-    worker_frontend: dict[Difficulty, ReviewSeatStatus] = {}
-    image_generation: ReviewSeatStatus | None = None
 
 
 class MemberList(StrictModel):
@@ -880,11 +859,18 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     if roles is not None and enabled:
         orchestration = OrchestrationStatus(
             enabled=True,
-            explorer=_review_status(roles.explorer, task_mode, excluded, host, installed, document),
-            worker=_review_status(roles.worker, task_mode, excluded, host, installed, document),
-            worker_frontend=_review_status(
-                roles.interface_workers(), task_mode, excluded, host, installed, document
-            ),
+            **{
+                definition.group: _review_status(
+                    roles.group_seats(definition.group),
+                    task_mode,
+                    excluded,
+                    host,
+                    installed,
+                    document,
+                )
+                for definition in role_catalog()
+                if roles.group_enabled(definition.group)
+            },
             image_generation=_review_status(
                 {"image-generator": image} if (image := roles.image_seat(host)) else {},
                 task_mode,
