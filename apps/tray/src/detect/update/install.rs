@@ -105,6 +105,27 @@ pub(super) fn identify(provider: &str, path: &Path) -> Option<Plan> {
 
 pub(super) fn classify(provider: &str, real: &Path, windows: bool) -> Option<Plan> {
     let normalized = real.to_string_lossy().replace('\\', "/");
+    if provider == "trae" {
+        let metadata =
+            std::fs::read_to_string(real.parent()?.join("trae-installation.json")).ok()?;
+        let metadata: Value = serde_json::from_str(&metadata).ok()?;
+        // Respect distribution policy: public builds can disable their native updater.
+        if metadata["channel"] != "public" || metadata["auto_update"] != true {
+            return None;
+        }
+        let track = metadata["release_channel"].as_str()?;
+        if !["stable", "alpha"].contains(&track) {
+            return None;
+        }
+        return Some(Plan {
+            program: command_path(real),
+            args: vec!["update".into()],
+            command: "traecli update".into(),
+            via: "native",
+            channel: Channel::Trae(track.into()),
+            environment: locks::Environment::Native(real.to_owned()),
+        });
+    }
     let native = match provider {
         "claude" => {
             normalized.contains("/.local/share/claude/versions/")
@@ -362,6 +383,7 @@ pub(super) fn commands(os: &str) -> Value {
     for provider in crate::members::PROVIDERS {
         let mut entries = Vec::new();
         match (provider, windows) {
+            ("trae", false) => entries.push(json!({"label":"安装脚本", "command":"curl -fsSL https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/install_v2.sh | sh"})),
             ("claude", false) => entries.push(json!({"label": "安装脚本", "command": "curl -fsSL https://claude.ai/install.sh | bash"})),
             ("claude", true) => entries.push(json!({"label": "PowerShell", "command": "irm https://claude.ai/install.ps1 | iex"})),
             ("codex", false) => {

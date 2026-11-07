@@ -2,6 +2,9 @@ use super::*;
 
 impl Hosts {
     pub(super) fn detect(&self, host: &Host) -> (bool, &'static str, Option<PathBuf>) {
+        if host.id == "trae-desktop" {
+            return trae::detect_desktop(&self.context);
+        }
         if self.context.find(host.binary).is_some() {
             return (true, "path", None);
         }
@@ -113,12 +116,15 @@ impl Hosts {
     pub(super) fn layers(&self, host: &Host) -> Vec<Value> {
         let mut layers:Vec<_>=host.user_layers.iter().enumerate().map(|(i,p)|json!({"path":p,"scope":if i==0{"user"}else{"override"},"has_entry":host.read_at(p).is_ok_and(|d|d.entry.is_some())})).collect();
         for dir in self.context.project.ancestors() {
-            let relative: &[&str] = match host.boss {
+            let relative: &[&str] = match host.id {
+                "trae-desktop" => &[".trae/mcp.json"],
                 "codex" => &[".codex/config.toml"],
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
                 "grok" => &[".grok/config.toml"],
                 "pi" => &[".pi/mcp.json"],
                 "zcode" => &["zcode.json", ".zcode/config.json"],
+                _ if host.boss == "codex" => &[".codex/config.toml"],
+                _ if host.boss == "claude" => &[".mcp.json"],
                 _ => &[],
             };
             for relative in relative {
@@ -223,7 +229,7 @@ impl Hosts {
         } else {
             json!({"state":"unknown","copies":[]})
         };
-        json!({"id":host.id,"boss":host.boss,"mark":host.id.split('@').next(),"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
+        json!({"id":host.id,"boss":host.boss,"mark":if host.boss == "trae" { Some("trae") } else { host.id.split('@').next() },"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.boss, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
             "reload_hint":reload_hint(host.id),"reopen":reopen::instructions(host),"copy_actions":reopen::copy_actions(host),"trust":trust_hint(host.boss).trim_start_matches('；'),"launcher":self.launcher_note(host),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})

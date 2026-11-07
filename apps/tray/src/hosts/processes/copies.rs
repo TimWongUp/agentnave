@@ -112,6 +112,21 @@ fn copy(kind: &'static str, node: &Node, bundle: Option<String>) -> Copy {
 }
 
 fn classify(host: &str, chain: &[&Node]) -> Option<Copy> {
+    if host == "trae" {
+        return chain
+            .iter()
+            .find(|node| super::identity(&node.exe) == Some("trae"))
+            .map(|node| copy("cli", node, None));
+    }
+    if host == "trae-desktop" {
+        return chain.iter().find_map(|node| {
+            if super::identity(&node.exe) != Some(host) {
+                return None;
+            }
+            let end = node.exe.to_ascii_lowercase().find(".app/contents/")?;
+            Some(copy("app", node, Some(node.exe[..end + 4].to_owned())))
+        });
+    }
     if host == "codex" && chain.first().is_some_and(|n| daemon_helper(n.args.iter())) {
         return None;
     }

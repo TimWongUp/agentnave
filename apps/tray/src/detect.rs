@@ -5,6 +5,7 @@
 
 mod locate;
 mod probe;
+mod trae;
 pub(crate) mod update;
 #[cfg(unix)] // Only the Unix copy actions run a host CLI outside detection.
 pub(crate) use probe::search_path;
@@ -672,6 +673,7 @@ fn probe(provider: &str) -> Value {
     let binary = match provider {
         "antigravity" => "agy",
         "deepseek" => "dsh",
+        "trae" => "traecli",
         other => other,
     };
     let Some(path) = find(binary) else {
@@ -807,6 +809,7 @@ fn listed_models(
             |models| ("initialize", models),
         )),
         "deepseek" => deepseek_listing(dsh_dump, configured_model),
+        "trae" => trae::models(path).map(|models| ("command", models)),
         "grok" => run(path, &["models"]).map(|out| {
             let cache = dirs::home_dir()
                 .and_then(|home| std::fs::read_to_string(home.join(".grok/models_cache.json")).ok())

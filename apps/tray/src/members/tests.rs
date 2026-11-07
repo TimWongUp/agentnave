@@ -412,3 +412,16 @@ fn app_file_samples_agree_with_the_server() {
     }
     assert!(checked > 0);
 }
+
+#[test]
+fn trae_desktop_confirmation_requires_a_real_cli_installation() {
+    let root = tempfile::tempdir().unwrap();
+    confirm_host_with_cli(root.path(), "trae-desktop", false, || false).unwrap();
+    let document = read(root.path()).unwrap().unwrap();
+    assert!(document["modes"]["task"].get("trae").is_none());
+    confirm_host_with_cli(root.path(), "trae-desktop", false, || true).unwrap();
+    let document = read(root.path()).unwrap().unwrap();
+    assert!(document["modes"]["task"].get("trae").is_some());
+    assert!(document["modes"]["discussion"].get("trae").is_some());
+    assert!(document["modes"]["task"].get("trae-desktop").is_none());
+}

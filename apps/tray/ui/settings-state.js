@@ -49,7 +49,7 @@ function textNode(content) {
 }
 
 // Supported CLI providers
-const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "zcode"];
+const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "zcode", "trae"];
 const PROVIDER_NAMES = {
   codex: "Codex CLI",
   claude: "Claude Code",
@@ -59,6 +59,7 @@ const PROVIDER_NAMES = {
   pi: "Pi Coding Agent",
   deepseek: "DeepSeek Harness",
   zcode: "ZCode",
+  trae: "TRAE CLI",
 };
 
 // Permission-related keywords for sensitive options

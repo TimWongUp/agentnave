@@ -24,7 +24,7 @@
 
 ### 🧑‍💼 One boss, a whole office of CLIs
 
-12 hosts can be the boss and 8 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
+14 hosts can be the boss and 9 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
 
 ### 👯 Private tasks and meetings
 
@@ -58,8 +58,8 @@ Connecting a host installs the Skills, and an employee has to be confirmed befor
 
 | Role                                                | Supported                                                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot (Linux only) |
-| **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
+| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, TRAE CLI, TRAE CN desktop (macOS), Grok Bot (Linux only) |
+| **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode, TRAE CLI                                   |
 
 A host never sends a single task to its own CLI, though its CLI can take a seat in a meeting.
 

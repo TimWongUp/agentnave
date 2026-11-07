@@ -638,3 +638,33 @@ fn standalone_discovery_skips_bundled_paths_and_their_aliases() {
     );
     assert_eq!(validate_target("codex", None).unwrap(), None);
 }
+
+#[test]
+fn trae_updater_uses_native_command_and_respects_distribution_policy() {
+    let temp = TempDir::new().unwrap();
+    let path = file(temp.path(), "release/traex");
+    let metadata = path.parent().unwrap().join("trae-installation.json");
+    fs::write(
+        &metadata,
+        r#"{"channel":"public","release_channel":"stable","auto_update":true}"#,
+    )
+    .unwrap();
+    let plan = install::identify("trae", &path).unwrap();
+    assert_eq!(plan.command, "traecli update");
+    assert_eq!(plan.args, vec!["update"]);
+    assert_eq!(plan.channel, Channel::Trae("stable".into()));
+    fs::write(
+        &metadata,
+        r#"{"channel":"public","release_channel":"stable","auto_update":false}"#,
+    )
+    .unwrap();
+    assert!(install::identify("trae", &path).is_none());
+    assert_eq!(latest::parse_trae(r#"{"version":"0.213.1","channel":"public","distribution":"public","release_channel":"stable"}"#,"stable").as_deref(),Some("0.213.1"));
+    assert!(latest::parse_trae(r#"{"version":"0.213.1","channel":"public","distribution":"public","release_channel":"alpha"}"#,"stable").is_none());
+    assert!(
+        install::commands("macos")["trae"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("install_v2.sh")
+    );
+}

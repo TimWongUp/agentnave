@@ -690,6 +690,30 @@ async def test_provider_details_are_disclosed_only_on_request(
 
 
 @pytest.mark.asyncio
+async def test_trae_advertises_only_supported_options_in_catalog_and_rejection(
+    tmp_path: Path,
+) -> None:
+    async with Client(mcp) as client:
+        described = await client.call_tool("list_members", {"provider": "trae"})
+        details = _payload(_payload(described.structured_content)["provider_details"])
+        supported = str(details["supported_options"])
+        assert "model" in supported and "permission_mode" in supported
+        assert "effort" not in supported and "restricted_tools" not in supported
+        rejected = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "trae",
+                "prompt": "work",
+                "cwd": str(tmp_path),
+                "provider_options": {"effort": "high"},
+            },
+        )
+        assert rejected.is_error
+        assert "unsupported trae options: effort" in str(rejected.content)
+        assert f"Supported trae options: {supported}." in str(rejected.content)
+
+
+@pytest.mark.asyncio
 async def test_mcp_starts_and_waits_for_provider_with_structured_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1215,7 +1239,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "excluded",
-    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi,zcode"],
+    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi,zcode,trae"],
 )
 async def test_stdio_enforces_host_exclusions_before_launch(
     excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

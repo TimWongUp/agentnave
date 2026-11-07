@@ -16,6 +16,7 @@ mod snapshot;
 mod split;
 #[cfg(test)]
 mod tests;
+mod trae;
 mod transaction;
 
 use crate::detect::executable;
@@ -272,7 +273,7 @@ type Spec = (
     Format,
     &'static str,
 );
-const IDS: [&str; 10] = [
+const IDS: [&str; 11] = [
     "codex",
     "claude",
     "codebuddy",
@@ -283,6 +284,7 @@ const IDS: [&str; 10] = [
     "deepseek",
     "hermes",
     "zcode",
+    "trae",
 ];
 
 pub struct Hosts {
@@ -421,7 +423,7 @@ impl Hosts {
                 key: host.id,
                 id: host.boss,
                 label: host.label,
-                root: host.root.path,
+                root: trae::rules_root(&host),
             })
             .collect()
     }
@@ -434,7 +436,7 @@ impl Hosts {
                 key: host.id,
                 id: host.boss,
                 label: host.label,
-                root: host.root.path,
+                root: trae::rules_root(&host),
             })
             .collect()
     }
@@ -497,6 +499,8 @@ fn reload_hint(id: &str) -> &'static str {
         "claude-desktop" => "重启 Claude 桌面",
         "codebuddy" => "重启 CodeBuddy Code",
         "workbuddy" => "完整退出并重启 WorkBuddy",
+        "trae" => "重启 TRAE CLI",
+        "trae-desktop" => "完整退出并重启 TRAE CN",
         "grok" => "重启 Grok CLI",
         "antigravity" => "重启 Antigravity（桌面版需完整退出）",
         "pi" => "重启 Pi",

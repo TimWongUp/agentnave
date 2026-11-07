@@ -47,6 +47,8 @@ def _match(executable: str) -> HostName | None:
         "antigravity.app": "antigravity",
         "deepseek harness.app": "deepseek",
         "zcode.app": "zcode",
+        "trae cn.app": "trae",
+        "trae.app": "trae",
     }
     for part in path.parts:
         if part.lower() in apps:
@@ -54,6 +56,8 @@ def _match(executable: str) -> HostName | None:
     name = path.name.lower()
     if path.suffix.lower() in {".js", ".mjs", ".cjs", ".py"}:
         name = path.stem.lower()
+    if name in {"traecli", "traecli.exe", "traex", "traex.exe"}:
+        return "trae"
     if name == "agy":
         return "antigravity"
     if name == "dsh":

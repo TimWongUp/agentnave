@@ -38,6 +38,7 @@ fn label(host: Option<&str>) -> &str {
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
         Some("zcode") => "ZCode",
+        Some("trae") | Some("trae-desktop") => "TRAE",
         Some("opencode") => "OpenCode",
         Some("gemini") => "Gemini CLI",
         Some("hermes") => "Hermes",
@@ -230,6 +231,7 @@ fn seat_desk(conversation: &str, seat: &str) -> String {
 fn host_provider(host: Option<&str>) -> Option<&str> {
     match host {
         Some("workbuddy") => Some("codebuddy"),
+        Some("trae-desktop") => Some("trae"),
         Some("opencode") | Some("hermes") | None => None,
         Some(name) => Some(name),
     }
@@ -539,7 +541,16 @@ fn meaningful_title(title: &str) -> bool {
     !title.is_empty()
         && !matches!(
             title.strip_suffix(" 任务"),
-            Some("antigravity" | "claude" | "codebuddy" | "codex" | "deepseek" | "grok" | "pi")
+            Some(
+                "antigravity"
+                    | "claude"
+                    | "codebuddy"
+                    | "codex"
+                    | "deepseek"
+                    | "grok"
+                    | "pi"
+                    | "trae"
+            )
         )
 }
 

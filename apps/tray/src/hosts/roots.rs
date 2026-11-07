@@ -12,6 +12,7 @@ use std::{
 
 pub(super) const VARIABLES: &[&str] = &[
     "CODEX_HOME",
+    "TRAE_HOME",
     "CLAUDE_CONFIG_DIR",
     "CODEBUDDY_CONFIG_DIR",
     "PI_CODING_AGENT_DIR",

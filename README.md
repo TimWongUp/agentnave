@@ -24,7 +24,7 @@
 
 ### 🧑‍💼 一个 boss，一屋子 CLI
 
-12 种宿主能当 boss，8 种 CLI 能当员工，派活用的是同一套工具。每个 CLI 继续用自己的登录和配置，聊过的会话之后还能接着聊。
+14 种宿主能当 boss，9 种 CLI 能当员工，派活用的是同一套工具。每个 CLI 继续用自己的登录和配置，聊过的会话之后还能接着聊。
 
 ### 👯 私聊和会议
 
@@ -58,8 +58,8 @@
 
 | 角色                              | 支持                                                                                                                                |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、Grok Bot（仅 Linux） |
-| **员工**（被派活的 CLI）          | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode                         |
+| **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、TRAE CLI、TRAE CN 桌面端（macOS）、Grok Bot（仅 Linux） |
+| **员工**（被派活的 CLI）          | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode、TRAE CLI                         |
 
 宿主不会把单个任务派给自己的 CLI，但会议里可以有它的席位。
 

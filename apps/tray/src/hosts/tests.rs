@@ -3,6 +3,7 @@ use crate::data::Reader;
 use tempfile::TempDir;
 
 mod reload_guidance;
+mod trae;
 mod versioned;
 
 fn fixture() -> (TempDir, Hosts) {
@@ -634,6 +635,11 @@ fn first_connection_detects_running_hosts_without_mcp_receipts() {
             })
             .to_string(),
         );
+        if id == "trae" {
+            // A provider-only receipt with no PID ancestry cannot identify CLI vs Desktop.
+            assert_eq!(hosts.state(&h)["reload"]["state"], "unverified");
+            continue;
+        }
         assert_eq!(hosts.state(&h)["reload"]["state"], "current");
         // The proof outlives the connection while the host stays open.
         hosts.remember_reloads();
@@ -2061,7 +2067,10 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     );
     save(&home.join(".codex/auth.json"), "{}");
     hosts.codex_homes = hosts.other_codex_homes();
-    assert_eq!(hosts.registry().len(), IDS.len());
+    assert_eq!(
+        hosts.registry().len(),
+        IDS.len() + usize::from(cfg!(target_os = "macos"))
+    );
 
     let elsewhere = home.join("claude-work");
     hosts.shell = Some(Ok(BTreeMap::from([(
@@ -2072,7 +2081,10 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     save(&home.join(".codex-profiles/side/sessions/x"), "");
     save(&home.join(".codex-backups/old/archive.tar.gz"), "");
     hosts.codex_homes = hosts.other_codex_homes();
-    assert_eq!(hosts.registry().len(), IDS.len() + 3);
+    assert_eq!(
+        hosts.registry().len(),
+        IDS.len() + usize::from(cfg!(target_os = "macos")) + 3
+    );
     assert_eq!(
         host(&hosts, "claude").config,
         elsewhere.join(".claude.json")
@@ -2130,14 +2142,20 @@ fn claude_desktop_is_found_by_its_folder_without_the_app() {
         "CLAUDE_CONFIG_DIR".into(),
         home.join("claude-work").display().to_string(),
     )])));
-    assert_eq!(hosts.registry().len(), IDS.len());
+    assert_eq!(
+        hosts.registry().len(),
+        IDS.len() + usize::from(cfg!(target_os = "macos"))
+    );
     let config = if cfg!(target_os = "macos") {
         "Library/Application Support"
     } else {
         ".config"
     };
     fs::create_dir_all(home.join(config).join("Claude-3p")).unwrap();
-    assert_eq!(hosts.registry().len(), IDS.len() + 1);
+    assert_eq!(
+        hosts.registry().len(),
+        IDS.len() + usize::from(cfg!(target_os = "macos")) + 1
+    );
 }
 
 #[cfg(unix)]

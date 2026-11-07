@@ -106,7 +106,11 @@ impl Hosts {
     ) -> Vec<processes::Copy> {
         let mut probe = self.processes.lock().unwrap_or_else(|p| p.into_inner());
         if reason == "host_running" {
-            return probe.old_copies(&self.context, host.boss, changed_at.unwrap_or(0));
+            return probe.old_copies(
+                &self.context,
+                trae::process_id(host),
+                changed_at.unwrap_or(0),
+            );
         }
         let mut copies: BTreeMap<&str, processes::Copy> = BTreeMap::new();
         if matches!(reason, "stale" | "tools" | "config") {
@@ -122,7 +126,8 @@ impl Hosts {
                     continue;
                 }
                 if let Some(pid) = pid
-                    && let Some(copy) = probe.receipt_copy(&self.context, host.boss, *pid)
+                    && let Some(copy) =
+                        probe.receipt_copy(&self.context, trae::process_id(host), *pid)
                     && copies
                         .get(copy.kind)
                         .is_none_or(|old| copy.since < old.since)
@@ -148,6 +153,9 @@ impl Hosts {
             let Some((age, modified, value)) = read_receipt(&entry, now, host.boss) else {
                 continue;
             };
+            if host.boss == "trae" && !self.trae_receipt_matches(host, &entry.path()) {
+                continue;
+            }
             if !value["ended_ms"].is_null() {
                 receipts.ended.push(value);
             } else if age <= LINGER_SECONDS
@@ -167,6 +175,15 @@ impl Hosts {
             }
         }
         receipts
+    }
+    fn trae_receipt_matches(&self, host: &Host, path: &Path) -> bool {
+        receipt_pid(path).is_some_and(|pid| {
+            self.processes
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .receipt_copy(&self.context, host.id, pid)
+                .is_some()
+        })
     }
     /// A missing or reused PID only excludes an old blocker; it never proves tools loaded.
     fn receipt_process_exited(&self, path: &Path, value: &Value, modified: SystemTime) -> bool {
@@ -199,7 +216,7 @@ impl Hosts {
             self.processes
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .state(&self.context, host.boss)
+                .state(&self.context, trae::process_id(host))
         } else {
             processes::State::Unknown
         };

@@ -17,6 +17,7 @@ const CLAUDE_DESKTOP: &str = "claude-desktop";
 pub(crate) fn boss_of(id: &str) -> &str {
     match id {
         CLAUDE_DESKTOP => "claude",
+        "trae-desktop" => "trae",
         id => id.split_once('@').map_or(id, |(boss, _)| boss),
     }
 }

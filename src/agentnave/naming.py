@@ -32,6 +32,7 @@ _CLI = {
     "pi": "Pi",
     "deepseek": "DeepSeek Harness",
     "zcode": "ZCode",
+    "trae": "TRAE CLI",
 }
 UNKNOWN_MODEL = "未记录模型"
 _FAMILY = {

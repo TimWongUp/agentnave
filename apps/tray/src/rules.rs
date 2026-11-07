@@ -92,6 +92,21 @@ fn candidates(app: &App, home: &Path) -> (bool, Vec<PathBuf>) {
     let root = &app.root;
     let at = |names: &[&str]| names.iter().map(|name| root.join(name)).collect::<Vec<_>>();
     match app.id {
+        "trae" if app.key == "trae-desktop" => {
+            let dedicated = root.join("user_rules.md");
+            let mut paths = vec![dedicated];
+            let mut user: Vec<_> = std::fs::read_dir(root.join("user_rules"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+                .collect();
+            user.sort();
+            paths.extend(user);
+            (false, paths)
+        }
+        "trae" => (false, at(&["AGENTS.md"])),
         "claude" => (false, at(&["CLAUDE.md"])),
         "codex" => (true, at(&["AGENTS.override.md", "AGENTS.md"])),
         "codebuddy" | "workbuddy" => (false, at(&["CODEBUDDY.md"])),
@@ -220,7 +235,13 @@ fn would_read(app: &App, home: &Path) -> Vec<PathBuf> {
 fn targets(connected: &[&App], home: &Path) -> Vec<PathBuf> {
     let mut apps: Vec<_> = connected
         .iter()
-        .map(|app| (reads(app, home), would_read(app, home)))
+        .map(|app| {
+            let mut read = reads(app, home);
+            if app.key == "trae-desktop" {
+                read.insert(0, app.root.join("user_rules.md"));
+            }
+            (read, would_read(app, home))
+        })
         .collect();
     apps.sort_by_key(|(_, covered)| covered.len());
     let mut chosen: Vec<PathBuf> = Vec::new();

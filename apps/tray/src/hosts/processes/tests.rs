@@ -271,3 +271,22 @@ fn host_paths_match_exact_executables_and_main_app_processes() {
         assert_eq!(identity(path), None, "{path}");
     }
 }
+
+#[test]
+fn trae_paths_match_cli_and_exact_desktop_executable_separately() {
+    assert_eq!(
+        identity("/Applications/Trae CN.app/Contents/MacOS/Electron"),
+        Some("trae-desktop")
+    );
+    assert_eq!(identity("/usr/local/bin/traecli"), Some("trae"));
+    assert_eq!(identity("/data/traex"), Some("trae"));
+    for path in [
+        "/bin/Electron",
+        "/bin/trae",
+        "/bin/trae-desktop",
+        "/Applications/Other.app/Contents/MacOS/Electron",
+        "/Applications/Trae CN.app/Contents/Frameworks/Trae Helper.app/Contents/MacOS/Electron",
+    ] {
+        assert_eq!(identity(path), None, "{path}");
+    }
+}

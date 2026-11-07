@@ -25,7 +25,7 @@ from agentnave.member_policy import (
 from agentnave.models import InvocationRequest, ProviderOption
 
 type ProviderName = Literal[
-    "antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi", "zcode"
+    "antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi", "zcode", "trae"
 ]
 type Mode = Literal["task", "discussion"]
 type ReviewRole = Literal[
@@ -127,6 +127,10 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
         "auto": {"dangerously_skip_permissions": True},
         "full": {"dangerously_skip_permissions": True},
     },
+    "trae": {
+        "auto": {"permission_mode": "auto"},
+        "full": {"permission_mode": "bypass_permissions"},
+    },
     "codex": {
         "auto": {"approve_for_me": True},
         "full": {"dangerously_bypass_approvals_and_sandbox": True},
@@ -140,6 +144,7 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
 # CLI's tier out; a tier replaces saved model options among them.
 PERMISSION_KEYS: dict[str, frozenset[str]] = {
     "zcode": frozenset({"permission_mode"}),
+    "trae": frozenset({"permission_mode", "sandbox"}),
     "claude": frozenset({"permission_mode", "permission_fallback"}),
     "codebuddy": frozenset({"permission_mode"}),
     "grok": frozenset({"permission_mode", "sandbox"}),

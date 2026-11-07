@@ -184,6 +184,9 @@ fn name(path: &str) -> &str {
 
 fn identity(path: &str) -> Option<&'static str> {
     let path = path.replace('\\', "/").to_lowercase();
+    if path.ends_with("/trae cn.app/contents/macos/electron") {
+        return Some("trae-desktop");
+    }
     for (app, id) in [
         ("codex", "codex"),
         ("chatgpt", "codex"),
@@ -207,6 +210,8 @@ fn identity(path: &str) -> Option<&'static str> {
         .unwrap_or(file);
     match stem {
         "agy" => Some("antigravity"),
+        "traecli" | "traex" => Some("trae"),
+        "trae" | "trae-desktop" => None,
         "dsh" | "deepseek-harness" | "deepseek harness" => Some("deepseek"),
         other => IDS.into_iter().find(|id| *id == other),
     }
@@ -356,7 +361,11 @@ fn host_targets(context: &Context) -> HashMap<String, &'static str> {
     // Resolve installed entry points so node/python CLIs with a generic script name also match.
     let mut targets: HashMap<String, &'static str> = HashMap::new();
     for id in IDS {
+        if id == "trae-desktop" {
+            continue;
+        }
         let binary = match id {
+            "trae" => "traecli",
             "antigravity" => "agy",
             "deepseek" => "dsh",
             _ => id,

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-pub const PROVIDERS: [&str; 8] = [
+pub const PROVIDERS: [&str; 9] = [
     "zcode",
     "antigravity",
     "claude",
@@ -19,6 +19,7 @@ pub const PROVIDERS: [&str; 8] = [
     "deepseek",
     "grok",
     "pi",
+    "trae",
 ];
 const MODES: [&str; 2] = ["task", "discussion"];
 /// The agentnave-review roles whose CLI and model the user may pick.
@@ -538,6 +539,17 @@ fn wait_prepared() {
 /// `used` is whether AgentNave ran here before this connection, judged by the caller from the
 /// hosts as they were before it.
 pub fn confirm_host(root: &Path, id: &str, used: bool) -> Result<(), String> {
+    confirm_host_with_cli(root, id, used, || {
+        crate::detect::locate("traecli").is_some()
+    })
+}
+
+fn confirm_host_with_cli(
+    root: &Path,
+    id: &str,
+    used: bool,
+    trae_installed: impl FnOnce() -> bool,
+) -> Result<(), String> {
     if crate::PREVIEW {
         return Ok(());
     }
@@ -559,10 +571,14 @@ pub fn confirm_host(root: &Path, id: &str, used: bool) -> Result<(), String> {
         migrate(root, &crate::detect::detected(false), used)?;
     }
     let mut document = read(root)?.unwrap_or_else(empty);
+    let installed = provider != "trae" || trae_installed();
     // Even a boss that is no employee (Hermes) writes the lists, so a later start-up does not
     // take this install for one that ran before.
     let mut changed = confirm_scenes(&mut document, &Value::Null);
-    for mode in MODES.iter().filter(|_| PROVIDERS.contains(&provider)) {
+    for mode in MODES
+        .iter()
+        .filter(|_| installed && PROVIDERS.contains(&provider))
+    {
         let selection = document["modes"][mode].as_object_mut().unwrap();
         if !selection.contains_key(provider) {
             selection.insert(provider.into(), json!({"models": [], "overrides": {}}));

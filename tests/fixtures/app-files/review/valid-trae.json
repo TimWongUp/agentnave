@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "seats": {
+    "correctness-reviewer": {
+      "provider": "trae",
+      "model": "native-model"
+    }
+  }
+}

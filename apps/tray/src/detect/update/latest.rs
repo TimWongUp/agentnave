@@ -12,6 +12,7 @@ pub(super) enum Channel {
         cask: bool,
     },
     Grok(String),
+    Trae(String),
 }
 
 type Entries = HashMap<Channel, (Instant, Option<String>)>;
@@ -70,6 +71,12 @@ fn query(channel: &Channel) -> Option<String> {
             "https://registry.npmjs.org/{package}/latest"
         ))?),
         Channel::Grok(channel) => grok_with(channel, http),
+        Channel::Trae(track) => parse_trae(
+            &http(&format!(
+                "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/public/{track}/latest.json"
+            ))?,
+            track,
+        ),
         Channel::Brew {
             program,
             name,
@@ -108,6 +115,18 @@ pub(super) fn grok_with(
         let v = text.trim();
         version(v).map(|_| v.to_owned())
     })
+}
+
+pub(super) fn parse_trae(text: &str, track: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    if value["channel"] != "public"
+        || value["distribution"] != "public"
+        || value["release_channel"] != track
+    {
+        return None;
+    }
+    let version = value["version"].as_str()?;
+    super::super::version_of(version)
 }
 
 pub(super) fn parse_npm(text: &str) -> Option<String> {

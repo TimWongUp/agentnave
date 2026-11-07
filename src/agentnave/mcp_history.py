@@ -123,7 +123,7 @@ async def list_members(
             provider=provider,
             permitted=provider not in runtime.EXCLUDED_PROVIDERS,
             show_permitted=discussion is None or provider in discussion,
-            supported_options="model, effort, " + runtime.PROVIDER_OPTIONS[provider],
+            supported_options=runtime.PROVIDER_OPTIONS[provider],
         )
     return payload
 

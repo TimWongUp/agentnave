@@ -20,6 +20,7 @@ type HostName = Literal[
     "deepseek",
     "hermes",
     "zcode",
+    "trae",
 ]
 # Hosts no longer connected or detected; saved history may still name them.
 type RetiredHostName = Literal["gemini", "opencode"]

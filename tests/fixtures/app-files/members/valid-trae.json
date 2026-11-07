@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "clis": {
+    "trae": {
+      "models": {
+        "native-model": {}
+      }
+    }
+  },
+  "modes": {
+    "task": {
+      "trae": {
+        "models": [
+          "native-model"
+        ],
+        "default": "native-model"
+      }
+    },
+    "discussion": {
+      "trae": {
+        "models": []
+      }
+    }
+  }
+}

@@ -92,6 +92,8 @@ class ProviderAdapter(Protocol):
     supports_restricted_tools: bool
     restricted_extra_options: frozenset[str]
 
+    def supported_options(self) -> str: ...
+
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]: ...
 
     def is_installed(self) -> bool: ...
@@ -121,6 +123,10 @@ class AdapterHooks:
     options_description = ""
     supports_restricted_tools = True
     restricted_extra_options: frozenset[str] = frozenset()
+
+    def supported_options(self) -> str:
+        """Complete option help, including the common options this adapter accepts."""
+        return "model, effort, " + self.options_description
 
     def executable_path(self) -> str:
         return resolve_executable(self.executable_name or self.name)

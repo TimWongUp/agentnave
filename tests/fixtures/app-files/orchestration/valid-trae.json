@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "preset": "split",
+  "explorer": {
+    "easy": {
+      "provider": "trae",
+      "model": "native-model"
+    }
+  },
+  "worker": {
+    "hard": {
+      "provider": "trae",
+      "model": "native-model"
+    }
+  }
+}

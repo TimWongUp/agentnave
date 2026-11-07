@@ -20,6 +20,9 @@ pub(super) fn instructions(host: &Host) -> Value {
         "antigravity" => {
             json!({"app":"完全退出 Antigravity 后重开","cli":"退出当前 agy 会话后重开"})
         }
+        "trae" => {
+            json!({"app":"完全退出 TRAE CN 后重开", "cli":"退出当前 TRAE CLI 会话后重开，可用 traecli resume 接回"})
+        }
         "pi" => json!({"cli":"在 Pi 会话里输入 /reload，或重开 Pi"}),
         "codebuddy" => json!({"cli":"退出当前 CodeBuddy Code 会话后重开"}),
         "grok" => json!({"cli":"退出当前 Grok CLI 会话后重开"}),

@@ -427,3 +427,5 @@ fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
             .is_some_and(|(_, text)| !text.contains("image-generator"))
     );
 }
+
+mod trae;

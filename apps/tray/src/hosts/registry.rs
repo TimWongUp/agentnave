@@ -5,6 +5,16 @@ impl Hosts {
         let h = &self.context.home;
         let specs = [
             (
+                "trae",
+                "TRAE CLI",
+                "traecli",
+                Some("TRAE_HOME"),
+                h.join(".trae"),
+                "traecli.toml",
+                Format::Toml,
+                "mcp_servers",
+            ),
+            (
                 "zcode",
                 "ZCode",
                 "zcode",
@@ -168,6 +178,8 @@ impl Hosts {
         let mut hosts: Vec<Host> = specs.into_iter().map(&build).collect();
         let rows = split::rows(&self.context, &hosts, &self.codex_homes);
         hosts.extend(rows.into_iter().map(&build));
+        #[cfg(target_os = "macos")]
+        hosts.push(self.trae_desktop());
         hosts
     }
 }

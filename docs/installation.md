@@ -140,7 +140,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Configure provider exclusions per host
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes|zcode`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes|zcode|trae`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
 宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 或 `AGENTNAVE_HOST=opencode` 的旧条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
 
@@ -154,6 +154,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 | Pi Coding Agent | `pi` |
 | DeepSeek Harness | `deepseek` |
 | ZCode | `zcode` |
+| TRAE CLI / TRAE CN desktop | `trae` |
 | Other hosts | Explicitly choose exclusions, or use an empty value |
 
 Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespace, letter case, and
@@ -223,7 +224,7 @@ format; register it with the official CLI command below instead of copying this 
 
 启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入；接入成功时把它对应的 CLI 加为员工（[ADR-0054](adr/0054-members-need-confirmation.md)），其他 CLI 要在「员工」里确认后才能被派发；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，DeepSeek Harness 桌面 App 已通过真实调用 `list_members` 与 `start_agent` 验收，均标为已实测；ZCode Desktop 已用手写条目通过真实调用 `list_members` 验收，尚未经 App 接管验收，仍标为未实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
 
-十个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识，DeepSeek Harness 只增删自己的 `- insert:` 列表项；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
+宿主配置均由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识，DeepSeek Harness 只增删自己的 `- insert:` 列表项；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
 
 MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符号链接，显示 `symlink_path` 并要求手动处理。Skill 所在目录经过符号链接时显示“无法安装”、不写入，不影响宿主接入状态或 MCP 接入、移除。本服务的 Skill 只由 App 管理：Skill 路径上不是 App 副本的内容（包括符号链接）会在接入或刷新时整体移入备份目录再替换，移除宿主时同样整体移走；目录未知返回 manual。接入时自动安装缺失的 App Skill；启动和刷新检测还会为已有 `agentnave` 用户级入口的宿主自动补装，并更新 App 管理的旧版副本。安装失败会在下次刷新检测时继续自动重试。服务缺失时，“安装本机服务”复用 uv 安装逻辑，进度由 `/app/status` 返回，不运行 Provider 会话。
 
@@ -239,6 +240,8 @@ MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符�
 | deepseek | YAML 补丁列表项 | `${DSH_HOME:-~/.dsh}/cordis.patch.yml`，`- insert:` 插入 `id: agentnave` 的 `@deepseek-ai/dsh-mcp-client` | 同配置根目录的 `skills` | true |
 | hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置根目录的 `skills` | true |
 | zcode | JSON/JSONC 定点编辑 | `~/.zcode/cli/config.json`，`mcp.servers` | `~/.zcode/skills` | false |
+| trae | TOML 定点编辑 | `${TRAE_HOME:-~/.trae}/traecli.toml`，`mcp_servers` | 同配置根目录的 `skills` | false |
+| trae-desktop（macOS） | JSON/JSONC 定点编辑 | `~/Library/Application Support/Trae CN/User/mcp.json`，`mcpServers` | `~/.trae-cn/skills` | false |
 
 layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义，逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
 
@@ -375,6 +378,16 @@ the App refuses a first connection while that fallback holds servers: move them 
 inspect the connection under Settings → MCP. ZCode's native permission prompts still apply to
 boss tool calls. This host configuration does not change its permission mode.
 
+### TRAE CLI 与 TRAE CN 桌面端
+
+两者共用 `trae` Provider 身份，在 App 中按不同的 MCP 配置分为 `trae`（CLI）与 `trae-desktop`（桌面端）两条 boss 接入记录。作为 boss 时，单独任务排除同类 TRAE CLI，会议仍按员工名单决定。桌面版的 `trae-cn` 启动脚本不能代替独立的 `traecli` 员工。
+
+先按 [TRAE CLI 官方安装指引](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh) 安装并单独登录，再在 App 中刷新检测。`traecli models --json` 的实际返回是模型与档位的依据；未登录或返回空目录时不使用安装包内置目录推测账号可用模型。
+
+TRAE CN（本次核验 macOS 3.4.15）的用户级 MCP 配置为 `~/Library/Application Support/Trae CN/User/mcp.json`，顶层 `mcpServers`；项目级 `.trae/mcp.json` 只读观测。桌面 Skill 安装在 `~/.trae-cn/skills`，编排块写入兼容单规则与多规则模式的 `~/.trae-cn/user_rules.md`，保留其中其他内容。CLI 使用 `${TRAE_HOME:-~/.trae}/traecli.toml`、同根目录的 `skills/agentnave-manager` 和 `AGENTS.md`。配置目录经过符号链接或内容无法安全解析时，按原有接入流程拒绝自动写入并提示处理。
+
+配套 Skill 通过 `list_members(provider="trae")` 核对当前服务支持的选项；登录、模型或权限失败均保留原生错误，不换模型重跑。此接入的真实验收状态以 PR 的验证记录为准。
+
 ### Other hosts
 
 Use the host's documented MCP registration interface. Configure the absolute command, empty
@@ -493,7 +506,7 @@ After registration or upgrade:
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
    visible (9 total).
    Confirm the host also discovers `agentnave-manager` and `agentnave-handover` in the intended
-   scope and can read its eight referenced CLI files. Check for older user/project copies that
+   scope and can read its nine referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.

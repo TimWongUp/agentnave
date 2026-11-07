@@ -146,7 +146,7 @@ DISPATCH_WAIT = (
     "dispatch whose result this turn needs, not parallel dispatches."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
-    provider: get_adapter(provider).options_description
+    provider: get_adapter(provider).supported_options()
     for provider in get_args(ProviderName.__value__)
 }
 
@@ -362,7 +362,7 @@ def invocation_request_error(provider: ProviderName, exc: ValueError) -> ToolErr
     if isinstance(exc, ForwardError):
         return ToolError(f"{exc}. Correct the arguments and retry.")
     supported = (
-        f" Supported {provider} options: model, effort, {PROVIDER_OPTIONS[provider]}."
+        f" Supported {provider} options: {PROVIDER_OPTIONS[provider]}."
         if isinstance(exc, AdapterOptionsError)
         else ""
     )

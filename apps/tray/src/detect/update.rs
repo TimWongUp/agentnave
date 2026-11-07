@@ -106,6 +106,7 @@ pub(crate) fn update(provider: &str, target: Option<&str>) -> Result<Value, Stri
         (_, None) => super::locate::find(match provider {
             "deepseek" => "dsh",
             "antigravity" => "agy",
+            "trae" => "traecli",
             other => other,
         }),
         _ => return Err("target 仅支持 Codex 的 standalone".into()),

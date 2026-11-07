@@ -136,3 +136,19 @@ fn snapshot_walks_parents_and_reports_each_kind_once_at_its_earliest_start() {
         "adopted by init"
     );
 }
+
+#[test]
+fn trae_copies_never_borrow_the_other_rows_connection() {
+    let cli = node(1000, "/bin/traecli", &["traecli"]);
+    let desktop = node(
+        1001,
+        "/Applications/Trae CN.app/Contents/MacOS/Electron",
+        &["Electron"],
+    );
+    assert_eq!(classify("trae", &[&cli]).unwrap().kind, "cli");
+    let copy = classify("trae-desktop", &[&desktop]).unwrap();
+    assert_eq!(copy.kind, "app");
+    assert_eq!(copy.bundle.as_deref(), Some("/Applications/Trae CN.app"));
+    assert!(classify("trae", &[&desktop]).is_none());
+    assert!(classify("trae-desktop", &[&cli]).is_none());
+}

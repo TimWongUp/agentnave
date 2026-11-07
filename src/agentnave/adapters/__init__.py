@@ -8,6 +8,7 @@ from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.deepseek import DeepSeekAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
+from agentnave.adapters.trae import TraeAdapter
 from agentnave.adapters.zcode import ZcodeAdapter
 
 
@@ -21,6 +22,7 @@ def get_adapter(provider: str) -> ProviderAdapter:
         "grok": GrokAdapter(),
         "pi": PiAdapter(),
         "zcode": ZcodeAdapter(),
+        "trae": TraeAdapter(),
     }
     try:
         return adapters[provider]
