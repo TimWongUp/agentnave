@@ -8,8 +8,8 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TRAY="$ROOT/apps/tray"
-ID=io.github.timwongup.agentnave.preview
-NAME="AgentNave 预览"
+ID=${AGENTNAVE_PREVIEW_ID:-io.github.timwongup.agentnave.preview}
+NAME=${AGENTNAVE_PREVIEW_NAME:-AgentNave 预览}
 APP="$HOME/Applications/$NAME.app"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$TRAY/Cargo.toml" | head -n 1)
 

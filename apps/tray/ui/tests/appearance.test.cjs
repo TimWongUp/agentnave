@@ -173,6 +173,8 @@ test("settings.html scripts load in declared order and language switch respects 
     addEventListener() {}, CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o?.detail; } },
     Event: class { constructor(t) { this.type = t; } },
     URL, URLSearchParams, CSS: { escape: s => s }, queueMicrotask,
+    MutationObserver: class { observe() {} },
+    requestAnimationFrame: () => 1, cancelAnimationFrame() {},
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     structuredClone,
     async fetch(url, opts) {

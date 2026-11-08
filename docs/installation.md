@@ -74,6 +74,15 @@ Register `agentnave-mcp` under the `agentnave` name. It is the only launcher and
 tasks, group rounds, optional review and viewing. History lives in `~/.agentnave/`, unless
 `AGENTNAVE_DATA_DIR` sets another absolute directory. Provider sessions remain provider-owned.
 
+高级编排的工位选择保存在同一数据根的 `orchestration.json`（默认
+`~/.agentnave/orchestration.json`）；CLI 可用模型与员工确认保存在 `members.json`，评审工位
+保存在 `review.json`。App 的「设置 → 高级 → 编排」负责保存编排配置，并按已接入的 boss
+更新其全局规则中的 AgentNave 块。修改后用 `list_members.orchestration` 核对当前宿主的
+有效档位和工位；直接改 JSON 不会替 App 更新宿主规则。
+
+开发者新增 Provider CLI 时，按[员工与 boss 完整接入清单](provider-integration.md)核对服务、
+App、编排、素材和真实调用验收。
+
 GitHub Release publication does not publish the package to a package index.
 
 The remaining commands reuse these variables; run them in the same shell or define them again.

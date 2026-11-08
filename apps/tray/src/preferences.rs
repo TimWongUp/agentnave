@@ -141,8 +141,9 @@ pub fn localize(html: &[u8], general: &Value) -> Vec<u8> {
     };
     let theme = general["theme"].as_str().unwrap_or("system");
     let motion = general["motion"].as_str().unwrap_or("system");
+    let character_style = general["character_style"].as_str().unwrap_or("static");
     let replacement = format!(
-        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}">"#
+        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}" data-character-style="{character_style}">"#
     );
     match html.windows(opening.len()).position(|w| w == opening) {
         Some(at) => [

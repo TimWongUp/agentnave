@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 pub fn validate(field: &str, value: &Value) -> Result<(), String> {
     let name = format!("general.{field}");
     match field {
+        "character_style" => super::one_of(value, &["static", "video-272", "video-544"], &name),
         "language" => super::one_of(value, &["system", "zh", "en"], &name),
         "theme" => super::one_of(value, &["system", "light", "dark"], &name),
         "motion" => super::one_of(value, &["system", "reduce", "full"], &name),
@@ -27,7 +28,7 @@ pub fn effective(document: &Value, autostart: bool) -> Value {
     let mut result = json!({
         "language": "system", "theme": "system", "motion": "system", "scale": 100,
         "autostart": autostart, "open_on_start": true, "tray_click": "panel",
-        "tray_count": true, "tray_font": "baskerville", "keep_awake": false,
+        "tray_count": true, "tray_font": "baskerville", "keep_awake": false, "character_style": "static",
     });
     if let Some(saved) = document["general"].as_object() {
         for (field, value) in saved {

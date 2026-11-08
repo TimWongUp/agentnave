@@ -72,7 +72,7 @@ Grok Bot connects only on Linux, not through the macOS or Windows App, and its m
 </p>
 
 Characters follow the **model family**, not the CLI: run GPT through Codex CLI and the little dragon girl shows up. A model
-without a character of its own is covered by the Newcomer. To use your own characters, upload a set on the App's Appearance page.
+without a character of its own is covered by the Newcomer. On the App's Appearance page you can switch between CSS characters and video packs, or replace a model family's CSS character with your own set; see the [custom CSS characters guide](docs/custom-characters.md) (in Chinese).
 
 ## 🚀 Quick start
 

@@ -15,6 +15,8 @@ const APPEARANCE_JS: &[u8] = include_bytes!("../../ui/appearance.js");
 const COMMON_JS: &[u8] = concat!(
     "\"use strict\";\nconst AGENTNAVE_ART_VERSION = \"",
     env!("CARGO_PKG_VERSION"),
+    "-",
+    env!("AGENTNAVE_ART_REVISION"),
     "\";\n",
     include_str!("../../ui/common.js")
 )
@@ -28,6 +30,12 @@ impl Reader {
         if path == "/app/voice" || path.starts_with("/app/voice/") {
             return crate::voice::get(&self.root, path);
         }
+        if path == "/app/video-packs" {
+            return Response::json(&crate::video_packs::status(&self.root));
+        }
+        if let Some(rest) = path.strip_prefix("/art/video/") {
+            return crate::video_packs::asset(&self.root, rest).unwrap_or_else(Response::not_found);
+        }
         if let Some(name) = path.strip_prefix("/art/") {
             if name.contains("..") {
                 return Response::not_found();
@@ -39,6 +47,7 @@ impl Reader {
                         Some("svg") => "image/svg+xml",
                         Some("png") => "image/png",
                         Some("json") => "application/json",
+                        Some("mov") => "video/quicktime",
                         _ => "application/octet-stream",
                     };
                     let mut response = Response::ok(mime, bytes.to_vec());
@@ -183,6 +192,10 @@ fn chat_asset(resource: &str) -> Response {
         "chat-state.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/chat-state.js").to_vec(),
+        ),
+        "laptop.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/laptop.js").to_vec(),
         ),
         "chat-office.js" => Response::ok(
             "text/javascript; charset=utf-8",

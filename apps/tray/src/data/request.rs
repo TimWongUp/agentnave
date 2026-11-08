@@ -1,8 +1,22 @@
 use super::*;
 
 impl Reader {
+    pub(crate) fn video_packs_request(
+        &self,
+        app: Option<&tauri::AppHandle>,
+        method: &str,
+        path: &str,
+        action: Option<&str>,
+        body: &[u8],
+    ) -> Response {
+        crate::video_packs::request(&self.root, app, method, path, action, body)
+    }
+
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        if path == "/app/video-packs" || path.starts_with("/app/video-packs/") {
+            return crate::video_packs::request(&self.root, None, method, path, action, body);
+        }
         if path == "/app/voice" || path.starts_with("/app/voice/") {
             if method == "GET" {
                 return crate::voice::get(&self.root, path);
@@ -263,6 +277,7 @@ impl Reader {
     /// This phase only runs the bounded shell probe, never reads host configuration.
     pub(crate) fn probe_tools(&self, context: &crate::hosts::Context) -> crate::hosts::Shell {
         let (shell, dirs) = crate::hosts::probe_tools(context);
+        crate::proxy::cache_network(&dirs.network);
         *self.tools.lock().unwrap_or_else(|p| p.into_inner()) = Some(dirs);
         shell
     }

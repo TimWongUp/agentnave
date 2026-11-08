@@ -272,7 +272,7 @@
     if (shell === "windows") captionButtons(bar, act);
   }
   // Painted art pauses with the window: a hidden window runs no animation at all.
-  const syncPaused = () => document.documentElement.classList.toggle("paused", document.hidden);
+  const syncPaused = () => root.classList?.toggle("paused", document.hidden || root.dataset?.windowHidden === "true");
   document.addEventListener("visibilitychange", syncPaused);
   syncPaused();
 
@@ -320,9 +320,14 @@
   const still = window.ANAppearance.reducedMotion;
   setInterval(() => {
     if (document.hidden || still.matches) return;
+    if (typeof root !== "undefined" && root.dataset?.windowHidden === "true") return;
     const now = performance.now();
     for (const e of emitters) {
       if (!e.fx.isConnected) { if (now - e.born > 5000) emitters.delete(e); continue; }
+      if (e.fig.classList.contains("video") && !e.fig.classList.contains("walk")) {
+        if (e.fx.childElementCount) e.fx.replaceChildren();
+        continue;
+      }
       const mood = e.fig.closest("[data-mood]")?.dataset.mood || "idle";
       const every = !e.fig.classList.contains("walk") && EMIT_EVERY[mood];
       if (!every || now < e.next) continue;
@@ -335,25 +340,94 @@
       e.fx.append(img);
     }
   }, 120);
-  const frameUrl = (name, size, state) => {
-    if (!name.startsWith("@")) return artUrl(`${size}/${name}/${state}.webp`);
+  const frameUrl = (name, size, state, staticOnly = false) => {
+    if (!name.startsWith("@") || (!staticOnly && activeVideoPack())) return artUrl(`${size}/${videoChar(name)}/${state}.webp`);
     const [, family, version] = name.split("@");
     return href(`/character/${family}/${size}/${state}.webp?v=${version}`);
   };
+  let videoPacks = {}, videoPackKey = "";
+  const VIDEO_PACKS_KEY = "agentnave.video-packs";
+  function activeVideoPack() {
+    const style = root.dataset.characterStyle || window.ANAppearance?.preferences?.().character_style || "static";
+    const tier = style === "video-272" ? "272" : style === "video-544" ? "544" : "";
+    const pack = tier && videoPacks[tier];
+    return pack?.installed && pack.stamp ? { tier, stamp: pack.stamp } : null;
+  }
+  const videoEnabled = (name) => Boolean(VIDEO[videoChar(name)] && activeVideoPack());
+  const videoPackUrl = (path) => {
+    const pack = activeVideoPack();
+    return pack ? href(`/art/video/${pack.tier}/${path}?v=${encodeURIComponent(pack.stamp)}`) : artUrl(`video/${path}`);
+  };
+  function syncVideoPackFigures() {
+    const pack = activeVideoPack();
+    const nextKey = pack ? `${pack.tier}:${pack.stamp}` : "";
+    if (nextKey === videoPackKey) return;
+    videoPackKey = nextKey;
+    version++;
+    for (const el of document.querySelectorAll?.(".head[data-char]") || []) {
+      el.style.backgroundImage = `url("${frameUrl(el.dataset.char, "h", el.dataset.state || "idle")}")`;
+    }
+    for (const fig of document.querySelectorAll?.(".fig[data-char]") || []) {
+      if (fig.dataset.staticOnly === "true") continue;
+      const name = fig.dataset.char, vchar = videoChar(name), size = fig.dataset.size || "s";
+      if (name.startsWith("@")) {
+        for (const s of [...STATES, ...EXTRA]) {
+          const img = fig.querySelector(`img.s-${s}`);
+          if (img) img.src = frameUrl(name, size, s);
+        }
+      }
+      releaseFigure(fig);
+      if (videoEnabled(name)) {
+        const state = fig.dataset.video || "idle";
+        let poster = fig.querySelector("img.poster");
+        if (!poster) {
+          poster = h("img.poster", { src: videoPackUrl(`${vchar}/${state}.webp`), alt: "", decoding: "async", draggable: "false" });
+          fig.querySelector(".fig-b")?.append(poster);
+        } else poster.src = videoPackUrl(`${vchar}/${state}.webp`);
+        fig.classList.add("video");
+        scheduleVideo(fig);
+      } else {
+        fig.classList.remove("video", "video-on");
+      }
+    }
+    pruneVideos();
+  }
+  const loadVideoPacks = () => fetch(href("/app/video-packs"), { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : {})).then((data) => {
+      videoPacks = data?.packs || {};
+      syncVideoPackFigures();
+    }).catch(() => {});
+  loadVideoPacks();
+  window.addEventListener("storage", (e) => { if (e.key === VIDEO_PACKS_KEY) loadVideoPacks(); });
+  window.addEventListener("agentnave:preferences", syncVideoPackFigures);
+  const videoPacksChanged = () => {
+    try { localStorage.setItem(VIDEO_PACKS_KEY, String(Date.now())); } catch { /* storage may be unavailable */ }
+    window.AgentNaveSettingsFrame?.changed?.();
+    return loadVideoPacks();
+  };
   // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
   // A missing optional frame marks the figure .no-<state> so CSS falls back.
-  function figure(name, size = "s") {
-    const fig = h("span.fig", { "data-char": name, "aria-hidden": "true" });
+  function figure(name, size = "s", staticOnly = false) {
+    const fig = h("span.fig", { "data-char": name, "data-size": size, "aria-hidden": "true" });
+    if (staticOnly) fig.dataset.staticOnly = "true";
+    const vchar = videoChar(name), useVideo = !staticOnly && videoEnabled(name);
+    if (useVideo) {
+      fig.classList.add("video");
+    }
     // Each figure keeps its own rhythm, so a row of desks never blinks or breathes in step.
     const r = Math.random;
     fig.style.cssText = `--phase:${(-7 * r()).toFixed(2)}s;--cycle:${(6 + 3 * r()).toFixed(2)}s;--breath:${(2.8 + r()).toFixed(2)}s`;
+    const fit = VIDEO_FIT[vchar];
+    if (fit) fig.style.cssText += `;--vs:${fit[0]};--vo:${fit[1]}%${fit[2] == null ? "" : `;--vx:${fit[2]}%`}`;
     const imgs = [...STATES, ...EXTRA].map((s) => {
-      const path = frameUrl(name, size, s);
+      const path = frameUrl(name, size, s, staticOnly);
       if (missing.has(path)) { fig.classList.add(`no-${s}`); return null; }
       const img = h(`img.s-${s}`, { src: path, alt: "", decoding: "async", draggable: "false" });
       if (EXTRA.includes(s)) img.addEventListener("error", () => { missing.add(path); fig.classList.add(`no-${s}`); img.remove(); }, { once: true });
       return img;
     });
+    // A video character shows its clip's own first frame until the clip plays, so the swap is seamless.
+    if (useVideo) imgs.push(h("img.poster", { src: videoPackUrl(`${vchar}/idle.webp`), alt: "", decoding: "async", draggable: "false" }));
     const body = h("span.fig-b", {}, imgs.filter(Boolean));
     fig.append(h("span.fig-a", {}, body));
     if (!name.startsWith("@")) emits.then((all) => {
@@ -377,7 +451,335 @@
     });
     return fig;
   }
-  const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
+  // A character with video loops plays one <video> for its nearest mood; its images stay as the
+  // fallback until the first loop plays, and for walking.
+  const VIDEO_STATES = ["idle", "working", "speaking", "review", "done", "sleep", "sad"];
+  const VIDEO = Object.fromEntries(["claude", "codex", "deepseek", "gemini", "glm", "grok", "qwen", "kimi", "minimax",
+    "hunyuan", "doubao", "muse", "default"].map((name) => [name, VIDEO_STATES]));
+  function videoChar(name) {
+    if (!name?.startsWith("@")) return name;
+    const family = name.split("@")[1];
+    return (typeof FAMILY_ART === "object" && FAMILY_ART[family]) || family;
+  }
+  // The clips frame each character a little differently; this scale and its origin (from the top) put every head
+  // top (hair, not horns, ears or headdresses) at 12% and every pair of shoes at 97.8% of the figure.
+  const VIDEO_FIT = { claude: [0.986, 83.5], codex: [1.092, 95.4], deepseek: [1.065, 94.5], gemini: [1.212, 34.9, 33.5], glm: [1.03, 97.8],
+    grok: [1.017, 153], qwen: [0.975, 90], kimi: [1.041, 75.1], minimax: [0.942, 76.8], hunyuan: [1.058, 110.5], doubao: [0.95, 84.5],
+    muse: [0.946, 82], default: [0.964, 79] };
+  const videoAssetUrl = (path) => (typeof videoPackUrl === "function" ? videoPackUrl(path) : artUrl(`video/${path}`));
+  const videoUrls = new Map();
+  const videoUrl = (name, state) => {
+    const url = videoAssetUrl(`${name}/${state}.mov`);
+    if (!videoUrls.has(url)) {
+      const entry = { refs: 0, promise: fetch(url).then((r) => {
+        if (!r.ok) throw new Error(`Video: ${r.status}`);
+        return r.blob();
+      }).then((b) => URL.createObjectURL(b)) };
+      videoUrls.set(url, entry);
+    }
+    videoUrls.get(url).refs++;
+    return videoUrls.get(url);
+  };
+  // A slot owns a reference before its fetch completes. A cancelled fetch may finish later,
+  // but its URL is revoked only after every consumer, including pending slots, has let it go.
+  function pruneVideos() {
+    for (const [key, entry] of videoUrls) {
+      if (entry.refs) continue;
+      videoUrls.delete(key);
+      entry.promise.then((url) => URL.revokeObjectURL(url), () => {});
+    }
+  }
+  // These moods loop their main clip and now and then slip in another one from the same pose.
+  const EXTRAS = { idle: ["slack-1", "slack-2"], sleep: ["sleep-1"] };
+  // Chance per finished loop of slipping one in; idle splits it evenly between its two clips.
+  const EXTRA_CHANCE = { idle: 0.3, sleep: 0.2 };
+  const nextClip = (state) => {
+    const extras = EXTRAS[state];
+    return extras && Math.random() < EXTRA_CHANCE[state] ? extras[Math.floor(Math.random() * extras.length)] : state;
+  };
+  const videoPlayers = new Map();
+  const pageMediaHidden = (fig) => document.hidden || root.dataset.artPaused === "true"
+    || root.dataset.windowHidden === "true" || Boolean(fig.closest("[hidden], [inert]"));
+  const videoVisible = (fig) => fig.isConnected && !pageMediaHidden(fig)
+    && !still.matches && !fig.classList.contains("offscreen") && !fig.classList.contains("walk");
+  const currentPlayback = (rec, seq) => rec.seq === seq && rec.running && videoVisible(rec.fig);
+  function cancelVideoCallbacks(slot) {
+    const video = slot.video;
+    if (slot.frame != null) video.cancelVideoFrameCallback(slot.frame);
+    if (slot.raf != null) cancelAnimationFrame(slot.raf);
+    slot.frame = slot.raf = null;
+    video.onloadeddata = video.onerror = video.onended = video.onplaying = null;
+    slot.ready = null;
+  }
+  function unloadVideo(slot, remove = false) {
+    slot.token++;
+    cancelVideoCallbacks(slot);
+    slot.video.pause();
+    slot.video.removeAttribute("src");
+    slot.video.load();
+    if (slot.entry) slot.entry.refs--;
+    slot.entry = null;
+    slot.clip = null;
+    slot.loaded = false;
+    slot.video.classList.add("next");
+    if (remove) slot.video.remove();
+  }
+  function pauseVideos(rec, release = false) {
+    if (rec.offscreenTimer) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
+    rec.seq++;
+    rec.running = false;
+    rec.incoming = rec.next = null;
+    rec.waiting = false;
+    for (const slot of rec.slots) {
+      if (!release && slot === rec.active) { cancelVideoCallbacks(slot); slot.video.pause(); }
+      else unloadVideo(slot, true);
+    }
+    rec.slots = release || !rec.active ? [] : [rec.active];
+    if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); }
+    pruneVideos();
+  }
+  function releaseFigure(fig) {
+    dirtyVideos.delete(fig);
+    const rec = videoPlayers.get(fig);
+    if (!rec) return;
+    pauseVideos(rec, true);
+    if (onScreen) onScreen.unobserve(fig);
+    videoPlayers.delete(fig);
+  }
+  function failVideo(rec, seq) {
+    if (!currentPlayback(rec, seq)) return;
+    pauseVideos(rec, true);
+    rec.failed = true;
+  }
+  function videoSlot(rec, clip) {
+    let slot = rec.slots.find((s) => s.clip === clip);
+    if (slot) return slot;
+    slot = rec.slots.find((s) => s !== rec.active);
+    if (slot) unloadVideo(slot);
+    else {
+      const video = document.createElement("video");
+      video.className = "next";
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      slot = { video, token: 0, frame: null, raf: null };
+      rec.slots.push(slot);
+    }
+    slot.clip = clip;
+    slot.state = rec.state;
+    slot.video.dataset.state = rec.state;
+    slot.video.loop = !EXTRAS[rec.state];
+    return slot;
+  }
+  function prepareClip(rec, clip, ready) {
+    const slot = videoSlot(rec, clip), seq = rec.seq, token = slot.token;
+    slot.ready = ready;
+    if (slot.loaded) { ready(slot); return slot; }
+    if (slot.entry) return slot;
+    slot.entry = videoUrl(videoChar(rec.fig.dataset.char), clip);
+    const valid = () => currentPlayback(rec, seq) && slot.token === token;
+    slot.entry.promise.then((url) => {
+      if (!valid()) return;
+      slot.video.onloadeddata = () => {
+        if (!valid()) return;
+        slot.loaded = true;
+        slot.video.onloadeddata = null;
+        slot.ready?.(slot);
+      };
+      slot.video.onerror = () => {
+        if (!valid()) return;
+        failVideo(rec, seq);
+      };
+      slot.video.src = url;
+      if (rec.active) rec.active.video.before(slot.video);
+      else rec.fig.querySelector(".fig-b").append(slot.video);
+    }).catch(() => {
+      if (valid()) failVideo(rec, seq);
+    });
+    return slot;
+  }
+  // Main loops reuse the player. Only an actual clip change needs the second slot;
+  // after its first painted frame the former player becomes the reusable spare.
+  function prepareNext(rec) {
+    rec.next = null;
+    const clip = nextClip(rec.state);
+    if (clip === rec.active.clip) {
+      if (clip === rec.state) for (const s of rec.slots) if (s !== rec.active && s.clip) unloadVideo(s);
+      rec.next = rec.active;
+      return;
+    }
+    prepareClip(rec, clip, (slot) => {
+      rec.next = slot;
+      if (rec.waiting) runClip(rec, slot);
+    });
+  }
+  function finishVideoFrame(rec, slot, seq) {
+    if (!currentPlayback(rec, seq) || rec.incoming !== slot) return;
+    if (rec.active && rec.active !== slot) {
+      cancelVideoCallbacks(rec.active);
+      rec.active.video.pause();
+      rec.active.video.classList.add("next");
+    }
+    rec.active = slot;
+    rec.incoming = null;
+    rec.fig.classList.add("video-on");
+    rec.fig.querySelector(".fx")?.replaceChildren();
+    if (!slot.video.loop) prepareNext(rec);
+    else for (const s of rec.slots) if (s !== rec.active && s.clip) unloadVideo(s);
+    pruneVideos();
+  }
+  function runClip(rec, slot) {
+    const seq = rec.seq;
+    if (!currentPlayback(rec, seq)) return;
+    rec.waiting = false;
+    const video = slot.video;
+    cancelVideoCallbacks(slot);
+    video.onerror = () => failVideo(rec, seq);
+    video.onended = () => {
+      if (!currentPlayback(rec, seq)) return;
+      if (rec.next === slot) {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+        prepareNext(rec);
+      } else if (rec.next) runClip(rec, rec.next);
+      else rec.waiting = true;
+    };
+    if (rec.active !== slot) {
+      rec.incoming = slot;
+      slot.video.classList.remove("next");
+      const painted = () => {
+        slot.frame = null;
+        slot.raf = requestAnimationFrame(() => {
+          slot.raf = null;
+          finishVideoFrame(rec, slot, seq);
+        });
+      };
+      if (video.requestVideoFrameCallback) slot.frame = video.requestVideoFrameCallback(painted);
+      else video.onplaying = () => { video.onplaying = null; slot.raf = requestAnimationFrame(painted); };
+    } else if (!video.loop) prepareNext(rec);
+    if (video.ended) video.currentTime = 0;
+    video.play().catch(() => {});
+  }
+  // Geometry is one gate; hidden documents, covered offices, and retained settings
+  // documents also stop media explicitly rather than relying on CSS animations.
+  const onScreen = typeof IntersectionObserver === "function" && new IntersectionObserver((entries) => {
+    for (const { target: fig, isIntersecting } of entries) {
+      fig.classList.toggle("offscreen", !isIntersecting);
+      scheduleVideo(fig);
+    }
+  });
+  function syncVideo(fig) {
+    if (!fig.isConnected || !fig.classList.contains("video")) { releaseFigure(fig); return; }
+    const name = videoChar(fig.dataset.char);
+    let rec = videoPlayers.get(fig);
+    if (!rec) {
+      rec = { fig, seq: 0, slots: [], active: null, running: false, state: null, offscreenTimer: null };
+      videoPlayers.set(fig, rec);
+      if (onScreen) { fig.classList.add("offscreen"); onScreen.observe(fig); }
+    }
+    const hiddenMedia = still.matches || pageMediaHidden(fig);
+    if (hiddenMedia) rec.failed = false;
+    if (hiddenMedia && rec.slots.length) pauseVideos(rec, true);
+    if (fig.classList.contains("warping")) {
+      if (!videoVisible(fig) && rec.running) pauseVideos(rec);
+      return;
+    }
+    const mood = fig.closest("[data-mood]")?.dataset.mood || "idle";
+    const wanted = mood === "failed" ? "sad" : mood;
+    const state = VIDEO[name].includes(wanted) ? wanted : "idle";
+    if (rec.state !== state) {
+      pauseVideos(rec);
+      rec.state = state;
+      rec.failed = false;
+      fig.dataset.video = state;
+      const poster = fig.querySelector("img.poster");
+      if (poster) poster.src = videoAssetUrl(`${name}/${state}.webp`);
+    }
+    if (hiddenMedia) { if (rec.slots.length) pauseVideos(rec, true); return; }
+    if (!videoVisible(fig)) {
+      if (rec.running) pauseVideos(rec);
+      if (fig.classList.contains("offscreen") && rec.slots.length && !rec.offscreenTimer) {
+        rec.offscreenTimer = setTimeout(() => {
+          rec.offscreenTimer = null;
+          if (!fig.isConnected || pageMediaHidden(fig) || fig.classList.contains("offscreen")) pauseVideos(rec, true);
+        }, 10000);
+      }
+      return;
+    }
+    if (rec.offscreenTimer) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
+    if (rec.running || rec.failed) return;
+    rec.running = true;
+    if (rec.active?.state === state) runClip(rec, rec.active);
+    else prepareClip(rec, state, (slot) => runClip(rec, slot));
+  }
+  // Every character teleports the same way: a small crouch and a springy hop that shrinks her away, or a
+  // drop that grows and settles her. It moves the figure's body, so the desk in front still covers it.
+  const WARP = {
+    out: { duration: 720, easing: "linear", frames: [
+      { transform: "translateY(0) scale(1, 1)", opacity: 1, easing: "cubic-bezier(.3, 0, .5, 1)" },
+      { transform: "translateY(1.5%) scale(1.04, 0.95)", opacity: 1, offset: 0.2, easing: "cubic-bezier(.2, .7, .4, 1)" },
+      { transform: "translateY(-7%) scale(0.97, 1.05)", opacity: 1, offset: 0.48, easing: "cubic-bezier(.5, 0, .75, .4)" },
+      { transform: "translateY(-13%) scale(0.02)", opacity: 0 },
+    ] },
+    in: { duration: 520, easing: "ease-in-out", frames: [
+      { transform: "translateY(-14%) scale(0)", opacity: 0 },
+      { transform: "translateY(-6%) scale(1.06)", opacity: 1, offset: 0.7 },
+      { transform: "translateY(0) scale(1)", opacity: 1 },
+    ] },
+  };
+  const canWarp = (name) => videoEnabled(name);
+  // Resolves when the move ends. An exit keeps her shrunk a moment longer, until the figure itself is hidden.
+  async function warp(fig, kind) {
+    const { duration, easing, frames } = WARP[kind];
+    fig.classList.add("warping");
+    const body = fig.querySelector(".fig-b");
+    const run = body.animate(frames.map((f) => ({ ...f, transformOrigin: "50% 40%" })), { duration, easing, fill: "forwards" });
+    await run.finished.catch(() => {});
+    fig.classList.remove("warping");
+    if (kind === "out") setTimeout(() => run.cancel(), 400);
+    else run.cancel();
+  }
+  let videoSync = 0;
+  const dirtyVideos = new Set();
+  function scheduleVideo(fig) {
+    if (!fig.isConnected) { releaseFigure(fig); dirtyVideos.delete(fig); return; }
+    if (videoPlayers.has(fig) && !videoVisible(fig)) { syncVideo(fig); return; }
+    dirtyVideos.add(fig);
+    videoSync ||= requestAnimationFrame(() => {
+      videoSync = 0;
+      const figures = [...dirtyVideos];
+      dirtyVideos.clear();
+      for (const node of figures) syncVideo(node);
+      pruneVideos();
+    });
+  }
+  function scheduleVideoTree(node) {
+    if (node.nodeType !== 1) return;
+    if (node.matches(".fig.video")) scheduleVideo(node);
+    for (const fig of node.querySelectorAll(".fig.video")) scheduleVideo(fig);
+  }
+  // Hidden documents can stop receiving rAF entirely: pausing must happen in the
+  // visibility event itself, not in a frame that may never be delivered.
+  const syncAllVideos = () => { for (const fig of videoPlayers.keys()) syncVideo(fig); };
+  if (typeof MutationObserver === "function") new MutationObserver((records) => {
+    for (const m of records) {
+      if (m.type === "childList") {
+        for (const node of [...m.addedNodes, ...m.removedNodes]) scheduleVideoTree(node);
+      } else if (m.attributeName === "class") {
+        if (m.target.matches(".fig.video") && ["walk", "warping"].some((name) =>
+          (m.oldValue || "").split(/\s+/).includes(name) !== m.target.classList.contains(name))) scheduleVideo(m.target);
+      } else if (m.oldValue !== m.target.getAttribute(m.attributeName)) {
+        if (m.target === root && m.attributeName === "data-window-hidden") syncPaused();
+        scheduleVideoTree(m.target);
+      }
+    }
+  }).observe(root, { subtree: true, childList: true, attributes: true, attributeOldValue: true,
+    attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden"] });
+  document.addEventListener("visibilitychange", syncAllVideos);
+  window.addEventListener("pagehide", () => { for (const fig of [...videoPlayers.keys()]) releaseFigure(fig); });
+  window.addEventListener("pageshow", () => scheduleVideoTree(root));
+  window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", syncAllVideos);
+  const head = (name, state = "idle") => h("span.head", { "data-char": name, "data-state": state, "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
   // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. The value is its tile, if any;
   // a desktop app's mark takes the colours of its app icon.
   const CLI_MARK = { claude: "", "claude-desktop": "claude-tile", codex: "", "codex-desktop": "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", devin: "", grok: "mono", pi: "mono", hermes: "", zcode: "mono" };
@@ -388,7 +790,13 @@
       h("img", { src: artUrl(`cli/${provider}.svg`), alt: "", draggable: "false" }));
   }
   // The laptop lid shows the CLI the desk runs in; the figure at it is the model.
-  const lid = (provider) => cliMark(provider) || h("img", { src: artUrl("logo-default.svg"), alt: "" });
+  function lid(provider) {
+    const mark = cliMark(provider);
+    if (!mark) return h("img", { src: artUrl("logo-default.svg"), alt: "" });
+    // Codex bakes a plain white tile into its logo; the other baked tiles are part of the picture
+    if (provider === "codex" && mark.matches(".cli-mark")) mark.firstChild.src = artUrl("cli/lid/codex.svg");
+    return mark;
+  }
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
   const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", devin: "Devin", zcode: "ZCode" };
   const cliName = (provider) => CLI[provider] || provider || "";
@@ -443,14 +851,15 @@
     if (d.private?.running > 0) out.push({ kind: "private", status: "running" });
     return out;
   }
-  // An idle desk rests once it has had no work for half an hour.
-  const dozing = (d) => Date.now() - at(d.last_active) > 30 * 60e3;
+  // A desk rests once it has had no work for two hours.
+  const SLEEP_AFTER = 2 * 3600e3;
+  const dozing = (d) => Date.now() - at(d.last_active) > SLEEP_AFTER;
   // A reviewed answer waits only briefly on the boss: it reads as work going on, not a state of its own.
   const ongoing = (status) => (status === "review" ? "running" : status);
 
-  const art = { url: artUrl, character, figure, head, lid, STATES, EXTRA, charactersChanged,
+  const art = { url: artUrl, character, figure, canWarp, warp, head, lid, STATES, EXTRA, charactersChanged, loadVideoPacks, videoPacksChanged,
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, SLEEP_AFTER, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 }

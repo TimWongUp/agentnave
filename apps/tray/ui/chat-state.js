@@ -47,7 +47,6 @@ const reduceMotion = AN.reducedMotion;
 const FOLD_PX = 320; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
-const SLEEP_AFTER = 20 * 60e3; // an idle boss dozes off after this long
 const COLLAPSED_KEY = "agentnave.office.convCollapsed";
 // Layout preferences survive restarts; storage may be unavailable, which only loses them.
 function stored(key) {

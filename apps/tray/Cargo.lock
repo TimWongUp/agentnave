@@ -33,6 +33,7 @@ dependencies = [
  "sha2",
  "sys-locale",
  "sysinfo",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

@@ -21,6 +21,7 @@ mod settings;
 mod stage;
 mod storage;
 mod update;
+mod video_packs;
 mod voice;
 
 use std::process::Command;
@@ -75,6 +76,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
         && !(cfg!(unix) && path == "/app/hosts/reload-copy")
+        && !path.starts_with("/app/video-packs/")
         && !matches!(
             path,
             "/app/preferences"
@@ -432,12 +434,22 @@ fn destination(target: &Url) -> String {
     path
 }
 
+fn set_window_hidden(window: &WebviewWindow, hidden: bool) {
+    let script = if hidden {
+        "document.documentElement.dataset.windowHidden = 'true';"
+    } else {
+        "delete document.documentElement.dataset.windowHidden;"
+    };
+    let _ = window.eval(script);
+}
+
 /// Bring the main window back on the page it was left on, or open the office if there is none.
 fn restore(app: &AppHandle) {
     match app.get_webview_window("main") {
         Some(window) => {
             let _ = window.unminimize();
             let _ = window.show();
+            set_window_hidden(&window, false);
             let _ = window.set_focus();
         }
         None => open(app, "main", "/chat/"),
@@ -498,6 +510,7 @@ fn open(app: &AppHandle, label: &str, path: &str) {
         }
         let _ = window.unminimize();
         let _ = window.show();
+        set_window_hidden(&window, false);
         let _ = window.set_focus();
         return;
     }
@@ -569,8 +582,13 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
         .on_navigation(allowed)
         // A main-document navigation clears the player; a settings iframe keeps that document.
         .on_page_load(|window, payload| {
-            if payload.event() == PageLoadEvent::Started && window.label() == TRAY {
-                voice::player::clear(window.app_handle());
+            if window.label() == TRAY {
+                match payload.event() {
+                    PageLoadEvent::Started => voice::player::clear(window.app_handle()),
+                    PageLoadEvent::Finished => {
+                        set_window_hidden(&window, !window.is_visible().unwrap_or(true));
+                    }
+                }
             }
         })
         .on_new_window(move |target, _| {
@@ -597,6 +615,7 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
                 {
                     api.prevent_close();
                     let _ = closing.hide();
+                    set_window_hidden(&closing, true);
                 }
                 #[cfg(not(target_os = "macos"))]
                 let _ = api;
@@ -791,6 +810,9 @@ impl ProtocolRequest {
         match (method, path.as_str()) {
             _ if preview_refuses(PREVIEW, method, path) => {
                 data::Response::error(403, "预览版只读：请在正式版里保存改动")
+            }
+            _ if path == "/app/video-packs" || path.starts_with("/app/video-packs/") => {
+                reader.video_packs_request(Some(app), method, path, action, self.request.body())
             }
             ("GET", "/app/status") => data::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),

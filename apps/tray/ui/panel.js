@@ -118,7 +118,7 @@ function brief(d) {
   if (d.status === "failed") return { mood: "failed", word: L("上次失败", "Last failed") };
   if (d.status === "pending") return { mood: "idle", word: L("等待中", "Pending") };
   if (lingering(d)) return { mood: "idle", word: L("已完成", "Finished") };
-  return dozing(d) ? { mood: "sleep", word: L("休息中", "Resting") } : { mood: "idle", word: L("空闲", "Idle") };
+  return dozing(d) ? { mood: "sleep", word: L("休息中", "Resting") } : { mood: "idle", word: L("摸鱼", "Slacking off") };
 }
 const HEAD = { working: "working", sleep: "sleep" };
 const roomRound = (r) => {

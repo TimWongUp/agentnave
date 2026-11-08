@@ -72,7 +72,7 @@ Grok Bot 只能在 Linux 上接入，不支持 macOS 和 Windows App，也看不
 </p>
 
 小人按**模型家族**分配，不看用的是哪个 CLI：用 Codex CLI 跑 GPT，出场的就是 GPT 那位小龙娘。没有专属形象的模型由「新同事」代班。
-想换成自己的小人，在 App 设置的「外观」页上传一套就行。
+在 App 设置的「外观」页可以切换 CSS 小人与视频小人包，也可以按模型家族上传一套自定义 CSS 小人，见[自制与更换办公室 CSS 小人教程](docs/custom-characters.md)。
 
 ## 🚀 快速开始
 
