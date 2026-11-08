@@ -151,6 +151,10 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
         "auto": {"permission_mode": "danger-full-access"},
         "full": {"permission_mode": "danger-full-access"},
     },
+    "devin": {
+        "auto": {"permission_mode": "auto"},
+        "full": {"permission_mode": "dangerous"},
+    },
 }
 # Options that decide what a CLI may run unasked. A caller passing any of them keeps the
 # CLI's tier out; a tier replaces saved model options among them.
@@ -162,6 +166,7 @@ PERMISSION_KEYS: dict[str, frozenset[str]] = {
     "antigravity": frozenset({"mode", "sandbox", "dangerously_skip_permissions"}),
     "codex": frozenset({"approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"}),
     "deepseek": frozenset({"permission_mode"}),
+    "devin": frozenset({"permission_mode", "sandbox"}),
 }
 
 

@@ -26,6 +26,7 @@ pub(super) fn instructions(host: &Host) -> Value {
         "deepseek" => {
             json!({"app":"完全退出 DeepSeek Harness 桌面端后重开","cli":"退出当前 dsh 会话后重开"})
         }
+        "devin" => json!({"cli":"退出当前 Devin CLI 会话后重开"}),
         "zcode" => {
             json!({"app":"完全退出 ZCode 桌面端后重开","cli":"在 ZCode 新建会话或退出后重开"})
         }

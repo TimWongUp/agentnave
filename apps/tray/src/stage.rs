@@ -37,6 +37,7 @@ fn label(host: Option<&str>) -> &str {
         Some("antigravity") => "Antigravity",
         Some("pi") => "Pi",
         Some("deepseek") => "DeepSeek Harness",
+        Some("devin") => "Devin",
         Some("zcode") => "ZCode",
         Some("opencode") => "OpenCode",
         Some("gemini") => "Gemini CLI",
@@ -539,7 +540,16 @@ fn meaningful_title(title: &str) -> bool {
     !title.is_empty()
         && !matches!(
             title.strip_suffix(" 任务"),
-            Some("antigravity" | "claude" | "codebuddy" | "codex" | "deepseek" | "grok" | "pi")
+            Some(
+                "antigravity"
+                    | "claude"
+                    | "codebuddy"
+                    | "codex"
+                    | "deepseek"
+                    | "devin"
+                    | "grok"
+                    | "pi"
+            )
         )
 }
 

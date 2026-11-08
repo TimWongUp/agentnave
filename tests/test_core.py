@@ -1563,3 +1563,34 @@ async def test_health_survives_retry_stall_and_success_clears_it(
         assert provider_health.active(tmp_path) == {}
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_devin_invocation_reads_prompt_file_and_exports_atif(tmp_path: Path) -> None:
+    fake_devin = (
+        "import json, pathlib, sys; "
+        "args = sys.argv[1:]; "
+        "prompt = pathlib.Path(args[args.index('--prompt-file') + 1]).read_text('utf-8'); "
+        "export = pathlib.Path(args[args.index('--export') + 1]); "
+        "export.write_text(json.dumps({"
+        "'schema_version': 'ATIF-v1.7', "
+        "'session_id': 'dramatic-penalty', "
+        "'steps': [{'source': 'agent', 'message': prompt.splitlines()[-1], "
+        "'extra': {'generation_model': 'swe-1.5'}}]"
+        "}), 'utf-8'); "
+        "print(prompt.splitlines()[-1])"
+    )
+    manager = InvocationManager()
+    request = InvocationRequest("devin", "verify fake devin", tmp_path)
+    prepared = manager.prepare(request)
+    prepared = replace(prepared, argv=(sys.executable, "-c", fake_devin, *prepared.argv[1:]))
+    try:
+        result = await manager.wait(manager.start(request, prepared=prepared), 10)
+        assert result is not None
+        assert result.status is InvocationStatus.SUCCEEDED
+        assert result.output == "verify fake devin"
+        assert result.session_id == "dramatic-penalty"
+        assert result.reported_model == "swe-1.5"
+        assert all(not path.exists() for path in prepared.cleanup_paths)
+    finally:
+        await manager.shutdown()

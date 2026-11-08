@@ -31,6 +31,7 @@ _CLI = {
     "grok": "Grok",
     "pi": "Pi",
     "deepseek": "DeepSeek Harness",
+    "devin": "Devin",
     "zcode": "ZCode",
 }
 UNKNOWN_MODEL = "未记录模型"
@@ -40,6 +41,7 @@ _FAMILY = {
     "gemini": "Gemini",
     "grok": "Grok",
     "deepseek": "DeepSeek",
+    "swe": "SWE",
     "glm": "GLM",
     "qwen": "Qwen",
     "kimi": "Kimi",

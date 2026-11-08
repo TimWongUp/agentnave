@@ -324,6 +324,14 @@ fn configured(provider: &str) -> Option<String> {
         }
         "antigravity" => json(home.join(".gemini/antigravity-cli/settings.json"), "model"),
         "codebuddy" => codebuddy_settings()?["model"].as_str().map(str::to_owned),
+        "devin" => {
+            let text = std::fs::read_to_string(home.join(".config/devin/config.json")).ok()?;
+            let value: Value = serde_json::from_str(&text).ok()?;
+            value["agent"]["model"]
+                .as_str()
+                .or_else(|| value["model"].as_str())
+                .map(str::to_owned)
+        }
         _ => None,
     }?;
     let name = name.trim();
@@ -825,6 +833,8 @@ fn listed_models(
             ("command", models)
         }),
         "antigravity" => run(path, &["models"]).map(|out| ("command", agy_models(&out))),
+        "devin" => run(path, &["models", "list", "--format", "json"])
+            .map(|out| ("command", devin_models(&out))),
         // Pi answers over RPC with each model's thinking levels; the listing has no levels.
         "pi" => pi_rpc_models(path)
             .map(|models| ("rpc", models))

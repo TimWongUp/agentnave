@@ -24,7 +24,15 @@ from agentnave.host import Host
 from agentnave.models import ProviderOption
 
 type ProviderName = Literal[
-    "antigravity", "claude", "codebuddy", "codex", "deepseek", "grok", "pi", "zcode"
+    "antigravity",
+    "claude",
+    "codebuddy",
+    "codex",
+    "deepseek",
+    "devin",
+    "grok",
+    "pi",
+    "zcode",
 ]
 type Difficulty = Literal["easy", "hard"]
 type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]

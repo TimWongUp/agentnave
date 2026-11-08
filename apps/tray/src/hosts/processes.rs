@@ -191,6 +191,7 @@ fn identity(path: &str) -> Option<&'static str> {
         ("workbuddy", "workbuddy"),
         ("antigravity", "antigravity"),
         ("deepseek harness", "deepseek"),
+        ("devin", "devin"),
         ("zcode", "zcode"),
     ] {
         if path.contains(&format!("/{app}.app/contents/macos/")) {

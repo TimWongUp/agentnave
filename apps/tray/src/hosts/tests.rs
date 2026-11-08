@@ -508,6 +508,15 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 360_000
             );
         }
+        if id == "devin" {
+            let entry = h.read().unwrap().entry.unwrap();
+            assert_eq!(entry["transport"], "stdio");
+            assert_eq!(entry["args"], json!([]));
+            assert_eq!(
+                h.config,
+                hosts.context.home.join(".config/devin/mcp_config.json")
+            );
+        }
         assert_eq!(
             result["host"]["tested"],
             [

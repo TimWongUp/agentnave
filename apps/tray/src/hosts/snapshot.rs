@@ -15,6 +15,7 @@ impl Hosts {
             "workbuddy" => Some("WorkBuddy.app"),
             "antigravity" => Some("Antigravity.app"),
             "deepseek" => Some("DeepSeek Harness.app"),
+            "devin" => Some("Devin.app"),
             "zcode" => Some("ZCode.app"),
             _ => None,
         };
@@ -116,6 +117,7 @@ impl Hosts {
             let relative: &[&str] = match host.boss {
                 "codex" => &[".codex/config.toml"],
                 "claude" | "codebuddy" | "workbuddy" => &[".mcp.json"],
+                "devin" => &[".devin/mcp_config.local.json", ".devin/mcp_config.json"],
                 "grok" => &[".grok/config.toml"],
                 "pi" => &[".pi/mcp.json"],
                 "zcode" => &["zcode.json", ".zcode/config.json"],

@@ -16,6 +16,7 @@ from uuid import UUID
 
 from agentnave.models import Host
 
+_DEVIN_SESSIONS = "sessions"
 _HERMES_SESSIONS = "sessions"
 _ZCODE_SESSIONS = "session"
 
@@ -75,6 +76,38 @@ def message_model(message: dict[str, object]) -> str | None:
     return clean_model(message.get("responseModel") or message.get("model"))
 
 
+def extract_devin_turn(
+    payload: dict[str, object] | None,
+) -> tuple[str | None, str, str | None]:
+    """Return (session_id, last_agent_message, last_agent_model) from a Devin ATIF export."""
+    if not payload:
+        return None, "", None
+    raw_session = payload.get("session_id")
+    session_id = raw_session if isinstance(raw_session, str) and raw_session else None
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        return session_id, "", clean_model(object_dict(payload.get("agent")).get("model_name"))
+    output = ""
+    model: str | None = None
+    for item in reversed(cast(list[object], steps)):
+        step = object_dict(item)
+        if step.get("source") != "agent":
+            continue
+        raw_message = step.get("message")
+        if not output and isinstance(raw_message, str):
+            output = raw_message
+        if model is None:
+            extra = object_dict(step.get("extra"))
+            model = clean_model(extra.get("generation_model")) or clean_model(
+                step.get("model_name")
+            )
+        if output and model is not None:
+            break
+    if model is None:
+        model = clean_model(object_dict(payload.get("agent")).get("model_name"))
+    return session_id, output, model
+
+
 def boss_key(host: str | None, session_id: str) -> str:
     """A boss chat's key on disk: a hash, so its native session ID alone is never stored."""
     identity = json.dumps([host, session_id], ensure_ascii=False).encode()
@@ -88,6 +121,8 @@ def session_file(host: Host, session_id: str | None) -> Path | None:
     try:
         if host.name == "deepseek":
             return _deepseek_file(session_id)
+        if host.name == "devin":
+            return _devin_file(session_id)
         if host.name == "hermes":
             return _shared_file(_hermes_database(), _HERMES_SESSIONS, session_id)
         if host.name == "zcode":
@@ -107,7 +142,9 @@ def session_file(host: Host, session_id: str | None) -> Path | None:
 def shared_session_id(host: str | None, key: str) -> str | None:
     """The session behind a boss key, for a host whose sessions share one database."""
     try:
-        if host == "hermes":
+        if host == "devin":
+            database, sessions = _devin_database(), _DEVIN_SESSIONS
+        elif host == "hermes":
             database, sessions = _hermes_database(), _HERMES_SESSIONS
         elif host == "zcode":
             database, sessions = zcode_database(), _ZCODE_SESSIONS
@@ -164,6 +201,8 @@ def session_model(
     if session_id is None:
         return None
     try:
+        if host.name == "devin":
+            return _devin_model(session_id, since)
         if host.name == "hermes":
             return _hermes_model(session_id)
         if host.name == "zcode":
@@ -321,6 +360,64 @@ def _hermes_model(session_id: str) -> str | None:
 
 def _hermes_database() -> Path:
     return _home("HERMES_HOME", ".hermes") / "state.db"
+
+
+def _devin_root() -> Path:
+    if override := os.environ.get("DEVIN_SESSIONS_DIR"):
+        return Path(override).expanduser()
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    return base / "devin/cli"
+
+
+def _devin_database() -> Path:
+    return _devin_root() / "sessions.db"
+
+
+def _devin_file(session_id: str) -> Path | None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", session_id):
+        return None
+    root = _devin_root()
+    transcript = root / "transcripts" / f"{session_id}.json"
+    if transcript.is_file() and transcript.resolve().is_relative_to(root.resolve()):
+        return transcript
+    return _shared_file(_devin_database(), _DEVIN_SESSIONS, session_id)
+
+
+def _devin_model(session_id: str, since: datetime | None) -> str | None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", session_id):
+        return None
+    root = _devin_root()
+    transcript = root / "transcripts" / f"{session_id}.json"
+    if (
+        transcript.is_file()
+        and transcript.resolve().is_relative_to(root.resolve())
+        and (since is None or transcript.stat().st_mtime >= since.timestamp() - 5)
+    ):
+        payload = parse_json_object(transcript.read_text(encoding="utf-8", errors="replace"))
+        if (model := extract_devin_turn(payload)[2]) is not None:
+            return model
+    database = _devin_database()
+    if not database.is_file():
+        return None
+    with closing(_read_only(database)) as db:
+        row = db.execute(
+            "SELECT model, last_activity_at FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    if not row:
+        return None
+    raw_model, last_activity = row
+    if (
+        since is not None
+        and isinstance(last_activity, int)
+        and not isinstance(last_activity, bool)
+        and last_activity < int(since.timestamp()) - 5
+    ):
+        return None
+    return clean_model(raw_model)
 
 
 def _zcode_model(session_id: str, since: datetime | None) -> str | None:

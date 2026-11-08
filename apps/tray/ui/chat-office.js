@@ -161,6 +161,7 @@ const BOSS_SET = {
   antigravity: "agy",
   agy: "agy",
   deepseek: "deepseek",
+  devin: "devin",
   grok: "grok",
   codebuddy: "codebuddy",
   workbuddy: "codebuddy",
