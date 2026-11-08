@@ -1883,6 +1883,9 @@ def test_devin_adapter_prepares_prompt_export_and_parses_atif(tmp_path: Path) ->
     assert adapter.parse(1, b"", b"Not logged in. Run devin auth login").status is (
         InvocationStatus.BLOCKED
     )
+    assert adapter.parse(1, b"", b"Refusing to run in an untrusted workspace").status is (
+        InvocationStatus.BLOCKED
+    )
 
 
 def test_devin_exports_stay_with_their_invocations(tmp_path: Path) -> None:

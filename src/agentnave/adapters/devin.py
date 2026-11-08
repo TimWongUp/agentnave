@@ -173,6 +173,7 @@ class DevinAdapter(AdapterHooks):
             or "not logged in" in lowered
             or "auth login" in lowered
             or "workspace trust" in lowered
+            or "untrusted workspace" in lowered
             or failure_status(lowered) is InvocationStatus.BLOCKED
         )
         status = InvocationStatus.BLOCKED if blocked else failure_status(message)
