@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.3.0` contains the runtime source, `agentnave-manager` Skill and all eight
+**Paired release:** `v1.4.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.3.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.4.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -548,7 +548,7 @@ protocol/provider path, not every desktop host's discovery or long-result render
 versions above are observations from 2026-09-08, not an all-version compatibility guarantee.
 
 Repository tests verify MCP contracts with fake providers, including STDIO startup, exclusions,
-and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all eight CLI
+and the allowed-provider lifecycle. CI checks that the Git source archive contains the runtime and complete Skill with all nine CLI
 references, matching the source-tag installation route. The workflow also installs a built wheel and lists tools
 through its installed launcher on Windows, macOS, and Linux. These checks do not establish live compatibility
 with every host or availability of each account's models.
@@ -604,26 +604,25 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.3.0
+### Upgrading to v1.4.0
 
-Update the App; it installs the paired service at startup. On macOS and Linux, the App updates host
-MCP configurations once to point at the fixed launcher `service/bin/agentnave-mcp` under the App
-data directory so later service upgrades no longer rewrite host config files (hosts such as
-WorkBuddy will not ask to trust the workspace again on subsequent upgrades). Reconnect or reopen any
-host copy listed on the boss card in Settings so it picks up the new launcher and runtime; on macOS,
-background services (Claude background service, Codex background service, Hermes gateway) can be
-stopped or restarted directly from the card.
+Update the App; it installs the paired service at startup. Reconnect or reopen any host copy listed
+on the boss card in Settings so it picks up the new runtime and tool schema. The App rewrites the
+orchestration block in each boss host's global rules: it now holds only authorization (Split needs
+the user's explicit instruction before parallel writes, with an optional switch letting the boss
+call meetings; Parallel lets the boss decide both), while the method lives in the
+`agentnave-manager` Skill and its new `references/workflows.md`. Generated v1.3.0 sentences copied
+into a Custom preset are migrated.
 
-Available models are now configured per CLI under `clis[provider].allowed_models` in `members.json`
-and shared across private tasks, meetings and orchestration seats; existing scene-level model lists
-continue to work until edited in the App. Confirmed CLIs (enabled for at least private tasks or
-meetings) can serve orchestration seats whenever the seat model is in their pool, without requiring
-the private-task toggle itself, and an optional `image-generator` seat can be configured under
-Advanced. `start_agent` and `run_round` accept an optional `wait=true` parameter and include `next`
-in receipts while work remains pending.
+Specialist roles are now interface work, writing, web research, social-platform research and
+office documents; `list_members` reports each visible role's scope in `orchestration.scopes`.
+`wait` waits at most 270 seconds (`wait_seconds` accepts `0` or `270`, with optional `seq`), and
+the App raises supported hosts' per-entry tool timeout to at least 360 seconds. Devin CLI joins as
+a member and boss. Headless Linux hosts should check `orchestration.json` against
+[the headless guide](linux-headless.md).
 
-See [v1.3.0 release notes](releases/v1.3.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.2.0.md).
+See [v1.4.0 release notes](releases/v1.4.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.3.0.md).
 
 ## Uninstall
 
