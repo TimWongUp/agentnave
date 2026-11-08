@@ -1526,11 +1526,13 @@ async def test_health_survives_retry_stall_and_success_clears_it(
     manager = InvocationManager()
     manager.health_root = tmp_path
 
+    observed_during_stall: dict[str, provider_health.Health] = {}
+
     async def stalled(record: Any) -> None:
+        nonlocal observed_during_stall
         while record.last_event_at is None:
             await asyncio.sleep(0.001)
-        if reported:
-            assert provider_health.active(tmp_path)["claude"]["code"] == "auth"
+        observed_during_stall = provider_health.active(tmp_path)
 
     monkeypatch.setattr(core, "_stall_guard", stalled)
     try:
@@ -1542,9 +1544,9 @@ async def test_health_survives_retry_stall_and_success_clears_it(
         result = await manager.wait(invocation)
         assert result is not None and result.status is InvocationStatus.FAILED
         assert result.error is not None and result.error.code == "provider_error"
-        assert provider_health.active(tmp_path)["claude"]["code"] == (
-            "auth" if reported else "quota"
-        )
+        expected = "auth" if reported else "quota"
+        assert observed_during_stall["claude"]["code"] == expected
+        assert provider_health.active(tmp_path)["claude"]["code"] == expected
 
         # Success on any model of the same CLI clears the provider-level breaker.
         async def no_stall(_record: Any) -> None:

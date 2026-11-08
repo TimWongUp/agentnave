@@ -266,9 +266,9 @@ class Groups:
         round_.task = asyncio.create_task(self._drive(round_))
         return round_
 
-    def retry(self, group_id: str, seat_ids: list[str]) -> Round:
-        """Start lost seats of the running parallel round again from the same snapshot: nothing
-        is committed before every seat ended, so they still cannot see each other's answers."""
+    def _validate_retry(
+        self, group_id: str, seat_ids: list[str]
+    ) -> tuple[Round, dict[str, SeatRun]]:
         round_ = self._group(group_id).active
         if round_ is None or round_.order != "parallel" or round_.cancelling or round_.settled:
             raise ValueError(
@@ -283,6 +283,12 @@ class Groups:
         alive = sorted(item for item in seat_ids if runs[item].status not in _LOST)
         if alive:
             raise ValueError("only failed or blocked seats can retry: " + ", ".join(alive))
+        return round_, runs
+
+    def retry(self, group_id: str, seat_ids: list[str]) -> Round:
+        """Start lost seats of the running parallel round again from the same snapshot: nothing
+        is committed before every seat ended, so they still cannot see each other's answers."""
+        round_, runs = self._validate_retry(group_id, seat_ids)
         for item in seat_ids:
             run = runs[item]
             run.status = "pending"

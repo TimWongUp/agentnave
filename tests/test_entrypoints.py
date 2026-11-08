@@ -2107,3 +2107,10 @@ async def test_cooldown_rejects_task_and_new_meeting_before_saving(
         assert rejected.is_error and "cooling down" in str(rejected.content)
         after, _ = Database(root).load(group_id)
         assert after.entries == before.entries and after.rounds == before.rounds
+        settled_retry = await client.call_tool(
+            "run_round",
+            {"group_id": group_id, "retry_seats": ["a"]},
+        )
+        assert settled_retry.is_error and "only a running parallel round" in str(
+            settled_retry.content
+        )

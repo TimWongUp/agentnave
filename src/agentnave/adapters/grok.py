@@ -144,7 +144,13 @@ class GrokAdapter(AdapterHooks):
         if event_type == "end":
             return ProviderActivity("lifecycle", "end", brief(event.get("stopReason")))
         if event_type == "error":
-            return ProviderActivity("lifecycle", "error", "error", blocking_error="provider_failed")
+            return ProviderActivity(
+                "lifecycle",
+                "error",
+                "error",
+                message=brief(event.get("message") or event.get("error")),
+                blocking_error="provider_failed",
+            )
         return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:

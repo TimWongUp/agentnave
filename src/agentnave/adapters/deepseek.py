@@ -335,7 +335,15 @@ class DeepSeekAdapter(AdapterHooks):
                 )
             return ProviderActivity("lifecycle", "status", phase) if phase else None
         if kind == "error":
-            return ProviderActivity("lifecycle", "error", "error", blocking_error="provider_failed")
+            return ProviderActivity(
+                "lifecycle",
+                "error",
+                "error",
+                message=brief(
+                    event.get("message") or object_dict(event.get("error")).get("message")
+                ),
+                blocking_error="provider_failed",
+            )
         return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:

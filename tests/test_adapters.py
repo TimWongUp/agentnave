@@ -729,13 +729,14 @@ def test_claude_refusal_is_blocked() -> None:
         "subtype": "success",
         "is_error": False,
         "stop_reason": "refusal",
-        "result": "cannot comply",
+        "result": "I cannot help with credit card fraud.",
     }
 
     result = ClaudeAdapter().parse(0, json.dumps(payload).encode(), b"")
 
     assert result.status is InvocationStatus.BLOCKED
-    assert result.output == "cannot comply"
+    assert result.output == "I cannot help with credit card fraud."
+    assert result.error_message == "claude refused the request"
 
 
 def test_antigravity_adapter_passes_prompt_session_and_explicit_options(tmp_path: Path) -> None:
