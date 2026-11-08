@@ -512,10 +512,15 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
             let entry = h.read().unwrap().entry.unwrap();
             assert_eq!(entry["transport"], "stdio");
             assert_eq!(entry["args"], json!([]));
-            assert_eq!(
-                h.config,
+            let config = if cfg!(windows) {
+                hosts
+                    .context
+                    .home
+                    .join("AppData/Roaming/devin/mcp_config.json")
+            } else {
                 hosts.context.home.join(".config/devin/mcp_config.json")
-            );
+            };
+            assert_eq!(h.config, config);
         }
         assert_eq!(
             result["host"]["tested"],
@@ -558,6 +563,41 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
         }
         assert!(!marker.exists());
     }
+}
+
+#[test]
+fn devin_config_root_uses_absolute_environment_paths_only() {
+    let (_temp, mut hosts) = fixture();
+    let variable = if cfg!(windows) {
+        "APPDATA"
+    } else {
+        "XDG_CONFIG_HOME"
+    };
+    let fallback = if cfg!(windows) {
+        "AppData/Roaming"
+    } else {
+        ".config"
+    };
+    for value in ["", "relative"] {
+        hosts.context.env.insert(variable.into(), value.into());
+        assert_eq!(
+            host(&hosts, "devin").config,
+            hosts
+                .context
+                .home
+                .join(fallback)
+                .join("devin/mcp_config.json")
+        );
+    }
+    let configured = hosts.context.home.join("custom-config");
+    hosts
+        .context
+        .env
+        .insert(variable.into(), configured.display().to_string());
+    assert_eq!(
+        host(&hosts, "devin").config,
+        configured.join("devin/mcp_config.json")
+    );
 }
 
 #[test]

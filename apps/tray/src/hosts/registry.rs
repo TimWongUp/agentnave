@@ -6,11 +6,13 @@ impl Hosts {
         let devin_config = if cfg!(windows) {
             roots::env_value(&self.context.env, "APPDATA")
                 .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
                 .unwrap_or_else(|| h.join("AppData/Roaming"))
                 .join("devin")
         } else {
             roots::env_value(&self.context.env, "XDG_CONFIG_HOME")
                 .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
                 .unwrap_or_else(|| h.join(".config"))
                 .join("devin")
         };
