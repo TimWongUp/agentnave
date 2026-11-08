@@ -441,7 +441,7 @@ async def _receive(
             conversations,
             invocation_ids,
             round_ids,
-            max(0.0, deadline - time.monotonic()),
+            min(float(window), max(0.0, deadline - time.monotonic())),
         )
         if ids is not None:
             break
