@@ -99,6 +99,7 @@ test("takeover changes the furniture and laptop immediately, then changes the pe
   assert.equal(app.rec.desk.src, "office/boss-desk-agy.webp");
   assert.equal(app.rec.chair.src, "office/boss-chair-agy.webp");
   assert.equal(app.rec.laptop.set, "agy");
+  assert.equal(app.rec.lid.children[0].host, "antigravity");
   c.messages.push(speech("antigravity", "claude-opus-5-5-medium", "2026-11-04T14:25:03Z"));
   app.update(c);
   assert.equal(app.rec.char, "claude-opus-5-5-medium");

@@ -183,6 +183,7 @@ function dressBossSet(rec, host) {
 }
 function createBoss() {
   const rec = {
+    lid: h("span.lid"),
     scene: null,
     portrait: h("span.boss-portrait", { hidden: true }),
     cli: h("div.cli"),
@@ -191,7 +192,7 @@ function createBoss() {
   };
   rec.chair = img("l-chair", "chair");
   rec.desk = img("l-desk", "boss-desk");
-  rec.laptop = Laptop.create();
+  rec.laptop = Laptop.create(rec.lid);
   rec.scene = h(
     "div.scene",
     {},
@@ -222,6 +223,7 @@ function updateBoss(rec, c, n) {
   const model = holder.model;
   dress(rec, ART.character(holder.host, model), rec.scene, rec.desk);
   dressBossSet(rec, c.host);
+  dressLid(rec, c.app || c.host);
   hangPortrait(rec, c, holder.former);
   const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
