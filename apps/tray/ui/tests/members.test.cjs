@@ -115,7 +115,7 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
   const state = { saved: document, members: null };
   const presets = {
     split: "whole", parallel: "whole+", image_generation: "\nimage",
-    role_base: { split: "base", parallel: "base+" },
+    role_base: { parallel: "base+" },
     split_parts: { base: "base", meetings_asked: "\nasked", meetings_own: "\nown" },
     role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
   };
