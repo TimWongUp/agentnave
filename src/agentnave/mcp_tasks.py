@@ -109,7 +109,10 @@ async def start_agent(
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                "CLI options, including model/effort; keys via list_members(provider=...); defaults in MCP instructions."
+                "CLI options, including model/effort; keys via list_members(provider=...); "
+                "defaults in MCP instructions. With orchestration on and no matching seat/role "
+                "supplying a model, pass an explicit model listed for that CLI by list_members; "
+                "a * row allows omitting model or passing a concrete unlisted model, never the literal *."
             )
         ),
     ] = None,

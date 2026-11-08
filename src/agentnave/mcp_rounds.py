@@ -25,7 +25,6 @@ from agentnave.mcp_payloads import (
     ShowRunPayload,
 )
 from agentnave.mcp_runtime import (
-    DISPATCH_WAIT,
     GroupSeatSpec,
     ManagerModel,
     ManagerSessionId,
@@ -50,6 +49,12 @@ from agentnave.members import (
 )
 from agentnave.task_start import (
     READ_ONLY_APPLIED,
+)
+
+ROUND_WAIT = (
+    "false (default) returns round_id at once; wait on it separately. true is kept for "
+    f"compatibility: it runs one wait on this round_id now (up to {runtime.WAIT_SECONDS}s) and returns it in wait, "
+    "which may report prompts, blockers or elapsed time before the round ends."
 )
 
 
@@ -244,7 +249,7 @@ async def run_round(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
-    wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
+    wait: Annotated[bool, Field(description=ROUND_WAIT)] = False,
     *,
     ctx: Context[Runtime],
 ) -> ShowRunPayload:

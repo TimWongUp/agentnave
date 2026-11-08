@@ -83,7 +83,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 ## CLI 与模型
 
-用户未点名 CLI 时，App 设了工位就直接传 `seat`（另写 `role` 说明职责）或评审 `role`，不用先查；派发被拒绝或因 CLI 未安装启动失败时，看 `list_members` 里该工位的 `reason` 和 `replacement`，后者给出可直接传的参数，连同原来的 `seat` 或 `role` 一起传，访问等级才不会丢，由 boss 决定用不用。没有工位时 `list_members`，从 `members` 按模式选 CLI：行内 `modes` 省略表示所有模式可用，空数组表示均不可用；`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认；工位 `available` 省略即可用，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数；`members` 行的 `error` 会标出未安装，不检查登录。
+用户未点名 CLI 时，App 设了工位就直接传 `seat`（另写 `role` 说明职责）或评审 `role`，不用先查；派发被拒绝或因 CLI 未安装启动失败时，看 `list_members` 里该工位的 `reason` 和 `replacement`，后者给出可直接传的参数，连同原来的 `seat` 或 `role` 一起传，访问等级才不会丢，由 boss 决定用不用。没有工位时 `list_members`，从 `members` 按模式选 CLI：行内 `modes` 省略表示所有模式可用，空数组表示均不可用；`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认；工位 `available` 省略即可用，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。开启高级编排时没有 task 默认可补，点名 CLI 时见本节末段的编排说明。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数；`members` 行的 `error` 会标出未安装，不检查登录。
 
 工位 `available=False` 也可能表示 CLI 近期遇到 quota／auth／billing 硬阻断，冷却 15 分钟；按 `reason` 和 `replacement` 选择其他可用 CLI，保留原 `seat` 或 `role` 显式派发。
 
@@ -102,7 +102,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自用户在 App 中设定的默认 options、服务按 CLI 套用的权限档位（缺省「自动」，用户可在 App 改为「完全放开」；见 `list_members` 的 `permissions`），或用户本轮明确要求，boss 不得自行追加；显式传任一权限参数会让该 CLI 的档位整档不套用。App 默认值续接时也会套用。终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒，按未完成处理并告知用户可在 App 调整档位。模型不可用时报告原错误，不静默替换。
 
-当前宿主开启高级编排时，服务不再提供普通任务候选池或借用其场景默认值，优先按可见工位派发；会议仍独立配置。员工页 CLI 级可用模型名单共同约束普通任务、编排工位与会议，工位和会议只能选择其中的模型；绑定失效时先报告并修复配置，不自动扩大允许名单或换模型。关闭编排后恢复保留的普通任务配置。
+当前宿主开启高级编排时，服务不再提供普通任务候选池或借用其场景默认值，优先按可见工位派发；会议仍独立配置。员工页 CLI 级可用模型名单共同约束普通任务、编排工位与会议，工位和会议只能选择其中的模型；绑定失效时先报告并修复配置，不自动扩大允许名单或换模型。用户点名的 CLI 已启用、却没有绑定它的工位或评审 `role` 时，仍可私聊，但不会补 task 默认模型（`members` 只剩 `discussion` 行）：先 `list_members(provider=...)` 看该 CLI 的模型行，有不限模型的 `*` 行时可省略 `model`，否则从列出的模型里选一个写进 `provider_options.model`；行上的 `default` 是会议默认，`effort` 和 options 也按会议显示，都不当作 task 默认，也不照搬；`*` 不是模型名，不填。与宿主同类的 CLI 仍不能私聊。没有可用模型时报告缺项，不自行扩大名单或换 CLI。关闭编排后恢复保留的普通任务配置。
 
 ## 目录与交接
 
@@ -157,7 +157,7 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 ## 等待、验收与取消
 
 1. `start_agent` 保存 `invocation_id`，`run_round` 保存 `round_id`；持续等到终态或显式取消，不另加总时限。
-   终态和阻塞不会主动推送，只能由 `wait` 收取：手头没有不依赖结果的工作时，派发后立刻单独调用 `wait`；有就先完成当前步骤再调用，并在结束本轮前收齐全部终态。常规省略 `wait_seconds`，最多等 270 秒；任务完成或需要处理时提前返回，`wait_elapsed` 后直接再等。`wait_seconds` 只接受 `0`、`270`，旧的 `240`、`600` 不再支持。调用已被宿主转入后台的，结束时按宿主提醒或句柄收取。回执里的 `unreceived` 是还没取走的结果，见到就先用 `wait` 收取；回执带 `next` 时照做，任务在跑时要先问用户，也先 `wait` 或 `cancel`。只派一个任务且本轮就要结果时，可传 `wait=true`，派发后先等一次，结果在回执的 `wait` 里；并联派发不要逐个传，全部派出后再统一等。
+   终态和阻塞不会主动推送，只能由 `wait` 收取：手头没有不依赖结果的工作时，派发后立刻单独调用 `wait`；有就先完成当前步骤再调用，并在结束本轮前收齐全部终态。常规省略 `wait_seconds`，最多等 270 秒；任务完成或需要处理时提前返回，`wait_elapsed` 后直接再等。`wait_seconds` 只接受 `0`、`270`，旧的 `240`、`600` 不再支持。调用已被宿主转入后台的，结束时按宿主提醒或句柄收取。回执里的 `unreceived` 是还没取走的结果，见到就先用 `wait` 收取；回执带 `next` 时照做，任务在跑时要先问用户，也先 `wait` 或 `cancel`。只派一个 `start_agent` 且本轮就要结果时，可传 `wait=true`，派发后先等一次，结果在回执的 `wait` 里；它只用于单次私聊；`run_round` 保持默认 `wait=false`，先返回 `round_id`，再单独 `wait`；并联派发不要逐个传，全部派出后再统一等。
 2. 常规用收件箱：省略 `ids`、带上派发时相同的 `manager_session_id`，每次保持相同归属，`seq` 从 1 开始逐次递增，以区分正常的连续等待，减少宿主的重复入参警告；回执原样带回 `seq`，它不去重、不重放，也不要求服务保存计数。无显式或宿主注入身份时会报错。定向等待用显式 `ids`，下次传返回的 `pending_ids`；保留已终态句柄会重读结果。任一就绪即返回，先处理阻塞和待审，再继续等到 `all_finished=true`；它只表示所选范围无待收终态，不代表全部成功。遇到 `review_needed` 先用 `decide_answers` 裁决，否则继续 `wait` 会立即返回。仅在用户询问进展或现有状态不足以判断是否介入时，对相关 `ids` 调用 `wait(wait_seconds=0)`；它仍会收取就绪答案或阻塞，不是只读查询。在 Codex 用 `functions.exec` 调 `wait` 时，首行写 `// @exec: {"yield_time_ms": 300000}`；返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id, yield_time_ms=300000)` 收取同一脚本，不再创建第二个 AgentNave `wait`。五分钟让出窗口长过 `wait` 的 270 秒；不要使用默认十秒间隔反复轮询。外层让出控制权不代表超时或取消；`seq` 只在新发起一次 AgentNave `wait` 时递增。
 3. `status=running` 尚未结束。`execution_blocked` 按 `error.code` 决定继续等或取消：阻塞不停止 CLI，同类阻塞每个任务只提醒一次；非交互模式下单个工具调用被拒绝不算阻塞，CLI 常会换工具继续，终态再按结果核对；普通工具失败、重试、沉默不证明任务失败。`seat_lost` 表示某席已失败或受阻而其他席仍在跑，每席提醒一次，只给状态和错误，不交付答案；按 `error` 决定补跑或继续等。
 4. `wait(0)` 返回的运行中 `output` 只是最新公开正文尾部，不含思考或工具参数；材料不足就报告未知，不凭此判定卡死。普通会议中，单席成功不单独唤醒等待，未就绪快照也不交付该席完整答案。
