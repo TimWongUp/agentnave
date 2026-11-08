@@ -313,6 +313,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "effective_apps",
         "enabled_roles",
         "image_generation",
+        "split_options",
     ];
     fields.extend(&groups);
     only(top, &fields, ORCHESTRATION_FILE)?;
@@ -355,6 +356,13 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     }
     if let Some(seat) = top.get("image_generation").filter(|seat| !seat.is_null()) {
         validate_seat(seat, "image_generation")?;
+    }
+    if let Some(options) = top.get("split_options") {
+        let options = object(options, "split_options")?;
+        only(options, &["meetings"], "split_options")?;
+        if !options.values().all(Value::is_boolean) {
+            return Err("split_options.meetings 必须为 true 或 false".into());
+        }
     }
     Ok(())
 }

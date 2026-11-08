@@ -8,6 +8,7 @@
 - 自定义编排规则是唯一手填例外的条款由 [ADR-0044](0044-meeting-voice-cloud-and-key-input.md) 修订：增加语音与摘要设置例外。
 - 「并行复核」加上换模型复核的条款由 [ADR-0051](0051-parallel-preset-without-recheck.md) 修订：档位改名「并行分工」，不再逐次复核。
 - Explorer 与 Worker 各有简单、困难两档的条款由 [ADR-0052](0052-orchestration-specialty-seats.md) 修订：Worker 增加界面两档。
+- 预设正文写工位用法、按任务难度二选一的条款由 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 修订：规则块只放授权，方法进 Skill。
 
 ## 背景
 

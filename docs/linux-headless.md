@@ -124,7 +124,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
     "easy": {"provider": "pi",        "model": "opencode-go/deepseek-v4.1-flash"},
     "hard": {"provider": "codebuddy", "model": "deepseek-v4-pro"}
   },
-  "worker_frontend": {              // 可选：界面实现；没设的一档沿用 worker 同难度
+  "worker_frontend": {              // 可选：界面制作专项；没设的一档不提供，boss 改选同难度通用
     "hard": {"provider": "antigravity", "model": "gemini-4-argon-medium"}
   }
 }
@@ -132,7 +132,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 
 - 工位（`ReviewSeat`）必须有 `provider`、非空的 `model`，`effort` 可选。工位不能写“默认模型”，要填 CLI 实际的模型 ID。
 - **无头宿主不要写 `apps` 和 `effective_apps`**：`enabled()` 用 `host.app_id or host.name` 作 key。bot 两者都为空，`apps` 里找不到就回落到 `preset`；但只要文件里有 `effective_apps`，没有 `app_id` 的连接就一律视为关闭（ADR-0041）。
-- `preset` 的规则正文（`apps/tray/src/rules.rs` 的 `SHARED`/`PARALLEL`）由 App 写进 CLI 宿主的全局规则文件。bot 宿主不需要这一步：`agentnave-manager` skill 已经要求 boss 读取 `list_members` 的 `orchestration` 字段，并按工位名传 `seat`（见该 SKILL.md“选谁执行”一节）。装好 skill（§4）就够了。
+- `preset` 的规则正文（`apps/tray/src/rules.rs` 的 `SHARED` 加 `SPLIT` 或 `PARALLEL`）由 App 写进 CLI 宿主的全局规则文件。bot 宿主没有这一步：装好 skill（§4）后，`agentnave-manager` 会在 `orchestration.enabled` 为真且看不到规则块时按分工协作执行，即可以主动派发，并行写入和开会须用户指明。想让 bot 按并行分工由自己判断并行写入和开会，把 `SHARED` 与 `PARALLEL` 的正文贴进 bot 的指令入口。
 - 派发：`start_agent(seat="explorer-easy", role="具体职责", cwd=..., prompt=...)`，不传 `provider`、`access` 和模型，由服务补齐（Explorer 自动 `access=read`）。
 
 ### 3.3 review.json：agentnave-review 评审工位（`members.py` `ReviewFile`/`ReviewRole`）

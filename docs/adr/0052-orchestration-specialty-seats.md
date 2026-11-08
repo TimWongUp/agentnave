@@ -4,6 +4,7 @@
 - 专项分组、启停与兜底由 [ADR-0065](0065-predefined-specialist-roles.md) 扩展，界面沿用 Worker 的条件由其修订。
 - 日期：2026-11-04
 - 修订 [ADR-0037](0037-app-writes-orchestration-rules.md) 中「Explorer 与 Worker 各有简单、困难两档」的条款，并为 [ADR-0038](0038-role-applies-app-seat.md) 增加两个 seat 名；`orchestration.json` 的版本、其余内容与写入方式不变。
+- 界面位沿用 Worker 同难度的条款由 [ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) 修订：界面实现改为普通专项，不再沿用。
 
 ## 背景
 

@@ -3,6 +3,8 @@
 - 状态：已接受
 - 日期：2026-11-07
 - 扩展 ADR-0037、ADR-0038、ADR-0052；CLI 共用模型池与普通任务目录边界继续遵循 ADR-0063。
+- 「不跨难度」的适用范围由 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 修订：只约束兜底，失败后的重新定档不在此列。
+- 专项清单、界面工位沿用 Worker 同档、专项两档的呈现方式由 [ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) 修订：界面实现不再沿用，专项默认一个模型两档共用。
 
 ## 背景
 

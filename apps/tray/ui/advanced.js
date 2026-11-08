@@ -10,8 +10,8 @@
 // with every app that reads it.
 const ORCHESTRATION_EFFECTS = {
   off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
-  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把探索、规划和实现派给已开启的角色，会用到它们的额度。", "Writes to selected bosses' global rules: even when not named, the boss delegates exploration, planning and implementation to the roles turned on, using their quota."),
-  parallel: AN.L("在分工协作之外，互不依赖的步骤会同时派给多个执行角色，额度用得更多。", "In addition to split collaboration, independent steps are dispatched to several execution roles in parallel, using more quota."),
+  split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把活派给已开启的角色，会用到它们的额度；同时改多处文件要你同意。", "Writes to selected bosses' global rules: even when not named, the boss delegates to the roles turned on, using their quota; changing several things at once needs your consent."),
+  parallel: AN.L("在分工协作之外，boss 自己决定同时改多处文件和开会，额度用得更多。", "Beyond split work, the boss decides on its own to change several things at once and to hold meetings, using more quota."),
   custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
 };
 const DIFFICULTIES = [["easy", AN.L("简单", "Easy")], ["hard", AN.L("困难", "Hard")]];
@@ -26,11 +26,16 @@ let orchestrationDraft = null; // The document as picked, without the custom tex
 let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
 let ruleOpenError = null; // { path, message }: why a rules file did not open, shown on its row.
 let customTouched = false; // Typed into the editor, so its text is saved even with no boss on it yet.
+let splitOpened = new Set(); // Specialists the user split by difficulty while both seats are still the same.
 const orchestrationShown = () => orchestrationDraft || orchestration?.document;
 const usesCustom = (doc) => doc?.preset === "custom" || Object.values(doc?.apps || {}).includes("custom");
 // The fixed catalog, or nothing from a page that was not given one: its roles are then left as saved.
 const roleCatalog = () => orchestration?.roles || [];
 const roleName = (role) => AN.L(role.name_zh, role.name_en);
+// General roles are what the specialists fall back to; they always show both difficulties.
+const isGeneral = (role) => !role.fallback_group;
+// A specialist is split by difficulty when its two saved seats differ; unset and identical ones share one row.
+const seatsSplit = (doc, group) => splitOpened.has(group) || !sameJson(doc[group]?.easy ?? null, doc[group]?.hard ?? null);
 // A document without the list keeps the groups from before the switches.
 const enabledGroups = (doc) => doc?.enabled_roles ?? roleCatalog().filter((role) => role.legacy_enabled).map((role) => role.group);
 // Every seat a document offers: both difficulties of each role turned on, and the image seat.
@@ -78,6 +83,7 @@ async function loadOrchestration() {
     if (!keep) {
       orchestrationDraft = null;
       customTouched = false;
+      splitOpened = new Set();
       $("custom-text").value = typeof orchestration.document.custom === "string"
         ? customRoleText(orchestration.document.custom, orchestration.document) : "";
       orchestrationView = savedView();
@@ -131,7 +137,11 @@ function orchestrationPresetText(mode) {
   const enabled = enabledGroups(shown);
   const sections = roleCatalog().filter((role) => enabled.includes(role.group))
     .map((role) => presets.role_sections?.[role.group] || "");
-  return [presets.role_base?.[mode] ?? text.replace(image, ""), ...sections, shown?.image_generation ? image : ""].join("");
+  const parts = presets.split_parts;
+  const base = mode === "split" && parts
+    ? parts.base + (shown?.split_options?.meetings ? parts.meetings_own : parts.meetings_asked)
+    : presets.role_base?.[mode] ?? text.replace(image, "");
+  return [base, ...sections, shown?.image_generation ? image : ""].join("");
 }
 
 function viewMode(mode) {
@@ -237,34 +247,93 @@ function renderTaskScope() {
   $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“高级”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Advanced; solo tasks are offered only to bosses without orchestration.`) : "";
 }
 
-// An unset interface seat runs the general execution seat of its difficulty, as the server fills it,
-// only while both roles are on. No other role borrows a seat.
-function inheritedSeatName(group, difficulty, doc) {
-  if (group !== "worker_frontend" || !doc.worker?.[difficulty]) return null;
-  return liveSeats(doc).find((seat) => seat.role === "worker" && seat.difficulty === difficulty)?.name;
+// One seat for both difficulties of a specialist that is not split.
+function setSharedSeat(group, seat) {
+  const shown = orchestrationShown();
+  orchestrationDraft = { ...shown, [group]: { easy: seat, hard: seat } };
+  if (!seat) delete orchestrationDraft[group];
+  renderOrchestration();
+  advancedEdited();
 }
 
-// A role's switch, and its two seats while on; turned off, they stay saved out of sight.
+// Joining the difficulties again keeps the hard seat, or the easy one when hard is unset.
+function setSplit(group, on) {
+  if (on) {
+    splitOpened.add(group);
+    renderOrchestration();
+    return;
+  }
+  splitOpened.delete(group);
+  const seats = orchestrationShown()[group];
+  const seat = seats?.hard ?? seats?.easy ?? null;
+  if (sameJson(seats?.easy ?? null, seats?.hard ?? null)) renderOrchestration();
+  else setSharedSeat(group, seat);
+}
+
+function seatRow(group, label, name, seat, onSet) {
+  return el("div", { className: "review-row" },
+    el("div", { className: "review-role" }, label),
+    ...seatSelects(group, name, seat, onSet, SEAT_UNSET));
+}
+
+// Split work's own switch: whether the boss may call meetings without being asked.
+function setSplitMeetings(on) {
+  const { split_options: _, ...rest } = orchestrationShown();
+  orchestrationDraft = on ? { ...rest, split_options: { meetings: true } } : rest;
+  renderOrchestration();
+  advancedEdited();
+}
+
+function renderSplitOptions(preset, editable) {
+  const box = $("orchestration-split");
+  box.hidden = preset !== "split" || !editable;
+  box.replaceChildren(...(box.hidden ? [] : [el("label", { className: "orchestration-switch" },
+    el("input", {
+      type: "checkbox", className: "switch-input", dataset: { focusKey: "split/meetings" },
+      checked: orchestrationShown().split_options?.meetings === true,
+      onChange: (e) => setSplitMeetings(e.target.checked),
+    }),
+    el("span", {}, AN.L("boss 可主动开会", "Boss may call meetings")))]));
+}
+
+// A role's switch, and its seats while on; turned off, they stay saved out of sight. A specialist
+// shows one seat for both difficulties until it is split.
 function roleGroup(entry, doc) {
   const { group, access } = entry;
   const name = roleName(entry);
   const on = enabledGroups(doc).includes(group);
-  const seats = !on ? [] : DIFFICULTIES.map(([difficulty, level]) => {
-    const general = inheritedSeatName(group, difficulty, doc);
-    const unset = general ? AN.L(`沿用 ${general}`, `Same as ${general}`) : SEAT_UNSET;
-    return el("div", { className: "review-row" },
-      el("div", { className: "review-role" }, level),
-      ...seatSelects(`${group}/${difficulty}`, `${name} · ${level}`, orchestrationSeat(doc, group, difficulty),
-        (next) => setOrchestrationSeat(group, difficulty, next), unset));
-  });
+  const general = isGeneral(entry);
+  const split = general || seatsSplit(doc, group);
+  const seats = !on ? [] : split
+    ? DIFFICULTIES.map(([difficulty, level]) => seatRow(`${group}/${difficulty}`, level, `${name} · ${level}`,
+      orchestrationSeat(doc, group, difficulty), (next) => setOrchestrationSeat(group, difficulty, next)))
+    : [seatRow(`${group}/both`, AN.L("简单 · 困难", "Easy · Hard"), name,
+      doc[group]?.hard ?? doc[group]?.easy, (next) => setSharedSeat(group, next))];
   return el("div", { className: "orchestration-group" },
-    el("label", { className: "orchestration-switch" },
-      el("input", {
-        type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/enabled` }, checked: on,
-        onChange: (e) => setRoleEnabled(group, e.target.checked),
-      }),
-      el("strong", {}, name), el("small", {}, ROLE_ACCESS[access])),
+    el("div", { className: "orchestration-head" },
+      el("label", { className: "orchestration-switch" },
+        el("input", {
+          type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/enabled` }, checked: on,
+          onChange: (e) => setRoleEnabled(group, e.target.checked),
+        }),
+        el("strong", {}, name), el("small", {}, ROLE_ACCESS[access])),
+      on && !general && el("label", { className: "orchestration-switch" },
+        el("input", {
+          type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/split` }, checked: split,
+          onChange: (e) => setSplit(group, e.target.checked),
+        }),
+        el("span", {}, AN.L("区分难度", "By difficulty")))),
     ...seats);
+}
+
+// General roles, then the specialists, each under its own heading.
+function roleSections(doc) {
+  const section = (title, entries) => el("div", { className: "orchestration-section" },
+    el("h3", {}, title), ...entries.map((entry) => roleGroup(entry, doc)));
+  return [
+    section(AN.L("通用", "General"), roleCatalog().filter(isGeneral)),
+    section(AN.L("专项", "Specialist"), roleCatalog().filter((entry) => !isGeneral(entry))),
+  ];
 }
 
 function renderOrchestration() {
@@ -288,13 +357,14 @@ function renderOrchestration() {
   $("orchestration-text").textContent = text || "";
   // An unread or broken file cannot take edits: nothing here could be saved or discarded.
   const editable = orchestration && !orchestration.error;
+  renderSplitOptions(preset, editable);
   $("orchestration-custom").hidden = preset !== "custom" || !editable;
   const roles = $("orchestration-roles");
   roles.hidden = !editable;
   if (!roles.hidden) {
     const focusKey = document.activeElement?.dataset?.focusKey;
     const { role, difficulty, name } = IMAGE_SEAT;
-    roles.replaceChildren(...(preset === "off" ? [] : roleCatalog().map((entry) => roleGroup(entry, shown))),
+    roles.replaceChildren(...(preset === "off" || !roleCatalog().length ? [] : roleSections(shown)),
       el("div", { className: "review-row" },
         el("div", { className: "review-role" }, el("strong", {}, name)),
         ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation"))));
@@ -350,6 +420,11 @@ const REVIEW_ROLES = [
   ["adversarial-verifier", AN.L("反证", "Adversarial"), AN.L("高风险改动修完后尝试推翻结论", "Attempts to disprove conclusions after high-risk fixes")],
 ];
 let seatsDraft = null; // Review seats as picked; `reviewSeats` holds what is saved.
+// The one review model picked for every role left unset, and the roles it filled in this draft,
+// which follow it until picked one by one. The easy correctness role stays as it is: unset, it
+// already runs the correctness seat.
+let uniformReview = null;
+let uniformFilled = new Set();
 const seatsShown = () => seatsDraft || reviewSeats;
 const seatsChanged = () => !sameJson(seatsShown(), reviewSeats);
 
@@ -399,6 +474,8 @@ async function saveSeats() {
   await apiPostReview({ version: 1, seats });
   reviewSeats = seats;
   seatsDraft = null;
+  uniformReview = null;
+  uniformFilled = new Set();
   reviewSaves += 1;
 }
 
@@ -410,6 +487,29 @@ function setReviewSeat(role, seat) {
   const seats = { ...seatsShown() };
   if (seat) seats[role] = seat;
   else delete seats[role];
+  uniformFilled.delete(role);
+  seatsDraft = seats;
+  renderReviewSeats();
+  advancedEdited();
+}
+
+function setUniformReview(seat) {
+  if (reviewError) {
+    showNotice(AN.L(`${reviewError}；请先修复或删除这个文件`, `${reviewError}; fix or delete this file first`), true);
+    return renderReviewSeats();
+  }
+  const seats = { ...seatsShown() };
+  for (const [role] of REVIEW_ROLES) {
+    if (role === "correctness-reviewer-easy" || (seats[role] && !uniformFilled.has(role))) continue;
+    if (seat) {
+      seats[role] = seat;
+      uniformFilled.add(role);
+    } else {
+      delete seats[role];
+      uniformFilled.delete(role);
+    }
+  }
+  uniformReview = seat;
   seatsDraft = seats;
   renderReviewSeats();
   advancedEdited();
@@ -476,13 +576,17 @@ function renderReviewSeats() {
   if (!box) return;
   const focusKey = document.activeElement?.dataset?.focusKey;
   const shown = seatsShown();
+  const uniformName = AN.L("统一评审模型", "One review model");
+  const uniform = el("div", { className: "review-row review-uniform" },
+    el("div", { className: "review-role" }, el("strong", {}, uniformName)),
+    ...seatSelects("review/uniform", uniformName, uniformReview, setUniformReview, AN.L("未选择", "Not chosen")));
   const rows = REVIEW_ROLES.map(([role, name, hint, unset]) => {
     const seat = shown[role];
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
       ...seatSelects(role, AN.L(`${name}评审`, `${name} review`), seat, (next) => setReviewSeat(role, next), unset));
   });
-  box.replaceChildren(...rows);
+  box.replaceChildren(uniform, ...rows);
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
 }
 
@@ -530,8 +634,11 @@ function advancedEdited() {
 
 function discardAdvanced() {
   seatsDraft = null;
+  uniformReview = null;
+  uniformFilled = new Set();
   orchestrationDraft = null;
   customTouched = false;
+  splitOpened = new Set();
   $("custom-text").value = orchestration?.document.custom ?? "";
   if (orchestration) orchestrationView = savedView();
   window.AgentNaveSkills?.discard();

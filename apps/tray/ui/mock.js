@@ -152,14 +152,15 @@
     roles: [
       ["explorer", "通用探索", "General exploration", "read", true],
       ["worker", "通用执行", "General execution", "write", true],
-      ["worker_code", "代码实现", "Code implementation", "write", false],
-      ["worker_frontend", "界面实现", "Interface implementation", "write", true],
+      ["worker_frontend", "界面制作", "Interface work", "write", true],
       ["worker_writing", "写作", "Writing", "write", false],
-      ["explorer_web", "网页知识检索", "Web and knowledge research", "read", false],
-      ["explorer_social", "社交调研", "Social research", "read", false],
-      ["worker_data", "数据分析", "Data analysis", "write", false],
-      ["worker_documents", "文档制作", "Document production", "write", false],
-    ].map(([group, name_zh, name_en, access, legacy_enabled]) => ({ group, name_zh, name_en, access, legacy_enabled })),
+      ["explorer_web", "网页调研", "Web research", "read", false],
+      ["explorer_social", "社交平台调研", "Social platform research", "read", false],
+      ["worker_documents", "办公文件制作", "Office files", "write", false],
+    ].map(([group, name_zh, name_en, access, legacy_enabled]) => ({
+      group, name_zh, name_en, access, legacy_enabled,
+      fallback_group: ["explorer", "worker"].includes(group) ? null : group.split("_")[0],
+    })),
     files: [
       { path: "/Users/me/.claude/CLAUDE.md", readers: ["Claude Code", "Grok"], exists: true, target: true, current: true, blocked: false },
       { path: "/Users/me/.codex/AGENTS.md", readers: ["Codex"], exists: false, target: false, current: false, blocked: false },

@@ -200,7 +200,7 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
         for enabled in (
             None,
             [],
-            ["worker_code", "explorer_web"],
+            ["worker_writing", "explorer_web"],
             [role.group for role in catalog],
             [],
         ):
@@ -251,10 +251,10 @@ def test_role_schema_filter_handles_serialization_definition_names() -> None:
             for mode in ("validation", "serialization")
         }
     }
-    mcp_runtime._filter_role_schema(schema, frozenset({"worker_code"}), False)  # pyright: ignore[reportPrivateUsage]
+    mcp_runtime._filter_role_schema(schema, frozenset({"worker_writing"}), False)  # pyright: ignore[reportPrivateUsage]
     serialized = json.dumps(schema)
     for role in role_catalog():
-        assert (f'"{role.group}"' in serialized) is (role.group == "worker_code")
+        assert (f'"{role.group}"' in serialized) is (role.group == "worker_writing")
     assert '"image_generation"' not in serialized
 
 
