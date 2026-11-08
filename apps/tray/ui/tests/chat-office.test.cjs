@@ -107,6 +107,15 @@ test("takeover changes the furniture and laptop immediately, then changes the pe
   assert.equal(app.rec.portrait.children[0].name, old.speaker.model);
 });
 
+test("Devin boss uses its own furniture and the shared 3D laptop", () => {
+  const app = office();
+  app.update({ host: "devin", app: "devin", label: "Devin CLI", messages: [speech("devin", "swe-2-flash-medium", "2026-11-08T15:00:00Z")] });
+  assert.equal(app.rec.desk.src, "office/boss-desk-devin.webp");
+  assert.equal(app.rec.chair.src, "office/boss-chair-devin.webp");
+  assert.equal(app.rec.laptop.set, "devin");
+  assert.equal(app.rec.lid.children[0].host, "devin");
+});
+
 test("an old boss speaking after release cannot take the new boss's model or erase its own portrait", () => {
   const app = office(), c = claimed();
   c.messages.push(speech("claude", old.speaker.model, "2026-11-04T13:38:00Z"));

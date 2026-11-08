@@ -1799,3 +1799,116 @@ def test_zcode_result_requires_terminal_and_preserves_session(tmp_path: Path) ->
         "sess-known",
     )
     assert adapter.parse(1, events, b"transport failed").status is InvocationStatus.FAILED
+
+
+def test_devin_adapter_prepares_prompt_export_and_parses_atif(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    adapter = get_adapter("devin")
+    prepared = adapter.prepare(
+        InvocationRequest(
+            "devin",
+            "hello devin",
+            tmp_path,
+            session_id="dramatic-penalty",
+            provider_options={
+                "model": "swe-1.5",
+                "permission_mode": "dangerous",
+                "sandbox": True,
+                "respect_workspace_trust": False,
+            },
+        )
+    )
+    prompt_path, export_path = prepared.cleanup_paths
+    try:
+        assert prompt_path.read_text(encoding="utf-8") == "hello devin"
+        assert prepared.argv[1:] == (
+            "-p",
+            "--prompt-file",
+            str(prompt_path),
+            "--export",
+            str(export_path),
+            "--resume",
+            "dramatic-penalty",
+            "--model",
+            "swe-1.5",
+            "--permission-mode",
+            "dangerous",
+            "--sandbox",
+            "--respect-workspace-trust",
+            "false",
+        )
+        export_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "ATIF-v1.7",
+                    "session_id": "dramatic-penalty",
+                    "steps": [
+                        {
+                            "source": "agent",
+                            "message": "exported reply",
+                            "extra": {"generation_model": "swe-1.5"},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = adapter.parse_prepared(prepared, 0, b"stdout reply\n", b"")
+        assert (result.status, result.output, result.session_id) == (
+            InvocationStatus.SUCCEEDED,
+            "stdout reply",
+            "dramatic-penalty",
+        )
+        assert adapter.session_model("dramatic-penalty", since=datetime.now(UTC)) == "swe-1.5"
+    finally:
+        for path in prepared.cleanup_paths:
+            path.unlink(missing_ok=True)
+
+    for options, match in (
+        ({"unknown": "x"}, "unsupported devin options"),
+        ({"permission_mode": "invalid"}, "devin permission_mode must be one of"),
+        ({"permission_mode": "autonomous"}, "requires sandbox=true"),
+        ({"restricted_tools": True}, "restricted_tools requires a registered provider"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            adapter.prepare(InvocationRequest("devin", "hi", tmp_path, provider_options=options))
+
+    rejected = adapter.parse(
+        0,
+        b"",
+        b"User rejected a tool call that requires confirmation in non-interactive mode",
+    )
+    assert rejected.status is InvocationStatus.BLOCKED
+    rejected_with_reply = adapter.parse(
+        0,
+        b"I could not edit the file",
+        b"User rejected a tool call that requires confirmation in non-interactive mode",
+    )
+    assert (rejected_with_reply.status, rejected_with_reply.output) == (
+        InvocationStatus.BLOCKED,
+        "I could not edit the file",
+    )
+    assert adapter.parse(1, b"", b"Not logged in. Run devin auth login").status is (
+        InvocationStatus.BLOCKED
+    )
+    assert adapter.parse(1, b"", b"Refusing to run in an untrusted workspace").status is (
+        InvocationStatus.BLOCKED
+    )
+
+
+def test_devin_exports_stay_with_their_invocations(tmp_path: Path) -> None:
+    adapter = get_adapter("devin")
+    first = adapter.prepare(InvocationRequest("devin", "first", tmp_path))
+    second = adapter.prepare(InvocationRequest("devin", "second", tmp_path))
+    try:
+        for command, session_id in ((first, "first-id"), (second, "second-id")):
+            command.cleanup_paths[-1].write_text(
+                json.dumps({"session_id": session_id, "steps": []}), encoding="utf-8"
+            )
+        assert adapter.parse_prepared(second, 0, b"same reply", b"").session_id == "second-id"
+        assert adapter.parse_prepared(first, 0, b"same reply", b"").session_id == "first-id"
+    finally:
+        for command in (first, second):
+            for path in command.cleanup_paths:
+                path.unlink(missing_ok=True)

@@ -451,3 +451,36 @@ pub(super) fn codebuddy_models(text: &str) -> Vec<Value> {
         .map(|(index, id)| model(id, id, index == 0))
         .collect()
 }
+
+/// `devin models`: grouped family sections with two-space indented `<model_uid>  <label>  [...]`
+/// lines, or JSON output from `devin models list --format json`.
+pub(super) fn devin_models(text: &str) -> Vec<Value> {
+    if text.trim_start().starts_with('{')
+        && let Ok(parsed) = serde_json::from_str::<Value>(text)
+        && let Some(families) = parsed["families"].as_array()
+    {
+        return families
+            .iter()
+            .filter_map(|family| family["variants"].as_array())
+            .flatten()
+            .filter_map(|variant| {
+                let id = variant["model_uid"].as_str()?.trim();
+                (!id.is_empty()).then(|| {
+                    let label = variant["label"].as_str().map(str::trim).unwrap_or(id);
+                    model(id, if label.is_empty() { id } else { label }, false)
+                })
+            })
+            .collect();
+    }
+    text.lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter(|line| !line.starts_with(char::is_whitespace))
+        .filter_map(|line| {
+            let head = line.split_once("  [").map_or(line, |(head, _)| head).trim();
+            let mut parts = head.split_whitespace();
+            let id = parts.next()?;
+            let rest = head[id.len()..].trim();
+            Some(model(id, if rest.is_empty() { id } else { rest }, false))
+        })
+        .collect()
+}

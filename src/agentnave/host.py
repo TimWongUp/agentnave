@@ -46,6 +46,7 @@ def _match(executable: str) -> HostName | None:
         "workbuddy.app": "workbuddy",
         "antigravity.app": "antigravity",
         "deepseek harness.app": "deepseek",
+        "devin.app": "devin",
         "zcode.app": "zcode",
     }
     for part in path.parts:

@@ -408,6 +408,8 @@ impl Hosts {
                     }
                     desired = Some(if id == "deepseek" {
                         json!({"serverName":"agentnave","transport":"stdio","command":path,"env":host_env(host)})
+                    } else if id == "devin" {
+                        json!({"transport":"stdio","command":path,"args":[],"env":host_env(host)})
                     } else if id == "zcode" {
                         json!({"type":"stdio","command":path,"args":[],"env":host_env(host)})
                     } else if id == "hermes" {

@@ -49,7 +49,7 @@ function textNode(content) {
 }
 
 // Supported CLI providers
-const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "zcode"];
+const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "devin", "zcode"];
 const PROVIDER_NAMES = {
   codex: "Codex CLI",
   claude: "Claude Code",
@@ -58,6 +58,7 @@ const PROVIDER_NAMES = {
   antigravity: "Antigravity CLI",
   pi: "Pi Coding Agent",
   deepseek: "DeepSeek Harness",
+  devin: "Devin CLI",
   zcode: "ZCode",
 };
 
@@ -163,6 +164,7 @@ const TIER_TEXT = {
     any: L("CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。", "The CLI’s built-in auto-review allows routine commands and edits while blocking obviously dangerous operations."),
     codex: L("Codex 自动审核放行命令，读写限在工作目录内。", "Codex auto-review allows commands while keeping reads and writes within the working directory."),
     claude: L("Claude Code 自动审核放行常规命令和改动，明显危险的操作仍会被拦下；这台电脑或账号用不了自动审核时，改为完全放开。", "Claude Code’s auto-review allows routine commands and edits while blocking obviously dangerous operations; where auto-review is unavailable, it runs with full access instead."),
+    devin: L("Devin 的 smart 模式自动执行快速模型判断安全的操作；需人工确认的操作会受阻。", "Devin's smart mode runs actions a fast model judges safe; actions needing human confirmation are blocked."),
   },
   full: {
     any: L("不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review. Choose only when you trust the dispatched tasks."),

@@ -13,6 +13,7 @@
     codebuddy: 35.6,
     codex: 33.0,
     deepseek: 33.0,
+    devin: 35.1,
     grok: 35.9,
     hermes: 35.3,
     pi: 33.5,
@@ -21,7 +22,7 @@
   const SILVER = [206, 208, 214];
   // boss laptops lean towards their desk's colour
   const TONES = {
-    agy: [162, 163, 186], claude: [174, 148, 139], codebuddy: [202, 206, 217], codex: [218, 213, 211], deepseek: [168, 172, 186],
+    agy: [162, 163, 186], claude: [174, 148, 139], codebuddy: [202, 206, 217], codex: [218, 213, 211], deepseek: [168, 172, 186], devin: [105, 141, 153],
     grok: [146, 143, 151], hermes: [197, 175, 152], pi: [214, 192, 166], zcode: [150, 148, 151],
   };
   const rad = (d) => (d * Math.PI) / 180;

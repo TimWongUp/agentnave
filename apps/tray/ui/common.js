@@ -782,7 +782,7 @@
   const head = (name, state = "idle") => h("span.head", { "data-char": name, "data-state": state, "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
   // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. The value is its tile, if any;
   // a desktop app's mark takes the colours of its app icon.
-  const CLI_MARK = { claude: "", "claude-desktop": "claude-tile", codex: "", "codex-desktop": "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "", zcode: "mono" };
+  const CLI_MARK = { claude: "", "claude-desktop": "claude-tile", codex: "", "codex-desktop": "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", devin: "", grok: "mono", pi: "mono", hermes: "", zcode: "mono" };
   function cliMark(provider) {
     if (provider && window.Avatars?.custom("host", provider, "")) return Avatars.create("host", provider, "");
     if (!Object.hasOwn(CLI_MARK, provider)) return null;
@@ -798,7 +798,7 @@
     return mark;
   }
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
-  const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", zcode: "ZCode" };
+  const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", devin: "Devin", zcode: "ZCode" };
   const cliName = (provider) => CLI[provider] || provider || "";
   // The boss tile and CLI badges show the CLI's mark, or its initial. A boss in a desktop app keeps the
   // claude or codex host and passes its app, claude-desktop or codex-desktop, for the mark.

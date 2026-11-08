@@ -10,13 +10,14 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-pub const PROVIDERS: [&str; 8] = [
+pub const PROVIDERS: [&str; 9] = [
     "zcode",
     "antigravity",
     "claude",
     "codebuddy",
     "codex",
     "deepseek",
+    "devin",
     "grok",
     "pi",
 ];

@@ -302,11 +302,13 @@ def test_host_parent_matching_scripts_boundaries_and_unreadable_argv() -> None:
         ("agy", "antigravity"),
         ("pi", "pi"),
         ("dsh", "deepseek"),
+        ("devin", "devin"),
         ("hermes", "hermes"),
         ("/Applications/Codex.app/Contents/MacOS/Electron", "codex"),
         ("/Applications/Claude.app/Contents/MacOS/Claude", "claude"),
         ("/Applications/Antigravity.app/Contents/MacOS/Electron", "antigravity"),
         ("/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", "deepseek"),
+        ("/Applications/Devin.app/Contents/MacOS/Devin", "devin"),
         ("/Users/test/.local/share/claude/versions/2.1.295", "claude"),
     ):
         table[40] = (executable,)
@@ -388,3 +390,40 @@ def test_zcode_reads_only_native_assistant_model(
     )
     assert session_model(Host("zcode"), "../bad") is None
     assert _match("/Applications/ZCode.app/Contents/MacOS/ZCode") == "zcode"
+
+
+def test_devin_native_session_file_and_model_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host import Host
+    from agentnave.native_sessions import boss_key, session_file, session_model, shared_session_id
+
+    devin_dir = tmp_path / "devin-sessions"
+    monkeypatch.setenv("DEVIN_SESSIONS_DIR", str(devin_dir))
+    transcript = devin_dir / "transcripts" / "dramatic-penalty.json"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        json.dumps(
+            {
+                "schema_version": "ATIF-v1.7",
+                "session_id": "dramatic-penalty",
+                "steps": [
+                    {
+                        "source": "agent",
+                        "message": "done",
+                        "extra": {"generation_model": "swe-1.5"},
+                    }
+                ],
+            }
+        )
+    )
+    database = devin_dir / "sessions.db"
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("CREATE TABLE sessions (id TEXT, model TEXT, last_activity_at INTEGER)")
+        db.execute("INSERT INTO sessions VALUES ('db-only-session', 'claude-opus-4-6', 2000000000)")
+    assert session_file(Host("devin"), "dramatic-penalty") == transcript
+    assert session_file(Host("devin"), "db-only-session") == database
+    assert session_model(Host("devin"), "dramatic-penalty") == "swe-1.5"
+    assert session_model(Host("devin"), "db-only-session") == "claude-opus-4-6"
+    assert shared_session_id("devin", boss_key("devin", "db-only-session")) == "db-only-session"
+    assert session_model(Host("devin"), "../bad") is None

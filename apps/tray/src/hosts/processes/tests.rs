@@ -257,8 +257,10 @@ fn host_paths_match_exact_executables_and_main_app_processes() {
             "deepseek",
         ),
         ("/Applications/Codex.app/Contents/MacOS/Codex", "codex"),
+        ("/Applications/Devin.app/Contents/MacOS/Devin", "devin"),
         ("/home/a/.local/share/claude/versions/2.0.0", "claude"),
         ("/usr/bin/agy", "antigravity"),
+        ("/usr/bin/devin", "devin"),
         ("/usr/bin/dsh.js", "deepseek"),
     ] {
         assert_eq!(identity(path), Some(id), "{path}");

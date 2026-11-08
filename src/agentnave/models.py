@@ -18,6 +18,7 @@ type HostName = Literal[
     "antigravity",
     "pi",
     "deepseek",
+    "devin",
     "hermes",
     "zcode",
 ]

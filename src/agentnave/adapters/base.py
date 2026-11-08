@@ -31,6 +31,7 @@ PROVIDER_BIN_DIRS = (
     "~/AppData/Roaming/npm",
     "~/AppData/Local/Programs/nodejs",
     "~/AppData/Local/ZCode/bin",
+    "~/AppData/Local/devin/cli/bin",
 )
 
 
@@ -100,6 +101,10 @@ class ProviderAdapter(Protocol):
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult: ...
 
+    def parse_prepared(
+        self, prepared: PreparedCommand, returncode: int, stdout: bytes, stderr: bytes
+    ) -> ParsedProviderResult: ...
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
     def event_model(self, event: dict[str, object]) -> str | None: ...
@@ -121,6 +126,14 @@ class AdapterHooks:
     options_description = ""
     supports_restricted_tools = True
     restricted_extra_options: frozenset[str] = frozenset()
+
+    def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
+        raise NotImplementedError
+
+    def parse_prepared(
+        self, prepared: PreparedCommand, returncode: int, stdout: bytes, stderr: bytes
+    ) -> ParsedProviderResult:
+        return self.parse(returncode, stdout, stderr)
 
     def executable_path(self) -> str:
         return resolve_executable(self.executable_name or self.name)

@@ -93,7 +93,7 @@ pub(super) fn target(path: &Path, provider: &str, windows: bool) -> Option<PathB
 }
 
 pub(super) fn identify(provider: &str, path: &Path) -> Option<Plan> {
-    if matches!(provider, "antigravity" | "zcode") || desktop(provider, path) {
+    if matches!(provider, "antigravity" | "devin" | "zcode") || desktop(provider, path) {
         return None;
     }
     let real = target(path, provider, cfg!(windows))?;

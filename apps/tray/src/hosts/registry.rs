@@ -3,6 +3,19 @@ use super::*;
 impl Hosts {
     pub(super) fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
+        let devin_config = if cfg!(windows) {
+            roots::env_value(&self.context.env, "APPDATA")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .unwrap_or_else(|| h.join("AppData/Roaming"))
+                .join("devin")
+        } else {
+            roots::env_value(&self.context.env, "XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .unwrap_or_else(|| h.join(".config"))
+                .join("devin")
+        };
         let specs = [
             (
                 "zcode",
@@ -104,6 +117,16 @@ impl Hosts {
                 "cordis.patch.yml",
                 Format::DshPatch,
                 "insert",
+            ),
+            (
+                "devin",
+                "Devin CLI",
+                "devin",
+                None,
+                devin_config,
+                "mcp_config.json",
+                Format::Json,
+                "mcpServers",
             ),
             (
                 "hermes",
