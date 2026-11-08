@@ -522,7 +522,9 @@ function updateRoom(rec, r, ctx) {
 // The boss's scene takes a desk's size too, so it grows and shrinks with the row.
 function layoutRooms() {
   const deskScene = el.desks.querySelector(".desk > .scene");
-  if (state.bossRec) state.bossRec.scene.style.width = deskScene ? `${Math.round(deskScene.offsetWidth * 1.3)}px` : "";
+  const bossWidth = deskScene ? `${Math.round(deskScene.offsetWidth * 1.3)}px` : "";
+  if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
+    state.bossRec.scene.style.width = bossWidth;
   // Desks scale with the floor, so seats take the size their figures have at the desks.
   const fig = el.desks.querySelector(".desk > .scene > .fig")?.offsetWidth || FIG;
   for (const rec of state.roomRecs.values()) {
@@ -540,7 +542,15 @@ function layoutRooms() {
       seat.style.setProperty("--x", `${-seat.offsetLeft}px`);
   }
 }
-new ResizeObserver(() => layoutRooms()).observe(el.floor);
+// Scene sizes depend on the floor's width. Their height changes must not feed back into
+// this observer, and writes belong outside resize delivery to avoid a ResizeObserver loop.
+let observedFloorWidth = null;
+new ResizeObserver(([entry]) => {
+  const width = entry.contentRect.width;
+  if (width <= 0 || width === observedFloorWidth) return;
+  observedFloorWidth = width;
+  requestAnimationFrame(layoutRooms);
+}).observe(el.floor);
 
 // ---------------------------------------------------------------- the office, patched in place
 const canAnimate = () =>
