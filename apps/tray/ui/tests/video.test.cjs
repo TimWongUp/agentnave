@@ -452,6 +452,9 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   await new Promise(r => setImmediate(r));
 
   const status = root.children[0];
+  const tip = root.findAll(el => el.className.includes("setting-tip"))[0];
+  assert.equal(tip.textContent, "?");
+  assert.match(tip.attrs["aria-label"], /150–300 MB/);
   const radios = () => root.findAll(el => el.attrs.role === "radio");
   assert.equal(radios()[0].textContent, "CSS 小人");
   assert.equal(radios()[0].disabled, false);

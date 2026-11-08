@@ -111,6 +111,10 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 .video-packs { margin: 12px 0 28px; }
 .video-pack-info { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .video-pack-info > h2 { margin: 0; font-size: 14px; }
+.setting-tip { position: relative; display: inline-grid; place-items: center; width: 17px; height: 17px; border: 1px solid var(--line); border-radius: 50%; background: var(--bg); color: var(--muted); font-size: 11px; font-weight: 650; line-height: 1; cursor: help; user-select: none; -webkit-user-select: none; }
+.setting-tip:hover, .setting-tip:focus-visible { color: var(--ink); border-color: var(--muted); outline: none; }
+.setting-tip::after { content: attr(aria-label); position: absolute; left: 0; top: calc(100% + 8px); z-index: 30; width: max-content; max-width: min(340px, 72vw); padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--soft); font-size: 12px; font-weight: 400; line-height: 1.55; white-space: normal; box-shadow: 0 8px 24px #0004; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .12s; }
+.setting-tip:hover::after, .setting-tip:focus-visible::after { opacity: 1; visibility: visible; }
 .video-pack-status { font-size: 12px; color: var(--muted); }
 .video-pack-status.bad { color: var(--bad); }
 .video-pack-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

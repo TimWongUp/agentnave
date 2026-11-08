@@ -157,7 +157,12 @@ print("Done ->", out_dir)`;
       btn.addEventListener("click", () => void saveStyle(choice));
       control.append(btn);
     }
-    const rows = [h("div.setting-row", {}, h("h2", {}, label), control)];
+    const tipText = L(
+      "视频小人在办公室窗口打开时会持续解码透明视频，比 CSS 小人多占用约 150–300 MB 内存与一定 GPU/CPU（544p 约为 272p 的两倍）；关闭或隐藏办公室窗口、滚出屏幕或开启「减少动效」时会自动释放解码器。",
+      "Video characters continuously decode alpha video while the office window is open, using ~150–300 MB more memory and extra GPU/CPU than CSS characters (544p uses roughly twice as much as 272p); decoders are released automatically when the window is hidden, scrolled offscreen, or Reduce motion is on.",
+    );
+    const tip = h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tipText }, "?");
+    const rows = [h("div.setting-row", {}, h("div.video-pack-info", {}, h("h2", {}, label), tip), control)];
     for (const [tier, title] of [["272", L("272p 视频包", "272p video pack")], ["544", L("544p 高清视频包", "544p HD video pack")]]) {
       const pack = packs[tier] || {};
       const activeDl = ["downloading", "extracting"].includes(pack.download?.state);
