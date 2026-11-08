@@ -506,9 +506,9 @@ function renderAll(c, newGroup = false) {
   followAlias(c, ctx);
   const n = counts(c);
   renderHead(c, n);
-  renderOffice(c, ctx, n, newGroup);
   renderConv(c, ctx);
   renderTicker(c, ctx);
+  renderOffice(c, ctx, n, newGroup);
   if (state.locate) locatePlaying();
 }
 // #desk:<key> opens a desk's conversation, #conv:<id> a room's transcript (or everything, for a task).
@@ -564,7 +564,7 @@ async function refresh() {
     const selected = state.selected;
     const hashKey = state.hashKey;
     const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
-    if (state.loaded !== selected) showBlank("loading");
+    if (!state.loaded) showBlank("loading");
     let chat;
     try {
       chat = await load(

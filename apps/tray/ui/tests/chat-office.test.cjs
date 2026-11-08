@@ -63,6 +63,27 @@ test("office resizing ignores height feedback and still lays out changed desks a
   resize([{ contentRect: { width: 720, height: 710 } }]);
   frames.splice(0).forEach(callback => callback());
   assert.equal(style.width, "182px");
+
+  const chatSource = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const start = chatSource.indexOf("function renderAll(");
+  const end = chatSource.indexOf("for (const link of", start);
+  const blanks = [];
+  const drawer = { hidden: true };
+  let measuredWithDrawerHidden = null;
+  const chatContext = vm.createContext({
+    AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
+    narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
+    contextOf: c => c, followAlias() {}, counts: () => ({}),
+    renderHead() {}, renderConv() { drawer.hidden = false; }, renderTicker() {},
+    renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
+    showBlank: kind => blanks.push(kind), renderList() {}, ingest() {},
+    load: async path => path === "/app/chats" ? { groups: [{ group: "ws-b" }] } : { group: "ws-b", rooms: [], desks: [], messages: [] },
+  });
+  vm.runInContext(chatSource.slice(start, end), chatContext);
+  return chatContext.refresh().then(() => {
+    assert.deepEqual(blanks, [null], "switching between loaded workspaces must not flash loading blank state");
+    assert.equal(measuredWithDrawerHidden, false, "renderAll must restore the conversation drawer before measuring office layout");
+  });
 });
 
 test("takeover changes the furniture and laptop immediately, then changes the person on first dispatch", () => {
