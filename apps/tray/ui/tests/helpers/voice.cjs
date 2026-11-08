@@ -62,7 +62,7 @@ async function office(listening = true, synthesize = async () => ({}), loadRoom 
     removeAttribute() {}
     load() {}
   }
-  const AN = { ...common(), h, L: zh => zh, href: path => path, updateFlow: () => navigations.push("check-update"),
+  const AN = { ...common(), h, L: (zh, en) => String(document.documentElement.lang || "zh").startsWith("en") ? en : zh, setLanguage: lang => { document.documentElement.lang = lang; }, href: path => path, updateFlow: () => navigations.push("check-update"),
     art: { character: (provider, model) => model || provider || "default", head: name => h("span.head", { name }) },
     reconcile: (root, items) => { root.children = items; },
   };
