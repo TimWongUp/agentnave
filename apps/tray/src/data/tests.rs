@@ -1652,8 +1652,9 @@ fn office_resources_are_embedded_cached_and_reject_traversal() {
     let script = reader.respond("/chat/common.js");
     let script = String::from_utf8(script.body).unwrap();
     assert!(script.contains(&format!(
-        "const AGENTNAVE_ART_VERSION = \"{}\";",
-        env!("CARGO_PKG_VERSION")
+        "const AGENTNAVE_ART_VERSION = \"{}-{}\";",
+        env!("CARGO_PKG_VERSION"),
+        env!("AGENTNAVE_ART_REVISION")
     )));
     assert!(script.contains("/art/${path}?v=${encodeURIComponent(artVersion)}"));
     let manifest = reader.respond("/art/parts.json");

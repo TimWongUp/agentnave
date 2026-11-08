@@ -1,46 +1,209 @@
-//! The system proxy, handed on to the CLIs this app starts.
+//! System and shell proxy resolution, plus shared release mirror expansion.
 //!
-//! Windows keeps its proxy in the registry, where only WinINET clients look. The CLIs we probe
-//! are Go and Node programs that read `HTTPS_PROXY` instead, so on a proxied machine every probe
-//! tries a direct connection: `agy models` sits on a Google IPv6 address until the timeout and
-//! the desk lists no models at all.
+//! Desktop apps started from Finder or the Windows shell do not inherit terminal `HTTPS_PROXY`
+//! variables. Windows keeps its system proxy in the WinINET registry; macOS keeps it in DynamicStore
+//! (`scutil --proxy`). Reading both lets the updater, video-pack downloader, and child CLIs use the
+//! user's active proxy without manual configuration.
 
-/// Copy the system proxy into this process's environment, unless the user already set one.
-#[cfg(windows)]
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+
+/// Public mirrors that serve GitHub release files when GitHub itself is unreachable.
+pub const GITHUB_MIRRORS: [&str; 2] = ["https://ghfast.top/", "https://gh-proxy.com/"];
+
+/// Mirror for Hugging Face asset URLs when `huggingface.co` is blocked or poisoned.
+pub const HF_MIRROR: &str = "https://hf-mirror.com/";
+
+const PROXY_KEYS: [&str; 6] = [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+];
+
+static SHELL_NETWORK: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+
+/// Cache the login shell's network variables detected by `hosts`, so background downloads can
+/// use a proxy configured only in `.zshrc` or `.bashrc`.
+pub fn cache_network(network: &BTreeMap<String, String>) {
+    let mutex = SHELL_NETWORK.get_or_init(Mutex::default);
+    *mutex.lock().unwrap_or_else(|p| p.into_inner()) = network.clone();
+}
+
+/// Copy the system proxy into this process's environment at startup, unless the user already set one.
 pub fn apply() {
-    if std::env::var_os("HTTPS_PROXY").is_some() || std::env::var_os("https_proxy").is_some() {
-        return;
-    }
-    if read("ProxyEnable")
-        .as_deref()
-        .is_none_or(|value| !enabled(value))
+    if PROXY_KEYS
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
     {
         return;
     }
-    let Some(server) = read("ProxyServer") else {
+    let Some(proxy) = system_proxy_url() else {
         return;
     };
-    let proxy = proxy_url(&server);
-    // SAFETY: `main` calls this before it starts any other thread, so no other thread is reading
-    // the environment while it changes.
+    // SAFETY: `main` calls this before starting any other thread, so no other thread reads the
+    // environment while it changes.
     unsafe {
+        if proxy.starts_with("socks5://") || proxy.starts_with("socks5h://") {
+            std::env::set_var("ALL_PROXY", &proxy);
+        }
         std::env::set_var("HTTPS_PROXY", &proxy);
         std::env::set_var("HTTP_PROXY", &proxy);
     }
 }
 
-#[cfg(not(windows))]
-pub fn apply() {}
+/// Resolve the active proxy URL from an explicit network map, cached login-shell environment,
+/// process environment, or live OS system proxy settings.
+pub fn resolve(network: Option<&BTreeMap<String, String>>) -> Option<tauri::Url> {
+    if let Some(map) = network
+        && let Some(url) = env_proxy_url(map)
+    {
+        return Some(url);
+    }
+    if let Some(mutex) = SHELL_NETWORK.get()
+        && let Some(url) = env_proxy_url(&mutex.lock().unwrap_or_else(|p| p.into_inner()))
+    {
+        return Some(url);
+    }
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    if let Some(url) = env_proxy_url(&env) {
+        return Some(url);
+    }
+    system_proxy_url().and_then(|raw| tauri::Url::parse(&raw).ok())
+}
+
+/// Read the first valid proxy URL from an environment variable map.
+pub fn env_proxy_url(env: &BTreeMap<String, String>) -> Option<tauri::Url> {
+    for key in PROXY_KEYS {
+        if let Some(raw) = env.get(key).map(|s| s.trim()).filter(|s| !s.is_empty())
+            && let Ok(url) = tauri::Url::parse(raw)
+        {
+            return Some(url);
+        }
+    }
+    None
+}
+
+/// Expand canonical download URLs with their fallback mirrors (`hf-mirror.com` for Hugging Face,
+/// `GITHUB_MIRRORS` for GitHub Releases), keeping official sources before mirrors.
+pub fn expand_urls(direct: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut github = Vec::new();
+    for raw in direct {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        push_unique(&mut out, trimmed.to_owned());
+        if let Some(rest) = trimmed.strip_prefix("https://huggingface.co/") {
+            push_unique(&mut out, format!("{HF_MIRROR}{rest}"));
+        } else if trimmed.starts_with("https://github.com/")
+            || trimmed.starts_with("https://raw.githubusercontent.com/")
+        {
+            github.push(trimmed.to_owned());
+        }
+    }
+    for prefix in GITHUB_MIRRORS {
+        for url in &github {
+            push_unique(&mut out, format!("{prefix}{url}"));
+        }
+    }
+    out
+}
+
+fn push_unique(list: &mut Vec<String>, item: String) {
+    if !list.contains(&item) {
+        list.push(item);
+    }
+}
+
+#[cfg(windows)]
+fn system_proxy_url() -> Option<String> {
+    if read("ProxyEnable")
+        .as_deref()
+        .is_none_or(|value| !enabled(value))
+    {
+        return None;
+    }
+    let server = read("ProxyServer")?;
+    Some(proxy_url(&server))
+}
+
+#[cfg(target_os = "macos")]
+fn system_proxy_url() -> Option<String> {
+    let mut command = std::process::Command::new("/usr/sbin/scutil");
+    command.arg("--proxy").stdin(std::process::Stdio::null());
+    let output = crate::process::output(command, std::time::Duration::from_secs(5)).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_scutil(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn system_proxy_url() -> Option<String> {
+    None
+}
+
+/// Parse `scutil --proxy` output on macOS: HTTPS wins over HTTP over SOCKS5.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn parse_scutil(out: &str) -> Option<String> {
+    let mut kv = BTreeMap::new();
+    let mut in_list = false;
+    for raw_line in out.lines() {
+        let line = raw_line.trim();
+        if in_list {
+            if line == "}" {
+                in_list = false;
+            }
+            continue;
+        }
+        let Some((k, v)) = line.split_once(" : ") else {
+            continue;
+        };
+        if k.trim() == "ExceptionsList" {
+            in_list = true;
+            continue;
+        }
+        kv.insert(k.trim(), v.trim());
+    }
+    let entry = |key: &str, scheme: &str| -> Option<String> {
+        if kv.get(format!("{key}Enable").as_str()).copied() != Some("1") {
+            return None;
+        }
+        let host = kv
+            .get(format!("{key}Proxy").as_str())
+            .copied()
+            .filter(|h| !h.is_empty())?;
+        let host_port = match kv
+            .get(format!("{key}Port").as_str())
+            .copied()
+            .filter(|p| !p.is_empty())
+        {
+            Some(port) if host.contains(':') && !host.starts_with('[') => {
+                format!("[{host}]:{port}")
+            }
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_owned(),
+        };
+        Some(format!("{scheme}://{host_port}"))
+    };
+    entry("HTTPS", "http")
+        .or_else(|| entry("HTTP", "http"))
+        .or_else(|| entry("SOCKS", "socks5"))
+}
 
 /// `ProxyEnable` is a DWORD: the registry prints it as `0x1`, and older tools as `1`.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn enabled(value: &str) -> bool {
     matches!(value.trim(), "1" | "0x1" | "0x00000001")
 }
 
 /// The proxy URL as an environment variable takes it. The registry holds `host:port`, or a
 /// per-scheme list such as `http=host:port;https=host:port`.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn proxy_url(server: &str) -> String {
     let entry = server
         .split(';')
@@ -88,9 +251,9 @@ fn read(name: &str) -> Option<String> {
     })
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
-    use super::{enabled, proxy_url};
+    use super::{enabled, expand_urls, parse_scutil, proxy_url};
 
     #[test]
     fn a_plain_host_and_port_gets_a_scheme() {
@@ -119,5 +282,60 @@ mod tests {
         assert!(enabled("1"));
         assert!(!enabled("0x0"));
         assert!(!enabled("0"));
+    }
+
+    #[test]
+    fn scutil_prefers_https_then_http_then_socks_and_ignores_exceptions() {
+        let https = "\
+<dictionary> {
+  ExceptionsList : <array> {
+    0 : 127.0.0.1
+    1 : localhost
+  }
+  HTTPEnable : 1
+  HTTPPort : 7890
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7897
+  HTTPSProxy : 127.0.0.1
+  SOCKSEnable : 1
+  SOCKSPort : 7891
+  SOCKSProxy : 127.0.0.1
+}";
+        assert_eq!(
+            parse_scutil(https).as_deref(),
+            Some("http://127.0.0.1:7897")
+        );
+
+        let socks_only = "\
+<dictionary> {
+  HTTPSEnable : 0
+  SOCKSEnable : 1
+  SOCKSPort : 1080
+  SOCKSProxy : 127.0.0.1
+}";
+        assert_eq!(
+            parse_scutil(socks_only).as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
+        assert_eq!(parse_scutil("<dictionary> {\n  HTTPEnable : 0\n}"), None);
+    }
+
+    #[test]
+    fn expand_urls_puts_hf_mirror_and_github_mirrors_in_order() {
+        let urls = expand_urls(&[
+            "https://huggingface.co/org/repo/resolve/main/pack.tar.gz".into(),
+            "https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz".into(),
+        ]);
+        assert_eq!(
+            urls,
+            vec![
+                "https://huggingface.co/org/repo/resolve/main/pack.tar.gz",
+                "https://hf-mirror.com/org/repo/resolve/main/pack.tar.gz",
+                "https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
+                "https://ghfast.top/https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
+                "https://gh-proxy.com/https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
+            ]
+        );
     }
 }

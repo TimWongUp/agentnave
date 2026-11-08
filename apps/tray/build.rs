@@ -1,3 +1,5 @@
+use std::hash::Hasher;
+
 fn main() {
     // Embed the entire matching Skills, including references, without a runtime checkout.
     let skills = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
@@ -33,9 +35,16 @@ fn main() {
     }
     files.sort();
     let mut source = String::from("pub const ART: &[(&str, &[u8])] = &[\n");
+    let mut revision = std::hash::DefaultHasher::new();
     for (name, path) in files {
+        revision.write(name.as_bytes());
+        revision.write(&std::fs::read(&path).unwrap());
         source.push_str(&format!("({name:?}, include_bytes!({path:?})),\n"));
     }
+    println!(
+        "cargo:rustc-env=AGENTNAVE_ART_REVISION={:016x}",
+        revision.finish()
+    );
     source.push_str("];\n");
     std::fs::write(
         std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("office_art.rs"),
@@ -55,7 +64,11 @@ fn collect(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String,
             "embedded Skill must contain regular files"
         );
         let name = path.file_name().unwrap().to_string_lossy();
-        if name.starts_with('.') || name == "__pycache__" || name.ends_with(".pyc") {
+        if (dir == root && root.ends_with("ui/art") && name == "video")
+            || name.starts_with('.')
+            || name == "__pycache__"
+            || name.ends_with(".pyc")
+        {
             continue;
         }
         if path.is_dir() {

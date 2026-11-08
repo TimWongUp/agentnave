@@ -6,6 +6,7 @@ window.ANAppearance = (() => {
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const inApp = () => location.protocol === "agentnave:" || location.hostname === "agentnave.localhost";
   let theme = root.dataset.theme || "system";
+  let characterStyle = root.dataset.characterStyle || "static";
   let generation = 0;
   const reducedMotion = { get matches() {
     return root.dataset.motion === "reduce" || (root.dataset.motion !== "full" && motion.matches);
@@ -23,6 +24,10 @@ window.ANAppearance = (() => {
     generation++;
     if (["system", "light", "dark"].includes(general.theme)) theme = general.theme;
     if (["system", "reduce", "full"].includes(general.motion)) root.dataset.motion = general.motion;
+    if (["static", "video-272", "video-544"].includes(general.character_style)) {
+      characterStyle = general.character_style;
+      root.dataset.characterStyle = characterStyle;
+    }
     applyTheme();
   }
 
@@ -82,5 +87,5 @@ window.ANAppearance = (() => {
   addEventListener("DOMContentLoaded", refresh);
   applyTheme();
   return { applyTheme, applyPreferences, themeSwitch, reducedMotion,
-    preferences: () => ({ theme, motion: root.dataset.motion }) };
+    preferences: () => ({ theme, motion: root.dataset.motion, character_style: characterStyle }) };
 })();

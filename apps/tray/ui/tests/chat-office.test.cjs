@@ -22,6 +22,7 @@ function office(character = (_host, model) => model || "default") {
   });
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
   const rec = Object.fromEntries(["lid", "scene", "desk", "chair", "open", "closed", "portrait", "cli", "st", "state"].map(key => [key, node()]));
+  rec.laptop = { laptop: { dress(set) { rec.laptop.set = set; } } };
   return { rec, update: c => context.updateBoss(rec, c, { running: 0, review: 0 }) };
 }
 
@@ -76,9 +77,7 @@ test("takeover changes the furniture and laptop immediately, then changes the pe
   assert.equal(app.rec.cli.textContent, "Antigravity");
   assert.equal(app.rec.desk.src, "office/boss-desk-agy.webp");
   assert.equal(app.rec.chair.src, "office/boss-chair-agy.webp");
-  assert.equal(app.rec.open.src, "office/boss-laptop-agy.webp");
-  assert.equal(app.rec.closed.src, "office/boss-laptop-closed-agy.webp");
-  assert.equal(app.rec.lid.children[0].host, "antigravity");
+  assert.equal(app.rec.laptop.set, "agy");
   c.messages.push(speech("antigravity", "claude-opus-5-5-medium", "2026-11-04T14:25:03Z"));
   app.update(c);
   assert.equal(app.rec.char, "claude-opus-5-5-medium");

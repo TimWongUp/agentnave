@@ -27,7 +27,7 @@ fn frames() -> impl Iterator<Item = (&'static str, &'static str, u32)> {
         .flat_map(|&(size, edge, count)| STATES[..count].iter().map(move |&s| (size, s, edge)))
 }
 
-fn webp_size(b: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn webp_size(b: &[u8]) -> Option<(u32, u32)> {
     if b.len() < 30 || &b[0..4] != b"RIFF" || &b[8..12] != b"WEBP" {
         return None;
     }

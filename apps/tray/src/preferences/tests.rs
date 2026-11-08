@@ -63,6 +63,10 @@ fn pages_open_with_preferences_before_first_paint() {
 fn general_validates_all_contract_fields_without_accepting_coercions() {
     let dir = tempfile::tempdir().unwrap();
     for (field, values) in [
+        (
+            "character_style",
+            vec![json!("static"), json!("video-272"), json!("video-544")],
+        ),
         ("language", vec![json!("system"), json!("zh"), json!("en")]),
         (
             "theme",
@@ -110,7 +114,7 @@ fn effective_fills_defaults_and_uses_the_os_autostart_value() {
         json!({
             "language": "system", "theme": "system", "motion": "system", "scale": 100,
             "autostart": true, "open_on_start": true, "tray_click": "panel",
-            "tray_count": true, "tray_font": "baskerville", "keep_awake": false,
+            "tray_count": true, "tray_font": "baskerville", "keep_awake": false, "character_style": "static",
         })
     );
     let effective = general::effective(
