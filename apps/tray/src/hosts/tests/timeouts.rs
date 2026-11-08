@@ -3,13 +3,13 @@ use super::*;
 #[test]
 fn refresh_raises_existing_tool_timeouts_and_keeps_other_configurations() {
     for (id, key, minimum) in [
-        ("codex", "tool_timeout_sec", 720),
-        ("claude", "timeout", 720_000),
-        ("antigravity", "timeoutSeconds", 720),
-        ("pi", "timeout", 720),
-        ("hermes", "timeout", 720),
-        ("deepseek", "toolCallTimeoutMs", 720_000),
-        ("zcode", "timeoutMs", 720_000),
+        ("codex", "tool_timeout_sec", 360),
+        ("claude", "timeout", 360_000),
+        ("antigravity", "timeoutSeconds", 360),
+        ("pi", "timeout", 360),
+        ("hermes", "timeout", 360),
+        ("deepseek", "toolCallTimeoutMs", 360_000),
+        ("zcode", "timeoutMs", 360_000),
     ] {
         let (_temp, mut hosts) = fixture();
         let h = host(&hosts, id);
@@ -59,7 +59,7 @@ fn native_long_defaults_unlimited_and_grok_tool_overrides_are_preserved() {
     super::super::timeouts::ensure(&mut grok, &host(&hosts, "grok")).unwrap();
     assert_eq!(
         grok,
-        json!({"tool_timeout_sec":1800,"tool_timeouts":{"wait":720,"start_agent":900,"other":30}})
+        json!({"tool_timeout_sec":1800,"tool_timeouts":{"wait":360,"start_agent":900,"other":30}})
     );
 }
 

@@ -117,7 +117,7 @@ def _read_excluded_providers() -> frozenset[str]:
     return excluded if host_provider is None else excluded | {host_provider}
 
 
-WAIT_SECONDS = 600
+WAIT_SECONDS = 270
 
 # Ends are never pushed (ADR-0007), so receipts say what to call before the turn ends (ADR-0064).
 WAIT_NEXT = (

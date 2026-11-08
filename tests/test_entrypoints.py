@@ -676,9 +676,9 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         "manager_session_id",
         "seq",
     }
-    assert mcp_server.WAIT_SECONDS == 600
+    assert mcp_server.WAIT_SECONDS == 270
     wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
-    assert wait_modes[0]["enum"] == [0, 600]
+    assert wait_modes[0]["enum"] == [0, 270]
     assert tools["answer_prompt"].input_schema["required"] == [
         "invocation_id",
         "prompt_id",
@@ -913,7 +913,7 @@ async def test_mcp_group_round_runs_seats_in_parallel_and_returns_final_answers(
         async with asyncio.timeout(10):
             while True:
                 waited = await client.call_tool(
-                    "wait", {"ids": [started_payload["round_id"]], "wait_seconds": 600}
+                    "wait", {"ids": [started_payload["round_id"]], "wait_seconds": 270}
                 )
                 payload = _first(waited, "rounds")
                 if payload["status"] != "running":
@@ -1038,10 +1038,10 @@ async def test_mcp_blocked_round_keeps_finished_answers_and_hides_running_tails(
 @pytest.mark.asyncio
 async def test_mcp_rejects_arbitrary_wait_windows() -> None:
     async with Client(mcp) as client:
-        for seconds in (1, 45, 240, 300):
+        for seconds in (1, 45, 240, 300, 600):
             result = await client.call_tool("wait", {"ids": ["missing"], "wait_seconds": seconds})
             assert result.is_error is True
-            assert "0" in str(result.content) and "600" in str(result.content)
+            assert "0" in str(result.content) and "270" in str(result.content)
             assert "Unknown or expired id" not in str(result.content)
 
 
@@ -1066,7 +1066,7 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
         )
         with monkeypatch.context() as patch:
             patch.setattr("agentnave.mcp_tasks._ready_handles", elapsed)
-            for arguments in ({"seq": 1}, {"seq": 2, "wait_seconds": 600}, {"seq": 2}):
+            for arguments in ({"seq": 1}, {"seq": 2, "wait_seconds": 270}, {"seq": 2}):
                 reply = _payload(
                     (
                         await client.call_tool(
@@ -1077,7 +1077,7 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
                 assert reply["reason"] == "wait_elapsed" and reply["seq"] == arguments["seq"]
                 assert reply["pending_ids"] == [started["invocation_id"]]
                 assert f"seq={int(arguments['seq']) + 1}" in str(reply["next"])
-        assert len(windows) == 3 and all(599 < window <= 600 for window in windows)
+        assert len(windows) == 3 and all(269 < window <= 270 for window in windows)
         # Reusing seq never replays a response: a later terminal result is still received once.
         await client.call_tool("cancel", {"id": started["invocation_id"]})
         ended = _payload(
