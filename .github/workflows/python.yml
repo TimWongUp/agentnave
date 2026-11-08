@@ -41,7 +41,7 @@ jobs:
                       "src/agentnave/mcp_server.py", "src/agentnave/conversations.py",
                       f"{skill}/references/studio.md"]
           required += [f"{skill}/references/{name}.md" for name in
-                       ("claude", "codebuddy", "codex", "grok", "antigravity", "pi", "deepseek", "zcode")]
+                       ("claude", "codebuddy", "codex", "grok", "antigravity", "pi", "deepseek", "devin", "zcode")]
           required += ["skills/agentnave-review/SKILL.md",
                        "skills/agentnave-review/references/reviewers.md",
                        "skills/agentnave-handover/SKILL.md",

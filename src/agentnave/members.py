@@ -152,7 +152,7 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
         "full": {"permission_mode": "danger-full-access"},
     },
     "devin": {
-        "auto": {"permission_mode": "auto"},
+        "auto": {"permission_mode": "smart"},
         "full": {"permission_mode": "dangerous"},
     },
 }
@@ -166,7 +166,7 @@ PERMISSION_KEYS: dict[str, frozenset[str]] = {
     "antigravity": frozenset({"mode", "sandbox", "dangerously_skip_permissions"}),
     "codex": frozenset({"approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"}),
     "deepseek": frozenset({"permission_mode"}),
-    "devin": frozenset({"permission_mode", "sandbox"}),
+    "devin": frozenset({"permission_mode", "sandbox", "respect_workspace_trust"}),
 }
 
 

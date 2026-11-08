@@ -1880,6 +1880,15 @@ def test_devin_adapter_prepares_prompt_export_and_parses_atif(tmp_path: Path) ->
         b"User rejected a tool call that requires confirmation in non-interactive mode",
     )
     assert rejected.status is InvocationStatus.BLOCKED
+    rejected_with_reply = adapter.parse(
+        0,
+        b"I could not edit the file",
+        b"User rejected a tool call that requires confirmation in non-interactive mode",
+    )
+    assert (rejected_with_reply.status, rejected_with_reply.output) == (
+        InvocationStatus.BLOCKED,
+        "I could not edit the file",
+    )
     assert adapter.parse(1, b"", b"Not logged in. Run devin auth login").status is (
         InvocationStatus.BLOCKED
     )

@@ -325,7 +325,12 @@ fn configured(provider: &str) -> Option<String> {
         "antigravity" => json(home.join(".gemini/antigravity-cli/settings.json"), "model"),
         "codebuddy" => codebuddy_settings()?["model"].as_str().map(str::to_owned),
         "devin" => {
-            let text = std::fs::read_to_string(home.join(".config/devin/config.json")).ok()?;
+            let config = if cfg!(windows) {
+                dir("APPDATA", "AppData/Roaming")
+            } else {
+                dir("XDG_CONFIG_HOME", ".config")
+            };
+            let text = std::fs::read_to_string(config.join("devin/config.json")).ok()?;
             let value: Value = serde_json::from_str(&text).ok()?;
             value["agent"]["model"]
                 .as_str()

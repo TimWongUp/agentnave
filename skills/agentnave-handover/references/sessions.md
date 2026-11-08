@@ -14,6 +14,7 @@
 | DeepSeek Harness | `~/.dsh/sessions/--目录--/session-<ID>/session.v*.jsonl.zstd`（`DSH_HOME`），用 `zstd -dc` 读                                    | 目录名                               | `user/message` 且 `data.source.kind` 为 `user` 的 `data.content`；`assistant/message` 的 `data.message.content` |
 | Hermes           | `~/.hermes/state.db`（`HERMES_HOME`），表 `messages`，只读打开                                                                   | 表 `sessions`                        | 按 `session_id` 查，`role` 为 `user`、`assistant`，`active = 1`                                                 |
 | ZCode | `~/.zcode/cli/db/db.sqlite`（`~/.zcode/cli/config.json` 的 `storage.sessionDbPath` 可覆盖），表 `message` 和 `part`，只读打开 | 表 `session` 的 `directory` | `message.data` 的 `semantics.origin` 为 `real_user` 是用户原话；文字在 `part.data` 里 `type` 为 `text` 的部分 |
+| Devin CLI | `~/.local/share/devin/cli/transcripts/<ID>.json`，找不到时查同目录 `sessions.db` 的 `sessions` 表（`DEVIN_SESSIONS_DIR` 可覆盖；Windows 默认 `%LOCALAPPDATA%\devin\cli`，POSIX 尊重 `XDG_DATA_HOME`） | 会话 ID；核对记录的工作目录 | ATIF 的 `steps` 中 `source` 为 `user`／`agent` 的 `message`，仅接手对应会话 |
 
 Antigravity 的会话如果只有 `conversations/<ID>.db`，那是 protobuf，读不了，告诉用户。
 

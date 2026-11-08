@@ -522,7 +522,7 @@ After registration or upgrade:
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
    visible (9 total).
    Confirm the host also discovers `agentnave-manager` and `agentnave-handover` in the intended
-   scope and can read its eight referenced CLI files. Check for older user/project copies that
+   scope and can read its nine referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.

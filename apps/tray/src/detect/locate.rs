@@ -11,11 +11,14 @@ pub(super) fn common_dirs() -> Vec<PathBuf> {
     if cfg!(windows) {
         // npm's global prefix. `codex`, and the npm install of `pi` and `codebuddy`, land there as
         // `.cmd` shims; a desktop app started before that PATH entry existed would miss them.
-        return dirs::data_dir()
-            .map(|roaming| roaming.join("npm"))
-            .filter(|dir| dir.is_dir())
-            .into_iter()
-            .collect();
+        return [
+            dirs::data_dir().map(|roaming| roaming.join("npm")),
+            dirs::data_local_dir().map(|local| local.join("devin/cli/bin")),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|dir| dir.is_dir())
+        .collect();
     }
     COMMON_DIRS
         .iter()

@@ -150,11 +150,7 @@ class DevinAdapter(AdapterHooks):
         output = stdout_text or export_output
         lowered_stderr = stderr_text.lower()
         rejected_tool = "rejected a tool call that requires confirmation" in lowered_stderr
-        if (
-            returncode == 0
-            and (output or session_id is not None)
-            and not (rejected_tool and not output)
-        ):
+        if returncode == 0 and (output or session_id is not None) and not rejected_tool:
             return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
 
         raw_message = (

@@ -174,6 +174,7 @@ impl Context {
             home.join(".bun/bin"),
             home.join(".npm-global/bin"),
             home.join(".volta/bin"),
+            home.join("AppData/Local/devin/cli/bin"),
         ]);
         Self {
             applications: applications(&home),
