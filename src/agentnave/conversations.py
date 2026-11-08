@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import IO
 from uuid import uuid4
 
+from agentnave import provider_health
 from agentnave.adapters import get_adapter
 from agentnave.conversations_store import (
     _CONNECTION_ID,
@@ -220,6 +221,9 @@ class Conversations(ConversationStore):
                 raise ValueError(self._not_yours("Group", state.manager_session))
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
+            provider_health.check(
+                self.root, (seat.provider for seat in state.seats if seat.id in seat_ids)
+            )
             # A parallel round starts every seat at once; a serial one runs a seat at a time.
             self._check_capacity(len(seat_ids) if order == "parallel" else 1)
             manager_reported = self._manager_model(state.manager_session) or manager_reported_model
@@ -264,6 +268,10 @@ class Conversations(ConversationStore):
             session = self._manager_session(manager_session_id)
             if session is not None and session != state.manager_session:
                 raise ValueError(self._not_yours("Group", state.manager_session))
+            self._validate_retry(group_id, seat_ids)
+            provider_health.check(
+                self.root, (seat.provider for seat in state.seats if seat.id in seat_ids)
+            )
             self._check_capacity(len(seat_ids))
             return super().retry(group_id, seat_ids)
 

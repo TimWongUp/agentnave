@@ -75,6 +75,7 @@ function tpDirectory(c, ctx) {
     const review = room.status === "review" || last?.replies.some((m) => m.status === "review") || room.pending_review > 0;
     const running = room.status === "running";
     const said = last ? [...last.replies].reverse().find((m) => m.kind === "reply") : null;
+    const live = running && last ? [...last.replies].reverse().find((m) => m.kind === "typing" && tpSummary(m)) : null;
     const total = last ? Math.max(last.replies.length, last.prompt?.recipients?.length || 0) : 0;
     items.push({
       weight: review ? 0 : running ? 1 : 2,
@@ -84,7 +85,7 @@ function tpDirectory(c, ctx) {
       status: review ? [AN.L("待审核", "Review"), "review"] : failed ? [AN.L("有失败", "Failed"), "bad"] : running ? [AN.L("进行中", "Running"), "run"] : [AN.L("已结束", "Ended"), "idle"],
       faces: room.seats.map((s) => ctx.desks.get(s.desk)).filter(Boolean).slice(0, 4).map((d) => ART.head(deskChar(d))),
       meta: last ? AN.L(`第 ${last.round} 轮 · ${last.replies.filter((m) => m.kind === "reply").length}/${total} 已答`, `Round ${last.round} · ${last.replies.filter((m) => m.kind === "reply").length}/${total} replied`) : AN.L("还没开始", "Not started"),
-      line: said ? tpFirst(said.text) : last?.prompt ? tpFirst(last.prompt.text) : "",
+      line: said ? tpFirst(said.text) : live ? tpSummary(live) : last?.prompt ? tpFirst(last.prompt.text) : "",
       scope: { kind: "room", id: room.id },
     });
   }

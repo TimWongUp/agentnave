@@ -122,6 +122,8 @@ class PiAdapter(AdapterHooks):
         kind = event.get("type")
         if kind == "message_update":
             delta = object_dict(event.get("assistantMessageEvent"))
+            if delta.get("type") == "thinking_start":
+                return ProviderActivity("lifecycle", "thinking_start", "reasoning")
             if delta.get("type") == "text_delta":
                 return ProviderActivity(
                     "message",

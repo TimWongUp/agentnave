@@ -231,6 +231,8 @@ class ClaudeAdapter(AdapterHooks):
             nested = object_dict(event.get("event"))
             block = object_dict(nested.get("content_block"))
             delta = object_dict(nested.get("delta"))
+            if nested.get("type") == "message_start":
+                return ProviderActivity("lifecycle", "stream_event.message_start", "reasoning")
             if nested.get("type") == "content_block_start":
                 if block.get("type") == "tool_use":
                     return ProviderActivity(
@@ -289,15 +291,19 @@ class ClaudeAdapter(AdapterHooks):
                             message=brief(block.get("text")),
                             public_output=brief(block.get("text"), 1000),
                         )
+                    if block_type == "thinking" and event_type == "assistant":
+                        return ProviderActivity("lifecycle", "assistant.thinking", "reasoning")
         if event_type == "result":
             # Denied or failed tool calls do not block; only a failed run does.
             failed = event.get("is_error") is True or (
                 isinstance(event.get("subtype"), str) and str(event["subtype"]).startswith("error")
             )
+            raw_error = event.get("errors") or event.get("error") or event.get("result")
             return ProviderActivity(
                 "lifecycle",
                 "result",
                 brief(event.get("subtype")),
+                message=brief(str(raw_error)) if failed and raw_error else None,
                 blocking_error="provider_failed" if failed else None,
             )
         return None
@@ -405,7 +411,7 @@ class ClaudeAdapter(AdapterHooks):
             )
 
         if refused:
-            message = error_summary(output, f"{self.name} refused the request")
+            message = f"{self.name} refused the request"
             status = InvocationStatus.BLOCKED
         elif has_permission_denials:
             message = f"{self.name} requires permission for one or more tool calls"

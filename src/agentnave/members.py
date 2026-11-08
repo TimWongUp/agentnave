@@ -12,6 +12,7 @@ from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, Field, model_validator
 
+from agentnave import provider_health
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import restricted_options
 from agentnave.host import Host, HostName, HostSource
@@ -830,6 +831,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     def installed(provider: str) -> bool:
         return get_adapter(provider).is_installed()
 
+    active_health = provider_health.active(data_root())
     document = read_members()
     roles = None
     orchestration_error = None
@@ -849,7 +851,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     try:
         if saved_review := _read_app_file("review.json", ReviewFile, MemberFileError):
             review = _review_status(
-                saved_review.seats, task_mode, excluded, host, installed, document
+                saved_review.seats, task_mode, excluded, host, installed, document, active_health
             )
     except MemberFileError as exc:
         review_error = str(exc)
@@ -865,6 +867,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                     host,
                     installed,
                     document,
+                    active_health,
                 )
                 for definition in role_catalog()
                 if roles.group_enabled(definition.group)
@@ -876,6 +879,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 host,
                 installed,
                 document,
+                active_health,
             ).get("image-generator"),
         )
     permissions: dict[ProviderName, PermissionTier] = {}
@@ -915,6 +919,7 @@ def _review_status[Role: str](
     host: Host,
     installed: Callable[[str], bool],
     document: MemberFile | None,
+    active_health: dict[str, provider_health.Health],
 ) -> dict[Role, ReviewSeatStatus]:
     task = mode.members
     seats: dict[Role, ReviewSeatStatus] = {}
@@ -936,6 +941,8 @@ def _review_status[Role: str](
             reason = pool_error
         elif native:
             reason = None
+        elif seat.provider in active_health:
+            reason = provider_health.reason(seat.provider, active_health[seat.provider])
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):
@@ -950,6 +957,7 @@ def _review_status[Role: str](
             m.provider
             for m in task
             if m.provider != seat.provider
+            and m.provider not in active_health
             and m.model == seat.model
             and m.permitted
             and m.error is None
@@ -962,26 +970,48 @@ def _review_status[Role: str](
             reason=reason,
             native=True if native else None,
             alternatives=list(dict.fromkeys(alternatives)),
-            replacement=(None if reason is None else _seat_replacement(seat, alternatives, task)),
+            replacement=(
+                None
+                if reason is None
+                else _seat_replacement(
+                    seat,
+                    alternatives,
+                    task,
+                    unhealthy=set(active_health),
+                    image=role == "image-generator",
+                )
+            ),
         )
     return seats
 
 
 def _seat_replacement(
-    seat: ReviewSeat, alternatives: list[ProviderName], task: list[MemberStatus]
+    seat: ReviewSeat,
+    alternatives: list[ProviderName],
+    task: list[MemberStatus],
+    *,
+    unhealthy: set[str],
+    image: bool = False,
 ) -> SeatReplacement | None:
     """The same model on another CLI, else another CLI's App default model."""
+    alternatives = [provider for provider in alternatives if provider not in unhealthy]
     if alternatives:
         return SeatReplacement(
             provider=alternatives[0],
             provider_options={"model": seat.model},
             reason=f"{alternatives[0]} offers the same model",
         )
+    if image:
+        return None
     fallback = next(
         (
             m
             for m in task
-            if m.default and m.permitted and m.error is None and m.provider != seat.provider
+            if m.default
+            and m.permitted
+            and m.error is None
+            and m.provider != seat.provider
+            and m.provider not in unhealthy
         ),
         None,
     )

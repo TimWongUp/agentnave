@@ -11,6 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import AfterValidator, Field
 
 from agentnave import mcp_runtime as runtime
+from agentnave import provider_health
 from agentnave.conversations import (
     Conversations,
     Decision,
@@ -285,6 +286,11 @@ async def run_round(
     if group_id is None:
         assert title is not None and members is not None
         try:
+            if seats:
+                provider_health.check(
+                    conversations.root,
+                    (seat.provider for seat in members if seat.id in seats),
+                )
             group_id, opened = _open_show(
                 conversations, title, members, cwd, review, isolated, manager_session_id
             )

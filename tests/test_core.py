@@ -6,13 +6,14 @@ import os
 import sys
 import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from agentnave import core
+from agentnave import core, provider_health
 from agentnave.adapters.base import ParsedProviderResult, PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codex import CodexAdapter
@@ -29,6 +30,7 @@ from agentnave.core import (
     _retry_streak_start,  # pyright: ignore[reportPrivateUsage]
     _stall_guard,  # pyright: ignore[reportPrivateUsage]
 )
+from agentnave.locks import lock_file, release_and_remove
 from agentnave.models import (
     InvocationError,
     InvocationPhase,
@@ -1422,3 +1424,142 @@ def test_prompt_content_hides_credentials_before_cutting_it(
     assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=twice).tool_input
     mixed = json.dumps(json.dumps('demo"pass\\word123', ensure_ascii=False), ensure_ascii=True)
     assert "pass" not in NativePrompt("f" * 32, "permission", "Bash", tool_input=mixed).tool_input
+
+
+def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Path) -> None:
+    path = tmp_path / "provider-health.json"
+    provider_health.record(tmp_path, "claude", "quota")
+    first = provider_health.active(tmp_path)["claude"]
+    until = datetime.fromisoformat(first["until"])
+    assert timedelta(minutes=14) < until - datetime.now(UTC) <= timedelta(minutes=15)
+    provider_health.record(tmp_path, "claude", "auth")
+    provider_health.record(tmp_path, "claude", "quota")
+    assert provider_health.active(tmp_path)["claude"] == {"code": "auth", "until": first["until"]}
+    assert set(json.loads(path.read_text())["providers"]["claude"]) == {"code", "until"}
+    provider_health.clear(tmp_path, "claude")
+    assert provider_health.active(tmp_path) == {}
+    before = path.stat().st_mtime_ns
+    provider_health.clear(tmp_path, "claude")
+    assert path.stat().st_mtime_ns == before
+
+
+def test_provider_health_bad_data_and_busy_lock_fail_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "provider-health.json"
+    for content in ("{", "[]", '{"version":true,"providers":{}}', '{"version":2,"providers":{}}'):
+        path.write_text(content)
+        assert provider_health.active(tmp_path) == {}
+    provider_health.record(tmp_path, "claude", "quota")
+    assert json.loads(path.read_text())["version"] == 2
+    now = datetime.now(UTC)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "providers": {
+                    "expired": {"code": "quota", "until": (now - timedelta(seconds=1)).isoformat()},
+                    "future": {"code": "auth", "until": (now + timedelta(days=2)).isoformat()},
+                    "naive": {"code": "quota", "until": "2026-11-08T08:30:00"},
+                    "invalid": {"code": "rate_limit", "until": "invalid"},
+                    "claude": {
+                        "code": "billing",
+                        "until": (now + timedelta(minutes=5)).isoformat(),
+                    },
+                },
+            }
+        )
+    )
+    assert set(provider_health.active(tmp_path)) == {"claude"}
+    lock = tmp_path / "locks" / "provider-health.lock"
+    handle = lock_file(lock, "busy")
+    before = path.read_bytes()
+    try:
+        provider_health.clear(tmp_path, "claude")
+        provider_health.record(tmp_path, "grok", "auth")
+        assert path.read_bytes() == before
+    finally:
+        release_and_remove(handle, lock)
+    provider_health.clear(tmp_path, "absent")
+    assert set(json.loads(path.read_text())["providers"]) == {"claude"}
+
+    def fail_write(_path: Path, _data: bytes) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(provider_health, "write_file", fail_write)
+    provider_health.record(tmp_path, "grok", "auth")
+    assert set(provider_health.active(tmp_path)) == {"claude"}
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "reported", "expected"),
+    [
+        ("provider_error", "retrying", {"insufficient_quota"}, "quota"),
+        ("invalid_api_key", "", set[str](), "auth"),
+        ("billing_error", "", set[str](), "billing"),
+        ("permission_denied", "login required", set[str](), None),
+        ("provider_failed", "not logged in; login required", set[str](), "auth"),
+        ("provider_error", "insufficient balance", set[str](), "billing"),
+        ("provider_error", "429 rate limit exceeded", set[str](), None),
+        ("provider_error", "429: weekly limit exceeded", set[str](), "quota"),
+        ("rate_limit", "too many requests", set[str](), None),
+        ("provider_failed", "network timeout; retrying", set[str](), None),
+    ],
+)
+def test_provider_health_classifies_only_account_blockers(
+    code: str, message: str, reported: set[str], expected: provider_health.Code | None
+) -> None:
+    assert provider_health.classify(InvocationStatus.FAILED, code, message, reported) == expected
+    assert provider_health.classify(InvocationStatus.SUCCEEDED, code, message, reported) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reported", [True, False])
+async def test_health_survives_retry_stall_and_success_clears_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reported: bool
+) -> None:
+    event = (
+        {"type": "system", "subtype": "api_retry", "error": "authentication_failed"}
+        if reported
+        else {"type": "result", "is_error": True, "errors": ["weekly limit reached"]}
+    )
+    manager = InvocationManager()
+    manager.health_root = tmp_path
+
+    observed_during_stall: dict[str, provider_health.Health] = {}
+
+    async def stalled(record: Any) -> None:
+        nonlocal observed_during_stall
+        while record.last_event_at is None:
+            await asyncio.sleep(0.001)
+        observed_during_stall = provider_health.active(tmp_path)
+
+    monkeypatch.setattr(core, "_stall_guard", stalled)
+    try:
+        script = f"import time; print({json.dumps(event)!r}, flush=True); time.sleep(30)"
+        invocation = manager.start(
+            InvocationRequest("claude", "work", tmp_path),
+            prepared=PreparedCommand((sys.executable, "-c", script), tmp_path),
+        )
+        result = await manager.wait(invocation)
+        assert result is not None and result.status is InvocationStatus.FAILED
+        assert result.error is not None and result.error.code == "provider_error"
+        expected = "auth" if reported else "quota"
+        assert observed_during_stall["claude"]["code"] == expected
+        assert provider_health.active(tmp_path)["claude"]["code"] == expected
+
+        # Success on any model of the same CLI clears the provider-level breaker.
+        async def no_stall(_record: Any) -> None:
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(core, "_stall_guard", no_stall)
+        script = 'print(\'{"type":"result","result":"ok","is_error":false}\')'
+        successful = manager.start(
+            InvocationRequest("claude", "work", tmp_path),
+            prepared=PreparedCommand((sys.executable, "-c", script), tmp_path),
+        )
+        result = await manager.wait(successful)
+        assert result is not None and result.status is InvocationStatus.SUCCEEDED
+        assert provider_health.active(tmp_path) == {}
+    finally:
+        await manager.shutdown()

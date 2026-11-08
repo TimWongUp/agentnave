@@ -483,7 +483,7 @@ fn show_chats_project_prompts_answers_review_absence_and_typing() {
             "rounds": [{"number": 1, "seats": [{"seat_id": "a", "status": "succeeded"}, {"seat_id": "d", "status": "succeeded"}]}],
             "round": {"number": 2, "seats": [
                 {"seat_id": "a", "status": "succeeded", "review": "pending", "output": "待审核私密回答"},
-                {"seat_id": "b", "status": "running", "output": "**正在写**"},
+                {"seat_id": "b", "status": "running", "output": "**正在写**", "doing": "thinking", "output_at": "2026-10-15T00:00:02Z"},
                 {"seat_id": "c", "status": "not_started"}]}});
     save(dir.path(), &show);
     let reader = Reader::new(dir.path().to_path_buf());
@@ -547,6 +547,13 @@ fn show_chats_project_prompts_answers_review_absence_and_typing() {
     assert_eq!(review_notice["focus"], prompts[0]["recipients"][0]["focus"]);
     assert_eq!(messages.last().unwrap()["focus"], "seat:show:b");
     assert_eq!(messages.last().unwrap()["kind"], "typing");
+    assert_eq!(
+        (
+            &messages.last().unwrap()["doing"],
+            &messages.last().unwrap()["output_at"]
+        ),
+        (&json!("thinking"), &json!("2026-10-15T00:00:02Z"))
+    );
     let members = chat["members"].as_array().unwrap();
     assert_eq!(
         members.iter().find(|m| m["key"] == "claude/m").unwrap()["line"],

@@ -5,7 +5,7 @@ description: 转交和接手 boss 会话。用户说「转交这个会话」时�
 
 # 转交与接手
 
-`handover` 的 `manager_session_id` 取法见 agentnave-manager。
+`handover` 必传当前聊天的 `manager_session_id`（取法见工具参数说明或当前宿主上下文提供的会话 ID）。看不到 `handover` 工具时，直接按「接手」第 2 步读本机老会话，或请用户重连 AgentNave MCP。
 
 ## 转交
 
@@ -19,16 +19,19 @@ description: 转交和接手 boss 会话。用户说「转交这个会话」时�
 
 用户要求接手时，按顺序做到能开工为止：
 
-1. **看待接手标记。** 有 `handover` 工具就先调 `handover()`：
+1. **看待接手标记。** 有 `handover` 工具就先调 `handover()`（`title` 是工作区首次派发时的名字，老工作区后续的会议或任务标题在认领后的 `conversations` 里）：
    - 用户点名了某个宿主或工作区：只看与之相符的。
    - 只有一个待接手，`released` 在一天内，`cwd` 与当前目录相同，且与用户的说法不矛盾：调 `handover(workspace_id=..., manager_session_id=...)` 认领。
    - 其余情况：列出每一个的 `title`、`from_host`、`cwd`、`released`，让用户选。
 2. **没有可接手的标记时找老会话。** 用户点名了宿主，按 [各宿主的会话位置](references/sessions.md) 找，排除本聊天自己的记录；同一目录有多个候选就列出来问。没点名就问用户接手哪个宿主的会话。找不到时，告诉用户查过哪些位置。
-3. **读历史。** 按下面的规则读 `note` 和老会话，直到说得清目标、已完成、未完成和停在哪里。`note` 可能为空（用户在 App 里标记时就没有），这时用 `read_conversation` 读回执 `conversations` 里最近的几个会话补上。老会话看认领回执字段：
-   - `previous_session_file`：老会话位置。
-   - `previous_session_moved`：文件已不在原处，按位置表找同一个会话 ID。
-   - `previous_session_id`：宿主共用数据库时，用它查这一个会话。
-   - 这些字段都没有：按位置表在回执的 `cwd` 下找 `from_host` 最近的会话，排除本聊天自己的记录；有多个候选或 `from_host` 为空就问用户。
+3. **读历史。** 按下面的顺序读 `note` 和老会话，直到说得清目标、已完成、未完成和停在哪里：
+   - 先读 `note`。
+   - 再从末尾读老会话最后几轮用户和 boss 的对话：
+     - `previous_session_file`：老会话位置（Codex 同一会话可能有更新的 `rollout-*-<ID>_*.jsonl` 续写文件，先核对有无更新的同 ID 文件）。
+     - `previous_session_moved`：文件已不在原处，按位置表找同一个会话 ID。
+     - `previous_session_id`：宿主共用数据库时，用它查这一个会话。
+     - 这些字段都没有：按位置表在回执的 `cwd` 下找 `from_host` 最近的会话，排除本聊天自己的记录；有多个候选或 `from_host` 为空就问用户。
+   - `note` 为空或老会话不够用时，在回执 `conversations` 里找最近的或标题与用户所说相符的会话，调 `read_conversation` 先传 `limit`（如 `limit=3`）看最后结论或 `会议总结`，不够再往前读。
 4. **核对现状。** 确认当前目录、分支和 diff，重读提到的文件，结果过期或缺失就重跑最小的相关检查。记录和现状不符时告诉用户。
 5. **汇报并继续。** 用几句话告诉用户目标、已完成、未完成、停在哪里和不确定的地方，然后继续未完成的工作；下一步不明确时只问一个问题。
 

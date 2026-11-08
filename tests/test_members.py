@@ -920,3 +920,69 @@ def test_claude_interactive_settings_reject_non_boolean_values(
         )
         with pytest.raises(SettingsFileError, match="Repair it in the AgentNave App"):
             read_claude_interactive()
+
+
+def test_cooling_clis_disable_seats_and_filter_replacements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    models = {"grok": "shared", "pi": "shared", "codebuddy": "other", "claude": "shared"}
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {p: {"models": {model: {}}} for p, model in models.items()},
+                "modes": {
+                    "task": {
+                        p: {"models": [model], "default": model} for p, model in models.items()
+                    }
+                },
+            }
+        )
+    )
+    (tmp_path / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": {"provider": "grok", "model": "shared"},
+                    "simplicity-reviewer": {"provider": "claude", "model": "shared"},
+                },
+            }
+        )
+    )
+    for provider in ("grok", "pi", "claude"):
+        provider_health.record(tmp_path, provider, "quota")
+    host = Host("claude")
+    result = list_members(frozenset(), host)
+    cooled = result.review["correctness-reviewer"]
+    assert cooled.available is False and "quota" in (cooled.reason or "")
+    assert provider_health.active(tmp_path)["grok"]["until"] in (cooled.reason or "")
+    assert cooled.alternatives == []
+    assert cooled.replacement is not None and cooled.replacement.provider == "codebuddy"
+    assert result.review["simplicity-reviewer"].native is True
+    assert result.review["simplicity-reviewer"].available is None
+
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "preset": "split",
+                "worker": {"easy": {"provider": "grok", "model": "shared"}},
+                "image_generation": {"provider": "grok", "model": "shared"},
+            }
+        )
+    )
+    result = list_members(frozenset(), host)
+    assert result.orchestration.worker["easy"].available is False
+    image = result.orchestration.image_generation
+    assert image is not None and image.available is False and image.replacement is None
+    assert all(m.modes == ["discussion"] for m in result.members)
+    provider_health.clear(tmp_path, "pi")
+    image = list_members(frozenset(), host).orchestration.image_generation
+    assert image is not None and image.replacement is not None
+    assert image.replacement.provider == "pi"
+    assert image.replacement.provider_options == {"model": "shared"}

@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import AfterValidator, Field
 
 from agentnave import mcp_runtime as runtime
+from agentnave import provider_health
 from agentnave.conversations import (
     Conversations,
 )
@@ -180,6 +181,10 @@ async def start_agent(
         raise ToolError(str(exc)) from exc
     provider, cwd = arguments.provider, arguments.cwd
     assert provider is not None and cwd is not None
+    try:
+        provider_health.check(_conversations(ctx).root, [provider])
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     role, seat, access = arguments.role, arguments.seat, arguments.access
     seat_name = seat or review_role(role)
     try:

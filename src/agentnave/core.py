@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import IO
 
+from agentnave import provider_health
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
 from agentnave.locks import lock_file, release_and_remove
@@ -66,12 +67,13 @@ _RETRY_STALL_ERROR = InvocationError(
 )
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
-_ENDED_TOOL_STATES = frozenset({"completed", "failed", "error", "errored"})
+_ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
 
 
 @dataclass(slots=True)
 class _InvocationRecord:
     request: InvocationRequest
+    health_root: Path | None = None
     reported_model: str | None = None
     started_wall_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: float = field(default_factory=time.monotonic)
@@ -116,6 +118,12 @@ class _InvocationRecord:
             code = activity.blocking_error
             if code is not None and code not in self.reported_errors:
                 self.reported_errors.add(code)
+                if self.health_root is not None and (
+                    category := provider_health.classify(
+                        InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
+                    )
+                ):
+                    provider_health.record(self.health_root, self.request.provider, category)
                 self.pending_attention.append(
                     InvocationError(
                         code, "CLI reported an execution blocker; inspect or cancel the invocation."
@@ -403,6 +411,7 @@ class InvocationManager:
         self.on_prompt_change: Callable[[str], None] | None = None
         # Lock directory shared by every server on one data root; None claims in-process only.
         self.session_locks: Path | None = None
+        self.health_root: Path | None = None
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         """Apply the shared subagent instruction before provider-specific encoding."""
@@ -428,7 +437,7 @@ class InvocationManager:
             adapter = get_adapter(request.provider)
             prepared = prepared if prepared is not None else self.prepare(request)
             invocation_id = str(uuid.uuid4())
-            record = _InvocationRecord(request)
+            record = _InvocationRecord(request, health_root=self.health_root)
             if prepared.keep_stdin_open:
                 record.prompts.encode = adapter.encode_prompt_answer
                 record.prompts.changed = lambda: self._prompts_changed(invocation_id)
@@ -602,7 +611,7 @@ class InvocationManager:
         activity = record.last_activity
         doing: str | None = None
         if activity is not None:
-            if activity.kind == "tool" and activity.state not in _ENDED_TOOL_STATES:
+            if activity.kind == "tool" and (activity.state or "").lower() not in _ENDED_TOOL_STATES:
                 doing = f"tool:{activity.tool_name or ''}"
             elif activity.kind == "lifecycle" and activity.state == "reasoning":
                 doing = "thinking"
@@ -769,13 +778,16 @@ class InvocationManager:
             # Without a final answer, an interrupted run keeps the reply text seen so far.
             partial = parsed.output or record.output_tail
             if terminal is not None:
-                return InvocationResult(
+                result = InvocationResult(
                     terminal,
                     record.request.provider,
                     partial,
                     parsed.session_id or prepared.session_id or record.request.session_id,
                     _duration_ms(started),
                     error,
+                )
+                return provider_health.observe_result(
+                    self.health_root, result, parsed.error_message, record.reported_errors
                 )
 
             if provider_returncode is None:
@@ -784,7 +796,7 @@ class InvocationManager:
             if parsed.error_message is not None:
                 details = stderr.data.decode(errors="replace")[-_MAX_ERROR_DETAILS:] or None
                 parsed_error = InvocationError("provider_error", parsed.error_message, details)
-            return InvocationResult(
+            result = InvocationResult(
                 parsed.status,
                 record.request.provider,
                 parsed.output if parsed.status is InvocationStatus.SUCCEEDED else partial,
@@ -792,6 +804,9 @@ class InvocationManager:
                 _duration_ms(started),
                 parsed_error,
                 warnings=parsed.warnings,
+            )
+            return provider_health.observe_result(
+                self.health_root, result, parsed.error_message, record.reported_errors
             )
         except (OSError, ValueError) as exc:
             return InvocationResult(

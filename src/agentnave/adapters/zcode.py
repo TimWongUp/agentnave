@@ -82,7 +82,9 @@ class ZcodeAdapter(AdapterHooks):
                 "tool", "tool", brief(event.get("status")), brief(event.get("name"))
             )
         if kind in {"session", "turn.started", "turn.completed", "turn.failed"}:
-            return ProviderActivity("lifecycle", str(kind), str(kind))
+            return ProviderActivity(
+                "lifecycle", str(kind), "reasoning" if kind == "turn.started" else str(kind)
+            )
         return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
