@@ -599,6 +599,12 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
+    # Later dispatches must use a healthy CLI once Claude reports an auth blocker.
+    executable = "codebuddy.cmd" if os.name == "nt" else "codebuddy"
+    source = tmp_path / ("claude.cmd" if os.name == "nt" else "claude")
+    healthy_cli = tmp_path / executable
+    healthy_cli.write_bytes(source.read_bytes())
+    healthy_cli.chmod(0o755)
     async with Client(mcp) as client:
         started = await client.call_tool(
             "start_agent", {"provider": "claude", "prompt": "blocker", "cwd": str(tmp_path)}
@@ -610,7 +616,7 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
             while True:
                 other_result = await client.call_tool(
                     "start_agent",
-                    {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path)},
+                    {"provider": "codebuddy", "prompt": "hi", "cwd": str(tmp_path)},
                 )
                 assert not other_result.is_error, other_result.content
                 other = _payload(other_result.structured_content)
@@ -2048,3 +2054,56 @@ def test_host_startup_merges_exclusions_and_reports_identity(tmp_path: Path) -> 
         text=True,
     )
     assert invalid.returncode != 0 and "Unknown AGENTNAVE_HOST" in invalid.stderr
+
+
+@pytest.mark.asyncio
+async def test_cooldown_rejects_task_and_new_meeting_before_saving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+    from agentnave.db import Database
+
+    root = tmp_path / "data"
+    provider_health.record(root, "claude", "auth")
+    async with Client(mcp) as client:
+        for name, arguments in (
+            ("start_agent", {"provider": "claude", "prompt": "ok", "cwd": str(tmp_path)}),
+            (
+                "run_round",
+                {
+                    "title": "Blocked",
+                    "cwd": str(tmp_path),
+                    "prompt": "work",
+                    "seats": ["a", "b"],
+                    "members": [{"id": s, "provider": "claude"} for s in "ab"],
+                },
+            ),
+        ):
+            result = await client.call_tool(name, arguments)
+            assert result.is_error and "auth" in str(result.content)
+            assert "replacement" in str(result.content) and "until" in str(result.content)
+        assert Database(root).revisions() == {}
+        # Creating a room without starting seats remains possible during cooldown.
+        room = await client.call_tool(
+            "run_round",
+            {
+                "title": "Idle",
+                "cwd": str(tmp_path),
+                "members": [{"id": s, "provider": "claude"} for s in "ab"],
+            },
+        )
+        assert not room.is_error
+        group_id = str(_payload(room.structured_content)["group_id"])
+        before, _ = Database(root).load(group_id)
+        rejected = await client.call_tool(
+            "run_round",
+            {
+                "group_id": group_id,
+                "prompt": "work",
+                "seats": ["a"],
+                "forward": ["missing:e:0"],
+            },
+        )
+        assert rejected.is_error and "cooling down" in str(rejected.content)
+        after, _ = Database(root).load(group_id)
+        assert after.entries == before.entries and after.rounds == before.rounds

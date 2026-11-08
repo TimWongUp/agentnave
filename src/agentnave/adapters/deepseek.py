@@ -327,6 +327,8 @@ class DeepSeekAdapter(AdapterHooks):
             return ProviderActivity("lifecycle", "thinking", "reasoning")
         if kind == "status":
             phase = brief(event.get("phase"))
+            if phase in ("turn_start", "step_start"):
+                return ProviderActivity("lifecycle", "status", "reasoning")
             if phase == "turn_end":
                 return ProviderActivity(
                     "lifecycle", "turn_end", brief(object_dict(event.get("reason")).get("kind"))

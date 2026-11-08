@@ -104,7 +104,8 @@ async def list_members(
     not authentication or model availability; install the CLI or pick another for "CLI is not
     installed", otherwise repair invalid files in App or by hand.
     Missing members leave modes unrestricted; disabled orchestration supplies no defaults.
-    Omitted available means usable; unavailable seats may offer replacement parameters:
+    Omitted available means usable; recent quota/auth/billing blockers also mark seats
+    unavailable during a short CLI cooldown. Unavailable seats may offer replacement parameters:
     pass with original seat/role; switching is never automatic. Native seats/exclusions:
     see MCP instructions.
     """

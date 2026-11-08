@@ -1280,6 +1280,17 @@ def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -
     )
     thought = GrokAdapter().activity({"type": "thought", "data": "hidden"})
     assert thought is not None and thought.message is None
+    reasoning_events: tuple[tuple[str, dict[str, object]], ...] = (
+        ("claude", {"type": "stream_event", "event": {"type": "message_start"}}),
+        ("codebuddy", {"type": "assistant", "message": {"content": [{"type": "thinking"}]}}),
+        ("codex", {"type": "turn.started"}),
+        ("deepseek", {"type": "status", "phase": "step_start"}),
+        ("pi", {"type": "message_update", "assistantMessageEvent": {"type": "thinking_start"}}),
+        ("zcode", {"type": "turn.started"}),
+    )
+    for provider, event in reasoning_events:
+        reasoning = get_adapter(provider).activity(event)
+        assert reasoning is not None and reasoning.state == "reasoning"
     for provider in ("claude", "codebuddy", "codex", "grok", "antigravity"):
         adapter = get_adapter(provider)
         assert adapter.activity({"type": ["unknown"], "event": ["unknown"]}) is None

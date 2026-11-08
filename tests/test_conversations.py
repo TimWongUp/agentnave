@@ -2900,6 +2900,15 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
                 break
             await asyncio.sleep(0.02)
         assert _state(data_root, group_id)["rounds"][0]["seats"][1]["status"] == "succeeded"
+        from agentnave import provider_health
+
+        provider_health.record(data_root, "claude", "quota")
+        before = _state(data_root, group_id)
+        rejected = await client.call_tool("run_round", {"group_id": group_id, "retry_seats": ["a"]})
+        assert rejected.is_error and "quota" in str(rejected.content)
+        assert "replacement" in str(rejected.content)
+        assert _state(data_root, group_id) == before
+        provider_health.clear(data_root, "claude")
         retried = await _run(client, {"group_id": group_id, "retry_seats": ["a"]})
         assert retried["round_id"] == round_id and retried["round"] == 1
         assert all("output" not in run for run in _seats(retried))

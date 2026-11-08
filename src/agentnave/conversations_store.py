@@ -181,6 +181,7 @@ class ConversationStore(Groups):
         self.connection_id = _CONNECTION_ID
         self.manager_started_at = _MANAGER_STARTED_AT
         self.root = root.resolve()  # created only by the first saved conversation
+        manager.health_root = self.root
         self.db = Database(self.root)
         self.locks = self.root / "locks"
         # Runs hold their native session's lock here, so servers on one data root exclude

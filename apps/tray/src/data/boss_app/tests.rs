@@ -91,7 +91,7 @@ fn chats_without_a_saved_path_are_found_by_their_session_id() {
         )
         .unwrap();
     let archived = codex.join(format!(
-        "archived_sessions/rollout-2026-10-01T00-00-00-{CODEX_SESSION}.jsonl.zst"
+        "archived_sessions/rollout-2026-10-01T00-00-00-{CODEX_SESSION}_{CLAUDE_SESSION}.jsonl.zst"
     ));
     fs::create_dir_all(archived.parent().unwrap()).unwrap();
     fs::write(

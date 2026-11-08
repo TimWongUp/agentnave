@@ -11,6 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import AfterValidator, Field
 
 from agentnave import mcp_runtime as runtime
+from agentnave import provider_health
 from agentnave.conversations import (
     Conversations,
     Decision,
@@ -84,6 +85,10 @@ def _retry_seats(
     manager_session_id: str | None,
 ) -> tuple[ShowRunPayload, str]:
     try:
+        state = conversations.record(group_id).state
+        provider_health.check(
+            conversations.root, (seat.provider for seat in state.seats if seat.id in seat_ids)
+        )
         round_ = conversations.retry(group_id, seat_ids, manager_session_id=manager_session_id)
     except KeyError as exc:
         raise ToolError("Unknown group_id; use list.") from exc
@@ -285,6 +290,8 @@ async def run_round(
     if group_id is None:
         assert title is not None and members is not None
         try:
+            if seats:
+                provider_health.check(conversations.root, (seat.provider for seat in members))
             group_id, opened = _open_show(
                 conversations, title, members, cwd, review, isolated, manager_session_id
             )

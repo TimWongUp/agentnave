@@ -209,7 +209,7 @@ class CodexAdapter(AdapterHooks):
             return ProviderActivity(
                 "lifecycle",
                 str(event_type),
-                str(event_type),
+                "reasoning" if event_type == "turn.started" else str(event_type),
                 blocking_error="provider_failed" if event_type == "turn.failed" else None,
             )
         if event_type == "error":

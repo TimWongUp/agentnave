@@ -187,11 +187,19 @@ def _native_id(session_id: str | None) -> str | None:
     return native_id if session_id and native_id == session_id.lower() else None
 
 
+def _codex_rollout_matches(path: Path, native_id: str) -> bool:
+    stem = path.stem
+    if stem.endswith(f"-{native_id}"):
+        return True
+    prefix, sep, tail = stem.rpartition(f"-{native_id}_")
+    return bool(prefix and sep and _native_id(tail) is not None)
+
+
 def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
     """The session's transcript and the marker of lines that may name its model."""
     if host.name == "codex":
         root = _home("CODEX_HOME", ".codex") / "sessions"
-        pattern, marker = f"*/*/*/rollout-*-{native_id}.jsonl", b'"turn_context"'
+        pattern, marker = f"*/*/*/rollout-*-{native_id}*.jsonl", b'"turn_context"'
     elif host.name == "claude":
         root = _home("CLAUDE_CONFIG_DIR", ".claude") / "projects"
         pattern, marker = f"*/{native_id}.jsonl", b'"assistant"'
@@ -208,7 +216,12 @@ def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
         pattern, marker = f"*/{native_id}/chat_history.jsonl", b'"model_id"'
     else:
         return None
-    paths = [path for path in root.glob(pattern) if path.resolve().is_relative_to(root.resolve())]
+    paths = [
+        path
+        for path in root.glob(pattern)
+        if path.resolve().is_relative_to(root.resolve())
+        and (host.name != "codex" or _codex_rollout_matches(path, native_id))
+    ]
     if not paths:
         return None
     # A chat moved between worktrees leaves a stale copy in the old project's folder.

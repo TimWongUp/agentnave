@@ -85,6 +85,8 @@ description: 用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI
 
 用户未点名 CLI 时，App 设了工位就直接传 `seat`（另写 `role` 说明职责）或评审 `role`，不用先查；派发被拒绝或因 CLI 未安装启动失败时，看 `list_members` 里该工位的 `reason` 和 `replacement`，后者给出可直接传的参数，连同原来的 `seat` 或 `role` 一起传，访问等级才不会丢，由 boss 决定用不用。没有工位时 `list_members`，从 `members` 按模式选 CLI：行内 `modes` 省略表示所有模式可用，空数组表示均不可用；`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认；工位 `available` 省略即可用，同一聊天复用结果。模型和档位由服务按 App 设置传入：用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；回执 `defaults_applied` 注明补上的值（App 没配模型时临时用 CLI 自身的模型与档位）。用户点名时把它们放在 `provider_options` 里（写在顶层会被拒绝），并先用 `list_members(provider=...)` 核对允许状态和支持参数；`members` 行的 `error` 会标出未安装，不检查登录。
 
+工位 `available=False` 也可能表示 CLI 近期遇到 quota／auth／billing 硬阻断，冷却 15 分钟；按 `reason` 和 `replacement` 选择其他可用 CLI，保留原 `seat` 或 `role` 显式派发。
+
 只读取所选 CLI 的参考文件，同一上下文复用，切换 CLI 再读新文件。
 
 | CLI | `provider` | 参考 |

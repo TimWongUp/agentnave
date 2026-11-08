@@ -231,6 +231,8 @@ class ClaudeAdapter(AdapterHooks):
             nested = object_dict(event.get("event"))
             block = object_dict(nested.get("content_block"))
             delta = object_dict(nested.get("delta"))
+            if nested.get("type") == "message_start":
+                return ProviderActivity("lifecycle", "stream_event.message_start", "reasoning")
             if nested.get("type") == "content_block_start":
                 if block.get("type") == "tool_use":
                     return ProviderActivity(
@@ -289,6 +291,8 @@ class ClaudeAdapter(AdapterHooks):
                             message=brief(block.get("text")),
                             public_output=brief(block.get("text"), 1000),
                         )
+                    if block_type == "thinking" and event_type == "assistant":
+                        return ProviderActivity("lifecycle", "assistant.thinking", "reasoning")
         if event_type == "result":
             # Denied or failed tool calls do not block; only a failed run does.
             failed = event.get("is_error") is True or (

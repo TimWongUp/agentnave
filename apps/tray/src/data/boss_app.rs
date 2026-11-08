@@ -233,11 +233,7 @@ fn sweep(homes: &Homes) -> Found {
             let stem = name
                 .strip_suffix(".jsonl.zst")
                 .or_else(|| name.strip_suffix(".jsonl"));
-            if let Some(id) = stem
-                .filter(|stem| stem.starts_with("rollout-") && stem.len() > 36)
-                .map(|stem| &stem[stem.len() - 36..])
-                .filter(|id| is_uuid(id))
-            {
+            if let Some(id) = stem.and_then(codex_rollout_id) {
                 keep_newest(&mut found.transcripts, boss_key("codex", id), path);
             }
         };
@@ -327,6 +323,21 @@ fn is_uuid(id: &str) -> bool {
             8 | 13 | 18 | 23 => c == '-',
             _ => c.is_ascii_digit() || ('a'..='f').contains(&c),
         })
+}
+
+fn codex_rollout_id(stem: &str) -> Option<&str> {
+    let rest = stem.strip_prefix("rollout-")?;
+    let tail = rest
+        .get(rest.len().checked_sub(36)?..)
+        .filter(|id| is_uuid(id))?;
+    if let Some(earlier) = rest[..rest.len() - 36]
+        .strip_suffix('_')
+        .and_then(|s| s.get(s.len().checked_sub(36)?..))
+        .filter(|id| is_uuid(id))
+    {
+        return Some(earlier);
+    }
+    Some(tail)
 }
 
 /// A boss chat's key: the service's `_boss`, which hashes `json.dumps([host, session])`.

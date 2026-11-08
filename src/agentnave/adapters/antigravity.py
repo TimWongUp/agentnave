@@ -223,6 +223,8 @@ class AntigravityAdapter(AdapterHooks):
                 public_output=brief(step.get("text_delta"), 1000),
                 message_delta=True,
             )
+        if step_type in ("thinking", "planning", "thought"):
+            return ProviderActivity("lifecycle", f"step_update.{step_type}", "reasoning")
         return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:

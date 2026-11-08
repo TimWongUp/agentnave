@@ -118,6 +118,13 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     )
     (tmp_path / "config.toml").write_text('model = "wrong-default"')
     assert session_model(Host("codex"), session) == "current-model"
+    resumed = folder / f"rollout-2026-10-18T02-00-00-{session}_01a1b682-d8cf-7600-a78c-dd6817238297.jsonl"  # fmt: skip
+    resumed.write_text(turn("resumed-model", "2026-01-01T02:00:00Z"))
+    os.utime(path, (1, 1))
+    from agentnave.native_sessions import session_file
+
+    assert session_file(Host("codex"), session) == resumed
+    assert session_model(Host("codex"), session) == "resumed-model"
     from datetime import UTC, datetime
 
     from agentnave.native_sessions import _lines_from_end  # pyright: ignore[reportPrivateUsage]
