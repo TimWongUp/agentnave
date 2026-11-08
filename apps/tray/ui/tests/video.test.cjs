@@ -475,6 +475,11 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   assert.equal(radios()[2].disabled, true);
   assert.ok(posts.some(p => p.path === "/app/preferences" && p.body?.general?.character_style === "static"));
 
+  // Late preferences broadcast for an uninstalled tier stays on CSS ("static").
+  ctx.window.dispatchEvent({ type: "agentnave:preferences", detail: { character_style: "video-544" } });
+  assert.equal(radios()[0].attrs["aria-checked"], "true");
+  assert.equal(radios()[2].attrs["aria-checked"], "false");
+
   // Importing 272p enables the 272p radio option.
   const importBtns = root.findAll(el => el.tagName === "BUTTON" && el.textContent === "从文件夹导入…");
   importBtns[0].click();

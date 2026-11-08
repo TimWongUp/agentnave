@@ -11,9 +11,6 @@ use std::sync::{Mutex, OnceLock};
 /// Public mirrors that serve GitHub release files when GitHub itself is unreachable.
 pub const GITHUB_MIRRORS: [&str; 2] = ["https://ghfast.top/", "https://gh-proxy.com/"];
 
-/// Mirror for Hugging Face asset URLs when `huggingface.co` is blocked or poisoned.
-pub const HF_MIRROR: &str = "https://hf-mirror.com/";
-
 const PROXY_KEYS: [&str; 6] = [
     "HTTPS_PROXY",
     "https_proxy",
@@ -86,8 +83,8 @@ pub fn env_proxy_url(env: &BTreeMap<String, String>) -> Option<tauri::Url> {
     None
 }
 
-/// Expand canonical download URLs with their fallback mirrors (`hf-mirror.com` for Hugging Face,
-/// `GITHUB_MIRRORS` for GitHub Releases), keeping official sources before mirrors.
+/// Expand canonical download URLs with their fallback GitHub Release mirrors (`GITHUB_MIRRORS`),
+/// keeping official sources before mirrors.
 pub fn expand_urls(direct: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut github = Vec::new();
@@ -97,9 +94,7 @@ pub fn expand_urls(direct: &[String]) -> Vec<String> {
             continue;
         }
         push_unique(&mut out, trimmed.to_owned());
-        if let Some(rest) = trimmed.strip_prefix("https://huggingface.co/") {
-            push_unique(&mut out, format!("{HF_MIRROR}{rest}"));
-        } else if trimmed.starts_with("https://github.com/")
+        if trimmed.starts_with("https://github.com/")
             || trimmed.starts_with("https://raw.githubusercontent.com/")
         {
             github.push(trimmed.to_owned());
@@ -322,16 +317,13 @@ mod tests {
     }
 
     #[test]
-    fn expand_urls_puts_hf_mirror_and_github_mirrors_in_order() {
+    fn expand_urls_puts_github_mirrors_after_direct_sources() {
         let urls = expand_urls(&[
-            "https://huggingface.co/org/repo/resolve/main/pack.tar.gz".into(),
             "https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz".into(),
         ]);
         assert_eq!(
             urls,
             vec![
-                "https://huggingface.co/org/repo/resolve/main/pack.tar.gz",
-                "https://hf-mirror.com/org/repo/resolve/main/pack.tar.gz",
                 "https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
                 "https://ghfast.top/https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
                 "https://gh-proxy.com/https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",

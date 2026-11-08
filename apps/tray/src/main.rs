@@ -76,17 +76,10 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
         && !(cfg!(unix) && path == "/app/hosts/reload-copy")
+        && !path.starts_with("/app/video-packs/")
         && !matches!(
             path,
-            "/app/video-packs/272/import"
-                | "/app/video-packs/544/import"
-                | "/app/video-packs/272/download"
-                | "/app/video-packs/544/download"
-                | "/app/video-packs/272/cancel"
-                | "/app/video-packs/544/cancel"
-                | "/app/video-packs/272/delete"
-                | "/app/video-packs/544/delete"
-                | "/app/preferences"
+            "/app/preferences"
                 | "/app/alerts/test"
                 | "/app/voice"
                 | "/app/voice/key"

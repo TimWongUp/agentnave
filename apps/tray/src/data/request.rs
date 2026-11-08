@@ -277,6 +277,7 @@ impl Reader {
     /// This phase only runs the bounded shell probe, never reads host configuration.
     pub(crate) fn probe_tools(&self, context: &crate::hosts::Context) -> crate::hosts::Shell {
         let (shell, dirs) = crate::hosts::probe_tools(context);
+        crate::proxy::cache_network(&dirs.network);
         *self.tools.lock().unwrap_or_else(|p| p.into_inner()) = Some(dirs);
         shell
     }

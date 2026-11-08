@@ -192,6 +192,7 @@ print("Done ->", out_dir)`;
   window.addEventListener("agentnave:preferences", ({ detail }) => {
     if (["static", "video-272", "video-544"].includes(detail?.character_style)) {
       styleChoice = detail.character_style;
+      ensureInstalledStyle(false);
       renderVideoPacks();
     }
   });

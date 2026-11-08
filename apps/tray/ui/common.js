@@ -340,8 +340,8 @@
       e.fx.append(img);
     }
   }, 120);
-  const frameUrl = (name, size, state) => {
-    if (!name.startsWith("@")) return artUrl(`${size}/${name}/${state}.webp`);
+  const frameUrl = (name, size, state, staticOnly = false) => {
+    if (!name.startsWith("@") || (!staticOnly && activeVideoPack())) return artUrl(`${size}/${videoChar(name)}/${state}.webp`);
     const [, family, version] = name.split("@");
     return href(`/character/${family}/${size}/${state}.webp?v=${version}`);
   };
@@ -364,9 +364,18 @@
     if (nextKey === videoPackKey) return;
     videoPackKey = nextKey;
     version++;
+    for (const el of document.querySelectorAll?.(".head[data-char]") || []) {
+      el.style.backgroundImage = `url("${frameUrl(el.dataset.char, "h", el.dataset.state || "idle")}")`;
+    }
     for (const fig of document.querySelectorAll?.(".fig[data-char]") || []) {
       if (fig.dataset.staticOnly === "true") continue;
-      const name = fig.dataset.char, vchar = videoChar(name);
+      const name = fig.dataset.char, vchar = videoChar(name), size = fig.dataset.size || "s";
+      if (name.startsWith("@")) {
+        for (const s of [...STATES, ...EXTRA]) {
+          const img = fig.querySelector(`img.s-${s}`);
+          if (img) img.src = frameUrl(name, size, s);
+        }
+      }
       releaseFigure(fig);
       if (videoEnabled(name)) {
         const state = fig.dataset.video || "idle";
@@ -399,7 +408,7 @@
   // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
   // A missing optional frame marks the figure .no-<state> so CSS falls back.
   function figure(name, size = "s", staticOnly = false) {
-    const fig = h("span.fig", { "data-char": name, "aria-hidden": "true" });
+    const fig = h("span.fig", { "data-char": name, "data-size": size, "aria-hidden": "true" });
     if (staticOnly) fig.dataset.staticOnly = "true";
     const vchar = videoChar(name), useVideo = !staticOnly && videoEnabled(name);
     if (useVideo) {
@@ -411,7 +420,7 @@
     const fit = VIDEO_FIT[vchar];
     if (fit) fig.style.cssText += `;--vs:${fit[0]};--vo:${fit[1]}%${fit[2] == null ? "" : `;--vx:${fit[2]}%`}`;
     const imgs = [...STATES, ...EXTRA].map((s) => {
-      const path = frameUrl(name, size, s);
+      const path = frameUrl(name, size, s, staticOnly);
       if (missing.has(path)) { fig.classList.add(`no-${s}`); return null; }
       const img = h(`img.s-${s}`, { src: path, alt: "", decoding: "async", draggable: "false" });
       if (EXTRA.includes(s)) img.addEventListener("error", () => { missing.add(path); fig.classList.add(`no-${s}`); img.remove(); }, { once: true });
@@ -526,10 +535,11 @@
       else unloadVideo(slot, true);
     }
     rec.slots = release || !rec.active ? [] : [rec.active];
-    if (release) { rec.active = null; rec.fig.classList.remove("video-on"); }
+    if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); }
     pruneVideos();
   }
   function releaseFigure(fig) {
+    dirtyVideos.delete(fig);
     const rec = videoPlayers.get(fig);
     if (!rec) return;
     pauseVideos(rec, true);
@@ -659,7 +669,7 @@
     }
   });
   function syncVideo(fig) {
-    if (!fig.isConnected) { releaseFigure(fig); return; }
+    if (!fig.isConnected || !fig.classList.contains("video")) { releaseFigure(fig); return; }
     const name = videoChar(fig.dataset.char);
     let rec = videoPlayers.get(fig);
     if (!rec) {
@@ -768,7 +778,7 @@
   window.addEventListener("pagehide", () => { for (const fig of [...videoPlayers.keys()]) releaseFigure(fig); });
   window.addEventListener("pageshow", () => scheduleVideoTree(root));
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", syncAllVideos);
-  const head = (name, state = "idle") => h("span.head", { "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
+  const head = (name, state = "idle") => h("span.head", { "data-char": name, "data-state": state, "aria-hidden": "true", style: `background-image:url("${frameUrl(name, "h", state)}")` });
   // A CLI's or host app's own mark (LobeHub icons, art/cli); models never borrow it. The value is its tile, if any;
   // a desktop app's mark takes the colours of its app icon.
   const CLI_MARK = { claude: "", "claude-desktop": "claude-tile", codex: "", "codex-desktop": "", codebuddy: "", workbuddy: "", antigravity: "", deepseek: "", grok: "mono", pi: "mono", hermes: "", zcode: "mono" };

@@ -48,13 +48,13 @@ fn pages_open_with_preferences_before_first_paint() {
     let html = b"<!doctype html>\n<html lang=\"zh-CN\">\n<head>";
     let general = general::effective(
         &json!({"general": {
-            "language": "en", "theme": "dark", "motion": "reduce"
+            "language": "en", "theme": "dark", "motion": "reduce", "character_style": "video-272"
         }}),
         false,
     );
     let page = String::from_utf8(localize(html, &general)).unwrap();
     assert!(
-        page.contains(r#"<html lang="en" data-lang="en" data-theme="dark" data-motion="reduce">"#)
+        page.contains(r#"<html lang="en" data-lang="en" data-theme="dark" data-motion="reduce" data-character-style="video-272">"#)
     );
     assert_eq!(localize(b"<html>", &general), b"<html>");
 }

@@ -159,8 +159,10 @@ fn open_response(
     client: &reqwest::blocking::Client,
     url: &str,
     output: &mut fs::File,
+    cancel: &AtomicBool,
 ) -> Result<(reqwest::blocking::Response, u64), String> {
     use std::io::{Seek, SeekFrom};
+    check_cancel(cancel)?;
     let mut have = output.metadata().map_or(0, |m| m.len());
     let limit = 221 * install::MOV_LIMIT;
     if have > limit {
@@ -175,10 +177,12 @@ fn open_response(
         req.send().map_err(|e| e.to_string())
     };
     let mut response = send(have)?;
+    check_cancel(cancel)?;
     if have > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
         output.set_len(0).map_err(|e| e.to_string())?;
         have = 0;
         response = send(0)?;
+        check_cancel(cancel)?;
     }
     let response = response.error_for_status().map_err(|e| e.to_string())?;
     if have > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
@@ -198,7 +202,7 @@ fn transfer(
     key: &Key,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let (mut response, mut downloaded) = open_response(client, url, output)?;
+    let (mut response, mut downloaded) = open_response(client, url, output, cancel)?;
     let total = response.content_length().map(|len| downloaded + len);
     let limit = 221 * install::MOV_LIMIT;
     if total.is_some_and(|total| total > limit) {
@@ -262,13 +266,17 @@ fn run(key: &Key, cancel: &Arc<AtomicBool>) -> Result<(), String> {
     check_cancel(cancel)?;
     update(key, cancel, |state| state["state"] = json!("extracting"));
     let extracted = tempfile::tempdir_in(&base).map_err(|e| e.to_string())?;
-    if let Err(error) = install::extract(&part, extracted.path(), cancel) {
-        if !cancel.load(Ordering::Acquire) {
-            let _ = fs::remove_file(&part);
+    let staged = match install::extract(&part, extracted.path(), cancel)
+        .and_then(|()| install::stage(&base, &key.1, extracted.path()))
+    {
+        Ok(staged) => staged,
+        Err(error) => {
+            if !cancel.load(Ordering::Acquire) {
+                let _ = fs::remove_file(&part);
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
-    let staged = install::stage(&base, &key.1, extracted.path())?;
+    };
     // Cancellation, deletion, import and the final swap share this lock: an obsolete worker
     // can never reinstall a pack after a successful cancel/delete/import response.
     let guard = jobs();
