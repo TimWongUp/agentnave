@@ -121,6 +121,7 @@ async function saveOrchestration() {
   orchestration.bosses = data.bosses;
   orchestrationDraft = null;
   customTouched = false;
+  splitOpened = new Set();
   // The choice is saved even when a rules file could not take it; the list below shows which one.
   const failed = data.failures || [];
   if (failed.length) throw new Error(AN.L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));

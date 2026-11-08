@@ -187,6 +187,9 @@ class OrchestrationStatus(StrictModel):
     explorer_social: dict[Difficulty, ReviewSeatStatus] = {}
     worker_documents: dict[Difficulty, ReviewSeatStatus] = {}
     image_generation: ReviewSeatStatus | None = None
+    # What each visible group covers, for bosses that never see the App's rules block. Plain
+    # string keys keep hidden group names out of the published schema.
+    scopes: dict[str, str] = {}
 
     @model_serializer(mode="wrap")
     def visible_groups(self, handler: SerializerFunctionWrapHandler):

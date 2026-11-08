@@ -101,6 +101,7 @@ def test_role_switch_defaults_hide_fields_and_preserve_bindings(
     host = Host("codex", "env")
     status = list_members(frozenset(), host).orchestration.model_dump()
     assert {role.group for role in role_catalog() if role.group in status} == expected
+    assert set(status["scopes"]) == expected
     saved = OrchestrationFile.model_validate(raw).model_dump()
     for role in role_catalog():
         assert saved[role.group] == {"easy": {**binding, "effort": ""}}

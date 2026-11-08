@@ -2,22 +2,8 @@
 use serde_json::{Value, json};
 
 const LEGACY_DISPATCH: &str = r#"- Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一；涉及界面（页面、样式、交互、看截图或设计稿）的实现改用 Worker 的界面两档。取 `list_members` 的 `orchestration`：`native` 工位交给宿主自带子代理并尽量用该模型，它不经过服务，prompt 要写明非交互，Explorer 还要写明只读；其余派发时 `seat` 用 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`、`worker-frontend-easy` 或 `worker-frontend-hard`，省略 `provider`、`access` 和模型，服务按 App 工位补齐；`role` 写具体职责，新任务必传 `cwd`。工位不可用时用 `list_members` 的 `replacement`，连同原来的 `seat` 或 `role` 一起传；没有工位时按任务组员选，都不可用时自己做。"#;
-const PREVIOUS_DISPATCH: &str = r#"- 按任务类型和难度选择 `list_members` 的 `orchestration` 中可见工位；同难度专项优先，专项未设或不可用时，明确选择同难度的通用工位，通用也不可用时由 boss 自己完成或报告能力不足。`native` 工位交给宿主自带子代理并尽量使用所选模型，prompt 写明非交互，只读工位还写明只读；其余使用下列可见 `seat`，省略 `provider`、`access` 和模型，服务按 App 绑定补齐；`role` 写具体职责，新任务必传 `cwd`。只使用已公开的工位与替换参数，不跨难度、不静默换模型，不恢复隐藏的普通任务池。"#;
 const LEGACY_ASSIGNMENT: &str = "- 探索、规划派 Explorer，实现派 Worker。";
 const LEGACY_REVIEW: &str = "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。";
-
-/// Directory lines written before roles had a scope, including roles since removed or renamed.
-const LEGACY_ROLES: &[(&str, &str, &str)] = &[
-    ("通用探索", "只读", "explorer"),
-    ("通用执行", "可写", "worker"),
-    ("代码实现", "可写", "worker-code"),
-    ("界面实现", "可写", "worker-frontend"),
-    ("写作", "可写", "worker-writing"),
-    ("网页知识检索", "只读", "explorer-web"),
-    ("社交调研", "只读", "explorer-social"),
-    ("数据分析", "可写", "worker-data"),
-    ("文档制作", "可写", "worker-documents"),
-];
 
 fn directory_line(name: &str, access: &str, scope: &str, prefix: &str) -> String {
     format!("- {name}（{access}）：{scope}简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。")
@@ -53,7 +39,6 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
         .expect("shared dispatch instruction");
     text = text
         .replace(LEGACY_DISPATCH, dispatch)
-        .replace(PREVIOUS_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
         .replace("互不依赖的写入步骤并行派给多个 Worker", "互不依赖的写入步骤并行派给多个可写工位")
         .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
@@ -65,11 +50,6 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
         .values()
         .filter_map(Value::as_str)
         .map(|section| section.trim_start_matches('\n').to_owned())
-        .chain(
-            LEGACY_ROLES
-                .iter()
-                .map(|(name, access, prefix)| directory_line(name, access, "", prefix)),
-        )
         .collect();
     text = text
         .split_inclusive('\n')
@@ -105,16 +85,12 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     assert!(migrated.contains("兜底不跨难度"));
     assert!(!migrated.contains("Worker"));
     assert!(migrated.contains("用户正文"));
-    let previous = apply(&document, format!("{PREVIOUS_DISPATCH}\n用户正文"));
-    assert!(previous.contains("兜底不跨难度") && !previous.contains(PREVIOUS_DISPATCH));
     let section = sections()["worker_writing"]
         .as_str()
         .unwrap()
         .trim()
         .to_owned();
     let first = apply(&document, format!("{section}\n用户正文"));
-    let legacy = directory_line("数据分析", "可写", "", "worker-data");
-    assert_eq!(apply(&document, format!("{legacy}\n用户正文")), "用户正文");
     assert_eq!(first, "用户正文");
     let last = apply(&document, format!("用户正文\n{section}"));
     assert_eq!(last, "用户正文");

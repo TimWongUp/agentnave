@@ -110,29 +110,36 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 
 校验规则（`MemberFile.references`）：`models`、`overrides` 和 `default` 里的模型必须先在 `clis.<cli>.models` 里声明。ProviderName 只能取 `antigravity|claude|codebuddy|codex|deepseek|grok|pi|zcode`。
 
-### 3.2 orchestration.json：Explorer/Worker 工位（`members.py` `OrchestrationFile`；App 端 `apps/tray/src/members.rs` `validate_orchestration`；ADR-0037/0038/0041/0052）
+### 3.2 orchestration.json：通用与专项工位（`members.py` `OrchestrationFile`；App 端 `apps/tray/src/members.rs` `validate_orchestration`；ADR-0037/0041/0065/0068/0069）
 
 ```jsonc
 {
   "version": 1,
   "preset": "split",               // off | split | parallel | custom；不是 off 才启用工位
-  "explorer": {                     // 只读：探索、规划、评审
+  "enabled_roles": ["explorer", "worker", "worker_frontend", "explorer_web"], // 可选：开启的角色，不写时只开通用探索、通用执行和界面制作
+  "explorer": {                     // 通用探索（只读）
     "easy": {"provider": "pi",       "model": "opencode-go/deepseek-v4.1-flash"},
     "hard": {"provider": "deepseek", "model": "deepseek-flash"}
   },
-  "worker": {                       // 可写：实现
+  "worker": {                       // 通用执行（可写）
     "easy": {"provider": "pi",        "model": "opencode-go/deepseek-v4.1-flash"},
     "hard": {"provider": "codebuddy", "model": "deepseek-v4-pro"}
   },
-  "worker_frontend": {              // 可选：界面制作专项；没设的一档不提供，boss 改选同难度通用
+  "worker_frontend": {              // 专项：界面制作；两档可以写同一个模型
+    "easy": {"provider": "antigravity", "model": "gemini-4-argon-medium"},
     "hard": {"provider": "antigravity", "model": "gemini-4-argon-medium"}
+  },
+  "explorer_web": {                 // 专项：网页调研；没设的一档不提供，boss 改选同难度通用探索
+    "hard": {"provider": "deepseek", "model": "deepseek-flash"}
   }
 }
 ```
 
 - 工位（`ReviewSeat`）必须有 `provider`、非空的 `model`，`effort` 可选。工位不能写“默认模型”，要填 CLI 实际的模型 ID。
 - **无头宿主不要写 `apps` 和 `effective_apps`**：`enabled()` 用 `host.app_id or host.name` 作 key。bot 两者都为空，`apps` 里找不到就回落到 `preset`；但只要文件里有 `effective_apps`，没有 `app_id` 的连接就一律视为关闭（ADR-0041）。
-- `preset` 的规则正文（`apps/tray/src/rules.rs` 的 `SHARED` 加 `SPLIT` 或 `PARALLEL`）由 App 写进 CLI 宿主的全局规则文件。bot 宿主没有这一步：装好 skill（§4）后，`agentnave-manager` 会在 `orchestration.enabled` 为真且看不到规则块时按分工协作执行，即可以主动派发，并行写入和开会须用户指明。想让 bot 按并行分工由自己判断并行写入和开会，把 `SHARED` 与 `PARALLEL` 的正文贴进 bot 的指令入口。
+- 角色键：通用组 `explorer`、`worker`；专项组 `worker_frontend`（界面制作）、`worker_writing`（写作）、`explorer_web`（网页调研）、`explorer_social`（社交平台调研）、`worker_documents`（办公文件制作）。每个角色管什么写在 `src/agentnave/orchestration_roles.json` 的 `scope_zh`，`list_members.orchestration.scopes` 会列出开启角色的范围。`worker_code`、`worker_data` 已删除，写了会被 App 拒绝。
+- 专项只提供自己绑定的档，不沿用通用工位；App 里「区分难度」关闭时，两档存的是同一个模型。
+- `preset` 的规则正文（`apps/tray/src/rules.rs` 的 `SHARED` 加 `SPLIT` 或 `PARALLEL`，再加开启角色的目录行）由 App 写进 CLI 宿主的全局规则文件。bot 宿主没有这一步：装好 skill（§4）后，`agentnave-manager` 会在 `orchestration.enabled` 为真且看不到规则块时按分工协作执行，即已确认的任务内可以主动派发，并行写入和开会须用户本人指明，工位范围从 `orchestration.scopes` 读。想让 bot 按并行分工由自己判断并行写入和开会，把 `SHARED` 与 `PARALLEL` 的正文贴进 bot 的指令入口。`split_options`（分工协作下 boss 能否主动开会）只改变 App 写入的规则正文，bot 不读。
 - 派发：`start_agent(seat="explorer-easy", role="具体职责", cwd=..., prompt=...)`，不传 `provider`、`access` 和模型，由服务补齐（Explorer 自动 `access=read`）。
 
 ### 3.3 review.json：agentnave-review 评审工位（`members.py` `ReviewFile`/`ReviewRole`）
@@ -194,7 +201,7 @@ done
 调用 `list_members`（不带参数），检查：
 
 - `configured: true`，`members` 里有 pi、codebuddy、deepseek
-- `orchestration.enabled: true`，四个工位都在
+- `orchestration.enabled: true`，开启的角色和工位都在，`orchestration.scopes` 列出它们的范围
 - `review` 有 8 个角色，`permissions` 符合预期
 - 各 `*_error` 字段为空
 
@@ -301,7 +308,7 @@ rm -rf "$TMP"
 （已经有本地仓库的话，也可以用 `git -C <repo> archive v1.0.0 skills/ | tar -x -C "$TMP"` 导出，或者直接从 §4 的 uv 安装目录复制。）
 
 ### 6.6 编排
-不需要另写宿主规则。只要按 §3.2 写好 `orchestration.json`（`preset` 不为 `off`，且不写 `effective_apps`），再装上 `agentnave-manager`，bot 就会按 `list_members.orchestration` 传 `seat`。
+不需要另写宿主规则。只要按 §3.2 写好 `orchestration.json`（`preset` 不为 `off`，且不写 `effective_apps`），再装上 `agentnave-manager`，bot 就会按分工协作、从 `list_members.orchestration` 选工位传 `seat`。要按并行分工，见 §3.2 最后一条。
 
 ### 6.7 一个连接里完成 start 和 wait
 - 派出的 CLI 只在它所属的 MCP 连接里存活（§0、§8.6）。
@@ -347,8 +354,8 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 员工、各模式白名单、默认模型 | `members.json`：`clis.<cli>.models`、`modes.{task,discussion}.<cli>.{models,default,overrides}`、`defaults` | `members.py` 的 `MemberFile`；`apps/tray/src/members.rs` | `list_members.members`/`restricted` | 不需要 |
 | 某个模型的默认档位和参数 | `members.json`：`clis.<cli>.models.<m>.{efforts,effort,options,notes}` | `MemberConfig`（`options` 里不能放 model/effort） | `list_members` 的组员 `options`/`effort` | 不需要 |
 | 每个 CLI 的权限档位 | `permissions.json`：`clis.<cli>` = `auto`/`full` | `PermissionFile`、`PERMISSION_TIERS` | `list_members.permissions`（auto 本身就是全权限的 CLI 会显示为 full） | 不需要 |
-| 编排档位（关闭/分工/并行/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`apps`/`effective_apps` | `OrchestrationFile`；`members.rs` 的 `validate_orchestration`；ADR-0041 | `list_members.orchestration.enabled` | 不需要；**不要写 `effective_apps`**（§3.2） |
-| Explorer/Worker 工位 | `orchestration.json`：`explorer.{easy,hard}`、`worker.{easy,hard}`、`worker_frontend.{easy,hard}` → `{provider,model,effort?}` | `ReviewSeat` | `list_members.orchestration` | 不需要 |
+| 编排档位（关闭/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options`（分工协作下 boss 可主动开会）、`apps`/`effective_apps` | `OrchestrationFile`；`members.rs` 的 `validate_orchestration`；ADR-0041 | `list_members.orchestration.enabled` | 不需要；**不要写 `effective_apps`**（§3.2） |
+| 通用与专项工位、角色开关 | `orchestration.json`：`explorer`、`worker` 与五个专项键的 `.{easy,hard}` → `{provider,model,effort?}`；`enabled_roles` | `ReviewSeat`；`orchestration_roles.json` | `list_members.orchestration`（含 `scopes`） | 不需要 |
 | 评审工位（技能 → agentnave-review） | `review.json`：`seats.<role>` | `ReviewFile`；`ui/skills.js`、`ui/advanced.js` | `list_members.review`/`review_error` | 不需要 |
 | 评审门（是否启用 agentnave-review） | **没有对应的服务配置文件**。App 会把这个 skill 按宿主开关（`ui/skills.js`，`/app/hosts/skill`），bot 这边就是装或卸 skill 目录（§6.5） | `apps/tray/src/hosts.rs` | 看 bot 的 skill 列表 | bot 下次读 skill 时生效 |
 | 同时运行上限（默认 8） | `settings.json`：`max_running`，1–32 | `settings.rs`；`members.py` 的 `read_max_running`；`conversations.py` 在每次启动前读取 | 超出时报 `CapacityError`；`version` 或 `max_running` 非法时派发报 `SettingsFileError` 并给出文件路径。`list_members` 不显示这个值 | 不需要 |
