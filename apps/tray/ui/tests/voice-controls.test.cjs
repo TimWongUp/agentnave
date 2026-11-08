@@ -242,7 +242,7 @@ test("listen buttons remain pure listening controls", async () => {
   await app.command("listen", { group: "workspace" });
   open(app);
   assert.equal(node(app, "p.voice-status").textContent, "等待新消息");
-  const workspace = node(app, "button.listen-here");
+  const [workspace, column] = app.nodes.filter(item => item.tag === "button.listen-here");
   const label = workspace.children[0];
   assert.equal(label.textContent, "停止收听");
   assert.equal(workspace.children.length, 1);
@@ -250,6 +250,15 @@ test("listen buttons remain pure listening controls", async () => {
   assert.equal(label.textContent, "停止收听");
   assert.equal(node(app, "button.voice-primary").attributes["aria-label"], "继续");
   assert.equal(app.nodes.some(item => item.id === "voice-banner"), false);
+  await app.command("unlisten");
+  app.AN.setLanguage("en");
+  await app.voice.refresh();
+  assert.equal(workspace.children[0].textContent, "Listen to workspace");
+  assert.equal(column.children[0].textContent, "Listen to this column");
+  app.AN.setLanguage("zh-CN");
+  await app.voice.refresh();
+  assert.equal(workspace.children[0].textContent, "收听工作区");
+  assert.equal(column.children[0].textContent, "收听此列消息");
 });
 
 const desk = (key, running = false, kind = "task") => ({ key, kind, provider: "codex", model: key, status: running ? "running" : "idle", last_active: "2026-11-01T00:00:01Z", activities: running ? [{ kind: "private", status: "running" }] : [] });

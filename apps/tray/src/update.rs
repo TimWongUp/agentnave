@@ -231,10 +231,6 @@ impl Updates {
 const MANIFEST: &str =
     "https://github.com/TimWongUp/agentnave/releases/latest/download/latest.json";
 
-/// Public mirrors that serve GitHub release files where GitHub itself does not answer. Each
-/// takes the full GitHub URL as a path, so the manifest and the installer it points at both work.
-const UPDATE_MIRRORS: [&str; 2] = ["https://ghfast.top/", "https://gh-proxy.com/"];
-
 /// An explicit manifest to use before the mirrors. Advanced overrides only; the default path
 /// needs no configuration.
 fn update_override() -> Option<tauri::Url> {
@@ -258,7 +254,7 @@ fn update_endpoints() -> Vec<(Option<&'static str>, tauri::Url)> {
     if let Ok(direct) = tauri::Url::parse(MANIFEST) {
         endpoints.push((None, direct));
     }
-    for mirror in UPDATE_MIRRORS {
+    for mirror in crate::proxy::GITHUB_MIRRORS {
         if let Ok(url) = tauri::Url::parse(&format!("{mirror}{MANIFEST}")) {
             endpoints.push((Some(mirror), url));
         }
@@ -697,31 +693,12 @@ fn finish_upgrade(app: &AppHandle) {
 }
 
 fn updater_proxy(app: &AppHandle) -> Option<tauri::Url> {
-    if let Some(dirs) = service_dirs(app)
-        && let Some(url) = proxy_url(&dirs.network)
-    {
-        return Some(url);
-    }
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    proxy_url(&env)
+    crate::proxy::resolve(service_dirs(app).as_ref().map(|dirs| &dirs.network))
 }
 
+#[cfg(test)]
 fn proxy_url(env: &std::collections::BTreeMap<String, String>) -> Option<tauri::Url> {
-    for key in [
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ] {
-        if let Some(raw) = env.get(key).map(|s| s.trim()).filter(|s| !s.is_empty())
-            && let Ok(url) = tauri::Url::parse(raw)
-        {
-            return Some(url);
-        }
-    }
-    None
+    crate::proxy::env_proxy_url(env)
 }
 
 pub fn service_command() -> String {

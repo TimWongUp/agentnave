@@ -19,7 +19,7 @@
   const sameListen = target => Boolean(target && follow && follow.group === target.group
     && follow.room === (target.room || null) && follow.desk === (target.desk || null));
   // Starts listening to `target()`, or stops when that is what is being listened to.
-  function listenButton(label, target) {
+  function listenButton(zh, en, target) {
     const name = h("span");
     const button = h("button.listen-here", { type: "button", hidden: true, "aria-pressed": "false" }, name);
     button.addEventListener("click", event => {
@@ -31,12 +31,12 @@
       button.hidden = !config?.enabled || !target();
       button.disabled = !ready();
       button.setAttribute("aria-pressed", String(on));
-      name.textContent = on ? L("停止收听", "Stop listening") : label;
+      name.textContent = on ? L("停止收听", "Stop listening") : L(zh, en);
     };
     return { el: button, draw };
   }
-  const workspaceListen = listenButton(L("收听工作区", "Listen to workspace"), () => group && { group });
-  const columnListen = listenButton(L("收听此列消息", "Listen to this column"), () => group && (roomView || privateView) && { group, room: roomView?.id, desk: privateView, shown: deskListenShown });
+  const workspaceListen = listenButton("收听工作区", "Listen to workspace", () => group && { group });
+  const columnListen = listenButton("收听此列消息", "Listen to this column", () => group && (roomView || privateView) && { group, room: roomView?.id, desk: privateView, shown: deskListenShown });
   actions.append(roster, columnListen.el);
   let channelContext = null;
   const participants = new Map();

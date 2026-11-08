@@ -42,7 +42,7 @@ function deskMood(d, ctx) {
         word: L("休息中", "Resting"),
         away: null,
       }
-    : { mood: "idle", say: "", word: L("空闲", "Idle"), away: null };
+    : { mood: "idle", say: "", word: L("摸鱼", "Slacking off"), away: null };
 }
 // A seat that has answered stays at the table until its round ends, so it is never drawn twice.
 function seatedIn(d, ctx) {
@@ -146,10 +146,10 @@ function seatHolder(c) {
   if (!bossSpeech(c, later)) return { ...former, former: null };
   return { host: c.host, model: modelOf(later), former };
 }
-// `live` only means a server is running work right now; an idle boss dozes off after a while.
+// `live` only means a server is running work right now; an idle boss dozes off like its desks do.
 function recentlyActive(c) {
   const g = state.groupsData.find((x) => x.group === c.group);
-  return !!g && Date.now() - AN.at(g.updated) < SLEEP_AFTER;
+  return !!g && Date.now() - AN.at(g.updated) < AN.SLEEP_AFTER;
 }
 const MUGS = ["mug", "mug-saucer", "mug-cream", "mug-thermos", "mug-glass", "mug-cat"];
 const PLANTS = ["plant", "pot-succulent", "pot-cactus", "vase-tulip", "vase-daisy", "pot-pothos"];
@@ -179,8 +179,7 @@ function dressBossSet(rec, host) {
   rec.bossSet = set;
   rec.chair.src = ART.url(`office/${set ? `boss-chair-${set}` : "chair"}.webp`);
   rec.desk.src = ART.url(`office/${set ? `boss-desk-${set}` : "boss-desk"}.webp`);
-  rec.open.src = ART.url(`office/${set ? `boss-laptop-${set}` : "laptop"}.webp`);
-  rec.closed.src = ART.url(`office/${set ? `boss-laptop-closed-${set}` : "laptop-closed"}.webp`);
+  rec.laptop.laptop.dress(set);
 }
 function createBoss() {
   const rec = {
@@ -193,17 +192,14 @@ function createBoss() {
   };
   rec.chair = img("l-chair", "chair");
   rec.desk = img("l-desk", "boss-desk");
-  rec.open = img("l-laptop.l-open", "laptop");
-  rec.closed = img("l-laptop.l-closed", "laptop-closed");
+  rec.laptop = Laptop.create(rec.lid);
   rec.scene = h(
     "div.scene",
     {},
     rec.portrait,
     rec.chair,
     rec.desk,
-    rec.open,
-    rec.closed,
-    rec.lid,
+    rec.laptop,
   );
   // boss sits in the middle; recent chats on the left, meetings on the right
   rec.chats = h("div.boss-side");
@@ -353,9 +349,7 @@ function createDesk(d) {
     rec.desk,
     rec.mug,
     rec.plant,
-    img("l-laptop.l-open", "laptop"),
-    img("l-laptop.l-closed", "laptop-closed"),
-    rec.lid,
+    Laptop.create(rec.lid),
   );
   rec.el = h(
     "button.desk",
@@ -735,6 +729,7 @@ function walk(animate, sat) {
     travel(start, end, rec.char);
   }
 }
+const TELEPORT_GAP_MS = 900;
 // start is a figure, or the last place of one that has already left the page.
 function travel(start, end, name) {
   if (!start || !end?.isConnected) return;
@@ -743,6 +738,7 @@ function travel(start, end, name) {
   const a = start instanceof Element ? start.getBoundingClientRect() : start,
     b = end.getBoundingClientRect();
   if (!a.width || !b.width) return;
+  if (ART.canWarp(name)) return teleport(start, end, name, a, base);
   const walker = ART.figure(name);
   walker.classList.add("walker");
   // With walking frames the figure strolls along a straight line; otherwise the seated figure hops over.
@@ -779,6 +775,24 @@ function travel(start, end, name) {
     walker.remove();
     end.style.visibility = "";
   };
+}
+
+// A character with a teleport vanishes where it was and appears at its destination; nothing crosses the room.
+function teleport(start, end, name, a, base) {
+  // a figure that has already left the page plays its exit where it last stood; the boss's figure is someone else
+  if (!(start instanceof Element)) {
+    const ghost = ART.figure(name);
+    ghost.classList.add("walker");
+    ghost.style.cssText += `left:${a.left - base.left}px;top:${a.top - base.top}px;width:${a.width}px;height:${a.height}px`;
+    el.fx.append(ghost);
+    ART.warp(ghost, "out").finally(() => ghost.remove());
+  } else if (start.dataset.char === name) ART.warp(start, "out");
+  if (end.dataset.char !== name) return;
+  end.style.visibility = "hidden";
+  setTimeout(() => {
+    end.style.visibility = "";
+    if (end.isConnected) ART.warp(end, "in");
+  }, TELEPORT_GAP_MS);
 }
 
 // An envelope travels between two office elements: dispatch, return, forward.

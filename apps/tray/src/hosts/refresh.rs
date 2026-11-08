@@ -3,6 +3,7 @@ use super::*;
 impl Hosts {
     pub fn refresh(&mut self) -> Value {
         let (shell, dirs) = probe_tools(&self.context);
+        crate::proxy::cache_network(&dirs.network);
         self.shell = Some(shell);
         *self.tools.lock().unwrap_or_else(|p| p.into_inner()) = Some(dirs);
         self.refresh_probed()

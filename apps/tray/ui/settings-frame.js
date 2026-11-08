@@ -2,6 +2,7 @@
 // Only the same-origin office parent can host this retained settings page.
 if (window.parent !== window && new URLSearchParams(location.search).get("embedded") === "1") {
   document.documentElement.dataset.embedded = "true";
+  document.documentElement.dataset.artPaused = "true";
   const origin = location.origin === "null" ? "*" : location.origin;
   const send = data => window.parent.postMessage({ type: "agentnave:settings", ...data }, origin);
   let receiving = false;
@@ -28,7 +29,10 @@ if (window.parent !== window && new URLSearchParams(location.search).get("embedd
     if (event.source !== window.parent || event.data?.type !== "agentnave:settings") return;
     const data = event.data;
     if (data.action === "section") section(data.hash);
-    else if (data.action === "visible") window.dispatchEvent(new Event(data.visible ? "focus" : "agentnave:settings-hidden"));
+    else if (data.action === "visible") {
+      document.documentElement.dataset.artPaused = String(!data.visible);
+      window.dispatchEvent(new Event(data.visible ? "focus" : "agentnave:settings-hidden"));
+    }
     else if (data.action === "preferences") {
       receiving = true;
       window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: data.general }));
