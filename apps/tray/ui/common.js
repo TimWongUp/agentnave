@@ -678,6 +678,7 @@
       if (onScreen) { fig.classList.add("offscreen"); onScreen.observe(fig); }
     }
     const hiddenMedia = still.matches || pageMediaHidden(fig);
+    if (hiddenMedia) rec.failed = false;
     if (hiddenMedia && rec.slots.length) pauseVideos(rec, true);
     if (fig.classList.contains("warping")) {
       if (!videoVisible(fig) && rec.running) pauseVideos(rec);

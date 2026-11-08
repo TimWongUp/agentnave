@@ -216,6 +216,7 @@ fn transfer(
     loop {
         check_cancel(cancel)?;
         let n = response.read(&mut buffer).map_err(|e| e.to_string())?;
+        check_cancel(cancel)?;
         if n == 0 {
             break;
         }
