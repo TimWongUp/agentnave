@@ -94,6 +94,7 @@ Generate 10 state frames for the same character:
 """从 10 张正方形透明底 PNG 原图生成单个模型家族的 27 张 s/m/h WebP。
 用法: python build_css_character.py <原图目录> <输出目录> [头部框 left,top,size 占原图比例，默认 0.22,0.06,0.56]
 """
+
 import sys
 from pathlib import Path
 from PIL import Image
@@ -110,8 +111,12 @@ for folder in ("s", "m", "h"):
 for state in STATES_10:
     im = Image.open(src_dir / f"{state}.png").convert("RGBA")
     w, h = im.size
-    im.resize((266, 266), Image.Resampling.LANCZOS).save(out_dir / "s" / f"{state}.webp", "WEBP", quality=92, method=6)
-    im.resize((320, 320), Image.Resampling.LANCZOS).save(out_dir / "m" / f"{state}.webp", "WEBP", quality=92, method=6)
+    im.resize((266, 266), Image.Resampling.LANCZOS).save(
+        out_dir / "s" / f"{state}.webp", "WEBP", quality=92, method=6
+    )
+    im.resize((320, 320), Image.Resampling.LANCZOS).save(
+        out_dir / "m" / f"{state}.webp", "WEBP", quality=92, method=6
+    )
     if state in STATES_7:
         box = (round(w * hx), round(h * hy), round(w * (hx + hw)), round(h * (hy + hw)))
         im.crop(box).resize((96, 96), Image.Resampling.LANCZOS).save(
