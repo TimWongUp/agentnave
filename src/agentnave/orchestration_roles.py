@@ -39,12 +39,10 @@ type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
 type OrchestrationGroup = Literal[
     "explorer",
     "worker",
-    "worker_code",
     "worker_frontend",
     "worker_writing",
     "explorer_web",
     "explorer_social",
-    "worker_data",
     "worker_documents",
 ]
 type OrchestrationRole = Literal[
@@ -52,8 +50,6 @@ type OrchestrationRole = Literal[
     "explorer-hard",
     "worker-easy",
     "worker-hard",
-    "worker-code-easy",
-    "worker-code-hard",
     "worker-frontend-easy",
     "worker-frontend-hard",
     "worker-writing-easy",
@@ -62,8 +58,6 @@ type OrchestrationRole = Literal[
     "explorer-web-hard",
     "explorer-social-easy",
     "explorer-social-hard",
-    "worker-data-easy",
-    "worker-data-hard",
     "worker-documents-easy",
     "worker-documents-hard",
     "image-generator",
@@ -79,6 +73,7 @@ class CatalogRole(StrictModel):
     seat_prefix: str
     name_zh: str
     name_en: str
+    scope_zh: str
     access: Literal["read", "write"]
     fallback_group: OrchestrationGroup | None
     legacy_enabled: bool
@@ -120,11 +115,9 @@ class OrchestrationFile(BaseModel):
     worker: dict[Difficulty, ReviewSeat] = {}
     # A key of its own, which servers that predate it ignore instead of rejecting the file.
     worker_frontend: dict[Difficulty, ReviewSeat] = {}
-    worker_code: dict[Difficulty, ReviewSeat] = {}
     worker_writing: dict[Difficulty, ReviewSeat] = {}
     explorer_web: dict[Difficulty, ReviewSeat] = {}
     explorer_social: dict[Difficulty, ReviewSeat] = {}
-    worker_data: dict[Difficulty, ReviewSeat] = {}
     worker_documents: dict[Difficulty, ReviewSeat] = {}
     enabled_roles: list[OrchestrationGroup] | None = None
     image_generation: ReviewSeat | None = None
@@ -143,12 +136,6 @@ class OrchestrationFile(BaseModel):
         seat = self.image_generation
         return seat if seat is not None and seat.provider != host.provider else None
 
-    def interface_workers(self) -> dict[Difficulty, ReviewSeat]:
-        """The interface Worker seats, an unset one filled from the Worker seat of its difficulty."""
-        if not self.group_enabled("worker_frontend"):
-            return {}
-        return {**(self.worker if self.group_enabled("worker") else {}), **self.worker_frontend}
-
     def group_enabled(self, group: OrchestrationGroup) -> bool:
         if self.enabled_roles is not None:
             return group in self.enabled_roles
@@ -157,8 +144,6 @@ class OrchestrationFile(BaseModel):
     def group_seats(self, group: OrchestrationGroup) -> dict[Difficulty, ReviewSeat]:
         if not self.group_enabled(group):
             return {}
-        if group == "worker_frontend":
-            return self.interface_workers()
         return cast(dict[Difficulty, ReviewSeat], getattr(self, group))
 
     def enabled(self, host: Host) -> bool:
@@ -197,13 +182,14 @@ class OrchestrationStatus(StrictModel):
     explorer: dict[Difficulty, ReviewSeatStatus] = {}
     worker: dict[Difficulty, ReviewSeatStatus] = {}
     worker_frontend: dict[Difficulty, ReviewSeatStatus] = {}
-    worker_code: dict[Difficulty, ReviewSeatStatus] = {}
     worker_writing: dict[Difficulty, ReviewSeatStatus] = {}
     explorer_web: dict[Difficulty, ReviewSeatStatus] = {}
     explorer_social: dict[Difficulty, ReviewSeatStatus] = {}
-    worker_data: dict[Difficulty, ReviewSeatStatus] = {}
     worker_documents: dict[Difficulty, ReviewSeatStatus] = {}
     image_generation: ReviewSeatStatus | None = None
+    # What each visible group covers, for bosses that never see the App's rules block. Plain
+    # string keys keep hidden group names out of the published schema.
+    scopes: dict[str, str] = {}
 
     @model_serializer(mode="wrap")
     def visible_groups(self, handler: SerializerFunctionWrapHandler):

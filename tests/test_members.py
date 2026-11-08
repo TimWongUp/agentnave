@@ -55,7 +55,7 @@ def _installed_cli(_adapter: AdapterHooks) -> bool:
 
 def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     catalog = role_catalog()
-    assert len(catalog) == 9
+    assert len(catalog) == 7
     assert {role.group for role in catalog} == set(get_args(OrchestrationGroup.__value__))
     assert {
         f"{role.seat_prefix}-{difficulty}" for role in catalog for difficulty in ("easy", "hard")
@@ -101,6 +101,7 @@ def test_role_switch_defaults_hide_fields_and_preserve_bindings(
     host = Host("codex", "env")
     status = list_members(frozenset(), host).orchestration.model_dump()
     assert {role.group for role in role_catalog() if role.group in status} == expected
+    assert set(status["scopes"]) == expected
     saved = OrchestrationFile.model_validate(raw).model_dump()
     for role in role_catalog():
         assert saved[role.group] == {"easy": {**binding, "effort": ""}}
@@ -114,21 +115,16 @@ def test_role_switches_reject_unknown_and_duplicate_groups(enabled: list[str]) -
         OrchestrationFile.model_validate({"version": 1, "enabled_roles": enabled})
 
 
-def test_frontend_inheritance_requires_both_groups_and_never_crosses_difficulty() -> None:
+def test_interface_role_uses_only_its_own_seats() -> None:
     document = OrchestrationFile.model_validate(
         {"version": 1, "worker": {"hard": {"provider": "claude", "model": "general"}}}
     )
-    assert set(document.interface_workers()) == {"hard"}
-    document.enabled_roles = [role.group for role in role_catalog()]
-    for role in role_catalog():
-        if role.group not in ("worker", "worker_frontend"):
-            assert document.group_seats(role.group) == {}
-    document.enabled_roles = ["worker_frontend"]
-    assert document.interface_workers() == {}
+    assert document.group_enabled("worker_frontend")
+    assert document.group_seats("worker_frontend") == {}
     document.worker_frontend = {"easy": ReviewSeat(provider="claude", model="interface")}
-    assert set(document.interface_workers()) == {"easy"}
+    assert set(document.group_seats("worker_frontend")) == {"easy"}
     document.enabled_roles = ["worker"]
-    assert document.interface_workers() == {}
+    assert document.group_seats("worker_frontend") == {}
     assert document.worker_frontend["easy"].model == "interface"
 
 
@@ -143,6 +139,7 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
         "preset": "off",
         "explorer": {"easy": seat},
         "worker": {"hard": seat},
+        "worker_frontend": {"hard": seat},
         "image_generation": seat,
     }
 
@@ -194,7 +191,7 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
     assert json.loads(path.read_text())["worker"]["hard"] == seat
 
 
-def test_interface_seat_falls_back_to_the_worker_seat_of_its_difficulty(
+def test_interface_seat_never_borrows_the_worker_seat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
@@ -210,9 +207,9 @@ def test_interface_seat_falls_back_to_the_worker_seat_of_its_difficulty(
     host = Host("claude", "env")
     status = list_members(frozenset(), host).orchestration
     assert set(status.worker) == {"hard"}
-    assert status.worker_frontend["hard"].model == "general"
+    assert set(status.worker_frontend) == {"easy"}
     assert status.worker_frontend["easy"].model == "interface"
-    assert cast(ReviewSeat, role_seat("worker-frontend-hard", host)).model == "general"
+    assert role_seat("worker-frontend-hard", host) is None
     assert cast(ReviewSeat, role_seat("worker-frontend-easy", host)).model == "interface"
     assert role_seat("worker-easy", host) is None
     assert status.image_generation is None

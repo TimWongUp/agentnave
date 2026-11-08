@@ -115,7 +115,8 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
   const state = { saved: document, members: null };
   const presets = {
     split: "whole", parallel: "whole+", image_generation: "\nimage",
-    role_base: { split: "base", parallel: "base+" },
+    role_base: { parallel: "base+" },
+    split_parts: { base: "base", meetings_asked: "\nasked", meetings_own: "\nown" },
     role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
   };
   const app = advancedEditor(async (url, options) => {
@@ -127,10 +128,12 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
     else state.members = body;
     return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
   });
-  const groups = () => app.run('$("orchestration-roles").children').filter((box) => box.className !== "review-row");
-  const group = (name) => groups().find((box) => box.children[0].children[1].children[0] === name);
-  const toggle = (name, checked) => group(name).children[0].children[0].listeners.change({ target: { checked } });
-  return { app, state, groups, group, toggle };
+  const sections = () => app.run('$("orchestration-roles").children').filter((box) => box.className === "orchestration-section");
+  const groups = () => sections().flatMap((box) => box.children.slice(1));
+  const group = (name) => groups().find((box) => box.children[0].children[0].children[1].children[0] === name);
+  const toggle = (name, checked) => group(name).children[0].children[0].children[0].listeners.change({ target: { checked } });
+  const split = (name, checked) => group(name).children[0].children[1].children[0].listeners.change({ target: { checked } });
+  return { app, state, sections, groups, group, toggle, split };
 }
 
 test("custom editor tracks generated role and image lines without changing user text", async () => {
@@ -156,21 +159,22 @@ test("role switches default like old files, round-trip through save, and keep bi
   const { app, state, groups, group, toggle } = rolesEditor({ version: 1, preset: "split", worker_writing: { easy: binding } });
   await app.run("loadOrchestration()");
 
-  assert.equal(groups().length, 9);
+  assert.equal(groups().length, 7);
   assert.equal(group("通用探索").children.length, 3);
   assert.equal(group("写作").children.length, 1, "a new role starts off with its seats out of sight");
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nexplorer\nworker\nworker_frontend");
+  assert.equal(group("写作").children[0].children.length, 1, "and without its difficulty switch");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend");
 
   toggle("写作", true);
-  assert.equal(group("写作").children.length, 3, "turning a role on only shows its seats");
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nexplorer\nworker\nworker_frontend\nworker_writing");
+  assert.equal(group("写作").children.length, 3, "turning a role on shows its seats, split while only one is set");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend\nworker_writing");
   assert.equal(app.run("orchestrationChanged()"), true);
   toggle("写作", false);
   assert.equal(app.run("orchestrationChanged()"), false, "back to what is saved leaves nothing unsaved");
   assert.equal(app.run('"enabled_roles" in orchestrationWanted()'), false);
 
-  for (const name of ["通用探索", "通用执行", "界面实现"]) toggle(name, false);
-  assert.equal(app.run('orchestrationPresetText("split")'), "base");
+  for (const name of ["通用探索", "通用执行", "界面制作"]) toggle(name, false);
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked");
   await app.run("saveOrchestration()");
   assert.deepEqual(state.saved.enabled_roles, []);
   assert.deepEqual(state.saved.worker_writing, { easy: binding }, "turning off keeps the binding");
@@ -189,7 +193,7 @@ test("a global off shows only the image seat, and no catalog means no role is gu
   await off.app.run("loadOrchestration()");
   assert.equal(off.app.run('$("orchestration-roles").children.length'), 1);
   off.app.run('viewMode("split")');
-  assert.equal(off.groups().length, 9);
+  assert.equal(off.groups().length, 7);
 
   const older = rolesEditor({ version: 1, preset: "split", enabled_roles: ["worker"] }, null);
   await older.app.run("loadOrchestration()");
@@ -197,29 +201,81 @@ test("a global off shows only the image seat, and no catalog means no role is gu
   assert.equal(older.app.run("orchestrationChanged()"), false);
 });
 
-test("only roles turned on conflict with the pool, and only the interface role borrows a seat", async () => {
+test("general and specialist roles are grouped, and no role borrows another role's seat", async () => {
   const outside = { provider: "codex", model: "gone" };
   const worker = { provider: "codex", model: "chat-model" };
-  const { app, group, toggle } = rolesEditor({
-    version: 1, preset: "split", enabled_roles: ["worker", "worker_frontend", "worker_code"],
+  const { app, sections, group, toggle } = rolesEditor({
+    version: 1, preset: "split", enabled_roles: ["worker", "worker_frontend", "worker_writing"],
     worker: { easy: worker }, explorer_web: { hard: outside },
   });
   await app.run("loadOrchestration()");
   app.run('currentDoc.clis.codex = { allowed_models: ["chat-model"], models: {} }');
 
+  const title = (box) => box.children[0].children[0];
+  const name = (box) => box.children[0].children[0].children[1].children[0];
+  assert.deepEqual(Array.from(sections(), title), ["通用", "专项"]);
+  assert.deepEqual(Array.from(sections()[0].children.slice(1), name), ["通用探索", "通用执行"]);
+  assert.equal(sections()[1].children.slice(1).map(name).includes("界面制作"), true);
   const unset = (row) => row.children[1].children[0].children[0];
-  assert.equal(unset(group("界面实现").children[1]), "沿用 通用执行 · 简单");
-  assert.equal(unset(group("界面实现").children[2]), "未配置");
-  assert.equal(unset(group("代码实现").children[1]), "未配置", "other roles never borrow");
-  toggle("通用执行", false);
-  assert.equal(unset(group("界面实现").children[1]), "未配置", "with general execution off nothing is borrowed");
+  assert.equal(group("通用执行").children[0].children.length, 1, "general roles have no difficulty switch");
+  assert.equal(group("界面制作").children.length, 2, "an unset specialist shows one shared row");
+  assert.equal(unset(group("界面制作").children[1]), "未配置", "the interface role no longer borrows");
 
   assert.equal(app.run("seatConflicts().length"), 0, "a role turned off keeps a stale binding quietly");
-  toggle("网页知识检索", true);
+  toggle("网页调研", true);
   assert.equal(app.run("seatConflicts().length"), 1);
-  assert.match(app.run("seatConflictText(seatConflicts()[0])"), /网页知识检索 · 困难 用的 gone/);
+  assert.match(app.run("seatConflictText(seatConflicts()[0])"), /网页调研 · 困难 用的 gone/);
   assert.ok(app.run("blockedSeat()"), "and blocks saving until rebound, without repairing it");
   assert.deepEqual(JSON.parse(app.run("JSON.stringify(orchestrationWanted().explorer_web)")), { hard: outside });
+});
+
+test("a specialist picks one seat for both difficulties until it is split", async () => {
+  const { app, group, split } = rolesEditor({ version: 1, preset: "split", enabled_roles: ["worker_writing"] });
+  await app.run("loadOrchestration()");
+  const seats = () => JSON.parse(app.run("JSON.stringify(orchestrationWanted().worker_writing ?? null)"));
+  const pick = (row, value) => group("写作").children[row].children[1].listeners.change({ target: { value } });
+  const shared = { provider: "codex", model: "chat-model" };
+
+  pick(1, "codex");
+  assert.deepEqual(seats(), { easy: shared, hard: shared });
+  assert.equal(group("写作").children.length, 2, "the same seat on both stays one row");
+
+  split("写作", true);
+  assert.equal(group("写作").children.length, 3);
+  assert.equal(app.run("orchestrationChanged()"), true);
+  pick(1, "");
+  assert.deepEqual(seats(), { hard: shared });
+  split("写作", false);
+  assert.deepEqual(seats(), { easy: shared, hard: shared }, "joining keeps the hard seat");
+  assert.equal(group("写作").children.length, 2);
+
+  split("写作", true);
+  pick(2, "");
+  split("写作", false);
+  assert.deepEqual(seats(), { easy: shared, hard: shared }, "or the easy one when hard is unset");
+  pick(1, "");
+  assert.equal(seats(), null);
+  assert.equal(app.run("orchestrationChanged()"), false);
+});
+
+test("one review model fills only the review roles left unset, and follows until saved", async () => {
+  const app = advancedEditor();
+  app.run('reviewSeats = { "security-reviewer": { provider: "codex", model: "own" } }; renderReviewSeats()');
+  const shown = () => JSON.parse(app.run("JSON.stringify(seatsShown())"));
+  const pick = (value) => app.run('$("review-seats").children[0]').children[1].listeners.change({ target: { value } });
+  const uniform = { provider: "codex", model: "chat-model" };
+
+  assert.equal(app.run('$("review-seats").children[0].children[0].children[0].children[0]'), "统一评审模型");
+  pick("codex");
+  assert.deepEqual(shown()["security-reviewer"], { provider: "codex", model: "own" }, "a role set on its own is kept");
+  assert.deepEqual(shown()["correctness-reviewer"], uniform);
+  assert.equal(Object.hasOwn(shown(), "correctness-reviewer-easy"), false, "unset, it already follows correctness");
+  app.run('setReviewSeat("architecture-reviewer", { provider: "codex", model: "picked" })');
+  pick("");
+  assert.deepEqual(Object.keys(shown()).sort(), ["architecture-reviewer", "security-reviewer"]);
+  assert.equal(app.run("seatsChanged()"), true);
+  app.run("discardAdvanced()");
+  assert.equal(app.run("seatsChanged()"), false);
 });
 
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
@@ -569,4 +625,18 @@ test("each boss is named by its own saved orchestration mode", () => {
   assert.match(app.run('$("task-scope").textContent'), /^Codex CLI 已启用编排.*单独干活只提供给未启用编排的 boss/);
   app.run('orchestration.document.apps = {}; renderTaskScope()');
   assert.equal(app.run('$("task-scope").hidden'), true);
+});
+
+test("split work lets the boss call meetings only when its switch is on", async () => {
+  const { app } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
+  await app.run("loadOrchestration()");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked");
+  const meetings = () => app.run('$("orchestration-split").children[0].children[0]');
+  meetings().listeners.change({ target: { checked: true } });
+  assert.equal(app.run("JSON.stringify(orchestrationWanted().split_options)"), '{"meetings":true}');
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nown");
+  meetings().listeners.change({ target: { checked: false } });
+  assert.equal(app.run("orchestrationWanted().split_options"), undefined);
+  app.run('viewMode("parallel")');
+  assert.equal(app.run('$("orchestration-split").hidden'), true);
 });

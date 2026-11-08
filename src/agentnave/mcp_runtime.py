@@ -318,7 +318,8 @@ mcp = _Server(
     "AgentNave",
     version=__version__,
     instructions=(
-        "AgentNave runs local CLI subagents and saves history; workflows: agentnave-manager Skill. "
+        "AgentNave runs local CLI subagents and saves history. Load the agentnave-manager Skill before dispatching or organizing collaboration; "
+        "available tools do not authorize orchestration; the Skill says what does. "
         "History survives restart; processes do not; invocation handles expire seven days after completion. "
         "Native CLI permissions are the security boundary; isolation is not a sandbox. "
         "Prompts already require noninteractive completion, reporting to boss, no AgentNave tools/delegation, "

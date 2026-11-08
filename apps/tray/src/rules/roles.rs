@@ -5,6 +5,10 @@ const LEGACY_DISPATCH: &str = r#"- Explorer（只读：探索、规划、评审�
 const LEGACY_ASSIGNMENT: &str = "- 探索、规划派 Explorer，实现派 Worker。";
 const LEGACY_REVIEW: &str = "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。";
 
+fn directory_line(name: &str, access: &str, scope: &str, prefix: &str) -> String {
+    format!("- {name}（{access}）：{scope}简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。")
+}
+
 pub(super) fn sections() -> Value {
     let mut sections = serde_json::Map::new();
     if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
@@ -12,6 +16,7 @@ pub(super) fn sections() -> Value {
             let group = role["group"].as_str().expect("role group");
             let prefix = role["seat_prefix"].as_str().expect("seat prefix");
             let name = role["name_zh"].as_str().expect("role name");
+            let scope = role["scope_zh"].as_str().expect("role scope");
             let access = if role["access"] == "read" {
                 "只读"
             } else {
@@ -19,9 +24,7 @@ pub(super) fn sections() -> Value {
             };
             sections.insert(
                 group.into(),
-                json!(format!(
-                    "\n- {name}（{access}）：简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。"
-                )),
+                json!(format!("\n{}", directory_line(name, access, scope, prefix))),
             );
         }
     }
@@ -43,12 +46,17 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
         .replace(LEGACY_REVIEW, "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位；没有时选择当前可见的只读工位，不可用时由 boss 自行评审。不交给实现者，尽量换模型。");
     let sections = sections();
     let sections = sections.as_object().expect("role sections");
+    let generated: Vec<String> = sections
+        .values()
+        .filter_map(Value::as_str)
+        .map(|section| section.trim_start_matches('\n').to_owned())
+        .collect();
     text = text
         .split_inclusive('\n')
         .filter(|line| {
-            !sections.values().filter_map(Value::as_str).any(|section| {
-                section.trim_start_matches('\n') == line.trim_end_matches(['\r', '\n'])
-            })
+            !generated
+                .iter()
+                .any(|known| known == line.trim_end_matches(['\r', '\n']))
         })
         .collect();
     text.truncate(text.trim_end().len());
@@ -74,7 +82,7 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     );
     let migrated = apply(&document, legacy);
     assert!(migrated.contains("同难度专项优先"));
-    assert!(migrated.contains("`cwd`"));
+    assert!(migrated.contains("兜底不跨难度"));
     assert!(!migrated.contains("Worker"));
     assert!(migrated.contains("用户正文"));
     let section = sections()["worker_writing"]

@@ -877,6 +877,11 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 for definition in role_catalog()
                 if roles.group_enabled(definition.group)
             },
+            scopes={
+                definition.group: definition.scope_zh
+                for definition in role_catalog()
+                if roles.group_enabled(definition.group)
+            },
             image_generation=_review_status(
                 {"image-generator": image} if (image := roles.image_seat(host)) else {},
                 task_mode,

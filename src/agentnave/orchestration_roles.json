@@ -1,11 +1,9 @@
 [
-  {"group":"explorer","seat_prefix":"explorer","name_zh":"通用探索","name_en":"General exploration","access":"read","fallback_group":null,"legacy_enabled":true},
-  {"group":"worker","seat_prefix":"worker","name_zh":"通用执行","name_en":"General execution","access":"write","fallback_group":null,"legacy_enabled":true},
-  {"group":"worker_code","seat_prefix":"worker-code","name_zh":"代码实现","name_en":"Code implementation","access":"write","fallback_group":"worker","legacy_enabled":false},
-  {"group":"worker_frontend","seat_prefix":"worker-frontend","name_zh":"界面实现","name_en":"Interface implementation","access":"write","fallback_group":"worker","legacy_enabled":true},
-  {"group":"worker_writing","seat_prefix":"worker-writing","name_zh":"写作","name_en":"Writing","access":"write","fallback_group":"worker","legacy_enabled":false},
-  {"group":"explorer_web","seat_prefix":"explorer-web","name_zh":"网页知识检索","name_en":"Web and knowledge research","access":"read","fallback_group":"explorer","legacy_enabled":false},
-  {"group":"explorer_social","seat_prefix":"explorer-social","name_zh":"社交调研","name_en":"Social research","access":"read","fallback_group":"explorer","legacy_enabled":false},
-  {"group":"worker_data","seat_prefix":"worker-data","name_zh":"数据分析","name_en":"Data analysis","access":"write","fallback_group":"worker","legacy_enabled":false},
-  {"group":"worker_documents","seat_prefix":"worker-documents","name_zh":"文档制作","name_en":"Document production","access":"write","fallback_group":"worker","legacy_enabled":false}
+  {"group":"explorer","seat_prefix":"explorer","name_zh":"通用探索","name_en":"General exploration","scope_zh":"读代码和材料，查问题、找原因、出计划；没有对应专项的只读任务都归它。","access":"read","fallback_group":null,"legacy_enabled":true},
+  {"group":"worker","seat_prefix":"worker","name_zh":"通用执行","name_en":"General execution","scope_zh":"改代码和其他文件、处理数据；没有对应专项的写入都归它。","access":"write","fallback_group":null,"legacy_enabled":true},
+  {"group":"worker_frontend","seat_prefix":"worker-frontend","name_zh":"界面制作","name_en":"Interface work","scope_zh":"做网页和应用界面，调外观与交互，或按截图、设计稿改页面。","access":"write","fallback_group":"worker","legacy_enabled":true},
+  {"group":"worker_writing","seat_prefix":"worker-writing","name_zh":"写作","name_en":"Writing","scope_zh":"写、改、翻译给人看的文章、文案和报告；代码里的注释和说明归通用执行。","access":"write","fallback_group":"worker","legacy_enabled":false},
+  {"group":"explorer_web","seat_prefix":"explorer-web","name_zh":"网页调研","name_en":"Web research","scope_zh":"上网查资料、官方文档和新闻，核对事实并附出处。","access":"read","fallback_group":"explorer","legacy_enabled":false},
+  {"group":"explorer_social","seat_prefix":"explorer-social","name_zh":"社交平台调研","name_en":"Social platform research","scope_zh":"查 X、Reddit 等社交平台上的讨论和用户反馈，并附出处。","access":"read","fallback_group":"explorer","legacy_enabled":false},
+  {"group":"worker_documents","seat_prefix":"worker-documents","name_zh":"办公文件制作","name_en":"Office files","scope_zh":"制作和排版 Word、Excel、PPT、PDF 成品文件。","access":"write","fallback_group":"worker","legacy_enabled":false}
 ]

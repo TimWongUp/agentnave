@@ -111,9 +111,9 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
     roles: dict[str, Any] = {
         "version": 1,
         "preset": "split",
-        "enabled_roles": ["explorer", "worker", "worker_code"],
+        "enabled_roles": ["explorer", "worker", "worker_writing"],
         "worker": {"easy": {"provider": "grok", "model": "seat-only"}},
-        "worker_code": {"hard": {"provider": "pi", "model": "shared"}},
+        "worker_writing": {"hard": {"provider": "pi", "model": "shared"}},
         "explorer": {"easy": {"provider": "pi", "model": "shared"}},
     }
     role_path = tmp_path / "orchestration.json"
@@ -123,9 +123,9 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
     )
     listed = list_members(frozenset(), host)
     assert listed.orchestration.worker["easy"].available is None
-    assert listed.orchestration.worker_code["hard"].available is None
-    assert not listed.orchestration.worker_code.get("easy")
-    native = list_members(frozenset({"pi"}), Host("pi", "env")).orchestration.worker_code["hard"]
+    assert listed.orchestration.worker_writing["hard"].available is None
+    assert not listed.orchestration.worker_writing.get("easy")
+    native = list_members(frozenset({"pi"}), Host("pi", "env")).orchestration.worker_writing["hard"]
     assert native.native and native.available is None and native.replacement is None
     assert listed.review["correctness-reviewer"].available is None
     assert all(member.modes == ["discussion"] for member in listed.members)
@@ -208,9 +208,9 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
     roles = {
         "version": 1,
         "preset": "split",
-        "enabled_roles": ["worker", "worker_code"],
+        "enabled_roles": ["worker", "worker_writing"],
         "worker": {"easy": binding},
-        "worker_code": {"hard": binding},
+        "worker_writing": {"hard": binding},
         "image_generation": binding,
     }
     (tmp_path / "orchestration.json").write_text(json.dumps(roles))
@@ -221,7 +221,7 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
     assert listed.orchestration.image_generation is not None
     for status in (
         listed.orchestration.worker["easy"],
-        listed.orchestration.worker_code["hard"],
+        listed.orchestration.worker_writing["hard"],
         listed.orchestration.image_generation,
         listed.review["correctness-reviewer"],
     ):
@@ -231,13 +231,13 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
     native = list_members(frozenset({"pi"}), Host("pi", "env")).review["correctness-reviewer"]
     assert native.native and native.available is False
     native_specialist = list_members(frozenset({"pi"}), Host("pi", "env")).orchestration
-    assert native_specialist.worker_code["hard"].native
-    assert native_specialist.worker_code["hard"].available is False
+    assert native_specialist.worker_writing["hard"].native
+    assert native_specialist.worker_writing["hard"].available is False
     assert native_specialist.image_generation is None
     async with Client(mcp) as client:
         for selector in (
             {"seat": "worker-easy"},
-            {"seat": "worker-code-hard"},
+            {"seat": "worker-writing-hard"},
             {"seat": "image-generator"},
             {"role": "correctness-reviewer"},
         ):

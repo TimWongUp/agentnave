@@ -12,7 +12,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree 或面向人的 TUI；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、worktree 或面向人的 TUI；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 只在其中写入 AgentNave 标记的一段，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）。
 
 ## 进程与模块
 

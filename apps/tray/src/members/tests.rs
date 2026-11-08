@@ -397,8 +397,8 @@ fn orchestration_role_switches_keep_every_group_and_refuse_bad_lists() {
     assert_eq!(enabled(&json!({"enabled_roles": null})).unwrap(), legacy);
     assert!(enabled(&document).unwrap().is_empty());
     assert_eq!(
-        enabled(&json!({"enabled_roles": ["worker_data", "explorer"]})).unwrap(),
-        ["explorer", "worker_data"]
+        enabled(&json!({"enabled_roles": ["worker_documents", "explorer"]})).unwrap(),
+        ["explorer", "worker_documents"]
     );
 
     for bad in [
@@ -412,7 +412,7 @@ fn orchestration_role_switches_keep_every_group_and_refuse_bad_lists() {
         assert!(validate_orchestration(&document).is_err());
     }
     document["enabled_roles"] = json!(null);
-    document["worker_data"] = json!({"medium": seat});
+    document["worker_documents"] = json!({"medium": seat});
     assert!(validate_orchestration(&document).is_err());
 }
 

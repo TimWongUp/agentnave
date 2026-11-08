@@ -125,6 +125,13 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let connected = [claude, grok, codex];
     let split = json!({"preset": "split"});
     let text = text_of(&split, "split").unwrap();
+    assert!(text.contains("只在用户要求时开会") && !text.contains("boss 可以开 AgentNave 会议室"));
+    let meetings = json!({"preset": "split", "split_options": {"meetings": true}});
+    let meetings = text_of(&meetings, "split").unwrap();
+    assert!(
+        meetings.contains("boss 可以开 AgentNave 会议室")
+            && !meetings.contains("只在用户要求时开会")
+    );
     assert!(sync(&installed, &connected, h, &split, &[], &backup, false).is_empty());
     let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert_eq!(

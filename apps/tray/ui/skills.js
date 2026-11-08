@@ -21,15 +21,22 @@ const why = (host, state) =>
     : !state.enabled ? L(`点选为 ${host.label} 安装`, `Click to install for ${host.label}`)
       : state.state === "app" ? L("已安装，点选停用", "Installed; click to disable") : L("已选，接入这个应用时自动安装", "Selected; will install automatically when connected");
 
-// One chip per detected host, so a host added later simply appears as another chip.
-function chip(skill, host) {
+// Whether a host offers the Skill, and whether it is switched on there as saved or as picked.
+function switched(skill, host) {
   const state = host.skills?.[skill.name];
   if (!state || state.state === "manual" || host.status === "orphaned") return null;
   const key = `${skill.name}/${host.id}`;
   const blocked = state.state === "blocked";
   const saved = state.enabled && !blocked;
   const pending = S.want.has(key);
-  const on = pending ? S.want.get(key).enabled : saved;
+  return { state, key, blocked, saved, pending, on: pending ? S.want.get(key).enabled : saved };
+}
+
+// One chip per detected host, so a host added later simply appears as another chip.
+function chip(skill, host) {
+  const found = switched(skill, host);
+  if (!found) return null;
+  const { state, key, blocked, saved, pending, on } = found;
   const b = h("button.skill-chip", {
     type: "button", "data-focus-key": key, "aria-pressed": String(on), "data-pending": String(pending), title: why(host, state),
     disabled: blocked,
@@ -65,7 +72,8 @@ function row(skill) {
     h("h3", {}, L("安装到", "Install to")),
     chips.length ? h("div.skill-chips", {}, chips) : h("p.guidance", {}, L("还没有可安装的应用；在“boss”里接入后会出现在这里。", "No apps available yet; connect apps in “Boss” to see them here.")),
     h("p.skill-hint", {}, L("点选后按保存设置才会安装或停用。新接入的应用会自动出现。", "Click to select, then press Save settings to install or disable. Newly connected apps appear automatically.")),
-    SETTINGS[skill.name]?.(),
+    // A Skill's settings show while some host has it on.
+    S.hosts.some((host) => switched(skill, host)?.on) && SETTINGS[skill.name]?.(),
     more,
     reading && h("pre.skill-content", {}, skill.content),
   ));
