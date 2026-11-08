@@ -82,6 +82,9 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .fh-sum { margin-left: auto; display: flex; gap: 8px; }
 .back { display: none; flex: none; padding: 4px 2px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .office { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+/* Reserve the inner scrollers' width even at the overflow boundary. html's gutter does
+   not apply here; changing this width resizes the painted scenes and message lines. */
+.office, .tl, .gl-wrap, .side-rows, .optimized-rows { scrollbar-gutter: stable; }
 /* one column: boss office, meetings in session, open desks. --fig is the character size everywhere */
 .floor { --fig: 100px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 10px 20px 20px; }
 /* Zones space themselves, so an ended room can fold its own gap away as it closes. */

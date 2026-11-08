@@ -30,6 +30,40 @@ const old = speech("claude", "claude-opus-5-5", "2026-11-04T13:30:00Z");
 const handover = { kind: "handover", time: "2026-11-04T13:37:42Z", speaker: { role: "system" } };
 const claimed = () => ({ host: "antigravity", app: "antigravity", label: "Antigravity", handover: "changed", previous_host: "claude", messages: [old, handover] });
 
+test("office resizing ignores height feedback and still lays out changed desks at the same floor width", () => {
+  let resize;
+  let deskWidth = 160;
+  const frames = [];
+  const writes = [];
+  const style = new Proxy({}, {
+    set(target, key, value) { writes.push([key, value]); target[key] = value; return true; },
+  });
+  const context = vm.createContext({
+    AN: {}, window: {},
+    ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },
+    requestAnimationFrame: callback => frames.push(callback),
+    el: { floor: {}, desks: { querySelector: selector => selector === ".desk > .scene" ? { offsetWidth: deskWidth } : null } },
+    state: { bossRec: { scene: { style } }, roomRecs: new Map() },
+    FIG: 100,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  resize([{ contentRect: { width: 800, height: 700 } }]);
+  assert.equal(writes.length, 0, "resize delivery must not change the observed floor's height");
+  frames.splice(0).forEach(callback => callback());
+  assert.equal(style.width, "208px");
+  resize([{ contentRect: { width: 800, height: 710 } }]);
+  assert.equal(frames.length, 0, "the height change caused by layout must not schedule another layout");
+  context.layoutRooms();
+  assert.equal(writes.length, 1, "unchanged scene sizes must not mutate the DOM again");
+  deskWidth = 180;
+  context.layoutRooms();
+  assert.equal(style.width, "234px", "new desk data still lays out without a floor resize");
+  deskWidth = 140;
+  resize([{ contentRect: { width: 720, height: 710 } }]);
+  frames.splice(0).forEach(callback => callback());
+  assert.equal(style.width, "182px");
+});
+
 test("takeover changes the furniture and laptop immediately, then changes the person on first dispatch", () => {
   const app = office();
   app.update({ host: "claude", app: "claude-cli", label: "Claude Code", handover: "pending", messages: [old, handover] });
