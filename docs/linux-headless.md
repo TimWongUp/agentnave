@@ -51,7 +51,7 @@ npm 全局目录若无写权限：`npm config set prefix ~/.local`。
 
 可选环境变量（`src/agentnave/host.py` `detect_host()`、`mcp_server.py` `_read_excluded_providers()`）：
 
-- `AGENTNAVE_HOST`：宿主名，只能取 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes|zcode`。bot 不属于这些，**不要设**；这时 `list_members` 报 `"host_source":"unknown"`，属正常。（`grok` 指 Grok CLI，不是 Grok Bot。）
+- `AGENTNAVE_HOST`：宿主名，只能取 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|devin|hermes|zcode`。bot 不属于这些，**不要设**；这时 `list_members` 报 `"host_source":"unknown"`，属正常。（`grok` 指 Grok CLI，不是 Grok Bot。）
 - `AGENTNAVE_HOST_SESSION_ID`：当前聊天的会话 ID，优先于宿主原生环境变量；只能按聊天注入，不能给多个聊天共用同一个值。设置后可省略调用中的 `manager_session_id`。
 - `AGENTNAVE_HOST_APP`：App 的接入行身份，没有 App 就不设（见 §3.4）。
 - `AGENTNAVE_EXCLUDED_PROVIDERS=codex,antigravity`：在 task 模式下禁止这些 CLI，是暂停 CLI 的另一种做法。
@@ -108,7 +108,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 }
 ```
 
-校验规则（`MemberFile.references`）：`models`、`overrides` 和 `default` 里的模型必须先在 `clis.<cli>.models` 里声明。ProviderName 只能取 `antigravity|claude|codebuddy|codex|deepseek|grok|pi|zcode`。
+校验规则（`MemberFile.references`）：`models`、`overrides` 和 `default` 里的模型必须先在 `clis.<cli>.models` 里声明。ProviderName 只能取 `antigravity|claude|codebuddy|codex|deepseek|devin|grok|pi|zcode`。
 
 ### 3.2 orchestration.json：通用与专项工位（`members.py` `OrchestrationFile`；App 端 `apps/tray/src/members.rs` `validate_orchestration`；ADR-0037/0041/0065/0068/0069）
 
@@ -166,8 +166,8 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 ```
 
 - 只有 `auto` 和 `full` 两档，没写的 CLI 也按 `auto`。**不要写 `full`**。
-- 注意：有几家 CLI 的 `auto` 本身就是全权限（源码注释：这几家没有可用的自动审批器）。`codebuddy` 的 auto 是 `bypassPermissions`，`deepseek` 是 `danger-full-access`，`antigravity` 是 `dangerously_skip_permissions`，`zcode` 是 `yolo`，所以 `list_members` 会把它们显示为 `"full"`。只有 claude、grok、codex 的 auto 比 full 低（codex auto 是 `approve_for_me`）。Pi 没有档位。
-- `list_members.permissions` 返回全部 7 个有档位的 CLI（claude、grok、codex、codebuddy、deepseek、antigravity、zcode），不按已选组员过滤，也不含 Pi。
+- 注意：有几家 CLI 的 `auto` 本身就是全权限（源码注释：这几家没有可用的自动审批器）。`codebuddy` 的 auto 是 `bypassPermissions`，`deepseek` 是 `danger-full-access`，`antigravity` 是 `dangerously_skip_permissions`，`zcode` 是 `yolo`，所以 `list_members` 会把它们显示为 `"full"`。只有 claude、grok、codex、devin 的 auto 比 full 低（codex auto 是 `approve_for_me`，devin auto 是 `smart`）。Pi 没有档位。
+- `list_members.permissions` 返回全部 8 个有档位的 CLI（claude、grok、codex、codebuddy、deepseek、devin、antigravity、zcode），不按已选组员过滤，也不含 Pi。
 - 调用方传了 `PERMISSION_KEYS` 里的任何参数，档位就不再生效，所以 bot 不要自己追加权限参数。
 
 ### 3.5 其余可选文件
