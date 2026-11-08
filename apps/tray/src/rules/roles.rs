@@ -39,6 +39,7 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
         .replace(LEGACY_ASSIGNMENT, "")
         .replace("互不依赖的写入步骤并行派给多个 Worker", "互不依赖的写入步骤并行派给多个可写工位")
         .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
+        .replace("每次最多等十分钟", "每次最多等 270 秒")
         .replace(LEGACY_REVIEW, "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位；没有时选择当前可见的只读工位，不可用时由 boss 自行评审。不交给实现者，尽量换模型。");
     let sections = sections();
     let sections = sections.as_object().expect("role sections");

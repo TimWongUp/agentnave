@@ -1,15 +1,15 @@
-//! Tool-call limits for AgentNave's ten-minute wait, with two minutes for the reply.
+//! Tool-call limits for AgentNave's 270-second wait, with 90 seconds for the reply.
 use super::{Host, Value, json};
 
 pub(super) fn ensure(entry: &mut Value, host: &Host) -> Result<(), String> {
     let (key, minimum) = match host.boss {
-        "codex" => ("tool_timeout_sec", 720),
-        "claude" => ("timeout", 720_000),
-        "antigravity" => ("timeoutSeconds", 720),
-        "pi" | "hermes" => ("timeout", 720),
-        "deepseek" => ("toolCallTimeoutMs", 720_000),
-        "zcode" => ("timeoutMs", 720_000),
-        "grok" => ("tool_timeout_sec", 720),
+        "codex" => ("tool_timeout_sec", 360),
+        "claude" => ("timeout", 360_000),
+        "antigravity" => ("timeoutSeconds", 360),
+        "pi" | "hermes" => ("timeout", 360),
+        "deepseek" => ("toolCallTimeoutMs", 360_000),
+        "zcode" => ("timeoutMs", 360_000),
+        "grok" => ("tool_timeout_sec", 360),
         // CodeBuddy reads a host-process variable (default one hour), not a server field.
         // WorkBuddy's limit is unverified. Neither belongs in the child service's env.
         _ => return Ok(()),
@@ -26,7 +26,7 @@ pub(super) fn ensure(entry: &mut Value, host: &Host) -> Result<(), String> {
         }
         for tool in ["wait", "start_agent", "run_round"] {
             if overrides.get(tool).is_some() {
-                raise(overrides, tool, 720, false)?;
+                raise(overrides, tool, 360, false)?;
             }
         }
     }
