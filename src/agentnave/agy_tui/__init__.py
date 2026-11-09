@@ -31,6 +31,9 @@ DIALOG_SETTLE = 2.0
 # and without one. An unrecognized screen gets the longer wait too.
 STOP_GRACE = 15.0
 STALL_LIMIT = 60.0
+# A call agy moves to the background names its task here, and ends with that task's message.
+BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
+TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
 
 
 def emit(event: dict[str, object]) -> None:
@@ -75,6 +78,9 @@ class Turn:
     error: str | None = None
     warnings: list[str] = field(default_factory=list[str])
     open_tools: list[int] = field(default_factory=list[int])
+    tool_names: dict[int, str] = field(default_factory=dict[int, str])
+    background: dict[str, int] = field(default_factory=dict[str, int])
+    shown: str = ""
 
     def block(self, reason: str, screen: str = "") -> None:
         self.error = f"permission required: Antigravity interactive runtime blocked: {reason}"
@@ -113,17 +119,60 @@ class Turn:
             if isinstance(content, str) and content:
                 self.response = content
                 self.step(index, "agent_response", "DONE", text_delta=content)
+                self.shown = ""
             calls = row.get("tool_calls")
             for number, raw in enumerate(
                 cast(list[object], calls) if isinstance(calls, list) else []
             ):
                 # Tool ids stay distinct when one response makes several calls.
                 tool = index * 100 + number
+                name = object_dict(raw).get("name")
+                if isinstance(name, str):
+                    self.tool_names[tool] = name
                 self.open_tools.append(tool)
-                self.step(tool, "tool", "ACTIVE", tool_name=object_dict(raw).get("name"))
+                self.step(tool, "tool", "ACTIVE", tool_name=name)
             self.answered = not calls
+        elif (
+            kind == "GENERIC"
+            and row.get("status") == "RUNNING"
+            and self.user_seen
+            and self.open_tools
+            and isinstance(content, str)
+            and (moved := BACKGROUND.search(content))
+        ):
+            self.background[moved.group(1)] = self.open_tools.pop(0)
+            self.shown = ""
         elif row.get("source") == "MODEL" and self.user_seen:
             self.close_tool()  # A tool's output step follows its call in order.
+        elif (
+            kind == "SYSTEM_MESSAGE"
+            and isinstance(content, str)
+            and (ended := TASK_ENDED.search(content))
+            and ended.group(1) in self.background
+        ):
+            self.step(self.background.pop(ended.group(1)), "tool", "DONE")
+            self.shown = ""
+
+    def watch(self, shown: str) -> None:
+        """While a background call runs, the footer tells who works: idle is agy waiting on
+        the call, busy is the model."""
+        if self.stopped:
+            return  # Stop owns turn completion; do not emit further progress.
+        if self.open_tools:
+            # Transcript calls take precedence; reconsider even an unchanged footer after
+            # their output arrives and hands control back to the model/background calls.
+            self.shown = ""
+            return
+        if shown == self.shown:
+            return
+        self.shown = shown
+        if not self.background:
+            return
+        if shown == "idle":
+            tool = next(reversed(self.background.values()))
+            self.step(tool, "tool", "ACTIVE", tool_name=self.tool_names.get(tool))
+        elif shown == "busy":
+            self.step(0, "thinking", "ACTIVE")
 
     def read(self) -> None:
         if self.transcript is None:
@@ -251,6 +300,7 @@ class Run:
         while not self.turn.stopped:
             offset = self.turn.offset
             screen = self.poll()
+            self.turn.watch(state(screen))
             now = time.monotonic()
             if self.exited():
                 self.poll()
