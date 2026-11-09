@@ -30,7 +30,7 @@ fn settings_default_validate_and_save_atomically() {
     assert_eq!(max_running(root.path()), 2);
     assert_eq!(
         state(root.path())["settings"],
-        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": true})
+        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true})
     );
     save(
         root.path(),
@@ -40,7 +40,7 @@ fn settings_default_validate_and_save_atomically() {
     let saved: Value = serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
     assert_eq!(
         saved,
-        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": true})
+        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true})
     );
     // Saving one other key keeps the saved limit, and a broken saved limit falls back.
     save(root.path(), &json!({"version": 1, "y": 2})).unwrap();
@@ -147,4 +147,14 @@ fn claude_interactive_defaults_on_and_partial_saves_preserve_other_settings() {
     }
     save(root.path(), &defaults()).unwrap();
     assert_eq!(state(root.path())["error"], Value::Null);
+    assert_eq!(
+        state(root.path())["settings"]["antigravity_interactive"],
+        true
+    );
+    let error = save(
+        root.path(),
+        &json!({"version": 1, "antigravity_interactive": "yes"}),
+    )
+    .unwrap_err();
+    assert!(error.contains("antigravity_interactive"));
 }

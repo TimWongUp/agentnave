@@ -155,19 +155,32 @@ function renderMembership(provider, enabled) {
   }, enabled ? L("移除", "Remove") : L("启用", "Enable"));
 }
 
-function renderClaudeInteractive(provider) {
-  if (provider !== "claude" || AN.shellOS?.() === "windows") return null;
+// CLIs with an interactive runtime: the settings.json key and what turning it on means.
+const INTERACTIVE = {
+  claude: {
+    key: "claude_interactive",
+    tip: () => L("用终端界面驱动 Claude Code，代替 -p 以省订阅额度。子任务会出现在 Claude 的 /resume 列表和历史记录里，不想留这些痕迹就关掉。", "Drives Claude Code through its terminal UI instead of -p to save subscription quota. Subtasks then appear in Claude’s /resume list and history; turn this off if you don’t want those traces."),
+  },
+  antigravity: {
+    key: "antigravity_interactive",
+    tip: () => L("用终端界面驱动 Antigravity CLI，代替 -p 以省额度。会在 Antigravity 的全局 hooks.json 加一条只在 AgentNave 派发时起作用的 hook。", "Drives Antigravity CLI through its terminal UI instead of -p to save quota. Adds a hook to Antigravity’s global hooks.json that acts only in runs AgentNave starts."),
+  },
+};
+
+function renderInteractive(provider) {
+  const runtime = INTERACTIVE[provider];
+  if (!runtime || AN.shellOS?.() === "windows") return null;
   return el("div", { className: "member-row member-runtime" },
     el("label", { className: "member-interactive" },
       el("input", {
         type: "checkbox",
         className: "switch-input",
-        dataset: { focusKey: "claude/interactive" },
-        checked: limitDoc?.claude_interactive === true,
+        dataset: { focusKey: `${provider}/interactive` },
+        checked: limitDoc?.[runtime.key] === true,
         disabled: busy || !limitDoc || Boolean(limitError),
-        onChange: (e) => setClaudeInteractive(e.target.checked),
+        onChange: (e) => setInteractive(runtime.key, e.target.checked),
       }), textNode(L("交互模式运行", "Run interactively")),
-      settingTip(L("用终端界面驱动 Claude Code，代替 -p 以省订阅额度。子任务会出现在 Claude 的 /resume 列表和历史记录里，不想留这些痕迹就关掉。", "Drives Claude Code through its terminal UI instead of -p to save subscription quota. Subtasks then appear in Claude’s /resume list and history; turn this off if you don’t want those traces."))));
+      settingTip(runtime.tip())));
 }
 
 // One card per CLI: one row for both scenes, or one row each once split.
@@ -226,7 +239,7 @@ function renderCards() {
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
     if (provider === "codex") card.appendChild(renderCodexSource());
     for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
-    const runtime = renderClaudeInteractive(provider);
+    const runtime = renderInteractive(provider);
     if (runtime) card.appendChild(runtime);
     if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
     card.appendChild(renderCliUpdateError(provider));

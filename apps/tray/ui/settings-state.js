@@ -580,18 +580,18 @@ async function saveLimit() {
   const response = await fetch("/app/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-    body: JSON.stringify({ version: 1, max_running: value, ...(limitError ? { history_retention_days: null, claude_interactive: true } : {}) }),
+    body: JSON.stringify({ version: 1, max_running: value, ...(limitError ? { history_retention_days: null, claude_interactive: true, antigravity_interactive: true } : {}) }),
   });
   const data = await response.json();
   if (!response.ok || data.error) throw new Error(data.error || L(`同时工作的员工上限保存失败（${response.status}）`, `Failed to save max concurrent employees (${response.status})`));
   limitDoc = { ...(limitDoc || {}), version: 1, max_running: value };
-  if (limitError) Object.assign(limitDoc, { history_retention_days: null, claude_interactive: true });
+  if (limitError) Object.assign(limitDoc, { history_retention_days: null, claude_interactive: true, antigravity_interactive: true });
   limitError = null;
   limitRevision += 1;
 }
 
 // This setting applies to both scenes and is saved as soon as it is selected.
-async function setClaudeInteractive(enabled) {
+async function setInteractive(key, enabled) {
   if (busy || !limitDoc || limitError) return renderCards();
   busy = true;
   limitRevision += 1;
@@ -600,11 +600,11 @@ async function setClaudeInteractive(enabled) {
     const response = await fetch("/app/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ version: 1, claude_interactive: enabled }),
+      body: JSON.stringify({ version: 1, [key]: enabled }),
     });
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
-    limitDoc = { ...limitDoc, claude_interactive: enabled };
+    limitDoc = { ...limitDoc, [key]: enabled };
     showNotice(L("设置已保存", "Settings saved"));
   } catch (error) {
     showNotice(L(`交互模式保存失败：${error.message}`, `Failed to save interactive mode: ${error.message}`), true);

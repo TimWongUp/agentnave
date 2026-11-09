@@ -24,6 +24,7 @@ from agentnave.members import (
     SettingsFileError,
     apply_member,
     list_members,
+    read_antigravity_interactive,
     read_claude_interactive,
     read_max_running,
     read_members,
@@ -905,6 +906,32 @@ def test_claude_interactive_is_on_unless_turned_off_and_explicit_values_win(
             None, "discussion", provider, options, frozenset(), restricted=restricted
         )
         assert result.get("interactive") is not True and "interactive" not in applied
+
+
+def test_antigravity_interactive_applies_only_with_permissions_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "agentnave.members.read_antigravity_interactive", read_antigravity_interactive
+    )
+
+    def no_effort(*_: object) -> None:
+        return None
+
+    monkeypatch.setattr("agentnave.members.cli_default_effort", no_effort)
+    yolo: dict[str, ProviderOption] = {"dangerously_skip_permissions": True}
+
+    def applied(options: dict[str, ProviderOption]) -> bool:
+        result, names = apply_member(None, "task", "antigravity", options, frozenset())
+        assert (result.get("interactive") is True) is ("interactive" in names)
+        return "interactive" in names
+
+    assert applied(yolo) is (os.name != "nt")
+    assert not applied({"dangerously_skip_permissions": False})
+    assert not applied({**yolo, "print_timeout": "5m"})
+    (tmp_path / "settings.json").write_text('{"version": 1, "antigravity_interactive": false}')
+    assert not applied(yolo)
 
 
 def test_claude_interactive_settings_reject_non_boolean_values(
