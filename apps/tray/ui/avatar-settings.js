@@ -175,11 +175,14 @@ print("Done ->", out_dir)`;
         cancel.addEventListener("click", () => void packAction(tier, "cancel", L("已取消下载", "Download cancelled")));
         actions.append(cancel);
       } else {
-        const dl = h("button", { type: "button", disabled: busy }, pack.installed ? L("重新下载", "Redownload") : L("一键下载", "Download"));
-        dl.addEventListener("click", () => void packAction(tier, "download"));
+        if (!pack.installed) {
+          const dl = h("button", { type: "button", disabled: busy }, L("一键下载", "Download"));
+          dl.addEventListener("click", () => void packAction(tier, "download"));
+          actions.append(dl);
+        }
         const imp = h("button", { type: "button", disabled: busy }, L("从文件夹导入…", "Import folder…"));
         imp.addEventListener("click", () => void packAction(tier, "import", L(`已导入 ${tier}p 视频包`, `Imported ${tier}p video pack`)));
-        actions.append(dl, imp);
+        actions.append(imp);
         if (pack.installed) {
           const del = h("button", { type: "button", disabled: busy }, L("删除", "Delete"));
           del.addEventListener("click", () => void packAction(tier, "delete", L(`已删除 ${tier}p 视频包`, `Deleted ${tier}p video pack`)));
