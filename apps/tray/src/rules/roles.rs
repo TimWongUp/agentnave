@@ -2,8 +2,22 @@
 use serde_json::{Value, json};
 
 const LEGACY_DISPATCH: &str = r#"- Explorer（只读：探索、规划、评审）与 Worker（可写：实现）各有简单、困难两档，按任务难度二选一；涉及界面（页面、样式、交互、看截图或设计稿）的实现改用 Worker 的界面两档。取 `list_members` 的 `orchestration`：`native` 工位交给宿主自带子代理并尽量用该模型，它不经过服务，prompt 要写明非交互，Explorer 还要写明只读；其余派发时 `seat` 用 `explorer-easy`、`explorer-hard`、`worker-easy`、`worker-hard`、`worker-frontend-easy` 或 `worker-frontend-hard`，省略 `provider`、`access` 和模型，服务按 App 工位补齐；`role` 写具体职责，新任务必传 `cwd`。工位不可用时用 `list_members` 的 `replacement`，连同原来的 `seat` 或 `role` 一起传；没有工位时按任务组员选，都不可用时自己做。"#;
+const LEGACY_SMALL_TASKS: &str = "用户点名 CLI 时也通过 AgentNave 派发，不在终端直接运行它。小事自己做，但落在下列专项范围内的任务交给专项，即使自己的工具也能做。";
+const LEGACY_PARALLEL: &str = "- 并行写入和开会由 boss 判断：计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支，最后统一验收；有实质取舍或分歧时开 AgentNave 会议室出决定，会上不改代码。";
 const LEGACY_ASSIGNMENT: &str = "- 探索、规划派 Explorer，实现派 Worker。";
 const LEGACY_REVIEW: &str = "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。";
+
+/// What replaced the old one-line "small tasks" rule: from the named-CLI sentence through the
+/// orchestration-only line.
+fn small_tasks() -> String {
+    let start = super::SHARED
+        .find("用户点名 CLI 时也通过 AgentNave 派发")
+        .expect("named CLI sentence");
+    let rest = &super::SHARED[start..];
+    let end = rest.find("自己只拆分").expect("orchestration-only line");
+    let end = end + rest[end..].find('\n').unwrap_or(rest.len() - end);
+    rest[..end].to_owned()
+}
 
 fn directory_line(name: &str, access: &str, scope: &str, prefix: &str) -> String {
     format!("- {name}（{access}）：{scope}简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。")
@@ -40,6 +54,15 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
     text = text
         .replace(LEGACY_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
+        .replace(LEGACY_SMALL_TASKS, &small_tasks())
+        .replace(
+            LEGACY_PARALLEL,
+            &format!(
+                "{}{}",
+                super::PARALLEL.trim_start(),
+                super::SPLIT_MEETINGS_OWN
+            ),
+        )
         .replace("互不依赖的写入步骤并行派给多个 Worker", "互不依赖的写入步骤并行派给多个可写工位")
         .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
         .replace("每次最多等十分钟", "每次最多等 270 秒")
@@ -78,9 +101,10 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
 fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     let document = json!({"enabled_roles": []});
     let legacy = format!(
-        "{LEGACY_DISPATCH}\n{LEGACY_ASSIGNMENT}\n- 计划确认后，互不依赖的写入步骤并行派给多个 Worker，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。\n用户正文"
+        "{LEGACY_DISPATCH}\n{LEGACY_ASSIGNMENT}\n- 计划确认后，互不依赖的写入步骤并行派给多个 Worker，在 Git 仓库里各用独立 worktree；无法隔离时串行。boss 合入当前分支，最后统一验收。\n- 选择本档即授权主动派发；{LEGACY_SMALL_TASKS}\n用户正文"
     );
     let migrated = apply(&document, legacy);
+    assert!(migrated.contains("只负责编排") && !migrated.contains("小事自己做，但"));
     assert!(migrated.contains("同难度专项优先"));
     assert!(migrated.contains("兜底不跨难度"));
     assert!(!migrated.contains("Worker"));

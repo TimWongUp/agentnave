@@ -132,6 +132,19 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         meetings.contains("boss 可以开 AgentNave 会议室")
             && !meetings.contains("只在用户要求时开会")
     );
+    assert!(text.contains(LEAD_ASKED) && !text.contains(LEAD_ALWAYS));
+    let parallel = text_of(&json!({"preset": "parallel"}), "parallel").unwrap();
+    assert!(parallel.contains("boss 可以开 AgentNave 会议室"));
+    let quiet = json!({"preset": "parallel", "parallel_options": {"meetings": false}});
+    assert!(
+        text_of(&quiet, "parallel")
+            .unwrap()
+            .contains("只在用户要求时开会")
+    );
+    for mode in ["split", "parallel"] {
+        let lead = text_of(&json!({"preset": mode, "lead_only": true}), mode).unwrap();
+        assert!(lead.contains(LEAD_ALWAYS) && !lead.contains(LEAD_ASKED));
+    }
     assert!(sync(&installed, &connected, h, &split, &[], &backup, false).is_empty());
     let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert_eq!(

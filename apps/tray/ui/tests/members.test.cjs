@@ -690,7 +690,33 @@ test("split work lets the boss call meetings only when its switch is on", async 
   meetings().listeners.change({ target: { checked: false } });
   assert.equal(app.run("orchestrationWanted().split_options"), undefined);
   app.run('viewMode("parallel")');
+  assert.equal(app.run('$("orchestration-split").children.length'), 2);
+  app.run('orchestration.presets.parallel_base = "par"; renderOrchestration()');
+  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nown");
+  meetings().listeners.change({ target: { checked: false } });
+  assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), '{"meetings":false}');
+  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nasked");
+  meetings().listeners.change({ target: { checked: true } });
+  assert.equal(app.run("orchestrationWanted().parallel_options"), undefined);
+});
+
+test("the orchestration-only switch rewrites its line in split and parallel only", async () => {
+  const { app } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
+  await app.run("loadOrchestration()");
+  app.run(`orchestration.presets.split_parts.base = "base\\nlead-asked";
+    orchestration.presets.role_base.parallel = "par\\nlead-asked";
+    orchestration.presets.lead = { asked: "lead-asked", always: "lead-always" }; renderOrchestration()`);
+  const lead = () => app.run('$("orchestration-split").children[1].children[0]');
+  lead().listeners.change({ target: { checked: true } });
+  assert.equal(app.run("orchestrationWanted().lead_only"), true);
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-always\nasked");
+  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nlead-always");
+  app.run('viewMode("custom")');
   assert.equal(app.run('$("orchestration-split").hidden'), true);
+  app.run('viewMode("split")');
+  lead().listeners.change({ target: { checked: false } });
+  assert.equal(app.run("orchestrationWanted().lead_only"), undefined);
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-asked\nasked");
 });
 
 // The settings scripts share one global scope: a later top-level function of the same name

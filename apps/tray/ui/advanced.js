@@ -11,7 +11,7 @@
 const ORCHESTRATION_EFFECTS = {
   off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
   split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把活派给已开启的角色，会用到它们的额度；同时改多处文件要你同意。", "Writes to selected bosses' global rules: even when not named, the boss delegates to the roles turned on, using their quota; changing several things at once needs your consent."),
-  parallel: AN.L("在分工协作之外，boss 自己决定同时改多处文件和开会，额度用得更多。", "Beyond split work, the boss decides on its own to change several things at once and to hold meetings, using more quota."),
+  parallel: AN.L("在分工协作之外，boss 自己决定同时改多处文件，额度用得更多。", "Beyond split work, the boss decides on its own to change several things at once, using more quota."),
   custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
 };
 const DIFFICULTIES = [["easy", AN.L("简单", "Easy")], ["hard", AN.L("困难", "Hard")]];
@@ -139,9 +139,12 @@ function orchestrationPresetText(mode) {
   const sections = roleCatalog().filter((role) => enabled.includes(role.group))
     .map((role) => presets.role_sections?.[role.group] || "");
   const parts = presets.split_parts;
-  const base = mode === "split" && parts
+  let base = mode === "split" && parts
     ? parts.base + (shown?.split_options?.meetings ? parts.meetings_own : parts.meetings_asked)
-    : presets.role_base?.[mode] ?? text.replace(image, "");
+    : mode === "parallel" && parts && presets.parallel_base
+      ? presets.parallel_base + (shown?.parallel_options?.meetings === false ? parts.meetings_asked : parts.meetings_own)
+      : presets.role_base?.[mode] ?? text.replace(image, "");
+  if (shown?.lead_only && presets.lead && (mode === "split" || mode === "parallel")) base = base.replace(presets.lead.asked, presets.lead.always);
   return [base, ...sections, shown?.image_generation ? image : ""].join("");
 }
 
@@ -277,24 +280,45 @@ function seatRow(group, label, name, seat, onSet) {
     ...seatSelects(group, name, seat, onSet, SEAT_UNSET));
 }
 
-// Split work's own switch: whether the boss may call meetings without being asked.
-function setSplitMeetings(on) {
-  const { split_options: _, ...rest } = orchestrationShown();
-  orchestrationDraft = on ? { ...rest, split_options: { meetings: true } } : rest;
+// Whether the boss may call meetings without being asked: off by default in split work, on in parallel.
+const meetingsOn = (doc, preset) => preset === "split" ? doc.split_options?.meetings === true : doc.parallel_options?.meetings !== false;
+function setMeetings(preset, on) {
+  const key = `${preset}_options`;
+  const { [key]: _, ...rest } = orchestrationShown();
+  orchestrationDraft = on === (preset === "parallel") ? rest : { ...rest, [key]: { meetings: on } };
+  renderOrchestration();
+  advancedEdited();
+}
+
+// Both presets' switch: the boss hands out all the work, small tasks too, and keeps only planning and checking.
+function setLeadOnly(on) {
+  const { lead_only: _, ...rest } = orchestrationShown();
+  orchestrationDraft = on ? { ...rest, lead_only: true } : rest;
   renderOrchestration();
   advancedEdited();
 }
 
 function renderSplitOptions(preset, editable) {
   const box = $("orchestration-split");
-  box.hidden = preset !== "split" || !editable;
-  box.replaceChildren(...(box.hidden ? [] : [el("label", { className: "orchestration-switch" },
+  box.hidden = (preset !== "split" && preset !== "parallel") || !editable;
+  if (box.hidden) return box.replaceChildren();
+  const meetings = el("label", { className: "orchestration-switch" },
     el("input", {
-      type: "checkbox", className: "switch-input", dataset: { focusKey: "split/meetings" },
-      checked: orchestrationShown().split_options?.meetings === true,
-      onChange: (e) => setSplitMeetings(e.target.checked),
+      type: "checkbox", className: "switch-input", dataset: { focusKey: `${preset}/meetings` },
+      checked: meetingsOn(orchestrationShown(), preset),
+      onChange: (e) => setMeetings(preset, e.target.checked),
     }),
-    el("span", {}, AN.L("boss 可主动开会", "Boss may call meetings")))]));
+    el("span", {}, AN.L("boss 可主动开会", "Boss may call meetings")),
+    settingTip(AN.L("打开后遇到有实质取舍或分歧的问题，boss 会自己召集几个员工开会讨论再定，会用到他们的额度；关闭时只在你要求时开会。", "On: when a choice has real trade-offs or disagreement, the boss calls a few employees into a meeting before deciding, using their quota. Off: meetings happen only when you ask."), true));
+  const lead = el("label", { className: "orchestration-switch" },
+    el("input", {
+      type: "checkbox", className: "switch-input", dataset: { focusKey: "lead-only" },
+      checked: orchestrationShown().lead_only === true,
+      onChange: (e) => setLeadOnly(e.target.checked),
+    }),
+    el("span", {}, AN.L("boss 只负责编排", "Boss only orchestrates")),
+    settingTip(AN.L("打开后小事也交给员工，boss 只拆分、写简报和验收；更慢，也更费员工额度。关闭时 boss 自己做小事，你也可以对某个任务说「这次只负责编排」。", "On: even small tasks go to employees, and the boss only splits work, writes briefs and checks results; slower and uses more employee quota. Off: the boss does small tasks itself, and you can still say \"only orchestrate this time\" for one task."), true));
+  box.replaceChildren(meetings, lead);
 }
 
 // A role's switch, and its seats while on; turned off, they stay saved out of sight. A specialist
