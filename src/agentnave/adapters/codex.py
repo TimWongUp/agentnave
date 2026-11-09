@@ -203,6 +203,8 @@ class CodexAdapter(AdapterHooks):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
+        # Options are checked first, so a missing install never hides an invalid request.
+        options = self.option_args(request)
         source = _source()
         executable = _codex_executable(source)
         if source is not None and executable == "codex":
@@ -227,7 +229,7 @@ class CodexAdapter(AdapterHooks):
             ):
                 argv.extend(("--config", setting))
 
-        argv.extend(self.option_args(request))
+        argv.extend(options)
 
         if request.session_id is not None:
             argv.append(request.session_id)

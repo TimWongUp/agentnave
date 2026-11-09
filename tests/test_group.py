@@ -426,6 +426,8 @@ async def test_invalid_rounds_and_groups_fail_before_launch(
     monkeypatch.setattr(codex, "_source", lambda: "desktop")
     monkeypatch.setattr(codex, "_bundled_paths", lambda: ())
     groups.open(tmp_path, [GroupSeat("x", "codex", {}, tmp_path)])
+    with pytest.raises(ValueError):
+        groups.open(tmp_path, [GroupSeat("x", "codex", {"unknown": True}, tmp_path)])
 
 
 @pytest.mark.asyncio
