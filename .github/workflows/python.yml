@@ -341,3 +341,25 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
           PY
           gh release upload "$RELEASE_TAG" windows-assets/latest.json --clobber
+
+  dmg-layout-check:
+    name: TEMP dmg layout check
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build dmg with Finder layout
+        working-directory: apps/tray
+        env:
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+        run: npx --yes @tauri-apps/cli@2.12.3 build --bundles dmg
+      - name: Check layout
+        run: |
+          dmg=$(ls apps/tray/target/release/bundle/dmg/*.dmg)
+          hdiutil attach "$dmg" -mountpoint /tmp/an -nobrowse
+          ls -la /tmp/an /tmp/an/.background
+          test -s /tmp/an/.DS_Store
+          test -s /tmp/an/.background/background.tiff
+          strings /tmp/an/.DS_Store | grep -c background || true
