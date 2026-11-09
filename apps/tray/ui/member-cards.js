@@ -66,8 +66,9 @@ function poolSummary(provider, all, pool) {
   if (!hasPool(provider) && lists.length > 1 && !sameJson(lists[0], lists[1])) {
     return scenes.map((s, i) => `${SCENES[s]} ${count(lists[i])}`).join(L("、", ", "));
   }
-  if (!pool) return count(null);
+  if (!pool) return L("不限模型", "Any model");
   const shown = visible(pool);
+  if (!shown.length) return L("未选择", "None selected");
   const names = shown.slice(0, 3).join(L("、", ", "));
   return L(`${shown.length} 个：${names}${shown.length > 3 ? " 等" : ""}`, `${shown.length}: ${names}${shown.length > 3 ? ", etc." : ""}`);
 }
@@ -94,25 +95,33 @@ function poolRows(provider) {
     const toggle = (m, on) => {
       const list = pool || [];
       const allowed = on ? [...list, m] : list.filter((x) => x !== m);
-      if (allowed.length) writePool(provider, allowed);
-      else renderCards();
+      if (allowed.length > MAX_SELECTED_MODELS) {
+        showNotice(L(`最多选 ${MAX_SELECTED_MODELS} 个模型`, `Select at most ${MAX_SELECTED_MODELS} models`), true);
+        return;
+      }
+      writePool(provider, allowed);
     };
     const defaults = SCENE_IDS.map((s) => slot(s, provider).model);
     rows.push(el("div", { className: "member-picker" },
-      el("label", { className: "member-option member-option-all" },
-        el("input", {
-          type: "checkbox",
-          dataset: { focusKey: `${key}/all` },
-          checked: !pool,
-          disabled: !all.length,
-          onChange: (e) => writePool(provider, e.target.checked ? null : [...all]),
-        }), textNode(L("全部模型（以后新出的也算）", "All models (including future releases)"))),
+      el("div", { className: "member-picker-actions" },
+        el("button", { type: "button", dataset: { focusKey: `${key}/all` }, disabled: !all.length,
+          onClick: () => {
+            if (all.length > MAX_SELECTED_MODELS) {
+              showNotice(L(`共有 ${all.length} 个模型，最多选 ${MAX_SELECTED_MODELS} 个`, `${all.length} models available; select at most ${MAX_SELECTED_MODELS}`), true);
+              return;
+            }
+            writePool(provider, all);
+          },
+        }, L("全选", "Select all")),
+        el("button", { type: "button", dataset: { focusKey: `${key}/none` },
+          onClick: () => writePool(provider, []),
+        }, L("全不选", "Clear all")),
+        el("span", {}, L(`已选 ${pool?.length || 0}/${MAX_SELECTED_MODELS}`, `Selected ${pool?.length || 0}/${MAX_SELECTED_MODELS}`))),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
           type: "checkbox",
           dataset: { focusKey: `${key}/allow/${m}` },
-          checked: !pool || pool.includes(m),
-          disabled: !pool,
+          checked: Boolean(pool?.includes(m)),
           onChange: (e) => toggle(m, e.target.checked),
         }),
         el("span", { className: "member-option-id" }, m),

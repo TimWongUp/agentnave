@@ -2171,6 +2171,23 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     assert_eq!(homes.codex.len(), 3);
 }
 
+#[test]
+fn shared_desktop_hosts_name_both_entry_points() {
+    let (_temp, mut hosts) = fixture();
+    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    fs::create_dir_all(hosts.context.applications[0].join("Devin.app")).unwrap();
+    assert_eq!(host(&hosts, "claude").label, "Claude Code（终端／桌面端）");
+    assert_eq!(host(&hosts, "devin").label, "Devin（CLI／桌面端）");
+
+    let elsewhere = hosts.context.home.join("claude-work");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        elsewhere.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "claude").label, "Claude Code");
+    assert_eq!(host(&hosts, "claude-desktop").label, "Claude 桌面");
+}
+
 #[cfg(not(windows))]
 #[test]
 fn claude_desktop_is_found_by_its_folder_without_the_app() {

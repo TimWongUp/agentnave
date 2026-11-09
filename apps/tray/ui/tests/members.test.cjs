@@ -546,7 +546,9 @@ function poolEditor(fetch) {
     const seatOptions = (seat) => seatSelects("seat", "工位", seat, () => {})[1].children.flat();
     const poolPick = (key, checked) => {
       pickerOpen = "codex/pool";
-      findKey(poolRows("codex"), key).attrs.onChange({ target: { checked } });
+      const action = findKey(poolRows("codex"), key).attrs;
+      if (action.onClick) action.onClick();
+      else action.onChange({ target: { checked } });
     };
     detected.codex = { installed: true, native: { model: "a" }, models: [{ id: "a" }, { id: "b" }] };
     currentDoc.clis.codex = { models: { old: {} } };
@@ -566,7 +568,7 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
     currentDoc.modes.discussion.codex.default = "b";
     reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
     markSaved();
-    poolPick("codex/pool/all", false);
+    poolPick("codex/pool/all");
     poolPick("codex/pool/allow/old", false);
     poolPick("codex/pool/allow/b", false);
   `);
@@ -597,10 +599,10 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   await assert.rejects(app.run('listSeatModel({ provider: "codex", model: "b" })'), /不在 Codex CLI 的可用模型里/);
   assert.deepEqual(posts, ["/app/members"]);
 
-  // Any model again lets a model the CLI lists later through, without a list to keep up.
-  app.run('poolPick("codex/pool/all", true); detected.codex.models.push({ id: "next" })');
-  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
-  assert.ok(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'));
+  // Select all is an explicit list; future CLI models are not silently allowed.
+  app.run('poolPick("codex/pool/all"); detected.codex.models.push({ id: "next" })');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b", "old"]);
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), false);
   app.run(`
     currentDoc.clis.codex.allowed_models = ["a"];
     orchestration = { document: { version: 1, preset: "off", image_generation: { provider: "codex", model: "b" } } };
@@ -608,6 +610,29 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.equal(app.run("seatConflicts().length"), 0, "inactive image bindings do not block model-pool edits");
   app.run('orchestration.document.preset = "split"');
   assert.equal(app.run("seatConflicts().length"), 1, "enabling orchestration restores the binding conflict");
+});
+
+test("model choices start unchecked, clear all stays unsaved, and selection stops at 20", () => {
+  const app = poolEditor();
+  app.run(`
+    detected.codex.models = Array.from({ length: 21 }, (_, i) => ({ id: "model-" + i }));
+    currentDoc.clis.codex.models = {};
+    markSaved();
+  `);
+  assert.equal(app.run('poolSummary("codex", getAllModelIds("codex"), shownPool("codex"))'), "不限模型");
+  app.run('pickerOpen = "codex/pool"');
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/model-0").attrs.checked'), false);
+  app.run('poolPick("codex/pool/all")');
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
+  assert.match(app.run("$('notice').textContent"), /最多选 20 个/);
+  app.run('writePool("codex", Array.from({ length: 20 }, (_, i) => `model-${i}`))');
+  app.run('poolPick("codex/pool/allow/model-20", true)');
+  assert.equal(app.doc().clis.codex.allowed_models.length, 20);
+  app.run('poolPick("codex/pool/none")');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, []);
+  assert.match(app.run('configurationErrors()[0].message'), /至少选一个模型/);
+  app.run('poolPick("codex/pool/allow/model-0", true)');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["model-0"]);
 });
 
 test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {

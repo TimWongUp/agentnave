@@ -95,7 +95,7 @@ function slot(scene, provider) {
     : Boolean(detected[provider]?.installed || currentDoc.defaults?.[scene]?.[provider]);
   const model = (selection ? selection.default : currentDoc.defaults?.[scene]?.[provider]) || "";
   const pool = hasPool(provider) ? listedPool(provider) : selection?.models;
-  const allowed = pool?.length ? [...pool] : null;
+  const allowed = hasPool(provider) && Array.isArray(pool) ? [...pool] : pool?.length ? [...pool] : null;
   const effort = enabled ? sceneEffort(scene, provider, model || nativeDefault(provider).model) : "";
   return { enabled, model: enabled ? model : "", allowed, effort };
 }

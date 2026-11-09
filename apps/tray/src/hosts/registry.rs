@@ -190,6 +190,21 @@ impl Hosts {
         };
         let mut hosts: Vec<Host> = specs.into_iter().map(&build).collect();
         let rows = split::rows(&self.context, &hosts, &self.codex_homes);
+        if split::claude_desktop_here(&self.context)
+            && !rows.iter().any(|row| row.0 == "claude-desktop")
+            && let Some(claude) = hosts.iter_mut().find(|host| host.id == "claude")
+        {
+            claude.label = "Claude Code（终端／桌面端）";
+        }
+        if self
+            .context
+            .applications
+            .iter()
+            .any(|dir| dir.join("Devin.app").is_dir())
+            && let Some(devin) = hosts.iter_mut().find(|host| host.id == "devin")
+        {
+            devin.label = "Devin（CLI／桌面端）";
+        }
         hosts.extend(rows.into_iter().map(&build));
         hosts
     }
