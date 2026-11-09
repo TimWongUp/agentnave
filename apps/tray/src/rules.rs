@@ -17,11 +17,18 @@ const SHARED: &str = "## AgentNave 编排偏好
 
 - 仅在作为主对话 boss 时适用；被 AgentNave 派发时只完成任务、回报，不再派发。与本文件其他规则冲突时，以其他规则为准。
 - 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数；派发、开会、等待和验收前先加载 agentnave-manager Skill 并按它执行。
-- 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；用户点名 CLI 时也通过 AgentNave 派发，不在终端直接运行它。小事自己做，但落在下列专项范围内的任务交给专项，即使自己的工具也能做。
+- 选择本档即授权在已确认的任务内主动派发，包括实现，无需用户点名 CLI；用户点名 CLI 时也通过 AgentNave 派发，不在终端直接运行它。
+- 派发是默认做法，不因冷启动或要写简报改为自己做。boss 只自己做小事：读一两个文件、改一处、几分钟能完成，且不在下列专项范围内；多文件实现、需要调查定位的问题、成篇文案和专项范围内的任务都派出，即使自己的工具也能做。
+- 用户对当前任务说明 boss 只负责编排时，boss 读到能写出简报为止，调查、实现和写作全部派出，自己只拆分、写简报、验收、合入和收尾。
 - 按任务类型和难度选择下列可见工位；同难度专项优先，专项未设或不可用时选择同难度的通用工位，通用也不可用时由 boss 自己完成或报告能力不足；兜底不跨难度、不静默换模型。
 - 只读任务能否并行由 boss 判断。并行写入指同一时间有两个及以上可写任务在跑，boss 自己改文件也算；前提是各单元互不依赖、各用独立 worktree，做不到就串行。同一组文件同一时间只有一个执行者在写，不为每次实现另派复核。
 - 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位；没有时选择当前可见的只读工位，不可用时由 boss 自行评审。不交给实现者，尽量换模型。
 - 结果不会主动推送：派发后结束本轮前收齐全部终态，任务还在跑时要问用户也先收齐或取消；`succeeded` 不等于完成，boss 核对产物后验收；高风险改动由 boss 针对具体的出错方式补做检查。";
+
+/// The orchestration-only line as written in `SHARED`, and what replaces it in the split and
+/// parallel presets while `lead_only` is on.
+const LEAD_ASKED: &str = "- 用户对当前任务说明 boss 只负责编排时，boss 读到能写出简报为止，调查、实现和写作全部派出，自己只拆分、写简报、验收、合入和收尾。";
+const LEAD_ALWAYS: &str = "- 已开启「boss 只负责编排」：小事也派出；boss 读到能写出简报为止，调查、实现和写作全部派出，自己只拆分、写简报、验收、合入和收尾。";
 
 const IMAGE_GENERATION: &str = "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。";
 
@@ -32,7 +39,7 @@ const SPLIT_MEETINGS_OWN: &str =
     "\n- 有实质取舍或分歧时，boss 可以开 AgentNave 会议室出决定，会上不改代码。";
 
 const PARALLEL: &str = "
-- 并行写入和开会由 boss 判断：计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支，最后统一验收；有实质取舍或分歧时开 AgentNave 会议室出决定，会上不改代码。";
+- 并行写入由 boss 判断：计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支，最后统一验收。";
 
 /// The split preset's own lines: parallel writing waits for the user, and the boss calls meetings
 /// on its own only when `split_options.meetings` is on.
@@ -45,13 +52,26 @@ fn split_text(document: &Value) -> String {
     format!("{SHARED}{SPLIT}{meetings}")
 }
 
+/// The parallel preset's own lines: the boss calls meetings on its own unless
+/// `parallel_options.meetings` is turned off.
+fn parallel_text(document: &Value) -> String {
+    let meetings = if document["parallel_options"]["meetings"] == false {
+        SPLIT_MEETINGS_ASKED
+    } else {
+        SPLIT_MEETINGS_OWN
+    };
+    format!("{SHARED}{PARALLEL}{meetings}")
+}
+
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
 pub fn presets(document: &Value) -> Value {
     json!({"split": text_of(document, "split"), "parallel": text_of(document, "parallel"),
         "image_generation": IMAGE_GENERATION, "role_sections": roles::sections(),
-        "role_base": {"parallel": format!("{SHARED}{PARALLEL}")},
+        "role_base": {"parallel": parallel_text(document)},
+        "parallel_base": format!("{SHARED}{PARALLEL}"),
         "split_parts": {"base": format!("{SHARED}{SPLIT}"), "meetings_asked": SPLIT_MEETINGS_ASKED,
-            "meetings_own": SPLIT_MEETINGS_OWN}})
+            "meetings_own": SPLIT_MEETINGS_OWN},
+        "lead": {"asked": LEAD_ASKED, "always": LEAD_ALWAYS}})
 }
 
 /// The mode of apps sharing a file: the first set among them, or the default that rows without
@@ -64,14 +84,26 @@ fn mode_of<'a>(document: &'a Value, group: &[&App]) -> &'a str {
         .unwrap_or("off")
 }
 
+/// The saved Custom text with our retired generated sentences in their current wording, as the
+/// settings page shows and edits it, so what it shows is what the rules files get.
+pub fn migrate_custom(document: &mut Value) {
+    let migrated = document["custom"].as_str().map(roles::migrate_legacy);
+    if let Some(text) = migrated {
+        document["custom"] = text.into();
+    }
+}
+
 /// The text a mode puts in the rules files, if any.
 fn text_of(document: &Value, mode: &str) -> Option<String> {
     let mut text = match mode {
         "split" => split_text(document),
-        "parallel" => format!("{SHARED}{PARALLEL}"),
+        "parallel" => parallel_text(document),
         "custom" => document["custom"].as_str()?.trim().to_owned(),
         _ => return None,
     };
+    if mode != "custom" && document["lead_only"] == true {
+        text = text.replace(LEAD_ASKED, LEAD_ALWAYS);
+    }
     if text.is_empty() {
         return None;
     }

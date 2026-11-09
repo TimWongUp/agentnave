@@ -314,6 +314,8 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "enabled_roles",
         "image_generation",
         "split_options",
+        "parallel_options",
+        "lead_only",
     ];
     fields.extend(&groups);
     only(top, &fields, ORCHESTRATION_FILE)?;
@@ -357,12 +359,17 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     if let Some(seat) = top.get("image_generation").filter(|seat| !seat.is_null()) {
         validate_seat(seat, "image_generation")?;
     }
-    if let Some(options) = top.get("split_options") {
-        let options = object(options, "split_options")?;
-        only(options, &["meetings"], "split_options")?;
-        if !options.values().all(Value::is_boolean) {
-            return Err("split_options.meetings 必须为 true 或 false".into());
+    for key in ["split_options", "parallel_options"] {
+        if let Some(options) = top.get(key) {
+            let options = object(options, key)?;
+            only(options, &["meetings"], key)?;
+            if !options.values().all(Value::is_boolean) {
+                return Err(format!("{key}.meetings 必须为 true 或 false"));
+            }
         }
+    }
+    if top.get("lead_only").is_some_and(|on| !on.is_boolean()) {
+        return Err("lead_only 必须为 true 或 false".into());
     }
     Ok(())
 }
