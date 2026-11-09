@@ -639,7 +639,8 @@ async def test_snapshot_retains_tool_name_across_interleaved_calls(
         assert snapshot.last_activity.tool_call_id == "a"
         assert snapshot.last_activity.tool_name == "Bash"
         assert snapshot.last_activity.state == "completed"
-        assert manager.progress(invocation_id)[0] is None  # an ended call is not current work
+        # An ended call returns its result to the model, which works on it next.
+        assert manager.progress(invocation_id)[0] == "thinking"
     finally:
         await manager.shutdown()
 

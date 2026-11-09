@@ -331,8 +331,18 @@ class ClaudeAdapter(AdapterHooks):
                 ),
             )
         if subtype == "status":
-            return ProviderActivity("lifecycle", "system.status", brief(event.get("status")))
-        if subtype in ("init", "hook_started", "hook_response"):
+            # "requesting" precedes each model request, including the one after a tool result.
+            # CodeBuddy sends an empty status right after init; it reports no change.
+            status = brief(event.get("status"))
+            if status is None:
+                return None
+            return ProviderActivity(
+                "lifecycle", "system.status", "reasoning" if status == "requesting" else status
+            )
+        if subtype == "init":
+            # The interactive runtime streams nothing more until the first assistant message.
+            return ProviderActivity("lifecycle", "system.init", "reasoning")
+        if subtype in ("hook_started", "hook_response"):
             return ProviderActivity("lifecycle", f"system.{subtype}", str(subtype))
         return None
 

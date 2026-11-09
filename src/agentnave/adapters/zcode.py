@@ -78,8 +78,13 @@ class ZcodeAdapter(AdapterHooks):
                 public_output=brief(event.get("text"), 1000),
             )
         if kind == "tool":
+            # A call ends with unnamed "result" and "batch" events.
+            status = brief(event.get("status"))
             return ProviderActivity(
-                "tool", "tool", brief(event.get("status")), brief(event.get("name"))
+                "tool",
+                "tool",
+                "completed" if status in ("result", "batch") else status,
+                brief(event.get("name")),
             )
         if kind in {"session", "turn.started", "turn.completed", "turn.failed"}:
             return ProviderActivity(
