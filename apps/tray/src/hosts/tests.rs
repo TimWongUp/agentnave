@@ -533,6 +533,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 "antigravity",
                 "pi",
                 "deepseek",
+                "devin",
                 "hermes"
             ]
             .contains(&id)
