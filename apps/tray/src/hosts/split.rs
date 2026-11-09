@@ -86,7 +86,7 @@ pub(super) fn codex_homes(home: &Path, main: &Path) -> Vec<PathBuf> {
 }
 
 /// Claude Desktop is there if its app is, or, on macOS and Linux, its folders.
-fn claude_desktop_here(context: &Context) -> bool {
+pub(super) fn claude_desktop_here(context: &Context) -> bool {
     let app = |dir: &PathBuf| dir.join("Claude.app").is_dir();
     if context.applications.iter().any(app) {
         return true;
@@ -116,7 +116,7 @@ pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -
     let default = home.join(".claude");
     // A variable the app itself was started with reaches Claude Desktop the same way.
     if !context.env.contains_key("CLAUDE_CONFIG_DIR")
-        && claude.is_some_and(|host| real(&host.root.path) != real(&default))
+        && claude.is_some_and(|host| real(&host.config) != real(&home.join(".claude.json")))
         && claude_desktop_here(context)
     {
         rows.push((

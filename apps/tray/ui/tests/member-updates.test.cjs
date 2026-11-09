@@ -204,6 +204,22 @@ test("English labels name each installation by its id and app", () => {
   assert.doesNotMatch(active, /内置/);
 });
 
+test("Codex source selection saves a fixed source and restores automatic", () => {
+  const ui = app(async () => { throw new Error("unexpected request"); });
+  ui.run(`cliUpdates = { clis: { codex: { installations: [
+    { id: 'desktop', label: 'Codex 内置 CLI', active: true },
+    { id: 'standalone', label: 'Codex CLI', active: false },
+  ] } } }`);
+  ui.run("currentDoc.clis.codex = { models: {} }; edited = () => {};");
+  const select = ui.run("renderCodexSource().children[1].children[0]");
+  assert.equal(select.children.find((option) => option.attrs.selected).attrs.value, "auto");
+  ui.run("renderCodexSource().children[1].children[0].attrs.onChange({ target: { value: 'standalone' } })");
+  assert.equal(ui.run("currentDoc.clis.codex.executable_source"), "standalone");
+  assert.match(JSON.stringify(ui.json("renderCliInstallation('codex', cliUpdates.clis.codex.installations[1])")), /当前使用/);
+  ui.run("renderCodexSource().children[1].children[0].attrs.onChange({ target: { value: 'auto' } })");
+  assert.equal(ui.run("currentDoc.clis.codex.executable_source"), undefined);
+});
+
 test("without installations a card keeps its single version and has no source rows", () => {
   const ui = app(async () => { throw new Error("unexpected request"); });
   assert.equal(ui.json("renderCliInstallations('codex')"), null);

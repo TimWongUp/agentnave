@@ -201,7 +201,11 @@ class Groups:
             request = InvocationRequest(
                 seat.provider, "validate", seat.cwd, None, seat.provider_options
             )
-            for path in get_adapter(seat.provider).prepare(request).cleanup_paths:
+            try:
+                prepared = get_adapter(seat.provider).prepare(request)
+            except FileNotFoundError:
+                continue  # a missing CLI fails when its seat launches, as an uninstalled one does
+            for path in prepared.cleanup_paths:
                 Path(path).unlink(missing_ok=True)
         group = Group(group_id or uuid.uuid4().hex, cwd, {seat.id: seat for seat in seats})
         group.states = {seat.id: SeatState() for seat in seats}

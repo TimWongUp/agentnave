@@ -533,6 +533,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 "antigravity",
                 "pi",
                 "deepseek",
+                "devin",
                 "hermes"
             ]
             .contains(&id)
@@ -2169,6 +2170,36 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     let homes = hosts.boss_homes();
     assert!(homes.claude.contains(&elsewhere) && homes.claude.contains(&home.join(".claude")));
     assert_eq!(homes.codex.len(), 3);
+}
+
+#[test]
+fn shared_desktop_hosts_name_both_entry_points() {
+    let (_temp, mut hosts) = fixture();
+    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    fs::create_dir_all(hosts.context.applications[0].join("Devin.app")).unwrap();
+    assert_eq!(host(&hosts, "claude").label, "Claude Code（终端／桌面端）");
+    assert_eq!(host(&hosts, "devin").label, "Devin（CLI／桌面端）");
+
+    let elsewhere = hosts.context.home.join("claude-work");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        elsewhere.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "claude").label, "Claude Code");
+    assert_eq!(host(&hosts, "claude-desktop").label, "Claude 桌面");
+
+    // Naming the default folder still moves Claude Code's file away from the desktop's.
+    let named = hosts.context.home.join(".claude");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        named.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "claude").config, named.join(".claude.json"));
+    assert_eq!(host(&hosts, "claude").label, "Claude Code");
+    assert_eq!(
+        host(&hosts, "claude-desktop").config,
+        hosts.context.home.join(".claude.json")
+    );
 }
 
 #[cfg(not(windows))]

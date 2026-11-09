@@ -632,9 +632,16 @@ fn validate_clis(clis: &Map<String, Value>) -> Result<(), String> {
         let fields = object(cli, &format!("clis.{provider}"))?;
         only(
             fields,
-            &["models", "allowed_models"],
+            &["models", "allowed_models", "executable_source"],
             &format!("clis.{provider}"),
         )?;
+        if let Some(source) = fields.get("executable_source")
+            && (provider != "codex" || !matches!(source.as_str(), Some("desktop" | "standalone")))
+        {
+            return Err(format!(
+                "clis.{provider}.executable_source 只支持 Codex 的 desktop 或 standalone"
+            ));
+        }
         let models = fields
             .get("models")
             .ok_or_else(|| format!("clis.{provider} 缺少 models"))?;

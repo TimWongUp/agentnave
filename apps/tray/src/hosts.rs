@@ -504,7 +504,7 @@ fn reload_hint(id: &str) -> &'static str {
         "antigravity" => "重启 Antigravity（桌面版需完整退出）",
         "pi" => "重启 Pi",
         "deepseek" => "重启 DeepSeek Harness（桌面版需完整退出）",
-        "devin" => "重启 Devin CLI",
+        "devin" => "重启 Devin CLI 或桌面端",
         "hermes" => "重启 Hermes 网关",
         "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",
