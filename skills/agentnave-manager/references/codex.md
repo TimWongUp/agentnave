@@ -8,6 +8,8 @@
 {"model": "gpt-6.1-sol", "effort": "high"}
 ```
 
+Codex 作宿主时，`native=true` 的 Codex 工位交给自带子代理：`spawn_agent` 传 `model` 和 `reasoning_effort`，取工位的模型和档位；不传会沿用 config 里 `[agents]` 的默认子代理模型。模型须在 Codex 的模型列表里，否则报 `Unknown model`。
+
 服务总是为 Codex 带上 `--skip-git-repo-check`，非 Git 目录也能直接运行，无需传参；它只跳过仓库检查，不扩大命令权限。
 
 `sandbox`（`read-only`、`workspace-write`、`danger-full-access`）设定本次调用的原生沙箱模式，续接同样生效；它是权限类参数，只能来自 App 默认值或用户明确要求。
