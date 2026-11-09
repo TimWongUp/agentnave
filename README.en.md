@@ -18,7 +18,7 @@
 
 ## 🎬 Live demo
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss brings six CLI employees into a meeting for two parallel rounds, then the boss sums up" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss brings seven CLI employees into a meeting, with video characters, for two parallel rounds, then the boss sums up" width="100%"></p>
 
 ## ✨ Highlights
 

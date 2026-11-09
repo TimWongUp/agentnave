@@ -18,7 +18,7 @@
 
 ## 🎬 实机演示
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 请 6 个 CLI 员工开会，在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 请 7 位 CLI 员工开会，视频小人在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
 
 ## ✨ 几大特点
 
