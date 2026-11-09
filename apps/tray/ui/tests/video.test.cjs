@@ -461,6 +461,8 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   assert.equal(radios()[1].disabled, true);
   assert.equal(radios()[1].attrs.title, "请先安装 272p 视频包");
   assert.equal(radios()[2].disabled, false);
+  const badges = () => root.findAll(el => el.className.includes("video-pack-status")).map(el => el.textContent);
+  assert.deepEqual(badges(), ["未安装 · 180.4 MB", "已安装 · 42.0 MB"]);
 
   radios()[2].click();
   await new Promise(r => setImmediate(r));
