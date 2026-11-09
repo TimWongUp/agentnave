@@ -4,7 +4,7 @@ function slotRows(provider, scene, split) {
   const key = `${provider}/${scene || "both"}`;
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
-  if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : L(`${SCENES.task}、${SCENES.discussion}`, `${SCENES.task}, ${SCENES.discussion}`));
   const pick = (change) => changeSlot(provider, scene, change);
@@ -59,15 +59,17 @@ function slotRows(provider, scene, split) {
 
 // What the pool row reads: scenes of an older file can still hold lists of their own.
 function poolSummary(provider, all, pool) {
+  const visible = (list) => list?.filter((id) => !hiddenModel(provider, id));
   const count = (list) => (list ? L(`${list.length} 个`, `${list.length}`) : L(`全部 ${all.length} 个`, `All ${all.length}`));
   const scenes = SCENE_IDS.filter((s) => slot(s, provider).enabled);
-  const lists = scenes.map((s) => slot(s, provider).allowed);
+  const lists = scenes.map((s) => visible(slot(s, provider).allowed));
   if (!hasPool(provider) && lists.length > 1 && !sameJson(lists[0], lists[1])) {
     return scenes.map((s, i) => `${SCENES[s]} ${count(lists[i])}`).join(L("、", ", "));
   }
   if (!pool) return count(null);
-  const names = pool.slice(0, 3).join(L("、", ", "));
-  return L(`${pool.length} 个：${names}${pool.length > 3 ? " 等" : ""}`, `${pool.length}: ${names}${pool.length > 3 ? ", etc." : ""}`);
+  const shown = visible(pool);
+  const names = shown.slice(0, 3).join(L("、", ", "));
+  return L(`${shown.length} 个：${names}${shown.length > 3 ? " 等" : ""}`, `${shown.length}: ${names}${shown.length > 3 ? ", etc." : ""}`);
 }
 
 // One list per CLI; every scene and seat of the CLI picks its model from it.
@@ -75,7 +77,7 @@ function poolRows(provider) {
   const key = `${provider}/pool`;
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
-  if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const pool = shownPool(provider);
   const open = pickerOpen === key;
   const rows = [el("div", { className: "member-row" },

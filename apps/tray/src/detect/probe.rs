@@ -461,11 +461,16 @@ pub(super) fn devin_models(text: &str) -> Vec<Value> {
     {
         return families
             .iter()
+            .filter(|family| {
+                family["family_uid"]
+                    .as_str()
+                    .is_none_or(|id| !id.eq_ignore_ascii_case("fusion"))
+            })
             .filter_map(|family| family["variants"].as_array())
             .flatten()
             .filter_map(|variant| {
                 let id = variant["model_uid"].as_str()?.trim();
-                (!id.is_empty()).then(|| {
+                (!id.is_empty() && !id.to_ascii_lowercase().starts_with("fusion-")).then(|| {
                     let label = variant["label"].as_str().map(str::trim).unwrap_or(id);
                     model(id, if label.is_empty() { id } else { label }, false)
                 })
@@ -479,6 +484,9 @@ pub(super) fn devin_models(text: &str) -> Vec<Value> {
             let head = line.split_once("  [").map_or(line, |(head, _)| head).trim();
             let mut parts = head.split_whitespace();
             let id = parts.next()?;
+            if id.to_ascii_lowercase().starts_with("fusion-") {
+                return None;
+            }
             let rest = head[id.len()..].trim();
             Some(model(id, if rest.is_empty() { id } else { rest }, false))
         })

@@ -73,8 +73,10 @@ function getAllModelIds(provider) {
   for (const selection of Object.values(currentDoc.modes || {})) {
     for (const id of selection?.[provider]?.models || []) ids.add(id);
   }
-  return [...ids].filter((id) => typeof id === "string" && id.trim());
+  return [...ids].filter((id) => typeof id === "string" && id.trim() && !hiddenModel(provider, id));
 }
+
+const hiddenModel = (provider, id) => provider === "devin" && /^fusion-/i.test(id);
 
 // A scene's effort for one model: its override, else the shared level; "" follows the CLI.
 function sceneEffort(scene, provider, modelId) {
