@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.6.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.7.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.6.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.7.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -609,26 +609,31 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.6.0
+### Upgrading to v1.7.0
 
-Update the App; it installs the paired service at startup. Reconnect or reopen host copies as the
-boss card asks.
+Update the App; it installs the paired service at startup and rewrites the orchestration block of
+bosses on Split work or Parallel work. Dispatching is now the default: the boss keeps only small
+tasks that read one or two files, change one place and take a few minutes, and hands multi-file
+implementations, investigation that needs locating the cause, long-form writing and specialist
+work to employees. Employees' quota is used more than before; switch orchestration to Off, or use
+Custom, to keep more work in the boss.
 
-On macOS and Linux, Antigravity CLI (`agy`) now runs through its interactive terminal UI instead of
-`-p` when its permissions are skipped, which both App permission tiers do. The service turns this
-on by default and reports `interactive` in `defaults_applied`; turn it off with the Antigravity
-card's interactive switch, or set `"antigravity_interactive": false` in `settings.json` on headless
-Linux. The first interactive run adds an `agentnave-interactive` entry to
-`~/.gemini/config/hooks.json`. It acts only in `agy` processes AgentNave starts and keeps every
-other entry; a disabled entry blocks the run instead of being re-enabled. Explicit
-`interactive=true` requires `dangerously_skip_permissions=true` and rejects `print_timeout` and
-`disable_slash_commands`.
+Split work and Parallel work share a new "boss only orchestrates" switch (`lead_only`), off by
+default. When on, even small tasks go out and the boss only splits work, writes briefs, checks
+results, merges and wraps up. When off, a request to only orchestrate still applies to the current
+task. Custom text that contains the previous generated sentences verbatim is migrated to the new
+wording; your own edits stay.
 
-The App downloads the video pack from the v1.4.0 release again, so one-click video pack downloads
-work without importing from a folder.
+Parallel work now has its own "boss may call meetings" switch (`parallel_options.meetings`), on by
+default; turn it off to hold meetings only when asked. Split work's same switch stays off by
+default.
 
-See [v1.6.0 release notes](releases/v1.6.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.5.0.md).
+On headless Linux, these switches change only the rules text the App writes. Bots do not read these
+fields; copy the new text into the bot's instruction entry as the
+[headless Linux host guide](linux-headless.md) describes.
+
+See [v1.7.0 release notes](releases/v1.7.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.6.0.md).
 
 ## Uninstall
 
