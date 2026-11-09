@@ -157,7 +157,7 @@ class Turn:
         """While a background call runs, the footer tells who works: idle is agy waiting on
         the call, busy is the model."""
         if self.stopped:
-            return  # fullyIdle can leave daemon tasks running; the hook owns turn completion.
+            return  # Stop owns turn completion; do not emit further progress.
         if self.open_tools:
             # Transcript calls take precedence; reconsider even an unchanged footer after
             # their output arrives and hands control back to the model/background calls.
