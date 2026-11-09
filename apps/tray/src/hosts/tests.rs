@@ -2151,11 +2151,28 @@ fn zcode_fallback_servers_block_only_a_first_server() {
     assert_eq!(zcode_fallback(home, &own), None);
 }
 
+/// Leaves what each platform's Claude Desktop discovery looks for.
+fn install_claude_desktop(hosts: &Hosts) {
+    if cfg!(windows) {
+        save(
+            &hosts
+                .context
+                .home
+                .join("AppData/Local/AnthropicClaude/claude.exe"),
+            "",
+        );
+    } else if cfg!(target_os = "macos") {
+        fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    } else {
+        fs::create_dir_all(hosts.context.home.join(".config/Claude")).unwrap();
+    }
+}
+
 #[test]
 fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     let (_temp, mut hosts) = fixture();
     let home = hosts.context.home.clone();
-    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    install_claude_desktop(&hosts);
     executable_file(
         &hosts.context.search[0].join("codex"),
         "#!/bin/sh\nexit 99\n",
@@ -2286,7 +2303,7 @@ fn connection_receipts_belong_to_the_config_row_that_started_them() {
 #[test]
 fn claude_desktop_gets_a_row_only_for_a_file_of_its_own() {
     let (_temp, mut hosts) = fixture();
-    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    install_claude_desktop(&hosts);
     let desktop_row = |hosts: &Hosts| hosts.registry().iter().any(|h| h.id == "claude-desktop");
     assert!(!desktop_row(&hosts));
 
@@ -2341,7 +2358,7 @@ fn a_separate_claude_desktop_row_owns_its_installation() {
         home.join("claude-work").display().to_string(),
     )])));
     executable_file(&hosts.context.search[0].join("claude"), "fake");
-    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    install_claude_desktop(&hosts);
     let main = hosts.state(&host(&hosts, "claude"));
     let desktop = hosts.state(&host(&hosts, "claude-desktop"));
     assert_eq!(main["clients"][0]["kind"], "cli");

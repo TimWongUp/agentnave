@@ -187,10 +187,10 @@ pub(super) fn install_dir(display_name: &str) -> Option<PathBuf> {
             }
         }
         // Electron apps often leave `InstallLocation` out but point `DisplayIcon` at their exe.
-        if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            if let Some(parent) = registry_path(&icon).parent() {
-                return Some(parent.to_path_buf());
-            }
+        if let Some(icon) = registry_value(&key, "DisplayIcon")
+            && let Some(parent) = registry_path(&icon).parent()
+        {
+            return Some(parent.to_path_buf());
         }
     }
     None
