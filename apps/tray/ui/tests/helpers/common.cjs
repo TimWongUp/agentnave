@@ -3,20 +3,30 @@ const vm = require("node:vm");
 
 // Run the shared production helpers instead of maintaining test-side naming rules.
 function common(english = false) {
-  const storage = new Map();
+  const storage = new Map(), listeners = {};
+  let selection = "";
   const context = vm.createContext({
     document: {
       documentElement: { lang: english ? "en" : "zh", dataset: {}, classList: { toggle() {} } },
-      querySelectorAll: () => [], querySelector: () => null, addEventListener() {},
+      querySelectorAll: () => [], querySelector: () => null, addEventListener: (name, fn) => { listeners[name] = fn; },
     },
+    getSelection: () => selection,
     window: { ANAppearance: { applyTheme() {}, reducedMotion: { matches: true } }, addEventListener() {} },
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
     fetch: async () => ({ ok: false, json: async () => ({}) }),
     setInterval() {},
   });
   vm.runInContext(readFileSync(`${__dirname}/../../common.js`, "utf8"), context);
-  return Object.fromEntries(["deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
+  const api = Object.fromEntries(["deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
     .map(key => [key, context.window.AN[key]]));
+  // Whether the shared contextmenu listener blocks WebKit's menu for this event and selection.
+  api.menuBlocked = (event, current = "") => {
+    selection = current;
+    let blocked = false;
+    listeners.contextmenu({ clientX: 0, clientY: 0, ...event, preventDefault() { blocked = true; } });
+    return blocked;
+  };
+  return api;
 }
 
 // Concrete service projections, deliberately not a second naming implementation.

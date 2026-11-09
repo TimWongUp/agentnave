@@ -17,11 +17,25 @@
     return node;
   }
   const $ = (id) => document.getElementById(id);
-  // WebKit's own menu (Reload, Back, Inspect…) offers nothing on these pages. Text fields and
-  // selected text keep it for copy and paste; workspaces and rooms open their own menus.
+  // WebKit's own menu (Reload, Back, Inspect…) offers nothing on these pages. Text entry keeps it
+  // for copy and paste, and so does selected text under the pointer; workspaces and rooms open
+  // their own menus. A menu opened from the keyboard carries no pointer position, so a selection
+  // anywhere keeps it there.
+  const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image", "hidden"]);
+  function overSelection(x, y) {
+    const selection = getSelection();
+    if (!String(selection)) return false;
+    if (!x && !y) return true;
+    for (let i = 0; i < selection.rangeCount; i++) {
+      for (const r of selection.getRangeAt(i).getClientRects()) {
+        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return true;
+      }
+    }
+    return false;
+  }
   document.addEventListener("contextmenu", (e) => {
-    if (e.target instanceof Element && e.target.closest("input, textarea, [contenteditable]")) return;
-    if (String(getSelection())) return;
+    const field = e.target.closest?.("input, textarea");
+    if (e.target.isContentEditable || (field && !NON_TEXT_INPUTS.has(field.type)) || overSelection(e.clientX, e.clientY)) return;
     e.preventDefault();
   });
   // Bilingual text: the page's <html lang> carries the App's interface language. The App sets
