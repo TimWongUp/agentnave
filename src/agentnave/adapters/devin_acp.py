@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -16,6 +17,8 @@ from agentnave.adapters.base import resolve_executable
 from agentnave.native_prompts import mask_secrets
 
 LINE_LIMIT = 64 * 1024 * 1024
+# Devin's own reason for leaving is on stderr, which the adapter reads instead.
+CLOSED = "Devin ACP closed before completing the request"
 PROTOCOL_VERSION = 1
 # ACP has no `-p` auto mode; dangerous is what the App's full tier writes.
 MODES = {
@@ -69,6 +72,10 @@ class Turn:
         return next((text for text in reversed(self.segments) if text.strip()), "")
 
 
+class RpcError(RuntimeError):
+    """Devin answered a request with a JSON-RPC error."""
+
+
 class Connection:
     def __init__(self, process: subprocess.Popen[bytes]) -> None:
         self.process = process
@@ -93,7 +100,7 @@ class Connection:
             if len(line) > LINE_LIMIT:
                 raise RuntimeError("Devin ACP line exceeds 64 MiB")
             if not line:
-                raise RuntimeError("Devin ACP closed before completing the request")
+                raise RuntimeError(CLOSED)
             try:
                 raw: object = json.loads(line)
             except ValueError:
@@ -116,7 +123,7 @@ class Connection:
             if "error" in message:
                 error = _object(message["error"])
                 detail = error.get("data")
-                raise RuntimeError(
+                raise RpcError(
                     str(error.get("message") or f"Devin {method} failed")
                     + (f": {detail}" if isinstance(detail, str) and detail else "")
                 )
@@ -255,7 +262,7 @@ def _select(connection: Connection, result: dict[str, Any], option: str, value: 
             "session/set_config_option",
             {"sessionId": connection.session_id, "configId": option, "value": value},
         )
-    except RuntimeError as exc:
+    except RpcError as exc:
         raise ValueError(
             f"Devin {option} {value} is not available here; available: "
             + ", ".join(str(v) for v in values)
@@ -338,7 +345,7 @@ def run(request: dict[str, Any], answers: IO[bytes]) -> int:
             emit(
                 {
                     "type": "result",
-                    "session_id": connection.session_id or None,
+                    "session_id": connection.session_id or request.get("session_id") or None,
                     "output": connection.turn.output(),
                     "failed": True,
                     "error": str(exc) if expected else f"Unexpected Devin reply: {exc!r}",
@@ -351,7 +358,9 @@ def run(request: dict[str, Any], answers: IO[bytes]) -> int:
 
 
 def _stop(process: subprocess.Popen[bytes]) -> None:
-    cast(IO[bytes], process.stdin).close()
+    # Closing flushes what a broken pipe left behind; that must not skip the timeouts below.
+    with contextlib.suppress(OSError):
+        cast(IO[bytes], process.stdin).close()
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:

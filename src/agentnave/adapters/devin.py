@@ -19,7 +19,7 @@ from agentnave.adapters.base import (
     parse_json_object,
     restricted_options,
 )
-from agentnave.adapters.devin_acp import MODES
+from agentnave.adapters.devin_acp import CLOSED, MODES
 from agentnave.models import Host, InvocationRequest, InvocationStatus, ProviderActivity
 from agentnave.native_prompts import NativePrompt, encode_answer, prompt_from_event
 from agentnave.native_sessions import session_model as native_session_model
@@ -134,11 +134,14 @@ class DevinAdapter(AdapterHooks):
         raw_error = next(
             (str(e["message"]) for e in reversed(events) if e.get("type") == "error"), ""
         ) or (str(result.get("error") or "") if result is not None else "")
+        stderr_text = stderr.decode(errors="replace")
+        if raw_error == CLOSED and stderr_text.strip():
+            raw_error = ""
         message = error_summary(
-            raw_error or stderr.decode(errors="replace"),
+            raw_error or stderr_text,
             f"devin exited with status {returncode}",
         )
-        lowered = message.lower()
+        lowered = f"{stderr_text}\n{message}".lower()
         if stop == "cancelled":
             status = InvocationStatus.CANCELLED
         elif stop == "refusal" or "not logged in" in lowered or "auth login" in lowered:

@@ -1861,6 +1861,11 @@ def test_devin_parse_maps_acp_stop_reasons_and_errors() -> None:
         InvocationStatus.FAILED
     )
     assert adapter.parse(1, b"", b"").status is InvocationStatus.FAILED
+    # Devin that quits explains itself on stderr, not in the helper's closed-pipe error.
+    closed = {"type": "result", "failed": True, "error": devin_acp.CLOSED}
+    logged_out = adapter.parse(1, lines(closed), b"Not logged in. Run devin auth login\n")
+    assert logged_out.status is InvocationStatus.BLOCKED
+    assert logged_out.error_message == "Not logged in. Run devin auth login"
 
 
 def test_devin_activity_keeps_thinking_and_tool_inputs_private() -> None:
