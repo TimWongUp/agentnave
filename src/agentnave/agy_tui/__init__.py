@@ -228,8 +228,14 @@ class Run:
             # agy folds a long paste into "[Pasted text #1 +121 lines]".
             box = input_box(screen)
             echoed = evidence in box or box.lower().startswith("> [pasted text #")
+            # Enter never answers a menu that came up after the paste.
+            if state(screen) == "menu":
+                self.turn.block("agy opened a dialog while taking the task", screen)
+                return False
             if submitted is None and not self.terminal.outgoing and echoed:
                 time.sleep(0.5)  # Let agy finish taking the paste before Enter.
+                if state(self.poll()) == "menu":
+                    continue
                 self.terminal.outgoing.extend(b"\r")
                 submitted = now
             elif submitted is not None and now - submitted >= 3 and not retried:
@@ -260,6 +266,8 @@ class Run:
         deadline = time.monotonic() + 3
         while not self.turn.answered and time.monotonic() < deadline:
             self.poll()
+        if not self.turn.answered and self.turn.error is None:
+            self.turn.error = "agy stopped without a final reply after this task"
 
     def stalled(self, shown: str, steady: float, screen: str) -> bool:
         """Blocks a turn whose screen has stood still past its limit. A busy footer has none,

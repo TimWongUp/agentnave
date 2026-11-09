@@ -75,7 +75,8 @@ if case != "resume":
 assert hook("PreToolUse", toolCall={"name": "ask_question"})["decision"] == "deny"
 row(step_index=11, source="MODEL", type="PLANNER_RESPONSE", content="looking", tool_calls=[{"name": "run_command"}])
 row(step_index=12, source="MODEL", type="GENERIC", content="ran")
-row(step_index=13, source="MODEL", type="PLANNER_RESPONSE", content="finished")
+if case != "noreply":
+    row(step_index=13, source="MODEL", type="PLANNER_RESPONSE", content="finished")
 # A subagent of this agy stops first; only this conversation's Stop ends the turn.
 hook("Stop", conversationId="subagent", fullyIdle=True, terminationReason="NO_TOOL_CALL")
 hook("Stop", fullyIdle=True, terminationReason="NO_TOOL_CALL", error="")
@@ -84,7 +85,7 @@ time.sleep(12)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY runtime")
-@pytest.mark.parametrize("case", ["new", "resume", "dialog"])
+@pytest.mark.parametrize("case", ["new", "resume", "dialog", "noreply"])
 def test_fake_agy_turn_through_the_standalone_helper(
     case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -120,6 +121,11 @@ def test_fake_agy_turn_through_the_standalone_helper(
         assert parsed.status is InvocationStatus.BLOCKED
         assert "unexpected startup dialog" in str(parsed.error_message)
         return
+    if case == "noreply":
+        # The last response still calls a tool: a Stop then is no finished turn.
+        assert parsed.status is InvocationStatus.FAILED
+        assert "without a final reply" in str(parsed.error_message)
+        return
     assert parsed.status is InvocationStatus.SUCCEEDED, completed.stdout.decode()
     assert parsed.output == "finished"
     assert parsed.session_id == (sid or "new-conversation")
@@ -130,14 +136,19 @@ def test_fake_agy_turn_through_the_standalone_helper(
     assert any(hooks.NAME in warning for warning in parsed.warnings)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell hook; no interactive runtime on Windows")
 def test_hook_entry_keeps_other_hooks_and_acts_only_in_agentnave_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     path = hooks.hooks_path()
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"mine": {"Stop": []}}))
+    # A user who keeps the file elsewhere keeps the link; the target gets the entry.
+    target = tmp_path / "dotfiles-hooks.json"
+    target.write_text(json.dumps({"mine": {"Stop": []}}))
+    path.symlink_to(target)
     assert hooks.ensure_entry() is not None
+    assert path.is_symlink()
     assert hooks.ensure_entry() is None
     saved = json.loads(path.read_text())
     assert list(saved) == ["mine", hooks.NAME]

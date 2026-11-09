@@ -186,8 +186,6 @@ class AntigravityAdapter(AdapterHooks):
 
     def _prepare_interactive(self, request: InvocationRequest) -> PreparedCommand:
         """Only with permissions skipped: the runtime answers no permission dialog (ADR-0072)."""
-        if os.name == "nt":
-            raise ValueError("antigravity interactive is not available on Windows")
         argv = [sys.executable, "-I", "-m", "agentnave.agy_tui", "--agy", self.executable_path()]
         if request.session_id is not None:
             argv.extend(("--conversation", request.session_id))
@@ -367,6 +365,8 @@ class AntigravityAdapter(AdapterHooks):
         if not isinstance(interactive, bool):
             raise ValueError("antigravity option interactive must be boolean")
         if interactive:
+            if os.name == "nt":
+                raise ValueError("antigravity interactive is not available on Windows")
             if options.get("dangerously_skip_permissions") is not True:
                 raise ValueError("antigravity interactive needs dangerously_skip_permissions=true")
             if print_only := sorted({"print_timeout", "disable_slash_commands"} & set(options)):

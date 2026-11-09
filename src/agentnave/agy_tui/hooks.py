@@ -55,34 +55,50 @@ def hooks_path() -> Path:
     return Path.home() / ".gemini" / "config" / "hooks.json"
 
 
-def ensure_entry() -> str | None:
-    """Adds or restores the entry, keeping every other hook; a warning when it wrote one."""
-    path = hooks_path()
+def _read(path: Path) -> bytes | None:
     try:
-        document: object = json.loads(path.read_text(encoding="utf-8"))
+        return path.read_bytes()
     except FileNotFoundError:
-        document = {}
-    except ValueError as exc:
-        raise ValueError(f"{path} is not valid JSON ({exc}); fix it in Antigravity") from exc
-    if not isinstance(document, dict):
-        raise ValueError(f"{path} must hold a JSON object; fix it in Antigravity")
-    hooks = cast(dict[str, object], document)
-    current = hooks.get(NAME)
-    if isinstance(current, dict) and cast(dict[str, object], current).get("enabled") is False:
-        raise ValueError(
-            f"the {NAME} hook is disabled in {path}; enable it, or turn off interactive mode "
-            "for Antigravity in the AgentNave App"
-        )
-    if current == entry():
         return None
-    hooks[NAME] = entry()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.agentnave-{os.getpid()}")
-    temporary.write_text(json.dumps(hooks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    with contextlib.suppress(FileNotFoundError):
-        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
-    os.replace(temporary, path)
-    return f"AgentNave added the {NAME} hook to {path}; it acts only in runs AgentNave starts"
+
+
+def ensure_entry() -> str | None:
+    """Adds or restores the entry, keeping every other hook; a warning when it wrote one.
+
+    Writes through a symlink to its target, and starts over when the file changed while it
+    was being rewritten, so a concurrent save by the user or Antigravity is not lost.
+    """
+    path = Path(os.path.realpath(hooks_path()))
+    for _ in range(3):
+        original = _read(path)
+        try:
+            document: object = json.loads(original) if original is not None else {}
+        except ValueError as exc:
+            raise ValueError(f"{path} is not valid JSON ({exc}); fix it in Antigravity") from exc
+        if not isinstance(document, dict):
+            raise ValueError(f"{path} must hold a JSON object; fix it in Antigravity")
+        hooks = cast(dict[str, object], document)
+        current = hooks.get(NAME)
+        if isinstance(current, dict) and cast(dict[str, object], current).get("enabled") is False:
+            raise ValueError(
+                f"the {NAME} hook is disabled in {path}; enable it, or turn off interactive "
+                "mode for Antigravity in the AgentNave App"
+            )
+        if current == entry():
+            return None
+        hooks[NAME] = entry()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.agentnave-{os.getpid()}")
+        text = json.dumps(hooks, indent=2, ensure_ascii=False) + "\n"
+        temporary.write_text(text, encoding="utf-8")
+        with contextlib.suppress(FileNotFoundError):
+            os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+        if _read(path) != original:
+            temporary.unlink()
+            continue
+        os.replace(temporary, path)
+        return f"AgentNave added the {NAME} hook to {path}; it acts only in runs AgentNave starts"
+    raise ValueError(f"{path} kept changing while AgentNave added its hook; try again")
 
 
 def read_events(
