@@ -165,7 +165,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - name: Create tag and GitHub Release
+      # The release stays a draft until every installer and latest.json is on it (publish-release):
+      # releases/latest is where the app looks for updates, so a published release without them
+      # fails every update check until the last job finishes.
+      - name: Create tag and draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -184,17 +187,17 @@ jobs:
               echo "An existing release has no tag: $RELEASE_TAG" >&2
               exit 1
             }
-            test "$draft" = false || {
-              echo "An existing draft requires manual review: $RELEASE_TAG" >&2
-              exit 1
-            }
-            echo "Release already published: $RELEASE_TAG"
+            if [ "$draft" = true ]; then
+              echo "Resuming the draft of a rerun: $RELEASE_TAG"
+            else
+              echo "Release already published: $RELEASE_TAG"
+            fi
           else
             if [ "$tag_exists" = false ]; then
               gh api --method POST "repos/$GH_REPO/git/refs" \
                 -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"
             fi
-            gh release create "$RELEASE_TAG" --verify-tag \
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
               --title "AgentNave $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
           fi
           uv build --wheel
@@ -341,3 +344,43 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
           PY
           gh release upload "$RELEASE_TAG" windows-assets/latest.json --clobber
+
+  publish-release:
+    name: Publish release
+    # Last, once the wheel, both installers and latest.json are on the draft.
+    needs: [release-metadata, release, tray-release, windows-release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.release-metadata.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-release-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Publish, Latest only when newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+        run: |
+          # GitHub marks the release published last Latest, and the app updates from Latest: a rerun
+          # of an older release published after a newer one would send every app back to it.
+          newest() {
+            gh release list --exclude-drafts --exclude-pre-releases -L 100 --json tagName -q '.[].tagName' |
+              { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -1
+          }
+          top=$(newest)
+          if [ -z "$top" ] || [ "$(printf '%s\n%s\n' "$top" "$RELEASE_TAG" | sort -V | tail -1)" = "$RELEASE_TAG" ]; then
+            latest=true
+          else
+            latest=false
+            echo "$top is newer: $RELEASE_TAG is published without the Latest mark"
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest="$latest"
+          # Two releases publishing at once can each decide before the other is out.
+          top=$(newest)
+          now=$(gh api "repos/$GH_REPO/releases/latest" -q .tag_name 2>/dev/null || true)
+          if [ -n "$top" ] && [ "$now" != "$top" ]; then
+            echo "Latest was ${now:-none}: giving the mark to $top"
+            gh release edit "$top" --latest
+          fi
