@@ -20,6 +20,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
 - Claude 在 macOS／Linux 默认以交互模式运行：Provider 进程是服务自带的 helper，它在同一 supervisor 进程组里用伪终端驱动 `claude`，把 transcript 与 hooks 归一成事件；Windows 与受限工具路径用 `-p`。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)）。
+- Antigravity 在 macOS／Linux 且权限放开时默认以交互模式运行，形状与 Claude 相同；helper 为此在用户的全局 `~/.gemini/config/hooks.json` 维护一条只在它启动的 agy 里起作用的门控条目（[ADR-0072](../adr/0072-antigravity-interactive-runtime.md)）。
 - 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。运行记录失去活跃运行证据时，可在服务使用的同一会话锁下确认无人持有，重读视图并仅在展示中标记中断，不回写历史；不能确认时保留服务状态（[ADR-0060](../adr/0060-tray-detects-orphaned-running-work.md)）。
 
 ## MCP 合同
@@ -79,7 +80,7 @@ App 设置文件按写入方和损坏时的影响范围分开：
 | `members.json` | App；不装 App 时由用户手写 | 每次派发现读；损坏时返回 App 修复错误 |
 | `review.json`、`orchestration.json` | App | 按职责或工位选择读取；编排工位仅对当前接入行启用，分组后的有效档位由 App 计算保存，服务不重复推导规则文件分组；损坏时不套用，由 `list_members` 报告；普通工位调用一律拒绝，包括显式提供 Provider 的调用，评审工位仍按其配置校验 |
 | `permissions.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
-| `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude 时读取交互模式开关，缺省打开 |
+| `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude、Antigravity 时读取各自的交互模式开关，缺省打开 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |
 
 App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样例由两侧测试共同断言接受或拒绝，保证 App 能保存的服务就能读取。

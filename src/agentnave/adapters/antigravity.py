@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -130,8 +133,9 @@ class AntigravityAdapter(AdapterHooks):
     options_description = (
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "
         "dangerously_skip_permissions (boolean; explicitly true enables YOLO for this invocation), "
-        "restricted_tools (boolean; tool-free profile, only in a dedicated seat cwd that already "
-        "contains it)"
+        "interactive (boolean; interactive agy runtime, needs dangerously_skip_permissions; "
+        "not on Windows), restricted_tools (boolean; tool-free profile, only in a dedicated "
+        "seat cwd that already contains it)"
     )
     _options = {
         "model": "--model",
@@ -148,6 +152,8 @@ class AntigravityAdapter(AdapterHooks):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
+        if request.provider_options.get("interactive") is True:
+            return self._prepare_interactive(request)
         message = {"event": "user", "message": {"content": request.prompt}}
         prompt = (json.dumps(message, ensure_ascii=False) + "\n").encode()
         argv = [
@@ -177,6 +183,26 @@ class AntigravityAdapter(AdapterHooks):
                 )
             )
         return PreparedCommand(tuple(argv), request.cwd, prompt, capture_line=_result_capture())
+
+    def _prepare_interactive(self, request: InvocationRequest) -> PreparedCommand:
+        """Only with permissions skipped: the runtime answers no permission dialog (ADR-0072)."""
+        if os.name == "nt":
+            raise ValueError("antigravity interactive is not available on Windows")
+        argv = [sys.executable, "-I", "-m", "agentnave.agy_tui", "--agy", self.executable_path()]
+        if request.session_id is not None:
+            argv.extend(("--conversation", request.session_id))
+        argv.extend(("--", *self.option_args(request)))
+        prompt = json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n"
+        return PreparedCommand(
+            tuple(argv), request.cwd, prompt.encode(), capture_line=_result_capture()
+        )
+
+    def event_model(self, event: dict[str, object]) -> str | None:
+        # The interactive runtime names the model in its result; print mode's comes from the log.
+        if event.get("event") != "result":
+            return None
+        model = object_dict(event.get("result")).get("model")
+        return model if isinstance(model, str) and model else None
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
         return session_model(session_id, since=since)
@@ -268,6 +294,12 @@ class AntigravityAdapter(AdapterHooks):
         session_id = payload.get("conversation_id")
         provider_status = payload.get("status")
         explicit_error = payload.get("error")
+        raw_warnings = payload.get("warnings")
+        warnings = (
+            tuple(w for w in cast(list[object], raw_warnings) if isinstance(w, str))
+            if isinstance(raw_warnings, list)
+            else ()
+        )
 
         if not isinstance(session_id, str) or not session_id:
             session_id = stream_session_id
@@ -302,7 +334,9 @@ class AntigravityAdapter(AdapterHooks):
             and ((normalized_status == "SUCCESS" and not explicit_error) or turn_answered)
             and not blocked_by_stderr
         ):
-            return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
+            return ParsedProviderResult(
+                InvocationStatus.SUCCEEDED, output, session_id, warnings=warnings
+            )
 
         if normalized_status is None:
             status_message = "antigravity result omitted status"
@@ -324,14 +358,24 @@ class AntigravityAdapter(AdapterHooks):
             status = InvocationStatus.BLOCKED
         else:
             status = failure_status(message)
-        return ParsedProviderResult(status, output, session_id, message)
+        return ParsedProviderResult(status, output, session_id, message, warnings)
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
-        unknown = sorted(set(request.provider_options) - set(self._options))
+        options = dict(request.provider_options)
+        # Chooses the runtime in prepare(); it is no agy flag.
+        interactive = options.pop("interactive", False)
+        if not isinstance(interactive, bool):
+            raise ValueError("antigravity option interactive must be boolean")
+        if interactive:
+            if options.get("dangerously_skip_permissions") is not True:
+                raise ValueError("antigravity interactive needs dangerously_skip_permissions=true")
+            if print_only := sorted({"print_timeout", "disable_slash_commands"} & set(options)):
+                raise ValueError(f"antigravity interactive does not take {', '.join(print_only)}")
+        unknown = sorted(set(options) - set(self._options))
         if unknown:
             raise ValueError(f"unsupported antigravity options: {', '.join(unknown)}")
         args: list[str] = []
-        for key, value in request.provider_options.items():
+        for key, value in options.items():
             flag = self._options[key]
             if key in self._boolean_options:
                 if not isinstance(value, bool):

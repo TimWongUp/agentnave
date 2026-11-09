@@ -138,7 +138,7 @@ Claude 两档所选的模式在这台电脑或账号上不可用时，服务改�
 
 ## 交互模式
 
-Claude Code 以终端界面而不是 `-p` 运行，由服务自带的 helper 驱动；macOS／Linux 默认打开，Windows 没有。
+Claude Code 或 Antigravity CLI 以终端界面而不是 `-p` 运行，由服务自带的 helper 驱动；macOS／Linux 默认打开，Windows 没有。Antigravity 只在权限放开时使用。
 _Avoid_: TUI 模式、print 模式（指 `-p` 时说 `-p`）
 
 ## 原生弹框

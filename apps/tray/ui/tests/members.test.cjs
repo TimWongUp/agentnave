@@ -428,12 +428,13 @@ function runtimeEditor(fetch, os) {
   return app;
 }
 
-test("Claude runtime switch is labelled, defaults off, and is hidden on Windows and other cards", async () => {
+test("runtime switches are labelled, default off, and are hidden on Windows and other cards", async () => {
   const app = runtimeEditor(async () => ({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8 } }) }));
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
   await app.run("loadLimit()");
-  assert.equal(app.run("renderClaudeInteractive('codex')"), null);
-  const row = app.run("renderClaudeInteractive('claude')");
+  assert.equal(app.run("renderInteractive('codex')"), null);
+  assert.equal(app.run("renderInteractive('antigravity').children[0].children[0].attrs.checked"), false);
+  const row = app.run("renderInteractive('claude')");
   assert.equal(row.attrs.className, "member-row member-runtime");
   const label = row.children[0], input = label.children[0];
   assert.equal(label.tag, "label");
@@ -441,7 +442,7 @@ test("Claude runtime switch is labelled, defaults off, and is hidden on Windows 
   assert.equal(input.attrs.checked, false);
   assert.equal(input.attrs.disabled, false);
   const windows = runtimeEditor(undefined, "windows");
-  assert.equal(windows.run("renderClaudeInteractive('claude')"), null);
+  assert.equal(windows.run("renderInteractive('claude')"), null);
 });
 
 test("runtime saves immediately without changing other settings or the unsaved limit", async () => {
@@ -456,10 +457,13 @@ test("runtime saves immediately without changing other settings or the unsaved l
     return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, history_retention_days: 90, claude_interactive: true } }) };
   });
   await app.run("loadLimit()");
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.checked"), true);
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.checked"), true);
   app.run("$('max-running').value = '3'; refreshDirty()");
-  await app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.onChange({ target: { checked: false } })");
+  await app.run("renderInteractive('claude').children[0].children[0].attrs.onChange({ target: { checked: false } })");
   assert.deepEqual(calls, [{ version: 1, claude_interactive: false }]);
+  await app.run("renderInteractive('antigravity').children[0].children[0].attrs.onChange({ target: { checked: true } })");
+  assert.deepEqual(calls[1], { version: 1, antigravity_interactive: true });
+  calls.pop();
   assert.equal(app.run("limitChanged()"), true);
   assert.equal(app.run("dirty"), true);
   assert.equal(app.run("limitDoc.history_retention_days"), 90);
@@ -472,11 +476,11 @@ test("failed writes restore the runtime switch and report preview refusals", asy
   let finish;
   const app = runtimeEditor(() => new Promise(resolve => { finish = resolve; }));
   app.run("limitDoc = { version: 1, max_running: 8, claude_interactive: false }");
-  const saving = app.run("setClaudeInteractive(true)");
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  const saving = app.run("setInteractive('claude_interactive', true)");
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
   finish({ ok: false, json: async () => ({ error: "预览版不修改正式数据" }) });
   await saving;
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.checked"), false);
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.checked"), false);
   assert.equal(app.run("busy"), false);
   assert.match(app.run("$('notice').textContent"), /预览版不修改正式数据/);
 });
@@ -493,13 +497,13 @@ test("broken settings keep the switch disabled until the existing settings save 
     return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: true }, error: "claude_interactive 必须为布尔值" }) };
   });
   await app.run("loadLimit()");
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
-  await app.run("setClaudeInteractive(true)");
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  await app.run("setInteractive('claude_interactive', true)");
   assert.equal(posts, 0);
   assert.match(app.run("$('notice').textContent"), /claude_interactive/);
   app.run("$('max-running').value = '3'");
   await app.run("saveLimit()");
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), false);
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), false);
 });
 
 test("a settings read started before a runtime save cannot restore its old value", async () => {
@@ -509,7 +513,7 @@ test("a settings read started before a runtime save cannot restore its old value
     : new Promise(resolve => { finish = resolve; }));
   app.run("limitDoc = { version: 1, max_running: 8, claude_interactive: false }");
   const loading = app.run("loadLimit()");
-  await app.run("setClaudeInteractive(true)");
+  await app.run("setInteractive('claude_interactive', true)");
   finish({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: false } }) });
   await loading;
   assert.equal(app.run("limitDoc.claude_interactive"), true);
@@ -524,7 +528,7 @@ test("a failed settings read cannot make a limit save reset other runtime settin
     return { ok: true, json: async () => ({ saved: true }) };
   });
   await app.run("loadLimit()");
-  assert.equal(app.run("renderClaudeInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
   app.run("$('max-running').value = '3'");
   await app.run("saveLimit()");
   assert.deepEqual(sent, { version: 1, max_running: 3 });

@@ -14,7 +14,7 @@ pub const DEFAULT_MAX_RUNNING: u64 = 8;
 const MAX_RUNNING: std::ops::RangeInclusive<u64> = 1..=32;
 
 pub fn defaults() -> Value {
-    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": true})
+    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true})
 }
 
 /// The normalized known settings; the same rules as the service:
@@ -40,13 +40,19 @@ pub fn validate(document: &Value) -> Result<Value, String> {
                 .ok_or("history_retention_days 必须为 null、30、90 或 180")?,
         ),
     };
-    let claude_interactive = match object.get("claude_interactive") {
-        None => true,
-        Some(value) => value.as_bool().ok_or("claude_interactive 必须为布尔值")?,
+    let interactive = |key: &str| match object.get(key) {
+        None => Ok(true),
+        Some(value) => value.as_bool().ok_or(format!("{key} 必须为布尔值")),
     };
-    Ok(
-        json!({"version": 1, "max_running": max_running, "history_retention_days": retention, "claude_interactive": claude_interactive}),
-    )
+    let claude_interactive = interactive("claude_interactive")?;
+    let antigravity_interactive = interactive("antigravity_interactive")?;
+    Ok(json!({
+        "version": 1,
+        "max_running": max_running,
+        "history_retention_days": retention,
+        "claude_interactive": claude_interactive,
+        "antigravity_interactive": antigravity_interactive,
+    }))
 }
 
 /// The saved document; `None` when there is none yet.

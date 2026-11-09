@@ -28,8 +28,9 @@ def codex_auto_source(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def claude_over_print(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Fake Claude CLIs here speak --print; a test of the interactive default restores it.
+    # Fake Claude and agy CLIs here speak print mode; a test of an interactive default restores it.
     monkeypatch.setattr(members, "read_claude_interactive", lambda: False)
+    monkeypatch.setattr(members, "read_antigravity_interactive", lambda: False)
 
 
 @pytest.fixture(autouse=True)

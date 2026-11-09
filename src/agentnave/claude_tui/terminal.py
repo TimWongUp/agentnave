@@ -47,13 +47,19 @@ class Terminal:
     groups: set[int]
     groups_at: float
 
-    def __init__(self, executable: str, args: list[str]) -> None:
+    def __init__(
+        self,
+        executable: str,
+        args: list[str],
+        extra_env: dict[str, str] | None = None,
+        screen: type[Screen] = Screen,
+    ) -> None:
         assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
         import fcntl
         import struct
         import termios
 
-        self.screen = Screen()
+        self.screen = screen()
         self.outgoing = bytearray()
         self.master, slave = os.openpty()
         try:
@@ -63,7 +69,7 @@ class Terminal:
                 stdin=slave,
                 stdout=slave,
                 stderr=slave,
-                env=child_environment(executable),
+                env={**child_environment(executable), **(extra_env or {})},
                 close_fds=True,
             )
         except BaseException:

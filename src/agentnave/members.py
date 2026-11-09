@@ -414,10 +414,12 @@ def _read_settings() -> dict[str, object]:
         or type(value) is not int
         or not 1 <= value <= 32
         or type(settings.get("claude_interactive", False)) is not bool
+        or type(settings.get("antigravity_interactive", False)) is not bool
     ):
         raise SettingsFileError(
             "Invalid settings.json: needs version 1, max_running between 1 and 32 "
-            "and an optional boolean claude_interactive. " + _repair("settings.json")
+            "and optional booleans claude_interactive and antigravity_interactive. "
+            + _repair("settings.json")
         )
     return settings
 
@@ -430,6 +432,11 @@ def read_max_running() -> int:
 def read_claude_interactive() -> bool:
     """The interactive Claude runtime is on unless the App turned it off (ADR-0056)."""
     return cast(bool, _read_settings().get("claude_interactive", True))
+
+
+def read_antigravity_interactive() -> bool:
+    """The interactive agy runtime is on unless the App turned it off (ADR-0072)."""
+    return cast(bool, _read_settings().get("antigravity_interactive", True))
 
 
 def read_history_retention_days(root: Path | None = None) -> int | None:
@@ -570,6 +577,17 @@ def apply_member(
             and "interactive" not in result
             and os.name != "nt"
             and read_claude_interactive()
+        ):
+            result["interactive"] = True
+            applied.append("interactive")
+        if (
+            provider == "antigravity"
+            and "interactive" not in result
+            and os.name != "nt"
+            # Only with permissions skipped, and without the options only print mode takes.
+            and result.get("dangerously_skip_permissions") is True
+            and not {"print_timeout", "disable_slash_commands"} & set(result)
+            and read_antigravity_interactive()
         ):
             result["interactive"] = True
             applied.append("interactive")
