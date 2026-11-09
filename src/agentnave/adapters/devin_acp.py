@@ -172,6 +172,9 @@ class Connection:
             name = meta.get("cognition.ai/inferenceToolName") or update.get("kind") or "tool"
             turn.tools[call_id] = (str(name), update.get("rawInput"))
             turn.split = True
+        elif "rawInput" in update and call_id in turn.tools:
+            # Arguments may change after the call starts; a permission prompt shows the latest.
+            turn.tools[call_id] = (turn.tools[call_id][0], update["rawInput"])
         status = update.get("status") or ("pending" if kind == "tool_call" else None)
         if isinstance(status, str) and turn.statuses.get(call_id) != status:
             turn.statuses[call_id] = status
@@ -180,8 +183,10 @@ class Connection:
             emit({"type": "tool", "id": call_id, "name": name, "status": status})
 
     def ask_boss(self, request_id: object, params: dict[str, Any]) -> None:
-        call_id = _object(params.get("toolCall")).get("toolCallId")
-        name, raw_input = self.turn.tools.get(str(call_id), ("tool", None))
+        tool_call = _object(params.get("toolCall"))
+        name, raw_input = self.turn.tools.get(str(tool_call.get("toolCallId")), ("tool", None))
+        # The request's own arguments are the ones the answer approves.
+        raw_input = tool_call.get("rawInput", raw_input)
         prompt_id = uuid4().hex
         options = [_object(option) for option in _list(params.get("options"))]
         with self.lock:

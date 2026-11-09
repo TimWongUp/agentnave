@@ -1621,8 +1621,10 @@ for line in sys.stdin:
                              'content': {'type': 'text', 'text': 'before the tool'}})
             update(session, {'sessionUpdate': 'tool_call', 'toolCallId': 'c1',
                              'title': 'Ran echo secret-title', 'kind': 'execute',
-                             'rawInput': {'command': 'echo hi'},
+                             'rawInput': {'command': 'echo draft'},
                              '_meta': {'cognition.ai/inferenceToolName': 'exec'}})
+            update(session, {'sessionUpdate': 'tool_call_update', 'toolCallId': 'c1',
+                             'rawInput': {'command': 'echo hi'}})
             send({'jsonrpc': '2.0', 'id': 'perm-1', 'method': 'session/request_permission',
                   'params': {'sessionId': session, 'toolCall': {'toolCallId': 'c1'},
                              'options': [{'optionId': 'once', 'kind': 'allow_once'},
@@ -1654,6 +1656,7 @@ for line in sys.stdin:
         assert isinstance(prompt, NativePrompt)
         assert (prompt.kind, prompt.tool_name) == ("permission", "exec")
         assert "echo hi" in prompt.tool_input and "secret-title" not in prompt.tool_input
+        assert "draft" not in prompt.tool_input
         await manager.answer_prompt(invocation, prompt.prompt_id, "allow")
         result = await manager.wait(invocation, 10)
         assert result is not None and result.status is InvocationStatus.SUCCEEDED
