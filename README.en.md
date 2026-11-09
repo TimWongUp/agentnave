@@ -24,7 +24,7 @@
 
 ### 🧑‍💼 One boss, a whole office of CLIs
 
-12 hosts can be the boss and 8 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
+13 hosts can be the boss and 9 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
 
 ### 👯 Private tasks and meetings
 
