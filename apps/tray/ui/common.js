@@ -17,6 +17,13 @@
     return node;
   }
   const $ = (id) => document.getElementById(id);
+  // WebKit's own menu (Reload, Back, Inspect…) offers nothing on these pages. Text fields and
+  // selected text keep it for copy and paste; workspaces and rooms open their own menus.
+  document.addEventListener("contextmenu", (e) => {
+    if (e.target instanceof Element && e.target.closest("input, textarea, [contenteditable]")) return;
+    if (String(getSelection())) return;
+    e.preventDefault();
+  });
   // Bilingual text: the page's <html lang> carries the App's interface language. The App sets
   // it when serving the page, including the system language, before any text is built.
   const root = document.documentElement;
