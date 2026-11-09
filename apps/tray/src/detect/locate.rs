@@ -100,7 +100,7 @@ pub(crate) fn codex_desktop_app(path: &Path) -> Option<&'static str> {
     None
 }
 
-pub(super) fn standalone_codex() -> Option<PathBuf> {
+pub(crate) fn standalone_codex() -> Option<PathBuf> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     standalone_codex_in(std::env::split_paths(&inherited).chain(common_dirs()))
 }
@@ -181,17 +181,16 @@ pub(super) fn install_dir(display_name: &str) -> Option<PathBuf> {
             continue;
         };
         if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
-            let dir = PathBuf::from(dir);
+            let dir = registry_path(&dir);
             if dir.is_dir() {
                 return Some(dir);
             }
         }
         // Electron apps often leave `InstallLocation` out but point `DisplayIcon` at their exe.
-        if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            let exe = icon.split(',').next().unwrap_or(&icon).trim();
-            if let Some(parent) = Path::new(exe).parent() {
-                return Some(parent.to_path_buf());
-            }
+        if let Some(icon) = registry_value(&key, "DisplayIcon")
+            && let Some(parent) = registry_path(&icon).parent()
+        {
+            return Some(parent.to_path_buf());
         }
     }
     None
@@ -242,10 +241,30 @@ pub(super) fn registry(args: &[&str]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(windows)]
+pub(crate) fn store_packages(key: &str) -> Vec<String> {
+    registry(&["query", key])
+        .into_iter()
+        .filter_map(|line| line.trim().rsplit('\\').next().map(str::to_owned))
+        .filter(|name| name.contains('_') && !name.contains(' '))
+        .collect()
+}
+
 /// A CLI this app knows how to find, including the ones a desktop app bundles instead of
 /// putting on PATH.
 pub(crate) fn locate(name: &str) -> Option<PathBuf> {
     find(name)
+}
+
+/// The path an uninstall entry names, without the quotes and icon index Windows allows around it.
+#[cfg(any(test, windows))]
+pub(super) fn registry_path(value: &str) -> PathBuf {
+    let value = value.trim();
+    let path = match value.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(rest),
+        None => value.split(',').next().unwrap_or(value),
+    };
+    PathBuf::from(path.trim())
 }
 
 /// The executable an installed app's uninstall entry points at, for apps that install wherever
@@ -257,16 +276,16 @@ pub(crate) fn uninstall_icon(display_name: &str) -> Option<PathBuf> {
             continue;
         };
         if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            let exe = icon.split(',').next().unwrap_or(&icon).trim();
-            let path = PathBuf::from(exe);
+            let path = registry_path(&icon);
             if path.is_file() {
                 return Some(path);
             }
         }
+        // A folder left behind after uninstalling is no app; its executable must still be there.
         if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
-            let dir = PathBuf::from(dir);
-            if dir.is_dir() {
-                return Some(dir);
+            let exe = registry_path(&dir).join(format!("{display_name}.exe"));
+            if exe.is_file() {
+                return Some(exe);
             }
         }
     }

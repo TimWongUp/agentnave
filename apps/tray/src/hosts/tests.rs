@@ -602,6 +602,52 @@ fn devin_config_root_uses_absolute_environment_paths_only() {
 }
 
 #[test]
+fn desktop_roots_follow_their_own_environment_and_active_profile() {
+    let (_temp, mut hosts) = fixture();
+    let codebuddy = hosts.context.home.join("codebuddy-custom");
+    hosts.context.env.insert(
+        "CODEBUDDY_CONFIG_DIR".into(),
+        codebuddy.display().to_string(),
+    );
+    assert_eq!(host(&hosts, "codebuddy").root.path, codebuddy);
+    assert_eq!(
+        host(&hosts, "workbuddy").root.path,
+        hosts.context.home.join(".workbuddy")
+    );
+    let workbuddy = hosts.context.home.join("workbuddy-custom");
+    hosts.context.env.insert(
+        "WORKBUDDY_CONFIG_DIR".into(),
+        workbuddy.display().to_string(),
+    );
+    assert_eq!(host(&hosts, "workbuddy").root.path, workbuddy);
+    // An empty variable sets nothing.
+    hosts
+        .context
+        .env
+        .insert("WORKBUDDY_CONFIG_DIR".into(), String::new());
+    assert_eq!(
+        host(&hosts, "workbuddy").root.path,
+        hosts.context.home.join(".workbuddy")
+    );
+
+    let root = hosts.context.home.join(".hermes");
+    save(&root.join("active_profile"), "work\n");
+    fs::create_dir_all(root.join("profiles/work")).unwrap();
+    assert_eq!(
+        host(&hosts, "hermes").config,
+        root.join("profiles/work/config.yaml")
+    );
+    save(&root.join("active_profile"), "2026\n");
+    fs::create_dir_all(root.join("profiles/2026")).unwrap();
+    assert_eq!(
+        host(&hosts, "hermes").config,
+        root.join("profiles/2026/config.yaml")
+    );
+    save(&root.join("active_profile"), "../elsewhere");
+    assert_eq!(host(&hosts, "hermes").config, root.join("config.yaml"));
+}
+
+#[test]
 fn host_routes_confirm_members_only_after_a_successful_connection() {
     let (_temp, hosts) = fixture();
     let h = host(&hosts, "codex");
@@ -1473,6 +1519,10 @@ fn optional_skill_off_keeps_a_copy_another_host_shares_and_wants() {
         .context
         .env
         .insert("CODEBUDDY_CONFIG_DIR".into(), shared.display().to_string());
+    hosts
+        .context
+        .env
+        .insert("WORKBUDDY_CONFIG_DIR".into(), shared.display().to_string());
     let path = host(&hosts, "codebuddy")
         .optional("agentnave-review")
         .unwrap();
@@ -2101,11 +2151,28 @@ fn zcode_fallback_servers_block_only_a_first_server() {
     assert_eq!(zcode_fallback(home, &own), None);
 }
 
+/// Leaves what each platform's Claude Desktop discovery looks for.
+fn install_claude_desktop(hosts: &Hosts) {
+    if cfg!(windows) {
+        save(
+            &hosts
+                .context
+                .home
+                .join("AppData/Local/AnthropicClaude/claude.exe"),
+            "",
+        );
+    } else if cfg!(target_os = "macos") {
+        fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    } else {
+        fs::create_dir_all(hosts.context.home.join(".config/Claude")).unwrap();
+    }
+}
+
 #[test]
 fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     let (_temp, mut hosts) = fixture();
     let home = hosts.context.home.clone();
-    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    install_claude_desktop(&hosts);
     executable_file(
         &hosts.context.search[0].join("codex"),
         "#!/bin/sh\nexit 99\n",
@@ -2173,19 +2240,79 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
 }
 
 #[test]
-fn shared_desktop_hosts_name_both_entry_points() {
+fn connection_receipts_belong_to_the_config_row_that_started_them() {
     let (_temp, mut hosts) = fixture();
-    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
-    fs::create_dir_all(hosts.context.applications[0].join("Devin.app")).unwrap();
-    assert_eq!(host(&hosts, "claude").label, "Claude Code（终端／桌面端）");
-    assert_eq!(host(&hosts, "devin").label, "Devin（CLI／桌面端）");
+    executable_file(
+        &hosts.context.search[0].join("codex"),
+        "#!/bin/sh\nexit 99\n",
+    );
+    save(&hosts.context.home.join(".codex-work/auth.json"), "{}");
+    hosts.codex_homes = hosts.other_codex_homes();
+    let extra = "codex@.codex-work";
+    for id in ["codex", extra] {
+        assert_eq!(
+            hosts.action("connect", &json!({"id":id})).unwrap()["ok"],
+            true
+        );
+    }
+    let old_token = hosts.reload_token(&host(&hosts, extra)).unwrap();
+    hosts.settings[extra]["reload_confirmed"] =
+        json!({"v":4,"token":old_token,"at":"before-row-receipts"});
+    assert_ne!(
+        hosts.state(&host(&hosts, extra))["reload"]["state"],
+        "confirmed"
+    );
+    let started = ["codex", extra]
+        .into_iter()
+        .map(|id| {
+            hosts.settings[id]["reload_changed"]["at_ms"]
+                .as_u64()
+                .unwrap()
+        })
+        .max()
+        .unwrap()
+        + 1;
+    let dir = hosts.context.home.join(".agentnave/connections");
+    let mut receipt = json!({"version":1,"host":"codex","started_ms":started,
+        "runtime_version":"0.22.0","runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64)});
+    save(&dir.join("legacy.json"), &receipt.to_string());
+    assert_ne!(
+        hosts.state(&host(&hosts, "codex"))["reload"]["state"],
+        "current"
+    );
+    assert_ne!(
+        hosts.state(&host(&hosts, extra))["reload"]["state"],
+        "current"
+    );
+    fs::remove_file(dir.join("legacy.json")).unwrap();
+    receipt["host_app"] = json!(extra);
+    save(&dir.join("extra.json"), &receipt.to_string());
+    assert_eq!(
+        hosts.state(&host(&hosts, extra))["reload"]["state"],
+        "current"
+    );
+    assert_ne!(
+        hosts.state(&host(&hosts, "codex"))["reload"]["state"],
+        "current"
+    );
+    hosts.remember_reloads();
+    assert!(hosts.settings[extra]["reload_confirmed"]["token"].is_string());
+    assert!(hosts.settings["codex"]["reload_confirmed"].is_null());
+}
+
+#[test]
+fn claude_desktop_gets_a_row_only_for_a_file_of_its_own() {
+    let (_temp, mut hosts) = fixture();
+    install_claude_desktop(&hosts);
+    let desktop_row = |hosts: &Hosts| hosts.registry().iter().any(|h| h.id == "claude-desktop");
+    assert!(!desktop_row(&hosts));
 
     let elsewhere = hosts.context.home.join("claude-work");
     hosts.shell = Some(Ok(BTreeMap::from([(
         "CLAUDE_CONFIG_DIR".into(),
         elsewhere.display().to_string(),
     )])));
-    assert_eq!(host(&hosts, "claude").label, "Claude Code");
+    assert_eq!(host(&hosts, "claude").label, "Claude");
     assert_eq!(host(&hosts, "claude-desktop").label, "Claude 桌面");
 
     // Naming the default folder still moves Claude Code's file away from the desktop's.
@@ -2195,7 +2322,7 @@ fn shared_desktop_hosts_name_both_entry_points() {
         named.display().to_string(),
     )])));
     assert_eq!(host(&hosts, "claude").config, named.join(".claude.json"));
-    assert_eq!(host(&hosts, "claude").label, "Claude Code");
+    assert_eq!(host(&hosts, "claude").label, "Claude");
     assert_eq!(
         host(&hosts, "claude-desktop").config,
         hosts.context.home.join(".claude.json")
@@ -2219,6 +2346,25 @@ fn claude_desktop_is_found_by_its_folder_without_the_app() {
     };
     fs::create_dir_all(home.join(config).join("Claude-3p")).unwrap();
     assert_eq!(hosts.registry().len(), IDS.len() + 1);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_separate_claude_desktop_row_owns_its_installation() {
+    let (_temp, mut hosts) = fixture();
+    let home = hosts.context.home.clone();
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        home.join("claude-work").display().to_string(),
+    )])));
+    executable_file(&hosts.context.search[0].join("claude"), "fake");
+    install_claude_desktop(&hosts);
+    let main = hosts.state(&host(&hosts, "claude"));
+    let desktop = hosts.state(&host(&hosts, "claude-desktop"));
+    assert_eq!(main["clients"][0]["kind"], "cli");
+    assert_eq!(main["clients"].as_array().unwrap().len(), 1);
+    assert_eq!(desktop["clients"][0]["kind"], "desktop");
+    assert_eq!(desktop["clients"].as_array().unwrap().len(), 1);
 }
 
 #[cfg(unix)]
@@ -2288,17 +2434,41 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn codex_host_label_tracks_the_bundled_cli_without_changing_identity() {
+fn a_cli_inside_the_desktop_app_is_not_a_reader_of_its_own() {
+    let (_temp, hosts) = fixture();
+    let app = hosts.context.applications[0].join("DeepSeek Harness.app");
+    let bundled = app.join("Contents/Resources/dsh");
+    executable_file(&bundled, "fake");
+    std::os::unix::fs::symlink(&bundled, hosts.context.search[0].join("dsh")).unwrap();
+    let clients = hosts.state(&host(&hosts, "deepseek"))["clients"].clone();
+    assert_eq!(clients.as_array().unwrap().len(), 1);
+    assert_eq!(clients[0]["kind"], "desktop");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn codex_host_lists_cli_and_desktop_under_one_config() {
     let (_temp, hosts) = fixture();
     executable_file(&hosts.context.search[0].join("codex"), "fake");
-    assert_eq!(host(&hosts, "codex").label, "Codex CLI");
+    assert_eq!(host(&hosts, "codex").label, "Codex");
     let desktop =
         hosts.context.applications[0].join("ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
     executable_file(&desktop, "fake");
+    let info = hosts.context.applications[0].join("ChatGPT.app/Contents/Info.plist");
+    save(
+        &info,
+        "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.openai.codex</string></dict></plist>",
+    );
     let codex = host(&hosts, "codex");
     assert_eq!(codex.id, "codex");
     assert_eq!(codex.boss, "codex");
-    assert_eq!(codex.label, "ChatGPT（Codex）");
+    assert_eq!(codex.label, "Codex");
+    assert_eq!(hosts.state(&codex)["clients"].as_array().unwrap().len(), 2);
+    save(
+        &info,
+        "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.openai.chat</string></dict></plist>",
+    );
+    assert_eq!(hosts.state(&codex)["clients"].as_array().unwrap().len(), 1);
 }
 
 #[cfg(target_os = "macos")]
@@ -2315,5 +2485,5 @@ fn codex_host_execution_keeps_codex_app_ahead_of_chatgpt() {
     assert_eq!(host(&hosts, "codex").label, "Codex");
     fs::remove_file(codex).unwrap();
     assert_eq!(hosts.context.find("codex"), Some(chatgpt));
-    assert_eq!(host(&hosts, "codex").label, "ChatGPT（Codex）");
+    assert_eq!(host(&hosts, "codex").label, "Codex");
 }

@@ -274,6 +274,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
         env={
             **os.environ,
             "AGENTNAVE_HOST": "codex",
+            "AGENTNAVE_HOST_APP": "codex@work",
             "AGENTNAVE_DATA_DIR": str(data),
             "AGENTNAVE_DISPATCHED": _marker(marker),
         },
@@ -313,11 +314,13 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
         assert set(initial) == {
             "version",
             "host",
+            "host_app",
             "started_ms",
             "runtime_version",
             "runtime_tools_hash",
             "host_tools_hash",
         } | ({"dispatched"} if dispatched else set())
+        assert initial["host_app"] == "codex@work"
         if dispatched:
             assert initial["dispatched"] is True
         # Unchanged observations only refresh the modification time; removal rewrites it.

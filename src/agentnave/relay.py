@@ -258,6 +258,7 @@ class Relay:
         self.code = 0
         effective_env = env if env is not None else os.environ
         self.host = effective_env.get("AGENTNAVE_HOST")
+        self.host_app = effective_env.get("AGENTNAVE_HOST_APP")
         self.dispatched = _dispatched(effective_env.get("AGENTNAVE_DISPATCHED"))
         self.connection_path = (
             Path(effective_env.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
@@ -346,6 +347,8 @@ class Relay:
                 "runtime_tools_hash": self.runtime_tools_hash,
                 "host_tools_hash": self.host_tools_hash,
             }
+            if self.host_app:
+                payload["host_app"] = self.host_app
             if ended_ms is not None:
                 payload["ended_ms"] = ended_ms
             if self.dispatched:

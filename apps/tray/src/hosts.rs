@@ -1,6 +1,7 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod actions;
 mod config;
+mod installed;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]
 mod live_tests;
 mod orchestration;
@@ -34,8 +35,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Format of the stored reload records; older records also hashed the Skill.
-const RELOAD_FORMAT: u64 = 4;
+/// Format of stored reload records; v4 could confirm another row's connection.
+const RELOAD_FORMAT: u64 = 5;
 pub(crate) use transaction::safe_path as check_path;
 #[derive(Clone)]
 pub(crate) struct ToolDirs {
